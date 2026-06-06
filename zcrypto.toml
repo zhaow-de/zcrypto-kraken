@@ -1,0 +1,5 @@
+[zcrypto]
+# Compiled dataset directory.
+data_dir = "data"
+# Durable backup root holding raw/ (downloaded-zip mirror) and snapshots/.
+backup_dir = "../zcrypto-kraken-data/zcrypto"
