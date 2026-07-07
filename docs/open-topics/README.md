@@ -18,7 +18,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-_(none)_
+- [T0004 — full tick history + tick-derived bar reconciliation](T0004-tick-history-reconciliation.md) — the tick-vs-OHLCVT tolerance test + true vwap; blocked on tick-data acquisition (not on NAS), deferred to Phase-4 microstructure / true-vwap need.
 
 ### Partially done<a name="partially-done"></a>
 
@@ -33,7 +33,8 @@ _(none)_
 
 ### Open<a name="open-1"></a>
 
-_(none)_
+- [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — the hard Phase-1 exit-bar gate (≥7-day clean capture + verified sync); human-gated on VPS provisioning, then autonomous.
+- [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step.
 
 ### Partially done<a name="partially-done-1"></a>
 
