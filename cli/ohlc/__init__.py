@@ -3,6 +3,7 @@ from cli.ohlc.errors import OHLCError
 from cli.ohlc.fetch import fetch_ohlc
 from cli.ohlc.ingest import ingest_basket
 from cli.ohlc.qa import INTERVAL_SECONDS, detect_gaps, price_discontinuities, qa_dataset, qa_series, render_markdown, wick_outliers
+from cli.ohlc.reconstruct import fill_gaps
 
 # 1d / 4h / 1h — the §6 decision-cadence intervals (minutes).
 DEFAULT_INTERVALS = [1440, 240, 60]
@@ -23,4 +24,5 @@ __all__ = [
     "qa_series",
     "qa_dataset",
     "render_markdown",
+    "fill_gaps",
 ]
