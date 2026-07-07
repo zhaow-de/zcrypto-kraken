@@ -62,6 +62,16 @@ def test_passing_entry_has_no_reasons():
     assert entry["reasons"] == []
 
 
+def test_candidate_at_200k_median_volume_passes_default_floor():
+    # T0002: the lowered €150k/day floor admits names around €200k that the old €1M floor dropped.
+    pairs = [_Pair(symbol="FOO/EUR", base="FOO", quote="EUR")]
+    volumes = {"FOO/EUR": 200_000.0}
+    selection = finalize_universe(pairs, volumes)
+    entry = _entry(selection, "FOO/EUR")
+    assert entry["selected"] is True
+    assert entry["reasons"] == []
+
+
 def test_escalate_true_when_selected_below_min_names():
     pairs = [_Pair(symbol=f"S{i}/EUR", base=f"S{i}", quote="EUR") for i in range(MIN_NAMES - 1)]
     volumes = {p.symbol: 2_000_000.0 for p in pairs}

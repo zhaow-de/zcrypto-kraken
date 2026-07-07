@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEFAULT_MIN_LEVERAGE = 2
-DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 1_000_000.0  # EUR/day, documented, tunable
+# EUR/day; a full max-size position (~€1,400 at ~$10k, ≤1.5x gross, ~12 names) ≈ 1% of median daily
+# EUR volume — our microstructure-impact floor. Tunable.
+DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0
 MANDATORY = ("BTC", "ETH")
 MIN_NAMES = 8
 MAX_NAMES = 15

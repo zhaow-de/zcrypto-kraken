@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # Universe liquidity-floor calibration & quote-currency-aware volume (§3 escalation)
@@ -25,3 +25,12 @@ The point-in-time universe file (`docs/universe/point-in-time-universe.md`) is a
 - Calibrate the volume floor, or decide the basket policy: lower the EUR floor; **or** route the thinner alts through their deeper Kraken **USD-quoted** pairs (USD books are deeper than EUR for alts); **or** accept a smaller EUR-only basket (6–8 names); **or** per-quote-currency floors.
 - Make the volume floor quote-currency-aware: convert a BTC-quoted leg's volume to EUR via the BTC/EUR price (or apply a BTC-denominated floor to BTC legs) so ETH/BTC & SOL/BTC are judged on real turnover, not a unit artifact.
 - Re-run `finalize_universe` with the calibrated parameters and re-generate the universe file.
+
+## Resolution (iter-007, 2026-07-07)
+
+Resolved by **lowering the EUR floor and making the volume metric quote-currency-aware**, grounded in a live EUR-vs-USD-vs-USDT depth + margin-parity + FX/tax analysis (recorded in master-plan §3): USD books are 2–8.5× deeper, but that depth does not bind at ~$10k (a full per-name position is <1% of even the thinnest EUR book) and EUR gives up zero margin capability, while USD adds conversion/FX/§23-tax friction. So:
+
+- **Floor `€1,000,000 → €150,000`/day** (`DEFAULT_MIN_MEDIAN_QUOTE_VOLUME`, commit `9495e2d`) — footprint-based (a full max-size position ≈1% of median daily EUR volume). Admits LINK/DOGE/DOT/AVAX.
+- **`quote_volume_in_eur`** FX-normalizes the BTC-quoted RV legs (ETH/BTC → €579,964, SOL/BTC → €233,595) via the BTC/EUR daily close, ending the unit mismatch.
+- **Result:** the full §3 target of **12 names** (10 EUR + 2 BTC RV), `escalate=False`. `docs/universe/point-in-time-universe.md` regenerated; findings + the floor decision inserted into master-plan §3.
+- **Deferred (not this topic):** routing thin alts via deeper USD pairs is a pre-registered **scaling trigger** (revisit at ~5–10× this account); USDT ruled out entirely (thinnest venue, MiCA-delisted for EEA, breaks AVAX margin). The spread-cap criterion still awaits the L2 capture daemon.

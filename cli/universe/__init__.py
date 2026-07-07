@@ -9,11 +9,12 @@ from cli.universe.rules import (
     UniverseSelection,
     finalize_universe,
 )
-from cli.universe.volume import median_quote_volume
+from cli.universe.volume import median_quote_volume, quote_volume_in_eur
 
 __all__ = [
     "UniverseError",
     "median_quote_volume",
+    "quote_volume_in_eur",
     "DEFAULT_MIN_LEVERAGE",
     "DEFAULT_MIN_MEDIAN_QUOTE_VOLUME",
     "MANDATORY",
