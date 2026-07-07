@@ -3,43 +3,46 @@
 **Iteration:** iter-005 · **Phase:** 1 (Data Foundation) · **Scope:** the mechanical, rule-driven universe
 selection defined in `docs/specs/00003-universe-finalization-design.md` (master-plan §3), composing iter-002's
 margin/leverage snapshot (`cli.snapshot`) and iter-004's daily OHLC (`cli.ohlc`) via `cli/universe/`
-(`finalize_universe` + `build_universe_file`).
+(`finalize_universe` + `build_universe_file`). **Regenerated in iter-007** per **T0002**: the liquidity floor is
+now €150,000/day and quote-volume is EUR-normalized via `quote_volume_in_eur` (FX-converts BTC-quoted legs
+through the BTC/EUR daily close).
 
 **As of:** 2026-07-07 (UTC)
-**Escalate:** **True** — 6 selected, below `MIN_NAMES` (8). See "Escalation note" below; this is a recorded
-signal for review, not an error.
+**Escalate:** **False** — 12 selected, within `MIN_NAMES`–`MAX_NAMES` (8–15). No escalation signal this run.
 
 ## Selected universe
 
-BTC/EUR, ETH/EUR, SOL/EUR, XRP/EUR, ADA/EUR, LTC/EUR
+BTC/EUR, ETH/EUR, SOL/EUR, XRP/EUR, ADA/EUR, LINK/EUR, DOGE/EUR, LTC/EUR, DOT/EUR, AVAX/EUR, ETH/BTC, SOL/BTC
 
 ## Per-symbol criteria
 
-| Symbol   | Selected | Margin | Max leverage | Median quote volume (30d) | Reasons                                             |
-| -------- | -------- | ------ | ------------ | -------------------------- | ---------------------------------------------------- |
-| BTC/EUR  | yes      | yes    | 10           | 27,842,495.91               | -                                                      |
-| ETH/EUR  | yes      | yes    | 10           | 11,453,549.13               | -                                                      |
-| SOL/EUR  | yes      | yes    | 10           | 5,388,531.14                | -                                                      |
-| XRP/EUR  | yes      | yes    | 10           | 3,968,065.63                | -                                                      |
-| ADA/EUR  | yes      | yes    | 10           | 1,299,998.00                | -                                                      |
-| LINK/EUR | no       | yes    | 10           | 283,221.05                  | median quote volume below the €1,000,000.0 floor     |
-| DOGE/EUR | no       | yes    | 10           | 501,434.02                  | median quote volume below the €1,000,000.0 floor     |
-| LTC/EUR  | yes      | yes    | 10           | 1,247,595.16                | -                                                      |
-| DOT/EUR  | no       | yes    | 5            | 182,168.24                  | median quote volume below the €1,000,000.0 floor     |
-| AVAX/EUR | no       | yes    | 10           | 272,540.96                  | median quote volume below the €1,000,000.0 floor     |
-| ETH/BTC  | no       | yes    | 5            | 10.55                       | median quote volume below the 1,000,000.0 floor (BTC-denominated, see note) |
-| SOL/BTC  | no       | yes    | 4            | 4.36                        | median quote volume below the 1,000,000.0 floor (BTC-denominated, see note) |
+| Symbol   | Selected | Margin | Max leverage | Median quote volume (30d, EUR) | Reasons |
+| -------- | -------- | ------ | ------------ | ------------------------------- | ------- |
+| BTC/EUR  | yes      | yes    | 10           | 27,842,495.91                   | -       |
+| ETH/EUR  | yes      | yes    | 10           | 11,453,549.13                   | -       |
+| SOL/EUR  | yes      | yes    | 10           | 5,388,531.14                    | -       |
+| XRP/EUR  | yes      | yes    | 10           | 3,968,065.63                    | -       |
+| ADA/EUR  | yes      | yes    | 10           | 1,299,998.00                    | -       |
+| LINK/EUR | yes      | yes    | 10           | 283,221.05                      | -       |
+| DOGE/EUR | yes      | yes    | 10           | 501,434.02                      | -       |
+| LTC/EUR  | yes      | yes    | 10           | 1,247,595.16                    | -       |
+| DOT/EUR  | yes      | yes    | 5            | 182,168.24                      | -       |
+| AVAX/EUR | yes      | yes    | 10           | 272,540.96                      | -       |
+| ETH/BTC  | yes      | yes    | 5            | 579,963.79                      | -       |
+| SOL/BTC  | yes      | yes    | 4            | 233,594.56                      | -       |
 
-All twelve candidates are margin-enabled with `leverage_buy` clearing `min_leverage=2`, so the selection line here is
-drawn entirely by the median-quote-volume floor. None of BTC/ETH's own criteria failed, so the `mandatory` override
-(§3: BTC/ETH always selected) never had to activate for this run.
+All twelve candidates are margin-enabled with `leverage_buy` clearing `min_leverage=2`, and at the new €150,000/day
+floor every candidate also clears the median-quote-volume criterion: the four previously-thin EUR alts
+(LINK/DOGE/DOT/AVAX) clear it directly, and the two BTC-quoted RV legs (ETH/BTC, SOL/BTC) clear it once
+FX-normalized to EUR via `quote_volume_in_eur`. None of BTC/ETH's own criteria failed, so the `mandatory` override
+(§3: BTC/ETH always selected) never had to activate for this run either.
 
 ## Parameters
 
 | Parameter                          | Value       |
 | ----------------------------------- | ----------- |
 | `min_leverage`                      | 2           |
-| `min_median_quote_volume`           | 1,000,000.0 (EUR/day) |
+| `min_median_quote_volume`           | 150,000.0 (EUR/day) |
 | `median_quote_volume_window_days`   | 30          |
 | `mandatory`                         | BTC, ETH (EUR-quoted leg only) |
 
@@ -50,35 +53,38 @@ built). Per the design's non-goals, every entry above carries this same placehol
 
 ## Escalation note
 
-6 of 12 candidates are selected, below `MIN_NAMES=8`, so `escalate=True` per §3. The six EUR-quoted majors (BTC, ETH,
-SOL, XRP, ADA, LTC) clear all three criteria on their own merits. LINK/DOGE/DOT/AVAX are dropped solely on the
-€1,000,000/day median-quote-volume floor — all four pass margin+leverage. The two BTC-quoted relative-value legs
-(ETH/BTC, SOL/BTC) are also dropped: their `volume * vwap` is denominated in BTC, not EUR, so it is compared against
-the same nominal `1,000,000.0` floor as the EUR-quoted legs — a known unit mismatch (their raw BTC turnover numbers,
-~10.5 and ~4.4, are not literally "below liquidity", they're in the wrong unit), not evidence the legs are illiquid.
-Per the design, this escalation is a recorded signal for the next review, not auto-resolved by this module.
+12 of 12 candidates are selected; `escalate=False` (within `MIN_NAMES=8`–`MAX_NAMES=15`), so no escalation signal
+fires on this run. This resolves iter-005's T0002 escalation on both of its drivers: (1) the liquidity floor
+dropped from €1,000,000/day to €150,000/day — a footprint-sizing floor (a full max-size position at our sizing is
+≈1% of median daily EUR volume) — under which the four previously-thin EUR alts (LINK €283,221.05, DOGE
+€501,434.02, DOT €182,168.24, AVAX €272,540.96) now clear the bar; and (2) `quote_volume_in_eur` FX-normalizes the
+two BTC-quoted relative-value legs (ETH/BTC, SOL/BTC) through the BTC/EUR daily close, so their turnover is judged
+in EUR (€579,963.79 and €233,594.56 respectively) rather than compared unconverted against a EUR-scaled floor — no
+longer a unit mismatch, a real, comparable measurement. All twelve candidates now clear every criterion on their
+own merits.
 
 ## Provenance
 
 - **Snapshot file:** `data/snapshots/kraken-refdata-20260707T032900Z.json` (gitignored; regenerate via
   `cli.snapshot.fetch_public` + `build_snapshot`) — fetched at `2026-07-07T03:29:00+00:00`, raw sha256
-  `e1510e9887b5a2c4f03e7830c4f0f71b9fa458301d453c18b92e85d8ae3226e3`.
+  `e1510e9887b5a2c4f03e7830c4f0f71b9fa458301d453c18b92e85d8ae3226e3`. Unchanged since iter-005 — this
+  regeneration reuses the same snapshot and OHLC inputs; only the selection rule's parameters and volume
+  derivation changed (T0002).
 - **OHLC dataset:** `data/ohlc/{symbol}/1440.parquet` (gitignored; regenerate via `cli.ohlc.ingest_basket`) per
   `data/ohlc/manifest.json`, fetched at `2026-07-07T04:12:55.776871+00:00`; basket sha256 (over the sorted
   `{symbol: dataset_hash}` map for the twelve `1440.parquet` series used for the volume signal)
   `407d2ed8222946111dc8301cf420a456d9a7ebbfc2835610f89a236ed23fd093`.
 - **Derivation code:** `cli/universe/` (`volume.py`, `rules.py`, `build.py`), unit-tested against synthetic
-  `PairSnapshot`-shaped inputs — see `docs/specs/00003-universe-finalization-design.md`.
+  `PairSnapshot`-shaped inputs — see `docs/specs/00003-universe-finalization-design.md`. Volume is now computed via
+  `quote_volume_in_eur` (EUR-quoted legs: identical to `median_quote_volume`; BTC-quoted legs: FX-normalized
+  through the BTC/EUR daily close), and the floor is `DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0` (commit
+  `9495e2d`, T0002).
 - **Machine-readable file:** `data/universe/point-in-time-universe.json` (gitignored; the full `build_universe_file`
-  dict, regenerable from the inputs above) — sha256 `43a727a71f3ff16aaa5b4bcf4b177103799c322a73147f7e816393759c0d7499`.
+  dict, regenerable from the inputs above) — sha256 `2ddef2c7fc42da2af1af438ff3cd1861d7da49fa111c2075816f7c13aca210e9`.
 
 ## Deferred / follow-ups
 
 - **Spread-cap criterion** — needs the L2 capture daemon (VPS-gated, not built). Parked per the design's non-goals.
-- **BTC-quoted relative-value legs' volume unit mismatch** (see "Escalation note" above) — `median_quote_volume` for
-  ETH/BTC and SOL/BTC is in raw BTC, compared against a EUR-scaled floor, so it always fails by construction. An
-  FX-normalization step (e.g. via the BTC/EUR reference price) would be needed to judge these legs on the same
-  €-denominated bar as the EUR-quoted majors, if that is the intent.
 - **Full-history volume** improves once T0001's OHLCVT backfill lands (currently ~2 years from the REST 720-candle
   cap; the median window is only 30 days, so this affects data depth, not the current selection).
 - Full symbol & corporate-action ledger (redenominations, quote-book migrations) beyond iter-002's alias ledger

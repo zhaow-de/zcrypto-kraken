@@ -6,6 +6,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [Research and development](#research-and-development)
   - [Open](#open)
+  - [Resolved](#resolved)
 - [Live trading preparation](#live-trading-preparation)
   - [Open](#open-1)
 
@@ -16,7 +17,10 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0001 — full-history OHLCVT backfill](T0001-ohlcvt-full-history-backfill.md) — Kraken's downloadable ZIP archive (Google-Drive-hosted) holds the 2019→2026 history the §9 walk-forward needs; the REST-seeded v0 dataset only spans ~2y. Mechanism needs investigation (possibly human-assisted).
-- [T0002 — universe liquidity-floor calibration & quote-currency volume](T0002-universe-liquidity-floor-calibration.md) — iter-005's §3 rule selected only 6 names at the €1M/day floor (escalate fired); thin Kraken-EUR alt liquidity + a BTC-leg unit mismatch need a human basket/floor decision.
+
+### Resolved<a name="resolved"></a>
+
+- [T0002 — universe liquidity-floor calibration & quote-currency volume](archive/T0002-universe-liquidity-floor-calibration.md) — resolved in iter-007: EUR floor lowered €1M→€150k (footprint-based) + `quote_volume_in_eur` FX-normalizes the BTC-quoted legs → the full 12-name basket, `escalate=False`; findings recorded in master-plan §3.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
