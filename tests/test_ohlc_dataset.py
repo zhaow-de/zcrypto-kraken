@@ -50,6 +50,13 @@ def test_to_frame_raises_on_conflicting_duplicate_timestamp():
         to_frame([ROWS[0], conflicting])
 
 
+def test_to_frame_raises_on_non_numeric_price_string():
+    bad_rows = [list(ROWS[0])]
+    bad_rows[0][1] = "not-a-number"
+    with pytest.raises(OHLCError):
+        to_frame(bad_rows)
+
+
 def test_write_parquet_read_parquet_roundtrip(tmp_path):
     frame = to_frame(ROWS)
     path = tmp_path / "nested" / "1440.parquet"

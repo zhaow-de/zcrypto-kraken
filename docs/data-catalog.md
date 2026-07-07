@@ -78,6 +78,8 @@ assets = fetch_public("Assets")
 universe = derive_universe(assetpairs, assets, list(CANDIDATE_SYMBOLS))
 pair_keys = {row.symbol: row.pair_key for row in universe if row.found}
 
+# Writes data/ohlc/{symbol}/{interval}.parquet plus data/ohlc/manifest.json, and returns the same
+# manifest dict as written.
 manifest = ingest_basket(pair_keys, DEFAULT_INTERVALS, "data/ohlc", datetime.now(timezone.utc).isoformat())
 ```
 

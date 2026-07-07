@@ -39,3 +39,14 @@ def test_ingest_basket_deterministic_given_fixed_fetched_at(tmp_path_factory):
     manifest_b = ingest_basket(pair_keys, intervals, tmp_path_factory.mktemp("b"), FETCHED_AT, fetch_fn=_fetch_fn)
 
     assert manifest_a == manifest_b
+
+
+def test_ingest_basket_writes_manifest_json(tmp_path):
+    pair_keys = {"BTC/EUR": "XXBTZEUR"}
+    intervals = [1440]
+
+    manifest = ingest_basket(pair_keys, intervals, tmp_path, FETCHED_AT, fetch_fn=_fetch_fn)
+
+    manifest_path = tmp_path / "manifest.json"
+    assert manifest_path.exists()
+    assert json.loads(manifest_path.read_text()) == manifest

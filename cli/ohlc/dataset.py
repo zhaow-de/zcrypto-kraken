@@ -16,16 +16,20 @@ def to_frame(rows: list[list]) -> pl.DataFrame:
 
     Schema: `ts` (`Datetime("us", "UTC")`, from the epoch-seconds col 0), `open/high/low/close/vwap/volume`
     (`Float64`, parsed from Kraken's string decimals), `count` (`Int64`). Exact-duplicate rows (e.g. from
-    an overlapping refetch) are dropped. Raises `OHLCError` on a NaN value, or on a non-monotonic/duplicate
-    `ts` still remaining after de-duplication (two rows sharing a `ts` with differing data — an unresolvable
-    conflict, not a true duplicate).
+    an overlapping refetch) are dropped. Raises `OHLCError` on an unparseable value (a non-numeric string
+    in a price/count column), a NaN value, or on a non-monotonic/duplicate `ts` still remaining after
+    de-duplication (two rows sharing a `ts` with differing data — an unresolvable conflict, not a true
+    duplicate).
     """
     raw = pl.DataFrame(rows, schema=_RAW_COLUMNS, orient="row")
-    frame = raw.with_columns(
-        pl.from_epoch(pl.col("ts"), time_unit="s").dt.replace_time_zone("UTC"),
-        pl.col(*_FLOAT_COLUMNS).cast(pl.Float64),
-        pl.col("count").cast(pl.Int64),
-    )
+    try:
+        frame = raw.with_columns(
+            pl.from_epoch(pl.col("ts"), time_unit="s").dt.replace_time_zone("UTC"),
+            pl.col(*_FLOAT_COLUMNS).cast(pl.Float64),
+            pl.col("count").cast(pl.Int64),
+        )
+    except pl.exceptions.InvalidOperationError as exc:
+        raise OHLCError(f"OHLC frame has an unparseable value: {exc}") from exc
 
     if frame.select(pl.any_horizontal(pl.col(_FLOAT_COLUMNS).is_nan())).to_series().any():
         raise OHLCError("OHLC frame contains NaN values")

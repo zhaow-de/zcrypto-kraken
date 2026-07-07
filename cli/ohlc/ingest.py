@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from cli.ohlc.dataset import dataset_hash, to_frame, write_parquet
@@ -17,9 +18,10 @@ def ingest_basket(
     """Fetch, normalize, and write canonical Parquet for each symbol x interval in the basket.
 
     For each `display_symbol -> kraken_pair_key` in `pair_keys`, times each interval in `intervals`:
-    fetch -> `to_frame` -> write `out_dir/{symbol}/{interval}.parquet`. Returns a manifest dict:
+    fetch -> `to_frame` -> write `out_dir/{symbol}/{interval}.parquet`. Builds a manifest dict:
     `fetched_at` plus one `series` entry per symbol x interval (symbol, interval, rows, first_ts,
-    last_ts, dataset_hash). Deterministic given a fixed `fetched_at` and `fetch_fn`.
+    last_ts, dataset_hash); writes it to `out_dir/manifest.json` and returns it. Deterministic given
+    a fixed `fetched_at` and `fetch_fn`.
     """
     series = []
     for symbol, pair_key in pair_keys.items():
@@ -36,4 +38,6 @@ def ingest_basket(
                     "dataset_hash": dataset_hash(frame),
                 }
             )
-    return {"fetched_at": fetched_at, "series": series}
+    manifest = {"fetched_at": fetched_at, "series": series}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    return manifest

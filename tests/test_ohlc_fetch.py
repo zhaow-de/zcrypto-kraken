@@ -42,3 +42,15 @@ def test_fetch_ohlc_raises_on_transport_error():
 
     with pytest.raises(OHLCError):
         fetch_ohlc("XXBTZEUR", 1440, opener=_raise)
+
+
+def test_fetch_ohlc_raises_on_missing_result_key():
+    body = {"error": []}
+    with pytest.raises(OHLCError):
+        fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
+
+
+def test_fetch_ohlc_raises_on_result_with_only_last_key():
+    body = {"error": [], "result": {"last": 1234567890}}
+    with pytest.raises(OHLCError):
+        fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
