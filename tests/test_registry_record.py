@@ -93,6 +93,12 @@ def test_seeds_may_be_empty_but_metrics_may_not():
         validate_caller_fields(_caller(metrics={}))
 
 
+def test_bool_metric_leaf_rejected():
+    # type() is-strict must reject bool inside metrics too, not just in seeds/n_trials_in_family.
+    with pytest.raises(RegistryError):
+        validate_caller_fields(_caller(metrics={"flag": True}))
+
+
 def test_stored_record_hash_and_schema_checks():
     body = dict(_caller(), trial_id=1, schema_version=SCHEMA_VERSION, timestamp="2026-07-07T00:00:00+00:00")
     rec = dict(body, record_hash=compute_hash(body))

@@ -48,7 +48,8 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
         prior = seen.get(rec["family"], 0)
         if rec["n_trials_in_family"] < prior + 1:
             raise RegistryCorruptionError(
-                f"{path}: trial {rec['trial_id']} n_trials_in_family={rec['n_trials_in_family']} < {prior + 1} in family {rec['family']!r}"
+                f"{path}: trial {rec['trial_id']} n_trials_in_family={rec['n_trials_in_family']} < {prior + 1} "
+                f"in family {rec['family']!r}"
             )
         seen[rec["family"]] = prior + 1
 

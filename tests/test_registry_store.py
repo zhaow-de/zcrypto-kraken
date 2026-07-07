@@ -149,3 +149,13 @@ def test_concurrent_registries_get_unique_ids(tmp_path):
     _append(b)  # b re-reads under lock -> id 2, not a duplicate 1
     ids = sorted(r.trial_id for r in TrialRegistry(p).records)
     assert ids == [1, 2]
+
+
+def test_append_after_torn_trailing_line_self_heal(tmp_path):
+    p = _write(tmp_path, [_line(1)])
+    with p.open("a", encoding="utf-8") as f:
+        f.write('{"trial_id":2,"fam')  # crash mid-append, NO trailing newline
+    reg = TrialRegistry(p)  # heals to len 1, does not raise
+    r = _append(reg, family="B1", n_trials_in_family=1)  # 1st in a fresh family -> floor OK
+    assert r.trial_id == 2
+    assert len(TrialRegistry(p)) == 2  # reload confirms the registry stayed appendable
