@@ -38,7 +38,7 @@ Researched and verified against official Kraken sources on 2026-07-07 (the full 
 
 **API key** (you create it; the config lands in this branch):
 
-- [ ] Create a **read-only** Kraken API key now (Settings → API; **Query** permissions only — NO trade, NO withdraw). Copy `.env.sample` → `.env` (gitignored) and set `KRAKEN_API_KEY` / `KRAKEN_API_SECRET`. A **trade-scoped** key comes later at Phase 6 — keep it out of `.env` until then.
+- [ ] Create a **read-only** Kraken API key now (Settings → API). **Enable only:** Query closed orders & trades, Query ledger entries, Export data, Query funds. **Leave off:** Query open orders & trades, WebSocket interface, and every create/modify/cancel-order + deposit + withdraw permission. Copy `.env.sample` → `.env` (gitignored) and set `KRAKEN_API_KEY` / `KRAKEN_API_SECRET`. A **trade-scoped** key comes later at Phase 6 — keep it out of `.env` until then.
 
 **Cost-model follow-up:**
 
