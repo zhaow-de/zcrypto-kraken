@@ -1,0 +1,353 @@
+{
+  "1INCHEUR": {
+    "altname": "1INCHEUR",
+    "base": "1INCH",
+    "costmin": "0.45",
+    "leverage_buy": [],
+    "leverage_sell": [],
+    "ordermin": "70",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "1INCH/EUR"
+  },
+  "ADAEUR": {
+    "altname": "ADAEUR",
+    "base": "ADA",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "20",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "ADA/EUR"
+  },
+  "AVAXEUR": {
+    "altname": "AVAXEUR",
+    "base": "AVAX",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "0.5",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "AVAX/EUR"
+  },
+  "DOTEUR": {
+    "altname": "DOTEUR",
+    "base": "DOT",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "ordermin": "3.9",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "DOT/EUR"
+  },
+  "LINKEUR": {
+    "altname": "LINKEUR",
+    "base": "LINK",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "0.55",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "LINK/EUR"
+  },
+  "SOLEUR": {
+    "altname": "SOLEUR",
+    "base": "SOL",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "0.06",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "SOL/EUR"
+  },
+  "SOLXBT": {
+    "altname": "SOLXBT",
+    "base": "SOL",
+    "costmin": "0.00002",
+    "leverage_buy": [
+      2,
+      3,
+      4
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4
+    ],
+    "ordermin": "0.06",
+    "quote": "XXBT",
+    "status": "online",
+    "wsname": "SOL/XBT"
+  },
+  "XDGEUR": {
+    "altname": "XDGEUR",
+    "base": "XXDG",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "50",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "XDG/EUR"
+  },
+  "XETHXXBT": {
+    "altname": "ETHXBT",
+    "base": "XETH",
+    "costmin": "0.00002",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "ordermin": "0.001",
+    "quote": "XXBT",
+    "status": "online",
+    "wsname": "ETH/XBT"
+  },
+  "XETHZEUR": {
+    "altname": "ETHEUR",
+    "base": "XETH",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "0.001",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "ETH/EUR"
+  },
+  "XLTCZEUR": {
+    "altname": "LTCEUR",
+    "base": "XLTC",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "0.1",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "LTC/EUR"
+  },
+  "XXBTZEUR": {
+    "altname": "XBTEUR",
+    "base": "XXBT",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "0.00005",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "XBT/EUR"
+  },
+  "XXRPZEUR": {
+    "altname": "XRPEUR",
+    "base": "XXRP",
+    "costmin": "0.45",
+    "leverage_buy": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "leverage_sell": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "ordermin": "1.65",
+    "quote": "ZEUR",
+    "status": "online",
+    "wsname": "XRP/EUR"
+  }
+}

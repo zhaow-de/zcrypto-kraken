@@ -45,5 +45,6 @@ repos:
         (?x)^(
             README\.md|
             docs/open-topics/README\.md|
-            docs/research/00\.master-plan\.md
+            docs/research/00\.master-plan\.md|
+            docs/research/01\.kraken-snapshot-register\.md
         )$

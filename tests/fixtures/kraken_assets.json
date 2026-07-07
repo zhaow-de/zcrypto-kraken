@@ -1,0 +1,50 @@
+{
+  "1INCH": {
+    "altname": "1INCH",
+    "status": "enabled"
+  },
+  "ADA": {
+    "altname": "ADA",
+    "status": "enabled"
+  },
+  "AVAX": {
+    "altname": "AVAX",
+    "status": "enabled"
+  },
+  "DOT": {
+    "altname": "DOT",
+    "status": "enabled"
+  },
+  "LINK": {
+    "altname": "LINK",
+    "status": "enabled"
+  },
+  "SOL": {
+    "altname": "SOL",
+    "status": "enabled"
+  },
+  "XETH": {
+    "altname": "ETH",
+    "status": "enabled"
+  },
+  "XLTC": {
+    "altname": "LTC",
+    "status": "enabled"
+  },
+  "XXBT": {
+    "altname": "XBT",
+    "status": "enabled"
+  },
+  "XXDG": {
+    "altname": "XDG",
+    "status": "enabled"
+  },
+  "XXRP": {
+    "altname": "XRP",
+    "status": "enabled"
+  },
+  "ZEUR": {
+    "altname": "EUR",
+    "status": "enabled"
+  }
+}
