@@ -84,3 +84,10 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 - **Discontinuity audit** over the full-history dataset (`data/ohlc-full/`, daily): **only 2 flags across all 12 symbols, both genuine market events, not corporate actions** — ETH/EUR 2015-08-08 (ratio 0.25, ETH's chaotic launch weeks) and DOGE/EUR 2021-01-28 (ratio 4.89, the Jan-2021 WSB/Elon pump). **DOT/EUR shows no discontinuity** — confirming DOT's Aug-2020 1:100 redenomination is *not* in our history (Kraken listed DOT post-redenomination). Conclusion: the full-history dataset is **clean of corporate-action price artifacts** for the universe; no price adjustments needed for backtesting.
 - Manufactured Phase-1 package (§3 hard-dependency; R&D open-topics backlog empty). **Deferred data-foundation follow-ups** remaining: empty-interval reconstruction, Binance-Vision cross-check.
 - Independent whole-branch review (Sonnet): APPROVED — the function + tests verified; the ledger's audit findings independently re-run (2 flags, DOT clean) and the alias table cross-checked against `cli.backfill` / `cli.snapshot`.
+
+## 2026-07-08 — iter-011: empty-interval reconstruction — fill_gaps (Phase 1)
+
+- **Added `cli.ohlc.reconstruct.fill_gaps`** — empty-interval reconstruction as an **opt-in on-read transform**: inserts a synthetic bar per missing grid point (OHLC = vwap = the prior forward-filled close; volume = 0, count = 0), returning a contiguous frame (`detect_gaps` → `[]` after). 6 tests (182 total).
+- **Design (distrust-the-instrument):** the fill is a reusable utility, **not** baked into a canonical dataset — a synthetic zero-volume flat candle looks like a real bar and can bias features, so the fabrication stays explicit + opt-in at use time. A filled dataset variant is generatable on-demand if a strategy needs contiguous bars.
+- Resolves the "empty-interval reconstruction" deferred data-foundation follow-up (iter-004/006). **Remaining Phase-1 follow-up:** the Binance-Vision cross-check.
+- Independent whole-branch review (Sonnet): APPROVED.
