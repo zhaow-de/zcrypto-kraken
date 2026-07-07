@@ -44,8 +44,8 @@ zcrypto [OPTIONS]          # or: uv run python -m cli [OPTIONS]
 
 ```toml
 [zcrypto]
-data_dir = "data"               # compiled dataset directory
-backup_dir = "../zcrypto-data"  # durable backup root (raw/ mirror + snapshots/)
+data_dir = "data"                              # compiled dataset directory
+backup_dir = "../zcrypto-kraken-data/zcrypto"  # durable backup root (raw/ mirror + snapshots/)
 ```
 
 Paths resolve via **flag → config → error**: if a path is neither passed as a CLI flag nor set in `zcrypto.toml`, the command exits immediately with a clear error message (`ERROR: no <name> configured — set [zcrypto].<name> in zcrypto.toml or pass --<flag> <path>`). There is no built-in fallback.
