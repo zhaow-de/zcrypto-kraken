@@ -85,3 +85,47 @@ def test_read_minute_rows_raises_on_same_ts_conflict(tmp_path):
 
     with pytest.raises(BackfillError):
         read_minute_rows(tmp_path, "BTC/EUR")
+
+
+def test_read_minute_rows_ignores_same_ts_formatting_difference(tmp_path):
+    # base dump and a quarterly update disagree only on trailing-zero formatting (1.50 vs 1.5) —
+    # numerically identical, so this must NOT be treated as a conflict.
+    _write_zip(
+        tmp_path / "Kraken_OHLCVT.zip",
+        {"master_q4/XBTEUR_1.csv": "1700000000,42000.0,42010.0,41990.0,42005.0,1.50,12\n"},
+    )
+    _write_zip(
+        tmp_path / "Kraken_OHLCVT_Q1_2099.zip",
+        {"XBTEUR_1.csv": "1700000000,42000.0,42010.0,41990.0,42005.0,1.5,12\n"},
+    )
+
+    rows = read_minute_rows(tmp_path, "BTC/EUR")
+
+    assert [r[0] for r in rows] == [1700000000]
+
+
+def test_read_minute_rows_raises_on_same_ts_genuine_numeric_conflict(tmp_path):
+    # same ts, formatting aside — the close differs numerically, so this must still raise.
+    _write_zip(
+        tmp_path / "Kraken_OHLCVT.zip",
+        {"master_q4/XBTEUR_1.csv": "1700000000,42000.0,42010.0,41990.0,42005.0,1.50,12\n"},
+    )
+    _write_zip(
+        tmp_path / "Kraken_OHLCVT_Q1_2099.zip",
+        {"XBTEUR_1.csv": "1700000000,42000.0,42010.0,41990.0,42006.0,1.5,12\n"},
+    )
+
+    with pytest.raises(BackfillError):
+        read_minute_rows(tmp_path, "BTC/EUR")
+
+
+def test_read_minute_rows_raises_backfill_error_on_malformed_row(tmp_path):
+    _write_zip(
+        tmp_path / "Kraken_OHLCVT_Q1_2099.zip",
+        # malformed line: only 6 fields (missing trades count)
+        {"XBTEUR_1.csv": "1700000000,42000.0,42010.0,41990.0,42005.0,1.5\n"},
+    )
+
+    with pytest.raises(BackfillError) as exc_info:
+        read_minute_rows(tmp_path, "BTC/EUR")
+    assert not isinstance(exc_info.value, ValueError)
