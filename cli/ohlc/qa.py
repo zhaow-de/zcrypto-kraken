@@ -46,6 +46,24 @@ def wick_outliers(frame: pl.DataFrame, *, rel_range: float = 0.20) -> list[dict]
     return flagged.to_dicts()
 
 
+def price_discontinuities(frame: pl.DataFrame, *, max_ratio: float = 3.0) -> list[dict]:
+    """Return bar-over-bar close moves beyond `max_ratio`x (or below `1 / max_ratio`) — candidate corporate
+    actions (splits, redenominations) or data errors. A heuristic flag: genuine crypto moves (early-market
+    chaos, mania pumps) also trip it, so classify each against known events. Returns
+    `[{ts, prev_close, close, ratio}]`; fewer than 2 rows → `[]`.
+    """
+    if frame.height < 2:
+        return []
+    flagged = (
+        frame.sort("ts")
+        .with_columns(pl.col("close").shift(1).alias("prev_close"))
+        .with_columns((pl.col("close") / pl.col("prev_close")).alias("ratio"))
+        .filter((pl.col("ratio") > max_ratio) | (pl.col("ratio") < 1 / max_ratio))
+        .select("ts", "prev_close", "close", "ratio")
+    )
+    return flagged.to_dicts()
+
+
 def qa_series(frame: pl.DataFrame, interval_secs: int) -> dict:
     """Compute the per-series QA summary for `frame` at `interval_secs` cadence.
 
