@@ -6,9 +6,11 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [Research and development](#research-and-development)
   - [Open](#open)
+  - [Partially done](#partially-done)
   - [Resolved](#resolved)
 - [Live trading preparation](#live-trading-preparation)
   - [Open](#open-1)
+  - [Partially done](#partially-done-1)
 
 <!-- mdformat-toc end -->
 
@@ -16,7 +18,11 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-- [T0001 — full-history OHLCVT backfill](T0001-ohlcvt-full-history-backfill.md) — Kraken's downloadable ZIP archive (Google-Drive-hosted) holds the 2019→2026 history the §9 walk-forward needs; the REST-seeded v0 dataset only spans ~2y. Mechanism needs investigation (possibly human-assisted).
+_(none)_
+
+### Partially done<a name="partially-done"></a>
+
+- [T0001 — full-history OHLCVT backfill](T0001-ohlcvt-full-history-backfill.md) — download mechanism resolved (manual pull to the NAS mount; the base 2013+ full-history dump + the quarterly updates are present and their structure verified); the ZIP→canonical-Parquet backfill build is deferred until scheduled.
 
 ### Resolved<a name="resolved"></a>
 
@@ -26,4 +32,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open-1"></a>
 
-- [T0000 — Phase 0 human account actions & live-account confirmations](T0000-phase0-account-actions.md) — D3(i) Kraken account actions (verification-tier check, margin enablement, API keys) + live fee-tier/AoP confirmation; human-only, gates Phase 1 data, Phase 6 execution, and the cost model.
+_(none)_
+
+### Partially done<a name="partially-done-1"></a>
+
+- [T0000 — Phase 0 human account actions & live-account confirmations](T0000-phase0-account-actions.md) — all account actions done (eligibility, read-only key verified + in `.env`, fee tier Tier 1/$0, leverage, margin rates); only the Phase-2 cost-model fold-in remains (deferred to Phase 2).
