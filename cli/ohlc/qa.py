@@ -50,7 +50,8 @@ def price_discontinuities(frame: pl.DataFrame, *, max_ratio: float = 3.0) -> lis
     """Return bar-over-bar close moves beyond `max_ratio`x (or below `1 / max_ratio`) — candidate corporate
     actions (splits, redenominations) or data errors. A heuristic flag: genuine crypto moves (early-market
     chaos, mania pumps) also trip it, so classify each against known events. Returns
-    `[{ts, prev_close, close, ratio}]`; fewer than 2 rows → `[]`.
+    `[{ts, prev_close, close, ratio}]`; fewer than 2 rows → `[]`. (A `prev_close` of 0 gives ±inf/NaN — inf is
+    still flagged, a 0→0 NaN is not; the universe has no non-positive closes, so this does not arise in practice.)
     """
     if frame.height < 2:
         return []
