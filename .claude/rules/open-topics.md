@@ -10,13 +10,30 @@ Open a topic when a **non-trivial** item surfaces that cannot be resolved immedi
 
 Opening a topic requires **no user approval**, in either interactive or unattended mode: when a qualifying item surfaces, write the topic file and update the index in the same change, then carry on. Mention newly opened topics in the iteration closeout / session summary so the user sees them — transparency, not permission.
 
+## "Human-gated" is per sub-item, not per topic — decompose and pursue what you can
+
+A topic that touches the account or the venue is not automatically off-limits. **"Needs the human" — a login, an API key, money, or an irreversible/high-stakes action — is a property of a *sub-item*, not of the whole topic.** When a topic's `## Suggested next steps` mixes both kinds, classify each item and split the work:
+
+- **Autonomously-resolvable sub-items** — public web research (fee schedules, API/support docs, margin & leverage specs, market-structure changes), data pulls, and code — get **done**: pursued autonomously in the research loop, or pre-answered when an interactive session first touches the topic. Public research needs no login and no approval.
+- **Genuinely human-gated sub-items** — the ones that literally require the human's account, key, money, or an irreversible action — are the **only** parked residual (aside from a sub-item the dependency check below marks *waits-on*).
+
+**One dependency check before running an autonomously-resolvable sub-item** — which way does it depend on the parked human decision?
+
+- It **feeds** the decision (the decision depends on the research's outcome — e.g. measure liquidity or pull the fee schedule so the human can choose) → **run it now**; producing it de-risks and speeds the human's call. It is decision-support: if the human later decides **no-go, write the outcome off** — it was reversible and cheap, and informing the decision was its whole job.
+- It **waits on** the decision (the work consumes the decision's output — e.g. "implement whichever basket the human picks") → **don't run it yet**; leave it open beside the human sub-item, because the decision could change what — or whether — to build.
+- **Independent** (neither waits on the other) → the base case above: do it, park only the human item.
+
+In one line: run the autonomous sub-item now iff its result **feeds into** the decision or is **independent** of it — never if it **waits on** the decision.
+
+Never park a whole topic as "human" when half of it is public research anyone could do. Decomposing this way is what keeps the drain invariant below honest: the researchable half should already be resolved before hand-back, leaving a clean, actionable human residual.
+
 ## Review and drain
 
 The list only works if it is actively drained, not just appended to. Three checkpoints:
 
 - **At the start of every new brainstorming iteration**, review the index's `### Open` and `### Partially done` subsections and **fold the relevant items into the iteration** being brainstormed; anything ripe but out of scope for it is a candidate work package of its own. Addressing a topic pops it from the list per the lifecycle below (close or partially complete + index sync).
 - **Before finishing a phase** (ahead of writing its close-out report), sweep the list once more and split it by relevance: a topic **more relevant to the current phase than to future phases** gets a **dedicated brainstorming iteration** to address it before the phase closes; a topic more relevant to a **future phase** is deliberately **deferred** — leave it parked, that phase's iteration-start reviews will pick it up.
-- **End-state invariant (autonomous runs):** an autonomous run works the resolvable topics down as it goes, so that by hand-back everything still in `### Open` / `### Partially done` either **requires a human decision** (irreversible, high-stakes, or a pre-registered escalation trigger) or is **deliberately deferred to a future phase**. An autonomously-resolvable *current-phase* topic still parked at the end of a run is a miss — it should have been drained or picked as a work package.
+- **End-state invariant (autonomous runs):** an autonomous run works the resolvable topics down as it goes, so that by hand-back everything still in `### Open` / `### Partially done` either **requires a human decision** (irreversible, high-stakes, or a pre-registered escalation trigger) or is **deliberately deferred to a future phase**. An autonomously-resolvable *current-phase* topic — **or an autonomously-resolvable *sub-item* of an otherwise human-gated topic** (per the decomposition rule above) — still parked at the end of a run is a miss; it should have been drained or picked as a work package. (The exception is a sub-item the decomposition rule's dependency check marks *waits-on* — that one is correctly parked until the human decides.)
 
 ## File path & naming
 
@@ -39,11 +56,13 @@ status: open   # one of: open | partial | resolved
 - `## Context — what` — one paragraph stating what the topic is.
 - `## Why this matters` — the consequence or motivation; why it's worth tracking.
 - `## Findings so far` — what is already known (link relevant commits, PRs, files, log lines). `_(none)_` is acceptable when the topic is opened cold.
-- `## Suggested next steps` — bullet list of concrete actions a future investigator could take.
+- `## Suggested next steps` — bullet list of concrete actions a future investigator could take. **Human-action items must be executable, not vague:** give the exact screen / endpoint / menu path, the exact values to read or enter, and the expected result, so the human (or a future interactive session) can run the item top-to-bottom **without a clarification round** — e.g. "On Kraken Pro → Fee tab, read the maker/taker tier and 30-day USD volume and record both," never a bare "confirm the fee tier."
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
 ## Partially completing a topic
+
+**Keep `status` in sync with the sub-items — flip it as soon as work lands, don't batch it to a closeout sweep.** The frontmatter `status` must track the `## Suggested next steps` checklist: the moment the **first** sub-item is resolved while others remain, the topic is `partial`; when the **last** one resolves, it is `resolved`. A topic whose body shows completed / checked-off items but still reads `status: open` is a **state-drift bug** — flip it in the same change that lands the work, in interactive and autonomous work alike. This is per sub-item, not a once-at-the-end action.
 
 A topic is partially completed by flipping its front-matter `status: open` → `status: partial` **in place**. Then:
 
