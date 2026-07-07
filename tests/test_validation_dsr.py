@@ -33,7 +33,17 @@ def test_emp_known_value():
     assert expected_max_sharpe(10, 1.0) == pytest.approx(1.574, abs=0.01)
 
 
-@pytest.mark.parametrize("n,v", [(0, 1.0), (2, -1.0), (2, float("inf"))])
+@pytest.mark.parametrize(
+    "n,v",
+    [
+        (0, 1.0),
+        (2, -1.0),
+        (2, float("inf")),
+        (float("nan"), 1.0),
+        (float("inf"), 1.0),
+        (10**16, 1.0),
+    ],
+)
 def test_emp_guards(n, v):
     with pytest.raises(ValidationError):
         expected_max_sharpe(n, v)
@@ -68,6 +78,9 @@ def test_psr_matches_normaldist_cdf():
         ((0.5, 1), {}),  # n_obs < 2
         ((float("nan"), 100), {}),  # non-finite sr
         ((1.0, 100), {"skew": 5.0}),  # denom = 1 - 5 + 0.5 = -3.5 <= 0
+        ((0.5, float("nan")), {}),  # non-finite n_obs
+        ((0.5, float("inf")), {}),  # non-finite n_obs
+        ((2.0, 100), {"kurtosis": 0.0}),  # denom = 1 - 0 + (0-1)/4*4 = 0 <= 0
     ],
 )
 def test_psr_guards_never_nan(args, kwargs):
@@ -90,7 +103,22 @@ def test_dsr_finite_in_unit_interval():
     assert math.isfinite(d) and 0.0 <= d <= 1.0
 
 
-@pytest.mark.parametrize("args", [(float("nan"), 250, 100, 1.0), (1.5, 250, 100, float("nan"))])
+@pytest.mark.parametrize(
+    "args",
+    [
+        (float("nan"), 250, 100, 1.0),
+        (1.5, 250, 100, float("nan")),
+        (1.5, float("nan"), 100, 1.0),
+        (1.5, 250, float("nan"), 1.0),
+        (1.5, 250, float("inf"), 1.0),
+    ],
+)
 def test_dsr_nan_refusal(args):
     with pytest.raises(ValidationError):
         deflated_sharpe_ratio(*args)
+
+
+def test_dsr_passes_through_skew_kurtosis():
+    sr, t, n, v, sk, ku = 1.5, 250, 50, 1.0, -0.5, 6.0
+    expected = probabilistic_sharpe_ratio(sr, t, benchmark_sr=expected_max_sharpe(n, v), skew=sk, kurtosis=ku)
+    assert deflated_sharpe_ratio(sr, t, n, v, skew=sk, kurtosis=ku) == pytest.approx(expected, rel=1e-12)
