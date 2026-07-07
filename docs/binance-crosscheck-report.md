@@ -20,3 +20,5 @@
 - Series count: 12
 - Min close corr: 1.0000
 - Max abs rel diff overall: 0.047944
+
+_Recent-window check: the most recent ≤ 1000 daily candles per pair (Binance single-page limit); Binance EUR history reaches ~2020, so full-overlap cross-check via startTime pagination is a deferred follow-up._
