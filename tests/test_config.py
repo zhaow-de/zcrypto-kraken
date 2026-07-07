@@ -9,6 +9,7 @@ from cli.config import (
     load_config,
     resolve_backup_dir,
     resolve_data_dir,
+    resolve_ohlcvt_source_dir,
 )
 
 
@@ -22,13 +23,20 @@ def test_absent_file_yields_none_paths_and_default_fetch(tmp_path):
     cfg = load_config(tmp_path / "zcrypto.toml")
     assert cfg.data_dir is None
     assert cfg.backup_dir is None
+    assert cfg.ohlcvt_source_dir is None
     assert cfg.fetch == FetchConfig()
 
 
 def test_reads_paths(tmp_path):
-    cfg = load_config(_write(tmp_path, '[zcrypto]\ndata_dir = "data"\nbackup_dir = "../zcrypto-data"\n'))
+    cfg = load_config(
+        _write(
+            tmp_path,
+            '[zcrypto]\ndata_dir = "data"\nbackup_dir = "../zcrypto-data"\nohlcvt_source_dir = "../zcrypto-ohlcvt"\n',
+        )
+    )
     assert cfg.data_dir == Path("data")
     assert cfg.backup_dir == Path("../zcrypto-data")
+    assert cfg.ohlcvt_source_dir == Path("../zcrypto-ohlcvt")
 
 
 def test_missing_one_path_key_is_none(tmp_path):
@@ -96,9 +104,27 @@ def test_resolve_falls_back_to_config(tmp_path):
     assert resolve_backup_dir(None, cfg) == Path("cfg_bk")
 
 
+def test_resolve_ohlcvt_source_dir_flag_wins(tmp_path):
+    cfg = load_config(_write(tmp_path, '[zcrypto]\nohlcvt_source_dir = "from_config"\n'))
+    assert resolve_ohlcvt_source_dir(Path("from_flag"), cfg) == Path("from_flag")
+
+
+def test_resolve_ohlcvt_source_dir_falls_back_to_config(tmp_path):
+    cfg = load_config(_write(tmp_path, '[zcrypto]\nohlcvt_source_dir = "cfg_ohlcvt"\n'))
+    assert resolve_ohlcvt_source_dir(None, cfg) == Path("cfg_ohlcvt")
+
+
 def test_resolve_unconfigured_raises_with_both_remedies():
-    cfg = AppConfig(data_dir=None, backup_dir=None, fetch=FetchConfig())
+    cfg = AppConfig(data_dir=None, backup_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig())
     with pytest.raises(ConfigError) as exc:
         resolve_data_dir(None, cfg)
     msg = str(exc.value)
     assert "--data-dir" in msg and "[zcrypto].data_dir" in msg
+
+
+def test_resolve_ohlcvt_source_dir_unconfigured_raises_with_both_remedies():
+    cfg = AppConfig(data_dir=None, backup_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig())
+    with pytest.raises(ConfigError) as exc:
+        resolve_ohlcvt_source_dir(None, cfg)
+    msg = str(exc.value)
+    assert "--ohlcvt-source-dir" in msg and "[zcrypto].ohlcvt_source_dir" in msg

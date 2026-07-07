@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Full-history OHLCVT backfill from Kraken's downloadable ZIP archive
@@ -26,8 +26,14 @@ iter-004 built the OHLCVT ingestion pipeline seeded from Kraken's **public REST 
 - **Download mechanism resolved** (commit `a52a700` on this branch): the ZIPs are downloaded manually to the NAS mount `/home/zhaow/Projects/zcrypto-kraken-data/kraken-ohlcvt-updates/` — the **base 2013+ full-history dump** (`Kraken_OHLCVT.zip`) and the **quarterly update ZIPs** (2023-Q1 → 2026-Q1) are both present, resolving T0001's core "how do we get the data" question.
 - **Archive structure verified** (the Findings above): per-file interval sets, the 7-column no-vwap format, the `master_q4/` prefix + `__MACOSX/` cruft, and the coverage bounds are all confirmed — so the backfill can be designed against known ground truth rather than guessed.
 
-## Suggested next steps (backfill implementation — deferred; do not start until scheduled)
+## Resolution (iter-008, 2026-07-07)
 
-- Wire a **`ZIP → canonical Parquet` backfill**: read the base dump + quarterly updates from the NAS path (configured in `zcrypto.toml`, **not** hardcoded), reconstruct 1h/4h/1d **and vwap** by aggregating the 1-minute bars, merge base + update quarters (sort + dedup on `ts`), skip `__MACOSX/` entries and strip the `master_q4/` prefix, write the canonical `data/ohlc/{base}/{quote}/{interval}.parquet` tree, and reconcile vs the REST v0 window. TDD on small synthetic ZIP fixtures.
-- Decide scope at build time: the 12-name universe (matches v0) vs all EUR/BTC pairs vs the full archive; and which intervals (1h/4h/1d vs also 1m/5m/15m). Verify per-interval how far back the 1-minute data actually reaches (this bounds deep-history intraday).
-- Empty-interval handling; re-hash the dataset + update `docs/data-catalog.md`; Binance Vision cross-check per §8 remains a follow-up.
+Built **`cli/backfill/`** (spec/plan `docs/{specs,plans}/00005-ohlcvt-backfill*`) and generated the full-history dataset:
+
+- **Pipeline** — `read_minute_rows` (base + quarterly zips), `aggregate_minutes` (1-minute → 1h/4h/1d bars), `backfill_basket` (canonical Parquet + manifest, reusing `cli.ohlc.dataset`), `reconcile_series`/`reconcile_dataset`; `ohlcvt_source_dir` added to `zcrypto.toml`. 27 tests.
+- **Key correction to the Findings above:** the 1-minute bars are **full-history** (XBTEUR: 2013-09-10 → 2025-12-31, 5.5M rows) — only *native* 4h (240) is short (2024+). So **all cadences are reconstructed from the 1-minute bars**, giving full-history 1h/4h/1d *and* a volume-weighted vwap proxy (Σ close·vol / Σ vol — the dumps carry no vwap).
+- **Merge policy** — the base dump is authoritative for its range (2013 → 2025-12-31); quarterly updates contribute only rows past the base's last ts (Q1-2026, exactly contiguous). Found by an instrument-check smoke test: the base + 2023-2025 quarterlies overlap and the base has more-complete volume/trades.
+- **Dataset** — `data/ohlc-full/` (gitignored): the 12-name universe × 1h/4h/1d, BTC/EUR daily 2013-09-10 → 2026-03-31 (4581 rows). Cataloged in `docs/data-catalog-full.md`.
+- **Validation** (`docs/ohlcvt-backfill-reconciliation.md`) — reconstructed OHLC is **bit-identical to the v0 REST** (100% exact match over 623 daily + 137 4h overlap rows/pair); vwap proxy within **~0.05%** of REST's true vwap. Caveats: daily volume within ~7% max on the worst bar (aggregation/revision artifact; 4h volume exact); 1h not independently reconciled (v0's REST 1h window post-dates the 2026-03-31 dump end). QA: 7807 no-trade gaps, 90.5% min coverage (expected for thin markets/early history).
+
+**Deferred follow-ups:** finer cadences (1m/5m/15m) and full-exchange breadth; empty-interval reconstruction; Binance-Vision cross-check; the symbol & corporate-action ledger; pointing the universe/backtests at the new dataset hash (a Phase-2 decision).

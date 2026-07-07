@@ -22,11 +22,12 @@ _(none)_
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0001 — full-history OHLCVT backfill](T0001-ohlcvt-full-history-backfill.md) — download mechanism resolved (manual pull to the NAS mount; the base 2013+ full-history dump + the quarterly updates are present and their structure verified); the ZIP→canonical-Parquet backfill build is deferred until scheduled.
+_(none)_
 
 ### Resolved<a name="resolved"></a>
 
 - [T0002 — universe liquidity-floor calibration & quote-currency volume](archive/T0002-universe-liquidity-floor-calibration.md) — resolved in iter-007: EUR floor lowered €1M→€150k (footprint-based) + `quote_volume_in_eur` FX-normalizes the BTC-quoted legs → the full 12-name basket, `escalate=False`; findings recorded in master-plan §3.
+- [T0001 — full-history OHLCVT backfill](archive/T0001-ohlcvt-full-history-backfill.md) — resolved in iter-008: built `cli/backfill/` (1-minute dumps → canonical 1h/4h/1d, base-authoritative merge); the full-history dataset (12 pairs, BTC 2013→2026) reconstructs OHLC bit-identical to the v0 REST (100% match).
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
