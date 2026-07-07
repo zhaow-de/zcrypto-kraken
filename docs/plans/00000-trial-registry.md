@@ -332,7 +332,9 @@ def test_absent_and_empty_file_is_empty_registry(tmp_path):
 
 
 def test_valid_file_loads(tmp_path):
-    reg = TrialRegistry(_write(tmp_path, [_line(1), _line(2)]))
+    # both records are in family A1, which therefore has 2 trials -> both carry n_trials_in_family=2
+    # (satisfies the anti-gaming floor: the k-th record in a family needs n_trials_in_family >= k).
+    reg = TrialRegistry(_write(tmp_path, [_line(1, n=2), _line(2, n=2)]))
     assert len(reg) == 2 and reg.records[1].trial_id == 2
 
 
