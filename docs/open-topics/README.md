@@ -16,6 +16,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0001 — full-history OHLCVT backfill](T0001-ohlcvt-full-history-backfill.md) — Kraken's downloadable ZIP archive (Google-Drive-hosted) holds the 2019→2026 history the §9 walk-forward needs; the REST-seeded v0 dataset only spans ~2y. Mechanism needs investigation (possibly human-assisted).
+- [T0002 — universe liquidity-floor calibration & quote-currency volume](T0002-universe-liquidity-floor-calibration.md) — iter-005's §3 rule selected only 6 names at the €1M/day floor (escalate fired); thin Kraken-EUR alt liquidity + a BTC-leg unit mismatch need a human basket/floor decision.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
