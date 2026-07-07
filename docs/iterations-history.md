@@ -44,3 +44,11 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 - **13 unit tests** (synthetic inputs, no live network): median-volume + too-few-rows raise, leverage/volume-floor drops, mandatory-kept-though-failing + flagged, escalate boundaries, reasons populated, build determinism.
 - **Deferred (non-blocking, → T0002):** relabel cross-quote volume reasons as "quote-currency mismatch — deferred"; quote-currency-aware / FX-normalized volume; the spread criterion still awaits the L2 capture daemon. A `MAX_NAMES`-boundary test is a noted test-coverage gap.
 - Independent whole-branch review (Sonnet): APPROVED — rule engine correct + tested; the BTC-leg mismatch adjudicated as a narrow, non-silent limitation legitimately deferred to T0002 (escalate=True guarantees human review before production).
+
+## 2026-07-07 — iter-006: OHLC dataset QA report (Phase 1)
+
+- **Added `cli/ohlc/qa.py`** — read-only QA over the canonical OHLC Parquet dataset: `detect_gaps` (missing candles on the interval grid), `wick_outliers` ((high−low)/close > 0.20), `qa_series` (rows, coverage%, gaps, wick outliers, monotonic-ts, nonneg-volume), `qa_dataset` (walks the nested `{base}/{quote}/{interval}.parquet` tree — symbols contain `/`), `render_markdown`. Pure (`as_of` injected; no clock/network); stdlib + polars.
+- **Generated the QA report** `docs/ohlc-qa-report.md` over the v0 dataset — **clean: 100% grid coverage, 0 gaps across all 36 series** (12 symbols × 1d/4h/1h); 87 wick-outlier flags, all on daily altcoin candles (a benign heuristic flag, not a failure).
+- **10 unit tests** on synthetic frames (no live-dataset reads): planted gap → `missing==1`, planted extreme candle flagged, coverage math, monotonic/nonneg flags, whole-dataset walk + summary, `as_of` present/omitted.
+- **Deferred (follow-up Phase-1 iterations):** empty-interval reconstruction (fill no-trade candles — the gaps this surfaces), Binance-Vision cross-venue reconciliation, the symbol & corporate-action ledger.
+- Independent whole-branch review (Sonnet): APPROVED — verified by regenerating the report from the live dataset (byte-identical), confirming the nested-layout walk matches the `manifest.json` symbol convention, and checking every correctness detail (missing-candle count, coverage math, div-by-zero→inf-not-crash, empty-frame guards).
