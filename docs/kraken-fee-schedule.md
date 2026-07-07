@@ -51,12 +51,26 @@ An **alternative** qualification path: the real-time USD value of eligible holdi
 - **Maker rebate** (to −0.02% on selected low-liquidity pairs) is **tier-gated to the top volume bands** — not a lever for us.
 - **Cancelled/untouched orders are free** — resting post-only maker orders cost nothing until filled.
 
-## Spot-margin fees (UNCHANGED on 2026-07-09; verify the per-pair rate live)
+## Live account confirmation (2026-07-07)
 
-- **Opening fee 0.01–0.05%** of the extended amount + **rollover of the same rate every 4 hours** the position is open — dynamic, but **locked at order execution and displayed on the order form** (select a leverage multiplier on the BTC/EUR or ETH/EUR margin form to read the two line items *before* submitting). Majors historically at the ~0.01%/4h low end — but read the live number.
-- Carry: 0.01%/4h ≈ 0.06%/day ≈ **~22%/yr**; 0.02%/4h ≈ **~44%/yr** (simple, ×6×365).
-- **Standard trade fees apply on both the opening and closing volume** of a margin position (none on settling **in kind**) — so a leveraged round trip pays the spot maker/taker fee twice **on top of** the open + rollover fees.
-- **3% liquidation fee** at index price on forced liquidation.
+- **Fee tier: Tier 1**, 30-day spot volume **$0.00** ("generate 10,001 USD more to reach the next tier"). Plan on the base tier — **0.40% maker / 0.80% taker** (new schedule). AoP is moot at our size.
+- **Per-pair max leverage** (the order-form Leverage dropdown) matches the iter-002 snapshot **exactly**: the EUR majors (BTC/EUR, ETH/EUR, SOL/EUR, XRP/EUR, ADA/EUR, LINK/EUR, DOGE/EUR, LTC/EUR, AVAX/EUR) 2–10×; **DOT/EUR 2–5×, ETH/BTC 2–5×, SOL/BTC 2–4×**.
+- **Read-only API key** created + **verified working** (Balance / Ledgers / TradesHistory all return OK → Query funds + Query ledger entries + Query closed orders & trades granted); placed in `.env`.
+
+## Spot-margin fees — confirmed per-base-currency (⏱ 2026-07-07; unchanged July 9)
+
+Charged on the **extended (borrowed) currency**, at that currency's rate — a range, dynamic, **locked at order execution**, and shown on the order form as an absolute EUR amount (the % is on this fee-schedule page). Rollover is the **same rate every 4 hours** the position is open.
+
+| Extended (base) currency | Opening fee | Rollover /4h | ≈ annualized (×6×365) |
+|---|---|---|---|
+| **BTC** | 0.01–0.02% | 0.01–0.02% | **~22–44%/yr** |
+| ETH · SOL · XRP · ADA · LINK · DOGE · LTC · DOT · AVAX | 0.02–0.04% | 0.02–0.04% | **~44–88%/yr** |
+
+**Which rate applies:** a **SHORT** sells the borrowed asset → the **base crypto** is extended → the table's base-currency rate (short BTC = 0.01–0.02%; short alts = 0.02–0.04%). A **LONG on margin** buys with borrowed fiat → the **quote/fiat** is extended → the fiat leg's rate (the article's worked example: ~0.025% for a USD leg).
+
+**Confirms + quantifies master-plan §4:** shorting/hedging is cheapest via **short BTC** (0.01–0.02%/4h); **alt shorts cost ~2×** (0.02–0.04%/4h ≈ 44–88%/yr) — *higher* than the §4 snapshot's ~22–44% low-end assumption. This tightens the short-side EV: alt shorts must clear ~44–88%/yr of carry, reinforcing **short-BTC-only** + tactical (days-to-weeks) shorts.
+
+Plus: standard spot trade fees on **both** the open and close of a margin position (none on settling **in kind**) — the maker/taker fee is paid twice on top of the open + rollover; **3% liquidation fee** at index on forced liquidation.
 
 ## Provenance & cost-model note
 
