@@ -48,6 +48,7 @@ def test_pbo_custom_metric_is_used():
         ([[1], [2], [3], [4]], {"n_splits": 2}),  # N < 2 (single config)
         ([[1, 2], [3]], {"n_splits": 2}),  # non-rectangular
         ([[1, 2], [float("nan"), 3], [1, 2], [3, 4]], {"n_splits": 2}),  # non-finite cell
+        ([[10, 0]] * 4, {"n_splits": 2.0}),  # even-float n_splits
     ],
 )
 def test_pbo_guards(matrix, kwargs):
@@ -58,3 +59,18 @@ def test_pbo_guards(matrix, kwargs):
 def test_pbo_metric_returning_nan_raises():
     with pytest.raises(ValidationError):
         pbo([[10, 0]] * 4, n_splits=2, metric=lambda xs: float("nan"))
+
+
+def test_pbo_metric_that_raises_is_validation_error():
+    with pytest.raises(ValidationError):
+        pbo([[10, 0]] * 4, n_splits=2, metric=lambda xs: xs[99])
+
+
+def test_pbo_first_argmax_tie_breaking():
+    # IS tie between configs 0 and 1; first-argmax (config 0, OOS-worst) must win -> pbo 0.5 (last-argmax would give 0.0)
+    assert pbo([[2, 2], [2, 2], [0, 3], [0, 3]], n_splits=2)["pbo"] == 0.5
+
+
+def test_pbo_all_tied_is_not_overfit():
+    # w == 0.5 exactly (logit 0) must count as NOT overfit (strict <) -> pbo 0.0 (a <= boundary would give 1.0)
+    assert pbo([[5, 5, 5]] * 4, n_splits=2)["pbo"] == 0.0

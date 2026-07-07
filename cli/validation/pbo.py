@@ -16,8 +16,8 @@ def pbo(
     metric: Callable[[list[float]], float] = statistics.mean,
 ) -> dict:
     """Probability of Backtest Overfitting via CSCV (see docs/specs/00008). Never returns NaN."""
-    if n_splits < 2 or n_splits % 2 != 0:
-        raise ValidationError(f"n_splits must be an even integer >= 2, got {n_splits}")
+    if not isinstance(n_splits, int) or n_splits < 2 or n_splits % 2 != 0:
+        raise ValidationError(f"n_splits must be an even integer >= 2, got {n_splits!r}")
     if not perf_matrix:
         raise ValidationError("perf_matrix must be non-empty")
     n_cols = len(perf_matrix[0])
@@ -39,8 +39,11 @@ def pbo(
         is_set = set(is_blocks)
         is_rows = [i for b in is_blocks for i in block_rows[b]]
         oos_rows = [i for b in range(n_splits) if b not in is_set for i in block_rows[b]]
-        is_perf = [metric([perf_matrix[i][j] for i in is_rows]) for j in range(n_cols)]
-        oos_perf = [metric([perf_matrix[i][j] for i in oos_rows]) for j in range(n_cols)]
+        try:
+            is_perf = [metric([perf_matrix[i][j] for i in is_rows]) for j in range(n_cols)]
+            oos_perf = [metric([perf_matrix[i][j] for i in oos_rows]) for j in range(n_cols)]
+        except Exception as exc:
+            raise ValidationError(f"metric raised on a block: {exc!r}") from exc
         for p in (*is_perf, *oos_perf):
             if not math.isfinite(p):
                 raise ValidationError(f"metric returned a non-finite value ({p})")
