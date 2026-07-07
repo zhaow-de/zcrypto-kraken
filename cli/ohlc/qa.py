@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
+
+from cli.ohlc.dataset import read_parquet
 
 # 1d / 4h / 1h — matches `cli.ohlc.DEFAULT_INTERVALS`, keyed by the on-disk interval label.
 INTERVAL_SECONDS = {"1440": 86400, "240": 14400, "60": 3600}
@@ -64,6 +68,39 @@ def qa_series(frame: pl.DataFrame, interval_secs: int) -> dict:
         "monotonic_ts": bool(frame["ts"].is_sorted() and frame["ts"].n_unique() == rows),
         "nonneg_volume": bool((frame["volume"] >= 0).all()),
     }
+
+
+def qa_dataset(root: Path, intervals: dict[str, int], *, as_of: str | None = None) -> dict:
+    """Run `qa_series` over every `root/{symbol}/{label}.parquet` for `label` in `intervals`.
+
+    `symbol` is discovered from the directory tree (the path relative to `root`, e.g. `"BTC/EUR"`),
+    not passed in. Returns `{as_of?, series: {"{symbol}/{label}": qa_series-dict}, summary}`, where
+    `summary` is `{series_count, total_gaps, min_coverage_pct}`. `as_of` is included only when given.
+    """
+    entries = sorted(
+        (
+            (str(path.parent.relative_to(root)), label, interval_secs, path)
+            for label, interval_secs in intervals.items()
+            for path in root.rglob(f"{label}.parquet")
+        ),
+        key=lambda entry: (entry[0], -entry[2]),
+    )
+
+    series = {f"{symbol}/{label}": qa_series(read_parquet(path), interval_secs) for symbol, label, interval_secs, path in entries}
+
+    coverages = [s["coverage_pct"] for s in series.values()]
+    summary = {
+        "series_count": len(series),
+        "total_gaps": sum(s["gap_count"] for s in series.values()),
+        "min_coverage_pct": min(coverages) if coverages else 0.0,
+    }
+
+    report: dict = {}
+    if as_of is not None:
+        report["as_of"] = as_of
+    report["series"] = series
+    report["summary"] = summary
+    return report
 
 
 def render_markdown(report: dict) -> str:

@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import polars as pl
 import pytest
 
-from cli.ohlc.dataset import to_frame
-from cli.ohlc.qa import detect_gaps, qa_series, render_markdown, wick_outliers
+from cli.ohlc.dataset import to_frame, write_parquet
+from cli.ohlc.qa import detect_gaps, qa_dataset, qa_series, render_markdown, wick_outliers
 
 BASE_TS = 1721174400  # 2024-07-17T00:00:00Z
 DAY = 86400
@@ -107,6 +107,36 @@ def test_qa_series_flags_negative_volume():
     result = qa_series(frame, DAY)
 
     assert result["nonneg_volume"] is False
+
+
+def test_qa_dataset_discovers_symbols_and_aggregates_summary(tmp_path):
+    btc_eur = to_frame(_daily_rows(5))
+    eth_eur_rows = _daily_rows(5)
+    del eth_eur_rows[2]  # one gap in this series only
+    eth_eur = to_frame(eth_eur_rows)
+
+    write_parquet(btc_eur, tmp_path / "BTC" / "EUR" / "1440.parquet")
+    write_parquet(eth_eur, tmp_path / "ETH" / "EUR" / "1440.parquet")
+
+    report = qa_dataset(tmp_path, {"1440": DAY}, as_of="2026-07-07T00:00:00+00:00")
+
+    assert report["as_of"] == "2026-07-07T00:00:00+00:00"
+    assert set(report["series"]) == {"BTC/EUR/1440", "ETH/EUR/1440"}
+    assert report["series"]["BTC/EUR/1440"]["gap_count"] == 0
+    assert report["series"]["ETH/EUR/1440"]["gap_count"] == 1
+    assert report["summary"] == {
+        "series_count": 2,
+        "total_gaps": 1,
+        "min_coverage_pct": pytest.approx(4 / 5 * 100),
+    }
+
+
+def test_qa_dataset_omits_as_of_when_not_given(tmp_path):
+    write_parquet(to_frame(_daily_rows(3)), tmp_path / "BTC" / "EUR" / "1440.parquet")
+
+    report = qa_dataset(tmp_path, {"1440": DAY})
+
+    assert "as_of" not in report
 
 
 def test_render_markdown_contains_series_rows_and_summary():
