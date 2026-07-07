@@ -69,6 +69,7 @@ short series in this fetch.
 
 ```python
 from datetime import datetime, timezone
+from pathlib import Path
 
 from cli.ohlc import DEFAULT_INTERVALS, ingest_basket
 from cli.snapshot import CANDIDATE_SYMBOLS, derive_universe, fetch_public
@@ -80,7 +81,7 @@ pair_keys = {row.symbol: row.pair_key for row in universe if row.found}
 
 # Writes data/ohlc/{symbol}/{interval}.parquet plus data/ohlc/manifest.json, and returns the same
 # manifest dict as written.
-manifest = ingest_basket(pair_keys, DEFAULT_INTERVALS, "data/ohlc", datetime.now(timezone.utc).isoformat())
+manifest = ingest_basket(pair_keys, DEFAULT_INTERVALS, Path("data/ohlc"), datetime.now(timezone.utc).isoformat())
 ```
 
 Re-running this will refetch the current ~720-candle REST window (not the same historical span as
