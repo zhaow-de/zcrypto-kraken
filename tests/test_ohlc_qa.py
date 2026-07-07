@@ -6,14 +6,14 @@ import polars as pl
 import pytest
 
 from cli.ohlc.dataset import to_frame, write_parquet
-from cli.ohlc.qa import detect_gaps, qa_dataset, qa_series, render_markdown, wick_outliers
+from cli.ohlc.qa import detect_gaps, price_discontinuities, qa_dataset, qa_series, render_markdown, wick_outliers
 
 BASE_TS = 1721174400  # 2024-07-17T00:00:00Z
 DAY = 86400
 
 
-def _row(ts: int, *, high: str = "101.0", low: str = "99.0", volume: str = "10.0") -> list:
-    return [ts, "100.0", high, low, "100.0", "100.0", volume, 5]
+def _row(ts: int, *, high: str = "101.0", low: str = "99.0", close: str = "100.0", volume: str = "10.0") -> list:
+    return [ts, "100.0", high, low, close, "100.0", volume, 5]
 
 
 def _daily_rows(n: int) -> list[list]:
@@ -59,6 +59,54 @@ def test_wick_outliers_respects_threshold():
 
     assert wick_outliers(frame) == []
     assert len(wick_outliers(frame, rel_range=0.01)) == 2
+
+
+def test_price_discontinuities_flags_bar_over_bar_close_jump():
+    rows = [_row(BASE_TS, close="1.0"), _row(BASE_TS + DAY, close="5.0")]
+    frame = to_frame(rows)
+
+    flagged = price_discontinuities(frame)
+
+    assert len(flagged) == 1
+    assert flagged[0]["ts"] == frame["ts"][1]
+    assert flagged[0]["prev_close"] == 1.0
+    assert flagged[0]["close"] == 5.0
+    assert flagged[0]["ratio"] == pytest.approx(5.0)
+
+
+def test_price_discontinuities_flags_drop_below_inverse_ratio():
+    rows = [_row(BASE_TS, close="5.0"), _row(BASE_TS + DAY, close="1.0")]
+    frame = to_frame(rows)
+
+    flagged = price_discontinuities(frame)
+
+    assert len(flagged) == 1
+    assert flagged[0]["ts"] == frame["ts"][1]
+    assert flagged[0]["prev_close"] == 5.0
+    assert flagged[0]["close"] == 1.0
+    assert flagged[0]["ratio"] == pytest.approx(0.2)
+
+
+def test_price_discontinuities_ignores_moves_within_threshold():
+    # ratios land exactly on the [1/max_ratio, max_ratio] boundary — inclusive, so neither flags.
+    rows = [_row(BASE_TS, close="1.0"), _row(BASE_TS + DAY, close="3.0"), _row(BASE_TS + 2 * DAY, close="1.0")]
+    frame = to_frame(rows)
+
+    assert price_discontinuities(frame) == []
+
+
+def test_price_discontinuities_empty_for_frame_with_fewer_than_two_rows():
+    frame = to_frame(_daily_rows(1))
+
+    assert price_discontinuities(frame) == []
+
+
+def test_price_discontinuities_respects_custom_max_ratio():
+    rows = [_row(BASE_TS, close="1.0"), _row(BASE_TS + DAY, close="2.5")]  # ratio == 2.5
+    frame = to_frame(rows)
+
+    assert price_discontinuities(frame) == []  # within the default max_ratio=3.0
+    assert len(price_discontinuities(frame, max_ratio=2.0)) == 1
 
 
 def test_qa_series_reports_gap_coverage_and_flags():
