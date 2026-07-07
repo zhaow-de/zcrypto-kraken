@@ -31,7 +31,9 @@ def binance_pair_name(symbol: str) -> str:
 def fetch_binance_klines(pair: str, *, limit: int = 1000) -> list:
     """GET Binance's public daily klines for `pair` and return the raw kline rows.
 
-    Raises `XCheckError` on a transport/JSON failure, or when the decoded body isn't a list.
+    Raises `XCheckError` on a transport/JSON failure, or when the decoded body isn't a list. Returns
+    only the most recent <= `limit` daily candles (Binance single-page limit, max 1000) — a
+    recent-window check, not full history.
     """
     url = f"{_BASE_URL}?symbol={pair}&interval=1d&limit={limit}"
     try:
@@ -53,7 +55,8 @@ def binance_daily_closes(pair: str, *, fetch_fn=fetch_binance_klines, limit: int
     Each kline row is `[openTime_ms, open, high, low, close, volume, closeTime, ...]` (>= 5 fields);
     `openTime_ms` -> `ts` (`Datetime("us", "UTC")`), `close` (row[4], a string) -> `Float64`. The
     result is sorted ascending and exact-`ts` de-duped. Raises `XCheckError` on an empty result or
-    an unparseable row.
+    an unparseable row. Covers only the most recent <= `limit` daily candles (a recent-window
+    check; full-overlap via `startTime` pagination is a deferred follow-up).
     """
     rows = fetch_fn(pair, limit=limit)
     if not rows:
@@ -114,20 +117,21 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
     """Cross-check each `symbol`'s Kraken daily series under `kraken_root` against Binance.
 
     For each `"BASE/QUOTE"` in `symbols`, reads `kraken_root/{base}/{quote}/1440.parquet` and compares
-    it to Binance's daily closes (`binance_pair_name(symbol)`, fetched via `fetch_fn`). A symbol whose
-    Binance fetch raises `XCheckError` (pair not listed on Binance) is skipped and recorded under
-    `skipped` instead of `series`. Returns `{series: {symbol: crosscheck_series-dict}, skipped: [...],
-    summary}`, where `summary` is `{series_count, min_close_corr, max_abs_rel_diff_overall}`.
+    it to Binance's daily closes (`binance_pair_name(symbol)`, fetched via `fetch_fn`). A symbol that
+    isn't `"BASE/QUOTE"`, or whose Binance fetch raises `XCheckError` (pair not listed on Binance), is
+    skipped and recorded under `skipped` instead of `series`. Returns `{series: {symbol:
+    crosscheck_series-dict}, skipped: [...], summary}`, where `summary` is `{series_count,
+    min_close_corr, max_abs_rel_diff_overall}`.
     """
     series: dict[str, dict] = {}
     skipped: list[str] = []
 
     for symbol in symbols:
-        base, quote = symbol.split("/")
-        kraken = read_parquet(kraken_root / base / quote / "1440.parquet")
         try:
+            base, quote = symbol.split("/")
+            kraken = read_parquet(kraken_root / base / quote / "1440.parquet")
             binance = binance_daily_closes(binance_pair_name(symbol), fetch_fn=fetch_fn)
-        except XCheckError:
+        except ValueError, XCheckError:
             skipped.append(symbol)
             continue
         series[symbol] = crosscheck_series(kraken, binance)
@@ -167,6 +171,10 @@ def render_markdown(report: dict) -> str:
         f"- Series count: {summary['series_count']}",
         f"- Min close corr: {min_close_corr}",
         f"- Max abs rel diff overall: {summary['max_abs_rel_diff_overall']:.6f}",
+        "",
+        "_Recent-window check: the most recent ≤ 1000 daily candles per pair (Binance single-page "
+        "limit); Binance EUR history reaches ~2020, so full-overlap cross-check via startTime pagination "
+        "is a deferred follow-up._",
     ]
 
     if report["skipped"]:

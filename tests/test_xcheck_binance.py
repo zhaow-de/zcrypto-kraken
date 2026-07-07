@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import io
+import json
+import urllib.error
+from unittest import mock
+
 import polars as pl
 import pytest
 
@@ -9,6 +14,7 @@ from cli.xcheck.binance import (
     binance_pair_name,
     crosscheck_dataset,
     crosscheck_series,
+    fetch_binance_klines,
     render_markdown,
 )
 from cli.xcheck.errors import XCheckError
@@ -58,6 +64,29 @@ def test_binance_pair_name_maps_common_tickers(symbol, expected):
 def test_binance_pair_name_rejects_non_base_quote_symbol():
     with pytest.raises(XCheckError):
         binance_pair_name("BTCEUR")
+
+
+# --- fetch_binance_klines ---
+
+
+def test_fetch_binance_klines_raises_xcheck_error_on_http_error():
+    http_error = urllib.error.HTTPError("url", 429, "Too Many Requests", None, None)
+    with mock.patch("urllib.request.urlopen", side_effect=http_error):
+        with pytest.raises(XCheckError):
+            fetch_binance_klines("BTCEUR")
+
+
+def test_fetch_binance_klines_raises_xcheck_error_on_url_error():
+    with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+        with pytest.raises(XCheckError):
+            fetch_binance_klines("BTCEUR")
+
+
+def test_fetch_binance_klines_raises_xcheck_error_on_non_list_payload():
+    body = json.dumps({"code": -1121, "msg": "Invalid symbol."}).encode("utf-8")
+    with mock.patch("urllib.request.urlopen", return_value=io.BytesIO(body)):
+        with pytest.raises(XCheckError):
+            fetch_binance_klines("BTCEUR")
 
 
 # --- binance_daily_closes ---
@@ -164,6 +193,21 @@ def test_crosscheck_dataset_skips_symbol_whose_binance_fetch_errors(tmp_path):
     assert report["skipped"] == ["SOL/BTC"]
     assert "BTC/EUR" in report["series"]
     assert "SOL/BTC" not in report["series"]
+    assert report["summary"]["series_count"] == 1
+
+
+def test_crosscheck_dataset_skips_malformed_symbol_without_crashing(tmp_path):
+    root = tmp_path / "ohlc-full"
+    write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
+
+    def fetch_fn(pair, *, limit=1000):
+        ts_ms = [(BASE_TS + i * DAY) * 1000 for i in range(3)]
+        return [_kline(ts, 100.0) for ts in ts_ms]
+
+    report = crosscheck_dataset(root, ["BTCEUR", "BTC/EUR"], fetch_fn=fetch_fn)
+
+    assert report["skipped"] == ["BTCEUR"]
+    assert "BTC/EUR" in report["series"]
     assert report["summary"]["series_count"] == 1
 
 
