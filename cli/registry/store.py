@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cli.logging.get_logger import get_logger
-from cli.registry.errors import RegistryCorruptionError
+from cli.registry.errors import RegistryCorruptionError, RegistryError
 from cli.registry.record import (
     SCHEMA_VERSION,
     TrialRecord,
@@ -83,6 +85,10 @@ def _read_healing(path: Path) -> list[dict]:
     return out
 
 
+def _now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class TrialRegistry:
     """Append-only, integrity-checked JSONL store of validation trials. See docs/specs/00000-trial-registry-design.md.
 
@@ -100,3 +106,50 @@ class TrialRegistry:
 
     def __len__(self) -> int:
         return len(self._records)
+
+    def append(
+        self,
+        *,
+        iteration: str,
+        family: str,
+        spec_hash: str,
+        dataset_hash: str,
+        seeds: list[int],
+        metrics: dict,
+        n_trials_in_family: int,
+        verdict: str,
+        run_ref: str | None = None,
+        notes: str = "",
+    ) -> TrialRecord:
+        caller = dict(
+            iteration=iteration,
+            family=family,
+            spec_hash=spec_hash,
+            dataset_hash=dataset_hash,
+            seeds=list(seeds),
+            metrics=metrics,
+            n_trials_in_family=n_trials_in_family,
+            verdict=verdict,
+            run_ref=run_ref,
+            notes=notes,
+        )
+        validate_caller_fields(caller)  # raises on non-finite metric BEFORE opening the file
+        lock_f = open(self.path, "a", encoding="utf-8")
+        try:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+            disk = _read_healing(self.path)  # re-derive from disk under lock — the file is authoritative
+            next_id = disk[-1]["trial_id"] + 1 if disk else 1
+            prior = sum(1 for r in disk if r["family"] == family)
+            if n_trials_in_family < prior + 1:
+                raise RegistryError(f"n_trials_in_family={n_trials_in_family} < {prior + 1} already recorded in family {family!r}")
+            rec = {**caller, "trial_id": next_id, "schema_version": SCHEMA_VERSION, "timestamp": _now_utc_iso()}
+            rec["record_hash"] = compute_hash(rec)
+            lock_f.write(canonical_json(rec) + "\n")
+            lock_f.flush()
+            os.fsync(lock_f.fileno())
+        finally:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+            lock_f.close()
+        record = _to_record(rec)
+        self._records = (*self._records, record)
+        return record

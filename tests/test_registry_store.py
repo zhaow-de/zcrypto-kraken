@@ -1,6 +1,6 @@
 import pytest
 
-from cli.registry import SCHEMA_VERSION, RegistryCorruptionError, TrialRegistry
+from cli.registry import SCHEMA_VERSION, RegistryCorruptionError, RegistryError, TrialRegistry
 from cli.registry.record import canonical_json, compute_hash
 
 
@@ -96,3 +96,56 @@ def test_unknown_schema_version_raises(tmp_path):
     line = canonical_json(dict(body, record_hash=compute_hash(body)))
     with pytest.raises(RegistryCorruptionError):
         TrialRegistry(_write(tmp_path, [line]))
+
+
+def _append(reg, **over):
+    kw = dict(
+        iteration="iter-001",
+        family="A1",
+        spec_hash="s",
+        dataset_hash="d",
+        seeds=[0],
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        n_trials_in_family=2,
+        verdict="adopt",
+    )
+    kw.update(over)
+    return reg.append(**kw)
+
+
+def test_append_assigns_contiguous_ids_across_reopen(tmp_path):
+    p = tmp_path / "t.jsonl"
+    r1 = _append(TrialRegistry(p))
+    assert r1.trial_id == 1 and r1.record_hash and r1.timestamp.endswith("+00:00")
+    r2 = _append(TrialRegistry(p))  # fresh registry, same path
+    assert r2.trial_id == 2
+    assert len(TrialRegistry(p)) == 2  # reload verifies all asserts
+
+
+def test_append_rejects_nonfinite_before_writing(tmp_path):
+    p = tmp_path / "t.jsonl"
+    with pytest.raises(RegistryError):
+        _append(TrialRegistry(p), metrics={"dsr": float("nan")})
+    assert not p.exists() or p.read_text() == ""  # nothing was written
+
+
+def test_append_family_count_floor(tmp_path):
+    p = tmp_path / "t.jsonl"
+    _append(TrialRegistry(p), family="A1", n_trials_in_family=1)  # 1st in A1, floor is 1 -> OK
+    with pytest.raises(RegistryError):
+        _append(TrialRegistry(p), family="A1", n_trials_in_family=1)  # 2nd in A1 needs >= 2
+
+
+def test_append_then_records_snapshot(tmp_path):
+    reg = TrialRegistry(tmp_path / "t.jsonl")
+    _append(reg)
+    assert reg.records[-1].trial_id == 1  # in-memory cache updated
+
+
+def test_concurrent_registries_get_unique_ids(tmp_path):
+    p = tmp_path / "t.jsonl"
+    a, b = TrialRegistry(p), TrialRegistry(p)  # both see empty
+    _append(a)
+    _append(b)  # b re-reads under lock -> id 2, not a duplicate 1
+    ids = sorted(r.trial_id for r in TrialRegistry(p).records)
+    assert ids == [1, 2]
