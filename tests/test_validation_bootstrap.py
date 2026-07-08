@@ -52,6 +52,8 @@ def test_ci_varied_series_has_positive_width():
         ([1.0, 2.0], {"mean_block": 0.5, "seed": 1}),
         ([1.0, 2.0], {"mean_block": float("inf"), "seed": 1}),
         ([1.0, 2.0], {"mean_block": 2, "n_resamples": 0, "seed": 1}),
+        ([1.0, 2.0], {"mean_block": 2, "n_resamples": 2.5, "seed": 1}),
+        ([1.0, 2.0], {"mean_block": 2, "n_resamples": float("nan"), "seed": 1}),
         ([1.0, 2.0], {"mean_block": 2, "alpha": 0.0, "seed": 1}),
         ([1.0, 2.0], {"mean_block": 2, "alpha": 1.0, "seed": 1}),
         ([1.0, 2.0], {"mean_block": 2, "seed": "x"}),
@@ -77,3 +79,16 @@ def test_indices_guards():
         stationary_bootstrap_indices(0, mean_block=3, n_resamples=5, seed=1)
     with pytest.raises(ValidationError):
         stationary_bootstrap_indices(10, mean_block=3, n_resamples=5, seed="x")
+    with pytest.raises(ValidationError):
+        stationary_bootstrap_indices(10.5, mean_block=3, n_resamples=5, seed=1)
+    with pytest.raises(ValidationError):
+        stationary_bootstrap_indices(float("nan"), mean_block=3, n_resamples=5, seed=1)
+    with pytest.raises(ValidationError):
+        stationary_bootstrap_indices(10, mean_block=3, n_resamples=2.5, seed=1)
+
+
+def test_ci_statistic_non_numeric_return_raises():
+    with pytest.raises(ValidationError):
+        bootstrap_ci([1.0, 2.0, 3.0], lambda xs: "not a number", mean_block=2, seed=1)
+    with pytest.raises(ValidationError):
+        bootstrap_ci([1.0, 2.0, 3.0], lambda xs: None, mean_block=2, seed=1)
