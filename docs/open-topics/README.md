@@ -19,6 +19,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0004 — full tick history + tick-derived bar reconciliation](T0004-tick-history-reconciliation.md) — the tick-vs-OHLCVT tolerance test + true vwap; blocked on tick-data acquisition (not on NAS), deferred to Phase-4 microstructure / true-vwap need.
+- [T0006 — harness numeric-param type guards](T0006-validation-numeric-param-type-guards.md) — non-numeric-type args to `cli/validation/` float params raise `TypeError` not `ValidationError` (never NaN, just wrong exception); one coherent hardening pass, folds into the acceptance-suite iteration.
 
 ### Partially done<a name="partially-done"></a>
 
