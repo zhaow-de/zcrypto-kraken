@@ -23,13 +23,14 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0004 — full tick history + tick-derived bar reconciliation](T0004-tick-history-reconciliation.md) — `cli/tick/` built + sample-validated (all 10 pairs, Q1-2026: 100% O/H/L/C match, true vwap); remainder = the 3-column complete-dataset reader + the full-history batch.
+_(none)_
 
 ### Resolved<a name="resolved"></a>
 
 - [T0002 — universe liquidity-floor calibration & quote-currency volume](archive/T0002-universe-liquidity-floor-calibration.md) — resolved in iter-007: EUR floor lowered €1M→€150k (footprint-based) + `quote_volume_in_eur` FX-normalizes the BTC-quoted legs → the full 12-name basket, `escalate=False`; findings recorded in master-plan §3.
 - [T0001 — full-history OHLCVT backfill](archive/T0001-ohlcvt-full-history-backfill.md) — resolved in iter-008: built `cli/backfill/` (1-minute dumps → canonical 1h/4h/1d, base-authoritative merge); the full-history dataset (12 pairs, BTC 2013→2026) reconstructs OHLC bit-identical to the v0 REST (100% match).
 - [T0006 — harness numeric-param type guards](archive/T0006-validation-numeric-param-type-guards.md) — resolved in iter-021: `isinstance(int|float)` guards on `cli/validation/` float params → `ValidationError` (not `TypeError`) on a non-numeric type; closed per defined scope (dsr `n_trials`/`n_obs` deliberately isfinite-only).
+- [T0004 — full tick history + tick-derived bar reconciliation](archive/T0004-tick-history-reconciliation.md) — resolved in iter-044 (human-confirmed exit-bar): `cli/tick/` reconciles the full universe + full history at 100% coverage, 99.4–100% within 1% (the early-illiquid residual accepted), plus the true tick-weighted VWAP; 15m/tick-storage folded into the Bucket-B queue.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
