@@ -185,6 +185,51 @@ gated-B1 is the frozen deployment bar.
 This is a single historical path, not a guarantee — "worst year −5.5%" describes 2013–2026, it is
 not a guaranteed floor for future years.
 
+## Short-state check (does adding a short to gated-B1 help?)
+
+The frozen bar (gated-B1) is **long/flat** — it sits out downtrends but never shorts. A natural
+question for any future short-side alpha is whether *adding a short state* to it helps. Two
+variants are tested on full-history BTC, both vol-targeted, zero-fee:
+
+- **Naive long/short** — the 200-day gate flips to a full short (`−1 ×` the vol-target size) whenever
+  price is below its 200-day SMA (the single-asset analogue of the basket's B4).
+- **Disciplined long/short** — a short is entered only on a *confirmed* bear, and at reduced size:
+  `−0.5 ×` the vol-target size when price is **more than 5% below** the 200-day SMA **and** the
+  90-day momentum is negative; long when above the SMA; flat otherwise. (These band / momentum /
+  size parameters are deliberately coarse, per §12's "avoid benchmark overfitting"; the result is
+  robust to them — see below.) Both signals use only prices through the start of each return period
+  — look-ahead-free, same convention as the rest of this report.
+
+| BTC strategy (full history)             | Total return | Annualized | Sharpe | Max DD | Short % |
+| ---------------------------------------- | ------------: | ----------: | ------: | ------: | -------: |
+| gated-B1 — long/flat (the frozen bar)    |         2.75× |      11.12% |  1.247 |  12.3% |      0% |
+| BTC naive long/short                     |         2.12× |       9.49% |  0.839 |  20.9% |    39.7% |
+| BTC disciplined long/short (0.5×)        |         2.43× |      10.32% |  1.105 |  15.4% |    29.9% |
+
+Three honest conclusions:
+
+- **Adding a short is a net drag over 2013–2026 — even done well.** The disciplined short (Sharpe
+  1.105) still *underperforms* the long/flat bar (1.247), with lower return and a deeper drawdown.
+  The result is robust: across band ∈ {3%, 5%, 8%} and momentum window ∈ {60, 90 d}, the disciplined
+  short's Sharpe stays in **1.076–1.119** — always well below the bar's 1.247 and well above the
+  naive short's 0.839, never a parameter fluke.
+- **Discipline matters enormously.** The disciplined short (1.105) massively beats the naive gate-flip
+  short (0.839): the confirmed-bear band + negative-momentum filter + half size cut exactly the
+  whipsaw that made the basket's B4 disastrous (Sharpe −0.136). So *if* a short is used, it must be
+  built this way — but even built this way it does not clear the long/flat bar.
+- **Why: the sample is a secular BTC uptrend.** BTC rose ~600× over 2013–2026, so a short state
+  spends most of its time fighting the primary trend and is naturally penalized; its value is
+  *regime-dependent* — insurance for a prolonged bear market this sample does not contain. This is
+  exactly why §5 specifies the short at *reduced size, confirmed-bear-only* — as insurance, not a
+  return driver — and why the deployable bar stays long/flat.
+
+**Implication.** For the §12 handback (B4's risk behavior as a fallback deployable): a BTC-based
+short is a net drag over the historical sample, so the long/flat gated-B1 dominates it — B4 is a
+poor *fallback*, not an improvement. For Phase-4 alpha (A1's short state,
+`docs/research/05.phase4-orientation.md` finding 2): the disciplined design is the correct one to
+carry, but the short must earn its place against this long/flat bar in a regime the backtest can
+actually price, and the kill bar must isolate the short leg's contribution.
+
 ## Distrust-the-instrument note
 
 The whole stack — real `data/ohlc-full/BTC/EUR/1440.parquet` daily closes, `returns_from_prices`,
