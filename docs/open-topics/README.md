@@ -11,6 +11,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [Live trading preparation](#live-trading-preparation)
   - [Open](#open-1)
   - [Partially done](#partially-done-1)
+  - [Resolved](#resolved-1)
 
 <!-- mdformat-toc end -->
 
@@ -39,4 +40,8 @@ _(none)_
 
 ### Partially done<a name="partially-done-1"></a>
 
-- [T0000 — Phase 0 human account actions & live-account confirmations](T0000-phase0-account-actions.md) — all account actions done (eligibility, read-only key verified + in `.env`, fee tier Tier 1/$0, leverage, margin rates); only the Phase-2 cost-model fold-in remains (deferred to Phase 2).
+_(none)_
+
+### Resolved<a name="resolved-1"></a>
+
+- [T0000 — Phase 0 human account actions & live-account confirmations](archive/T0000-phase0-account-actions.md) — resolved in iter-023 (Phase-2 close-out): account actions + live confirmations done 2026-07-07; the deferred July-9 fee-schedule fold-in landed in iter-017 (`cli/costs/`).
