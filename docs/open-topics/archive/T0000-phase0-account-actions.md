@@ -1,8 +1,10 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Phase 0 human account actions & live-account confirmations (D3(i))
+
+**Resolved (iter-023 / Phase-2 close-out, 2026-07-08):** the human account actions + live confirmations completed 2026-07-07 (see `## Done so far`); the one deferred sub-item — folding the July-9 fee schedule (`docs/kraken-fee-schedule.md`) into the Phase-2 cost model — landed in **iter-017** (`cli/costs/` encodes the 17-tier July-9 spot ladder + the per-base margin open/rollover rates verbatim from that doc). Nothing remains.
 
 ## Context — what
 
@@ -34,4 +36,4 @@ All Phase-0 human account actions and live confirmations are **complete** (2026-
 
 ## Suggested next steps
 
-- **(→ deferred to Phase 2)** Fold the July-9 schedule (`docs/kraken-fee-schedule.md`) into the Phase-2 cost model; the master-plan §1/§4/§14 fee numbers (0.25 / 0.40 base) are superseded. Autonomously doable, but **deliberately deferred to Phase 2** (the cost-model code does not exist yet) — the inputs are fully recorded, so it is not a login-gated blocker.
+- **(✓ done — iter-017)** Fold the July-9 schedule (`docs/kraken-fee-schedule.md`) into the Phase-2 cost model — landed in `cli/costs/` (`SPOT_FEE_TIERS` + `MARGIN_RATES`). The master-plan §1/§4/§14 fee numbers (0.25 / 0.40 base) are superseded by this schedule.

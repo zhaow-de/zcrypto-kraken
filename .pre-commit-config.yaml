@@ -49,5 +49,6 @@ repos:
             docs/research/01\.1\.kraken-snapshot-register\.md|
             docs/research/01\.2\.nautilus-kraken-adapter-memo\.md|
             docs/research/01\.3\.phase0-closeout\.md|
-            docs/research/02\.phase1-data-foundation-closeout\.md
+            docs/research/02\.phase1-data-foundation-closeout\.md|
+            docs/research/03\.phase2-validation-harness-closeout\.md
         )$
