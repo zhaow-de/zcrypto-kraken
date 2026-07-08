@@ -1,10 +1,12 @@
+import json
+
 import pytest
 
-from cli.registry import SCHEMA_VERSION, RegistryCorruptionError, RegistryError, TrialRegistry
+from cli.registry import GENESIS_HASH, SCHEMA_VERSION, RegistryCorruptionError, RegistryError, TrialRegistry
 from cli.registry.record import canonical_json, compute_hash
 
 
-def _line(trial_id, family="A1", n=1, metrics=None):
+def _line(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
     body = dict(
         trial_id=trial_id,
         schema_version=SCHEMA_VERSION,
@@ -19,8 +21,17 @@ def _line(trial_id, family="A1", n=1, metrics=None):
         verdict="adopt",
         run_ref=None,
         notes="",
+        prev_hash=prev_hash,
     )
     return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+
+def _hash_of(line: str) -> str:
+    return json.loads(line)["record_hash"]
+
+
+def _new_registry(tmp_path):
+    return TrialRegistry(tmp_path / "t.jsonl")
 
 
 def _write(tmp_path, lines, trailing_nl=True):
@@ -38,7 +49,9 @@ def test_absent_and_empty_file_is_empty_registry(tmp_path):
 
 
 def test_valid_file_loads(tmp_path):
-    reg = TrialRegistry(_write(tmp_path, [_line(1, n=2), _line(2, n=2)]))
+    l1 = _line(1, n=2)
+    l2 = _line(2, n=2, prev_hash=_hash_of(l1))
+    reg = TrialRegistry(_write(tmp_path, [l1, l2]))
     assert len(reg) == 2 and reg.records[1].trial_id == 2
 
 
@@ -159,3 +172,76 @@ def test_append_after_torn_trailing_line_self_heal(tmp_path):
     r = _append(reg, family="B1", n_trials_in_family=1)  # 1st in a fresh family -> floor OK
     assert r.trial_id == 2
     assert len(TrialRegistry(p)) == 2  # reload confirms the registry stayed appendable
+
+
+def test_chain_links_are_written(tmp_path):
+    reg = _new_registry(tmp_path)
+    r0 = _append(reg, family="A", n_trials_in_family=1)
+    r1 = _append(reg, family="A", n_trials_in_family=2)
+    r2 = _append(reg, family="A", n_trials_in_family=3)
+    assert r0.prev_hash == GENESIS_HASH
+    assert r1.prev_hash == r0.record_hash
+    assert r2.prev_hash == r1.record_hash
+
+
+def test_rehashing_tamper_of_middle_record_is_caught(tmp_path):
+    reg = _new_registry(tmp_path)
+    _append(reg, family="A", n_trials_in_family=1)
+    _append(reg, family="A", n_trials_in_family=2)
+    _append(reg, family="A", n_trials_in_family=3)
+    lines = reg.path.read_text().splitlines()
+    rec = json.loads(lines[1])  # record 2 (trial_id 2)
+    rec["metrics"] = {**rec["metrics"], "sharpe": 999.0}  # tamper a metric
+    body = {k: v for k, v in rec.items() if k != "record_hash"}
+    rec["record_hash"] = compute_hash(body)  # re-hash so the SELF-hash check passes
+    lines[1] = canonical_json(rec)
+    reg.path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(reg.path)  # chain check fails at record 3 (prev_hash mismatch)
+
+
+def test_metric_tamper_without_rehash_still_caught(tmp_path):
+    reg = _new_registry(tmp_path)
+    _append(reg, family="A", n_trials_in_family=1)
+    _append(reg, family="A", n_trials_in_family=2)
+    lines = reg.path.read_text().splitlines()
+    rec = json.loads(lines[0])
+    rec["metrics"] = {**rec["metrics"], "sharpe": 999.0}  # no re-hash
+    lines[0] = canonical_json(rec)
+    reg.path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(reg.path)  # existing self-hash check fires
+
+
+def test_deleting_middle_record_is_caught(tmp_path):
+    reg = _new_registry(tmp_path)
+    _append(reg, family="A", n_trials_in_family=1)
+    _append(reg, family="A", n_trials_in_family=2)
+    _append(reg, family="A", n_trials_in_family=3)
+    lines = reg.path.read_text().splitlines()
+    del lines[1]
+    reg.path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(reg.path)
+
+
+def test_schema_version_1_record_is_rejected(tmp_path):
+    reg = _new_registry(tmp_path)
+    _append(reg, family="A", n_trials_in_family=1)
+    lines = reg.path.read_text().splitlines()
+    rec = json.loads(lines[0])
+    rec["schema_version"] = 1
+    body = {k: v for k, v in rec.items() if k != "record_hash"}
+    rec["record_hash"] = compute_hash(body)
+    lines[0] = canonical_json(rec)
+    reg.path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(reg.path)
+
+
+def test_chain_continues_across_registry_instances(tmp_path):
+    reg = _new_registry(tmp_path)
+    last = _append(reg, family="A", n_trials_in_family=1)
+    reg2 = TrialRegistry(reg.path)  # reopen
+    nxt = _append(reg2, family="A", n_trials_in_family=2)
+    assert nxt.prev_hash == last.record_hash

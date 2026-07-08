@@ -7,10 +7,11 @@ from dataclasses import dataclass
 
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+GENESIS_HASH = "0" * 64
 VERDICTS = frozenset({"adopt", "reject", "park"})
 
-_STORE_OWNED = ("trial_id", "schema_version", "timestamp", "record_hash")
+_STORE_OWNED = ("trial_id", "schema_version", "timestamp", "prev_hash", "record_hash")
 _REQUIRED_CALLER = ("iteration", "family", "spec_hash", "dataset_hash", "seeds", "metrics", "n_trials_in_family", "verdict")
 
 
@@ -81,6 +82,8 @@ def validate_stored_record(rec: dict, where: str) -> None:
     body = {k: v for k, v in rec.items() if k != "record_hash"}
     if compute_hash(body) != rec["record_hash"]:
         raise RegistryCorruptionError(f"{where}: record_hash mismatch (record was mutated)")
+    if type(rec.get("prev_hash")) is not str or len(rec["prev_hash"]) != 64:
+        raise RegistryCorruptionError(f"{where}: prev_hash must be a 64-char hex str")
     if type(rec.get("trial_id")) is not int:
         raise RegistryCorruptionError(f"{where}: trial_id must be int")
     caller = {k: v for k, v in rec.items() if k not in _STORE_OWNED}
@@ -102,4 +105,5 @@ class TrialRecord:
     verdict: str
     run_ref: str | None
     notes: str
+    prev_hash: str
     record_hash: str

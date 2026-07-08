@@ -4,6 +4,7 @@ import pytest
 
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 from cli.registry.record import (
+    GENESIS_HASH,
     SCHEMA_VERSION,
     VERDICTS,
     canonical_json,
@@ -46,7 +47,7 @@ def test_loads_strict_accepts_finite():
 
 
 def test_constants():
-    assert SCHEMA_VERSION == 1 and VERDICTS == frozenset({"adopt", "reject", "park"})
+    assert SCHEMA_VERSION == 2 and VERDICTS == frozenset({"adopt", "reject", "park"})
 
 
 def _caller(**over):
@@ -100,7 +101,7 @@ def test_bool_metric_leaf_rejected():
 
 
 def test_stored_record_hash_and_schema_checks():
-    body = dict(_caller(), trial_id=1, schema_version=SCHEMA_VERSION, timestamp="2026-07-07T00:00:00+00:00")
+    body = dict(_caller(), trial_id=1, schema_version=SCHEMA_VERSION, timestamp="2026-07-07T00:00:00+00:00", prev_hash=GENESIS_HASH)
     rec = dict(body, record_hash=compute_hash(body))
     validate_stored_record(rec, "x")  # OK
     bad = dict(rec, metrics={"sharpe": 0.9, "dsr": 0.1})  # mutated, hash now stale
