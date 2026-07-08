@@ -1,0 +1,32 @@
+# Reference compose file for the capture daemon. `${...}` placeholders are resolved from the
+# shell environment or an adjacent `.env` file (see
+# https://docs.docker.com/compose/environment-variables/) — e.g. for local testing against a
+# just-built image:
+#   CAPTURE_IMAGE_DIGEST=sha256:<digest> CAPTURE_UID=$(id -u) CAPTURE_GID=$(id -g) \
+#     docker compose -f infra/docker/compose.yaml up
+#
+# On the deploy host, the `capture` Ansible role renders the equivalent service from
+# infra/ansible/roles/capture/templates/compose.yaml.j2, with concrete values baked in at
+# converge time instead of resolved from the environment.
+services:
+  capture:
+    image: ghcr.io/zhaow-de/zcrypto-capture@${CAPTURE_IMAGE_DIGEST}
+    restart: unless-stopped
+    user: "${CAPTURE_UID:-10001}:${CAPTURE_GID:-10001}"
+    environment:
+      CAPTURE_DATA_DIR: /var/lib/zcrypto-capture
+      CAPTURE_DEPTH: "${CAPTURE_DEPTH:-100}"
+      CAPTURE_PAIRS: "${CAPTURE_PAIRS:-}"
+      HEALTHCHECK_URL: "${HEALTHCHECK_URL:-}"
+    volumes:
+      - /var/lib/zcrypto-capture:/var/lib/zcrypto-capture
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

@@ -1,0 +1,35 @@
+#!/usr/sbin/nft -f
+#
+# Managed by Ansible (roles/firewall) — do not edit by hand.
+#
+# Manages ONLY `table inet filter` (the host's own inbound policy). It deliberately does
+# NOT `flush ruleset`, because Docker installs its own nftables tables (`ip/ip6 nat`, the
+# `docker` tables) for container NAT + forwarding — a global flush wipes those and breaks
+# container networking (DNS/egress from containers). The add/delete/add idiom below
+# atomically replaces only our table, leaving Docker's tables untouched. We also omit a
+# `forward` chain so Docker's forwarding/masquerade rules govern container egress; only the
+# host's own INPUT is filtered. `nft -f` still applies this whole file as one atomic
+# transaction, so policy-drop + the 10022 accept always land together (no lockout window).
+
+add table inet filter
+delete table inet filter
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    # loopback
+    iif lo accept
+
+    # established/related — keeps in-flight connections (including this SSH session) alive
+    ct state established,related accept
+
+    # SSH
+    tcp dport {{ firewall_ssh_port }} accept
+
+    # ICMPv4 ping
+    icmp type echo-request accept
+
+    # ICMPv6 ping + the neighbor-discovery / router-advertisement types IPv6 needs to function
+    icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept
+  }
+}

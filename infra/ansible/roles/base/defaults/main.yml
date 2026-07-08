@@ -1,0 +1,11 @@
+base_timezone: UTC
+
+# unattended-upgrades: security pocket only, auto-reboot, email on failure only.
+# No mailer/relay is wired up for this host yet — "root" is the safe, always-present
+# local recipient (readable via the local mail spool even without an MTA); override
+# with a real address once alerting/monitoring lands.
+base_unattended_upgrades_reboot_time: "04:00"
+base_unattended_upgrades_mail_to: root
+
+base_capture_user: kraken-capture
+base_capture_data_dir: /var/lib/zcrypto-capture

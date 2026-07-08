@@ -1,0 +1,6 @@
+---
+- name: restart capture service
+  ansible.builtin.systemd_service:
+    name: zcrypto-capture.service
+    daemon_reload: true
+    state: restarted

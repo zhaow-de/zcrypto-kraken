@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator, Callable
+from decimal import Decimal
+
+import websockets
+from websockets.exceptions import ConnectionClosed
+
+from cli.capture.errors import CaptureError
+from cli.logging import get_logger
+
+logger = get_logger("capture.ws_client")
+
+DEFAULT_URI = "wss://ws.kraken.com/v2"
+# Depths Kraken's WS v2 `book` channel accepts.
+# https://docs.kraken.com/api/docs/websocket-v2/book
+ALLOWED_DEPTHS = (10, 25, 100, 500, 1000)
+
+_BACKOFF_BASE_SECONDS = 1.0
+_BACKOFF_MAX_SECONDS = 60.0
+
+
+def build_subscribe_message(
+    channel: str, symbols: list[str], *, depth: int | None = None, snapshot: bool = True, req_id: int | None = None
+) -> dict:
+    """Build a WS v2 `subscribe` request for `channel` (`"book"` or `"trade"`) over `symbols`.
+
+    See https://docs.kraken.com/api/docs/websocket-v2/book and .../trade for the request shape:
+    `{"method": "subscribe", "params": {"channel": ..., "symbol": [...], ...}}`.
+    """
+    params: dict = {"channel": channel, "symbol": list(symbols), "snapshot": snapshot}
+    if depth is not None:
+        params["depth"] = depth
+    message: dict = {"method": "subscribe", "params": params}
+    if req_id is not None:
+        message["req_id"] = req_id
+    return message
+
+
+def parse_message(raw: str | bytes) -> dict:
+    """Parse one WS v2 text frame. Uses `parse_float=Decimal` so price/qty retain their exact
+    wire-format precision (trailing zeros survive) — required for the book CRC32 checksum to be
+    reproducible; a plain `float` would silently corrupt it (see `cli.capture.book`)."""
+    try:
+        return json.loads(raw, parse_float=Decimal)
+    except json.JSONDecodeError as exc:
+        raise CaptureError(f"invalid JSON frame from Kraken WS: {exc}") from exc
+
+
+def classify(msg: dict) -> str:
+    """Coarse category for a parsed WS v2 message, used to route it to the right handler."""
+    channel = msg.get("channel")
+    mtype = msg.get("type")
+    if channel == "book":
+        return "book_snapshot" if mtype == "snapshot" else "book_update"
+    if channel == "trade":
+        return "trade_snapshot" if mtype == "snapshot" else "trade_update"
+    if channel == "heartbeat":
+        return "heartbeat"
+    if msg.get("method") == "subscribe":
+        return "subscribe_ack" if msg.get("success") else "subscribe_error"
+    return "other"
+
+
+def compute_backoff(attempt: int, *, base: float = _BACKOFF_BASE_SECONDS, max_delay: float = _BACKOFF_MAX_SECONDS) -> float:
+    """Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`."""
+    if attempt < 0:
+        raise CaptureError(f"attempt must be >= 0, got {attempt}")
+    return min(base * (2**attempt), max_delay)
+
+
+class CaptureClient:
+    """Thin async client for Kraken's public WS v2 feed: subscribes `book` (at `depth`) + `trade`
+    for `pairs`, auto-reconnecting with exponential backoff on any drop.
+
+    `connect_fn`/`sleep_fn` are injectable so the reconnect/backoff orchestration is unit-testable
+    without a real socket or real delays.
+    """
+
+    def __init__(
+        self,
+        pairs: list[str],
+        depth: int,
+        *,
+        uri: str = DEFAULT_URI,
+        connect_fn: Callable[[str], object] | None = None,
+        sleep_fn: Callable[[float], object] | None = None,
+    ) -> None:
+        if depth not in ALLOWED_DEPTHS:
+            raise CaptureError(f"depth must be one of {ALLOWED_DEPTHS}, got {depth}")
+        if not pairs:
+            raise CaptureError("pairs must be non-empty")
+        self._pairs = list(pairs)
+        self._depth = depth
+        self._uri = uri
+        self._connect = connect_fn or websockets.connect
+        self._sleep = sleep_fn or asyncio.sleep
+        self._ws = None
+
+    @property
+    def connected(self) -> bool:
+        """True while a live WS connection is established; False during reconnect/backoff. Lets the
+        liveness heartbeat stop pinging on a connectivity loss, not only on checksum desyncs."""
+        return self._ws is not None
+
+    async def stream(self) -> AsyncIterator[dict]:
+        """Yield parsed messages forever, reconnecting (with backoff) on any drop. Cancel the
+        consuming task to stop — there is no internal stop condition."""
+        attempt = 0
+        while True:
+            try:
+                async with self._connect(self._uri) as ws:
+                    self._ws = ws
+                    await self._subscribe_all(ws)
+                    attempt = 0
+                    async for raw in ws:
+                        yield parse_message(raw)
+            except ConnectionClosed as exc:
+                logger.warning("WS connection closed, reconnecting: %s", exc)
+            finally:
+                self._ws = None
+            delay = compute_backoff(attempt)
+            attempt += 1
+            logger.info("reconnecting in %.1fs (attempt %d)", delay, attempt)
+            await self._sleep(delay)
+
+    async def _subscribe_all(self, ws) -> None:
+        await ws.send(json.dumps(build_subscribe_message("book", self._pairs, depth=self._depth)))
+        await ws.send(json.dumps(build_subscribe_message("trade", self._pairs)))
+
+    async def resubscribe_book(self, pair: str) -> None:
+        """Re-subscribe a single pair's `book` channel (Kraken responds with a fresh snapshot) —
+        used to recover from a checksum desync without dropping the whole connection. A no-op if
+        not currently connected (the next reconnect resubscribes everything anyway)."""
+        if self._ws is None:
+            return
+        await self._ws.send(json.dumps(build_subscribe_message("book", [pair], depth=self._depth)))

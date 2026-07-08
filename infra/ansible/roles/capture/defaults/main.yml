@@ -1,0 +1,14 @@
+---
+# The pinned image digest to deploy — no sane default; override per-run (or in group_vars) with
+# the value from the capture-image workflow's job summary, e.g.:
+#   -e capture_image_digest=sha256:<...>
+capture_image_digest: ""
+
+capture_cpu_limit: "1.5"
+capture_memory_limit: "2g"
+capture_log_max_size: "50m"
+capture_log_max_file: "5"
+
+# Optional healthchecks.io ping URL (the `monitoring` role provisions + supplies this once it
+# lands); empty means the daemon simply skips liveness pings.
+capture_healthcheck_url: ""

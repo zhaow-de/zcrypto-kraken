@@ -1,0 +1,49 @@
+- name: install prerequisites for the Docker apt repo
+  ansible.builtin.apt:
+    name: [ca-certificates, curl]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: add the Docker apt repository (deb822 format; module fetches + stores the signing key)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/debian
+    suites: "{{ docker_apt_distribution }}"
+    components: stable
+    architectures: "{{ docker_apt_arch }}"
+    signed_by: https://download.docker.com/linux/debian/gpg
+    install_python_debian: true
+
+- name: install Docker Engine + Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: add deploy user to the docker group
+  ansible.builtin.user:
+    name: "{{ docker_deploy_user }}"
+    groups: docker
+    append: true
+
+- name: configure the docker daemon (bounded json-file log driver)
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart docker
+
+- name: enable + start docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started

@@ -1,0 +1,66 @@
+- name: set timezone to UTC
+  community.general.timezone:
+    name: "{{ base_timezone }}"
+
+- name: install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: configure unattended-upgrades — security pocket, auto-reboot, mail on failure only
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: enable periodic apt update + unattended-upgrade runs
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: enable + start unattended-upgrades service
+  ansible.builtin.systemd:
+    name: unattended-upgrades
+    enabled: true
+    state: started
+
+- name: create the kraken-capture system user (nologin, home = its state dir)
+  ansible.builtin.user:
+    name: "{{ base_capture_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ base_capture_data_dir }}"
+    create_home: false
+    state: present
+
+- name: ensure the capture state dir exists and is owned by kraken-capture
+  ansible.builtin.file:
+    path: "{{ base_capture_data_dir }}"
+    state: directory
+    owner: "{{ base_capture_user }}"
+    group: "{{ base_capture_user }}"
+    mode: "0750"
+
+- name: logrotate policy for the docker container console log (json-file driver)
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/zcrypto-capture-docker
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /var/lib/docker/containers/*/*-json.log {
+        daily
+        rotate 90
+        compress
+        delaycompress
+        copytruncate
+        missingok
+        notifempty
+      }

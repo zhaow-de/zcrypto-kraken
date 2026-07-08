@@ -1,0 +1,19 @@
+hardening_ssh_port: "10022"
+hardening_ssh_allow_users: deploy
+
+# devsec.hardening.ssh_hardening hard-codes ssh_listen_to: [0.0.0.0] by default even though
+# network_ipv6_enable defaults to true (AddressFamily any) — list both explicitly so sshd
+# keeps listening on IPv6 too, matching the host's dual-stack bootstrap state instead of
+# silently narrowing to IPv4-only.
+hardening_ssh_listen_to:
+  - 0.0.0.0
+  - "::"
+
+# devsec.hardening.os_hardening's default sysctl_config already covers kptr_restrict=2,
+# rp_filter=1, tcp_syncookies=1, randomize_va_space=2, and disabling ip forwarding /
+# redirects / source-routing. These two are the actual gaps against the spec's list:
+# dmesg_restrict isn't set by the role at all, and its ptrace_scope default (2, admin-only)
+# is stricter than the ptrace_scope=1 the spec asks for — merged in via sysctl_overwrite.
+hardening_extra_sysctl:
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1

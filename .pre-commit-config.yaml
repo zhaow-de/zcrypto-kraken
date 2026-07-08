@@ -7,9 +7,11 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-merge-conflict
       - id: check-shebang-scripts-are-executable
+        exclude: '\.j2$'
       - id: check-toml
       - id: check-yaml
         args: ["--allow-multiple-documents", "--unsafe"]
+        exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
       - id: end-of-file-fixer
       - id: mixed-line-ending

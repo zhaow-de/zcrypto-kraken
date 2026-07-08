@@ -1,0 +1,3 @@
+creation_rules:
+  - path_regex: vault-password\.sops\.yaml$
+    pgp: "089D27EE8E61BDC0C3F3C58CA03F69C42E8025A3"

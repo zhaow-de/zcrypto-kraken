@@ -1,0 +1,62 @@
+---
+# Deploys the capture daemon: renders compose.yaml + the systemd unit, and lets the unit's own
+# ExecStartPre/ExecStart/ExecStop ("docker compose pull" / "up" / "down") own the actual
+# pull+run — that's also what resumes capture on boot. Ansible only starts/enables/restarts it.
+- name: look up the kraken-capture service account (created by the base role)
+  ansible.builtin.getent:
+    database: passwd
+    key: kraken-capture
+
+- name: derive the kraken-capture uid/gid for the container's user mapping
+  ansible.builtin.set_fact:
+    capture_uid: "{{ getent_passwd['kraken-capture'][1] }}"
+    capture_gid: "{{ getent_passwd['kraken-capture'][2] }}"
+
+- name: fail fast if the pinned image digest was not supplied
+  ansible.builtin.assert:
+    that: capture_image_digest | length > 0
+    fail_msg: >-
+      capture_image_digest is empty — pass the built image's digest, e.g.
+      -e capture_image_digest=sha256:<...> (see the job summary of
+      .github/workflows/capture-image.yml for the digest of the latest push).
+
+- name: ensure the capture data directory exists
+  ansible.builtin.file:
+    path: "{{ capture_data_dir }}"
+    state: directory
+    owner: kraken-capture
+    group: kraken-capture
+    mode: "0750"
+
+- name: ensure the compose project directory exists
+  ansible.builtin.file:
+    path: /opt/zcrypto-capture
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the capture compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: /opt/zcrypto-capture/compose.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart capture service
+
+- name: install the capture systemd unit
+  ansible.builtin.copy:
+    src: zcrypto-capture.service
+    dest: /etc/systemd/system/zcrypto-capture.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart capture service
+
+- name: enable + start the capture service (boot resume)
+  ansible.builtin.systemd_service:
+    name: zcrypto-capture.service
+    daemon_reload: true
+    enabled: true
+    state: started

@@ -1,0 +1,19 @@
+# Installed by the `capture` Ansible role at /etc/systemd/system/zcrypto-capture.service —
+# do not hand-edit on the host, edit this file and re-converge instead.
+[Unit]
+Description=zcrypto capture daemon (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/zcrypto-capture
+ExecStartPre=/usr/bin/docker compose -f /opt/zcrypto-capture/compose.yaml pull
+ExecStart=/usr/bin/docker compose -f /opt/zcrypto-capture/compose.yaml up
+ExecStop=/usr/bin/docker compose -f /opt/zcrypto-capture/compose.yaml down
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
