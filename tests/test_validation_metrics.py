@@ -54,6 +54,9 @@ def test_volatility_guards(returns, kwargs):
 def test_annualized_return():
     assert annualized_return([0.1, 0.1], periods_per_year=2) == pytest.approx(0.21)
     assert annualized_return([0.0] * 252, periods_per_year=252) == pytest.approx(0.0)
+    # n != periods_per_year and cumulative != 1: pins the exponent direction (ppy/n, not n/ppy).
+    # (1.01**10) ** (252/10) - 1 == 1.01**252 - 1; the inverted n/ppy exponent gives ~0.004, far off.
+    assert annualized_return([0.01] * 10, periods_per_year=252) == pytest.approx(1.01**252 - 1)
 
 
 @pytest.mark.parametrize(
