@@ -4,7 +4,14 @@ from cli.validation.dsr import deflated_sharpe_ratio, expected_max_sharpe, proba
 from cli.validation.errors import ValidationError
 from cli.validation.metrics import annualized_return, max_drawdown, sharpe, volatility
 from cli.validation.pbo import pbo
-from cli.validation.synthetic import linear_signal, nn_leak_metric, overlapping_label_series, sign_strategy_returns
+from cli.validation.spa import reality_check_pvalue
+from cli.validation.synthetic import (
+    linear_signal,
+    nn_leak_metric,
+    outperformance_matrix,
+    overlapping_label_series,
+    sign_strategy_returns,
+)
 
 __all__ = [
     "ValidationError",
@@ -18,9 +25,11 @@ __all__ = [
     "max_drawdown",
     "n_backtest_paths",
     "nn_leak_metric",
+    "outperformance_matrix",
     "overlapping_label_series",
     "pbo",
     "probabilistic_sharpe_ratio",
+    "reality_check_pvalue",
     "sharpe",
     "sign_strategy_returns",
     "stationary_bootstrap_indices",
