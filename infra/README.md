@@ -1,0 +1,87 @@
+# infra — T0003 capture-pipeline infrastructure-as-code
+
+Portable, scripted provisioning + deployment for the D2 forward-capture pipeline (spec:
+`docs/specs/00027-t0003-capture-pipeline-design.md`). Everything here is idempotent and
+provider-agnostic: to move the pipeline to a new host you re-provision, point the inventory at the
+new address, and re-run — no edits to the config layer.
+
+## Layout
+
+- `ansible/` — the source of truth. `bootstrap.yml` (one-time: root → `deploy@10022`), `site.yml`
+  (steady-state converge: hardening → firewall → fail2ban → chrony → docker → capture), and the
+  `roles/`. Secrets are two-layer: **sops+GPG** encrypts the ansible-vault password
+  (`vault-password.sops.yaml`, GPG recipient `zhaow.km@gmail.com`), and **ansible-vault** encrypts
+  the SSH keys + host secrets (`files/*_ed25519`, `group_vars/capture_host/vault.yml`).
+- `docker/` — the capture daemon's `Dockerfile` + reference `compose.yaml`. The image is
+  `ghcr.io/zhaow-de/zcrypto-capture` (CI: `.github/workflows/capture-image.yml`).
+
+## Running it
+
+```bash
+cd infra/ansible
+./scripts/run.sh site.yml          # loads the vault-encrypted deploy key into a transient
+                                   # ssh-agent, then runs the playbook (needs the GPG key unlocked)
+./scripts/run.sh site.yml --check --diff   # dry-run
+./scripts/run.sh bootstrap.yml -e ansible_user=root -e ansible_port=22   # first-time only
+```
+
+`run.sh` uses `scripts/vault-pass.sh` (`sops -d` → the ansible-vault password) — so a run needs the
+GPG private key for `zhaow.km@gmail.com` available/unlocked in your gpg-agent.
+
+## The two-firewall model — IMPORTANT
+
+Inbound is filtered by **two independent layers, and a port must be opened in *both*:**
+
+1. **Host nftables** (`roles/firewall`) — default-drop inbound, allows only **10022/tcp** + ICMP
+   (ping v4/v6) + established/related. It manages *only* `table inet filter` (no `flush ruleset`),
+   so Docker's own NAT/forward tables survive — do not add a `flush ruleset` back or container
+   networking breaks.
+2. **Linode Cloud Firewall** (managed by hand in the Linode Cloud Manager) — currently whitelists
+   **22 + 10022**. No inbound 443 (the daemon is outbound-only; nothing is served publicly).
+
+To open a new inbound port you must edit `roles/firewall/templates/nftables.conf.j2` **and** add the
+rule in the Linode Cloud Manager. Editing only one silently fails.
+
+## Break-glass — you are locked out of SSH
+
+SSH is **key-only on port 10022**, root + password login are disabled, and port 22 no longer
+listens. If you lose `deploy@10022` access:
+
+1. **Linode Lish console** (out-of-band, bypasses SSH and the network entirely): Linode Cloud
+   Manager → your Linode → **Launch LISH Console** (or `ssh <user>@lish-<region>.linode.com`). Log
+   in as `root` with the Linode root password (set/reset under the Linode's **Settings → Reset Root
+   Password**, requires a reboot).
+2. From the Lish root shell, fix whatever broke:
+   - **SSH:** `nano /etc/ssh/sshd_config` (+ `/etc/ssh/sshd_config.d/`), then `sshd -t` (validate)
+     and `systemctl restart ssh`. To re-enable port 22 temporarily as a fallback, add `Port 22`,
+     restart ssh, and add 22 to both firewalls.
+   - **Firewall lockout:** `nft flush ruleset` (opens everything — temporary!) or
+     `nft -f /etc/nftables.conf` to reload the managed rules; check `nft list ruleset`.
+   - **Recover the deploy key** to reach the box from the workstation:
+     `cd infra/ansible && sops -d --extract '["vault_password"]' vault-password.sops.yaml` gives the
+     vault password (needs the GPG key); `ansible-vault view files/deploy_ed25519` prints the
+     private key.
+3. Once back in, re-run `./scripts/run.sh site.yml` to re-assert the intended (hardened) state.
+
+## Rebuild from scratch (portability)
+
+1. Provision a fresh host (any provider/distro Ansible + dev-sec.io support; the roles target
+   Debian-family here). Ensure the Linode/cloud firewall allows 22 (bootstrap) + 10022.
+2. `./scripts/run.sh bootstrap.yml -e ansible_user=root -e ansible_port=22` — creates `deploy`,
+   moves SSH to 10022, disables root/password.
+3. `./scripts/run.sh site.yml` — hardens + installs Docker + deploys the capture container.
+4. Drop 22 from the cloud firewall once `deploy@10022` is confirmed.
+
+## Key rotation
+
+Regenerate a keypair, `ansible-vault encrypt` the new private key into `files/`, update the matching
+`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey),
+verify the new key works, then remove the old key's `authorized_key` entry and re-run.
+
+## Deploy image note
+
+The GHCR CI builds `ghcr.io/zhaow-de/zcrypto-capture` on push. **GHCR packages default to private** —
+after the first push, set the package to **Public** in GitHub (Packages → the package → Package
+settings → Change visibility) so the keyless host can `docker compose pull` it. Until then the
+`capture` role needs `-e capture_image_digest=sha256:<...>` (from the workflow's job summary), or the
+image can be built on the host directly (`docker build -f infra/docker/Dockerfile`).

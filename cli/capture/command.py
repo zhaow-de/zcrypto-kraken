@@ -70,9 +70,15 @@ async def _handle_book_message(
         in_sync = book.ingest_snapshot(entry) if category == "book_snapshot" else book.ingest_update(entry)
         now = datetime.now(UTC)
         if not in_sync:
-            monitor.start_gap(pair, "checksum_resync", at=now)
-            logger.warning("checksum desync pair=%s - resubscribing", pair)
-            await client.resubscribe_book(pair)
+            # Resubscribe (and open a gap) ONCE, on the transition into desync — NOT on every
+            # subsequent out-of-sync update. Otherwise a single desync fires a resubscribe on
+            # every following update (hundreds/sec at depth-100), which trips Kraken's subscribe
+            # rate limit ("Exceeded msg rate") so the pair can never resync — a self-inflicted
+            # cascade. While desynced, we simply wait for the resubscribe's fresh snapshot.
+            if not was_desynced:
+                monitor.start_gap(pair, "checksum_resync", at=now)
+                logger.warning("checksum desync pair=%s - resubscribing", pair)
+                await client.resubscribe_book(pair)
         elif was_desynced:
             monitor.end_gap(pair, at=now)
 
@@ -138,10 +144,13 @@ async def _consume(
         # heartbeat / subscribe_ack / other -> nothing to do
 
 
-async def _healthcheck_loop(url: str | None, monitor: GapMonitor, pairs: list[str], interval: int) -> None:
+async def _healthcheck_loop(url: str | None, client: CaptureClient, monitor: GapMonitor, pairs: list[str], interval: int) -> None:
     while True:
         await asyncio.sleep(interval)
-        if monitor.is_healthy(pairs):
+        # Dead-man's-switch: ping only while the WS is actually connected AND books are healthy, so
+        # a connectivity loss (stuck in reconnect/backoff, no book updates flowing) stops the ping
+        # and healthchecks.io alerts — not just checksum desyncs.
+        if client.connected and monitor.is_healthy(pairs):
             ping_healthcheck(url)
 
 
@@ -168,7 +177,7 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
                 loop.add_signal_handler(sig, main_task.cancel)
 
     consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark))
-    health = asyncio.create_task(_healthcheck_loop(healthcheck_url, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS))
+    health = asyncio.create_task(_healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS))
     disk_check = asyncio.create_task(_disk_watermark_loop(watermark, DISK_WATERMARK_INTERVAL_SECONDS))
 
     try:

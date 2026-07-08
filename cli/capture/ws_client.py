@@ -99,6 +99,12 @@ class CaptureClient:
         self._sleep = sleep_fn or asyncio.sleep
         self._ws = None
 
+    @property
+    def connected(self) -> bool:
+        """True while a live WS connection is established; False during reconnect/backoff. Lets the
+        liveness heartbeat stop pinging on a connectivity loss, not only on checksum desyncs."""
+        return self._ws is not None
+
     async def stream(self) -> AsyncIterator[dict]:
         """Yield parsed messages forever, reconnecting (with backoff) on any drop. Cancel the
         consuming task to stop — there is no internal stop condition."""
