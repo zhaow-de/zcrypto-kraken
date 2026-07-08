@@ -84,3 +84,24 @@ def nn_leak_metric(features: list[float], labels: list[float], train_idx: list[i
         best_j = min(train, key=lambda j: (abs(features[j] - xi), abs(j - i), j))
         total += labels[best_j] * labels[i]
     return total / len(test_idx)
+
+
+def outperformance_matrix(n_periods: int, n_strategies: int, *, edge: float, seed: int, edge_col: int = 0) -> list[list[float]]:
+    """T x K per-period outperformance-vs-benchmark matrix; column `edge_col` outperforms by `edge`/period."""
+    if not isinstance(n_periods, int) or n_periods < 1:
+        raise ValidationError(f"n_periods must be an int >= 1, got {n_periods!r}")
+    if not isinstance(n_strategies, int) or n_strategies < 1:
+        raise ValidationError(f"n_strategies must be an int >= 1, got {n_strategies!r}")
+    if not isinstance(edge, (int, float)) or not math.isfinite(edge):
+        raise ValidationError(f"edge must be a finite number, got {edge!r}")
+    if not isinstance(seed, int):
+        raise ValidationError(f"seed must be an int, got {seed!r}")
+    if not isinstance(edge_col, int) or not (0 <= edge_col < n_strategies):
+        raise ValidationError(f"edge_col must be an int in [0, {n_strategies}), got {edge_col!r}")
+    rng = random.Random(seed)
+    matrix: list[list[float]] = []
+    for _ in range(n_periods):
+        row = [rng.gauss(0.0, 1.0) for _ in range(n_strategies)]
+        row[edge_col] += edge
+        matrix.append(row)
+    return matrix
