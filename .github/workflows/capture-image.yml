@@ -7,6 +7,9 @@ on:
     paths:
       - "cli/capture/**"
       - "infra/docker/**"
+  # Manual trigger: on-demand rebuilds, and a way to test this workflow itself — edits to this
+  # file don't match the paths filter above, so a workflow-only change never auto-runs.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -20,6 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # QEMU registers binfmt handlers so buildx can cross-build the arm64 image on the amd64 runner.
+      - uses: docker/setup-qemu-action@v3.7.0
 
       - uses: docker/setup-buildx-action@v4.2.0
 
@@ -36,6 +42,15 @@ jobs:
         with:
           context: .
           file: infra/docker/Dockerfile
+          # amd64 = the current Linode host; arm64 = an ARM VPS / Apple-silicon local run. Both base
+          # images (python:3.14-slim, ghcr.io/astral-sh/uv) are multi-arch and `uv sync` installs
+          # wheels, so no Dockerfile change is needed.
+          platforms: linux/amd64,linux/arm64
+          # Disable SLSA provenance attestations: they publish an extra `unknown/unknown` manifest in
+          # GHCR's "OS/Arch" list (an attestation blob, not a runnable image). Off = the list shows
+          # exactly linux/amd64 + linux/arm64. (Re-enable with provenance: mode=max if supply-chain
+          # attestations are wanted later — accepting the unknown/unknown entries back.)
+          provenance: false
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}
@@ -47,10 +62,11 @@ jobs:
             echo "### Capture image pushed"
             echo
             echo "- Image: \`${{ env.IMAGE }}\`"
+            echo "- Platforms: \`linux/amd64\`, \`linux/arm64\`"
             echo "- Tags: \`${{ github.sha }}\`, \`latest\`"
             echo "- Digest: \`${{ steps.push.outputs.digest }}\`"
             echo
-            echo "Pin the Ansible deploy var with:"
+            echo "Pin the Ansible deploy var with (the multi-arch index digest; docker pull picks the host's arch):"
             echo '```yaml'
             echo "capture_image_digest: \"${{ steps.push.outputs.digest }}\""
             echo '```'
