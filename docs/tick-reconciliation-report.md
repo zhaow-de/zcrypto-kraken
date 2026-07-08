@@ -136,10 +136,42 @@ These would be the candidates to flag if early-2013 bars ever became load-bearin
 **Exit-bar reading:** the master-plan tolerance test (≥99.5 % of intervals within tolerance) is met at
 a 1 % band (99.94 %) but not at 1e-6; the honest conclusion is that the canonical dataset faithfully
 reproduces 12+ years of tick-derived bars to within ~10 bp, with a 0.064 % early-illiquid residual —
-and the exact Q1-2026 match reflects that recent data shares identical precision in both sources. The
-per-pair full-**universe** full-history batch (reading each pair's ~GB complete member) remains the
-deferred remainder (open topic `T0004`); this pass proves the reader + the representative BTC/EUR
-12-year run.
+and the exact Q1-2026 match reflects that recent data shares identical precision in both sources.
+
+## Full-universe full-history reconciliation — all 10 majors (iter-043)
+
+The whole universe, full history, complete dataset → **660,343 hourly bars, 100.0000 % coverage**
+(0 not-covered). Per-pair 1h match at each tolerance, and the count of bars diverging > 1 %:
+
+| Pair | ticks | 1h bars | 1e-6 | 10 bp | 1 % | > 1 % bars |
+|---|--:|--:|--:|--:|--:|--:|
+| BTC/EUR | 102,444,670 | 106,626 | 77.14 % | 97.23 % | 99.94 % | 68 |
+| ETH/EUR | 53,134,545 | 90,134 | 79.43 % | 97.37 % | 99.86 % | 125 |
+| LTC/EUR | 19,663,798 | 97,405 | 82.25 % | 95.58 % | **99.37 %** | 611 |
+| ADA/EUR | 13,529,994 | 63,463 | 77.47 % | 97.32 % | 99.96 % | 27 |
+| SOL/EUR | 12,076,835 | 39,758 | 85.95 % | 99.08 % | 100.00 % | 1 |
+| DOGE/EUR | 9,402,117 | 51,077 | 84.32 % | 98.00 % | 99.70 % | 152 |
+| DOT/EUR | 7,727,919 | 47,021 | 78.71 % | 98.97 % | 99.99 % | 3 |
+| LINK/EUR | 5,117,408 | 54,358 | 79.44 % | 98.10 % | 99.94 % | 34 |
+| XRP/EUR | 26,247,964 | 75,493 | 77.74 % | 97.43 % | 99.92 % | 63 |
+| AVAX/EUR | 1,528,331 | 35,008 | 91.42 % | 98.69 % | 99.99 % | 4 |
+
+**The BTC finding generalizes across the universe:** 100 % coverage everywhere; 1e-6 is
+precision-noise-limited (77–91 %); **9 of 10 pairs match ≥ 99.7 % within 1 %.** Total > 1 % divergences
+are **1088 bars (0.165 %)**, and — verified per year — they sit in each pair's **early-illiquid
+history**. The weakest pair, **LTC/EUR (99.37 % within 1 %, 611 > 1 % bars)**, is the clearest case:
+**606 of its 611 outliers fall in 2013–2017** (220 in 2014, 211 in 2015), with essentially none after
+2018 (5 bars in 8 years) — LTC was very thinly traded early, so the OHLCVT-vs-tick divergence is
+concentrated there while its modern history reconciles near-exactly.
+
+**Exit-bar verdict (honest):** at a 1 % tolerance the ≥ 99.5 %-of-intervals test is met for **9 of 10
+pairs**; **LTC (99.37 %) is marginally below**, dragged entirely by 2013–2017 sparse data. None of the
+pairs clear ≥ 99.5 % at 1e-6 (precision-noise-limited). The reconciliation itself is **complete** and
+the canonical dataset is validated as faithful to tick data to within ~1 % (≈ 10 bp for 95–99 %) over
+the full universe and full history — the residual is a characterized early-illiquid data property, not
+aggregation error. Whether that clears the Phase-1 tick-reconciliation exit bar is a **tolerance
+judgment** (accept ~1 % with the early-illiquid residual, or tighten and flag the early years) left for
+attended review — see open topic `T0004`.
 
 ## Reproduce
 

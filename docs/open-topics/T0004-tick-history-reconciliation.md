@@ -48,15 +48,23 @@ Iteration **iter-042** added the complete-dataset reader + a **full-history** BT
   storage-precision noise (median close reldiff 0.000 bps every year; same code gives 100 % on
   Q1-2026), with just **68 bars (0.064 %) genuinely diverging > 1 %**, isolated to 2013–2015
   early-illiquid history.
+- **iter-043 — full-**universe** full-history batch done:** all 10 majors, complete dataset →
+  **660,343 hourly bars, 100.0000 % coverage**; **9 of 10 pairs match ≥ 99.7 % within 1 %**, total
+  1088 bars (0.165 %) diverge > 1 %, all in each pair's early-illiquid history. Weakest is LTC/EUR
+  (99.37 % within 1 %; 606 of its 611 outliers in 2013–2017, near-clean from 2018). Precision-noise-
+  limited at 1e-6 (77–91 %). Table + per-year LTC breakdown in `docs/tick-reconciliation-report.md`.
 
 ## Suggested next steps
 
-Remainder (the full-**universe** batch + tick-level enhancements):
-- **Full-universe full-history batch** — extend the BTC/EUR full-history run to the other 9 majors
-  (each ~GB complete member, billions of ticks total) → then this topic can flip to `resolved`. The
-  reader now handles the format; this is the deferred heavy batch job. Fold in the exit-bar tolerance
-  question the BTC run surfaced (1 % band clears ≥99.5 %; 1e-6 is precision-noise-limited) and the
-  0.064 % early-illiquid >1 % divergences (flag or accept).
+The reconciliation work is complete; what remains is a judgment call + an optional future enhancement:
+- **(HUMAN — exit-bar tolerance judgment)** Decide whether the Phase-1 tick-reconciliation exit bar
+  (≥99.5 % of intervals within tolerance) is **met**: at a **1 % tolerance** it holds for 9/10 pairs
+  (LTC 99.37 %, marginally below, dragged only by 2013–2017 sparse data); at 1e-6/10 bp it is
+  precision-noise-limited. The reconciliation shows the canonical dataset is faithful to tick data to
+  ~1 % (≈10 bp for 95–99 %) universe-wide, with the residual isolated to early-illiquid history. If the
+  1 % band + the characterized early-illiquid residual are acceptable, flip this topic to `resolved`;
+  if not, decide whether to exclude/flag the pre-2018 sparse years. (Not autonomously resolved — this
+  touches the Phase-1 exit-bar standard.)
 - **15-minute bars + tick storage/catalog** — the aggregator is interval-parametric, so 15m is
   trivial once there is an OHLCVT 15m (or another) reference to reconcile against; a parse-on-demand
   model suffices for reconciliation, so a tick storage/catalog layer is only needed if Phase-4
