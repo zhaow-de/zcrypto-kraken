@@ -71,6 +71,49 @@ beta) or an artifact of this particular window.
 vol-targeted / gated family established on single-asset BTC — any Phase-4 alpha strategy still
 has to clear B0/B1/gated-B1 from the prior report, not the raw basket.
 
+## B3 and B4: gating and shorting the basket
+
+The gate here is the same 200-day long/flat rule as the single-asset panel, but applied to a
+**self-referential regime signal**: the basket's own equity index (the cumulative product of the
+B2 return series, seeded at 1.0), not a market proxy. B3 goes long when the basket's equity is
+above its trailing 200-day average and flat otherwise; B4 replaces "flat" with "short" below the
+average. Both run over the same common window (2021-12-21 → 2026-03-31, 1561 returns), zero-fee.
+
+| Strategy                          | Total return | Annualized | Sharpe | Max DD |
+| ---------------------------------- | ------------: | ----------: | ------: | ------: |
+| B2 — raw basket (reference)        |         0.68× |     −8.57% |   0.194 |   69.4% |
+| B3 — gated-B2 (200d, long/flat)    |         1.06× |      1.36% |   0.237 |   48.4% |
+| gated-B2 + vol-target              |         1.08× |      1.73% |   0.270 |   14.8% |
+| **B4 — basket long/short**          |     **0.34×** | **−22.43%** | **−0.136** | **83.0%** |
+
+Gate long fraction ≈ **41.8%**; B4 short fraction ≈ **45.5%**.
+
+**B3 (gate) rescues the raw basket from a loss but doesn't lift it.** Long only ~41.8% of the
+time, the gate turns the −8.6%/yr raw basket into a slight +1.4%/yr gain (0.68× → 1.06×) and
+roughly halves the drawdown (69.4% → 48.4%) by sitting out much of the alt bear — but Sharpe
+(0.237) stays far below the vol-targeted basket's 0.453.
+
+**The gate HURTS the vol-targeted basket.** gated-B2 + vol-target (Sharpe 0.270) is *worse* than
+plain B2 + vol-target (0.453): once vol-targeting controls the risk, the gate only subtracts
+participation. On the basket the gate and vol-target are **substitutes, not complements** — the
+*opposite* of single-asset BTC, where `gate × vol-target` (gated-B1) was the **best** result in
+the whole family (Sharpe 1.247, `docs/benchmark-b0-b1-report.md`).
+
+**B4 (short) is disastrous.** Adding the short takes Sharpe *negative* (**−0.136**) and the
+drawdown to **83.0%** — worse than every other line. The 200-day gate is a *lagging* signal: it
+flips to short only *after* price is already below the trailing SMA, so B4 shorts into the
+violent 2022–2023 bear-market counter-rallies and gets whipsawed. Shorting a lagging-trend basket
+over this window destroyed capital.
+
+**Family conclusion.** No overlay lifts the basket to the single-asset BTC bar. Vol-targeting is
+the only overlay that helps; gating rescues-but-doesn't-lift and is redundant with vol-targeting;
+shorting backfires. The deployable target remains **gated-B1** (vol-targeted BTC with the regime
+gate) from the single-asset panel.
+
+B4 is an **idealized long/short** (zero-cost, always-shortable). Real short-borrow costs and
+per-alt shortability constraints on Kraken spot-margin would make B4 *even worse* — and it is
+already the worst line in the panel.
+
 ## Distrust-the-instrument note
 
 The whole stack — 10 real `data/ohlc-full/<BASE>/EUR/1440.parquet` daily closes, common-calendar
@@ -92,5 +135,5 @@ the backtester.
 - **Fixed 10-asset intersection composition.** This basket drops each asset's pre-listing history
   to force a common calendar; the dynamic full-history variant that lets composition grow from 2
   assets (2013) to 10 (2021+) is parked as open topic **T0007**.
-- **B3** (gate × basket), **B4** (short), and the DSR/PBO/SPA statistical-significance comparison
-  across the full benchmark family are deferred to later iterations.
+- The DSR/PBO/SPA statistical-significance comparison across the full benchmark family, and the
+  basket-turnover cost model, are deferred to later iterations.
