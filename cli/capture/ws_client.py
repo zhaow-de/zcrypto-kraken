@@ -39,6 +39,21 @@ def build_subscribe_message(
     return message
 
 
+def build_unsubscribe_message(channel: str, symbols: list[str], *, depth: int | None = None, req_id: int | None = None) -> dict:
+    """Build a WS v2 `unsubscribe` request for `channel` over `symbols` — the inverse of
+    `build_subscribe_message`. Kraken rejects a re-`subscribe` of an already-active channel with
+    "Already subscribed" and sends no snapshot, so forcing a fresh book snapshot (desync recovery)
+    requires unsubscribe-then-subscribe. `depth` must match the original book subscription. There is
+    no `snapshot` param (it is subscribe-only)."""
+    params: dict = {"channel": channel, "symbol": list(symbols)}
+    if depth is not None:
+        params["depth"] = depth
+    message: dict = {"method": "unsubscribe", "params": params}
+    if req_id is not None:
+        message["req_id"] = req_id
+    return message
+
+
 def parse_message(raw: str | bytes) -> dict:
     """Parse one WS v2 text frame. Uses `parse_float=Decimal` so price/qty retain their exact
     wire-format precision (trailing zeros survive) — required for the book CRC32 checksum to be
@@ -61,6 +76,8 @@ def classify(msg: dict) -> str:
         return "heartbeat"
     if msg.get("method") == "subscribe":
         return "subscribe_ack" if msg.get("success") else "subscribe_error"
+    if msg.get("method") == "unsubscribe":
+        return "unsubscribe_ack" if msg.get("success") else "unsubscribe_error"
     return "other"
 
 
@@ -131,9 +148,13 @@ class CaptureClient:
         await ws.send(json.dumps(build_subscribe_message("trade", self._pairs)))
 
     async def resubscribe_book(self, pair: str) -> None:
-        """Re-subscribe a single pair's `book` channel (Kraken responds with a fresh snapshot) —
-        used to recover from a checksum desync without dropping the whole connection. A no-op if
-        not currently connected (the next reconnect resubscribes everything anyway)."""
+        """Force a fresh `book` snapshot for one pair to recover from a checksum desync without
+        dropping the whole connection: **unsubscribe then re-subscribe**. A bare re-`subscribe` of an
+        already-active channel is rejected by Kraken ("Already subscribed") and yields no snapshot, so
+        the desynced book could never heal — the unsubscribe first is what forces the new snapshot
+        (`ingest_snapshot` then rebuilds the book and clears `desynced`). A no-op if not currently
+        connected (the next reconnect resubscribes everything anyway)."""
         if self._ws is None:
             return
+        await self._ws.send(json.dumps(build_unsubscribe_message("book", [pair], depth=self._depth)))
         await self._ws.send(json.dumps(build_subscribe_message("book", [pair], depth=self._depth)))

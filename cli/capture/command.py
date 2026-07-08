@@ -141,7 +141,11 @@ async def _consume(
             _handle_trade_message(msg, trade_writers, watermark)
         elif category == "subscribe_error":
             logger.error("subscribe error: %s", msg)
-        # heartbeat / subscribe_ack / other -> nothing to do
+        elif category == "unsubscribe_error":
+            # the resubscribe recovery's unsubscribe leg was rejected — surface it, since a silently
+            # rejected request is exactly what made the desync incident undiagnosable
+            logger.error("unsubscribe error: %s", msg)
+        # heartbeat / subscribe_ack / unsubscribe_ack / other -> nothing to do
 
 
 async def _healthcheck_loop(url: str | None, client: CaptureClient, monitor: GapMonitor, pairs: list[str], interval: int) -> None:
