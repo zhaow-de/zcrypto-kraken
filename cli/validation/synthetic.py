@@ -42,3 +42,45 @@ def sign_strategy_returns(features: list[float], targets: list[float]) -> list[f
             raise ValidationError(f"non-finite value (x={x}, r={r})")
         out.append((1.0 if x >= 0 else -1.0) * r)
     return out
+
+
+def overlapping_label_series(n: int, *, horizon: int, seed: int) -> tuple[list[float], list[float]]:
+    """Feature x_t = t (index); label y_t = sum of `horizon` consecutive N(0,1) noise terms (overlapping labels).
+
+    Cov(y_i, y_j) = horizon - |i-j| for |i-j| < horizon, else 0. x carries no signal — any OOS skill is leakage.
+    """
+    if not isinstance(n, int) or n < 1:
+        raise ValidationError(f"n must be an int >= 1, got {n!r}")
+    if not isinstance(horizon, int) or horizon < 1:
+        raise ValidationError(f"horizon must be an int >= 1, got {horizon!r}")
+    if not isinstance(seed, int):
+        raise ValidationError(f"seed must be an int, got {seed!r}")
+    rng = random.Random(seed)
+    noise = [rng.gauss(0.0, 1.0) for _ in range(n + horizon - 1)]
+    features = [float(t) for t in range(n)]
+    labels = [sum(noise[t : t + horizon]) for t in range(n)]
+    return features, labels
+
+
+def nn_leak_metric(features: list[float], labels: list[float], train_idx: list[int], test_idx: list[int]) -> float:
+    """Mean over test of labels[j*]*labels[i], where j* is the nearest train index by feature (ties: smaller
+    |i-j|, then smaller j). With features=index this is a 1-NN-by-index leak probe."""
+    if len(features) != len(labels):
+        raise ValidationError(f"features and labels must match in length ({len(features)} != {len(labels)})")
+    if not train_idx or not test_idx:
+        raise ValidationError("train_idx and test_idx must be non-empty")
+    size = len(features)
+    for name, idxs in (("train_idx", train_idx), ("test_idx", test_idx)):
+        for j in idxs:
+            if not isinstance(j, int) or not (0 <= j < size):
+                raise ValidationError(f"{name} contains an out-of-range/non-int index {j!r}")
+    for v in (*features, *labels):
+        if not math.isfinite(v):
+            raise ValidationError(f"non-finite value {v}")
+    train = list(train_idx)
+    total = 0.0
+    for i in test_idx:
+        xi = features[i]
+        best_j = min(train, key=lambda j: (abs(features[j] - xi), abs(j - i), j))
+        total += labels[best_j] * labels[i]
+    return total / len(test_idx)

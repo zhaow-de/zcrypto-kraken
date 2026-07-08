@@ -3,7 +3,7 @@ import statistics
 
 import pytest
 
-from cli.validation import ValidationError, linear_signal, sign_strategy_returns
+from cli.validation import ValidationError, linear_signal, nn_leak_metric, overlapping_label_series, sign_strategy_returns
 
 
 def test_linear_signal_reproducible():
@@ -50,3 +50,59 @@ def test_sign_strategy_returns_basic():
 def test_sign_strategy_returns_guards(features, targets):
     with pytest.raises(ValidationError):
         sign_strategy_returns(features, targets)
+
+
+def test_overlapping_label_series_reproducible_and_shaped():
+    a = overlapping_label_series(50, horizon=5, seed=1)
+    assert a == overlapping_label_series(50, horizon=5, seed=1)
+    x, y = a
+    assert len(x) == 50 and len(y) == 50 and x == [float(t) for t in range(50)]
+
+
+def test_overlapping_label_covariance():
+    _x, y = overlapping_label_series(20000, horizon=10, seed=2)
+    import statistics as _st
+
+    var = _st.variance(y)
+    cov1 = _st.covariance(y[:-1], y[1:])  # |i-j|=1 -> ~ horizon-1 = 9
+    cov_h = _st.covariance(y[:-10], y[10:])  # |i-j|=horizon -> ~0
+    assert abs(var - 10) < 1.0
+    assert abs(cov1 - 9) < 1.0
+    assert abs(cov_h) < 0.5
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"n": 0, "horizon": 5, "seed": 1},
+        {"n": 10, "horizon": 0, "seed": 1},
+        {"n": 10, "horizon": 2.5, "seed": 1},
+        {"n": 10, "horizon": 5, "seed": "x"},
+    ],
+)
+def test_overlapping_label_series_guards(kwargs):
+    with pytest.raises(ValidationError):
+        overlapping_label_series(**kwargs)
+
+
+def test_nn_leak_metric_nearest_pick():
+    # features = index; test point 2's nearest train index is 1 (or 3). labels chosen so the pick is unambiguous.
+    feats = [0.0, 1.0, 2.0, 3.0, 4.0]
+    labels = [10.0, 5.0, 100.0, 5.0, 10.0]
+    # train {0,1,3,4}, test {2}: nearest to index 2 is 1 or 3 (dist 1); tie -> smaller |i-j| equal -> smaller j = 1
+    assert nn_leak_metric(feats, labels, [0, 1, 3, 4], [2]) == 5.0 * 100.0
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ([1.0], [1.0, 2.0], [0], [0]),  # length mismatch
+        ([1.0, 2.0], [1.0, 2.0], [], [0]),  # empty train
+        ([1.0, 2.0], [1.0, 2.0], [0], []),  # empty test
+        ([1.0, 2.0], [1.0, 2.0], [5], [0]),  # out-of-range
+        ([1.0, float("nan")], [1.0, 2.0], [0], [1]),  # non-finite
+    ],
+)
+def test_nn_leak_metric_guards(args):
+    with pytest.raises(ValidationError):
+        nn_leak_metric(*args)
