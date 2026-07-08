@@ -40,3 +40,13 @@ def vol_target(returns: list[float], *, target_vol: float, lookback: int, max_le
         rv = statistics.stdev(returns[t - lookback : t])
         positions.append(min(target_vol / rv, max_leverage) if rv > 0 else 0.0)
     return positions
+
+
+def returns_from_prices(prices: list[float]) -> list[float]:
+    """Close-to-close simple returns: r[t] = prices[t] / prices[t-1] - 1. Prices must be finite and positive."""
+    if not isinstance(prices, list) or len(prices) < 2:
+        raise BenchmarkError(f"prices must be a list of >= 2 values, got {prices!r}")
+    for p in prices:
+        if not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0:
+            raise BenchmarkError(f"prices must be finite positive numbers, got {p!r}")
+    return [prices[t] / prices[t - 1] - 1 for t in range(1, len(prices))]
