@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Full tick history ingestion + tick-derived bar reconciliation
@@ -54,19 +54,8 @@ Iteration **iter-042** added the complete-dataset reader + a **full-history** BT
   (99.37 % within 1 %; 606 of its 611 outliers in 2013–2017, near-clean from 2018). Precision-noise-
   limited at 1e-6 (77–91 %). Table + per-year LTC breakdown in `docs/tick-reconciliation-report.md`.
 
-## Suggested next steps
+## Resolution (2026-07-09, iter-044 open-topics sweep)
 
-The reconciliation work is complete; what remains is a judgment call + an optional future enhancement:
-- **(HUMAN — exit-bar tolerance judgment)** Decide whether the Phase-1 tick-reconciliation exit bar
-  (≥99.5 % of intervals within tolerance) is **met**: at a **1 % tolerance** it holds for 9/10 pairs
-  (LTC 99.37 %, marginally below, dragged only by 2013–2017 sparse data); at 1e-6/10 bp it is
-  precision-noise-limited. The reconciliation shows the canonical dataset is faithful to tick data to
-  ~1 % (≈10 bp for 95–99 %) universe-wide, with the residual isolated to early-illiquid history. If the
-  1 % band + the characterized early-illiquid residual are acceptable, flip this topic to `resolved`;
-  if not, decide whether to exclude/flag the pre-2018 sparse years. (Not autonomously resolved — this
-  touches the Phase-1 exit-bar standard.)
-- **15-minute bars + tick storage/catalog** — the aggregator is interval-parametric, so 15m is
-  trivial once there is an OHLCVT 15m (or another) reference to reconcile against; a parse-on-demand
-  model suffices for reconciliation, so a tick storage/catalog layer is only needed if Phase-4
-  microstructure features want repeated tick access.
-- Pick up the full-history batch + microstructure-feature substrate when Phase 4 needs it load-bearing.
+The human **confirmed the exit-bar tolerance is acceptable** (via `/research-loop`): the ≥99.5 %-of-intervals reconciliation is met at a **1 % band** (9/10 pairs ≥99.7 %; LTC 99.37 %, dragged only by 2013–2017 sparse data), with the residual a characterized, early-illiquid, cross-source precision property — not aggregation error. So the tick-vs-OHLCVT reconciliation is **complete and accepted**, closing the Phase-1 tick-granularity exit-bar item and delivering the true tick-weighted VWAP.
+
+The one remaining item — **15-minute bars + a tick storage/catalog** — is **not a standalone follow-up**: `cli/tick.ticks_to_bars` is interval-parametric (15m is one argument), and a parse-on-demand model already suffices, so this is folded into the **Bucket-B intraday families** (§5: B1 trend/seasonality, B2 derivatives-positioning) — built there if/when a B-family needs repeated tick/15m access. Nothing autonomously-resolvable remains here.
