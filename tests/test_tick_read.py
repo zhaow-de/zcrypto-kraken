@@ -91,6 +91,32 @@ def test_read_trades_csv_raises_when_every_row_is_too_short(tmp_path):
         read_trades_csv(path)
 
 
+def test_read_trades_csv_complete_3col_format(tmp_path):
+    # the complete dataset is headerless 3-field ts,price,volume (different order, no side)
+    path = tmp_path / "XBTEUR.csv"
+    path.write_text("1378856831,97.0,1.0\n1378859634,99.9,0.1\n")
+
+    frame = read_trades_csv(path)
+
+    assert frame.height == 2
+    assert frame["price"].to_list() == [97.0, 99.9]
+    assert frame["volume"].to_list() == [1.0, 0.1]
+    assert frame["ts"][0].year == 2013  # field 0 is the timestamp, not the price
+    assert frame["side"].to_list() == [None, None]  # side is unavailable in this schema
+
+
+def test_read_trades_csv_complete_3col_from_zip_member(tmp_path):
+    zip_path = tmp_path / "Kraken_Trading_History.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("TimeAndSales_Combined/XBTEUR.csv", "1378856831,97.0,1.0\n")
+
+    frame = read_trades_csv((zip_path, "TimeAndSales_Combined/XBTEUR.csv"))
+
+    assert frame.height == 1
+    assert frame["price"].to_list() == [97.0]
+    assert frame["side"].to_list() == [None]
+
+
 def test_read_trades_csv_raises_on_invalid_side(tmp_path):
     path = tmp_path / "XBTEUR.csv"
     path.write_text("100.0,1.0,1700000000.0,x\n")

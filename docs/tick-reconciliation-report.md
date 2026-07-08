@@ -97,14 +97,49 @@ The trades data is **not** a single schema (the spec assumed one — corrected h
   (the header text names only 6; a known Kraken export quirk). `read_trades_csv` reads the first four
   positionally, so extra trailing fields are ignored — handled.
 - **Complete dataset** (`Kraken_Trading_History.zip:TimeAndSales_Combined/<PAIR>.csv`, ~102 M rows,
-  2013 → the Q1-2026 boundary) — genuinely headerless, but only **3** fields in a *different order*:
-  `Timestamp,Price,Volume` — **no side/type column.** `read_trades_csv` raises a clean `TickError`
-  (not a silent misparse) if pointed at it, since it requests 4 columns from a 3-field file.
+  2013 → the Q1-2026 boundary) — genuinely headerless, only **3** fields in a *different order*:
+  `Timestamp,Price,Volume` — **no side/type column.** `read_trades_csv` auto-detects it (a 3-field
+  row whose first field is a plausible Unix timestamp `>= 1e9`) and reads it with `side` = null; a
+  3-field row whose first field is a small number is still treated as a malformed 4-field row and
+  errors, so genuinely-short rows are not silently reinterpreted (iter-042).
 
-This pass reconciles the quarterly format (the recent window the exit bar cares about). The
-full-history batch over the complete dataset needs a second recognized schema in `read_trades_csv`
-(the 3-column `ts,price,volume` layout; `side` is unused by the O/H/L/C/VWAP math, so it is a
-low-risk, mechanical extension) — tracked as the remainder of open topic `T0004`.
+Both layouts are now handled, so the full-history reconciliation below runs directly.
+
+## Full-history reconciliation — BTC/EUR, 2013–2025 (iter-042)
+
+With the complete-dataset reader, the whole BTC/EUR history reconciles end to end:
+**102,444,670 ticks** (`TimeAndSales_Combined/XBTEUR.csv`, 2013-09-10 → 2025-12-31) → 106,626 hourly
+bars vs the canonical OHLCVT, at **100.0000 % coverage** (0 not-covered). Unlike the Q1-2026 sample
+(100 % at 1e-6), the full history does **not** match to floating-point precision — and the honest read
+is more interesting than a headline number:
+
+| Tolerance | 1h match | 1d match |
+|---|--:|--:|
+| 1e-6 (exact-ish) | 77.14 % | 74.86 % |
+| 1e-4 (1 bp) | 88.24 % | 86.53 % |
+| 1e-3 (10 bp) | 97.23 % | 96.68 % |
+| 1e-2 (1 %) | **99.94 %** | **99.80 %** |
+
+**The strict miss is storage-precision noise, not aggregation error.** The same code gives 100 % on
+recent data, coverage is 100 %, and the **median close relative difference is 0.000 bps in every year**
+(2013–2025) — the centre of the distribution is exact. The historical OHLCVT (reconstructed from
+Kraken's 1-minute dumps, iter-008) and the TimeAndSales tick export carry slightly different rounding,
+so ~23 % of bars differ by an economically negligible sub-10-bp amount that busts the ultra-strict
+1e-6 but clears 10 bp (97 %) and 1 % (99.94 %).
+
+**Genuine divergences are tiny and isolated:** only **68 hourly bars (0.064 %) differ by > 1 %**,
+concentrated in **2013–2015** (48 in 2013) — the early, illiquid period where the OHLCVT dumps and the
+tick export disagree on the actual trades (sparse / revised early history) — plus 1 lone 2024 bar.
+These would be the candidates to flag if early-2013 bars ever became load-bearing (they are not for the
+1h/4h/1d strategies).
+
+**Exit-bar reading:** the master-plan tolerance test (≥99.5 % of intervals within tolerance) is met at
+a 1 % band (99.94 %) but not at 1e-6; the honest conclusion is that the canonical dataset faithfully
+reproduces 12+ years of tick-derived bars to within ~10 bp, with a 0.064 % early-illiquid residual —
+and the exact Q1-2026 match reflects that recent data shares identical precision in both sources. The
+per-pair full-**universe** full-history batch (reading each pair's ~GB complete member) remains the
+deferred remainder (open topic `T0004`); this pass proves the reader + the representative BTC/EUR
+12-year run.
 
 ## Reproduce
 

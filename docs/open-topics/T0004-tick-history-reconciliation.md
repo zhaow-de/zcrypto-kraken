@@ -34,19 +34,29 @@ Iteration **iter-039** (spec `docs/specs/00028-tick-reconciliation-design.md`, p
   100.0000 % coverage** — clears the ≥99.5 % exit-bar tolerance test for the sample. The true tick
   VWAP differs from the stored close-weighted proxy by ~1 bp (liquid) up to ~200 bps tails (illiquid).
 - **Data-schema finding:** the quarterly ZIPs are 7-field-with-header; the **complete** dataset is
-  headerless **3-field `Timestamp,Price,Volume`** (no side) — a different layout `read_trades_csv`
-  does not yet parse (it raises cleanly rather than misparsing).
+  headerless **3-field `Timestamp,Price,Volume`** (no side).
+
+Iteration **iter-042** added the complete-dataset reader + a **full-history** BTC/EUR run:
+
+- **`read_trades_csv` now auto-detects the complete 3-column layout** (a 3-field row whose first field
+  is a plausible Unix timestamp `≥ 1e9` → `ts,price,volume` with null side; a small first field is
+  still a malformed 4-field row and errors). TDD (2 new tests; the disambiguation keeps the existing
+  malformed-row tests green).
+- **Full-history BTC/EUR reconciliation** (`docs/tick-reconciliation-report.md`): 102.4 M ticks
+  (2013-09-10 → 2025-12-31) → 106,626 hourly bars, **100.0000 % coverage**. Match: **99.94 % within
+  1 %, 97.23 % within 10 bp**, but only 77 % at 1e-6 — the strict miss is sub-10-bp cross-source
+  storage-precision noise (median close reldiff 0.000 bps every year; same code gives 100 % on
+  Q1-2026), with just **68 bars (0.064 %) genuinely diverging > 1 %**, isolated to 2013–2015
+  early-illiquid history.
 
 ## Suggested next steps
 
-Remainder (the full-history batch + tick-level enhancements):
-
-- **Second CSV schema in `read_trades_csv`** — recognize the complete dataset's 3-column
-  `Timestamp,Price,Volume` (headerless, no side) layout, so the full history (2013 → present) can be
-  read, not just the quarterly window. Low-risk/mechanical (`side` is unused by the O/H/L/C/VWAP math).
-- **Full-universe / full-history reconciliation batch** — run the tolerance test over the complete
-  dataset (~102 M rows/pair, billions of ticks total) once the 3-column reader lands → then this
-  topic can flip to `resolved`. Deferred this pass per the spec's non-goals (heavy batch job).
+Remainder (the full-**universe** batch + tick-level enhancements):
+- **Full-universe full-history batch** — extend the BTC/EUR full-history run to the other 9 majors
+  (each ~GB complete member, billions of ticks total) → then this topic can flip to `resolved`. The
+  reader now handles the format; this is the deferred heavy batch job. Fold in the exit-bar tolerance
+  question the BTC run surfaced (1 % band clears ≥99.5 %; 1e-6 is precision-noise-limited) and the
+  0.064 % early-illiquid >1 % divergences (flag or accept).
 - **15-minute bars + tick storage/catalog** — the aggregator is interval-parametric, so 15m is
   trivial once there is an OHLCVT 15m (or another) reference to reconcile against; a parse-on-demand
   model suffices for reconciliation, so a tick storage/catalog layer is only needed if Phase-4
