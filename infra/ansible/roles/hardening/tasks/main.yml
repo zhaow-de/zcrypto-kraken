@@ -9,6 +9,15 @@
     path: /etc/ssh/sshd_config.d/10-zcrypto.conf
     state: absent
 
+# ssh_hardening sets PermitRootLogin no + AllowUsers deploy, so root can never log in over SSH —
+# but a stale /root/.ssh/authorized_keys (left by the provider's initial root-key provisioning)
+# would silently become live again if that policy ever regressed. Remove it as defense-in-depth so
+# no dangling root credential outlives the no-root-login posture.
+- name: remove any stale root authorized_keys (defense-in-depth for the no-root-login policy)
+  ansible.builtin.file:
+    path: /root/.ssh/authorized_keys
+    state: absent
+
 - name: apply devsec.hardening.os_hardening baseline (+ sysctl extras not already covered)
   ansible.builtin.include_role:
     name: devsec.hardening.os_hardening

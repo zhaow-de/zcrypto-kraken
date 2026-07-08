@@ -2,6 +2,24 @@
   community.general.timezone:
     name: "{{ base_timezone }}"
 
+- name: set the system hostname
+  ansible.builtin.hostname:
+    name: "{{ base_hostname }}"
+
+- name: ensure the hostname resolves locally (avoid sudo "unable to resolve host" warnings)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\b'
+    line: "127.0.1.1 {{ base_hostname }}"
+    state: present
+
+- name: install base utility packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: install unattended-upgrades
   ansible.builtin.apt:
     name: unattended-upgrades
