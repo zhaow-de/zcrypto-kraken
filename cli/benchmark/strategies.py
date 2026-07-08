@@ -74,3 +74,46 @@ def sma_gate(prices: list[float], *, window: int) -> list[float]:
         sma = statistics.mean(prices[k - window + 1 : k + 1])
         signal.append(1.0 if prices[k] > sma else 0.0)
     return signal
+
+
+def inverse_vol_basket(prices_by_asset: dict[str, list[float]], *, lookback: int) -> list[float]:
+    """Inverse-vol-weighted basket net return series (B2), look-ahead-free.
+
+    Each price series must be pre-aligned to the same length L. For return-period
+    t >= lookback, weight asset i by 1 / stdev(returns_i[t-lookback:t]) (the window
+    strictly before t), normalized over assets with positive trailing vol, and apply
+    to returns_i[t]. Warm-up (t < lookback) and days with no positive-vol asset are 0.0.
+    """
+    if not isinstance(lookback, int) or isinstance(lookback, bool) or lookback < 2:
+        raise BenchmarkError(f"lookback must be an int >= 2, got {lookback!r}")
+    if not isinstance(prices_by_asset, dict) or not prices_by_asset:
+        raise BenchmarkError("prices_by_asset must be a non-empty dict of price series")
+
+    returns_by_asset: dict[str, list[float]] = {}
+    lengths: set[int] = set()
+    for asset, prices in prices_by_asset.items():
+        returns_by_asset[asset] = returns_from_prices(prices)  # validates finite/positive/len>=2
+        lengths.add(len(prices))
+    if len(lengths) != 1:
+        raise BenchmarkError(f"all price series must have equal length, got {sorted(lengths)}")
+    length = lengths.pop()
+    if length < lookback + 2:
+        raise BenchmarkError(f"price series length {length} too short for lookback {lookback} (need >= {lookback + 2})")
+
+    n_returns = length - 1
+    portfolio: list[float] = []
+    for t in range(n_returns):
+        if t < lookback:
+            portfolio.append(0.0)
+            continue
+        inv_weights: dict[str, float] = {}
+        for asset, rets in returns_by_asset.items():
+            vol = statistics.stdev(rets[t - lookback : t])
+            if vol > 0.0:
+                inv_weights[asset] = 1.0 / vol
+        if not inv_weights:
+            portfolio.append(0.0)
+            continue
+        total = sum(inv_weights.values())
+        portfolio.append(sum((inv / total) * returns_by_asset[asset][t] for asset, inv in inv_weights.items()))
+    return portfolio
