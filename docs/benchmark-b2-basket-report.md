@@ -114,6 +114,36 @@ B4 is an **idealized long/short** (zero-cost, always-shortable). Real short-borr
 per-alt shortability constraints on Kraken spot-margin would make B4 *even worse* — and it is
 already the worst line in the panel.
 
+## Statistical significance (bootstrap CIs)
+
+Same method as `docs/benchmark-b0-b1-report.md`, scaled to this shorter window: 95% confidence
+intervals on the annualized Sharpe via the **stationary block bootstrap**
+(`cli.validation.bootstrap_ci`, Politis–Romano resampling) on each strategy's zero-fee net-return
+series, block length **ℓ=12** (≈ n^(1/3) for the 1561-return common window), **2000 resamples**,
+seed=42.
+
+| Strategy                     |   Point |          95% CI |
+| ------------------------------ | ------: | ---------------: |
+| B0 — BTC buy-and-hold          |   0.397 |  [−0.55, 1.38] |
+| B1 — BTC vol-target            |   0.456 |  [−0.59, 1.53] |
+| B2 — inverse-vol basket        |   0.194 |  [−0.74, 1.18] |
+| B3 — gated-B2                  |   0.237 |  [−0.68, 1.26] |
+| B2 + vol-target                |   0.453 |  [−0.57, 1.49] |
+| B4 — long/short                |  −0.136 |  [−1.05, 0.80] |
+
+**Every CI straddles zero.** Over this short ~4.3-year window, not one strategy — not BTC
+buy-and-hold, not the basket, not either vol-targeted line — has a significantly-positive Sharpe,
+and B4's −0.136 is not significantly negative either ([−1.05, 0.80] spans both signs). The
+basket's underperformance against BTC (`## Interpretation` above) and B4's disastrous −0.136
+(`## B3 and B4` above) are **directional point estimates, not significant results** at this
+sample size.
+
+This is a **power problem, not a null finding**: 1561 daily returns spanning a single
+bull→bear→recovery cycle cannot statistically distinguish these Sharpes from each other or from
+zero. It reinforces the case for the full-history, dynamic-composition basket parked as open
+topic **T0007** — a basket spanning BTC's full 2013–2026 history, rather than one truncated to
+AVAX's 2021-12 listing, would have the sample horizon this common window lacks.
+
 ## Distrust-the-instrument note
 
 The whole stack — 10 real `data/ohlc-full/<BASE>/EUR/1440.parquet` daily closes, common-calendar

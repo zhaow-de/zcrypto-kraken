@@ -109,6 +109,31 @@ A subtler, correct effect worth naming: **fees slightly raise the gated strategi
 **11.1% → 8.6%**) — because the fee drag deepens and extends drawdown troughs rather than just
 shaving off average return. This is expected behavior, not a bug.
 
+## Statistical significance (bootstrap CIs)
+
+The `## Results` and `## Cost stress` tables above are single-run point estimates. To gauge how
+much of the ranking is signal versus noise from one ~12-year price path, this section adds 95%
+confidence intervals on each strategy's annualized Sharpe, via a **stationary block bootstrap**
+(`cli.validation.bootstrap_ci`, Politis–Romano resampling) on the zero-fee net-return series, with
+block length **ℓ=16** (≈ n^(1/3) for the 4580-return history), **2000 resamples**, seed=42.
+
+| Strategy                             |  Point |        95% CI |
+| ------------------------------------- | -----: | -------------: |
+| B0 — buy-and-hold                     |  1.075 |  [0.47, 1.70] |
+| gated-B0                              |  1.102 |  [0.48, 1.70] |
+| B1 — vol-target                       |  1.111 |  [0.43, 1.79] |
+| gated-B1 (the bar)                    |  1.247 |  [0.61, 1.88] |
+
+**All four Sharpes are significantly positive** — every lower bound (0.43–0.61) sits well above
+zero, so each strategy's edge over a zero-Sharpe null is real. But **their CIs overlap heavily**:
+gated-B1's [0.61, 1.88] comfortably brackets the other three strategies' point estimates, and vice
+versa — from a single ~12-year path, the four Sharpes are **not statistically distinguishable**
+from one another. gated-B1 does carry both the highest point estimate (1.247) and the highest,
+most robustly-positive lower bound (~0.61, stable across block lengths ℓ∈{8,16,24} and seeds∈{1,
+42,99}), so it remains the best-supported pick in the family — but that pick rests on **point
+estimate + best lower bound + drawdown control** (12.3% vs B0's 82.5%), **not** on a statistically
+significant Sharpe edge over B0 or B1. No such edge exists at this sample size.
+
 ## Distrust-the-instrument note
 
 The whole stack — real `data/ohlc-full/BTC/EUR/1440.parquet` daily closes, `returns_from_prices`,
