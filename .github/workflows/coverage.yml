@@ -1,12 +1,9 @@
 name: Test coverage
 
 on:
-  push:
-    branches: [develop, main]
-  # Also run on PRs into develop/main so a failing test (or, before, a CI-only
-  # failure like the ANSI/gitignored-file cases) is caught *before* merge, not only
-  # on the post-merge push. The Coveralls upload below stays push-only so the
-  # coverage record tracks the integration branches, without duplicate PR builds.
+  # PRs into develop/main only. Every change reaches those branches via a PR, so the PR run gates
+  # each change before merge — and there is no redundant post-merge `push` run of the same suite.
+  # Coverage is uploaded from the PR build (so the README develop-branch badge tracks PR builds).
   pull_request:
     branches: [develop, main]
 
@@ -21,9 +18,7 @@ jobs:
       - run: uv sync
       - run: uv run coverage run -m pytest
       - run: uv run coverage lcov -o coverage.lcov
-        if: github.event_name == 'push'
       - name: Upload coverage to Coveralls
-        if: github.event_name == 'push'
         uses: coverallsapp/github-action@v2
         with:
           file: coverage.lcov

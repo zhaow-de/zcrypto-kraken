@@ -106,9 +106,11 @@ git push --force-with-lease origin "$(git branch --show-current)"
 PR_NUMBER=<the number for this PR>
 
 # Poll CI: every 30s, max 10 minutes.
-# This repo's coverage.yml runs on push to develop/main, NOT on pull_request,
-# so a Dependabot PR usually reports NO checks — that is treated as a pass,
-# and the local ruff + pytest gate above is the real merge gate.
+# coverage.yml now runs on pull_request into develop/main (dependabot targets develop), so a
+# Dependabot PR DOES report a "Test coverage" check — wait for it, and merge only when green.
+# Caveat: GitHub gives Dependabot-triggered pull_request runs restricted (read-only) secret
+# access, so if that check ever goes red purely on the Coveralls *upload* step (not on pytest),
+# that's a secrets-access artifact, not a real failure — inspect the log before escalating.
 deadline=$(( $(date +%s) + 600 ))
 state="pending"
 while [ "$(date +%s)" -lt "$deadline" ]; do
