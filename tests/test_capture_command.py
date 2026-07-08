@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -14,6 +15,11 @@ from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import verify_manifest
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+# The point-in-time universe JSON is a gitignored *generated* artifact (its canonical committed
+# form is docs/universe/point-in-time-universe.md); it is absent in CI and fresh checkouts.
+_REPO_UNIVERSE = Path("data/universe/point-in-time-universe.json")
 
 
 def test_default_pairs_filters_to_eur_quoted(tmp_path):
@@ -34,10 +40,13 @@ def test_default_pairs_raises_clear_error_on_malformed_universe_file(tmp_path):
         _default_pairs(universe_path)
 
 
-def test_default_pairs_from_committed_repo_universe_file():
-    # The repo's real point-in-time universe (data/universe/point-in-time-universe.json) has 12
-    # selected symbols, 10 of them EUR-quoted (the "EUR majors").
-    pairs = _default_pairs(Path("data/universe/point-in-time-universe.json"))
+@pytest.mark.skipif(not _REPO_UNIVERSE.exists(), reason="generated (gitignored) universe JSON absent — see docs/universe/*.md")
+def test_default_pairs_from_local_universe_file():
+    # A local sanity check on the real generated universe file when present: 12 selected symbols,
+    # 10 of them EUR-quoted (the "EUR majors"). Skips in CI / fresh checkouts (the file is a
+    # gitignored generated artifact); _default_pairs' logic itself is covered by the synthetic
+    # test_default_pairs_filters_to_eur_quoted above.
+    pairs = _default_pairs(_REPO_UNIVERSE)
     assert len(pairs) == 10
     assert all(p.endswith("/EUR") for p in pairs)
     assert "BTC/EUR" in pairs
@@ -58,10 +67,14 @@ def test_parse_ts_raises_capture_error_on_garbage():
 def test_capture_help_lists_options():
     result = runner.invoke(app, ["capture", "--help"])
     assert result.exit_code == 0
-    assert "--pairs" in result.output
-    assert "--depth" in result.output
-    assert "--data-dir" in result.output
-    assert "--duration" in result.output
+    # Strip ANSI: when the terminal reports color (e.g. CI with FORCE_COLOR), rich styles option
+    # names with escape codes *between* characters (`-`<esc>`-pairs`), so a raw substring check for
+    # "--pairs" fails even though it renders. Normalize before asserting.
+    output = _ANSI_RE.sub("", result.output)
+    assert "--pairs" in output
+    assert "--depth" in output
+    assert "--data-dir" in output
+    assert "--duration" in output
 
 
 class _FakeClient:
