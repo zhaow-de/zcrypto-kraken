@@ -32,7 +32,7 @@
   | B0 buy-and-hold | 606.9× | 1.075 | 82.5% | 66.7% |
   | gated-B0 (200d) | 188.9× | 1.102 | 62.8% | 51.9% |
   | B1 vol-target (10%/yr) | 3.76× | 1.111 | 22.0% | 13.2% |
-  | gated-B1 (gate × vol-target) | 2.77× | 1.247 | 12.3% | 11.1% |
+  | gated-B1 (gate × vol-target) | 2.75× | 1.247 | 12.3% | 11.1% |
 
   Gate long fraction ≈ 56.0%.
 

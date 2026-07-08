@@ -1,22 +1,29 @@
-# Benchmark Bar-to-Beat: B0/B1 on Real BTC/EUR Daily
+# Benchmark Gated-BTC Panel: B0/B1 and Their 200-Day-Gated Variants on Real BTC/EUR Daily
 
-This report records the first **bar-to-beat**: B0 buy-and-hold BTC and B1 vol-targeted BTC,
-run through the full stack (dataset → returns → strategy → backtester → metrics) on real
-BTC/EUR daily OHLC data (2013-09-10 → 2026-03-31; 4581 daily closes → 4580 returns from
-2013-09-11), at zero trading fees. Zero-fee is a benchmark idealization — cost stress is
-applied later, at evaluation time, per `docs/research/00.master-plan.md` §9 (cost stress).
-Any Phase-4 alpha strategy must clear this floor to be worth pursuing.
+This report records the **gated-BTC benchmark panel** — B0 buy-and-hold, B1 vol-targeted BTC, and
+their 200-day-gated variants (gated-B0, gated-B1) — run through the full stack (dataset → returns
+→ strategy → backtester → metrics) on real BTC/EUR daily OHLC data (2013-09-10 → 2026-03-31; 4581
+daily closes → 4580 returns from 2013-09-11), at zero trading fees. Zero-fee is a benchmark
+idealization — cost stress is applied later, at evaluation time, per
+`docs/research/00.master-plan.md` §9 (cost stress). Any Phase-4 alpha strategy must clear this
+floor to be worth pursuing.
 
 B1 uses the master plan's specified target — **vol-targeted BTC at 10–12%/yr** annualized
-realized vol (§9; §10 risk model), 30-day lookback, no leverage above 1.0×. The primary row
-below is the 10% end; the 10–12% range is discussed under Interpretation.
+realized vol (§9; §10 risk model), 30-day lookback, no leverage above 1.0×. The primary row below
+is the 10% end; the 10–12% range is discussed under Interpretation. The gate is the 200-day
+long/flat regime rule (the §5 prior survivor): long BTC when the close sits above its trailing
+200-day SMA, flat otherwise.
 
 ## Results
 
-| Strategy                            | Total return | Annualized | Sharpe | Max DD |
-| ----------------------------------- | ------------: | ----------: | ------: | ------: |
-| B0 — buy-and-hold                   |         606.9× |      66.7% |  1.075 |  82.5% |
-| B1 — vol-target (10%/yr, 30d, ≤1.0×) |           3.76× |      13.2% |  1.111 |  22.0% |
+| Strategy                             | Total return | Annualized | Sharpe | Max DD |
+| ------------------------------------- | ------------: | ----------: | ------: | ------: |
+| B0 — buy-and-hold                     |        606.9× |      66.7% |  1.075 |  82.5% |
+| gated-B0 — 200-day gate               |        188.9× |      51.9% |  1.102 |  62.8% |
+| B1 — vol-target (10%/yr, 30d, ≤1.0×)  |          3.76× |      13.2% |  1.111 |  22.0% |
+| gated-B1 — gate × vol-target          |          2.75× |      11.1% |  1.247 |  12.3% |
+
+The 200-day gate is long BTC on ~56.0% of days, flat the rest.
 
 ## Interpretation
 
@@ -37,10 +44,28 @@ Because vol-targeting scales the position linearly, **Sharpe is invariant to the
 14.6% → 15.9%** (total 3.8× → 4.5× → 5.4×). So the 10–12% band is a single risk/return ray, not
 a Sharpe choice.
 
-Together these are the deployment floor (§9's rule: the deployed system is the best of
-{benchmarks ∪ validated survivors}). Any Phase-4 alpha must clear **B0 on return/Sharpe** or
-**B1 on drawdown-for-Sharpe** to justify added complexity over simply holding — or vol-targeting
-— BTC.
+### The 200-day regime gate
+
+Overlaying the 200-day long/flat gate shows the same trade-off surfacing from the other side. On
+top of B0, the gate is long only ~56.0% of days, and this alone cuts the max drawdown from
+**82.5% → 62.8%** while *raising* the Sharpe from **1.075 → 1.102** — sidestepping some of BTC's
+worst drawdowns without giving up all participation in the trending regimes. Combined with
+vol-targeting (gated-B1 = gate × B1), the two effects compound: max drawdown falls further to
+**12.3%** (roughly a seventh of B0's), and Sharpe rises to **1.247** — the best risk-adjusted
+result in the panel, at the cost of participation (total return ~2.75×, 11.1%/yr — a similar
+order to B1 alone).
+
+This is directionally consistent with — and supports — the master plan's §1/§5 thesis: a
+disciplined, vol-targeted trend/regime rule — not raw buy-and-hold, and not vol-targeting alone —
+is the realistic best case and the deployable target family. (These are single-run, zero-fee
+benchmark numbers, not statistically-tested edges — the DSR/PBO/SPA significance comparison across
+the family is a later iteration; "supports," not "proves.") It sets the benchmark any Phase-4 alpha
+strategy must clear on risk-adjusted terms to justify added complexity.
+
+Together these four form the deployment floor (§9's rule: the deployed system is the best of
+{benchmarks ∪ validated survivors}). Any Phase-4 alpha must clear B0 on return/Sharpe, B1 on
+drawdown-for-Sharpe, or gated-B1 on risk-adjusted return (Sharpe 1.247, maxDD 12.3%) to justify
+added complexity over simply holding — or vol-targeting, or gating — BTC.
 
 ## Distrust-the-instrument note
 
@@ -55,8 +80,9 @@ vol-targeted position sitting near 0.17× matches the master plan's own expectat
 ## Caveats
 
 - Single-asset (BTC/EUR) only — no cross-asset panel yet.
-- Zero transaction cost — a benchmark idealization, not a live-trading estimate. (Vol-targeting
-  rebalances daily, so B1's *net* return is more fee-sensitive than B0's; the fee model folds in
-  with the full-panel run.)
-- The full B0–B4 benchmark panel and the DSR/PBO/SPA statistical-significance comparison
-  (the §9 deployment rule) are deferred to later iterations.
+- Zero transaction cost — a benchmark idealization, not a live-trading estimate. (The gated and
+  vol-targeted strategies rebalance whenever the gate flips or the vol-target position resizes, so
+  the *net* returns of gated-B0, B1, and gated-B1 are more fee-sensitive than B0's; the fee model
+  folds in with the full-panel run.)
+- The full B0–B4 benchmark panel (adding the basket + short strategies) and the DSR/PBO/SPA
+  statistical-significance comparison (the §9 deployment rule) are deferred to later iterations.
