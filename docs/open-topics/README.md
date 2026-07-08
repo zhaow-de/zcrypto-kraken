@@ -19,12 +19,11 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-- [T0004 — full tick history + tick-derived bar reconciliation](T0004-tick-history-reconciliation.md) — the tick-vs-OHLCVT tolerance test + true vwap; blocked on tick-data acquisition (not on NAS), deferred to Phase-4 microstructure / true-vwap need.
 - [T0007 — dynamic-composition inverse-vol basket (full-history B2 variant)](T0007-dynamic-composition-basket.md) — the richer B2 that grows the basket 2→10 assets over BTC's full 2013→2026 calendar; parked in iter-030 to isolate the look-ahead-critical weighting from composition churn.
 
 ### Partially done<a name="partially-done"></a>
 
-_(none)_
+- [T0004 — full tick history + tick-derived bar reconciliation](T0004-tick-history-reconciliation.md) — `cli/tick/` built + sample-validated (all 10 pairs, Q1-2026: 100% O/H/L/C match, true vwap); remainder = the 3-column complete-dataset reader + the full-history batch.
 
 ### Resolved<a name="resolved"></a>
 
