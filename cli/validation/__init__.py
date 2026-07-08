@@ -4,6 +4,7 @@ from cli.validation.dsr import deflated_sharpe_ratio, expected_max_sharpe, proba
 from cli.validation.errors import ValidationError
 from cli.validation.metrics import annualized_return, max_drawdown, sharpe, volatility
 from cli.validation.pbo import pbo
+from cli.validation.synthetic import linear_signal, sign_strategy_returns
 
 __all__ = [
     "ValidationError",
@@ -12,12 +13,14 @@ __all__ = [
     "cpcv_splits",
     "deflated_sharpe_ratio",
     "expected_max_sharpe",
+    "linear_signal",
     "make_groups",
     "max_drawdown",
     "n_backtest_paths",
     "pbo",
     "probabilistic_sharpe_ratio",
     "sharpe",
+    "sign_strategy_returns",
     "stationary_bootstrap_indices",
     "volatility",
 ]
