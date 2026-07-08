@@ -144,6 +144,45 @@ zero. It reinforces the case for the full-history, dynamic-composition basket pa
 topic **T0007** — a basket spanning BTC's full 2013–2026 history, rather than one truncated to
 AVAX's 2021-12 listing, would have the sample horizon this common window lacks.
 
+## Longer-history robustness check (4 majors, ~9 years)
+
+The window caveat above asks whether B2's underperformance is *structural* (alt-vs-BTC beta) or a
+*window artifact* of the alt-hostile 2021-12 → 2026-03 stretch. A partial answer, at low cost,
+comes from restricting the basket to the **four majors with long history** — BTC, ETH, LTC, XRP —
+whose common window is **2017-05-18 → 2026-03-31 (3239 days, ~8.9 years)**, spanning the 2018 bear,
+the 2020–21 bull, the 2022 crash, and the 2023–25 recovery (multiple full cycles). All strategies
+below are re-run over this identical window, zero-fee; gated-B1's Sharpe here (**0.759**) is
+window-specific and far below its full-history **1.247** (this window omits BTC's 2013–2016 run).
+
+| Strategy (same 2017–2026 window)       | Total return | Annualized | Sharpe | Max DD |
+| --------------------------------------- | ------------: | ----------: | ------: | ------: |
+| B0 — BTC buy-and-hold                   |        34.63× |      49.12% |  0.929 |  82.5% |
+| gated-B1 — BTC (the frozen bar)         |         1.68× |       6.05% |  0.759 |  12.3% |
+| 4-major inverse-vol basket              |        16.31× |      36.99% |  0.798 |  86.4% |
+| 4-major basket + vol-target (10%/yr)    |         2.22× |       9.43% |  0.841 |  20.9% |
+
+Two things change and one does not:
+
+- **The catastrophic loss was largely a window artifact.** Over ~9 years the raw 4-major basket
+  returns **16.31×** (Sharpe 0.798) — nothing like the 10-asset basket's 0.68× *loss* over the
+  4.3-year window. The 2021–2026 window was uniquely alt-hostile (it opened at the cycle top and
+  caught the 2022 crash before most alts recovered); a longer window that also contains the alt
+  bull runs is far kinder to the basket.
+- **A residual structural drag remains.** Even over ~9 years the raw basket does **not** beat
+  single-asset BTC on risk-adjusted terms — Sharpe 0.798 < BTC's 0.929, and its max drawdown
+  (86.4%) is *worse* than BTC's (82.5%). BTC was the best single major (34.6× vs ETH 21.1×, XRP
+  3.6×, LTC 1.8×), so inverse-vol weighting still dilutes the winner with laggards.
+- **The vol-targeted basket is competitive with the bar over this window.** The 4-major basket
+  *with* vol-targeting (Sharpe **0.841**, maxDD 20.9%) edges the same-window gated-B1 (0.759) on
+  Sharpe — though with a worse drawdown and on a single window. So the basket base, once
+  vol-targeted, is not disqualified; it is a *viable* candidate to A/B in Phase 4, more so than the
+  4.3-year window alone suggested (cf. `docs/research/05.phase4-orientation.md` finding 1).
+
+**Caveat:** this is a *fixed 4-asset* proxy (not the full 10, and not the dynamic 2→10 composition),
+and its window still starts in 2017, not BTC's 2013. It narrows the structural-vs-window question
+but does not close it — the honest test remains the full-history dynamic-composition basket
+(**T0007**).
+
 ## Distrust-the-instrument note
 
 The whole stack — 10 real `data/ohlc-full/<BASE>/EUR/1440.parquet` daily closes, common-calendar
