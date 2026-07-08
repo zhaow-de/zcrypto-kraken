@@ -134,6 +134,57 @@ most robustly-positive lower bound (~0.61, stable across block lengths ℓ∈{8,
 estimate + best lower bound + drawdown control** (12.3% vs B0's 82.5%), **not** on a statistically
 significant Sharpe edge over B0 or B1. No such edge exists at this sample size.
 
+## Regime slices (calendar-year)
+
+The tables above are single point estimates over the whole 2013–2026 history. This section slices
+the same zero-fee net-return series by **calendar year** — each return `rets[k]` is bucketed by the
+year it is realized in (`ts[k+1].year`), and each cell is the compounded net return for that
+strategy over that year's returns. **2013 and 2026 are partial years**: 2013 covers only the last
+108 days of the dataset (2013-09-11 to year end) and additionally sits inside the 200-day gate's
+warm-up, so gated-B1 shows 0.0% (flat, not yet gated); 2026 covers only the first 90 days of the
+year (through 2026-03-31, the dataset's end).
+
+| Year               |    B0 |   B1 | gated-B1 |
+| ------------------ | ----: | ---: | -------: |
+| 2013 (partial, 108 d) | 455.7% | 20.8% |     0.0% |
+| 2014               | −50.5% | −10.7% |   −5.5% |
+| 2015               |  48.5% | 20.2% |    19.1% |
+| 2016               | 131.1% | 39.9% |    39.9% |
+| 2017               | 1211.3% | 46.9% |    46.9% |
+| 2018               | −73.0% | −17.9% |   −5.2% |
+| 2019               |  97.7% | 25.2% |     8.9% |
+| 2020               | 269.6% | 33.6% |    27.5% |
+| 2021               |  71.9% |  9.6% |   −0.6% |
+| 2022               | −62.1% | −17.1% |   −0.5% |
+| 2023               | 149.0% | 27.0% |    11.4% |
+| 2024               | 134.6% | 23.8% |    17.2% |
+| 2025               | −17.3% | −4.1% |   −4.6% |
+| 2026 (partial, 90 d) | −20.8% | −5.2% |     0.0% |
+
+**gated-B1 turns catastrophic bear years into near-flat ones.** In the three big BTC bear years —
+2014 (**−50.5%**), 2018 (**−73.0%**), 2022 (**−62.1%**) — gated-B1 lost only **−5.5%, −5.2%,
+−0.5%** by going flat below the 200-day line. Its **worst year in the whole 2013–2026 sample is
+−5.5%**; B0 has four double-digit-loss years.
+
+**The gate's marginal value over vol-targeting is concentrated in the bear years.** Vol-targeting
+alone (B1) already softens them (2018 −17.9%, 2022 −17.1%), but the gate cuts them much further
+(2018 −5.2%, 2022 −0.5%). In calm uptrends (2016, 2017) the gate is long all year and gated-B1 ≡
+B1.
+
+**The cost is the bull-year cap.** gated-B1 gives up the explosive years — 2017 (**+46.9%** vs
+B0's **+1211%**), 2020 (+27.5% vs +269.6%) — so over the full history it dramatically
+underperforms buy-and-hold in *raw cumulative* return (the report's headline: 2.75× vs 607×). It
+trades return for the elimination of catastrophic years.
+
+**This decomposes the whole dossier.** The bootstrap CIs above showed gated-B1's Sharpe edge over
+B0/B1 is *not* statistically significant; the year-by-year view shows what *is* robust and
+economically real — not a higher average return, but **never losing more than ~6% in a year**.
+That bear-year elimination is the source of the low max drawdown (12.3% vs 82.5%) and is why
+gated-B1 is the frozen deployment bar.
+
+This is a single historical path, not a guarantee — "worst year −5.5%" describes 2013–2026, it is
+not a guaranteed floor for future years.
+
 ## Distrust-the-instrument note
 
 The whole stack — real `data/ohlc-full/BTC/EUR/1440.parquet` daily closes, `returns_from_prices`,
