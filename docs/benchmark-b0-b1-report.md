@@ -3,10 +3,10 @@
 This report records the **gated-BTC benchmark panel** — B0 buy-and-hold, B1 vol-targeted BTC, and
 their 200-day-gated variants (gated-B0, gated-B1) — run through the full stack (dataset → returns
 → strategy → backtester → metrics) on real BTC/EUR daily OHLC data (2013-09-10 → 2026-03-31; 4581
-daily closes → 4580 returns from 2013-09-11), at zero trading fees. Zero-fee is a benchmark
-idealization — cost stress is applied later, at evaluation time, per
-`docs/research/00.master-plan.md` §9 (cost stress). Any Phase-4 alpha strategy must clear this
-floor to be worth pursuing.
+daily closes → 4580 returns from 2013-09-11), at zero trading fees. Zero-fee is the headline
+benchmark idealization; the `## Cost stress (§9.6)` section below re-runs the same four strategies
+at the confirmed Tier-1 Kraken fee ladder, per `docs/research/00.master-plan.md` §9.6 (cost
+stress). Any Phase-4 alpha strategy must clear this floor to be worth pursuing.
 
 B1 uses the master plan's specified target — **vol-targeted BTC at 10–12%/yr** annualized
 realized vol (§9; §10 risk model), 30-day lookback, no leverage above 1.0×. The primary row below
@@ -67,6 +67,48 @@ Together these four form the deployment floor (§9's rule: the deployed system i
 drawdown-for-Sharpe, or gated-B1 on risk-adjusted return (Sharpe 1.247, maxDD 12.3%) to justify
 added complexity over simply holding — or vol-targeting, or gating — BTC.
 
+## Cost stress (§9.6)
+
+The master plan's §9.6 deployment gate requires every headline result to be re-run at 1.5× and 2×
+the fitted cost model, with the rule: **a strategy that dies at 1.5× costs is not deployable.** The
+fitted base here is the confirmed **Tier-1 Kraken maker fee, 0.40%**
+(`cli.costs.spot_fee_rates(0.0)["maker"]`), so the stress ladder is **0.40% (base) → 0.60% (1.5×)
+→ 0.80% (2×, which coincides with the Tier-1 taker fee)**, applied through the backtester's
+per-turnover `fee_rate`.
+
+### Sharpe by fee level
+
+| Strategy                             |    @0 | @0.40% (maker, base) | @0.60% (1.5×) | @0.80% (2×=taker) |
+| ------------------------------------- | -----: | ---------------------: | --------------: | -------------------: |
+| B0 — buy-and-hold                     | 1.075 |                  1.075 |            1.074 |                 1.074 |
+| gated-B0 — 200-day gate                | 1.102 |                  1.040 |            1.009 |                 0.978 |
+| B1 — vol-target (10%/yr, 30d, ≤1.0×)   | 1.111 |                  1.029 |            0.988 |                 0.948 |
+| gated-B1 — gate × vol-target           | 1.247 |                  1.117 |            1.052 |                 0.986 |
+
+**B0 is fee-immune.** Its turnover is ≈0.0002/day — it only ever buys once — so its Sharpe is
+essentially unchanged across the ladder (1.075 at zero fees, 1.074 at 2×).
+
+The **gated and vol-targeted strategies rebalance**: the vol-target position resizes daily and the
+gate flips regime, so gated-B1's turnover runs ≈0.008/day, and its net Sharpe erodes steadily with
+the fee — **1.247 → 1.117 → 1.052 → 0.986** across the ladder.
+
+**§9.6 verdict: gated-B1 does not die at 1.5×** — its Sharpe at 0.60% fees is 1.052, still above
+1.0, so it clears the deployment gate. The erosion is gentle precisely because its turnover is low.
+
+**The honest crossover (distrust-the-instrument).** At the realistic base maker fee (0.40%),
+gated-B1 (1.117) is still the panel's best Sharpe, above B0 (1.075). But because B0 is fee-immune
+while gated-B1 pays to rebalance, **B0 overtakes gated-B1 on Sharpe at 1.5×+ stress** (1.074 vs
+1.052 at 0.60%; 1.074 vs 0.986 at 0.80%). So gated-B1's *Sharpe edge over buy-and-hold* is
+fee-sensitive and does not survive the stress ladder — its **drawdown** advantage does: gated-B1's
+maxDD stays **15–18%** across the ladder versus B0's flat **82.5%**, roughly 4–5× smaller. The
+deployment case for the gated/vol-targeted family rests on **risk (drawdown) control**, not a
+fee-proof return edge.
+
+A subtler, correct effect worth naming: **fees slightly raise the gated strategies' max drawdown**
+— gated-B1's maxDD widens from **12.3% → 18.0%** across the ladder (annualized return also falls,
+**11.1% → 8.6%**) — because the fee drag deepens and extends drawdown troughs rather than just
+shaving off average return. This is expected behavior, not a bug.
+
 ## Distrust-the-instrument note
 
 The whole stack — real `data/ohlc-full/BTC/EUR/1440.parquet` daily closes, `returns_from_prices`,
@@ -80,9 +122,16 @@ vol-targeted position sitting near 0.17× matches the master plan's own expectat
 ## Caveats
 
 - Single-asset (BTC/EUR) only — no cross-asset panel yet.
-- Zero transaction cost — a benchmark idealization, not a live-trading estimate. (The gated and
-  vol-targeted strategies rebalance whenever the gate flips or the vol-target position resizes, so
-  the *net* returns of gated-B0, B1, and gated-B1 are more fee-sensitive than B0's; the fee model
-  folds in with the full-panel run.)
+- Zero transaction cost in the headline `## Results` table above — a benchmark idealization, not a
+  live-trading estimate. (The gated and vol-targeted strategies rebalance whenever the gate flips
+  or the vol-target position resizes, so the *net* returns of gated-B0, B1, and gated-B1 are more
+  fee-sensitive than B0's; the `## Cost stress (§9.6)` section above now applies the confirmed
+  Tier-1 fee ladder to all four.)
+- The `## Cost stress (§9.6)` ladder stresses **exchange fees only**. The bid-ask spread — a
+  further per-trade cost that would deepen the same erosion — is not yet modeled (it is gated on
+  the D2 forward-capture pipeline whose captured L2 books feed the per-pair spread term, open topic
+  T0003). Margin rollover/carry is genuinely N/A for this
+  panel: all four strategies are long/flat spot (position ≤ 1.0×, never short), so nothing is
+  borrowed.
 - The full B0–B4 benchmark panel (adding the basket + short strategies) and the DSR/PBO/SPA
   statistical-significance comparison (the §9 deployment rule) are deferred to later iterations.
