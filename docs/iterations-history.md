@@ -228,3 +228,12 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 - **Deferred:** B2 (inverse-vol basket), B3-proper (gate × basket, needs B2), B4 (short); an EMA variant; the real-data gated-BTC run (folds into the full B0–B4 panel dossier).
 - **Design/plan:** `docs/specs/00019-regime-gate-design.md`, `docs/plans/00019-regime-gate.md`. Fourth Phase-3 component (the B3 gate mechanism).
 - Independent whole-branch review (Sonnet): APPROVED, no Critical/Important findings — alignment look-ahead-free (verified live + via both off-by-one mutations), SMA math + composition + guards correct.
+
+## 2026-07-08 — iter-028: gated-BTC benchmark panel (Phase 3)
+
+- **Extended `docs/benchmark-b0-b1-report.md` to the four-strategy BTC panel** — added the 200-day-gated variants (gated-B0 = the §5 prior survivor; gated-B1 = gate × vol-target) run on real BTC/EUR daily (2013–2026) through the backtester, zero-fee. No new code (composes the existing `sma_gate`/`vol_target`/`run_backtest`).
+- **The §1/§5-thesis result, on real data.** The 200-day gate cuts B0's max drawdown **82.5% → 62.8%** while *raising* Sharpe **1.075 → 1.102** (long only ~56% of the time), and **gated-B1 (gate × vol-target) is the panel's best risk-adjusted result — Sharpe 1.247, maxDD 12.3%** (total 2.75×, 11.1%/yr). This *supports* the master plan's thesis that a disciplined vol-targeted trend/regime rule — not raw buy-and-hold, not vol-targeting alone — is the realistic best case / deployable target family.
+- **Distrust-the-instrument.** The implementer caught a rounding slip in *my plan* (gated-B1 total 2.77× vs the real **2.75×**), back-solved it from the annualized return, and used the real value (no fabrication). The whole-branch review reproduced all four rows bit-for-bit + cross-checked the annualized↔total-return consistency, and flagged that "validates" over-claimed for a single zero-fee non-significance-tested run — softened to "supports / directionally consistent with" (the DSR/PBO/SPA significance comparison across the family is a later iteration).
+- **Deferred:** the full B0–B4 panel (adding the inverse-vol basket B2 + the short B4) and the DSR/PBO/SPA significance comparison (the §9 deployment rule) — plus the fee model on the rebalancing strategies.
+- **Plan:** `docs/plans/00020-benchmark-gated-panel.md` (light doc iteration; no spec). Fifth Phase-3 component.
+- Independent whole-branch review (Sonnet): APPROVED — every panel number reproduced bit-for-bit from real data, interpretation honest (over-claim softened), scope clean.
