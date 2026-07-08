@@ -36,12 +36,11 @@ _(none)_
 
 ### Open<a name="open-1"></a>
 
-- [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — the hard Phase-1 exit-bar gate (≥7-day clean capture + verified sync); human-gated on VPS provisioning, then autonomous.
 - [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step.
 
 ### Partially done<a name="partially-done-1"></a>
 
-_(none)_
+- [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the workstation pull/NAS sync + alerting drill + the 7-day clean run.
 
 ### Resolved<a name="resolved-1"></a>
 
