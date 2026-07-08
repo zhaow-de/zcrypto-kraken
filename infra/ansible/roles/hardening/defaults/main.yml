@@ -14,6 +14,13 @@ hardening_ssh_listen_to:
 # redirects / source-routing. These two are the actual gaps against the spec's list:
 # dmesg_restrict isn't set by the role at all, and its ptrace_scope default (2, admin-only)
 # is stricter than the ptrace_scope=1 the spec asks for — merged in via sysctl_overwrite.
+#
+# net.ipv4.ip_forward MUST stay 1: this is a Docker host, and container↔internet egress needs
+# kernel IP forwarding (Docker's default bridge is IPv4-NAT). os_hardening's CIS default disables
+# it (0); we override to 1 so forwarding is persisted here rather than left to the docker daemon
+# to re-enable at runtime — that ordering is fragile and a hardening-only converge broke it
+# (ip_forward went to 0, all container egress died) until this override was added.
 hardening_extra_sysctl:
   kernel.dmesg_restrict: 1
   kernel.yama.ptrace_scope: 1
+  net.ipv4.ip_forward: 1
