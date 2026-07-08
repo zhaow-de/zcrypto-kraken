@@ -201,3 +201,12 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 - **Deferred (v1 scope):** margin carry (`cli.costs.margin_carry`) + spread (T0003-gated) + borrow as parameters; multi-asset/portfolio (the basket benchmark); cost-stress multipliers (§9.6, applied at eval time); the benchmark strategies B0–B4 (next iterations).
 - **Design/plan:** `docs/specs/00016-backtester-engine-design.md`, `docs/plans/00016-backtester-engine.md`. First Phase-3 component.
 - Independent whole-branch review (Sonnet): APPROVED, no Critical/Important findings — timing convention verified free of look-ahead, cost accounting correct, metrics reused not reimplemented, never NaN.
+
+## 2026-07-08 — iter-025: benchmark strategies B0 + B1 (Phase 3)
+
+- **Opened `cli/benchmark/`** — the first two benchmark strategies (position generators fed to the backtester): **B0 `buy_and_hold`** (constant full long) and **B1 `vol_target`** — `position[t] = min(target_vol / stdev(returns[t-lookback:t]), max_leverage)`, `0` for the warm-up (`t < lookback`) or a zero-vol window. **16 tests** (full suite 441). Stdlib-only (`statistics.stdev`, sample — consistent with the metrics module); `BenchmarkError` guards.
+- **Look-ahead-free (the crux).** The realized-vol window `returns[t-lookback:t]` **excludes `t`**, so `position[t]` never uses `return[t]`; the backtester then applies `position[t]` to `return[t]`, so the composed B1 strategy is look-ahead-free end to end. A test asserts `position[t]` is invariant to a perturbation of `return[t]` while `position[t+1]` (whose window includes `t`) does change.
+- **Distrust-the-instrument.** The whole-branch review live-perturbed `return[t]` (confirmed `position[t]` unchanged, `position[t+1]` changed) and **constructed the off-by-one inclusive-window bug** (`[t-lookback:t+1]`) to prove the test would catch it; verified the vol estimator matches `cli.validation`, the cap/zero-vol/warm-up paths, guards, and a real `run_backtest` integration.
+- **Deferred:** B2 (inverse-vol majors basket), B3 (B2 + 200-day long/flat gate), B4 (B3 + short), and the real-data bar-to-beat dossier (all of B0–B4 through the backtester on the Phase-1 dataset, with DSR/PBO/SPA comparison — §9's deployment rule).
+- **Design/plan:** `docs/specs/00017-benchmark-b0-b1-design.md`, `docs/plans/00017-benchmark-b0-b1.md`. Second Phase-3 component.
+- Independent whole-branch review (Sonnet): APPROVED, no Critical/Important findings — no look-ahead (verified live + via off-by-one mutation), vol math correct + codebase-consistent, guards clean.
