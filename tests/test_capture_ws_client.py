@@ -8,6 +8,7 @@ from cli.capture.errors import CaptureError
 from cli.capture.ws_client import (
     CaptureClient,
     build_subscribe_message,
+    build_unsubscribe_message,
     classify,
     compute_backoff,
     parse_message,
@@ -36,6 +37,15 @@ def test_build_subscribe_message_includes_req_id_when_given():
     assert msg["req_id"] == 7
 
 
+def test_build_unsubscribe_message_book_includes_depth_and_no_snapshot():
+    msg = build_unsubscribe_message("book", ["BTC/EUR"], depth=100)
+    assert msg == {
+        "method": "unsubscribe",
+        "params": {"channel": "book", "symbol": ["BTC/EUR"], "depth": 100},
+    }
+    assert "snapshot" not in msg["params"]
+
+
 def test_parse_message_preserves_trailing_zero_precision():
     parsed = parse_message('{"price": 0.30000000, "n": 3}')
     assert parsed["price"] == Decimal("0.30000000")
@@ -59,6 +69,8 @@ def test_parse_message_raises_capture_error_on_invalid_json():
         ({"channel": "heartbeat"}, "heartbeat"),
         ({"method": "subscribe", "success": True}, "subscribe_ack"),
         ({"method": "subscribe", "success": False}, "subscribe_error"),
+        ({"method": "unsubscribe", "success": True}, "unsubscribe_ack"),
+        ({"method": "unsubscribe", "success": False}, "unsubscribe_error"),
         ({"channel": "status"}, "other"),
     ],
 )
@@ -178,7 +190,9 @@ def test_stream_reconnects_with_backoff_after_connection_closed():
     asyncio.run(run())
 
 
-def test_resubscribe_book_sends_single_pair_subscribe():
+def test_resubscribe_book_unsubscribes_then_subscribes():
+    # Kraken rejects a bare re-subscribe of an active channel ("Already subscribed") and sends no
+    # snapshot, so recovery must unsubscribe THEN subscribe (in that order) to force a fresh snapshot.
     async def run():
         conn = _FakeConnection(['{"channel": "heartbeat"}'])
         connect_fn, _ = _connect_fn_returning(conn)
@@ -187,12 +201,16 @@ def test_resubscribe_book_sends_single_pair_subscribe():
         async for _ in client.stream():
             break
 
+        sent_before = len(conn.sent)
         await client.resubscribe_book("BTC/EUR")
         import json
 
-        last = json.loads(conn.sent[-1])
-        assert last["params"]["symbol"] == ["BTC/EUR"]
-        assert last["params"]["channel"] == "book"
+        new_frames = [json.loads(f) for f in conn.sent[sent_before:]]
+        assert [f["method"] for f in new_frames] == ["unsubscribe", "subscribe"]
+        for frame in new_frames:
+            assert frame["params"]["channel"] == "book"
+            assert frame["params"]["symbol"] == ["BTC/EUR"]
+            assert frame["params"]["depth"] == 100
 
     asyncio.run(run())
 
