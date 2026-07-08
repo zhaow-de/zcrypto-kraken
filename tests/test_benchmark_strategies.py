@@ -4,7 +4,7 @@ import statistics
 import pytest
 
 from cli.backtest import run_backtest
-from cli.benchmark import BenchmarkError, buy_and_hold, returns_from_prices, vol_target
+from cli.benchmark import BenchmarkError, buy_and_hold, returns_from_prices, sma_gate, vol_target
 
 
 def test_buy_and_hold():
@@ -88,3 +88,54 @@ def test_returns_from_prices():
 def test_returns_from_prices_guards(prices):
     with pytest.raises(BenchmarkError):
         returns_from_prices(prices)
+
+
+def test_sma_gate_value():
+    assert sma_gate([10.0, 11.0, 12.0, 9.0, 8.0, 13.0], window=3) == [0.0, 0.0, 1.0, 0.0, 0.0]
+
+
+def test_sma_gate_length_and_warmup():
+    prices = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+    g = sma_gate(prices, window=3)
+    assert len(g) == len(prices) - 1
+    assert g[:2] == [0.0, 0.0]
+
+
+def test_sma_gate_no_lookahead():
+    prices = [10.0, 11.0, 12.0, 9.0, 8.0, 13.0, 14.0]
+    window, k = 3, 2
+    base = sma_gate(prices, window=window)
+    perturbed = list(prices)
+    perturbed[k + 1] = 100.0
+    pert = sma_gate(perturbed, window=window)
+    assert pert[k] == base[k]  # signal[k]'s window excludes prices[k+1]
+    assert pert[k + 1] != base[k + 1]  # signal[k+1]'s window includes k+1 -> changes (window is real)
+
+
+def test_sma_gate_declining_mostly_flat():
+    g = sma_gate([100.0, 90.0, 80.0, 70.0, 60.0, 50.0], window=3)
+    assert all(s == 0.0 for s in g)
+
+
+def test_sma_gate_short_series_all_flat():
+    assert sma_gate([10.0, 11.0], window=5) == [0.0]
+
+
+@pytest.mark.parametrize(
+    "prices,window",
+    [([10.0], 3), ([10.0, float("nan")], 3), ([10.0, -5.0], 3), ([10.0, 11.0, 12.0], 1), ([10.0, 11.0, 12.0], 2.5)],
+)
+def test_sma_gate_guards(prices, window):
+    with pytest.raises(BenchmarkError):
+        sma_gate(prices, window=window)
+
+
+def test_sma_gate_composes_with_backtester():
+    prices = [100.0 * (1.003**i) * (1 + 0.02 * ((i % 5) - 2)) for i in range(300)]
+    rets = returns_from_prices(prices)
+    gate = sma_gate(prices, window=50)
+    r0 = run_backtest(rets, gate, fee_rate=0.0, periods_per_year=252)  # gated buy-and-hold
+    assert math.isfinite(r0["sharpe"]) and r0["n_periods"] == len(rets)
+    gv = [g * v for g, v in zip(gate, vol_target(rets, target_vol=0.01, lookback=20, max_leverage=1.0))]
+    r1 = run_backtest(rets, gv, fee_rate=0.0, periods_per_year=252)  # gated vol-target
+    assert math.isfinite(r1["sharpe"])

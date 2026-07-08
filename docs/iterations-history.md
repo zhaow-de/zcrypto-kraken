@@ -219,3 +219,12 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 - **Deferred:** B2 (inverse-vol basket), B3 (200-day gate), B4 (short); the full B0–B4 panel + the DSR/PBO/SPA significance comparison (the §9 deployment rule); the fee model on the rebalancing benchmarks.
 - **Plan:** `docs/plans/00018-benchmark-bar-to-beat.md` (light report iteration; no separate spec). Third Phase-3 component.
 - Independent whole-branch review (Sonnet): APPROVED after the B1 target-vol correction — helper correct, every report number reproduced bit-for-bit from real data (no fabrication), B1 now matches the master-plan canonical definition.
+
+## 2026-07-08 — iter-027: regime gate (200-day SMA long/flat) (Phase 3)
+
+- **Added `cli/benchmark/sma_gate`** — the §5 **prior survivor** (the best-performing prior-phase rule): a long/flat regime signal `signal[k] = 1.0 if prices[k] > SMA(prices[k-window+1:k+1]) else 0.0`, aligned with the return series (length `len(prices)-1`), warm-up 0. Composes multiplicatively: gated buy-and-hold = `sma_gate` itself; gated vol-target = `sma_gate × vol_target`. **11 new tests** (full suite 459). Stdlib-only; `BenchmarkError` guards.
+- **Look-ahead-free (the crux).** `signal[k]` uses `prices[k-window+1 .. k]` — through `prices[k]`, the price at the **start** of return-period `k` (which is the move `prices[k]→prices[k+1]`) — and never `prices[k+1]`. `prices[k]` legitimately appears in both the gate decision and the period's return without look-ahead (decide at the start, earn the period), matching the backtester's own timing contract.
+- **Distrust-the-instrument.** The whole-branch review live-perturbed `prices[k+1]` (confirmed `signal[k]` unchanged, `signal[k+1]` changed) and **constructed both off-by-one variants** — a forward shift (real look-ahead) turns the no-look-ahead test red, a backward shift crashes the value test — so both alignment directions are pinned by the suite. SMA math, warm-up boundary, composition, and guards all verified.
+- **Deferred:** B2 (inverse-vol basket), B3-proper (gate × basket, needs B2), B4 (short); an EMA variant; the real-data gated-BTC run (folds into the full B0–B4 panel dossier).
+- **Design/plan:** `docs/specs/00019-regime-gate-design.md`, `docs/plans/00019-regime-gate.md`. Fourth Phase-3 component (the B3 gate mechanism).
+- Independent whole-branch review (Sonnet): APPROVED, no Critical/Important findings — alignment look-ahead-free (verified live + via both off-by-one mutations), SMA math + composition + guards correct.

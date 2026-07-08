@@ -50,3 +50,27 @@ def returns_from_prices(prices: list[float]) -> list[float]:
         if not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0:
             raise BenchmarkError(f"prices must be finite positive numbers, got {p!r}")
     return [prices[t] / prices[t - 1] - 1 for t in range(1, len(prices))]
+
+
+def sma_gate(prices: list[float], *, window: int) -> list[float]:
+    """Long/flat 200-day-style regime gate: signal[k] = 1.0 if prices[k] > SMA(prices[k-window+1:k+1]) else 0.0.
+
+    Returns length len(prices)-1, aligned with returns_from_prices(prices) (element k = the move prices[k] ->
+    prices[k+1]). signal[k] uses only prices[<= k] (through prices[k], the price at the start of return-period
+    k) and never prices[k+1] -> no look-ahead. Warm-up (k < window-1) is 0.0.
+    """
+    if not isinstance(prices, list) or len(prices) < 2:
+        raise BenchmarkError(f"prices must be a list of >= 2 values, got {prices!r}")
+    for p in prices:
+        if not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0:
+            raise BenchmarkError(f"prices must be finite positive numbers, got {p!r}")
+    if not isinstance(window, int) or window < 2:
+        raise BenchmarkError(f"window must be an int >= 2, got {window!r}")
+    signal: list[float] = []
+    for k in range(len(prices) - 1):
+        if k < window - 1:
+            signal.append(0.0)
+            continue
+        sma = statistics.mean(prices[k - window + 1 : k + 1])
+        signal.append(1.0 if prices[k] > sma else 0.0)
+    return signal
