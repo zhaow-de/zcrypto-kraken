@@ -1,0 +1,27 @@
+# bootstrap.yml leaves a temporary sshd drop-in behind (/etc/ssh/sshd_config.d/10-zcrypto.conf,
+# "Port 22" + "Port 10022") so 10022 can be verified before 22 is retired. Below,
+# devsec.hardening.ssh_hardening replaces /etc/ssh/sshd_config wholesale with no
+# "Include sshd_config.d/*.conf" directive, so the drop-in is orphaned (never read again) the
+# moment this role runs — remove it explicitly too, so the effective config is never shadowed
+# by a stale, misleading file that still claims port 22 is open.
+- name: remove the bootstrap's temporary sshd drop-in (port 22 retires here)
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/10-zcrypto.conf
+    state: absent
+
+- name: apply devsec.hardening.os_hardening baseline (+ sysctl extras not already covered)
+  ansible.builtin.include_role:
+    name: devsec.hardening.os_hardening
+  vars:
+    sysctl_overwrite: "{{ hardening_extra_sysctl }}"
+
+- name: apply devsec.hardening.ssh_hardening baseline (port 10022, key-only, no-root)
+  ansible.builtin.include_role:
+    name: devsec.hardening.ssh_hardening
+  vars:
+    ssh_server_ports: ["{{ hardening_ssh_port }}"]
+    ssh_permit_root_login: "no"
+    ssh_server_password_login: false
+    ssh_pubkey_authentication: true
+    ssh_allow_users: "{{ hardening_ssh_allow_users }}"
+    ssh_listen_to: "{{ hardening_ssh_listen_to }}"

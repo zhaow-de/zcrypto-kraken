@@ -1,0 +1,6 @@
+# Two independent public NTS servers for basic redundancy — Cloudflare and PTB
+# (Germany's national metrology institute), both widely documented chrony NTS sources.
+chrony_nts_servers:
+  - time.cloudflare.com
+  - ntp3.ptb.de
+chrony_makestep: "1.0 3"

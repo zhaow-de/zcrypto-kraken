@@ -1,0 +1,22 @@
+- name: converge the capture host — hardening, host config, docker, capture (steady state)
+  hosts: capture_host
+  become: true
+  pre_tasks:
+    - name: note — assumes bootstrap.yml already ran
+      ansible.builtin.debug:
+        msg: >-
+          This play targets deploy@{{ ansible_port }} and assumes bootstrap.yml already
+          created the deploy user and opened port 10022 for verification (root + password
+          login still enabled at that point). The hardening role below removes the
+          bootstrap's temporary sshd drop-in and makes 10022 the only SSH port — run this
+          play only once deploy@10022 access is confirmed. Idempotent: changed=0 on a
+          clean second run.
+  roles:
+    - base
+    - hardening
+    - firewall
+    - fail2ban
+    - chrony
+    - docker
+    - role: capture
+      tags: [capture]

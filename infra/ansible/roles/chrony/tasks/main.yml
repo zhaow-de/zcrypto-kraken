@@ -1,0 +1,33 @@
+- name: ensure chrony is installed
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: configure chrony — NTS servers + makestep
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart chrony
+
+- name: enable + start chrony
+  ansible.builtin.systemd:
+    name: chrony
+    enabled: true
+    state: started
+
+- name: flush handlers so the source verification below sees the new config
+  ansible.builtin.meta: flush_handlers
+
+- name: verify chrony NTS sources
+  ansible.builtin.command: chronyc -N sources
+  register: chrony_sources_result
+  changed_when: false
+
+- name: report chrony sources
+  ansible.builtin.debug:
+    var: chrony_sources_result.stdout_lines

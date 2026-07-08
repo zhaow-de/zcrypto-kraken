@@ -11,6 +11,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
 
 - [Requirements](#requirements)
 - [Usage](#usage)
+  - [`zcrypto capture`](#zcrypto-capture)
   - [Configuration](#configuration)
     - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
 
@@ -34,7 +35,24 @@ zcrypto [OPTIONS]          # or: uv run python -m cli [OPTIONS]
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | Log threshold (default `INFO`). Applies to the `zcrypto.*` loggers.     |
 | `-h`, `--help`                           | Show help and exit.                                                     |
 
-`zcrypto` currently exposes **no subcommands** — only the global options above. Running it with no options (or with `-h` / `--help`) prints the help.
+Running `zcrypto` with no options (or with `-h` / `--help`) prints the help.
+
+### `zcrypto capture`<a name="zcrypto-capture"></a>
+
+24/7 daemon that streams Kraken's **public** WS v2 feed (no API keys) — order book (depth 100) + trades — for the universe pairs, and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment) for later backfill/analysis.
+
+```bash
+zcrypto capture [OPTIONS]
+```
+
+| Option              | Description                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `--pairs <PAIR>`    | Pair to capture, e.g. `--pairs BTC/EUR`; repeat for multiple. Defaults to the EUR majors in `data/universe/point-in-time-universe.json`. |
+| `--depth <INT>`     | Order book depth: one of `10`, `25`, `100`, `500`, `1000` (default `100`).                                                               |
+| `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_CAPTURE_DATA_DIR` if set, else `/var/lib/zcrypto-capture/segments`.                 |
+| `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted.                                          |
+
+Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
 
 ### Configuration<a name="configuration"></a>
 

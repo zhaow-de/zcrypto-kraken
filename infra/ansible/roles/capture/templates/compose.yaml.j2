@@ -1,0 +1,26 @@
+# Rendered by the `capture` Ansible role at /opt/zcrypto-capture/compose.yaml — do not
+# hand-edit on the host, it is overwritten on the next converge. Edit
+# infra/ansible/roles/capture/templates/compose.yaml.j2 (and its standalone reference
+# counterpart infra/docker/compose.yaml) instead.
+services:
+  capture:
+    image: "{{ capture_image }}@{{ capture_image_digest }}"
+    restart: unless-stopped
+    user: "{{ capture_uid }}:{{ capture_gid }}"
+    environment:
+      CAPTURE_DATA_DIR: "{{ capture_data_dir }}"
+      CAPTURE_DEPTH: "{{ capture_depth }}"
+      CAPTURE_PAIRS: "{{ capture_pairs | join(',') }}"
+      HEALTHCHECK_URL: "{{ capture_healthcheck_url }}"
+    volumes:
+      - "{{ capture_data_dir }}:{{ capture_data_dir }}"
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ capture_cpu_limit }}"
+          memory: "{{ capture_memory_limit }}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ capture_log_max_size }}"
+        max-file: "{{ capture_log_max_file }}"

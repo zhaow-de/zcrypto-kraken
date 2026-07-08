@@ -4,12 +4,14 @@ from typing import Optional
 
 import typer
 
+from cli.capture.command import capture
 from cli.logging import configure
 
 app = typer.Typer(
     add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+app.command(name="capture")(capture)
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 
