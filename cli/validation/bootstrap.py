@@ -26,6 +26,8 @@ def stationary_bootstrap_indices(n_obs: int, *, mean_block: float, n_resamples: 
         raise ValidationError(f"seed must be an int, got {seed!r}")
     if not isinstance(n_obs, int) or n_obs < 1:
         raise ValidationError(f"n_obs must be an int >= 1, got {n_obs!r}")
+    if not isinstance(mean_block, (int, float)):
+        raise ValidationError(f"mean_block must be numeric, got {mean_block!r}")
     if not math.isfinite(mean_block) or mean_block < 1:
         raise ValidationError(f"mean_block must be finite and >= 1, got {mean_block}")
     if not isinstance(n_resamples, int) or n_resamples < 1:
@@ -58,10 +60,14 @@ def bootstrap_ci(
     for x in series:
         if not math.isfinite(x):
             raise ValidationError(f"series values must be finite, got {x}")
+    if not isinstance(mean_block, (int, float)):
+        raise ValidationError(f"mean_block must be numeric, got {mean_block!r}")
     if not math.isfinite(mean_block) or mean_block < 1:
         raise ValidationError(f"mean_block must be finite and >= 1, got {mean_block}")
     if not isinstance(n_resamples, int) or n_resamples < 1:
         raise ValidationError(f"n_resamples must be an int >= 1, got {n_resamples!r}")
+    if not isinstance(alpha, (int, float)):
+        raise ValidationError(f"alpha must be numeric, got {alpha!r}")
     if not 0 < alpha < 1:
         raise ValidationError(f"alpha must be in (0, 1), got {alpha}")
 

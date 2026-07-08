@@ -12,8 +12,12 @@ def linear_signal(n: int, *, beta: float, noise_sd: float, seed: int) -> tuple[l
         raise ValidationError(f"n must be an int >= 1, got {n!r}")
     if not isinstance(seed, int):
         raise ValidationError(f"seed must be an int, got {seed!r}")
+    if not isinstance(beta, (int, float)):
+        raise ValidationError(f"beta must be numeric, got {beta!r}")
     if not math.isfinite(beta):
         raise ValidationError(f"beta must be finite, got {beta}")
+    if not isinstance(noise_sd, (int, float)):
+        raise ValidationError(f"noise_sd must be numeric, got {noise_sd!r}")
     if not math.isfinite(noise_sd) or noise_sd < 0:
         raise ValidationError(f"noise_sd must be finite and >= 0, got {noise_sd}")
     rng = random.Random(seed)

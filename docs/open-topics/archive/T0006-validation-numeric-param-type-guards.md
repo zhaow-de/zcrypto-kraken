@@ -1,8 +1,10 @@
 ---
-status: open
+status: resolved
 ---
 
 # Harness numeric-param type guards (raise ValidationError, not TypeError)
+
+**Resolved (iter-021, 2026-07-08, PR #26):** the defined scope — the float numeric params (`bootstrap.py` `mean_block`/`alpha`; `dsr.py` `sr`/`var_trials`/`benchmark_sr`/`skew`/`kurtosis`; `pbo.py` `perf_matrix` cells; plus `metrics.py` `risk_free` and `synthetic.py` `beta`/`noise_sd`) — now `isinstance(x, (int, float))`-guard before their `isfinite`/range checks, raising `ValidationError` on a non-numeric type; 11 regression tests. Per this topic's own "Already-hardened (no action)" note, `dsr.py`'s `n_trials`/`n_obs` are deliberately left `isfinite`-only (they feed arithmetic, not `range()`; a non-numeric type there still gives a clear `TypeError`, never NaN) — closed **per defined scope**, not as "the pattern eliminated everywhere."
 
 ## Context — what
 

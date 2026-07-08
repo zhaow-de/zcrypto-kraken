@@ -27,6 +27,8 @@ def pbo(
         if len(row) != n_cols:
             raise ValidationError("perf_matrix must be rectangular")
         for x in row:
+            if not isinstance(x, (int, float)):
+                raise ValidationError(f"perf_matrix cells must be numeric, got {x!r}")
             if not math.isfinite(x):
                 raise ValidationError(f"perf_matrix cells must be finite, got {x}")
 

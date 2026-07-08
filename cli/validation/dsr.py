@@ -13,6 +13,8 @@ def expected_max_sharpe(n_trials: int, var_trials: float) -> float:
     """Expected maximum of `n_trials` i.i.d. N(0, var_trials) trial Sharpes (Bailey & Lopez de Prado)."""
     if not math.isfinite(n_trials) or n_trials < 1:
         raise ValidationError(f"n_trials must be finite and >= 1, got {n_trials}")
+    if not isinstance(var_trials, (int, float)):
+        raise ValidationError(f"var_trials must be numeric, got {var_trials!r}")
     if not math.isfinite(var_trials) or var_trials < 0:
         raise ValidationError(f"var_trials must be finite and >= 0, got {var_trials}")
     if n_trials == 1 or var_trials == 0:
@@ -37,6 +39,8 @@ def probabilistic_sharpe_ratio(
     if not math.isfinite(n_obs) or n_obs < 2:
         raise ValidationError(f"n_obs must be finite and >= 2, got {n_obs}")
     for name, value in (("sr", sr), ("benchmark_sr", benchmark_sr), ("skew", skew), ("kurtosis", kurtosis)):
+        if not isinstance(value, (int, float)):
+            raise ValidationError(f"{name} must be numeric, got {value!r}")
         if not math.isfinite(value):
             raise ValidationError(f"{name} must be finite, got {value}")
     denom = 1 - skew * sr + (kurtosis - 1) / 4 * sr**2

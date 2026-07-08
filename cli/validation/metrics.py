@@ -26,6 +26,8 @@ def _check_periods_per_year(periods_per_year: int | None, *, required: bool) -> 
 def sharpe(returns: list[float], *, risk_free: float = 0.0, periods_per_year: int | None = None) -> float:
     """Per-period Sharpe (sample stdev), optionally annualized by sqrt(periods_per_year). Never NaN."""
     _check_returns(returns, min_len=2)
+    if not isinstance(risk_free, (int, float)):
+        raise ValidationError(f"risk_free must be numeric, got {risk_free!r}")
     if not math.isfinite(risk_free):
         raise ValidationError(f"risk_free must be finite, got {risk_free}")
     _check_periods_per_year(periods_per_year, required=False)

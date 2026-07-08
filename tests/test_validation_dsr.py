@@ -42,6 +42,7 @@ def test_emp_known_value():
         (float("nan"), 1.0),
         (float("inf"), 1.0),
         (10**16, 1.0),
+        (2, "x"),
     ],
 )
 def test_emp_guards(n, v):
@@ -81,6 +82,10 @@ def test_psr_matches_normaldist_cdf():
         ((0.5, float("nan")), {}),  # non-finite n_obs
         ((0.5, float("inf")), {}),  # non-finite n_obs
         ((2.0, 100), {"kurtosis": 0.0}),  # denom = 1 - 0 + (0-1)/4*4 = 0 <= 0
+        ((0.5, 100), {"skew": "x"}),  # non-numeric skew
+        (("x", 100), {}),  # non-numeric sr
+        ((0.5, 100), {"benchmark_sr": "x"}),  # non-numeric benchmark_sr
+        ((0.5, 100), {"kurtosis": "x"}),  # non-numeric kurtosis
     ],
 )
 def test_psr_guards_never_nan(args, kwargs):

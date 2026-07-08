@@ -49,6 +49,7 @@ def test_pbo_custom_metric_is_used():
         ([[1, 2], [3]], {"n_splits": 2}),  # non-rectangular
         ([[1, 2], [float("nan"), 3], [1, 2], [3, 4]], {"n_splits": 2}),  # non-finite cell
         ([[10, 0]] * 4, {"n_splits": 2.0}),  # even-float n_splits
+        ([[1, "x"], [2, 3], [1, 2], [3, 4]], {"n_splits": 2}),  # non-numeric cell
     ],
 )
 def test_pbo_guards(matrix, kwargs):
