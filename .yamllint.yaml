@@ -26,3 +26,9 @@ rules:
   colons:
     max-spaces-before: 0
     max-spaces-after: 1
+
+# Encrypted files are not parseable YAML — skip them
+ignore: |
+  infra/ansible/group_vars/*/vault.yml
+  infra/ansible/host_vars/*/vault.yml
+  infra/ansible/vault-password.sops.yaml

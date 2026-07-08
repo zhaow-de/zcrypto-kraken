@@ -1,0 +1,9 @@
+capture_depth: 100
+capture_pairs: [ADA/EUR, AVAX/EUR, BTC/EUR, DOGE/EUR, DOT/EUR, ETH/EUR, LINK/EUR, LTC/EUR, SOL/EUR, XRP/EUR]
+capture_data_dir: /var/lib/zcrypto-capture
+capture_image: ghcr.io/zhaow-de/zcrypto-capture
+healthchecks_project_id: "32eaee6f-cb82-4773-9471-4b802136adc1"
+deploy_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOO82sGb3FN50G4/javc3F9aAaoA5uU+I9XCgh7c4TQ zcrypto-deploy"
+sync_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM3nknO1BYgFJ5EvqT9nKG2bgs79TUWit4DusU+iDcxt zcrypto-sync-pullonly"
+ansible_user: deploy
+ansible_port: 10022

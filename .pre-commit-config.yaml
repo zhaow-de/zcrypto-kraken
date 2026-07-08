@@ -10,6 +10,7 @@ repos:
       - id: check-toml
       - id: check-yaml
         args: ["--allow-multiple-documents", "--unsafe"]
+        exclude: '^infra/ansible/(group_vars/.*/vault\.yml|host_vars/.*/vault\.yml|vault-password\.sops\.yaml)$'
       - id: debug-statements
       - id: end-of-file-fixer
       - id: mixed-line-ending
