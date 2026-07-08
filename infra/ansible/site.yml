@@ -11,12 +11,19 @@
           bootstrap's temporary sshd drop-in and makes 10022 the only SSH port — run this
           play only once deploy@10022 access is confirmed. Idempotent: changed=0 on a
           clean second run.
+      tags: [always]
   roles:
-    - base
-    - hardening
-    - firewall
-    - fail2ban
-    - chrony
-    - docker
+    - role: base
+      tags: [base]
+    - role: hardening
+      tags: [hardening]
+    - role: firewall
+      tags: [firewall]
+    - role: fail2ban
+      tags: [fail2ban]
+    - role: chrony
+      tags: [chrony]
+    - role: docker
+      tags: [docker]
     - role: capture
       tags: [capture]

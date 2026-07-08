@@ -1,4 +1,10 @@
 base_timezone: UTC
+base_hostname: zcrypto
+
+# Base utility packages present on every capture host (diagnostics + a proper apt resolver).
+base_packages:
+  - net-tools
+  - aptitude
 
 # unattended-upgrades: security pocket only, auto-reboot, email on failure only.
 # No mailer/relay is wired up for this host yet — "root" is the safe, always-present
