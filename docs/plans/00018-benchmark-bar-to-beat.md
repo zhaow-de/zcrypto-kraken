@@ -62,15 +62,15 @@ def returns_from_prices(prices: list[float]) -> list[float]:
 - [ ] **Step 1: Write + run** a scratchpad script that:
   - `read_parquet("data/ohlc-full/BTC/EUR/1440.parquet")`; `closes = f["close"].to_list()`; `rets = returns_from_prices(closes)`.
   - B0: `run_backtest(rets, buy_and_hold(len(rets)), fee_rate=0.0, periods_per_year=365)`.
-  - B1: per-period target `tv = 0.60 / (365 ** 0.5)`; `pos = vol_target(rets, target_vol=tv, lookback=30, max_leverage=1.0)`; `run_backtest(rets, pos, fee_rate=0.0, periods_per_year=365)`.
+  - B1: per-period target `tv = 0.10 / (365 ** 0.5)` (the master plan's specified B1 target — vol-targeted BTC at **10–12%/yr**, §9/§10; 10% is the primary); `pos = vol_target(rets, target_vol=tv, lookback=30, max_leverage=1.0)`; `run_backtest(rets, pos, fee_rate=0.0, periods_per_year=365)`.
   - Write `docs/benchmark-b0-b1-report.md` with the numbers.
 
-  **Expected values (verify your run matches — if it diverges materially, STOP and report):** B0 total_return ≈ 606.9, sharpe ≈ 1.075, maxDD ≈ 0.825, annret ≈ 0.667. B1 total_return ≈ 131.1, sharpe ≈ 0.979, maxDD ≈ 0.724, annret ≈ 0.476. Period: 2013-09-10 → 2026-03-31, 4580 daily returns.
+  **Expected values (verify your run matches — if it diverges materially, STOP and report):** B0 total_return ≈ 606.9, sharpe ≈ 1.075, maxDD ≈ 0.825, annret ≈ 0.667. B1 (10%/yr) total_return ≈ 3.76, sharpe ≈ 1.111, maxDD ≈ 0.220, annret ≈ 0.132. Period: 2013-09-10 → 2026-03-31, 4580 daily returns.
 
 - [ ] **Step 2: `docs/benchmark-b0-b1-report.md` content** — a short report:
   - Title + one-paragraph intro: the first bar-to-beat — B0 buy-and-hold BTC + B1 vol-targeted BTC on BTC/EUR daily (2013-09-10 → 2026-03-31, 4580 returns), zero-fee (a benchmark idealization; cost stress applied at evaluation per §9.6).
   - A results table: `Strategy | Total return | Annualized | Sharpe | Max DD` with the two rows.
-  - Interpretation: BTC buy-and-hold is a high-Sharpe (~1.08) but brutal-drawdown (~82%) floor; vol-targeting (60%/yr, 30d) cuts the drawdown (~72%) and total return (607× → 131×) at a similar Sharpe — the deployment rule's floor.
+  - Interpretation: BTC buy-and-hold is a high-return but brutal-drawdown (~82%) floor; vol-targeting at the master plan's 10%/yr target (§9, 30d) is the low-risk floor — maxDD ~22% (vs 82%) at a slightly higher Sharpe (~1.11, target-invariant), median exposure ~0.17×.
   - **Distrust-the-instrument note:** the whole stack (dataset → returns → strategy → backtester → metrics) runs on real data and the numbers are sane — BTC's ~82% max drawdown is a known historical fact (2018/2022 crashes), confirming the backtester + maxDD are correct.
   - Caveats: single-asset BTC only; zero transaction cost; the full B0–B4 panel + DSR/PBO/SPA comparison (the §9 deployment rule) is deferred to later iterations.
 
@@ -82,6 +82,6 @@ def returns_from_prices(prices: list[float]) -> list[float]:
 
 **Files:** Modify: `docs/iterations-history.md`
 
-- [ ] **Step 1:** Append `## 2026-07-08 — iter-026: B0/B1 bar-to-beat report (Phase 3)`: added `returns_from_prices` (close-to-close, reusable by B2–B4); ran B0 buy-and-hold + B1 vol-target on real BTC/EUR daily (2013–2026, 4580 returns) through the backtester → `docs/benchmark-b0-b1-report.md`: **B0 Sharpe 1.075 / maxDD 82.5% / 66.7% annualized / 607×**; **B1 (60%/yr, 30d) Sharpe 0.979 / maxDD 72.4% / 131×**. Validates the full stack on real data (the ~82% DD matches BTC's history — the engine is right); records the first deployment floor. Zero-fee idealization; single-asset; full B0–B4 panel deferred. Plan `00018`. Note the whole-branch review verdict.
+- [ ] **Step 1:** Append `## 2026-07-08 — iter-026: B0/B1 bar-to-beat report (Phase 3)`: added `returns_from_prices` (close-to-close, reusable by B2–B4); ran B0 buy-and-hold + B1 vol-target on real BTC/EUR daily (2013–2026, 4580 returns) through the backtester → `docs/benchmark-b0-b1-report.md`: **B0 Sharpe 1.075 / maxDD 82.5% / 66.7% annualized / 607×**; **B1 (10%/yr per §9, 30d) Sharpe 1.111 / maxDD 22.0% / 13.2% annualized / 3.76×** (Sharpe target-invariant; 10–12% is a single risk/return ray). Validates the full stack on real data (the ~82% DD matches BTC's history — the engine is right); records the first deployment floor. Zero-fee idealization; single-asset; full B0–B4 panel deferred. Plan `00018`. Note the whole-branch review verdict.
 
 - [ ] **Step 2: Commit** — `docs: iter-026 closeout — bar-to-beat report`.

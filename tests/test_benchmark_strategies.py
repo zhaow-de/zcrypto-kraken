@@ -4,7 +4,7 @@ import statistics
 import pytest
 
 from cli.backtest import run_backtest
-from cli.benchmark import BenchmarkError, buy_and_hold, vol_target
+from cli.benchmark import BenchmarkError, buy_and_hold, returns_from_prices, vol_target
 
 
 def test_buy_and_hold():
@@ -75,3 +75,16 @@ def test_vol_target_composes_with_backtester():
     pos = vol_target(returns, target_vol=0.015, lookback=20, max_leverage=2.0)
     r = run_backtest(returns, pos, fee_rate=0.0, periods_per_year=252)
     assert math.isfinite(r["sharpe"]) and r["n_periods"] == 200
+
+
+def test_returns_from_prices():
+    assert returns_from_prices([100.0, 110.0, 99.0]) == pytest.approx([0.10, -0.10])
+
+
+@pytest.mark.parametrize(
+    "prices",
+    [[100.0], [], [100.0, float("nan")], [100.0, -5.0], [100.0, 0.0], "not a list"],
+)
+def test_returns_from_prices_guards(prices):
+    with pytest.raises(BenchmarkError):
+        returns_from_prices(prices)
