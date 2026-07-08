@@ -32,6 +32,8 @@ def test_linear_signal_null_low_correlation():
         {"n": 10, "beta": float("nan"), "noise_sd": 1.0, "seed": 1},
         {"n": 10, "beta": 0.5, "noise_sd": -1.0, "seed": 1},
         {"n": 10, "beta": 0.5, "noise_sd": float("inf"), "seed": 1},
+        {"n": 10, "beta": "x", "noise_sd": 1.0, "seed": 1},
+        {"n": 10, "beta": 0.5, "noise_sd": "x", "seed": 1},
     ],
 )
 def test_linear_signal_guards(kwargs):

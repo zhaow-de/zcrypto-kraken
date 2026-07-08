@@ -33,6 +33,7 @@ def test_sharpe_risk_free_lowers():
         ([0.01, 0.03], {"periods_per_year": -1}),
         ([0.01, 0.03], {"periods_per_year": 2.5}),
         ([0.01, 0.01, 0.01], {}),
+        ([0.01, 0.03], {"risk_free": "x"}),
     ],
 )
 def test_sharpe_guards(returns, kwargs):
