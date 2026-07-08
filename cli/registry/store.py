@@ -9,6 +9,7 @@ from pathlib import Path
 from cli.logging.get_logger import get_logger
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 from cli.registry.record import (
+    GENESIS_HASH,
     SCHEMA_VERSION,
     TrialRecord,
     canonical_json,
@@ -36,6 +37,7 @@ def _to_record(rec: dict) -> TrialRecord:
         verdict=rec["verdict"],
         run_ref=rec.get("run_ref"),
         notes=rec.get("notes", ""),
+        prev_hash=rec["prev_hash"],
         record_hash=rec["record_hash"],
     )
 
@@ -45,6 +47,9 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
     for idx, rec in enumerate(recs):
         if rec["trial_id"] != idx + 1:
             raise RegistryCorruptionError(f"{path}: trial_id {rec['trial_id']} not contiguous (expected {idx + 1})")
+        expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
+        if rec["prev_hash"] != expected_prev:
+            raise RegistryCorruptionError(f"{path}: trial {rec['trial_id']} prev_hash breaks the chain")
         prior = seen.get(rec["family"], 0)
         if rec["n_trials_in_family"] < prior + 1:
             raise RegistryCorruptionError(
@@ -91,10 +96,14 @@ def _now_utc_iso() -> str:
 
 
 class TrialRegistry:
-    """Append-only, integrity-checked JSONL store of validation trials. See docs/specs/00000-trial-registry-design.md.
+    """Append-only, integrity-checked JSONL store of validation trials. See docs/specs/00000-trial-registry-design.md
+    and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain, schema v2).
 
-    The record_hash self-check catches accidental/careless in-place edits (and, with contiguity, deletion/
-    reorder/truncation); it is NOT tamper-evidence against a re-hashing writer — that is the Phase-2 hash chain.
+    The record_hash self-check catches accidental/careless in-place edits; contiguity + monotone family counts
+    catch deletion/reorder/truncation. The prev_hash chain (each record commits to its predecessor's record_hash,
+    genesis for the first) adds tamper-evidence against a re-hashing writer: re-hashing any single record breaks
+    the *next* record's link. Residual gap (non-goal, needs an external anchor): a writer that re-hashes the entire
+    trailing suffix can still forge a consistent chain.
     """
 
     def __init__(self, path: Path) -> None:
@@ -143,7 +152,14 @@ class TrialRegistry:
             prior = sum(1 for r in disk if r["family"] == family)
             if n_trials_in_family < prior + 1:
                 raise RegistryError(f"n_trials_in_family={n_trials_in_family} < {prior + 1} already recorded in family {family!r}")
-            rec = {**caller, "trial_id": next_id, "schema_version": SCHEMA_VERSION, "timestamp": _now_utc_iso()}
+            prev_hash = disk[-1]["record_hash"] if disk else GENESIS_HASH
+            rec = {
+                **caller,
+                "trial_id": next_id,
+                "schema_version": SCHEMA_VERSION,
+                "timestamp": _now_utc_iso(),
+                "prev_hash": prev_hash,
+            }
             rec["record_hash"] = compute_hash(rec)
             lock_f.write(canonical_json(rec) + "\n")
             lock_f.flush()
