@@ -136,3 +136,47 @@ def _asset_directions(
                 d.append(0.0)
         directions[asset] = d
     return directions
+
+
+import statistics
+
+
+def _asset_returns(prices: list[float | None]) -> list[float | None]:
+    """Per-asset union-calendar returns: ret[t] = prices[t+1]/prices[t]-1 iff both present, else None."""
+    return [
+        (prices[t + 1] / prices[t] - 1) if prices[t] is not None and prices[t + 1] is not None else None
+        for t in range(len(prices) - 1)
+    ]
+
+
+def _inverse_vol_weights(prices_by_asset: dict[str, list[float | None]], *, lookback: int) -> list[dict[str, float]]:
+    """Per-period renormalized inverse-vol qualifying weights over a union calendar (SAME qualifying
+    rule as dynamic_inverse_vol_basket, kept in sync by test_inverse_vol_weights_reduces_to_basket):
+    asset i qualifies at period t iff ret_i[t] is present, its trailing window ret_i[t-lookback:t]
+    (strictly before t) is fully non-None, and that window has positive stdev; weight 1/stdev,
+    renormalized over qualifiers. No qualifier -> {}. Returns weights (not a pre-combined return
+    series) so a1_book_returns (Task 4) can apply per-asset directions before combining. Private
+    helper: trusts a validated, equal-length, non-empty prices_by_asset (mirrors
+    dynamic_inverse_vol_basket's own private _inverse_vol_weight)."""
+    length = len(next(iter(prices_by_asset.values())))
+    returns_by_asset = {asset: _asset_returns(prices) for asset, prices in prices_by_asset.items()}
+
+    weights: list[dict[str, float]] = []
+    for t in range(length - 1):
+        inv_weights: dict[str, float] = {}
+        if t >= lookback:
+            for asset, rets in returns_by_asset.items():
+                if rets[t] is None:
+                    continue
+                window = rets[t - lookback : t]
+                if any(r is None for r in window):
+                    continue
+                vol = statistics.stdev(window)
+                if vol > 0:
+                    inv_weights[asset] = 1.0 / vol
+        if not inv_weights:
+            weights.append({})
+            continue
+        total = sum(inv_weights.values())
+        weights.append({asset: inv / total for asset, inv in inv_weights.items()})
+    return weights
