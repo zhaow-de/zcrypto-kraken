@@ -36,7 +36,7 @@ Verdict under the ratified bar via the driver (QA first: offset-mean Sharpe repr
 **Construction (weight-level, full costing — decisions log `[iter-072]` item 2):**
 
 1. Sleeve position sets on the union calendar: `pos_B_a[k]` = the benchmark sleeve's per-asset positions (`w·l3`); `pos_A_a[k]` = the A1-lf weekly **offset-mean** held positions (mean over the 7 offsets' position-hold books).
-2. Sleeve weights `w_B[k], w_A[k]`: rolling 30-bar inverse-vol on each sleeve's net-of-cost returns through k−1, normalized; 0.5/0.5 for k < 30.
+2. Sleeve weights `w_B[k], w_A[k]`: rolling 30-bar inverse-vol on each sleeve's net-of-cost returns through k−1, normalized; 0.5/0.5 for k < 30. *\[Precision added during execution: inverse-vol applies only when BOTH windows have positive vol; ANY degenerate window (a sleeve flat over its trailing 30 bars) falls back to 0.5/0.5 — the spec originally left this branch unstated, the driver and its diagnostic implemented it differently, and the divergence was caught by bisection before any verdict was recorded (decisions log \[iter-072\]).\]*
 3. Combined per-asset positions `c_a[k] = w_B[k]·pos_B_a[k] + w_A[k]·pos_A_a[k]` → `apply_position_caps` (20 %/10 %).
 4. **Per-asset net-of-cost on the final capped book** (turnover of `c` × 0.006/side; no shorts → no carry). Internal crossings between sleeves net out — full costing, not the overlay approximation.
 5. `drawdown_governor` (D1 defaults) on the capped book's own net-of-cost series; final positions = multiplier × capped.
