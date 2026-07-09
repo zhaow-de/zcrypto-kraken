@@ -58,5 +58,6 @@ repos:
             docs/research/06\.phase4-a1-results\.md|
             docs/research/07\.phase4-a1-cost-reality\.md|
             docs/research/08\.phase4-a2-orientation\.md|
-            docs/research/09\.phase4-a2-results\.md
+            docs/research/09\.phase4-a2-results\.md|
+            docs/research/10\.phase4-closeout\.md
         )$
