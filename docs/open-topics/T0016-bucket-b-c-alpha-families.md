@@ -19,6 +19,11 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 - Prerequisites already tracked elsewhere: T0009 (protocol legs → revised kill bar), T0012 (15m/tick storage for B1/C2), T0003 (captured L2 accumulating since 2026-07-08 → C1), T0014 (captured-spread cost term — directly upgrades B1's maker-fill realism).
 - Budgets pre-registered and untouched: **B = 25, C = 10**; A retains 8 reserved trials (T0009/T0011).
 
+## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
+
+- **Implement the remaining §10 portfolio limits as tested code first** — gross leverage 1.5×/2.0×, net-exposure band −0.5…+1.0×, margin-level floor ≥ 250 % — deferred in iter-059 because they never bind on the long-only P1 book (max gross 0.68×); any B4-leg/short/levered sleeve makes them binding (§10 mandates them "hard, enforced in code pre-trade").
+- **Re-run the borrow-unavailable stress rung** on any combined system containing a short sleeve — dispositioned N/A-with-evidence for the long-only book in `docs/research/11.phase5-stress-suite.md` (iter-060); §12's stress list makes it mandatory again the moment shorts exist.
+
 ## Suggested next steps
 
 - When the first prerequisite set fires, split the family being started into its own topic/spec (per family, one hypothesis + kill-bar plan) — this umbrella then goes `partial`/`resolved` per the lifecycle.
