@@ -1,9 +1,11 @@
 ---
-status: partial
+status: resolved
 ripe_when: the next attended Phase-4/5 protocol review — all decision inputs are merged and ready as of 2026-07-09
 ---
 
 # Phase-4/5 validation-protocol decisions (human decision sheet)
+
+> **Resolution (2026-07-09/10, attended review — iter-072).** All six legs below were decided by the human and executed the same night: worst-slice → benchmark-relative + stub-excluded; evaluation window → k≥230 decisive; SPA → net-of-cost both sides; DSR → 0.95; A1-lf weekly v0.12 → **admitted** (registry trial 34, adopt); A-family spending → **resumed** (T0011 live). Folded into `cli/alpha/killbar.py::a1_kill_bar`; master-plan §12 rewritten; full trail in the decisions log `[iter-072]`. The `## Suggested next steps` checklist below is the historical decision sheet, all items closed.
 
 ## Context — what
 

@@ -22,12 +22,11 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the un-started remainder of the §5 queue (B1/B2/B3/B4, C1–C3; budgets B=25/C=10), registered at the Phase-4 close (ripe when: per-family prerequisites — T0009 protocol legs, T0012 substrate, captured L2 for C1).
-- [T0017 — holdout window ratification](T0017-holdout-window-ratification.md) — the pre-registered "final 12 months at data freeze" holdout was never carved out and is in-sample everywhere; the human ratifies the clean out-of-time window at the Phase-5 holdout event (ripe when: that event, D3(v)).
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0009 — Phase-4/5 validation-protocol decisions](T0009-validation-protocol-decisions.md) — the human decision sheet from the A1/A2/benchmark arcs: the deployable bar is **decided** (2026-07-09: **B3+vt-dynamic adopted** as the frozen benchmark); remaining: worst-slice leg, evaluation window, net-of-cost SPA, DSR threshold, A1-long/flat disposition, trial resumption (ripe when: next attended protocol review).
 - [T0011 — A2 refinements: 4h band, breakout-hold](T0011-a2-refinements.md) — the 2026 probe is done (iter-065, decision-support feeding T0009's stub question); the remaining follow-ups spend reserved A-family trials (ripe when: T0009 resolved).
+- [T0017 — holdout window ratification](T0017-holdout-window-ratification.md) — window **ratified** (2026-07-09: out-of-time 2026-04-01 → fresh freeze); remaining: the look itself + the ledger, at the event (ripe when: the look session, human present).
 
 ### Resolved<a name="resolved"></a>
 
@@ -39,6 +38,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0010 — full-history dynamic benchmark B3/B4](archive/T0010-dynamic-benchmark-b3-b4.md) — resolved in iter-055: self-gated dynamic B3/B4 built with full QA; B3+vt point-beats gated-B1 net-of-cost (1.245/1.278 vs 1.047/1.074, n.s., higher drawdown) → the deployable-bar choice escalated to T0009; the Phase-3 basket-cost carry-forward reconciled.
 - [T0013 — trial-registry variant field](archive/T0013-registry-variant-field.md) — resolved in iter-056: schema_version 3 adds an optional first-class `variant` (hash-covered, omit-when-None); v2+v3 files co-load with the chain intact; budget counter untouched; adversarial review APPROVED (forge/torn-tail/concurrency probes).
 - [T0015 — registry per-schema-version key-set validation](archive/T0015-registry-key-set-validation.md) — resolved in iter-062: exact key-set per schema version (15 base keys, v3 ± `variant`); surplus or missing key = corruption; the chain-consistent "variannt" forge now fails on this check alone; adversarial review PASS.
+- [T0009 — Phase-4/5 validation-protocol decisions](archive/T0009-validation-protocol-decisions.md) — resolved in iter-072 (attended review, 2026-07-09): all six legs decided — benchmark-relative + stub-excluded worst-slice, k≥230 decisive window, net-of-cost SPA, DSR 0.95, A1-lf weekly v0.12 admitted (trial 34), A-family resumption; folded into `a1_kill_bar`.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 

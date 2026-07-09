@@ -1,3 +1,6 @@
+import math
+import random
+
 import pytest
 
 from cli.alpha import AlphaError, a1_kill_bar, benchmark_relative_worst_slice, net_of_cost_verdict, short_leg_whipsaw
@@ -9,6 +12,14 @@ N = 500
 # while a beta=0 null's noise Sharpe (SE ~= 1/sqrt(N)) falls below it on the majority of seeds -> dsr < 0.5.
 VAR_TRIALS_PER_PERIOD = 1e-3
 
+# regime_slices/benchmark_slices now also feed benchmark_relative_worst_slice (T0009-ratified worst-slice
+# leg), which compounds returns via max_drawdown/total_return -- unlike sharpe(), that's not scale-invariant
+# in the sense of tolerating raw noise_sd=1.0 fixtures (individual periods routinely < -100%, breaking the
+# equity curve). sharpe() itself IS scale-invariant, so scaling a book down by this factor changes nothing
+# about the DSR/SPA/cost-stress legs or the recorded worst_slice_name/worst_slice_sharpe; it only keeps the
+# relative diagnostic's compounding well-defined.
+_SLICE_SCALE = 0.01
+
 
 def _book_and_benchmark(*, beta, seed):
     x, r = linear_signal(N, beta=beta, noise_sd=1.0, seed=seed)
@@ -17,8 +28,28 @@ def _book_and_benchmark(*, beta, seed):
     return book, benchmark
 
 
-def _slices(book):
-    return {"first_half": book[: N // 2], "second_half": book[N // 2 :]}
+def _slices(returns):
+    return {"first_half": returns[: N // 2], "second_half": returns[N // 2 :]}
+
+
+def _scaled(returns):
+    return [r * _SLICE_SCALE for r in returns]
+
+
+def _book_regime_slices(book):
+    """regime_slices fixture built from a raw noise_sd=1.0 book -- see _SLICE_SCALE."""
+    return _slices(_scaled(book))
+
+
+def _noise_series(n, seed):
+    """A zero-edge, non-degenerate return series -- a plausible benchmark_slices source."""
+    x, r = linear_signal(n, beta=0.0, noise_sd=1.0, seed=seed)
+    return sign_strategy_returns(x, r)
+
+
+# Generic non-degenerate benchmark_slices fixture for tests where the relative worst-slice leg isn't the
+# point under test (fixed/deterministic seed, reused across those tests).
+_NOISE_BENCHMARK_SLICES = _slices(_scaled(_noise_series(N, seed=999)))
 
 
 def test_a1_kill_bar_planted_edge_passes():
@@ -31,17 +62,24 @@ def test_a1_kill_bar_planted_edge_passes():
         mean_block=5,
         seed=7,
         cost_stressed_returns=book,
-        regime_slices=_slices(book),
+        regime_slices=_book_regime_slices(book),
+        benchmark_slices=_NOISE_BENCHMARK_SLICES,
     )
-    # dsr is a probability; a real edge must clear 0.5 (deflated point estimate positive), not just > 0
-    # (which the pre-fix gate accepted for a ~5e-43 underflow — see test_a1_kill_bar_null_rarely_passes).
-    assert result["dsr"] > 0.5
+    # dsr is a probability; a real edge must clear 0.95 (the T0009-ratified, 2026-07-09 López-de-Prado
+    # significance bar), not just > 0 (which the pre-fix gate accepted for a ~5e-43 underflow -- see
+    # test_a1_kill_bar_null_rarely_passes) or the pre-ratification 0.5 bar.
+    assert result["dsr"] > 0.95
     assert result["dsr_pass"] is True
     assert result["spa_pass"] is True
     assert result["spa_p_value"] < 0.05
+    # decisive_start defaults to 0, so the decisive window is the full window here.
+    assert result["spa_p_value_full"] == pytest.approx(result["spa_p_value"])
     assert result["cost_stress_pass"] is True
     assert result["worst_slice_pass"] is True
     assert result["passes"] is True
+    # worst_slice_relative is the diagnostic's dict minus its per_slice detail.
+    assert "per_slice" not in result["worst_slice_relative"]
+    assert result["worst_slice_relative"]["beats_benchmark_worst"] is True
 
 
 def test_a1_kill_bar_null_rarely_passes():
@@ -51,8 +89,9 @@ def test_a1_kill_bar_null_rarely_passes():
     # This test also proves the DSR leg is a real gate, not the inert no-op it was before the fix. With
     # the pre-fix `dsr > 0` gate on these beta=0 nulls the DSR leg passed 20/20 (deflated_sharpe_ratio is
     # a probability that only underflows to ~5e-43, never <= 0), so only SPA/cost/slice discriminated.
-    # With the fixed `dsr > 0.5` gate and per-period var_trials, the observed per-leg null pass tally is
-    # dsr=4/20, spa=3/20, cost=8/20, slice=6/20, overall passes=3/20 — DSR now fails the majority of nulls.
+    # With the T0009-ratified `dsr > 0.95` gate (raised from the interim 0.5) and per-period var_trials,
+    # plus the benchmark-relative worst-slice leg, the observed per-leg null pass tally is dsr=0/20,
+    # spa=3/20, cost=8/20, slice=5/20, overall passes=0/20 -- the 0.95 bar now fails EVERY beta=0 null.
     passed = 0
     dsr_leg_passed = 0
     for seed in range(20):
@@ -65,16 +104,17 @@ def test_a1_kill_bar_null_rarely_passes():
             mean_block=5,
             seed=seed + 100,
             cost_stressed_returns=book,
-            regime_slices=_slices(book),
+            regime_slices=_book_regime_slices(book),
+            benchmark_slices=_NOISE_BENCHMARK_SLICES,
         )
         if result["passes"]:
             passed += 1
         if result["dsr_pass"]:
             dsr_leg_passed += 1
-    assert passed <= 4
-    # DSR now contributes discrimination: a beta=0 null clears dsr > 0.5 on only a minority of seeds
-    # (vs 20/20 under the broken gate), so the leg is no longer inert.
-    assert dsr_leg_passed <= 8
+    assert passed <= 2
+    # DSR is now the strictest leg: a beta=0 null essentially never clears dsr > 0.95 (vs 20/20 under the
+    # pre-fix gate, or a minority under the interim 0.5 bar).
+    assert dsr_leg_passed <= 2
 
 
 def test_a1_kill_bar_cost_stress_can_fail_alone():
@@ -88,7 +128,8 @@ def test_a1_kill_bar_cost_stress_can_fail_alone():
         mean_block=5,
         seed=7,
         cost_stressed_returns=stressed,
-        regime_slices=_slices(book),
+        regime_slices=_book_regime_slices(book),
+        benchmark_slices=_NOISE_BENCHMARK_SLICES,
     )
     assert result["cost_stress_pass"] is False
     assert result["passes"] is False  # cost stress alone fails the all-must-hold bar
@@ -97,6 +138,9 @@ def test_a1_kill_bar_cost_stress_can_fail_alone():
 def test_a1_kill_bar_worst_slice_can_fail_alone():
     book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
     bad_slice = [-0.01 + 0.002 * ((i % 3) - 1) for i in range(50)]  # non-degenerate, clearly negative
+    # The benchmark's own "bad_regime" easily beats the book's very negative slice, so the T0009-ratified
+    # relative leg fails here too -- same outcome as the old absolute leg, now for a relative reason.
+    benchmark_slices = {"good": _scaled(_noise_series(N, seed=501)), "bad_regime": _scaled(_noise_series(50, seed=502))}
     result = a1_kill_bar(
         book,
         benchmark,
@@ -105,23 +149,28 @@ def test_a1_kill_bar_worst_slice_can_fail_alone():
         mean_block=5,
         seed=7,
         cost_stressed_returns=book,
-        regime_slices={"good": book, "bad_regime": bad_slice},
+        regime_slices={"good": _scaled(book), "bad_regime": bad_slice},
+        benchmark_slices=benchmark_slices,
     )
     assert result["worst_slice_name"] == "bad_regime"
     assert result["worst_slice_pass"] is False
+    assert result["worst_slice_relative"]["beats_benchmark_worst"] is False
     assert result["passes"] is False
 
 
 def test_a1_kill_bar_skips_flat_regime_slice():
     # A flat slice (e.g. a calendar year entirely inside gate warm-up, or a bear year a long/flat book
     # correctly sat out) has zero variance -- sharpe() is undefined there, so it must be skipped rather
-    # than raising or being treated as the worst (or best) slice.
+    # than raising or being treated as the worst (or best) slice. This is the book-side record computation
+    # (worst_slice_name/worst_slice_sharpe), unaffected by the T0009 relative worst-slice leg.
     book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
     bad_slice = [-0.01 + 0.002 * ((i % 3) - 1) for i in range(50)]  # non-degenerate, clearly negative
     flat_zero = [0.0] * 50
     flat_const = [0.01] * 50
+    good_bench = _scaled(_noise_series(N, seed=501))
+    bad_bench = _scaled(_noise_series(50, seed=502))
 
-    def _run(regime_slices):
+    def _run(regime_slices, benchmark_slices):
         return a1_kill_bar(
             book,
             benchmark,
@@ -131,10 +180,22 @@ def test_a1_kill_bar_skips_flat_regime_slice():
             seed=7,
             cost_stressed_returns=book,
             regime_slices=regime_slices,
+            benchmark_slices=benchmark_slices,
         )
 
-    with_flat = _run({"good": book, "bad_regime": bad_slice, "flat_zero": flat_zero, "flat_const": flat_const})
-    without_flat = _run({"good": book, "bad_regime": bad_slice})
+    with_flat = _run(
+        {"good": _scaled(book), "bad_regime": bad_slice, "flat_zero": flat_zero, "flat_const": flat_const},
+        {
+            "good": good_bench,
+            "bad_regime": bad_bench,
+            "flat_zero": _scaled(_noise_series(50, seed=503)),
+            "flat_const": _scaled(_noise_series(50, seed=504)),
+        },
+    )
+    without_flat = _run(
+        {"good": _scaled(book), "bad_regime": bad_slice},
+        {"good": good_bench, "bad_regime": bad_bench},
+    )
 
     assert with_flat["worst_slice_name"] == "bad_regime"
     assert with_flat["worst_slice_pass"] is False
@@ -156,10 +217,184 @@ def test_a1_kill_bar_all_slices_degenerate():
         seed=7,
         cost_stressed_returns=book,
         regime_slices={"flat_zero": [0.0] * 50, "too_short": [0.01], "flat_const": [0.01] * 30},
+        # Every regime_slices entry is book-side degenerate, so benchmark_relative_worst_slice would have
+        # nothing to compare regardless of these values -- a1_kill_bar short-circuits instead of calling it.
+        benchmark_slices={"flat_zero": [0.02] * 50, "too_short": [0.02], "flat_const": [0.02] * 30},
     )
     assert result["worst_slice_name"] == "<no-nondegenerate-slice>"
     assert result["worst_slice_pass"] is False
+    assert result["worst_slice_relative"]["beats_benchmark_worst"] is False
     assert result["passes"] is False
+
+
+def test_a1_kill_bar_dsr_fails_between_old_and_new_bar():
+    # A marginal edge (beta=0.4) with var_trials=0.01 lands dsr ~= 0.925 -- strictly between the
+    # pre-ratification 0.5 bar and the T0009-ratified 0.95 bar (2026-07-09). It would have passed the old
+    # kill bar; it fails the new one, alone (the other three legs still pass).
+    x, r = linear_signal(N, beta=0.4, noise_sd=1.0, seed=1)
+    book = sign_strategy_returns(x, r)
+    benchmark = [0.0] * N
+    result = a1_kill_bar(
+        book,
+        benchmark,
+        n_trials=16,
+        var_trials=0.01,
+        mean_block=5,
+        seed=7,
+        cost_stressed_returns=book,
+        regime_slices=_book_regime_slices(book),
+        benchmark_slices=_NOISE_BENCHMARK_SLICES,
+    )
+    assert 0.5 < result["dsr"] < 0.95
+    assert result["dsr_pass"] is False
+    assert result["spa_pass"] is True
+    assert result["cost_stress_pass"] is True
+    assert result["worst_slice_pass"] is True
+    assert result["passes"] is False  # DSR alone fails the all-must-hold bar under the ratified 0.95
+
+
+def test_a1_kill_bar_spa_decisive_window_diverges_from_full():
+    # The book's edge over the benchmark exists ONLY before decisive_start=230 (a constant 0.02/period
+    # drift on top of shared noise); from 230 on, book == benchmark exactly (no edge). The full window
+    # sees the pre-cut edge and is significant; the decisive (post-warm-up) window sees only the no-edge
+    # tail and is not -- exactly the divergence the T0009-ratified decisive-window SPA leg is meant to
+    # catch (net-of-cost inputs; decisive_start=230 is the benchmark's post-warm-up cut for B3+vt-dynamic).
+    decisive_start = 230
+    rng = random.Random(1)
+    book, benchmark = [], []
+    for i in range(N):
+        shared_noise = rng.gauss(0.0, 0.01)
+        benchmark.append(shared_noise)
+        book.append(shared_noise + 0.02 if i < decisive_start else shared_noise)
+
+    result = a1_kill_bar(
+        book,
+        benchmark,
+        n_trials=16,
+        var_trials=VAR_TRIALS_PER_PERIOD,
+        mean_block=5,
+        seed=7,
+        cost_stressed_returns=book,
+        regime_slices=_slices(book),
+        benchmark_slices=_slices(benchmark),
+        decisive_start=decisive_start,
+    )
+    assert result["spa_p_value_full"] < 0.05
+    assert result["spa_p_value"] >= 0.05
+    assert result["spa_pass"] is False
+    assert result["passes"] is False  # SPA alone fails the all-must-hold bar on the decisive window
+
+
+def test_a1_kill_bar_relative_worst_slice_passes_despite_negative_sharpe():
+    # Mirrors test_benchmark_relative_worst_slice_exposure_blindness's construction: the fully-exposed
+    # book actually loses MORE than the near-flat benchmark (-4.51% vs -0.60% total return, drawdown
+    # 9.05% vs 0.70%) -- it passes purely because its bigger stdev shrinks the Sharpe ratio's magnitude,
+    # so its Sharpe is LESS negative than the benchmark's and `beats_benchmark_worst` keys on Sharpe.
+    # The point under test here: the T0009-ratified relative leg passes on a negative-Sharpe slice where
+    # the old absolute ("every slice Sharpe > 0") leg would have failed; the P&L/drawdown contradiction
+    # itself is asserted in the sibling exposure-blindness test.
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    near_flat_benchmark = [0.0] * 16 + [-0.004, 0.001, -0.004, 0.001]
+    fully_exposed_book = [0.05, -0.052] * 10
+
+    result = a1_kill_bar(
+        book,
+        benchmark,
+        n_trials=16,
+        var_trials=VAR_TRIALS_PER_PERIOD,
+        mean_block=5,
+        seed=7,
+        cost_stressed_returns=book,
+        regime_slices={"2014": fully_exposed_book},
+        benchmark_slices={"2014": near_flat_benchmark},
+    )
+    assert result["worst_slice_sharpe"] < 0
+    assert result["worst_slice_pass"] is True
+    assert result["worst_slice_relative"]["beats_benchmark_worst"] is True
+    assert "per_slice" not in result["worst_slice_relative"]
+    assert result["passes"] is True
+
+
+def test_a1_kill_bar_requires_benchmark_slices_kwarg():
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    with pytest.raises(TypeError):
+        a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=VAR_TRIALS_PER_PERIOD,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=_book_regime_slices(book),
+        )
+
+
+@pytest.mark.parametrize("decisive_start", [-1, N, 1.5, "10"])
+def test_a1_kill_bar_guards_bad_decisive_start(decisive_start):
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    with pytest.raises(AlphaError):
+        a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=VAR_TRIALS_PER_PERIOD,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=_book_regime_slices(book),
+            benchmark_slices=_NOISE_BENCHMARK_SLICES,
+            decisive_start=decisive_start,
+        )
+
+
+def test_a1_kill_bar_n_resamples_passthrough():
+    # n_resamples feeds the SPA leg's reality_check_pvalue (both windows). Default 1000 matches every
+    # registry row recorded before the fold-in; the pre-registered trial protocol ([iter-059]) passes
+    # 2000 explicitly. Different resample counts give different bootstrap p-values, so only shape and
+    # finiteness are asserted -- never exact p equality across counts.
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+
+    def _run(n_resamples):
+        return a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=VAR_TRIALS_PER_PERIOD,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=_book_regime_slices(book),
+            benchmark_slices=_NOISE_BENCHMARK_SLICES,
+            n_resamples=n_resamples,
+        )
+
+    low = _run(100)
+    high = _run(2000)
+    assert set(low) == set(high)  # result dict shape is independent of the resample count
+    for result in (low, high):
+        assert math.isfinite(result["spa_p_value"])
+        assert math.isfinite(result["spa_p_value_full"])
+        assert 0 < result["spa_p_value"] <= 1
+        assert 0 < result["spa_p_value_full"] <= 1
+
+
+@pytest.mark.parametrize("n_resamples", [0, -1, 1.5, "10"])
+def test_a1_kill_bar_guards_bad_n_resamples(n_resamples):
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    with pytest.raises(AlphaError):
+        a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=VAR_TRIALS_PER_PERIOD,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=_book_regime_slices(book),
+            benchmark_slices=_NOISE_BENCHMARK_SLICES,
+            n_resamples=n_resamples,
+        )
 
 
 def test_a1_kill_bar_guards_length_mismatch():
@@ -173,6 +408,7 @@ def test_a1_kill_bar_guards_length_mismatch():
             seed=1,
             cost_stressed_returns=[0.01, 0.02],
             regime_slices={"x": [0.01, 0.02]},
+            benchmark_slices={"x": [0.01, 0.02]},
         )
 
 
@@ -187,6 +423,7 @@ def test_a1_kill_bar_guards_empty_regime_slices():
             seed=1,
             cost_stressed_returns=[0.01, 0.02, 0.03],
             regime_slices={},
+            benchmark_slices={},
         )
 
 
