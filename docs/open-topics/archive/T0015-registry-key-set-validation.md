@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ripe_when: the next registry-hardening iteration (pairs naturally with any future schema bump)
 ---
 

@@ -22,7 +22,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0011 — A2 refinements: 4h band, breakout-hold, 2026 probe](T0011-a2-refinements.md) — the parked A2 follow-ups; they spend reserved A-family trials (ripe when: T0009 resolved).
 - [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
-- [T0015 — registry per-schema-version key-set validation](T0015-registry-key-set-validation.md) — close the unknown-key acceptance class found by the v3 review; hardening, not a live hole (ripe when: next registry-hardening iteration).
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the un-started remainder of the §5 queue (B1/B2/B3/B4, C1–C3; budgets B=25/C=10), registered at the Phase-4 close (ripe when: per-family prerequisites — T0009 protocol legs, T0012 substrate, captured L2 for C1).
 - [T0017 — holdout window ratification](T0017-holdout-window-ratification.md) — the pre-registered "final 12 months at data freeze" holdout was never carved out and is in-sample everywhere; the human ratifies the clean out-of-time window at the Phase-5 holdout event (ripe when: that event, D3(v)).
 
@@ -39,6 +38,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0007 — dynamic-composition inverse-vol basket (full-history B2 variant)](archive/T0007-dynamic-composition-basket.md) — resolved in iter-044: built the look-ahead-free `dynamic_inverse_vol_basket` (2→10 majors over the full 2013→2026 union calendar) and answered finding-1 — the full-history basket is statistically indistinguishable from single-asset BTC (Sharpe ~1.1 both), so the fixed-window "basket loses" was a window artifact; a co-equal viable base for A1.
 - [T0010 — full-history dynamic benchmark B3/B4](archive/T0010-dynamic-benchmark-b3-b4.md) — resolved in iter-055: self-gated dynamic B3/B4 built with full QA; B3+vt point-beats gated-B1 net-of-cost (1.245/1.278 vs 1.047/1.074, n.s., higher drawdown) → the deployable-bar choice escalated to T0009; the Phase-3 basket-cost carry-forward reconciled.
 - [T0013 — trial-registry variant field](archive/T0013-registry-variant-field.md) — resolved in iter-056: schema_version 3 adds an optional first-class `variant` (hash-covered, omit-when-None); v2+v3 files co-load with the chain intact; budget counter untouched; adversarial review APPROVED (forge/torn-tail/concurrency probes).
+- [T0015 — registry per-schema-version key-set validation](archive/T0015-registry-key-set-validation.md) — resolved in iter-062: exact key-set per schema version (15 base keys, v3 ± `variant`); surplus or missing key = corruption; the chain-consistent "variannt" forge now fails on this check alone; adversarial review PASS.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
