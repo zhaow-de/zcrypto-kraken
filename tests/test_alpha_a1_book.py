@@ -47,6 +47,7 @@ def test_a1_book_returns_no_lookahead():
     out_b = a1_book_returns(prices_b, btc, config=cfg)
     assert out_a["book_base_returns"][:k_common] == out_b["book_base_returns"][:k_common]
     assert out_a["net_returns"][:k_common] == out_b["net_returns"][:k_common]
+    assert out_a["asset_positions"]["BTC"][:k_common] == out_b["asset_positions"]["BTC"][:k_common]
 
 
 def test_a1_book_returns_toggles_engage():
@@ -102,6 +103,36 @@ def test_a1_book_returns_planted_signal_positive_sharpe():
     cfg = A1Config(base="equal_risk_basket", regime="single_gate", short="off", target_vol=0.10, **BASE_KWARGS)
     out = a1_book_returns(prices, btc, config=cfg)
     assert out["metrics"]["sharpe"] > 0
+
+
+def test_a1_book_returns_asset_positions_reconstruct_net_returns():
+    # At zero fees, run_backtest's net_returns[k] = positions[k] * book_base_returns[k] =
+    # positions[k] * sum_i weight_i[k]*direction_i[k]*ret_i[k] = sum_i asset_positions[i][k]*ret_i[k] --
+    # dotting the exposed per-asset positions with the per-asset returns must reconstruct net_returns
+    # exactly, for every period.
+    prices, btc = _synthetic_universe(150)
+    cfg = A1Config(base="equal_risk_basket", regime="ensemble", short="confirmed_bear", target_vol=0.10, **BASE_KWARGS)
+    out = a1_book_returns(prices, btc, config=cfg)
+    rets = {asset: returns_from_prices(p) for asset, p in prices.items()}
+    for k in range(len(out["net_returns"])):
+        reconstructed = sum(out["asset_positions"][asset][k] * rets[asset][k] for asset in prices)
+        assert reconstructed == pytest.approx(out["net_returns"][k], abs=1e-9)
+
+
+def test_a1_book_returns_asset_positions_btc_only():
+    prices, btc = _synthetic_universe(150)
+    cfg = A1Config(base="btc_only", regime="single_gate", short="off", target_vol=0.10, **BASE_KWARGS)
+    out = a1_book_returns(prices, btc, config=cfg)
+    gate = sma_gate(btc, window=20)  # direction reduces to the plain gate: single_gate, short=off, weight=1.0
+    assert set(out["asset_positions"].keys()) == {"BTC"}
+    assert len(out["asset_positions"]["BTC"]) == len(out["net_returns"])
+    for k in range(len(out["net_returns"])):
+        assert out["asset_positions"]["BTC"][k] == pytest.approx(out["vol_target_positions"][k] * gate[k], abs=1e-12)
+    # concrete periods: k=0 is warm-up (k < gate_window-1=19) -> gate is 0.0 regardless of positions.
+    assert out["asset_positions"]["BTC"][0] == 0.0
+    # k=25 sits inside the strictly-rising rally leg (i < 50) -> price is the max of its trailing
+    # window, so the gate is on (1.0) and the position equals vol_target_positions verbatim.
+    assert out["asset_positions"]["BTC"][25] == pytest.approx(out["vol_target_positions"][25], abs=1e-12)
 
 
 def test_a1_book_returns_guards():
