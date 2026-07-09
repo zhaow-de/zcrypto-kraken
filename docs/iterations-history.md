@@ -552,3 +552,24 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 - **Reading (adjudication stays with the go/no-go)**: the in-sample-best family member ranks below the family median out-of-sample in ~36 % of combinations — the bar's *top rank* is moderately window-dependent, exactly the rank-swapping the n.s. head-to-heads (p ≈ 0.27–0.29) already implied; its top *cluster* (B3+vt/B3/gated-B1/B2-dyn/B2-dyn+vt, 1.03–1.25) is stable and the B4 legs never leave the bottom. **Holdout expectation: the top-cluster level, not the 1.245 point** — consistent with, and sharpening, the CI-based expectations already pre-registered.
 - **Pre-set reporting rule honored on review**: the `[iter-068]` pick entry gated a runbook sentence on PBO being "materially high"; 0.365 sits on the "generalizes" side of the project's own PBO spec's framing (< the 0.5 midpoint), so the drafted runbook sentence was **withdrawn** — this entry is the number's home. (First drafted, then removed when the review flagged the post-hoc softening of "high" into "material" — the pre-registration culture outranks one useful sentence.)
 - Analysis + one runbook reporting sentence; scratchpad driver per convention. No trial spend; registry, deployment, holdout data, and capture pipeline untouched.
+
+## 2026-07-09 — iter-069: A1-long/flat start-date sensitivity (decision-support; feeds T0009)
+
+- **Answered T0009's A1-lf core doubt directly** ("2014: genuine tail or early-data artifact?") with a start-date table — book AND benchmark rebuilt from each Jan-1 truncation (QA first: the untruncated rebuild reproduces 1.3467/1.3798 vs 1.2455; the recorded p = 0.0070 identified as the k≥230 window, full-window 0.0080; the suspicious constant-DD column verified real — A1-lf's worst episode is **2024-03 → 2024-11**, inside every window):
+
+| Start | Bars | A1-lf v0.10 | A1-lf v0.12 | Bench | p (v0.12) |
+| --- | --- | --- | --- | --- | --- |
+| full | 4581 | 1.3467 | 1.3798 | 1.2455 | 0.0080 |
+| 2014 | 4472 | 1.3973 | 1.4290 | 1.2606 | 0.0050 |
+| 2015 | 4107 | 1.5297 | 1.5492 | 1.2691 | **0.0015** |
+| 2016 | 3742 | 1.3258 | 1.3490 | 1.0905 | 0.0045 |
+| 2017 | 3376 | 1.1994 | 1.2208 | 0.8514 | 0.0040 |
+| 2018 | 3011 | 1.0922 | 1.1117 | 0.6888 | 0.0125 |
+| 2019 | 2646 | 1.1561 | 1.1759 | 0.6044 | 0.0020 |
+| 2020 | 2281 | 1.4026 | 1.4064 | 0.6670 | 0.0010 |
+| 2021 | 1915 | 0.8941 | 0.8852 | 0.0482 | 0.0105 |
+| 2022 | 1550 | 0.9063 | 0.9019 | 0.0249 | 0.0195 |
+| 2023 | 1185 | 1.0645 | 1.0655 | 0.5609 | 0.0625 |
+
+- **Readings recorded into T0009's A1-lf item** (disposition stays the human's): the edge is **start-date robust** — significant at every start 2014–2022, only the short 2023 window misses; **dropping 2014 strengthens it** (the early-data-artifact reading gains direct support, or at minimum the edge does not depend on early data); A1-lf weekly's maxDD (15.78 %) is *lower* than the ungoverned bar's (25.53 %). Honest margins reported: v0.10's full-window p sits exactly at 0.0500.
+- Zero trial spend (diagnostics on the already-registered arm); registry, deployment, holdout data, and capture pipeline untouched.
