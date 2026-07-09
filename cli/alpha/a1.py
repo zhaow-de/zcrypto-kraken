@@ -180,3 +180,86 @@ def _inverse_vol_weights(prices_by_asset: dict[str, list[float | None]], *, look
         total = sum(inv_weights.values())
         weights.append({asset: inv / total for asset, inv in inv_weights.items()})
     return weights
+
+
+from cli.backtest import run_backtest
+from cli.benchmark.strategies import vol_target
+
+
+def _validate_prices_by_asset(prices_by_asset: dict[str, list[float | None]]) -> None:
+    if not isinstance(prices_by_asset, dict) or not prices_by_asset:
+        raise AlphaError("prices_by_asset must be a non-empty dict of price series")
+    if "BTC" not in prices_by_asset:
+        raise AlphaError("prices_by_asset must include 'BTC'")
+    lengths: set[int] = set()
+    for asset, prices in prices_by_asset.items():
+        if not isinstance(prices, list):
+            raise AlphaError(f"prices for {asset!r} must be a list, got {type(prices)!r}")
+        for p in prices:
+            if p is not None and (not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0):
+                raise AlphaError(f"prices must be None or finite positive numbers, got {p!r}")
+        lengths.add(len(prices))
+    if len(lengths) != 1:
+        raise AlphaError(f"all price series must have equal length, got {sorted(lengths)}")
+    if any(p is None for p in prices_by_asset["BTC"]):
+        raise AlphaError("BTC must have full coverage on the union calendar (no None gaps)")
+
+
+def _validate_btc_prices(btc_prices: list[float], *, length: int) -> None:
+    if not isinstance(btc_prices, list) or len(btc_prices) != length:
+        got = len(btc_prices) if isinstance(btc_prices, list) else btc_prices
+        raise AlphaError(f"btc_prices must be a list of length {length} (the union length), got {got!r}")
+    for p in btc_prices:
+        if not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0:
+            raise AlphaError(f"btc_prices must be finite positive numbers, got {p!r}")
+
+
+def a1_book_returns(prices_by_asset: dict[str, list[float | None]], btc_prices: list[float], *, config: A1Config) -> dict:
+    """Assemble the A1 book (docs/specs/00031): per-asset directions x inverse-vol/BTC-only weights x
+    union-calendar returns -> book_base_returns, then vol_target -> run_backtest. Returns
+    {book_base_returns, vol_target_positions, net_returns, metrics}."""
+    if not isinstance(config, A1Config):
+        raise AlphaError(f"config must be an A1Config, got {type(config)!r}")
+    _validate_prices_by_asset(prices_by_asset)
+    length = len(prices_by_asset["BTC"])
+    _validate_btc_prices(btc_prices, length=length)
+
+    working = {"BTC": prices_by_asset["BTC"]} if config.base == "btc_only" else prices_by_asset
+    union_ts = list(range(length))
+    asset_ts: dict[str, list] = {"BTC": union_ts}
+    for asset, prices in working.items():
+        if asset != "BTC":
+            asset_ts[asset] = [k for k, p in enumerate(prices) if p is not None]
+
+    directions = _asset_directions(working, btc_prices, union_ts, asset_ts, config=config)
+    returns = {asset: _asset_returns(prices) for asset, prices in working.items()}
+
+    if config.base == "btc_only":
+        weights = [({"BTC": 1.0} if r is not None else {}) for r in returns["BTC"]]
+    else:
+        weights = _inverse_vol_weights(working, lookback=config.basket_lookback)
+
+    book_base_returns: list[float] = []
+    for k in range(length - 1):
+        total = 0.0
+        for asset in working:
+            r = returns[asset][k]
+            d = directions[asset][k]
+            if r is None or d is None:
+                continue
+            total += weights[k].get(asset, 0.0) * d * r
+        book_base_returns.append(total)
+
+    positions = vol_target(
+        book_base_returns,
+        target_vol=config.target_vol / math.sqrt(config.periods_per_year),
+        lookback=config.vol_lookback,
+        max_leverage=config.max_leverage,
+    )
+    backtest = run_backtest(book_base_returns, positions, fee_rate=0.0, periods_per_year=config.periods_per_year)
+    return {
+        "book_base_returns": book_base_returns,
+        "vol_target_positions": positions,
+        "net_returns": backtest["net_returns"],
+        "metrics": {k: v for k, v in backtest.items() if k != "net_returns"},
+    }
