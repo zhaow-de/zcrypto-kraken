@@ -70,7 +70,7 @@ def drawdown_governor(returns: list[float], *, config: GovernorConfig = Governor
 
 ## The threshold backtest (the deliverable §10 pre-registers)
 
-Scratchpad driver (not committed, like every prior driver) rebuilding **B3+vt-dynamic net-of-cost** exactly per the iter-055 construction (`b3b4_dynamic_run.py`: dynamic inverse-vol basket lookback 30 over the 10-major union calendar; 200d `sma_gate` on the basket's own equity index; `vol_target` 10 %/yr 30d max 1.0× on the RAW basket, gate applied after; per-asset turnover + no short carry), **QA-gated first**: the driver must reproduce the frozen reference figures (net-of-cost Sharpe 1.245 full / 1.278 k≥230, maxDD 21.9 %) before any governed number is read.
+Scratchpad driver (not committed, like every prior driver) rebuilding **B3+vt-dynamic net-of-cost** exactly per the iter-055 construction (`b3b4_dynamic_run.py`: dynamic inverse-vol basket lookback 30 over the 10-major union calendar; 200d `sma_gate` on the basket's own equity index; `vol_target` 10 %/yr 30d max 1.0× on the RAW basket, gate applied after; per-asset turnover + no short carry), **QA-gated first**: the driver must reproduce the frozen reference figures (net-of-cost Sharpe 1.245 full / 1.278 k≥230, maxDD 21.9 %) before any governed number is read. *\[Correction, iter-071 audit: 21.9 % is the ZERO-FEE maxDD; the net-of-cost series' maxDD is 25.53 %. The executed driver gated on the correctly-attributed figures (see the iter-058 history entry and spec 00035's QA-1), so no result is affected — only this document's wording was wrong.\]*
 
 Then report, governed vs ungoverned, full window and k≥230:
 

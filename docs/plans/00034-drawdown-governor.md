@@ -369,7 +369,7 @@ ______________________________________________________________________
 
 Scratchpad driver `governor_backtest_run.py` (session scratchpad dir, NOT committed) extending `b3b4_dynamic_run.py`'s verified construction. Protocol per spec §threshold-backtest:
 
-1. **QA gate first**: rebuild B3+vt-dynamic net-of-cost exactly (dynamic inverse-vol basket lookback 30, union calendar; 200d `sma_gate` on the basket's own equity index; `vol_target` 10 %/yr 30d max 1.0× on the RAW basket, gate applied after; per-asset turnover costs). Must reproduce net-of-cost Sharpe 1.245 full / 1.278 k≥230 and maxDD 21.9 % before any governed number is read. Mismatch = instrument bug — stop, fix, do not proceed.
+1. **QA gate first**: rebuild B3+vt-dynamic net-of-cost exactly (dynamic inverse-vol basket lookback 30, union calendar; 200d `sma_gate` on the basket's own equity index; `vol_target` 10 %/yr 30d max 1.0× on the RAW basket, gate applied after; per-asset turnover costs). Must reproduce net-of-cost Sharpe 1.245 full / 1.278 k≥230 and maxDD 21.9 % before any governed number is read. Mismatch = instrument bug — stop, fix, do not proceed. *\[Correction, iter-071 audit: 21.9 % is the ZERO-FEE maxDD (net-of-cost maxDD is 25.53 %); the executed driver gated on the correct attribution — see the iter-058 history entry.\]*
 2. Governed vs ungoverned (default config): Sharpe, ann. return, ann. vol, maxDD, worst calendar year (P&L + DD), full window and k≥230.
 3. Engagement evidence (mandatory): rung occupancy, daily-loss triggers, breaches, transitions — a governor inert on a 21.9 %-maxDD series is a bug, not a result.
 4. `restart_after=None` diagnostic variant.
