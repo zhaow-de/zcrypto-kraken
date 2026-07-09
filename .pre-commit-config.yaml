@@ -60,5 +60,6 @@ repos:
             docs/research/08\.phase4-a2-orientation\.md|
             docs/research/09\.phase4-a2-results\.md|
             docs/research/10\.phase4-closeout\.md|
-            docs/research/11\.phase5-stress-suite\.md
+            docs/research/11\.phase5-stress-suite\.md|
+            docs/research/12\.phase5-system-spec-runbook\.md
         )$
