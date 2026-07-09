@@ -59,5 +59,6 @@ repos:
             docs/research/07\.phase4-a1-cost-reality\.md|
             docs/research/08\.phase4-a2-orientation\.md|
             docs/research/09\.phase4-a2-results\.md|
-            docs/research/10\.phase4-closeout\.md
+            docs/research/10\.phase4-closeout\.md|
+            docs/research/11\.phase5-stress-suite\.md
         )$
