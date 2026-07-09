@@ -25,7 +25,7 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 4. `## Checklist`,
 5. the aggregated `Co-Authored-By:` trailer — plus a `Reviewed-by:` line if any commits carry reviewer trailers (see below).
 
-**Flexible middle:** between Spec/Plan and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several.
+**Flexible middle:** between Spec/Plan and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home (see `open-topics.md` → *Deferrals and ripeness triggers*).
 
 ### Co-author trailer (PR description)
 

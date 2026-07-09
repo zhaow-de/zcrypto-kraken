@@ -6,6 +6,21 @@ A **park-for-later** convention for newly discovered issues or aspects worth fol
 
 Open a topic when a **non-trivial** item surfaces that cannot be resolved immediately within the current iteration: a recurring runtime warning, a deferred fix, an intriguing tangent, a parked irreversible/judgment step. If it can be resolved on the spot, resolve it instead of parking it. Trivial uncertainties (one-off questions answered in the same turn, style nits, already-fixed issues) do **not** qualify.
 
+## Deferrals and ripeness triggers
+
+**A deferred action is only tracked if it lives here — prose is not registration.** A follow-up mentioned in a report, an iterations-history entry, a **PR description**, the decisions log, or a docstring is invisible when future work is picked (none of those are re-read); if an item must survive the current iteration, open or update a topic for it, or record an explicit drop with a one-line reason. A PR description's `## Follow-ups` / `## Out of scope` sections may only reference registered `T<NNNN>` topics or explicit drops — a PR body must never be a deferred action's only home. (The standing example of the failure: the iter-045 worst-slice-recalibration flag lived only in a plan note + docstring, was invisible when its trigger fired one iteration later, and cost three iterations of mis-calibrated verdicts before being rediscovered.)
+
+A topic deferred on a precondition declares it in the frontmatter:
+
+```yaml
+---
+status: open
+ripe_when: <the concrete condition that makes this topic actionable>
+---
+```
+
+and its index bullet appends the trigger, e.g. `— <description> (ripe when: <condition>)`. Every review that consults the index (iteration start, phase close-out) **evaluates each `ripe_when:`** — a fired trigger makes the topic live work *now*: pick it up, or consciously re-defer it by updating the trigger and saying why.
+
 ## Opening is autonomous — no approval gate
 
 Opening a topic requires **no user approval**, in either interactive or unattended mode: when a qualifying item surfaces, write the topic file and update the index in the same change, then carry on. Mention newly opened topics in the iteration closeout / session summary so the user sees them — transparency, not permission.
@@ -31,7 +46,7 @@ Never park a whole topic as "human" when half of it is public research anyone co
 
 The list only works if it is actively drained, not just appended to. Three checkpoints:
 
-- **At the start of every new brainstorming iteration**, review the index's `### Open` and `### Partially done` subsections and **fold the relevant items into the iteration** being brainstormed; anything ripe but out of scope for it is a candidate work package of its own. Addressing a topic pops it from the list per the lifecycle below (close or partially complete + index sync).
+- **At the start of every new brainstorming iteration**, review the index's `### Open` and `### Partially done` subsections — **evaluating each topic's `ripe_when:` trigger** (a fired trigger makes the topic live work now) — and **fold the relevant items into the iteration** being brainstormed; anything ripe but out of scope for it is a candidate work package of its own. Addressing a topic pops it from the list per the lifecycle below (close or partially complete + index sync).
 - **Before finishing a phase** (ahead of writing its close-out report), sweep the list once more and split it by relevance: a topic **more relevant to the current phase than to future phases** gets a **dedicated brainstorming iteration** to address it before the phase closes; a topic more relevant to a **future phase** is deliberately **deferred** — leave it parked, that phase's iteration-start reviews will pick it up.
 - **End-state invariant (autonomous runs):** an autonomous run works the resolvable topics down as it goes, so that by hand-back everything still in `### Open` / `### Partially done` either **requires a human decision** (irreversible, high-stakes, or a pre-registered escalation trigger) or is **deliberately deferred to a future phase**. An autonomously-resolvable *current-phase* topic — **or an autonomously-resolvable *sub-item* of an otherwise human-gated topic** (per the decomposition rule above) — still parked at the end of a run is a miss; it should have been drained or picked as a work package. (The exception is a sub-item the decomposition rule's dependency check marks *waits-on* — that one is correctly parked until the human decides.)
 
@@ -74,7 +89,7 @@ A partially completed topic later closes the normal way (see below).
 
 ## Closing a topic
 
-A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved` **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`). `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in its category's `### Resolved` subsection, with its link now pointing at the archived path (see Index sync).
+A topic may be closed **only when it carries no live deferred sub-item** — a remaining "do X when Y" must first be split into its own topic (with its `ripe_when:`), because archived files are never reviewed and a deferral left inside one is lost. A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved` **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`). `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in its category's `### Resolved` subsection, with its link now pointing at the archived path (see Index sync).
 
 ## Index sync (every change)
 
