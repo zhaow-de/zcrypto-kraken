@@ -10,6 +10,7 @@ def test_a1config_valid_defaults():
     assert cfg.basket_lookback == 30
     assert cfg.trend_lookbacks == (20, 60, 120)
     assert cfg.short_exposure == 0.5
+    assert cfg.short_band == 0.0
     assert cfg.max_leverage == 1.0
     assert cfg.periods_per_year == 365
 
@@ -63,6 +64,17 @@ def test_a1config_bad_trend_lookbacks(trend_lookbacks):
 def test_a1config_bad_short_exposure(short_exposure):
     with pytest.raises(AlphaError):
         A1Config(base="btc_only", regime="single_gate", short="off", target_vol=0.10, short_exposure=short_exposure)
+
+
+@pytest.mark.parametrize("short_band", [-0.1, 1.0, True])
+def test_a1config_bad_short_band(short_band):
+    with pytest.raises(AlphaError):
+        A1Config(base="btc_only", regime="single_gate", short="off", target_vol=0.10, short_band=short_band)
+
+
+def test_a1config_valid_short_band():
+    cfg = A1Config(base="btc_only", regime="single_gate", short="off", target_vol=0.10, short_band=0.05)
+    assert cfg.short_band == 0.05
 
 
 @pytest.mark.parametrize("max_leverage", [0.0, -1.0, float("nan"), "x"])

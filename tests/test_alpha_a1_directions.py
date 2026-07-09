@@ -55,6 +55,42 @@ def test_asset_directions_ensemble_confirmed_bear_combo():
     assert d["BTC"] == [0.0, 0.0, -0.5, 1.0, -0.5]
 
 
+def test_asset_directions_short_band_narrows_short_set():
+    # Uptrend, then a mild pullback (dips ~3.5% below the recent SMA each step -- inside a 10% band)
+    # before a sharp ~15%/step drawdown phase (well outside any 10% band). With short_band=0.0 the
+    # mild pullback already qualifies as confirmed-bear (price < SMA); with short_band=0.10 it does
+    # not (price stays above SMA*0.90), so the short set must be a strict, non-empty-difference
+    # subset -- fewer short-active periods overall. Regression guard for the "band" (finding-2).
+    btc = [100.0]
+    for _ in range(10):
+        btc.append(btc[-1] * 1.02)
+    for i in range(10):
+        btc.append(btc[-1] * (0.965 if i % 2 == 0 else 1.01))
+    for _ in range(6):
+        btc.append(btc[-1] * 0.85)
+    union_ts = list(range(len(btc)))
+    prices = {"BTC": btc}
+    asset_ts = {"BTC": union_ts}
+
+    def _band_cfg(short_band):
+        return A1Config(
+            base="btc_only",
+            regime="single_gate",
+            short="confirmed_bear",
+            target_vol=0.10,
+            gate_window=5,
+            trend_lookbacks=(2,),
+            short_band=short_band,
+        )
+
+    no_band = _asset_directions(prices, btc, union_ts, asset_ts, config=_band_cfg(0.0))
+    banded = _asset_directions(prices, btc, union_ts, asset_ts, config=_band_cfg(0.10))
+
+    count_no_band = sum(1 for d in no_band["BTC"] if d == -0.5)
+    count_banded = sum(1 for d in banded["BTC"] if d == -0.5)
+    assert count_banded < count_no_band
+
+
 def test_map_to_union_index_gap_and_adjacency():
     # own calendar has an internal gap (day 13 missing); union has a superset of days (13 exists for
     # some OTHER asset). Transitions touching day 13 must map to None; adjacent-in-own-terms

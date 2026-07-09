@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass
 
 from cli.alpha.errors import AlphaError
+from cli.backtest import run_backtest
+from cli.benchmark.strategies import sma_gate, vol_target
+from cli.features import trend_agreement
 
 _BASES = frozenset({"btc_only", "equal_risk_basket"})
 _REGIMES = frozenset({"single_gate", "ensemble"})
@@ -40,6 +44,7 @@ class A1Config:
     basket_lookback: int = 30
     trend_lookbacks: tuple[int, ...] = (20, 60, 120)
     short_exposure: float = 0.5
+    short_band: float = 0.0
     max_leverage: float = 1.0
     periods_per_year: int = 365
 
@@ -62,13 +67,16 @@ class A1Config:
             or not (0 < self.short_exposure <= 1)
         ):
             raise AlphaError(f"short_exposure must be a finite number in (0, 1], got {self.short_exposure!r}")
+        if (
+            not isinstance(self.short_band, (int, float))
+            or isinstance(self.short_band, bool)
+            or not math.isfinite(self.short_band)
+            or not (0.0 <= self.short_band < 1.0)
+        ):
+            raise AlphaError(f"short_band must be a finite number in [0.0, 1.0), got {self.short_band!r}")
         _check_positive_number("max_leverage", self.max_leverage)
         if not isinstance(self.periods_per_year, int) or isinstance(self.periods_per_year, bool) or self.periods_per_year < 1:
             raise AlphaError(f"periods_per_year must be an int >= 1, got {self.periods_per_year!r}")
-
-
-from cli.benchmark.strategies import sma_gate
-from cli.features import trend_agreement
 
 
 def _map_to_union_index(own_ts: list, own_values: list[float], union_ts: list) -> list[float | None]:
@@ -93,6 +101,26 @@ def _map_to_union_index(own_ts: list, own_values: list[float], union_ts: list) -
     return mapped
 
 
+def _btc_market_bear(btc_prices: list[float], *, window: int, band: float) -> list[float]:
+    """Causal confirmed-bear "band" signal (docs/specs/00031, finding-2): the strict-below-SMA-by-band
+    mirror of sma_gate's above-SMA long signal, same alignment/warm-up convention (cli/benchmark/
+    strategies.py:sma_gate). Element k = 1.0 if btc_prices[k] < mean(btc_prices[k-window+1:k+1]) *
+    (1.0 - band) else 0.0, using only btc_prices[<= k] (no look-ahead). Warm-up (k < window-1) is 0.0.
+    Returns length len(btc_prices)-1, aligned with sma_gate/returns_from_prices. band == 0.0 reduces to
+    the plain below-SMA test; band > 0.0 opens a flat neutral zone between SMA*(1-band) and SMA where
+    neither this signal nor sma_gate's long signal fires. Private helper: trusts a validated btc_prices
+    (mirrors a1_book_returns's own _validate_btc_prices boundary).
+    """
+    signal: list[float] = []
+    for k in range(len(btc_prices) - 1):
+        if k < window - 1:
+            signal.append(0.0)
+            continue
+        sma = statistics.mean(btc_prices[k - window + 1 : k + 1])
+        signal.append(1.0 if btc_prices[k] < sma * (1.0 - band) else 0.0)
+    return signal
+
+
 def _asset_directions(
     prices_by_asset: dict[str, list[float | None]],
     btc_prices: list[float],
@@ -108,6 +136,8 @@ def _asset_directions(
     (Task 4) enforces this at its validation boundary."""
     g_btc_own = sma_gate(btc_prices, window=config.gate_window)
     g_btc = _map_to_union_index(asset_ts["BTC"], g_btc_own, union_ts)
+    bear_own = _btc_market_bear(btc_prices, window=config.gate_window, band=config.short_band)
+    market_bear = _map_to_union_index(asset_ts["BTC"], bear_own, union_ts)
 
     directions: dict[str, list[float | None]] = {}
     for asset, prices in prices_by_asset.items():
@@ -121,6 +151,7 @@ def _asset_directions(
                 d.append(None)
                 continue
             gate = g_btc[k] if g_btc[k] is not None else 0.0
+            bear = market_bear[k] if market_bear[k] is not None else 0.0
             # ta[k] is guaranteed non-None here: prices[k] and prices[k+1] both present means
             # union_ts[k]/union_ts[k+1] are adjacent in this asset's own compressed calendar too.
             ta_k = ta[k]
@@ -130,15 +161,12 @@ def _asset_directions(
                 long_ok = gate == 1.0 and ta_k > 0
             if long_ok:
                 d.append(1.0)
-            elif config.short == "confirmed_bear" and gate == 0.0 and ta_k < 0:
+            elif config.short == "confirmed_bear" and bear == 1.0 and ta_k < 0:
                 d.append(-config.short_exposure)
             else:
                 d.append(0.0)
         directions[asset] = d
     return directions
-
-
-import statistics
 
 
 def _asset_returns(prices: list[float | None]) -> list[float | None]:
@@ -182,10 +210,6 @@ def _inverse_vol_weights(prices_by_asset: dict[str, list[float | None]], *, look
     return weights
 
 
-from cli.backtest import run_backtest
-from cli.benchmark.strategies import vol_target
-
-
 def _validate_prices_by_asset(prices_by_asset: dict[str, list[float | None]]) -> None:
     if not isinstance(prices_by_asset, dict) or not prices_by_asset:
         raise AlphaError("prices_by_asset must be a non-empty dict of price series")
@@ -205,13 +229,24 @@ def _validate_prices_by_asset(prices_by_asset: dict[str, list[float | None]]) ->
         raise AlphaError("BTC must have full coverage on the union calendar (no None gaps)")
 
 
-def _validate_btc_prices(btc_prices: list[float], *, length: int) -> None:
-    if not isinstance(btc_prices, list) or len(btc_prices) != length:
+def _validate_btc_prices(btc_prices: list[float], prices_by_asset: dict[str, list[float | None]]) -> None:
+    """Validate the standalone btc_prices argument used to compute the regime gate (_asset_directions
+    reads btc_prices, not prices_by_asset["BTC"]). Under the current no-gap contract the two must be
+    the same series, so this checks btc_prices == prices_by_asset["BTC"] element-for-element -- a
+    same-length-but-different btc_prices would otherwise silently compute the gate off different data
+    than the BTC leg's own return/weight contribution. NOTE (iter-046): once BTC's real 1-day
+    union-calendar gap is handled, this will relax to "agrees where BTC is present" instead of a strict
+    full-length equality.
+    """
+    btc_column = prices_by_asset["BTC"]
+    if not isinstance(btc_prices, list) or len(btc_prices) != len(btc_column):
         got = len(btc_prices) if isinstance(btc_prices, list) else btc_prices
-        raise AlphaError(f"btc_prices must be a list of length {length} (the union length), got {got!r}")
+        raise AlphaError(f"btc_prices must be a list of length {len(btc_column)} (the union length), got {got!r}")
     for p in btc_prices:
         if not isinstance(p, (int, float)) or not math.isfinite(p) or p <= 0:
             raise AlphaError(f"btc_prices must be finite positive numbers, got {p!r}")
+    if btc_prices != btc_column:
+        raise AlphaError("btc_prices must equal prices_by_asset['BTC'] element-for-element (same series)")
 
 
 def a1_book_returns(prices_by_asset: dict[str, list[float | None]], btc_prices: list[float], *, config: A1Config) -> dict:
@@ -221,8 +256,8 @@ def a1_book_returns(prices_by_asset: dict[str, list[float | None]], btc_prices: 
     if not isinstance(config, A1Config):
         raise AlphaError(f"config must be an A1Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)
+    _validate_btc_prices(btc_prices, prices_by_asset)
     length = len(prices_by_asset["BTC"])
-    _validate_btc_prices(btc_prices, length=length)
 
     working = {"BTC": prices_by_asset["BTC"]} if config.base == "btc_only" else prices_by_asset
     union_ts = list(range(length))

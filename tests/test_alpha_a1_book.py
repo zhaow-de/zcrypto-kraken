@@ -118,3 +118,14 @@ def test_a1_book_returns_guards():
     gapped = {"BTC": [None] + btc[1:], "ETH": prices["ETH"]}
     with pytest.raises(AlphaError):
         a1_book_returns(gapped, btc, config=cfg)  # BTC must have full coverage
+
+
+def test_a1_book_returns_btc_prices_must_match_prices_by_asset():
+    # Right length, but one element differs from prices_by_asset["BTC"] -- the regime gate would
+    # silently compute off different data than the BTC leg's own return/weight contribution.
+    prices, btc = _synthetic_universe(150)
+    cfg = A1Config(base="btc_only", regime="single_gate", short="off", target_vol=0.10, **BASE_KWARGS)
+    mismatched = list(btc)
+    mismatched[50] = mismatched[50] * 1.01
+    with pytest.raises(AlphaError):
+        a1_book_returns(prices, mismatched, config=cfg)
