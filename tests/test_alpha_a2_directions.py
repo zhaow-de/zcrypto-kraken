@@ -130,6 +130,30 @@ def test_a2config_bad_target_vol(target_vol):
         A2Config(lookbacks=(20,), short="off", target_vol=target_vol)
 
 
+@pytest.mark.parametrize("vol_lookback", [1, 0, -5, 2.5, True])
+def test_a2config_bad_vol_lookback(vol_lookback):
+    with pytest.raises(AlphaError):
+        A2Config(lookbacks=(20,), short="off", target_vol=0.10, vol_lookback=vol_lookback)
+
+
+@pytest.mark.parametrize("basket_lookback", [1, 0, -5, 2.5, True])
+def test_a2config_bad_basket_lookback(basket_lookback):
+    with pytest.raises(AlphaError):
+        A2Config(lookbacks=(20,), short="off", target_vol=0.10, basket_lookback=basket_lookback)
+
+
+@pytest.mark.parametrize("max_leverage", [0.0, -0.1, float("nan"), float("inf")])
+def test_a2config_bad_max_leverage(max_leverage):
+    with pytest.raises(AlphaError):
+        A2Config(lookbacks=(20,), short="off", target_vol=0.10, max_leverage=max_leverage)
+
+
+@pytest.mark.parametrize("periods_per_year", [0, -1, 2.5, True])
+def test_a2config_bad_periods_per_year(periods_per_year):
+    with pytest.raises(AlphaError):
+        A2Config(lookbacks=(20,), short="off", target_vol=0.10, periods_per_year=periods_per_year)
+
+
 def test_a2config_valid_defaults():
     cfg = A2Config(lookbacks=(10, 20, 40), short="off", target_vol=0.10)
     assert cfg.band == 1.0

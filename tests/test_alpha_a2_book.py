@@ -3,6 +3,7 @@ import math
 import pytest
 
 from cli.alpha import A1Config, A2Config, AlphaError, a1_book_returns, a2_book_returns
+from cli.alpha.a1 import _asset_returns
 from cli.benchmark.strategies import returns_from_prices
 
 BASE_KWARGS = dict(vol_lookback=20, basket_lookback=20)
@@ -34,6 +35,24 @@ def _synthetic_universe(n=260):
         else:
             sol.append(sol[159] * (0.985 ** (i - 159)))
     return {"BTC": btc, "ETH": eth, "SOL": sol}
+
+
+def _synthetic_universe_with_absent_asset(n=260):
+    # Same BTC/ETH/SOL legs as _synthetic_universe (BTC stays gap-free, per _validate_prices_by_asset),
+    # plus a fourth asset ALT that is absent (None) for a leading stretch (pre-listing) and, separately,
+    # drops a single mid-series point (a gap) -- the real-data union calendar iter-053's per-asset
+    # turnover + margin-carry cost model has to handle, which the gap-free _synthetic_universe fixture
+    # never exercises.
+    universe = _synthetic_universe(n)
+    listing_at = 40
+    gap_at = 150
+    alt: list[float | None] = [None] * listing_at
+    alt.append(15.0)
+    for i in range(listing_at + 1, n):
+        alt.append(alt[-1] * (1 + 0.02 * math.sin(i / 6.0 + 3)))
+    alt[gap_at] = None
+    universe["ALT"] = alt
+    return universe
 
 
 def _mean_turnover(asset_positions: dict[str, list[float]]) -> float:
@@ -69,6 +88,24 @@ def test_a2_book_returns_no_lookahead():
         assert out_a["asset_positions"][asset][:k_common] == out_b["asset_positions"][asset][:k_common]
 
 
+def test_a2_book_returns_no_lookahead_with_absent_asset():
+    # Sibling of test_a2_book_returns_no_lookahead, run on the absent-asset universe so the book-level
+    # no-look-ahead property is checked in the presence of a pre-listing gap + a mid-series gap, not
+    # just the gap-free BTC/ETH/SOL universe.
+    n, k_common = 260, 199
+    prices_a = _synthetic_universe_with_absent_asset(n)
+    prices_b = {a: list(p) for a, p in prices_a.items()}
+    base_val = prices_b["SOL"][k_common]
+    for j in range(k_common + 1, n):
+        prices_b["SOL"][j] = base_val * (1 + 0.3 * math.sin(j))
+    cfg = A2Config(lookbacks=(10, 20, 40), short="on", target_vol=0.10, **BASE_KWARGS)
+    out_a = a2_book_returns(prices_a, config=cfg)
+    out_b = a2_book_returns(prices_b, config=cfg)
+    assert out_a["net_returns"][:k_common] == out_b["net_returns"][:k_common]
+    for asset in prices_a:
+        assert out_a["asset_positions"][asset][:k_common] == out_b["asset_positions"][asset][:k_common]
+
+
 def test_a2_book_returns_asset_positions_reconstruct_net_returns():
     prices = _synthetic_universe(260)
     cfg = A2Config(lookbacks=(10, 20, 40), short="on", target_vol=0.10, **BASE_KWARGS)
@@ -77,6 +114,26 @@ def test_a2_book_returns_asset_positions_reconstruct_net_returns():
     for k in range(len(out["net_returns"])):
         reconstructed = sum(out["asset_positions"][asset][k] * rets[asset][k] for asset in prices)
         assert reconstructed == pytest.approx(out["net_returns"][k], abs=1e-9)
+
+
+def test_a2_book_returns_reconstruct_identity_with_absent_asset():
+    # The gap-free reconstruct test above never exercises a None asset return -- iter-053's real-data
+    # universe has ALT absent (pre-listing) then gapped mid-series, and the per-asset-turnover +
+    # margin-carry cost model depends on this identity holding with ret_i[k] treated as 0.0 wherever
+    # it's None. returns_from_prices can't take a None-containing series, so use _asset_returns (the
+    # same helper a2_book_returns itself uses) to build the per-asset reference returns.
+    prices = _synthetic_universe_with_absent_asset(260)
+    cfg = A2Config(lookbacks=(10, 20, 40), short="on", target_vol=0.10, **BASE_KWARGS)
+    out = a2_book_returns(prices, config=cfg)
+    rets = {asset: _asset_returns(p) for asset, p in prices.items()}
+    for k in range(len(out["net_returns"])):
+        reconstructed = sum(out["asset_positions"][asset][k] * (rets[asset][k] or 0.0) for asset in prices)
+        assert reconstructed == pytest.approx(out["net_returns"][k], abs=1e-9)
+    # No phantom exposure: wherever ALT's own return is None (pre-listing or the mid-series gap), its
+    # book position must be exactly 0.0, not just close to it.
+    for k in range(len(rets["ALT"])):
+        if rets["ALT"][k] is None:
+            assert out["asset_positions"]["ALT"][k] == 0.0
 
 
 def test_a2_book_returns_toggles_engage():
@@ -99,16 +156,38 @@ def test_a2_book_returns_toggles_engage():
     assert all(v >= 0.0 for positions in r_fast["asset_positions"].values() for v in positions)
 
 
-def test_a2_book_returns_low_turnover_premise():
-    # The reason A2 exists: Donchian positions persist until the opposite channel breaks, so per-asset
-    # turnover should be structurally lower than A1's SMA-gate + trend-agreement book on the same
-    # universe. If this fails, that undercuts A2's whole premise -- a genuine finding, not a test to
-    # weaken.
+A2_LOOKBACK = 20
+
+
+def test_a2_turnover_below_a1_at_matched_horizon():
+    """Matched-horizon (window == gate_window) mechanism check -- NOT a claim that the production A2
+    book is cheaper than the production A1 book.
+
+    At the SAME lookback (A2_LOOKBACK == 20), Donchian-hold (A2) churns less than an SMA-gate flip
+    (A1): A2 lookback=20 turnover 0.04516 vs A1 gate_window=20 turnover 0.05745. That is the whole
+    scope of this test -- the structural reason A2 exists (positions persist until the opposite
+    channel breaks, instead of flipping on every gate crossing).
+
+    It does NOT generalize to "A2 beats A1 in production": A1 at a longer gate_window has LOWER
+    turnover than A2's matched-horizon figure -- gate_window=50 -> turnover 0.04133, gate_window=120
+    -> turnover 0.01723, both below A2's 0.04516. Which book is cheaper in production is an empirical
+    question for the real-data run, not settled by this test.
+    """
     prices = _synthetic_universe(260)
-    cfg_a2 = A2Config(lookbacks=(20,), short="off", target_vol=0.10, **BASE_KWARGS)
+    cfg_a2 = A2Config(lookbacks=(A2_LOOKBACK,), short="off", target_vol=0.10, **BASE_KWARGS)
     out_a2 = a2_book_returns(prices, config=cfg_a2)
 
-    cfg_a1 = A1Config(base="equal_risk_basket", regime="single_gate", short="off", target_vol=0.10, gate_window=20, **BASE_KWARGS)
+    cfg_a1 = A1Config(
+        base="equal_risk_basket",
+        regime="single_gate",
+        short="off",
+        target_vol=0.10,
+        gate_window=A2_LOOKBACK,
+        **BASE_KWARGS,
+    )
+    # Matched-horizon precondition, asserted in code so the test can't silently drift into comparing
+    # A2 against an unmatched A1 gate_window.
+    assert cfg_a1.gate_window == A2_LOOKBACK
     out_a1 = a1_book_returns(prices, prices["BTC"], config=cfg_a1)
 
     a2_turnover = _mean_turnover(out_a2["asset_positions"])

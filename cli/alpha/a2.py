@@ -4,7 +4,14 @@ import math
 import statistics
 from dataclasses import dataclass
 
-from cli.alpha.a1 import _asset_returns, _inverse_vol_weights, _map_to_union_index, _validate_prices_by_asset
+from cli.alpha.a1 import (
+    _asset_returns,
+    _check_positive_number,
+    _check_window,
+    _inverse_vol_weights,
+    _map_to_union_index,
+    _validate_prices_by_asset,
+)
 from cli.alpha.errors import AlphaError
 from cli.backtest import run_backtest
 from cli.benchmark.strategies import vol_target
@@ -51,6 +58,11 @@ class A2Config:
             or not (0 < self.band <= 1)
         ):
             raise AlphaError(f"band must be a finite number in (0, 1], got {self.band!r}")
+        _check_window("vol_lookback", self.vol_lookback)
+        _check_window("basket_lookback", self.basket_lookback)
+        _check_positive_number("max_leverage", self.max_leverage)
+        if not isinstance(self.periods_per_year, int) or isinstance(self.periods_per_year, bool) or self.periods_per_year <= 0:
+            raise AlphaError(f"periods_per_year must be an int > 0, got {self.periods_per_year!r}")
 
 
 def _donchian_signal(prices: list[float], *, window: int, band: float) -> list[float]:
