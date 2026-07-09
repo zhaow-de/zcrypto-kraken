@@ -364,11 +364,15 @@ def test_variant_tamper_without_rehash_is_caught(tmp_path):
 
 
 def test_live_registry_file_loads_clean():
-    # Read-only: exercises the new v2/v3 loader against the real, committed registry. Never write to this file.
+    # Read-only: exercises the v2/v3 loader against the real, committed registry. Never write to this file.
+    # The registry is append-only, so records 1-32 (the pre-v3 era) are a frozen historical fact asserted
+    # verbatim; the total count grows with every registered trial and is only floored, never pinned.
     reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "research" / "trial-registry.jsonl")
-    assert len(reg) == 32
-    assert all(r.schema_version == 2 for r in reg.records)
-    assert all(r.variant is None for r in reg.records)  # pre-v3 file; variant-25..32 lives in `notes` only
+    assert len(reg) >= 33  # 32 pre-v3 + the first v3-era record (iter-059, P1)
+    pre_v3 = reg.records[:32]
+    assert all(r.schema_version == 2 for r in pre_v3)
+    assert all(r.variant is None for r in pre_v3)  # pre-v3 records; variant-25..32 lives in `notes` only
+    assert all(r.schema_version >= 3 for r in reg.records[32:])  # everything after landed on schema v3+
 
 
 def test_variant_does_not_affect_family_budget_monotonic_check(tmp_path):
