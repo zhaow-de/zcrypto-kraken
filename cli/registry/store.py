@@ -29,6 +29,7 @@ def _to_record(rec: dict) -> TrialRecord:
         timestamp=rec["timestamp"],
         iteration=rec["iteration"],
         family=rec["family"],
+        variant=rec.get("variant"),
         spec_hash=rec["spec_hash"],
         dataset_hash=rec["dataset_hash"],
         seeds=tuple(rec["seeds"]),
@@ -97,7 +98,7 @@ def _now_utc_iso() -> str:
 
 class TrialRegistry:
     """Append-only, integrity-checked JSONL store of validation trials. See docs/specs/00000-trial-registry-design.md
-    and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain, schema v2).
+    and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain; loads schema v2+v3, writes v3).
 
     The record_hash self-check catches accidental/careless in-place edits; contiguity + monotone family counts
     catch deletion/reorder/truncation. The prev_hash chain (each record commits to its predecessor's record_hash,
@@ -130,6 +131,7 @@ class TrialRegistry:
         verdict: str,
         run_ref: str | None = None,
         notes: str = "",
+        variant: str | None = None,
     ) -> TrialRecord:
         caller = dict(
             iteration=iteration,
@@ -143,6 +145,8 @@ class TrialRegistry:
             run_ref=run_ref,
             notes=notes,
         )
+        if variant is not None:  # omit the key entirely rather than serialize a `null` (canonical form stays clean)
+            caller["variant"] = variant
         validate_caller_fields(caller)  # raises on non-finite metric BEFORE opening the file
         lock_f = open(self.path, "a", encoding="utf-8")
         try:
