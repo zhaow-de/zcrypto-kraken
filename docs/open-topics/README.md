@@ -19,7 +19,12 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-_(none)_
+- [T0009 — Phase-4/5 validation-protocol decisions](T0009-validation-protocol-decisions.md) — the human decision sheet from the A1/A2 arcs: worst-slice leg, evaluation window, net-of-cost SPA, DSR threshold, A1-long/flat disposition, trial resumption (ripe when: next attended protocol review — inputs ready now).
+- [T0010 — full-history dynamic benchmark B3/B4](T0010-dynamic-benchmark-b3-b4.md) — gate×basket and basket+short over the 2013→2026 dynamic basket, plus reconciling the Phase-3 basket-cost carry-forward (ripe when: already fired — the basket exists since iter-044).
+- [T0011 — A2 refinements: 4h band, breakout-hold, 2026 probe](T0011-a2-refinements.md) — the parked A2 follow-ups; they spend reserved A-family trials (ripe when: T0009 resolved).
+- [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
+- [T0013 — trial-registry variant field](T0013-registry-variant-field.md) — first-class family-vs-variant schema so shared budgets stay enforced without notes-encoding (ripe when: next registry-schema iteration).
+- [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 
 ### Partially done<a name="partially-done"></a>
 
