@@ -36,7 +36,11 @@ def test_donchian_signal_no_lookahead():
         prices_b[j] = prices_b[j] * 7.3 + 40.0  # unrelated divergent tail
     sig_a = _donchian_signal(prices_a, window=3, band=1.0)
     sig_b = _donchian_signal(prices_b, window=3, band=1.0)
-    assert sig_a[:k_common] == sig_b[:k_common]
+    # k_common itself is invariant too: sig[k_common] only reads cp[k_common], which only reads
+    # prices[<= k_common] -- so the bound extends through k_common inclusive, not just up to it.
+    # A 1-step peek (reading cp[k+1] instead of cp[k]) first corrupts exactly this index, so leaving
+    # it unchecked would make this test blind to the most likely real bug.
+    assert sig_a[: k_common + 1] == sig_b[: k_common + 1]
 
 
 def _cfg(*, lookbacks=(3,), short="off", band=1.0, short_exposure=0.5):
@@ -78,7 +82,10 @@ def test_asset_directions_a2_no_lookahead():
     cfg = _cfg()
     d_a = _asset_directions_a2({"BTC": prices_a}, union_ts, asset_ts, config=cfg)
     d_b = _asset_directions_a2({"BTC": prices_b}, union_ts, asset_ts, config=cfg)
-    assert d_a["BTC"][:k_common] == d_b["BTC"][:k_common]
+    # k_common itself is invariant too: direction[k_common] only reads prices[<= k_common] (via
+    # _donchian_signal / channel_position), so the bound extends through k_common inclusive -- same
+    # reasoning as _donchian_signal's own no-look-ahead test.
+    assert d_a["BTC"][: k_common + 1] == d_b["BTC"][: k_common + 1]
 
 
 def test_asset_directions_a2_union_none_and_warmup():
