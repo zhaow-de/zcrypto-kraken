@@ -37,3 +37,15 @@ Once the worst-slice leg was shown to fail the frozen benchmark itself, spending
 ## The Phase 0 → 1 boundary drift
 
 The loop advanced into Phase 1 on a bare "phase complete" note, leaving Phase 0's decisions un-drained in the running log — fixed retroactively by `01.3.phase0-closeout.md`. → *Never cross a phase boundary without the close-out report and the drained decisions sibling.*
+
+## The A2 double-division (iters 065–066 — caller-convention drift)
+
+Two probe drivers passed a per-period `target_vol` to `A2Config`, which takes the ANNUALIZED value and divides by √ppy internally — the A2 books ran at ~1/19 scale, and the mis-scaled numbers seeded a decision-critical (and false) "A2 demonstrates non-participation reward" reading headed for the human's T0009 sheet. Caught by the pre-merge review, which empirically pinned the fix by matching the corrected Sharpes to registry records 25/26/29/30 to 4 decimals; the merged iter-065 claims were corrected in place with bracketed notes. → *State unit contracts in the config docstrings and never pre-scale in the caller; a review that re-derives numbers from primary sources catches what a review that reads prose cannot.*
+
+## The silently-dropped protocol item (iter-059)
+
+The combination-trial spec pre-registered "record PSR/DSR (deflation nil at n=1)"; the driver and registry record omitted it, and nothing logged the narrowing. The pre-push review caught it; the figures were computed post-hoc through the identical construction and recorded with the omission disclosed. → *Pre-registered protocol items are a checklist at driver-writing time — walk the spec's protocol section line-by-line before running, and log any deliberate narrowing as a decision.*
+
+## The never-operationalized holdout default (iter-061, T0017)
+
+The Decision Register adopted "holdout = final 12 months at data freeze" as an autonomous default — and no phase ever carved it out. Every backtest from Phase 3 onward consumed the full window, silently burning the pre-registered holdout; the only clean window left is out-of-time data. Surfaced honestly at runbook-drafting time and escalated (T0017). → *Operationalize a register default the moment it is adopted (carve the data, build the ledger, add the guard) — a default that exists only as prose will be violated by everyone who never re-reads it.*

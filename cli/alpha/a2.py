@@ -24,7 +24,11 @@ _SHORTS = frozenset({"off", "on"})
 class A2Config:
     """A2 book configuration (docs/specs/00033): the per-asset Donchian breakout ensemble's toggles
     (lookbacks, short, target_vol) plus the fixed knobs shared by every trial. Validated at
-    construction; every field is immutable thereafter."""
+    construction; every field is immutable thereafter.
+
+    `target_vol` is ANNUALIZED (e.g. 0.10 = 10 %/yr); the book divides by sqrt(periods_per_year)
+    internally — never pre-divide in the caller (the iter-065/066 drivers did, running the book at
+    ~1/19 scale; caught in review, decisions log [iter-066])."""
 
     lookbacks: tuple[int, ...]
     short: str

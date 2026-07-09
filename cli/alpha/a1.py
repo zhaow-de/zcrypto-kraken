@@ -33,7 +33,11 @@ def _check_window(name: str, value: int) -> None:
 class A1Config:
     """A1 book configuration (docs/specs/00031): the four toggles (base, regime, short, target_vol)
     plus the fixed knobs shared by every trial. Validated at construction; every field is immutable
-    thereafter."""
+    thereafter.
+
+    `target_vol` is ANNUALIZED (e.g. 0.10 = 10 %/yr); the book divides by sqrt(periods_per_year)
+    internally — never pre-divide in the caller (the iter-065/066 drivers did, running the book at
+    ~1/19 scale; caught in review, decisions log [iter-066])."""
 
     base: str
     regime: str
