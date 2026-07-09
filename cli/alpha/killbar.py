@@ -5,10 +5,10 @@ import math
 from cli.alpha.errors import AlphaError
 from cli.validation import ValidationError, deflated_sharpe_ratio, max_drawdown, reality_check_pvalue, sharpe
 
-# 0.5 = faithful operationalization of the pre-registered "DSR > 0" (deflated point estimate positive);
-# the stricter López-de-Prado 0.95 significance bar is the alternative the human can ratify at Phase-5 —
-# SPA-beats-benchmark carries the significance-vs-benchmark burden separately.
-DSR_PASS_THRESHOLD = 0.5
+# Ratified 2026-07-09 (T0009, decisions log [iter-072]): the stricter López-de-Prado 0.95 significance
+# bar (not just a positive deflated point estimate) -- SPA-beats-benchmark carries the
+# significance-vs-benchmark burden separately.
+DSR_PASS_THRESHOLD = 0.95
 
 
 def a1_kill_bar(
@@ -21,33 +21,52 @@ def a1_kill_bar(
     seed: int,
     cost_stressed_returns: list[float],
     regime_slices: dict[str, list[float]],
+    benchmark_slices: dict[str, list[float]],
+    decisive_start: int = 0,
 ) -> dict:
-    """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031): a variant is
-    archived unless ALL hold: its DSR clears DSR_PASS_THRESHOLD at its trial count, SPA says it beats
-    the benchmark, it survives 1.5x cost stress, and its worst walk-forward regime slice is not
-    disqualifying.
+    """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031), folded to the
+    T0009-ratified protocol (2026-07-09, decisions log [iter-072]): a variant is archived unless ALL hold:
+    its DSR clears DSR_PASS_THRESHOLD at its trial count, SPA says it beats the benchmark on the decisive
+    window, it survives 1.5x cost stress, and its worst regime slice does not underperform the
+    benchmark's own worst slice.
 
     DSR leg: `deflated_sharpe_ratio` here returns a PROBABILITY P(true SR > deflated benchmark), so the
-    leg is `dsr > 0.5`. 0.5 = faithful operationalization of the pre-registered "DSR > 0" (deflated point
-    estimate positive); the stricter López-de-Prado 0.95 significance bar is the alternative the human can
-    ratify at Phase-5 — SPA-beats-benchmark carries the significance-vs-benchmark burden separately.
+    leg is `dsr > DSR_PASS_THRESHOLD`. Ratified 2026-07-09 (T0009): the bar is the stricter
+    López-de-Prado significance threshold, `dsr > 0.95` — not just the pre-ratification 0.5 "deflated
+    point estimate positive" bar. SPA-beats-benchmark carries the significance-vs-benchmark burden
+    separately.
+
+    SPA leg (ratified 2026-07-09, T0009): the caller passes NET-OF-COST series for both
+    `book_net_returns` and `benchmark_net_returns` (each already charged its own turnover + carry — the
+    same contract as `net_of_cost_verdict`). The leg is evaluated on the decisive window
+    `[decisive_start:]` — `spa_p_value`/`spa_pass` are the decisive-window figures; the full-window
+    p-value is also computed and returned as `spa_p_value_full` for reporting. `decisive_start` is the
+    benchmark's post-warm-up cut (230 for B3+vt-dynamic).
 
     Units contract: `sr = sharpe(book_net_returns)` is PER-PERIOD (PSR's formula is per-observation with
     n_obs = len(returns)), so `var_trials` MUST be in per-period Sharpe² units (at iter-046 = the variance
     of the 16 variants' per-period Sharpes) — NOT annualized. A per-period trial-Sharpe stdev > 1 is
     nonsensical, so `var_trials > 1.0` is rejected (a likely annualized-vs-per-period units mix-up).
 
-    Two judgment calls made here (see docs/plans/00031 "Design decisions ... flagged for review"):
-    "survives cost stress" = the cost-stressed series' own Sharpe is still > 0; "worst slice not
-    disqualifying" = every regime_slices entry's Sharpe is > 0. Task 6 (real-data run) may want to
-    recalibrate the worst-slice bar against the frozen benchmark's own worst-slice Sharpe instead.
+    "survives cost stress" = the cost-stressed series' own Sharpe is still > 0 (own-series, full window;
+    a judgment call from the original design, see docs/plans/00031 "Design decisions ... flagged for
+    review" — unchanged by T0009). Worst-slice leg (ratified 2026-07-09, T0009): the other original
+    judgment call — "worst slice not disqualifying" = every regime_slices entry's Sharpe > 0 — is
+    superseded by the benchmark-relative
+    `benchmark_relative_worst_slice(regime_slices, benchmark_slices)["beats_benchmark_worst"]`; the
+    caller excludes stub/partial-year slices from BOTH `regime_slices` and `benchmark_slices` before
+    calling. The book's own worst non-degenerate slice (`worst_slice_name`, `worst_slice_sharpe`) and the
+    full relative diagnostic (minus its verbose `per_slice` detail, as `worst_slice_relative`) stay in the
+    result for the record, but no longer drive `worst_slice_pass`.
 
     Worst-slice leg robustness (iter-046, `.tmp/decisions.md`): a regime slice that is zero-variance or
     shorter than 2 periods (e.g. a calendar-year slice sitting entirely inside the 200-day gate warm-up,
     or a bear year a long/flat book correctly sat out) means the book took NO risk that regime — there is
-    no risk-adjusted performance to judge and Sharpe is undefined, so the slice is skipped rather than
-    treated as qualifying or disqualifying. If every slice is degenerate this way, `worst_slice_pass` is
-    False (a book with no evaluable risk-taking cannot clear the leg).
+    no risk-adjusted performance to judge and Sharpe is undefined, so the slice is skipped when recording
+    the book's own worst-slice fields. If every slice is degenerate this way, `worst_slice_name`/
+    `worst_slice_sharpe` fall back to the `<no-nondegenerate-slice>`/nan sentinel, and `worst_slice_pass`
+    is False (there is nothing evaluable for the relative diagnostic to compare either, since its
+    per-slice skip rule also triggers whenever the book side is degenerate).
     """
     if len(book_net_returns) != len(benchmark_net_returns):
         raise AlphaError("book_net_returns and benchmark_net_returns must have the same length")
@@ -59,17 +78,26 @@ def a1_kill_bar(
             "the DSR leg is per-period, so pass var_trials in per-period Sharpe² units, not annualized "
             "(see the units contract in a1_kill_bar's docstring)"
         )
+    if not isinstance(decisive_start, int):
+        raise AlphaError(f"decisive_start must be an int, got {decisive_start!r}")
+    if decisive_start < 0 or decisive_start >= len(book_net_returns):
+        raise AlphaError(f"decisive_start={decisive_start} must be >= 0 and < len(book_net_returns)={len(book_net_returns)}")
 
     try:
         n_obs = len(book_net_returns)
         sr = sharpe(book_net_returns)
         dsr = deflated_sharpe_ratio(sr, n_obs, n_trials, var_trials)
-        # dsr is a probability P(true SR > deflated benchmark); dsr > 0.5 <=> deflated point estimate positive.
+        # dsr is a probability P(true SR > deflated benchmark); ratified bar is dsr > DSR_PASS_THRESHOLD (0.95).
         dsr_pass = dsr > DSR_PASS_THRESHOLD
 
-        outperformance = [[b - m] for b, m in zip(book_net_returns, benchmark_net_returns)]
-        spa = reality_check_pvalue(outperformance, mean_block=mean_block, seed=seed)
-        spa_pass = spa["p_value"] < 0.05
+        outperformance_full = [[b - m] for b, m in zip(book_net_returns, benchmark_net_returns)]
+        spa_p_value_full = reality_check_pvalue(outperformance_full, mean_block=mean_block, seed=seed)["p_value"]
+
+        outperformance_decisive = [
+            [b - m] for b, m in zip(book_net_returns[decisive_start:], benchmark_net_returns[decisive_start:])
+        ]
+        spa_p_value = reality_check_pvalue(outperformance_decisive, mean_block=mean_block, seed=seed)["p_value"]
+        spa_pass = spa_p_value < 0.05
 
         cost_stress_sharpe = sharpe(cost_stressed_returns)
         cost_stress_pass = cost_stress_sharpe > 0
@@ -82,24 +110,31 @@ def a1_kill_bar(
     if slice_sharpes:
         worst_slice_name = min(slice_sharpes, key=slice_sharpes.get)
         worst_slice_sharpe = slice_sharpes[worst_slice_name]
-        worst_slice_pass = worst_slice_sharpe > 0
+        relative = benchmark_relative_worst_slice(regime_slices, benchmark_slices)
+        worst_slice_pass = relative["beats_benchmark_worst"]
+        worst_slice_relative = {k: v for k, v in relative.items() if k != "per_slice"}
     else:
-        # Every provided slice was degenerate (no risk taken anywhere) -- not evaluable, so it cannot pass.
+        # Every provided regime_slices entry was degenerate (no risk taken anywhere): not evaluable, so it
+        # cannot pass -- and benchmark_relative_worst_slice would have nothing to compare either (its
+        # per-slice skip rule also triggers whenever the book side is degenerate), so it is not called.
         worst_slice_name = "<no-nondegenerate-slice>"
         worst_slice_sharpe = math.nan
         worst_slice_pass = False
+        worst_slice_relative = {"beats_benchmark_worst": False, "n_compared": 0, "skipped": list(regime_slices)}
 
     passes = dsr_pass and spa_pass and cost_stress_pass and worst_slice_pass
     return {
         "dsr": dsr,
         "dsr_pass": dsr_pass,
-        "spa_p_value": spa["p_value"],
+        "spa_p_value": spa_p_value,
+        "spa_p_value_full": spa_p_value_full,
         "spa_pass": spa_pass,
         "cost_stress_sharpe": cost_stress_sharpe,
         "cost_stress_pass": cost_stress_pass,
         "worst_slice_name": worst_slice_name,
         "worst_slice_sharpe": worst_slice_sharpe,
         "worst_slice_pass": worst_slice_pass,
+        "worst_slice_relative": worst_slice_relative,
         "passes": passes,
     }
 
