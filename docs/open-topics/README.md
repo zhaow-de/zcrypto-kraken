@@ -26,7 +26,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Partially done<a name="partially-done"></a>
 
 - [T0011 — A2 refinements: 4h band, breakout-hold](T0011-a2-refinements.md) — the 2026 probe is done (iter-065, decision-support feeding T0009's stub question); the remaining follow-ups spend reserved A-family trials (ripe when: T0009 resolved).
-- [T0017 — holdout window ratification](T0017-holdout-window-ratification.md) — window **ratified** (2026-07-09: out-of-time 2026-04-01 → fresh freeze); remaining: the look itself + the ledger, at the event (ripe when: the look session, human present).
 
 ### Resolved<a name="resolved"></a>
 
@@ -39,6 +38,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0013 — trial-registry variant field](archive/T0013-registry-variant-field.md) — resolved in iter-056: schema_version 3 adds an optional first-class `variant` (hash-covered, omit-when-None); v2+v3 files co-load with the chain intact; budget counter untouched; adversarial review APPROVED (forge/torn-tail/concurrency probes).
 - [T0015 — registry per-schema-version key-set validation](archive/T0015-registry-key-set-validation.md) — resolved in iter-062: exact key-set per schema version (15 base keys, v3 ± `variant`); surplus or missing key = corruption; the chain-consistent "variannt" forge now fails on this check alone; adversarial review PASS.
 - [T0009 — Phase-4/5 validation-protocol decisions](archive/T0009-validation-protocol-decisions.md) — resolved in iter-072 (attended review, 2026-07-09): all six legs decided — benchmark-relative + stub-excluded worst-slice, k≥230 decisive window, net-of-cost SPA, DSR 0.95, A1-lf weekly v0.12 admitted (trial 34), A-family resumption; folded into `a1_kill_bar`.
+- [T0017 — holdout window ratification](archive/T0017-holdout-window-ratification.md) — resolved in iter-073 (attended): window ratified (out-of-time 2026-04-01 → freeze), the look executed same night (degenerate gate-off window, reading **EQUALS**), ledger created, budget → 0.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
