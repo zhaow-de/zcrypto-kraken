@@ -3,7 +3,11 @@ import pytest
 from cli.alpha import AlphaError, a1_kill_bar, short_leg_whipsaw
 from cli.validation import linear_signal, sign_strategy_returns
 
-N = 200
+N = 500
+# Per-period Sharpe² units, consistent with a1_kill_bar's per-period sr (see its units-contract docstring).
+# At this scale a genuine planted edge (sr ~= 0.78) clears the deflated benchmark (~= 0.057) so dsr -> ~1.0,
+# while a beta=0 null's noise Sharpe (SE ~= 1/sqrt(N)) falls below it on the majority of seeds -> dsr < 0.5.
+VAR_TRIALS_PER_PERIOD = 1e-3
 
 
 def _book_and_benchmark(*, beta, seed):
@@ -23,13 +27,16 @@ def test_a1_kill_bar_planted_edge_passes():
         book,
         benchmark,
         n_trials=16,
-        var_trials=1.0,
+        var_trials=VAR_TRIALS_PER_PERIOD,
         mean_block=5,
         seed=7,
         cost_stressed_returns=book,
         regime_slices=_slices(book),
     )
-    assert result["dsr"] > 0
+    # dsr is a probability; a real edge must clear 0.5 (deflated point estimate positive), not just > 0
+    # (which the pre-fix gate accepted for a ~5e-43 underflow — see test_a1_kill_bar_null_rarely_passes).
+    assert result["dsr"] > 0.5
+    assert result["dsr_pass"] is True
     assert result["spa_pass"] is True
     assert result["spa_p_value"] < 0.05
     assert result["cost_stress_pass"] is True
@@ -40,14 +47,21 @@ def test_a1_kill_bar_planted_edge_passes():
 def test_a1_kill_bar_null_rarely_passes():
     # Mirrors tests/test_acceptance.py's null-false-positive-rate style: over 20 seeds, a beta=0 (no
     # real edge) book should almost never clear all four kill-bar conditions simultaneously.
+    #
+    # This test also proves the DSR leg is a real gate, not the inert no-op it was before the fix. With
+    # the pre-fix `dsr > 0` gate on these beta=0 nulls the DSR leg passed 20/20 (deflated_sharpe_ratio is
+    # a probability that only underflows to ~5e-43, never <= 0), so only SPA/cost/slice discriminated.
+    # With the fixed `dsr > 0.5` gate and per-period var_trials, the observed per-leg null pass tally is
+    # dsr=4/20, spa=3/20, cost=8/20, slice=6/20, overall passes=3/20 — DSR now fails the majority of nulls.
     passed = 0
+    dsr_leg_passed = 0
     for seed in range(20):
         book, benchmark = _book_and_benchmark(beta=0.0, seed=seed)
         result = a1_kill_bar(
             book,
             benchmark,
             n_trials=16,
-            var_trials=1.0,
+            var_trials=VAR_TRIALS_PER_PERIOD,
             mean_block=5,
             seed=seed + 100,
             cost_stressed_returns=book,
@@ -55,7 +69,12 @@ def test_a1_kill_bar_null_rarely_passes():
         )
         if result["passes"]:
             passed += 1
+        if result["dsr_pass"]:
+            dsr_leg_passed += 1
     assert passed <= 4
+    # DSR now contributes discrimination: a beta=0 null clears dsr > 0.5 on only a minority of seeds
+    # (vs 20/20 under the broken gate), so the leg is no longer inert.
+    assert dsr_leg_passed <= 8
 
 
 def test_a1_kill_bar_cost_stress_can_fail_alone():
