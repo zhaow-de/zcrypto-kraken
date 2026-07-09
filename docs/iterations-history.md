@@ -573,3 +573,8 @@ First iteration of the autonomous research loop, working Phase 0 of `docs/resear
 
 - **Readings recorded into T0009's A1-lf item** (disposition stays the human's): the edge is **start-date robust** — significant at every start 2014–2022, only the short 2023 window misses; **dropping 2014 strengthens it** (the early-data-artifact reading gains direct support, or at minimum the edge does not depend on early data); A1-lf weekly's maxDD (15.78 %) is *lower* than the ungoverned bar's (25.53 %). Honest margins reported: v0.10's full-window p sits exactly at 0.0500.
 - Zero trial spend (diagnostics on the already-registered arm); registry, deployment, holdout data, and capture pipeline untouched.
+
+## 2026-07-09 — iter-070: A1-long/flat cost-stress read (completes the T0009 A1-lf package)
+
+- **Ran the ×1.5/×2 cost-stress rungs for the A1-lf weekly candidate vs the equally-stressed adopted bar** (QA: the ×1 row reproduces iter-069's figures exactly, and the stressed bar Sharpes 1.1581/1.0705 match iter-059's independently-computed stress rungs — cross-driver consistency). **The v0.12 arm survives with significance intact**: ×1.5 → 1.2865 vs 1.1581 (p = 0.0115); ×2 → 1.1931 vs 1.0705 (p = 0.0155). **The v0.10 arm loses significance under stress** (p 0.0645 / 0.0820) — reported symmetrically.
+- **T0009's A1-lf decision-support package is now complete**: net-of-cost head-to-head, SPA (window-identified), start-date robustness, drawdown superiority, and cost stress — every input the disposition needs is recorded; the call stays the human's. Zero trial spend; registry, deployment, holdout data, and capture pipeline untouched.
