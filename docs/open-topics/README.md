@@ -21,8 +21,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0011 — A2 refinements: 4h band, breakout-hold, 2026 probe](T0011-a2-refinements.md) — the parked A2 follow-ups; they spend reserved A-family trials (ripe when: T0009 resolved).
 - [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
-- [T0013 — trial-registry variant field](T0013-registry-variant-field.md) — first-class family-vs-variant schema so shared budgets stay enforced without notes-encoding (ripe when: next registry-schema iteration).
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
+- [T0015 — registry per-schema-version key-set validation](T0015-registry-key-set-validation.md) — close the unknown-key acceptance class found by the v3 review; hardening, not a live hole (ripe when: next registry-hardening iteration).
 
 ### Partially done<a name="partially-done"></a>
 
@@ -36,6 +36,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0004 — full tick history + tick-derived bar reconciliation](archive/T0004-tick-history-reconciliation.md) — resolved in iter-044 (human-confirmed exit-bar): `cli/tick/` reconciles the full universe + full history at 100% coverage, 99.4–100% within 1% (the early-illiquid residual accepted), plus the true tick-weighted VWAP; 15m/tick-storage folded into the Bucket-B queue.
 - [T0007 — dynamic-composition inverse-vol basket (full-history B2 variant)](archive/T0007-dynamic-composition-basket.md) — resolved in iter-044: built the look-ahead-free `dynamic_inverse_vol_basket` (2→10 majors over the full 2013→2026 union calendar) and answered finding-1 — the full-history basket is statistically indistinguishable from single-asset BTC (Sharpe ~1.1 both), so the fixed-window "basket loses" was a window artifact; a co-equal viable base for A1.
 - [T0010 — full-history dynamic benchmark B3/B4](archive/T0010-dynamic-benchmark-b3-b4.md) — resolved in iter-055: self-gated dynamic B3/B4 built with full QA; B3+vt point-beats gated-B1 net-of-cost (1.245/1.278 vs 1.047/1.074, n.s., higher drawdown) → the deployable-bar choice escalated to T0009; the Phase-3 basket-cost carry-forward reconciled.
+- [T0013 — trial-registry variant field](archive/T0013-registry-variant-field.md) — resolved in iter-056: schema_version 3 adds an optional first-class `variant` (hash-covered, omit-when-None); v2+v3 files co-load with the chain intact; budget counter untouched; adversarial review APPROVED (forge/torn-tail/concurrency probes).
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
