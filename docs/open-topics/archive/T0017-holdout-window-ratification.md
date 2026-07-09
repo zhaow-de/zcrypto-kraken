@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ripe_when: the Phase-5 holdout event (D3(v), human present) — this decision IS the event's first agenda item
 ---
 
@@ -18,6 +18,8 @@ The Phase-5 exit bar reads *"combined system beats or equals the frozen bar **on
 - The discovery and options analysis: decisions log `[iter-061]`; presented with a recommendation in `docs/research/12.phase5-system-spec-runbook.md` §Holdout-look protocol.
 - No performance computation has touched post-2026-03-31 data (verified by the dataset span itself — the canonical dataset ends 2026-03-31 and is hash-frozen; registry record 1's `dataset_hash` binds it).
 - The §9 *budgeted-holdout ledger* was never built (no look has occurred yet).
+
+> **Resolution (2026-07-10, attended — iter-073).** Window ratified (out-of-time 2026-04-01 → freeze), the look executed in the human's presence the same night, the ledger created (`docs/research/holdout-ledger.md`, budget → 0). Result: a degenerate window — both systems at zero exposure throughout (gate off); exit-bar reading **EQUALS**, trivially.
 
 ## Done so far
 
