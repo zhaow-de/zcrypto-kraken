@@ -15,6 +15,9 @@ VERDICTS = frozenset({"adopt", "reject", "park"})
 _STORE_OWNED = ("trial_id", "schema_version", "timestamp", "prev_hash", "record_hash")
 _REQUIRED_CALLER = ("iteration", "family", "spec_hash", "dataset_hash", "seeds", "metrics", "n_trials_in_family", "verdict")
 
+_BASE_STORED_KEYS = frozenset(_STORE_OWNED) | frozenset(_REQUIRED_CALLER) | {"run_ref", "notes"}
+_EXPECTED_STORED_KEYS = {2: _BASE_STORED_KEYS, 3: _BASE_STORED_KEYS | {"variant"}}
+
 
 def canonical_json(obj: dict) -> str:
     # sort_keys + compact + allow_nan=False -> byte-stable line the store can never emit NaN/Inf into.
@@ -81,6 +84,12 @@ def validate_stored_record(rec: dict, where: str) -> None:
     version = rec.get("schema_version")
     if version not in _LOADABLE_SCHEMA_VERSIONS:
         raise RegistryCorruptionError(f"{where}: unknown schema_version {version!r}")
+    surplus = sorted(set(rec) - _EXPECTED_STORED_KEYS[version])
+    if surplus:
+        raise RegistryCorruptionError(f"{where}: unknown key(s) {surplus} for schema_version {version}")
+    missing = sorted(_BASE_STORED_KEYS - set(rec))
+    if missing:
+        raise RegistryCorruptionError(f"{where}: missing required key(s) {missing}")
     if version == 2 and "variant" in rec:
         raise RegistryCorruptionError(f"{where}: schema_version 2 record must not carry a variant field")
     if "variant" in rec and type(rec["variant"]) is not str:

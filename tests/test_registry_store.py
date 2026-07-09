@@ -351,6 +351,82 @@ def test_v3_record_with_nonstr_variant_is_corruption(tmp_path):
         TrialRegistry(_write(tmp_path, [line]))
 
 
+def test_v3_unknown_key_forge_is_corruption(tmp_path):
+    body = dict(
+        trial_id=1,
+        schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        iteration="iter-001",
+        family="A1",
+        variant="v1",
+        spec_hash="s",
+        dataset_hash="d",
+        seeds=[0],
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        n_trials_in_family=1,
+        verdict="adopt",
+        run_ref=None,
+        notes="",
+        prev_hash=GENESIS_HASH,
+        variannt="x",  # misspelled forge, not a real field
+    )
+    line = canonical_json(dict(body, record_hash=compute_hash(body)))
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(_write(tmp_path, [line]))
+
+
+def test_v2_unknown_key_forge_is_corruption(tmp_path):
+    body = json.loads(_line_v2(1, n=1))
+    body["extra_key"] = 1  # unknown key, not part of any v2 field set
+    tampered = canonical_json(dict(body, record_hash=compute_hash({k: v for k, v in body.items() if k != "record_hash"})))
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(_write(tmp_path, [tampered]))
+
+
+def test_missing_base_key_is_corruption(tmp_path):
+    body = dict(
+        trial_id=1,
+        schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        iteration="iter-001",
+        family="A1",
+        spec_hash="s",
+        dataset_hash="d",
+        seeds=[0],
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        n_trials_in_family=1,
+        verdict="adopt",
+        run_ref=None,
+        # notes intentionally omitted -- a required base key
+        prev_hash=GENESIS_HASH,
+    )
+    line = canonical_json(dict(body, record_hash=compute_hash(body)))
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(_write(tmp_path, [line]))
+
+
+def test_v3_without_variant_still_loads(tmp_path):
+    body = dict(
+        trial_id=1,
+        schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        iteration="iter-001",
+        family="A1",
+        spec_hash="s",
+        dataset_hash="d",
+        seeds=[0],
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        n_trials_in_family=1,
+        verdict="adopt",
+        run_ref=None,
+        notes="",
+        prev_hash=GENESIS_HASH,
+    )
+    line = canonical_json(dict(body, record_hash=compute_hash(body)))
+    reg = TrialRegistry(_write(tmp_path, [line]))
+    assert len(reg) == 1
+
+
 def test_variant_tamper_without_rehash_is_caught(tmp_path):
     reg = _new_registry(tmp_path)
     _append(reg, family="A", n_trials_in_family=1, variant="v1")
