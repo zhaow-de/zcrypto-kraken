@@ -24,6 +24,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 - [T0015 — registry per-schema-version key-set validation](T0015-registry-key-set-validation.md) — close the unknown-key acceptance class found by the v3 review; hardening, not a live hole (ripe when: next registry-hardening iteration).
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the un-started remainder of the §5 queue (B1/B2/B3/B4, C1–C3; budgets B=25/C=10), registered at the Phase-4 close (ripe when: per-family prerequisites — T0009 protocol legs, T0012 substrate, captured L2 for C1).
+- [T0017 — holdout window ratification](T0017-holdout-window-ratification.md) — the pre-registered "final 12 months at data freeze" holdout was never carved out and is in-sample everywhere; the human ratifies the clean out-of-time window at the Phase-5 holdout event (ripe when: that event, D3(v)).
 
 ### Partially done<a name="partially-done"></a>
 
