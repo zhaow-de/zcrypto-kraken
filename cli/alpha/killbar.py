@@ -176,3 +176,96 @@ def net_of_cost_verdict(
         "benchmark_sharpe": benchmark_sharpe,
         "mean_outperformance": mean_outperformance,
     }
+
+
+def _total_return(returns: list[float]) -> float:
+    cumulative = 1.0
+    for r in returns:
+        cumulative *= 1 + r
+    return cumulative - 1
+
+
+def benchmark_relative_worst_slice(
+    book_slices: dict[str, list[float]],
+    benchmark_slices: dict[str, list[float]],
+) -> dict:
+    """Benchmark-relative, exposure-aware alternative to `a1_kill_bar`'s worst-slice leg.
+
+    The pre-registered worst-slice leg is absolute ("every non-degenerate slice's Sharpe > 0") and
+    exposure-blind. On real data (iter-053, docs/research/09.phase4-a2-results.md) the frozen benchmark
+    fails that very leg: its 2014 per-period Sharpe is -0.108 (ann. -2.07) even though its gate kept it
+    ~87% flat, so it lost only -5.5% with a 6.0% drawdown -- while a fully-exposed challenger with a
+    BETTER Sharpe (ann. -1.80) actually lost -8.4% with an 8.4% drawdown. A Sharpe-only slice test
+    punishes prudent non-participation and hides P&L. This diagnostic reports Sharpe AND total return
+    AND max drawdown, per slice, book vs. benchmark, so that contradiction is visible.
+
+    This is a standalone, complementary tool -- it does NOT modify `a1_kill_bar` or any of its legs;
+    folding a benchmark-relative check into the pre-registered kill bar is a human decision.
+
+    `book_slices` and `benchmark_slices` are keyed by the same slice labels (e.g. calendar years), each
+    mapping to that slice's per-period return series. A slice is degenerate (Sharpe undefined) using the
+    same rule `a1_kill_bar` applies: len(rets) < 2 or min(rets) == max(rets). A slice is skipped -- the
+    book-vs-benchmark comparison is undefined -- if EITHER side is degenerate.
+    """
+    if not book_slices or not benchmark_slices:
+        raise AlphaError("book_slices and benchmark_slices must both be non-empty dicts")
+    if set(book_slices) != set(benchmark_slices):
+        raise AlphaError("book_slices and benchmark_slices must have identical key sets")
+    for label, book_rets in book_slices.items():
+        benchmark_rets = benchmark_slices[label]
+        if not isinstance(book_rets, list) or not isinstance(benchmark_rets, list):
+            raise AlphaError(f"slice {label!r} must map to a list of returns on both sides")
+        if len(book_rets) != len(benchmark_rets):
+            raise AlphaError(f"slice {label!r} has mismatched book/benchmark lengths")
+        for r in (*book_rets, *benchmark_rets):
+            if not isinstance(r, (int, float)) or not math.isfinite(r):
+                raise AlphaError(f"slice {label!r} must contain only finite numbers, got {r!r}")
+
+    def _degenerate(rets: list[float]) -> bool:
+        return len(rets) < 2 or min(rets) == max(rets)
+
+    per_slice = {}
+    skipped = []
+    try:
+        for label, book_rets in book_slices.items():
+            benchmark_rets = benchmark_slices[label]
+            if _degenerate(book_rets) or _degenerate(benchmark_rets):
+                skipped.append(label)
+                continue
+            book_sharpe = sharpe(book_rets)
+            benchmark_sharpe = sharpe(benchmark_rets)
+            per_slice[label] = {
+                "book_sharpe": book_sharpe,
+                "benchmark_sharpe": benchmark_sharpe,
+                "sharpe_delta": book_sharpe - benchmark_sharpe,
+                "book_total_return": _total_return(book_rets),
+                "benchmark_total_return": _total_return(benchmark_rets),
+                "book_max_drawdown": max_drawdown(book_rets),
+                "benchmark_max_drawdown": max_drawdown(benchmark_rets),
+            }
+    except ValidationError as exc:
+        raise AlphaError(f"benchmark_relative_worst_slice computation failed: {exc}") from exc
+
+    if not per_slice:
+        raise AlphaError("no non-degenerate slice to compare (every slice was degenerate on some side)")
+
+    worst_book_slice = min(per_slice, key=lambda label: per_slice[label]["book_sharpe"])
+    worst_benchmark_slice = min(per_slice, key=lambda label: per_slice[label]["benchmark_sharpe"])
+    worst_book_sharpe = per_slice[worst_book_slice]["book_sharpe"]
+    worst_benchmark_sharpe = per_slice[worst_benchmark_slice]["benchmark_sharpe"]
+
+    return {
+        "per_slice": per_slice,
+        "skipped": skipped,
+        "worst_book_slice": worst_book_slice,
+        "worst_book_sharpe": worst_book_sharpe,
+        "worst_benchmark_slice": worst_benchmark_slice,
+        "worst_benchmark_sharpe": worst_benchmark_sharpe,
+        "worst_slice_sharpe_delta": worst_book_sharpe - worst_benchmark_sharpe,
+        "beats_benchmark_worst": worst_book_sharpe >= worst_benchmark_sharpe,
+        "n_slices_book_better_sharpe": sum(1 for s in per_slice.values() if s["book_sharpe"] > s["benchmark_sharpe"]),
+        "n_slices_book_smaller_drawdown": sum(
+            1 for s in per_slice.values() if s["book_max_drawdown"] < s["benchmark_max_drawdown"]
+        ),
+        "n_compared": len(per_slice),
+    }

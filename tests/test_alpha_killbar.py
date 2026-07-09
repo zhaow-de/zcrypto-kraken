@@ -1,6 +1,6 @@
 import pytest
 
-from cli.alpha import AlphaError, a1_kill_bar, net_of_cost_verdict, short_leg_whipsaw
+from cli.alpha import AlphaError, a1_kill_bar, benchmark_relative_worst_slice, net_of_cost_verdict, short_leg_whipsaw
 from cli.validation import linear_signal, sign_strategy_returns
 
 N = 500
@@ -269,3 +269,139 @@ def test_net_of_cost_verdict_zero_fee_winner_loses_net_of_cost():
 def test_net_of_cost_verdict_guards(book, benchmark):
     with pytest.raises(AlphaError):
         net_of_cost_verdict(book, benchmark, mean_block=5, seed=1)
+
+
+def test_benchmark_relative_worst_slice_known_answer():
+    # Three hand-built slices; sharpe/total_return/max_drawdown hand-computed for both sides.
+    book_slices = {
+        "2012": [0.01, 0.02, -0.01],
+        "2013": [-0.02, -0.01],
+        "2014": [0.03, 0.01, 0.02, -0.01],
+    }
+    benchmark_slices = {
+        "2012": [0.004, 0.006, 0.005],
+        "2013": [-0.03, -0.005],
+        "2014": [0.0, 0.01, -0.005, 0.01],
+    }
+
+    result = benchmark_relative_worst_slice(book_slices, benchmark_slices)
+
+    assert result["skipped"] == []
+    assert result["n_compared"] == 3
+
+    per = result["per_slice"]
+    assert per["2012"]["book_sharpe"] == pytest.approx(0.4364357804719848)
+    assert per["2012"]["benchmark_sharpe"] == pytest.approx(5.0)
+    assert per["2012"]["sharpe_delta"] == pytest.approx(0.4364357804719848 - 5.0)
+    assert per["2012"]["book_total_return"] == pytest.approx(0.01989799999999997)
+    assert per["2012"]["benchmark_total_return"] == pytest.approx(0.015074119999999969)
+    assert per["2012"]["book_max_drawdown"] == pytest.approx(0.010000000000000009)
+    assert per["2012"]["benchmark_max_drawdown"] == pytest.approx(0.0)
+
+    assert per["2013"]["book_sharpe"] == pytest.approx(-2.1213203435596424)
+    assert per["2013"]["benchmark_sharpe"] == pytest.approx(-0.9899494936611665)
+    assert per["2013"]["book_total_return"] == pytest.approx(-0.02980000000000005)
+    assert per["2013"]["benchmark_total_return"] == pytest.approx(-0.03485000000000005)
+    assert per["2013"]["book_max_drawdown"] == pytest.approx(0.02980000000000005)
+    assert per["2013"]["benchmark_max_drawdown"] == pytest.approx(0.03485000000000005)
+
+    assert per["2014"]["book_sharpe"] == pytest.approx(0.7319250547114)
+    assert per["2014"]["benchmark_sharpe"] == pytest.approx(0.5)
+    assert per["2014"]["book_total_return"] == pytest.approx(0.0504949400000001)
+    assert per["2014"]["benchmark_total_return"] == pytest.approx(0.014999500000000054)
+    assert per["2014"]["book_max_drawdown"] == pytest.approx(0.010000000000000009)
+    assert per["2014"]["benchmark_max_drawdown"] == pytest.approx(0.0050000000000000044)
+
+    # Worst book slice is 2013 (-2.121); worst benchmark slice is also 2013 (-0.990).
+    assert result["worst_book_slice"] == "2013"
+    assert result["worst_book_sharpe"] == pytest.approx(-2.1213203435596424)
+    assert result["worst_benchmark_slice"] == "2013"
+    assert result["worst_benchmark_sharpe"] == pytest.approx(-0.9899494936611665)
+    assert result["worst_slice_sharpe_delta"] == pytest.approx(-2.1213203435596424 - (-0.9899494936611665))
+    assert result["beats_benchmark_worst"] is False  # book's worst (-2.121) is worse than benchmark's worst (-0.990)
+
+    # Only 2014 has book_sharpe > benchmark_sharpe; only 2013 has book_max_drawdown < benchmark_max_drawdown.
+    assert result["n_slices_book_better_sharpe"] == 1
+    assert result["n_slices_book_smaller_drawdown"] == 1
+
+
+def test_benchmark_relative_worst_slice_exposure_blindness():
+    # Documents the real iter-053 2014 case (docs/research/09.phase4-a2-results.md): the frozen
+    # benchmark's gate held it ~87% flat, so its near-flat slice has a clearly negative per-period
+    # Sharpe (small mean, small stdev, both negative) yet only a small total loss and small drawdown.
+    # A fully-exposed challenger has a LESS negative Sharpe (bigger stdev shrinks the ratio's magnitude)
+    # while its larger swings compound into a BIGGER total loss and BIGGER drawdown -- the exact
+    # contradiction a Sharpe-only worst-slice leg hides.
+    near_flat_benchmark = [0.0] * 16 + [-0.004, 0.001, -0.004, 0.001]
+    fully_exposed_book = [0.05, -0.052] * 10
+
+    result = benchmark_relative_worst_slice(
+        {"2014": fully_exposed_book},
+        {"2014": near_flat_benchmark},
+    )
+
+    per = result["per_slice"]["2014"]
+    assert per["book_sharpe"] == pytest.approx(-0.019111361460409683)
+    assert per["benchmark_sharpe"] == pytest.approx(-0.23044650151849083)
+    assert per["book_total_return"] == pytest.approx(-0.045059386810466395)
+    assert per["benchmark_total_return"] == pytest.approx(-0.005998975984000232)
+    assert per["book_max_drawdown"] == pytest.approx(0.09053274934330136)
+    assert per["benchmark_max_drawdown"] == pytest.approx(0.006991984000000118)
+
+    # The book looks better on the ratio (less negative Sharpe) ...
+    assert per["book_sharpe"] > per["benchmark_sharpe"]
+    # ... while it actually lost more, and drew down more, than the benchmark.
+    assert per["book_total_return"] < per["benchmark_total_return"]
+    assert per["book_max_drawdown"] > per["benchmark_max_drawdown"]
+
+    assert result["beats_benchmark_worst"] is True
+    assert result["n_slices_book_smaller_drawdown"] == 0
+
+
+def test_benchmark_relative_worst_slice_skips_degenerate_either_side():
+    book_slices = {
+        "bench_degenerate": [0.01, 0.02, 0.03],  # benchmark side is constant -> degenerate
+        "book_degenerate": [0.01, 0.01],  # book side is constant -> degenerate
+        "normal": [0.02, 0.03, -0.01],
+    }
+    benchmark_slices = {
+        "bench_degenerate": [0.0, 0.0, 0.0],
+        "book_degenerate": [0.01, 0.02],
+        "normal": [0.01, 0.01, 0.02],
+    }
+
+    result = benchmark_relative_worst_slice(book_slices, benchmark_slices)
+
+    assert set(result["skipped"]) == {"bench_degenerate", "book_degenerate"}
+    assert result["n_compared"] == 1
+    assert set(result["per_slice"]) == {"normal"}
+    assert result["worst_book_slice"] == "normal"
+    assert result["worst_benchmark_slice"] == "normal"
+
+
+def test_benchmark_relative_worst_slice_all_degenerate_raises():
+    book_slices = {
+        "bench_degenerate": [0.01, 0.02, 0.03],
+        "book_degenerate": [0.01, 0.01],
+    }
+    benchmark_slices = {
+        "bench_degenerate": [0.0, 0.0, 0.0],
+        "book_degenerate": [0.01, 0.02],
+    }
+    with pytest.raises(AlphaError):
+        benchmark_relative_worst_slice(book_slices, benchmark_slices)
+
+
+@pytest.mark.parametrize(
+    "book_slices, benchmark_slices",
+    [
+        ({}, {}),  # both empty
+        ({"a": [0.01, 0.02]}, {"b": [0.01, 0.02]}),  # mismatched key sets
+        ({"a": [0.01, 0.02]}, {"a": [0.01]}),  # mismatched lengths within a slice
+        ({"a": [0.01, float("nan")]}, {"a": [0.01, 0.02]}),  # non-finite value
+        ({"a": "not a list"}, {"a": [0.01, 0.02]}),  # slice value not a list
+    ],
+)
+def test_benchmark_relative_worst_slice_guards(book_slices, benchmark_slices):
+    with pytest.raises(AlphaError):
+        benchmark_relative_worst_slice(book_slices, benchmark_slices)
