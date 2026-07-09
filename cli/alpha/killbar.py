@@ -126,3 +126,53 @@ def short_leg_whipsaw(short_only_returns: list[float]) -> dict:
     except ValidationError as exc:
         raise AlphaError(f"short_leg_whipsaw computation failed: {exc}") from exc
     return {"turnover": turnover, "hit_rate": hit_rate, "max_drawdown": mdd}
+
+
+def net_of_cost_verdict(
+    book_net_of_cost: list[float],
+    benchmark_net_of_cost: list[float],
+    *,
+    mean_block: float,
+    seed: int,
+    n_resamples: int = 2000,
+) -> dict:
+    """Net-of-cost head-to-head verdict: the SPA check the pre-registered `a1_kill_bar`'s SPA leg omits.
+
+    A1's investigation found that `a1_kill_bar`'s SPA leg runs on the zero-fee `book_net_returns`/
+    `benchmark_net_returns` the caller happens to pass in, over-crediting a high-turnover family that
+    actually loses net-of-cost. This is a standalone, complementary tool -- it does NOT modify
+    `a1_kill_bar` or any of its legs; the human decides whether/how to fold a net-of-cost SPA check into
+    the pre-registered kill bar. Both `book_net_of_cost` and `benchmark_net_of_cost` must already be
+    charged their own realistic cost by the caller (the book's turnover plus any short margin carry; the
+    benchmark's own turnover) before being passed in here.
+
+    Builds the T x 1 outperformance matrix (book minus benchmark per period) and runs
+    `reality_check_pvalue` on it -- the same SPA machinery `a1_kill_bar`'s SPA leg uses -- so `beats` is
+    `spa_p_value < 0.05`. Sharpe figures are per-period (no annualization), consistent with
+    `a1_kill_bar`.
+    """
+    if len(book_net_of_cost) != len(benchmark_net_of_cost):
+        raise AlphaError("book_net_of_cost and benchmark_net_of_cost must have the same length")
+    if len(book_net_of_cost) < 2:
+        raise AlphaError(f"book_net_of_cost/benchmark_net_of_cost must have >= 2 values, got {len(book_net_of_cost)}")
+    for r in (*book_net_of_cost, *benchmark_net_of_cost):
+        if not isinstance(r, (int, float)) or not math.isfinite(r):
+            raise AlphaError(f"book_net_of_cost/benchmark_net_of_cost must be finite numbers, got {r!r}")
+
+    try:
+        outperformance = [[b - m] for b, m in zip(book_net_of_cost, benchmark_net_of_cost)]
+        spa = reality_check_pvalue(outperformance, mean_block=mean_block, n_resamples=n_resamples, seed=seed)
+        book_sharpe = sharpe(book_net_of_cost)
+        benchmark_sharpe = sharpe(benchmark_net_of_cost)
+    except ValidationError as exc:
+        raise AlphaError(f"net_of_cost_verdict computation failed: {exc}") from exc
+
+    spa_p_value = spa["p_value"]
+    mean_outperformance = sum(row[0] for row in outperformance) / len(outperformance)
+    return {
+        "spa_p_value": spa_p_value,
+        "beats": spa_p_value < 0.05,
+        "book_sharpe": book_sharpe,
+        "benchmark_sharpe": benchmark_sharpe,
+        "mean_outperformance": mean_outperformance,
+    }

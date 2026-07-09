@@ -1,6 +1,6 @@
 import pytest
 
-from cli.alpha import AlphaError, a1_kill_bar, short_leg_whipsaw
+from cli.alpha import AlphaError, a1_kill_bar, net_of_cost_verdict, short_leg_whipsaw
 from cli.validation import linear_signal, sign_strategy_returns
 
 N = 500
@@ -211,3 +211,61 @@ def test_short_leg_whipsaw_never_engaged():
 def test_short_leg_whipsaw_guards(returns):
     with pytest.raises(AlphaError):
         short_leg_whipsaw(returns)
+
+
+def test_net_of_cost_verdict_beats():
+    # A real edge (beta=1.2) vs a weaker, noise-only benchmark (beta=0.0) -- both series still have
+    # variance (sign_strategy_returns on noise is non-constant) so book_sharpe/benchmark_sharpe are
+    # both well-defined, unlike a flat-zero benchmark which would make sharpe() undefined.
+    x_book, r_book = linear_signal(N, beta=1.2, noise_sd=1.0, seed=42)
+    book = sign_strategy_returns(x_book, r_book)
+    x_bench, r_bench = linear_signal(N, beta=0.0, noise_sd=1.0, seed=99)
+    benchmark = sign_strategy_returns(x_bench, r_bench)
+
+    result = net_of_cost_verdict(book, benchmark, mean_block=5, seed=7)
+    assert result["beats"] is True
+    assert result["spa_p_value"] < 0.05
+    assert result["mean_outperformance"] > 0
+
+
+def test_net_of_cost_verdict_no_edge():
+    # book == benchmark exactly -> outperformance is identically 0 every period, no edge to detect.
+    x, r = linear_signal(N, beta=1.2, noise_sd=1.0, seed=42)
+    book = sign_strategy_returns(x, r)
+
+    result = net_of_cost_verdict(book, book, mean_block=5, seed=7)
+    assert result["beats"] is False
+    assert result["mean_outperformance"] == pytest.approx(0.0)
+
+
+def test_net_of_cost_verdict_zero_fee_winner_loses_net_of_cost():
+    # The A1 scenario this helper exists for: a book that beats the benchmark gross (small planted
+    # edge) but a1_kill_bar's SPA leg runs on zero-fee returns, over-crediting a high-turnover family
+    # that actually loses net-of-cost once a realistic per-period cost is charged. Here book_gross =
+    # benchmark + edge, book_net = book_gross - heavy_cost, with heavy_cost > edge so book_net trails
+    # the benchmark by a constant (edge - cost) every period.
+    x, r = linear_signal(N, beta=0.8, noise_sd=1.0, seed=11)
+    benchmark = sign_strategy_returns(x, r)
+    edge = 0.002  # book's gross per-period edge over the benchmark, before cost
+    cost = 0.01  # heavy per-period cost that swamps the edge
+    book_gross = [b + edge for b in benchmark]
+    book_net = [g - cost for g in book_gross]  # == benchmark + (edge - cost), a constant net-of-cost drag
+
+    result = net_of_cost_verdict(book_net, benchmark, mean_block=5, seed=7)
+    assert result["beats"] is False
+    assert result["mean_outperformance"] < 0
+    assert result["mean_outperformance"] == pytest.approx(edge - cost)
+
+
+@pytest.mark.parametrize(
+    "book, benchmark",
+    [
+        ([0.01, 0.02], [0.01]),  # length mismatch
+        ([], []),  # empty
+        ([0.01], [0.02]),  # single-element (< 2)
+        ([0.01, float("nan")], [0.01, 0.02]),  # non-finite
+    ],
+)
+def test_net_of_cost_verdict_guards(book, benchmark):
+    with pytest.raises(AlphaError):
+        net_of_cost_verdict(book, benchmark, mean_block=5, seed=1)
