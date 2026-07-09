@@ -19,7 +19,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-- [T0009 — Phase-4/5 validation-protocol decisions](T0009-validation-protocol-decisions.md) — the human decision sheet from the A1/A2/benchmark arcs: the deployable bar (gated-B1 vs B3+vt-dynamic, added iter-055), worst-slice leg, evaluation window, net-of-cost SPA, DSR threshold, A1-long/flat disposition, trial resumption (ripe when: next attended protocol review — inputs ready now).
 - [T0011 — A2 refinements: 4h band, breakout-hold, 2026 probe](T0011-a2-refinements.md) — the parked A2 follow-ups; they spend reserved A-family trials (ripe when: T0009 resolved).
 - [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
 - [T0013 — trial-registry variant field](T0013-registry-variant-field.md) — first-class family-vs-variant schema so shared budgets stay enforced without notes-encoding (ripe when: next registry-schema iteration).
@@ -27,7 +26,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done"></a>
 
-_(none)_
+- [T0009 — Phase-4/5 validation-protocol decisions](T0009-validation-protocol-decisions.md) — the human decision sheet from the A1/A2/benchmark arcs: the deployable bar is **decided** (2026-07-09: **B3+vt-dynamic adopted** as the frozen benchmark); remaining: worst-slice leg, evaluation window, net-of-cost SPA, DSR threshold, A1-long/flat disposition, trial resumption (ripe when: next attended protocol review).
 
 ### Resolved<a name="resolved"></a>
 
@@ -42,12 +41,12 @@ _(none)_
 
 ### Open<a name="open-1"></a>
 
-- [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step.
-- [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation.
+- [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: an attended session authorizes the read-only depot connection).
+- [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation (ripe when: next attended capture-maintenance window, or on a recurrence).
 
 ### Partially done<a name="partially-done-1"></a>
 
-- [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the workstation pull/NAS sync + alerting drill + the 7-day clean run.
+- [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the workstation pull/NAS sync + alerting drill + the 7-day clean run (ripe when: the ≥7-day clock completes ≈2026-07-15 + an attended workstation/NAS session).
 
 ### Resolved<a name="resolved-1"></a>
 

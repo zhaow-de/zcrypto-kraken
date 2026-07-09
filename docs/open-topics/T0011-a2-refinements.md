@@ -19,6 +19,6 @@ iter-053: long/flat A2 net-of-cost 1.23–1.33 vs gated-B1 1.047 (point), correc
 
 ## Suggested next steps
 
-- **4h A2**: first rebuild gated-B1 at 4h (its own warm-up/vol-target recalibrated) so the bar is native to the band, then run the A2 grid at 4h — sized within the remaining budget (or park for expansion, a §12 trigger).
+- **4h A2**: first rebuild the **frozen benchmark at 4h** — since 2026-07-09 that is **B3+vt-dynamic** (basket + own-equity 200d gate + vol-target, master-plan §9; T0009 item 1 decided), not gated-B1 — with warm-up/vol-target recalibrated to the band, then run the A2 grid at 4h — sized within the remaining budget (or park for expansion, a §12 trigger).
 - **Breakout-hold / cadence sweep** on the long/flat arms (offset-averaged, per the iter-048 method).
-- **2026 probe**: characterize A2's long-holding drawdown in the 2026 stub vs gated-B1's flatness — feeds T0009's partial-year-stub question.
+- **2026 probe**: characterize A2's long-holding drawdown in the 2026 stub vs the benchmarks' behavior (gated-B1 sat it out flat; check B3+vt-dynamic, the adopted bar, too) — feeds T0009's partial-year-stub question.

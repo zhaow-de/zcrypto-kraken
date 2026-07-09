@@ -1,5 +1,6 @@
 ---
 status: open
+ripe_when: the next attended capture-maintenance window (the fix deploys to the running daemon) — or immediately upon recurrence of a stuck-pair desync
 ---
 
 # Capture daemon — robust book-desync recovery (retry / ack-correlated resubscribe)

@@ -106,7 +106,9 @@ BTC-anchored book, as the fixed window suggested — but it does not decisively 
 A1 legitimately carries **both** the `equal_risk_basket` (this dynamic basket) and a `btc_only`
 base through its kill bar, rather than dropping the basket on finding 1. The deployable *benchmark*
 bar is unchanged: the vol-targeted / gated single-asset family (gated-B1, Sharpe 1.247 full-history)
-still stands as the bar-to-beat; B2-dyn matches BTC but does not raise it.
+still stands as the bar-to-beat; B2-dyn matches BTC but does not raise it. *(Superseded 2026-07-09:
+**B3+vt-dynamic** — built in §"B3 and B4" below — was adopted as the frozen benchmark on the PR-74
+review; master-plan §9, T0009.)*
 
 ## Distrust-the-instrument note
 
@@ -206,7 +208,9 @@ no alpha family required; the benchmarks did it themselves. It does **not** sett
 B3+vt trades a ~+0.2 (non-significant) Sharpe edge for **~1.8× the drawdown** (21.9 % vs 12.3 %
 zero-fee), and Phase 3's bar choice deliberately weighed drawdown control. Choosing between them — and
 swapping the kill bar's **frozen benchmark**, a pre-registered-protocol change — is escalated as the
-first item of **T0009**, not decided here.
+first item of **T0009**, not decided here. **(Update: decided by the human on the 2026-07-09 PR-74
+review — B3+vt-dynamic is adopted as the frozen benchmark; the exact construction + reference
+figures are bound in master-plan §9 and T0009's Done-so-far.)**
 
 Re-reads against the candidate bar (k ≥ 230, net-of-cost): **A1-long/flat weekly** (offset-mean 1.416)
 **significantly beats even B3+vt** (p = 0.0070, +1.7 bps/day) — the A1 alpha story survives the bar
