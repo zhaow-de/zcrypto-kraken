@@ -23,6 +23,7 @@ def a1_kill_bar(
     regime_slices: dict[str, list[float]],
     benchmark_slices: dict[str, list[float]],
     decisive_start: int = 0,
+    n_resamples: int = 1000,
 ) -> dict:
     """The Phase-4 kill bar (docs/research/00.master-plan.md sec12; docs/specs/00031), folded to the
     T0009-ratified protocol (2026-07-09, decisions log [iter-072]): a variant is archived unless ALL hold:
@@ -41,7 +42,9 @@ def a1_kill_bar(
     same contract as `net_of_cost_verdict`). The leg is evaluated on the decisive window
     `[decisive_start:]` — `spa_p_value`/`spa_pass` are the decisive-window figures; the full-window
     p-value is also computed and returned as `spa_p_value_full` for reporting. `decisive_start` is the
-    benchmark's post-warm-up cut (230 for B3+vt-dynamic).
+    benchmark's post-warm-up cut (230 for B3+vt-dynamic). `n_resamples` feeds both windows' bootstrap;
+    its default (1000) matches every registry row recorded before the fold-in, while the pre-registered
+    trial protocol ([iter-059]) passes 2000 explicitly.
 
     Units contract: `sr = sharpe(book_net_returns)` is PER-PERIOD (PSR's formula is per-observation with
     n_obs = len(returns)), so `var_trials` MUST be in per-period Sharpe² units (at iter-046 = the variance
@@ -82,6 +85,8 @@ def a1_kill_bar(
         raise AlphaError(f"decisive_start must be an int, got {decisive_start!r}")
     if decisive_start < 0 or decisive_start >= len(book_net_returns):
         raise AlphaError(f"decisive_start={decisive_start} must be >= 0 and < len(book_net_returns)={len(book_net_returns)}")
+    if not isinstance(n_resamples, int) or n_resamples < 1:
+        raise AlphaError(f"n_resamples must be an int >= 1, got {n_resamples!r}")
 
     try:
         n_obs = len(book_net_returns)
@@ -91,12 +96,16 @@ def a1_kill_bar(
         dsr_pass = dsr > DSR_PASS_THRESHOLD
 
         outperformance_full = [[b - m] for b, m in zip(book_net_returns, benchmark_net_returns)]
-        spa_p_value_full = reality_check_pvalue(outperformance_full, mean_block=mean_block, seed=seed)["p_value"]
+        spa_p_value_full = reality_check_pvalue(outperformance_full, mean_block=mean_block, n_resamples=n_resamples, seed=seed)[
+            "p_value"
+        ]
 
         outperformance_decisive = [
             [b - m] for b, m in zip(book_net_returns[decisive_start:], benchmark_net_returns[decisive_start:])
         ]
-        spa_p_value = reality_check_pvalue(outperformance_decisive, mean_block=mean_block, seed=seed)["p_value"]
+        spa_p_value = reality_check_pvalue(outperformance_decisive, mean_block=mean_block, n_resamples=n_resamples, seed=seed)[
+            "p_value"
+        ]
         spa_pass = spa_p_value < 0.05
 
         cost_stress_sharpe = sharpe(cost_stressed_returns)
@@ -173,11 +182,11 @@ def net_of_cost_verdict(
 ) -> dict:
     """Net-of-cost head-to-head verdict: the SPA check the pre-registered `a1_kill_bar`'s SPA leg omits.
 
-    A1's investigation found that `a1_kill_bar`'s SPA leg runs on the zero-fee `book_net_returns`/
-    `benchmark_net_returns` the caller happens to pass in, over-crediting a high-turnover family that
-    actually loses net-of-cost. This is a standalone, complementary tool -- it does NOT modify
-    `a1_kill_bar` or any of its legs; the human decides whether/how to fold a net-of-cost SPA check into
-    the pre-registered kill bar. Both `book_net_of_cost` and `benchmark_net_of_cost` must already be
+    A1's investigation found that `a1_kill_bar`'s SPA leg ran on the zero-fee `book_net_returns`/
+    `benchmark_net_returns` the caller happened to pass in, over-crediting a high-turnover family that
+    actually loses net-of-cost. The net-of-cost contract was folded into `a1_kill_bar`'s SPA leg per
+    T0009 (decisions log [iter-072], 2026-07-09); this standalone tool remains for drivers/diagnostics.
+    Both `book_net_of_cost` and `benchmark_net_of_cost` must already be
     charged their own realistic cost by the caller (the book's turnover plus any short margin carry; the
     benchmark's own turnover) before being passed in here.
 
@@ -234,8 +243,8 @@ def benchmark_relative_worst_slice(
     punishes prudent non-participation and hides P&L. This diagnostic reports Sharpe AND total return
     AND max drawdown, per slice, book vs. benchmark, so that contradiction is visible.
 
-    This is a standalone, complementary tool -- it does NOT modify `a1_kill_bar` or any of its legs;
-    folding a benchmark-relative check into the pre-registered kill bar is a human decision.
+    This check was folded into `a1_kill_bar`'s worst-slice leg per T0009 (decisions log [iter-072],
+    2026-07-09); the standalone tool remains for drivers/diagnostics.
 
     `book_slices` and `benchmark_slices` are keyed by the same slice labels (e.g. calendar years), each
     mapping to that slice's per-period return series. A slice is degenerate (Sharpe undefined) using the

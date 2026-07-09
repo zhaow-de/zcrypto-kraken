@@ -1,3 +1,4 @@
+import math
 import random
 
 import pytest
@@ -285,10 +286,13 @@ def test_a1_kill_bar_spa_decisive_window_diverges_from_full():
 
 
 def test_a1_kill_bar_relative_worst_slice_passes_despite_negative_sharpe():
-    # Mirrors test_benchmark_relative_worst_slice_exposure_blindness's construction: the book's worst
-    # slice has a (barely) negative Sharpe, but a smaller total loss and drawdown than the benchmark's
-    # own matching slice -- the T0009-ratified relative leg passes where the old absolute ("every slice
-    # Sharpe > 0") leg would have failed.
+    # Mirrors test_benchmark_relative_worst_slice_exposure_blindness's construction: the fully-exposed
+    # book actually loses MORE than the near-flat benchmark (-4.51% vs -0.60% total return, drawdown
+    # 9.05% vs 0.70%) -- it passes purely because its bigger stdev shrinks the Sharpe ratio's magnitude,
+    # so its Sharpe is LESS negative than the benchmark's and `beats_benchmark_worst` keys on Sharpe.
+    # The point under test here: the T0009-ratified relative leg passes on a negative-Sharpe slice where
+    # the old absolute ("every slice Sharpe > 0") leg would have failed; the P&L/drawdown contradiction
+    # itself is asserted in the sibling exposure-blindness test.
     book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
     near_flat_benchmark = [0.0] * 16 + [-0.004, 0.001, -0.004, 0.001]
     fully_exposed_book = [0.05, -0.052] * 10
@@ -341,6 +345,55 @@ def test_a1_kill_bar_guards_bad_decisive_start(decisive_start):
             regime_slices=_book_regime_slices(book),
             benchmark_slices=_NOISE_BENCHMARK_SLICES,
             decisive_start=decisive_start,
+        )
+
+
+def test_a1_kill_bar_n_resamples_passthrough():
+    # n_resamples feeds the SPA leg's reality_check_pvalue (both windows). Default 1000 matches every
+    # registry row recorded before the fold-in; the pre-registered trial protocol ([iter-059]) passes
+    # 2000 explicitly. Different resample counts give different bootstrap p-values, so only shape and
+    # finiteness are asserted -- never exact p equality across counts.
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+
+    def _run(n_resamples):
+        return a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=VAR_TRIALS_PER_PERIOD,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=_book_regime_slices(book),
+            benchmark_slices=_NOISE_BENCHMARK_SLICES,
+            n_resamples=n_resamples,
+        )
+
+    low = _run(100)
+    high = _run(2000)
+    assert set(low) == set(high)  # result dict shape is independent of the resample count
+    for result in (low, high):
+        assert math.isfinite(result["spa_p_value"])
+        assert math.isfinite(result["spa_p_value_full"])
+        assert 0 < result["spa_p_value"] <= 1
+        assert 0 < result["spa_p_value_full"] <= 1
+
+
+@pytest.mark.parametrize("n_resamples", [0, -1, 1.5, "10"])
+def test_a1_kill_bar_guards_bad_n_resamples(n_resamples):
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    with pytest.raises(AlphaError):
+        a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=VAR_TRIALS_PER_PERIOD,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=_book_regime_slices(book),
+            benchmark_slices=_NOISE_BENCHMARK_SLICES,
+            n_resamples=n_resamples,
         )
 
 
