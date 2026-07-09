@@ -47,7 +47,7 @@ def test_loads_strict_accepts_finite():
 
 
 def test_constants():
-    assert SCHEMA_VERSION == 2 and VERDICTS == frozenset({"adopt", "reject", "park"})
+    assert SCHEMA_VERSION == 3 and VERDICTS == frozenset({"adopt", "reject", "park"})
 
 
 def _caller(**over):
@@ -81,11 +81,18 @@ def test_valid_caller_passes():
         {"metrics": {"x": float("nan")}},  # flat NaN
         {"metrics": {"cv": {"paths": [0.1, float("inf")]}}},  # NaN/inf buried in a nested list
         {"trial_id": 9},  # caller supplied a store-owned field
+        {"variant": ""},  # empty string rejected
+        {"variant": 123},  # non-str rejected
     ],
 )
 def test_invalid_caller_rejected(over):
     with pytest.raises(RegistryError):
         validate_caller_fields(_caller(**over))
+
+
+def test_variant_is_optional_and_validated():
+    validate_caller_fields(_caller())  # no variant key -> defaults to None, OK
+    validate_caller_fields(_caller(variant="A2-donchian"))  # non-empty str -> OK
 
 
 def test_seeds_may_be_empty_but_metrics_may_not():
@@ -109,3 +116,27 @@ def test_stored_record_hash_and_schema_checks():
         validate_stored_record(bad, "x")
     with pytest.raises(RegistryCorruptionError):
         validate_stored_record(dict(rec, schema_version=999), "x")
+
+
+def test_stored_record_schema_version_variant_compat():
+    # v2 body (no variant) still valid.
+    body_v2 = dict(_caller(), trial_id=1, schema_version=2, timestamp="2026-07-07T00:00:00+00:00", prev_hash=GENESIS_HASH)
+    validate_stored_record(dict(body_v2, record_hash=compute_hash(body_v2)), "x")
+
+    # v3 body without variant valid; with a str variant valid.
+    body_v3 = dict(
+        _caller(), trial_id=1, schema_version=SCHEMA_VERSION, timestamp="2026-07-07T00:00:00+00:00", prev_hash=GENESIS_HASH
+    )
+    validate_stored_record(dict(body_v3, record_hash=compute_hash(body_v3)), "x")
+    body_v3_variant = dict(body_v3, variant="A2-donchian")
+    validate_stored_record(dict(body_v3_variant, record_hash=compute_hash(body_v3_variant)), "x")
+
+    # v2 body WITH a variant key -> corruption (variant is v3-only).
+    body_v2_bad = dict(body_v2, variant="A2-donchian")
+    with pytest.raises(RegistryCorruptionError):
+        validate_stored_record(dict(body_v2_bad, record_hash=compute_hash(body_v2_bad)), "x")
+
+    # v3 body with a non-str variant -> corruption.
+    body_v3_bad = dict(body_v3, variant=42)
+    with pytest.raises(RegistryCorruptionError):
+        validate_stored_record(dict(body_v3_bad, record_hash=compute_hash(body_v3_bad)), "x")

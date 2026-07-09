@@ -1,9 +1,12 @@
 ---
-status: open
-ripe_when: the next registry-schema-touching iteration (or fold into T0009's protocol revision if the schema is reopened there)
+status: resolved
 ---
 
 # Trial-registry schema — first-class family-vs-variant field
+
+## Resolution
+
+Resolved in **iter-056** (commit `98ef930`): `SCHEMA_VERSION = 3` adds optional `variant: str | None` (hash-covered; key omitted when None so canonical JSON stays clean); loader accepts v2+v3 in one file with the hash chain intact across the boundary; a v2 record carrying `variant` is corruption; budget accounting stays keyed on `family` only; records 25–32's notes-encoding documented in `record.py`'s docstring (deliberately not backfilled — append-only). 13 planted-corruption-style tests; adversarial review APPROVED (all forges repelled incl. the tail-position v2+variant forge; torn-tail self-heal and concurrent flock verified). Follow-up hardening registered as **T0015**.
 
 ## Context — what
 

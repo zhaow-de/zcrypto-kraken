@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,27 @@ def _line(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
     body = dict(
         trial_id=trial_id,
         schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        iteration="iter-001",
+        family=family,
+        spec_hash="s",
+        dataset_hash="d",
+        seeds=[0],
+        metrics=metrics or {"sharpe": 0.3, "dsr": 0.1},
+        n_trials_in_family=n,
+        verdict="adopt",
+        run_ref=None,
+        notes="",
+        prev_hash=prev_hash,
+    )
+    return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+
+def _line_v2(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
+    # Mimics the pre-v3 writer: hardcodes schema_version=2, never emits a `variant` key.
+    body = dict(
+        trial_id=trial_id,
+        schema_version=2,
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family=family,
@@ -245,3 +267,115 @@ def test_chain_continues_across_registry_instances(tmp_path):
     reg2 = TrialRegistry(reg.path)  # reopen
     nxt = _append(reg2, family="A", n_trials_in_family=2)
     assert nxt.prev_hash == last.record_hash
+
+
+def test_append_with_variant_round_trips(tmp_path):
+    p = tmp_path / "t.jsonl"
+    r = _append(TrialRegistry(p), variant="A2-donchian", n_trials_in_family=1)
+    assert r.variant == "A2-donchian"
+    assert r.schema_version == SCHEMA_VERSION
+    reloaded = TrialRegistry(p)
+    assert reloaded.records[0].variant == "A2-donchian"
+    assert reloaded.records[0].record_hash == r.record_hash
+    assert reloaded.records[0].prev_hash == GENESIS_HASH
+
+
+def test_append_without_variant_omits_key_from_raw_line(tmp_path):
+    p = tmp_path / "t.jsonl"
+    r = _append(TrialRegistry(p), n_trials_in_family=1)
+    assert r.variant is None
+    raw = p.read_text(encoding="utf-8").strip()
+    assert '"variant"' not in raw
+    assert len(TrialRegistry(p)) == 1  # loads fine without the key
+
+
+def test_append_rejects_invalid_variant_before_writing(tmp_path):
+    p = tmp_path / "t.jsonl"
+    with pytest.raises(RegistryError):
+        _append(TrialRegistry(p), variant="", n_trials_in_family=1)
+    assert not p.exists() or p.read_text() == ""
+    with pytest.raises(RegistryError):
+        _append(TrialRegistry(p), variant=123, n_trials_in_family=1)
+    assert not p.exists() or p.read_text() == ""
+
+
+def test_mixed_v2_and_v3_file_loads_with_intact_chain(tmp_path):
+    p = tmp_path / "trials.jsonl"
+    l1 = _line_v2(1, n=1)
+    l2 = _line_v2(2, n=2, prev_hash=_hash_of(l1))
+    p.write_text(l1 + "\n" + l2 + "\n", encoding="utf-8")
+    reg = TrialRegistry(p)
+    assert len(reg) == 2
+
+    r3 = _append(reg, family="A1", n_trials_in_family=3, variant="A2-donchian")
+    assert r3.trial_id == 3
+    assert r3.prev_hash == _hash_of(l2)
+
+    fresh = TrialRegistry(p)  # fresh instance re-reads and re-validates the whole file
+    assert [r.trial_id for r in fresh.records] == [1, 2, 3]
+    assert fresh.records[0].schema_version == 2 and fresh.records[1].schema_version == 2
+    assert fresh.records[2].schema_version == SCHEMA_VERSION
+    assert fresh.records[2].variant == "A2-donchian"
+    assert fresh.records[1].prev_hash == fresh.records[0].record_hash
+    assert fresh.records[2].prev_hash == fresh.records[1].record_hash
+
+
+def test_v2_record_with_variant_key_is_corruption(tmp_path):
+    body = json.loads(_line_v2(1, n=1))
+    body["variant"] = "A2-donchian"  # a v2 record must never carry this key
+    tampered = canonical_json(dict(body, record_hash=compute_hash({k: v for k, v in body.items() if k != "record_hash"})))
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(_write(tmp_path, [tampered]))
+
+
+def test_v3_record_with_nonstr_variant_is_corruption(tmp_path):
+    body = dict(
+        trial_id=1,
+        schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        iteration="iter-001",
+        family="A1",
+        variant=42,  # non-str
+        spec_hash="s",
+        dataset_hash="d",
+        seeds=[0],
+        metrics={"sharpe": 0.3, "dsr": 0.1},
+        n_trials_in_family=1,
+        verdict="adopt",
+        run_ref=None,
+        notes="",
+        prev_hash=GENESIS_HASH,
+    )
+    line = canonical_json(dict(body, record_hash=compute_hash(body)))
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(_write(tmp_path, [line]))
+
+
+def test_variant_tamper_without_rehash_is_caught(tmp_path):
+    reg = _new_registry(tmp_path)
+    _append(reg, family="A", n_trials_in_family=1, variant="v1")
+    lines = reg.path.read_text().splitlines()
+    rec = json.loads(lines[0])
+    rec["variant"] = "tampered"  # no re-hash
+    lines[0] = canonical_json(rec)
+    reg.path.write_text("\n".join(lines) + "\n")
+    with pytest.raises(RegistryCorruptionError):
+        TrialRegistry(reg.path)
+
+
+def test_live_registry_file_loads_clean():
+    # Read-only: exercises the new v2/v3 loader against the real, committed registry. Never write to this file.
+    reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "research" / "trial-registry.jsonl")
+    assert len(reg) == 32
+    assert all(r.schema_version == 2 for r in reg.records)
+    assert all(r.variant is None for r in reg.records)  # pre-v3 file; variant-25..32 lives in `notes` only
+
+
+def test_variant_does_not_affect_family_budget_monotonic_check(tmp_path):
+    p = tmp_path / "t.jsonl"
+    reg = TrialRegistry(p)
+    _append(reg, family="A1", n_trials_in_family=1, variant="v1")
+    with pytest.raises(RegistryError):  # 2nd in A1 needs >= 2, regardless of a different variant
+        _append(reg, family="A1", n_trials_in_family=1, variant="v2")
+    r2 = _append(reg, family="A1", n_trials_in_family=2, variant="v2")
+    assert r2.trial_id == 2

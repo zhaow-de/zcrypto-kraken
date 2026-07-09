@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3})
 GENESIS_HASH = "0" * 64
 VERDICTS = frozenset({"adopt", "reject", "park"})
 
@@ -70,13 +71,20 @@ def validate_caller_fields(f: dict) -> None:
         raise RegistryError(f"verdict must be one of {sorted(VERDICTS)}")
     if f.get("run_ref") is not None and type(f["run_ref"]) is not str:
         raise RegistryError("run_ref must be a str or None")
+    if f.get("variant") is not None and (type(f["variant"]) is not str or not f["variant"]):
+        raise RegistryError("variant must be a non-empty str or None")
     if type(f.get("notes", "")) is not str:
         raise RegistryError("notes must be a str")
 
 
 def validate_stored_record(rec: dict, where: str) -> None:
-    if rec.get("schema_version") != SCHEMA_VERSION:
-        raise RegistryCorruptionError(f"{where}: unknown schema_version {rec.get('schema_version')!r}")
+    version = rec.get("schema_version")
+    if version not in _LOADABLE_SCHEMA_VERSIONS:
+        raise RegistryCorruptionError(f"{where}: unknown schema_version {version!r}")
+    if version == 2 and "variant" in rec:
+        raise RegistryCorruptionError(f"{where}: schema_version 2 record must not carry a variant field")
+    if "variant" in rec and type(rec["variant"]) is not str:
+        raise RegistryCorruptionError(f"{where}: variant must be a str when present")
     if "record_hash" not in rec:
         raise RegistryCorruptionError(f"{where}: missing record_hash")
     body = {k: v for k, v in rec.items() if k != "record_hash"}
@@ -92,11 +100,21 @@ def validate_stored_record(rec: dict, where: str) -> None:
 
 @dataclass(frozen=True, kw_only=True)
 class TrialRecord:
+    """A single trial record. `variant` is schema_version 3+ only: str | None, omitted from the serialized
+    line entirely when None (schema_version 2 records may never carry the key at all).
+
+    Historical note: trial_id 25-32 (family="A1", schema_version 2) predate this field. They encode their
+    variant in free-text `notes` instead (e.g. "variant=A2-donchian; lookbacks=..."), all mapping to
+    variant="A2-donchian". This is deliberately not backfilled — the registry is append-only — so readers
+    of those eight records must consult `notes`, not `variant`.
+    """
+
     trial_id: int
     schema_version: int
     timestamp: str
     iteration: str
     family: str
+    variant: str | None = None
     spec_hash: str
     dataset_hash: str
     seeds: tuple[int, ...]
