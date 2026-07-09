@@ -9,9 +9,6 @@ repository:
   has_projects: false
   has_wiki: false
   has_downloads: false
-  has_discussions: false
-  is_template: false
-  web_commit_signoff_required: false
   default_branch: develop
   allow_squash_merge: true
   allow_merge_commit: true
