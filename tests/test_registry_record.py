@@ -108,7 +108,15 @@ def test_bool_metric_leaf_rejected():
 
 
 def test_stored_record_hash_and_schema_checks():
-    body = dict(_caller(), trial_id=1, schema_version=SCHEMA_VERSION, timestamp="2026-07-07T00:00:00+00:00", prev_hash=GENESIS_HASH)
+    body = dict(
+        _caller(),
+        trial_id=1,
+        schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        prev_hash=GENESIS_HASH,
+        run_ref=None,
+        notes="",
+    )
     rec = dict(body, record_hash=compute_hash(body))
     validate_stored_record(rec, "x")  # OK
     bad = dict(rec, metrics={"sharpe": 0.9, "dsr": 0.1})  # mutated, hash now stale
@@ -120,12 +128,26 @@ def test_stored_record_hash_and_schema_checks():
 
 def test_stored_record_schema_version_variant_compat():
     # v2 body (no variant) still valid.
-    body_v2 = dict(_caller(), trial_id=1, schema_version=2, timestamp="2026-07-07T00:00:00+00:00", prev_hash=GENESIS_HASH)
+    body_v2 = dict(
+        _caller(),
+        trial_id=1,
+        schema_version=2,
+        timestamp="2026-07-07T00:00:00+00:00",
+        prev_hash=GENESIS_HASH,
+        run_ref=None,
+        notes="",
+    )
     validate_stored_record(dict(body_v2, record_hash=compute_hash(body_v2)), "x")
 
     # v3 body without variant valid; with a str variant valid.
     body_v3 = dict(
-        _caller(), trial_id=1, schema_version=SCHEMA_VERSION, timestamp="2026-07-07T00:00:00+00:00", prev_hash=GENESIS_HASH
+        _caller(),
+        trial_id=1,
+        schema_version=SCHEMA_VERSION,
+        timestamp="2026-07-07T00:00:00+00:00",
+        prev_hash=GENESIS_HASH,
+        run_ref=None,
+        notes="",
     )
     validate_stored_record(dict(body_v3, record_hash=compute_hash(body_v3)), "x")
     body_v3_variant = dict(body_v3, variant="A2-donchian")
