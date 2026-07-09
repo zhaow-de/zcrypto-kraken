@@ -252,7 +252,7 @@ def _validate_btc_prices(btc_prices: list[float], prices_by_asset: dict[str, lis
 def a1_book_returns(prices_by_asset: dict[str, list[float | None]], btc_prices: list[float], *, config: A1Config) -> dict:
     """Assemble the A1 book (docs/specs/00031): per-asset directions x inverse-vol/BTC-only weights x
     union-calendar returns -> book_base_returns, then vol_target -> run_backtest. Returns
-    {book_base_returns, vol_target_positions, net_returns, metrics}."""
+    {book_base_returns, vol_target_positions, asset_positions, net_returns, metrics}."""
     if not isinstance(config, A1Config):
         raise AlphaError(f"config must be an A1Config, got {type(config)!r}")
     _validate_prices_by_asset(prices_by_asset)
@@ -291,10 +291,15 @@ def a1_book_returns(prices_by_asset: dict[str, list[float | None]], btc_prices: 
         lookback=config.vol_lookback,
         max_leverage=config.max_leverage,
     )
+    asset_positions: dict[str, list[float]] = {
+        asset: [weights[k].get(asset, 0.0) * (directions[asset][k] or 0.0) * positions[k] for k in range(length - 1)]
+        for asset in working
+    }
     backtest = run_backtest(book_base_returns, positions, fee_rate=0.0, periods_per_year=config.periods_per_year)
     return {
         "book_base_returns": book_base_returns,
         "vol_target_positions": positions,
+        "asset_positions": asset_positions,
         "net_returns": backtest["net_returns"],
         "metrics": {k: v for k, v in backtest.items() if k != "net_returns"},
     }

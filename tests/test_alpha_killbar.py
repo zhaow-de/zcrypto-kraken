@@ -112,6 +112,56 @@ def test_a1_kill_bar_worst_slice_can_fail_alone():
     assert result["passes"] is False
 
 
+def test_a1_kill_bar_skips_flat_regime_slice():
+    # A flat slice (e.g. a calendar year entirely inside gate warm-up, or a bear year a long/flat book
+    # correctly sat out) has zero variance -- sharpe() is undefined there, so it must be skipped rather
+    # than raising or being treated as the worst (or best) slice.
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    bad_slice = [-0.01 + 0.002 * ((i % 3) - 1) for i in range(50)]  # non-degenerate, clearly negative
+    flat_zero = [0.0] * 50
+    flat_const = [0.01] * 50
+
+    def _run(regime_slices):
+        return a1_kill_bar(
+            book,
+            benchmark,
+            n_trials=16,
+            var_trials=1.0,
+            mean_block=5,
+            seed=7,
+            cost_stressed_returns=book,
+            regime_slices=regime_slices,
+        )
+
+    with_flat = _run({"good": book, "bad_regime": bad_slice, "flat_zero": flat_zero, "flat_const": flat_const})
+    without_flat = _run({"good": book, "bad_regime": bad_slice})
+
+    assert with_flat["worst_slice_name"] == "bad_regime"
+    assert with_flat["worst_slice_pass"] is False
+    assert with_flat["passes"] is False
+    # Regression guard: the flat slices must not change the worst-slice result at all.
+    assert with_flat["worst_slice_name"] == without_flat["worst_slice_name"]
+    assert with_flat["worst_slice_sharpe"] == pytest.approx(without_flat["worst_slice_sharpe"])
+    assert with_flat["worst_slice_pass"] == without_flat["worst_slice_pass"]
+
+
+def test_a1_kill_bar_all_slices_degenerate():
+    book, benchmark = _book_and_benchmark(beta=1.2, seed=42)
+    result = a1_kill_bar(
+        book,
+        benchmark,
+        n_trials=16,
+        var_trials=1.0,
+        mean_block=5,
+        seed=7,
+        cost_stressed_returns=book,
+        regime_slices={"flat_zero": [0.0] * 50, "too_short": [0.01], "flat_const": [0.01] * 30},
+    )
+    assert result["worst_slice_name"] == "<no-nondegenerate-slice>"
+    assert result["worst_slice_pass"] is False
+    assert result["passes"] is False
+
+
 def test_a1_kill_bar_guards_length_mismatch():
     with pytest.raises(AlphaError):
         a1_kill_bar(

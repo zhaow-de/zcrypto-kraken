@@ -41,6 +41,13 @@ def a1_kill_bar(
     "survives cost stress" = the cost-stressed series' own Sharpe is still > 0; "worst slice not
     disqualifying" = every regime_slices entry's Sharpe is > 0. Task 6 (real-data run) may want to
     recalibrate the worst-slice bar against the frozen benchmark's own worst-slice Sharpe instead.
+
+    Worst-slice leg robustness (iter-046, `.tmp/decisions.md`): a regime slice that is zero-variance or
+    shorter than 2 periods (e.g. a calendar-year slice sitting entirely inside the 200-day gate warm-up,
+    or a bear year a long/flat book correctly sat out) means the book took NO risk that regime — there is
+    no risk-adjusted performance to judge and Sharpe is undefined, so the slice is skipped rather than
+    treated as qualifying or disqualifying. If every slice is degenerate this way, `worst_slice_pass` is
+    False (a book with no evaluable risk-taking cannot clear the leg).
     """
     if len(book_net_returns) != len(benchmark_net_returns):
         raise AlphaError("book_net_returns and benchmark_net_returns must have the same length")
@@ -67,13 +74,20 @@ def a1_kill_bar(
         cost_stress_sharpe = sharpe(cost_stressed_returns)
         cost_stress_pass = cost_stress_sharpe > 0
 
-        slice_sharpes = {name: sharpe(rets) for name, rets in regime_slices.items()}
+        # Skip degenerate slices (no risk taken that regime): too short to have variance, or flat.
+        slice_sharpes = {name: sharpe(rets) for name, rets in regime_slices.items() if len(rets) >= 2 and min(rets) != max(rets)}
     except ValidationError as exc:
         raise AlphaError(f"kill-bar computation failed: {exc}") from exc
 
-    worst_slice_name = min(slice_sharpes, key=slice_sharpes.get)
-    worst_slice_sharpe = slice_sharpes[worst_slice_name]
-    worst_slice_pass = worst_slice_sharpe > 0
+    if slice_sharpes:
+        worst_slice_name = min(slice_sharpes, key=slice_sharpes.get)
+        worst_slice_sharpe = slice_sharpes[worst_slice_name]
+        worst_slice_pass = worst_slice_sharpe > 0
+    else:
+        # Every provided slice was degenerate (no risk taken anywhere) -- not evaluable, so it cannot pass.
+        worst_slice_name = "<no-nondegenerate-slice>"
+        worst_slice_sharpe = math.nan
+        worst_slice_pass = False
 
     passes = dsr_pass and spa_pass and cost_stress_pass and worst_slice_pass
     return {

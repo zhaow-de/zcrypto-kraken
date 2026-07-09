@@ -54,5 +54,6 @@ repos:
             docs/research/02\.phase1-data-foundation-closeout\.md|
             docs/research/03\.phase2-validation-harness-closeout\.md|
             docs/research/04\.phase3-benchmarks-closeout\.md|
-            docs/research/05\.phase4-orientation\.md
+            docs/research/05\.phase4-orientation\.md|
+            docs/research/06\.phase4-a1-results\.md
         )$
