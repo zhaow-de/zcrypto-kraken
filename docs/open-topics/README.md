@@ -19,8 +19,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-- [T0009 — Phase-4/5 validation-protocol decisions](T0009-validation-protocol-decisions.md) — the human decision sheet from the A1/A2 arcs: worst-slice leg, evaluation window, net-of-cost SPA, DSR threshold, A1-long/flat disposition, trial resumption (ripe when: next attended protocol review — inputs ready now).
-- [T0010 — full-history dynamic benchmark B3/B4](T0010-dynamic-benchmark-b3-b4.md) — gate×basket and basket+short over the 2013→2026 dynamic basket, plus reconciling the Phase-3 basket-cost carry-forward (ripe when: already fired — the basket exists since iter-044).
+- [T0009 — Phase-4/5 validation-protocol decisions](T0009-validation-protocol-decisions.md) — the human decision sheet from the A1/A2/benchmark arcs: the deployable bar (gated-B1 vs B3+vt-dynamic, added iter-055), worst-slice leg, evaluation window, net-of-cost SPA, DSR threshold, A1-long/flat disposition, trial resumption (ripe when: next attended protocol review — inputs ready now).
 - [T0011 — A2 refinements: 4h band, breakout-hold, 2026 probe](T0011-a2-refinements.md) — the parked A2 follow-ups; they spend reserved A-family trials (ripe when: T0009 resolved).
 - [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
 - [T0013 — trial-registry variant field](T0013-registry-variant-field.md) — first-class family-vs-variant schema so shared budgets stay enforced without notes-encoding (ripe when: next registry-schema iteration).
@@ -37,6 +36,7 @@ _(none)_
 - [T0006 — harness numeric-param type guards](archive/T0006-validation-numeric-param-type-guards.md) — resolved in iter-021: `isinstance(int|float)` guards on `cli/validation/` float params → `ValidationError` (not `TypeError`) on a non-numeric type; closed per defined scope (dsr `n_trials`/`n_obs` deliberately isfinite-only).
 - [T0004 — full tick history + tick-derived bar reconciliation](archive/T0004-tick-history-reconciliation.md) — resolved in iter-044 (human-confirmed exit-bar): `cli/tick/` reconciles the full universe + full history at 100% coverage, 99.4–100% within 1% (the early-illiquid residual accepted), plus the true tick-weighted VWAP; 15m/tick-storage folded into the Bucket-B queue.
 - [T0007 — dynamic-composition inverse-vol basket (full-history B2 variant)](archive/T0007-dynamic-composition-basket.md) — resolved in iter-044: built the look-ahead-free `dynamic_inverse_vol_basket` (2→10 majors over the full 2013→2026 union calendar) and answered finding-1 — the full-history basket is statistically indistinguishable from single-asset BTC (Sharpe ~1.1 both), so the fixed-window "basket loses" was a window artifact; a co-equal viable base for A1.
+- [T0010 — full-history dynamic benchmark B3/B4](archive/T0010-dynamic-benchmark-b3-b4.md) — resolved in iter-055: self-gated dynamic B3/B4 built with full QA; B3+vt point-beats gated-B1 net-of-cost (1.245/1.278 vs 1.047/1.074, n.s., higher drawdown) → the deployable-bar choice escalated to T0009; the Phase-3 basket-cost carry-forward reconciled.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
