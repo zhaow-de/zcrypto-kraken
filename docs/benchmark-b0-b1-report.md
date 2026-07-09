@@ -1,5 +1,9 @@
 # Benchmark Gated-BTC Panel: B0/B1 and Their 200-Day-Gated Variants on Real BTC/EUR Daily
 
+> **Update 2026-07-09:** gated-B1 was superseded as the frozen benchmark / deployable bar by
+> **B3+vt-dynamic** (master-plan §9; T0009 item 1, human-adopted). The panel below stands as the
+> Phase-3 record; present-tense "frozen bar" statements in this file describe the *then*-frozen bar.
+
 This report records the **gated-BTC benchmark panel** — B0 buy-and-hold, B1 vol-targeted BTC, and
 their 200-day-gated variants (gated-B0, gated-B1) — run through the full stack (dataset → returns
 → strategy → backtester → metrics) on real BTC/EUR daily OHLC data (2013-09-10 → 2026-03-31; 4581

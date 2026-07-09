@@ -1,5 +1,6 @@
 ---
 status: open
+ripe_when: an attended session in which the human authorizes the read-only Blockpit<->Kraken depot connection
 ---
 
 # Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)

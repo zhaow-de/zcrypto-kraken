@@ -106,7 +106,9 @@ BTC-anchored book, as the fixed window suggested — but it does not decisively 
 A1 legitimately carries **both** the `equal_risk_basket` (this dynamic basket) and a `btc_only`
 base through its kill bar, rather than dropping the basket on finding 1. The deployable *benchmark*
 bar is unchanged: the vol-targeted / gated single-asset family (gated-B1, Sharpe 1.247 full-history)
-still stands as the bar-to-beat; B2-dyn matches BTC but does not raise it.
+still stands as the bar-to-beat; B2-dyn matches BTC but does not raise it. *(Superseded 2026-07-09:
+**B3+vt-dynamic** — built in §"B3 and B4" below — was adopted as the frozen benchmark on the PR-74
+review; master-plan §9, T0009.)*
 
 ## Distrust-the-instrument note
 
@@ -144,14 +146,89 @@ perturbation directions; `_inverse_vol_weight` refactor verified byte-identical 
 These match `docs/benchmark-b2-basket-report.md` line-for-line — the cross-check that the dynamic
 generalization did not perturb the established numbers.
 
+## B3 and B4: gating and shorting the dynamic basket (iter-055)
+
+The overlays mirror the fixed-window report: the gate is the same 200-day long/flat rule applied to a
+**self-referential signal** — the basket's own equity index (cumulative product of the B2-dyn series,
+seeded 1.0) vs its trailing 200-day average; B4 replaces "flat" with "short". Vol-targeted variants size
+on the **raw basket** (10 %/yr, 30d) with the gate applied after — the committed generator's convention,
+verified by reproducing the fixed-window numbers below. Gate warm-up (k < 199) is flat, never short.
+
+**Instrument QA (all passed before any number was read):** the same code path reproduces (a) the
+committed fixed-window B3/B4 line-for-line (B3 Sharpe 0.2369/maxDD 48.4 %; B3+vt 0.2696/14.8 %;
+B4 −0.1362/83.0 %; gate long 41.8 %, B4 short 45.5 %), (b) this report's own B2-dyn numbers exactly,
+and (c) gated-B1's 1.244 zero-fee / 1.047 net-of-cost; the per-asset weights reconstruct the basket
+returns to 0.0; the dynamic gate makes 88 transitions (long 52.5 % of periods; B4 short-active 43.1 %).
+
+### Full history 2013→2026, zero-fee
+
+| Strategy | Total | Annualized | Sharpe | Max DD |
+| --- | ---: | ---: | ---: | ---: |
+| B2-dyn (reference) | 1169× | 75.6 % | 1.100 | 90.1 % |
+| B2-dyn + vol-target | 4.79× | 13.3 % | 1.147 | 24.8 % |
+| B3 — gated basket (long/flat) | 1239× | 76.4 % | 1.270 | 75.3 % |
+| **B3 + vol-target** | 4.36× | 12.4 % | **1.419** | 21.9 % |
+| B4 — long/short | 254× | 55.4 % | 0.959 | 91.5 % |
+| B4 + vol-target | 4.23× | 12.2 % | 1.079 | 32.1 % |
+
+Unlike the fixed window (where the gate rescued-but-didn't-lift and the short was disastrous), over the
+full history the self-gate **helps**: B3+vt (1.419) beats both the vol-targeted basket (1.147) and
+gated-B1 (1.247) zero-fee. B4 confirms — a **fourth** time — that the short kills: its raw margin carry
+is 37.6 %/yr (short-active 43 % of periods at full weight).
+
+### Net of cost (per-asset turnover × 1.5× Tier-1 maker + short margin carry)
+
+| Strategy | net-of-cost Sharpe (full) | net-of-cost Sharpe (k ≥ 230) | spot drag | margin drag |
+| --- | ---: | ---: | ---: | ---: |
+| gated-B1 (the frozen bar) | 1.047 | 1.074 | 1.74 %/yr | — |
+| B2-dyn | 1.043 | 0.958 | 4.65 %/yr | — |
+| B2-dyn + vt | 1.028 | 0.994 | 1.37 %/yr | — |
+| B3 | 1.150 | 1.180 | 6.89 %/yr | — |
+| **B3 + vt** | **1.245** | **1.278** | 1.48 %/yr | — |
+| B4 | 0.293 | 0.305 | 12.80 %/yr | 37.6 %/yr |
+| B4 + vt | 0.297 | 0.301 | 2.74 %/yr | 6.0 %/yr |
+
+(k ≥ 230 = past both gated-B1's 199-period gate warm-up and B3's ~229-period basket-lookback + equity-gate
+warm-up — the apples-to-apples window per the iter-053 lesson.)
+
+### Significance — read symmetrically
+
+- **B3+vt vs gated-B1 head-to-head (net-of-cost): NOT significant** — p = 0.289 full / 0.271 post-warm-up
+  (seed-stable 0.268–0.271), mean outperformance only +0.4 bps/day between two highly-correlated
+  vol-targeted series. The **point** Sharpe edge (~+0.2) is real but statistically indistinguishable —
+  the same estimation-uncertainty regime as every benchmark comparison since Phase 3.
+- The K=4 overlay-family reality check vs gated-B1 gives p = 0.0085 with **raw B3** as the best arm —
+  but that test rewards mean **return** (raw B3 does 76 %/yr at 75 % drawdown), not risk-adjusted
+  quality; it is reported for completeness, not leaned on.
+
+### What this changes — and what it doesn't
+
+**The benchmark family now contains a member with a higher point net-of-cost Sharpe than gated-B1** —
+no alpha family required; the benchmarks did it themselves. It does **not** settle the deployable bar:
+B3+vt trades a ~+0.2 (non-significant) Sharpe edge for **~1.8× the drawdown** (21.9 % vs 12.3 %
+zero-fee), and Phase 3's bar choice deliberately weighed drawdown control. Choosing between them — and
+swapping the kill bar's **frozen benchmark**, a pre-registered-protocol change — is escalated as the
+first item of **T0009**, not decided here. **(Update: decided by the human on the 2026-07-09 PR-74
+review — B3+vt-dynamic is adopted as the frozen benchmark; the exact construction + reference
+figures are bound in master-plan §9 and T0009's Done-so-far.)**
+
+Re-reads against the candidate bar (k ≥ 230, net-of-cost): **A1-long/flat weekly** (offset-mean 1.416)
+**significantly beats even B3+vt** (p = 0.0070, +1.7 bps/day) — the A1 alpha story survives the bar
+move, still blocked only by the T0009 protocol questions and its 2014 tail. **A2's long/flat arms fall
+below** B3+vt post-warm-up (1.24 / 1.20 vs 1.28) — the A2 verdict gets stronger on risk-adjusted terms
+(the K=2 return-SPA vs B3+vt gives p = 0.026, i.e. A2 significantly out-*returns* the candidate bar at
+higher risk — the usual return-vs-Sharpe pattern, not a Sharpe win). A1-long/flat *daily*
+(1.142) is below the candidate bar.
+
 ## Caveats
 
-- **Zero-fee.** The basket rebalances inverse-vol weights daily and is the most fee-sensitive line
-  in the family; a basket-turnover cost model + the §9.6 stress ladder are deferred (A1's kill bar
+- **Zero-fee (headline tables).** The basket rebalances inverse-vol weights daily and is the most
+  fee-sensitive line in the family. The per-asset turnover + margin-carry **cost model is now applied**
+  in §"B3 and B4" (net-of-cost for all six variants, 1.5× Tier-1 maker — the pre-registered stress rung);
+  the remaining §9.6 rungs (2×, taker-only) are **explicitly dropped** for benchmarks — the kill bar's
+  1.5× rung is the load-bearing one, and the A-family verdicts already carry it (A1's kill bar
   applies costs).
-- **No B3/B4 dynamic variants this pass.** The gate × basket (B3) and basket + short (B4) overlays
-  were characterized on the fixed window (`docs/benchmark-b2-basket-report.md`); a full-history
-  dynamic B3/B4 is a noted follow-up once the basket base is in the A1 loop.
+- **B3/B4 dynamic variants**: delivered above (iter-055, resolving T0010).
 - **Point estimates marginally favor the basket, but not significantly** — the verdict is "≈tied,"
   read symmetrically. Do not carry "basket beats BTC" forward; carry "basket is a viable base,
   co-equal with btc_only under A1's kill bar."

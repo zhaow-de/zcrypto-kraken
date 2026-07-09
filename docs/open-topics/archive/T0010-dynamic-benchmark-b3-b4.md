@@ -1,9 +1,12 @@
 ---
-status: open
-ripe_when: already fired — the dynamic basket base exists since iter-044; next benchmark-maintenance iteration
+status: resolved
 ---
 
 # Full-history dynamic benchmark B3/B4 (gate × basket, basket + short)
+
+## Resolution
+
+Resolved in **iter-055** (the deferral-audit catch-up run). Both sub-items delivered, `docs/benchmark-b2-dynamic-report.md` §"B3 and B4": the self-gated dynamic B3/B4 built with full instrument QA (reproduces the committed fixed-window B3/B4 and iter-044 basket numbers exactly), zero-fee **and** net-of-cost via the per-asset-turnover + margin-carry model — which also **reconciles the Phase-3 carried-forward** basket-cost/§9.6 item. Headline: **B3+vt point-beats gated-B1 net-of-cost (1.245/1.278 vs 1.047/1.074)** — Sharpe edge n.s. (p ≈ 0.27), ~1.8× the drawdown — so the deployable-bar choice (and the frozen-benchmark swap) is escalated as **T0009's first item**. B4 confirms a fourth time that the short's margin carry kills (37.6 %/yr).
 
 ## Context — what
 

@@ -1,5 +1,6 @@
 ---
 status: partial
+ripe_when: the >=7-day clean-run clock completes (~2026-07-15) AND an attended session has workstation/NAS access for the pull + sync + alerting drill
 ---
 
 # D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)

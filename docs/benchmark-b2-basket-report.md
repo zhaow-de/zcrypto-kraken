@@ -1,5 +1,9 @@
 # Benchmark B2: Inverse-Vol Majors-Basket Bar-to-Beat on Real Data
 
+> **Update 2026-07-09:** gated-B1 was superseded as the frozen benchmark / deployable bar by
+> **B3+vt-dynamic** (master-plan §9; T0009 item 1, human-adopted). The panel below stands as the
+> Phase-3 record; present-tense "frozen bar" statements in this file describe the *then*-frozen bar.
+
 This report records the **B2 benchmark** — a naive inverse-vol-weighted basket of the 10 EUR
 majors (ADA, AVAX, BTC, DOGE, DOT, ETH, LINK, LTC, SOL, XRP) — run through the full stack
 (dataset → returns → `inverse_vol_basket` → backtester → metrics) on real daily OHLC data, and
