@@ -1,0 +1,35 @@
+# Record-44 builder + concordance core (design)
+
+**Iteration:** iter-082 (attended — the first of the two shadow-engine build iterations decided `[iter-082]`; the second, iter-083, wraps the node/store/journal-writing/CLI around this iteration's output). **Goal:** the Phase-6 engine's committed computational heart — the deployable system's (registry **record 44**) builder as tested code with a verified path and an equivalence-gated fast path, plus the concordance core implementing the ratified 4h Stage-6a gate.
+
+## Why this shape
+
+The engine's one hard promise (spec 00039, gate ratified 4h on 2026-07-10, decisions log `[iter-082]`) is that the node's targets equal a replay of its journaled inputs to |Δ| ≤ 1e-6. That demands the target computation exist as one committed, tested function — not as trial-driver scratch. Record 44's construction currently lives only in the iter-080/081 drivers + spec 00038; trials 43/44 pinned its figures in the registry, which this iteration turns into frozen-figure regression tests.
+
+## The builder — `cli/portfolio/crossfreq_system.py`
+
+Two callables, one truth:
+
+1. **`build_crossfreq_system(daily_prices, daily_ts, h4_prices, h4_ts, *, config=CrossfreqSystemConfig())`** — the **verified path**: a faithful transcription of the trial-44 driver (which reproduced trial 43's machinery bit-identically before the weight change). Construction, in order: BTC-only forward-fill on both grids (other assets' missing bars → return 0.0, per the drivers); B sleeve = daily benchmark w·l3 via the record-33 primitives (`dynamic_inverse_vol_basket` lookback 30, `sma_gate` 200, `vol_target` 0.10/√365 lookback 30, `_inverse_vol_weights` 30); A1 sleeve = A1-lf weekly v0.12 (`A1Config(base="equal_risk_basket", regime="ensemble", short="off", target_vol=0.12)`) 7-offset-mean **positions**; both daily sleeves expanded to the 4h calendar via `expand_daily_positions` with **close-time-shifted boundaries** (daily_ts+1d, h4_ts+4h — the pinned contract); A2 sleeve = equal-weight per-asset mean of the three adopted arms (`A2Config(lookbacks=(20,50,100), tv=0.12 / (60,120,240), tv=0.10 / (60,120,240), tv=0.12`, all `short="off"`, vol/basket lookback 180, ppy 2190); combination at **fixed ⅓ weights**; `apply_position_caps` 20 %/10 %; full per-asset net-of-cost at 0.006/side; `daily_cadence_governor` on **dense present-day ranks** of `date(h4_ts[k+1])`. Returns `CrossfreqSystemResult`: **`final_targets`** (per-asset, per-4h-bar: multiplier × capped position — the quantity the engine journals and the gate compares), `governed_net`, `ungoverned_net`, `multipliers`, sleeve position sets, `cap_breach_bars`, `day_index`, `n_periods`.
+2. **`build_crossfreq_system_fast(...)`** — same signature, same result type, vectorized (polars/numpy) where the profile says it matters (the three A2 arms dominate the ~13 min verified-path build; the noc/turnover loops and expansion follow). **Hard requirement — the equivalence gate**: elementwise agreement with the verified path over the **full history** at ≤ 1e-12 on `final_targets` and both net series, and identical integer diagnostics (cap-breach count, governor-engaged count); the headline figures must round to the registry's 4dp values. Speed is measured and recorded (target ~10× — advisory, not a gate). **Production and replay both run the fast path** (concordance replay is therefore same-code); the verified path is the permanent oracle it must equal — it never becomes dead code, the equivalence test runs in the suite (skipif-data).
+
+`CrossfreqSystemConfig` is a frozen dataclass carrying record 44's constants as defaults (assets, fee, caps, lookbacks/grids/vols as above, `GovernorConfig()` D1). It captures **record 44**, not a general framework — a future adopted record revises the builder under its own trial discipline (no speculative knobs).
+
+## Regression tests — the registry as the test oracle
+
+Skipif-data tests (pattern of record 33's): the verified path reproduces **trial 44's registered figures** — governed Sharpe **1.5609** full / **1.5583** decisive (k≥1380, ppy 2190), maxDD **13.57 %** (pre-governor 18.66 %), cap-breach **1,318**, governor-engaged **7,302** — and the five sleeve QA anchors internally (daily bench 1.2455 elementwise vs `build_combined_system`; A1-lf book 1.3798; the three arm Sharpes 1.3274/1.3017/1.3585). The fast path passes the equivalence gate. Unit tests (no data): config validation, degenerate-input errors, a synthetic mini-grid end-to-end sanity.
+
+## The concordance core — `cli/engine/` (pure pieces only; no node, no I/O loops)
+
+1. **Journal contract** (`cli/engine/journal.py`): a documented, versioned schema — per cycle: `cycle_ts` (the 4h bar boundary), the input-snapshot manifest (per pair × grid: n bars, first/last ts, and a **content hash = sha256 over the serialized (ts, close) arrays** — parquet bytes are not canonical), snapshot file paths, computed `final_targets` for the new bar, `started_at`/`completed_at`, and a code-version id (package version + builder path name). Dataclass + JSON (de)serialization + validation; **writing** it live is iter-083's node work — this iteration defines and tests the contract both sides use.
+2. **`replay_cycle(entry, snapshot_reader)`** — loads the journaled snapshots, verifies their content hashes, runs `build_crossfreq_system_fast`, returns the recomputed targets for `cycle_ts`'s bar.
+3. **`compare_targets(a, b, tol=1e-6)`** — per-asset absolute comparison; returns pass/fail + the worst offender.
+4. **`evaluate_gate(entries)`** — the **ratified 4h gate** (spec 00039 amendment, decision-dated 2026-07-10): a UTC calendar day is clean iff all **6** cycles (00/04/08/12/16/20) are present, each `completed_at` within **30 min** of its boundary, and each replay-compare passes at 1e-6; the gate = **≥ 14 consecutive clean days**; any miss/mismatch resets the streak. Returns streak status + first-failure detail. Tested on synthetic journals (clean streaks, a missed cycle, a late cycle, a mismatch, boundary days).
+
+## Docs at close
+
+Spec 00039 §go-live gets the 4h-gate amendment (decision-dated bracket; 00039 is not hash-pinned by any registry row). The runbook (`docs/research/12.phase5-system-spec-runbook.md`, mdformat-allowlisted) gets a decision-dated section: deployable system = **record 44** (construction summary, registered figures, reproduction via `build_crossfreq_system`), with the record-33 sections marked superseded-but-historical. T0018 gains the store-seeding deadline constraint (below). Iterations-history entry; PR into develop.
+
+## Out of scope (iter-083 — the node iteration)
+
+The Nautilus `TradingNode`, scheduler, price store + REST append (**constraint registered in T0018: Kraken's 720-bar REST window covers the canonical dataset's 2026-04-01 4h gap only until ≈ 2026-07-25** — iter-083 must seed the store before then or fall back to the quarterly OHLCVT dump), journal *writing*, the `zcrypto engine` CLI group, the VPS cycle benchmark, and every deployment artifact. Also out: any change to the registered trials, the kill bar, or the deployed-capture stack.
