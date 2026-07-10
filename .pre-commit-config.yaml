@@ -62,5 +62,6 @@ repos:
             docs/research/10\.phase4-closeout\.md|
             docs/research/11\.phase5-stress-suite\.md|
             docs/research/12\.phase5-system-spec-runbook\.md|
-            docs/research/13\.phase5-closeout\.md
+            docs/research/13\.phase5-closeout\.md|
+            docs/research/14\.phase6-adapter-verification\.md
         )$
