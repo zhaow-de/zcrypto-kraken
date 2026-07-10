@@ -1,0 +1,53 @@
+# zcrypto engine gate-ops -- a systemd USER unit template (spec 00042, workstation gate ops):
+# pull the VPS journal, replay UTC-yesterday on the verified path, then report -- the
+# pre-registered ">= 1 verified-path replay per day". A failed PULL aborts the run outright
+# (no replay/report over a stale journal); the report step still runs when REPLAY exits
+# non-zero (its rc is captured and re-raised at the end), so the daily read always has a
+# fresh report; failures surface in the user journal (no pager for gate-ops itself). `date -u`
+# is load-bearing: a local-time "yesterday" computed near midnight CET names the wrong journal
+# day. The rrsync forced command on the VPS pins the remote side to the journal subtree, so the
+# rsync source path is implicit (bare "deploy@<vps-host>:").
+#
+# Placeholders to fill in at install time:
+#   <repo>     = ABSOLUTE path of the zcrypto-kraken checkout (e.g. /home/you/Projects/zcrypto-kraken)
+#   <uv>       = ABSOLUTE path of the uv binary (find it with `command -v uv`, e.g. /home/you/.local/bin/uv)
+#   <vps-host> = the VPS hostname/IP (the host behind the ansible inventory's `zcrypto` entry)
+#
+# Prerequisites:
+#   - The sync private key decrypted to ~/.ssh (infra/ansible/files/sync_ed25519 is
+#     ansible-vault-encrypted in git -- ssh cannot consume it as checked out). From the repo root:
+#       umask 077; uv run ansible-vault view \
+#         --vault-password-file infra/ansible/scripts/vault-pass.sh \
+#         infra/ansible/files/sync_ed25519 > ~/.ssh/zcrypto-sync_ed25519
+#     then verify the file is 0600. NEVER `ansible-vault decrypt` in place: that rewrites the
+#     TRACKED file as plaintext private-key material in the worktree, one `git add` away from
+#     being committed.
+#   - The ATTENDED FIRST PULL has been verified by hand before this unit is installed (the
+#     spec's deployment sequence): the same rsync one-liner below completes, and
+#     `zcrypto engine replay --journal-dir data/engine-journal-vps --path verified` +
+#     `zcrypto engine report --journal-dir data/engine-journal-vps` round-trip the pulled
+#     journal.
+#   - Lingering, so the timer fires without an open session: loginctl enable-linger $USER
+#
+# Escaping note: systemd expands % specifiers and $ variables in ExecStart, so the shell line
+# below writes %% for date's %F and $$ for every shell $ -- the shell receives single % and $.
+# The single-% `%h` in the ssh -i path is DELIBERATE: systemd expands it to the user's home
+# (a `~` inside the double-quoted -e string would not be tilde-expanded by sh).
+#
+# Install (after filling in the placeholders; zcrypto-engine-gateops.timer does the scheduling):
+#   mkdir -p ~/.config/systemd/user
+#   cp infra/systemd/zcrypto-engine-gateops.service ~/.config/systemd/user/   # placeholders filled
+#   cp infra/systemd/zcrypto-engine-gateops.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now zcrypto-engine-gateops.timer
+#   systemctl --user list-timers zcrypto-engine-gateops.timer   # confirm the next 06:30 UTC run
+#   systemctl --user start zcrypto-engine-gateops.service       # optional: one attended run now
+#   journalctl --user -u zcrypto-engine-gateops.service         # read a run's output
+
+[Unit]
+Description=zcrypto engine gate-ops: VPS journal pull + verified replay of UTC-yesterday + report
+
+[Service]
+Type=oneshot
+WorkingDirectory=<repo>
+ExecStart=/bin/sh -c 'rsync -az -e "ssh -i %h/.ssh/zcrypto-sync_ed25519 -p 10022" deploy@<vps-host>: data/engine-journal-vps/ || exit 1; d="$$(date -u +%%F -d yesterday)"; <uv> run zcrypto engine replay --journal-dir data/engine-journal-vps --path verified --date "$$d"; rc=$$?; <uv> run zcrypto engine report --journal-dir data/engine-journal-vps; exit $$rc'

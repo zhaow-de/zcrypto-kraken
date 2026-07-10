@@ -1,0 +1,271 @@
+---
+# Deploys the shadow engine as a second compose service beside capture (same image, compose-level
+# entrypoint override; spec docs/specs/00042-vps-deployment-design.md): the §8-hardening gate
+# first, then the kraken-engine account, the state dirs, the QA'd store (only when absent), the
+# secrets env file, zcrypto.toml, the compose file, the systemd unit, and the rrsync journal pull
+# channel. Like capture, the unit's own ExecStartPre/ExecStart/ExecStop ("docker compose pull" /
+# "up" / "down") owns the actual pull+run — ansible only starts/enables/restarts it.
+
+# --- 1. The §8-hardening gate — asserts before anything else. The probes are read-only and run
+# with check_mode: false so a --check dry-run still evaluates the gate; any failure aborts the
+# role before a single secret is rendered.
+- name: "§8 gate — probe nftables enablement (a RemainAfterExit oneshot: is-active alone can be stale)"
+  ansible.builtin.command: systemctl is-enabled nftables
+  register: engine_gate_nft_enabled
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "§8 gate — probe the live nftables ruleset for content"
+  ansible.builtin.shell: /usr/sbin/nft list ruleset | grep -q .
+  register: engine_gate_nft_ruleset
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "§8 gate — assert the firewall posture (nftables enabled + non-empty live ruleset)"
+  ansible.builtin.assert:
+    that:
+      - engine_gate_nft_enabled.rc == 0
+      - engine_gate_nft_enabled.stdout | trim == 'enabled'
+      - engine_gate_nft_ruleset.rc == 0
+    fail_msg: >-
+      §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): nftables must be
+      enabled with a non-empty live ruleset before the engine (and its trade key) may land.
+
+- name: "§8 gate — probe fail2ban activity"
+  ansible.builtin.command: systemctl is-active fail2ban
+  register: engine_gate_fail2ban
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "§8 gate — assert fail2ban is active"
+  ansible.builtin.assert:
+    that:
+      - engine_gate_fail2ban.rc == 0
+      - engine_gate_fail2ban.stdout | trim == 'active'
+    fail_msg: >-
+      §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): fail2ban must be
+      active before the engine (and its trade key) may land.
+
+- name: "§8 gate — probe the unattended-upgrades package"
+  ansible.builtin.command: dpkg -s unattended-upgrades
+  register: engine_gate_uu_pkg
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "§8 gate — probe unattended-upgrades enablement"
+  ansible.builtin.command: systemctl is-enabled unattended-upgrades
+  register: engine_gate_uu_enabled
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "§8 gate — assert unattended-upgrades is installed and enabled"
+  ansible.builtin.assert:
+    that:
+      - engine_gate_uu_pkg.rc == 0
+      - engine_gate_uu_enabled.rc == 0
+      - engine_gate_uu_enabled.stdout | trim == 'enabled'
+    fail_msg: >-
+      §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md):
+      unattended-upgrades must be installed and enabled before the engine (and its trade key)
+      may land.
+
+- name: "§8 gate — probe the effective sshd posture"
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: engine_gate_sshd
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "§8 gate — assert the sshd posture (no root login, no passwords, deploy-only)"
+  ansible.builtin.assert:
+    that:
+      - engine_gate_sshd.rc == 0
+      - engine_gate_sshd.stdout is search('(?m)^permitrootlogin no$')
+      - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
+      - engine_gate_sshd.stdout is search('(?m)^allowusers .*\bdeploy\b')
+    fail_msg: >-
+      §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): sshd -T must
+      report permitrootlogin no, passwordauthentication no, and allowusers deploy before the
+      engine (and its trade key) may land.
+
+# --- 2. The kraken-engine service account — created by this role itself, deliberately unlike
+# kraken-capture (which the base role creates): in-role creation keeps `--tags engine`
+# self-sufficient on first deploy.
+- name: create the kraken-engine system user (nologin, home = its state dir)
+  ansible.builtin.user:
+    name: kraken-engine
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ engine_state_dir }}"
+    create_home: false
+    state: present
+
+- name: look up the kraken-engine service account
+  ansible.builtin.getent:
+    database: passwd
+    key: kraken-engine
+  register: engine_getent
+  # First-run check mode: the user task above didn't really create the account, so the lookup
+  # legitimately comes up empty — only a real run may fail here.
+  failed_when: engine_getent is failed and not ansible_check_mode
+
+- name: derive the kraken-engine uid/gid for the container's user mapping
+  # On a first-run --check the account doesn't exist yet, so a placeholder keeps the dry-run
+  # rendering/diffing; a real converge always re-derives the actual uid/gid before anything is
+  # written to the host.
+  ansible.builtin.set_fact:
+    engine_uid: "{{ engine_passwd['kraken-engine'][1] if engine_account_known else 'first-run-check-mode' }}"
+    engine_gid: "{{ engine_passwd['kraken-engine'][2] if engine_account_known else 'first-run-check-mode' }}"
+  vars:
+    engine_passwd: "{{ ansible_facts['getent_passwd'] | default({}) }}"
+    engine_account_known: "{{ (engine_passwd['kraken-engine'] | default(none)) is not none }}"
+
+# --- 3. State directories.
+- name: ensure the engine state directories exist (state dir + store + journal)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: kraken-engine
+    group: kraken-engine
+    mode: "0750"
+  loop:
+    - "{{ engine_state_dir }}"
+    - "{{ engine_state_dir }}/store"
+    - "{{ engine_state_dir }}/journal"
+
+# --- 4. Store delivery — only when absent: converges never clobber a live store. Run a
+# delivering converge away from a 4h-boundary+30-min window (the workstation soak rewrites
+# data/engine-store/ inside it — a mid-write copy could deliver a truncated parquet).
+#
+# VPS store-poisoning runbook (the code's `zcrypto engine seed` repair is workstation-only — the
+# image carries no canonical dataset): systemctl stop zcrypto-engine, rm -rf
+# <engine_state_dir>/store, re-run site.yml --tags engine (this only-when-absent copy
+# re-delivers), systemctl start zcrypto-engine.
+- name: probe whether the store was already delivered (BTC subtree present)
+  ansible.builtin.stat:
+    path: "{{ engine_state_dir }}/store/BTC"
+  register: engine_store_probe
+
+# A stat guard, not `force: no` — force:no still copies files that are new on the source side,
+# which would let a converge partially refresh a live store.
+- name: deliver the workstation's QA'd engine store (only when absent)
+  ansible.builtin.copy:
+    src: "{{ engine_store_src }}"
+    dest: "{{ engine_state_dir }}/store/"
+    owner: kraken-engine
+    group: kraken-engine
+    mode: "0640"
+    directory_mode: "0750"
+  register: engine_store_delivery
+  when: not engine_store_probe.stat.exists
+
+- name: read-verify one delivered store file (a truncated mid-write copy must fail loudly)
+  ansible.builtin.stat:
+    path: "{{ engine_state_dir }}/store/BTC/EUR/240.parquet"
+  register: engine_store_verify
+  when: engine_store_delivery is changed and not ansible_check_mode
+
+- name: assert the delivered store is readable and non-empty
+  ansible.builtin.assert:
+    that:
+      - engine_store_verify.stat.exists
+      - engine_store_verify.stat.size > 0
+    fail_msg: >-
+      The delivered store looks incomplete (BTC/EUR/240.parquet missing or empty) — follow the
+      poisoned-store runbook above: stop the unit, rm -rf the store, re-run --tags engine, start.
+  when: engine_store_delivery is changed and not ansible_check_mode
+
+# --- 5. The compose project dir + the secrets env file. The §8 gate above has already passed by
+# the time this renders — the first (and only) place the trade key lands on disk.
+- name: ensure the compose project directory exists
+  ansible.builtin.file:
+    path: /opt/zcrypto-engine
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the engine secrets env file (0600 root-only; never logged, never diffed)
+  ansible.builtin.template:
+    src: engine.env.j2
+    dest: /opt/zcrypto-engine/engine.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: restart engine service
+
+# --- 6. The engine's zcrypto.toml (bind-mounted read-only at /app/zcrypto.toml by the compose
+# file below).
+- name: render the engine zcrypto.toml
+  ansible.builtin.template:
+    src: zcrypto.toml.j2
+    dest: /opt/zcrypto-engine/zcrypto.toml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart engine service
+
+# --- 7. The compose file (secret-free — the key material stays in engine.env).
+- name: fail fast if the pinned engine image digest was not supplied
+  ansible.builtin.assert:
+    that: engine_image_digest | length > 0
+    fail_msg: >-
+      engine_image_digest is empty — pass the built image's digest, e.g.
+      -e engine_image_digest=sha256:<...> (see the job summary of
+      .github/workflows/capture-image.yml — the engine reuses the capture image).
+
+- name: render the engine compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: /opt/zcrypto-engine/compose.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart engine service
+
+# --- 8. The systemd unit (capture's pull/up/down pattern; enabled — boot resume).
+- name: install the engine systemd unit
+  ansible.builtin.copy:
+    src: zcrypto-engine.service
+    dest: /etc/systemd/system/zcrypto-engine.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart engine service
+
+- name: enable + start the engine service (boot resume)
+  ansible.builtin.systemd_service:
+    name: zcrypto-engine.service
+    daemon_reload: true
+    enabled: true
+    state: started
+
+# --- 9. The journal pull channel: an rrsync forced-command key on the deploy account, pinned
+# read-only to the journal subtree regardless of deploy's other powers.
+- name: ensure rsync (which ships the rrsync helper) is installed
+  ansible.builtin.package:
+    name: rsync
+    state: present
+
+# rrsync lives at /usr/bin/rrsync on Debian 13 (trixie) — the rsync package installs it there
+# since bookworm (rsync 3.2.4 promoted it out of /usr/share/doc/rsync/scripts/). The absolute
+# path keeps the forced command independent of the login shell's PATH.
+- name: install the sync pubkey as a forced-command entry in deploy's authorized_keys (journal read-only)
+  ansible.posix.authorized_key:
+    user: deploy
+    exclusive: false
+    key: "{{ sync_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ engine_state_dir }}/journal",restrict'
+
+- name: add deploy to the kraken-engine group (makes the 0750 state dirs traversable for the pull)
+  ansible.builtin.user:
+    name: deploy
+    groups: kraken-engine
+    append: true

@@ -1,0 +1,6 @@
+---
+- name: restart engine service
+  ansible.builtin.systemd_service:
+    name: zcrypto-engine.service
+    daemon_reload: true
+    state: restarted

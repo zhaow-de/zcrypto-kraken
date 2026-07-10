@@ -91,10 +91,17 @@ systemctl --user status zcrypto-engine-shadow.service    # confirm: active (runn
 
 #### VPS journal pull and daily gate ops (systemd user timer)<a name="vps-journal-pull-and-daily-gate-ops-systemd-user-timer"></a>
 
+One-time setup: the sync private key is ansible-vault-encrypted in git (`infra/ansible/files/sync_ed25519`), so decrypt a working copy to `~/.ssh` — never `ansible-vault decrypt` in place, which would rewrite the tracked file as plaintext key material one `git add` away from being committed:
+
+```bash
+umask 077; uv run ansible-vault view --vault-password-file infra/ansible/scripts/vault-pass.sh \
+  infra/ansible/files/sync_ed25519 > ~/.ssh/zcrypto-sync_ed25519    # verify: 0600
+```
+
 Pull the VPS node's journal to the workstation (the rrsync forced command on the sync key pins the remote side to the journal subtree, so no remote source path is given):
 
 ```bash
-rsync -az -e "ssh -i infra/ansible/files/sync_ed25519 -p 10022" deploy@<vps-host>: data/engine-journal-vps/
+rsync -az -e "ssh -i ~/.ssh/zcrypto-sync_ed25519 -p 10022" deploy@<vps-host>: data/engine-journal-vps/
 ```
 
 `infra/systemd/zcrypto-engine-gateops.{service,timer}` (workstation **user** units) automate the daily gate ops: pull, then `replay --journal-dir data/engine-journal-vps --path verified` for UTC-yesterday, then `report --journal-dir data/engine-journal-vps` — report still runs when replay fails, and the replay's exit code is preserved. The timer fires daily at **06:30 UTC**, when all of UTC-yesterday's cycles are complete. Install (mirroring the soak unit's walkthrough; run the first pull attended before enabling the timer):
@@ -102,7 +109,8 @@ rsync -az -e "ssh -i infra/ansible/files/sync_ed25519 -p 10022" deploy@<vps-host
 ```bash
 mkdir -p ~/.config/systemd/user
 cp infra/systemd/zcrypto-engine-gateops.service infra/systemd/zcrypto-engine-gateops.timer ~/.config/systemd/user/
-# fill in the <repo> placeholder (absolute path) in the copied service unit
+# fill in the copied service unit's placeholders: <repo> (absolute checkout path),
+# <uv> (absolute uv path, `command -v uv`), <vps-host> (the VPS hostname/IP)
 systemctl --user daemon-reload
 systemctl --user enable --now zcrypto-engine-gateops.timer     # the TIMER is what's enabled, not the service
 systemctl --user list-timers zcrypto-engine-gateops.timer      # confirm: next trigger at 06:30 UTC

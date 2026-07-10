@@ -1,0 +1,32 @@
+# Rendered by the `engine` Ansible role at /opt/zcrypto-engine/compose.yaml — do not
+# hand-edit on the host, it is overwritten on the next converge. Edit
+# infra/ansible/roles/engine/templates/compose.yaml.j2 instead. Secret-free by design: the
+# trade key material lives only in /opt/zcrypto-engine/engine.env (0600), pulled in via
+# env_file — this file must stay safely diffable.
+services:
+  engine:
+    # The capture image — the exec-form entrypoint override cleanly bypasses capture's shell
+    # ENTRYPOINT and starts the engine instead (one image, two services).
+    image: "{{ engine_image }}@{{ engine_image_digest }}"
+    restart: unless-stopped
+    user: "{{ engine_uid }}:{{ engine_gid }}"
+    entrypoint: ["zcrypto", "engine", "run"]
+    env_file:
+      - /opt/zcrypto-engine/engine.env
+    volumes:
+      # The state dir maps to the same path in-container, so the host-absolute store/journal
+      # paths in zcrypto.toml are also the container-visible ones.
+      - "{{ engine_state_dir }}:{{ engine_state_dir }}"
+      - "/opt/zcrypto-engine/zcrypto.toml:/app/zcrypto.toml:ro"
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ engine_cpu_limit }}"
+          memory: "{{ engine_memory_limit }}"
+    # Capture (docker's default 1024) wins CPU contention deterministically over the engine.
+    cpu_shares: {{ engine_cpu_shares }}
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ engine_log_max_size }}"
+        max-file: "{{ engine_log_max_file }}"

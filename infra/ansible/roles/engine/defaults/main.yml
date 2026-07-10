@@ -1,0 +1,33 @@
+---
+# The engine reuses the capture image — one image, two services; the rendered compose file
+# overrides the entrypoint to start the engine instead of the capture daemon.
+engine_image: ghcr.io/zhaow-de/zcrypto-capture
+
+# The pinned image digest to deploy — no sane default; override per-run (or in group_vars) with
+# the value from the capture-image workflow's job summary, e.g.:
+#   -e engine_image_digest=sha256:<...>
+engine_image_digest: ""
+
+engine_state_dir: /var/lib/zcrypto-engine
+
+# Where the workstation's QA'd warm store lives on the controller (ansible runs from the
+# workstation); playbook_dir is infra/ansible, so ../.. is the repo root.
+engine_store_src: "{{ playbook_dir }}/../../data/engine-store/"
+
+# Resource budget sized to the 2-vCPU/4-GB host with capture as the protected service: capture's
+# default cpu_shares (1024) wins CPU contention deterministically over the engine's 512, and the
+# combined memory caps (capture 2g + engine 1g) stay under host RAM with OS headroom.
+engine_cpu_limit: "0.75"
+engine_memory_limit: "1g"
+engine_cpu_shares: 512
+
+engine_log_max_size: "50m"
+engine_log_max_file: "5"
+
+# healthchecks.io ping URL for the dead-man's switch — vault-supplied (the attended deployment
+# vaults it as engine_healthcheck_url); empty means the engine simply skips liveness pings.
+engine_healthcheck_url: ""
+
+# [zcrypto.engine] knobs rendered into /opt/zcrypto-engine/zcrypto.toml.
+engine_shadow_nav_eur: 1000.0
+engine_settle_delay_secs: 90
