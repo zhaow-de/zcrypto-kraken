@@ -80,7 +80,7 @@ uv add --dev <pkg>      # add new dev deps
 
 Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
-The `uv run pytest` suite is medium-sized (~950 tests, ~25 seconds; a couple of data-dependent tests skip when `data/ohlc-full` is absent) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
+The `uv run pytest` suite is ~1,150 tests: ~40 seconds without the data-dependent regression tests, ~7 minutes with them (they run when `data/ohlc-full` is present, else skip) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
 
 ## Conventions
 

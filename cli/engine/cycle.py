@@ -39,8 +39,8 @@ from cli.portfolio import build_crossfreq_system_fast
 logger = get_logger("engine.cycle")
 
 _H4 = timedelta(hours=4)
-# The 5-min reserve inside the ratified 30-min gate window: any success within the retry window
-# still yields a gate-passable completed_at <= cycle_ts + 30 min.
+# The 25-min retry cutoff leaves a 5-min reserve inside the ratified 30-min gate window: any
+# success within the retry window still yields a gate-passable completed_at <= cycle_ts + 30 min.
 _REFRESH_RESERVE = timedelta(minutes=25)
 _BACKOFF_INITIAL_SECS = 5.0
 _BACKOFF_MAX_SECS = 60.0
