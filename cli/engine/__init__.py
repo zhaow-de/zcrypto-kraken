@@ -8,6 +8,7 @@ from cli.engine.concordance import (
     evaluate_gate,
     replay_cycle,
 )
+from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import (
     SCHEMA_VERSION,
@@ -37,6 +38,7 @@ __all__ = [
     "CompareResult",
     "CycleOutcome",
     "CycleRecord",
+    "CycleResult",
     "EngineError",
     "EngineJournalError",
     "FailureDetail",
@@ -53,6 +55,7 @@ __all__ = [
     "read_store_series",
     "refresh_store",
     "replay_cycle",
+    "run_cycle",
     "seed_store",
     "snapshot_content_hash",
     "to_json",
