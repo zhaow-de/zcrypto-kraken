@@ -19,6 +19,13 @@ from cli.engine.journal import (
     to_json,
     validate_record,
 )
+from cli.engine.node import (
+    ShadowStrategy,
+    build_shadow_node,
+    most_recent_boundary,
+    next_boundary,
+    startup_action,
+)
 from cli.engine.store import (
     GRID_INTERVALS,
     PAIR_KEYS,
@@ -48,16 +55,21 @@ __all__ = [
     "RefreshReport",
     "SeedEntry",
     "SeedReport",
+    "ShadowStrategy",
     "SnapshotEntry",
+    "build_shadow_node",
     "compare_targets",
     "evaluate_gate",
     "from_json",
+    "most_recent_boundary",
+    "next_boundary",
     "read_store_series",
     "refresh_store",
     "replay_cycle",
     "run_cycle",
     "seed_store",
     "snapshot_content_hash",
+    "startup_action",
     "to_json",
     "validate_record",
 ]
