@@ -80,7 +80,7 @@ uv add --dev <pkg>      # add new dev deps
 
 Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
-The `uv run pytest` suite is small and fast (a few dozen tests, well under a second) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
+The `uv run pytest` suite is medium-sized (~950 tests, ~25 seconds; a couple of data-dependent tests skip when `data/ohlc-full` is absent) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
 
 ## Conventions
 
