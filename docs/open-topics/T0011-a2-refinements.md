@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: T0009 is resolved — these spend reserved A-family trials, which are held while the kill bar is known-unable-to-discriminate
+ripe_when: next research iteration (the T0009 gate fired and was consumed in iter-074; the fold-in item additionally needs the cross-frequency construction design it names)
 ---
 
 # A2 refinements — native 4h band, breakout-hold sweep (2026 probe done)
@@ -19,9 +19,11 @@ iter-053: long/flat A2 net-of-cost 1.23–1.33 vs gated-B1 1.047 (point), correc
 
 ## Done so far
 
+- **4h A2 — done, iter-074** (registry trial_ids 36–39, family-n 34–37; 3 of A=40 remain): the frozen benchmark rebuilt at 4h (time-preserving mapping; noc 1.2128 full / 1.2447 decisive k≥1380), then four long/flat arms under the ratified bar. **Three ADOPT** — (20,50,100)v0.12 at 1.3274, (60,120,240)v0.10 at 1.3017, (60,120,240)v0.12 at **1.3585** — one reject on SPA. Family K=4 multiplicity-corrected p = **0.0145/0.0165** (blocks 30/102): the first family-level significant beat of the frozen bar. Two instrument holds resolved pre-verdict (DSR cross-periodicity units; SPA block/seed robustness — both pre-registered and held). Decisions log `[iter-074]`.
+
 - **2026 probe — done, iter-065** (no trial spend; decision-support run per the decomposition rule since it feeds T0009, not waits on it). Result: in the 2026 stub (Jan-Mar, ~90 bars) **every benchmark and the combined system sat at literal zero exposure** (gate off; their slices are degenerate and the worst-slice leg skips them), while the parked A2 long/flat arms diverged **(corrected in iter-066 — the first probe ran A2 at ~1/19 scale via a double √365 division)**: the fast arms (10–40) lost **−10.6 %/−12.7 %** (in-slice DD 12–14 %) at **~19 % mean gross exposure** — an economically real 2026 loss — while the slow arms (20–100) lost **−2.5 %** at **1.6 % exposure** (slice Sharpes −3.4…−4.0 across all four). Base-rate evidence for the stub question: across the full history, a 1.33-full-Sharpe book (the combined system) shows negative **89-bar** windows **41 %** of the time and negative **365-bar** windows **27 %** (rolling, step 10; benchmarks similar) — a negative quarter-length stub carries near-zero disqualifying information about a healthy book. Recorded in the iter-065 history entry; feeds T0009's worst-slice option (c).
 
 ## Suggested next steps
 
-- **4h A2**: first rebuild the **frozen benchmark at 4h** — since 2026-07-09 that is **B3+vt-dynamic** (basket + own-equity 200d gate + vol-target, master-plan §9; T0009 item 1 decided), not gated-B1 — with warm-up/vol-target recalibrated to the band, then run the A2 grid at 4h — sized within the remaining budget (or park for expansion, a §12 trigger).
+- **Fold the adopted 4h arms into the combined system**: a new P1 combination trial (§12 default inverse-vol of sleeves; the `[iter-073]` pre-registered DD-aware adopt criterion applies) — requires a **cross-frequency construction design** first (a 4h sleeve beside the daily record-33 book: union-calendar/resampling semantics, cost attribution, governor cadence). Not conflicting survivors (same-direction books), so autonomous when picked.
 - **Breakout-hold / cadence sweep** on the long/flat arms (offset-averaged, per the iter-048 method).
