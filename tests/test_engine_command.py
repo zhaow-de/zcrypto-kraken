@@ -1,7 +1,8 @@
 """CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over every
 subcommand with tmp dirs and monkeypatched seeder/cycle/builder stubs -- no network, no dataset,
-no live node. `run` is only asserted to exist and to import nautilus lazily (the subprocess check
-at the bottom); the attended soak is its live smoke."""
+no live node. `run`'s fail-fast checks and watchdog are exercised against a stub node + a
+synchronous timer; nautilus lazy-import stays a subprocess check at the bottom; the attended soak
+is the live smoke."""
 
 import json
 import re
@@ -596,3 +597,146 @@ def test_cycle_rejects_a_future_boundary(tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert "has not elapsed" in _output(result)
     assert called == []
+
+
+# --- run: fail-fast + the supervision watchdog (spec 00042) ----------------------------------------
+
+
+class FakeTimer:
+    """A synchronous stand-in for threading.Timer: start() fires the callback immediately, so the
+    watchdog check runs deterministically inside `engine run` without waiting out the real delay."""
+
+    instances: list["FakeTimer"] = []
+
+    def __init__(self, interval, function):
+        self.interval = interval
+        self.function = function
+        self.daemon = False
+        self.started = False
+        self.cancelled = False
+        FakeTimer.instances.append(self)
+
+    def start(self):
+        self.started = True
+        self.function()
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def _fake_node(is_running: bool):
+    return types.SimpleNamespace(
+        _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
+        trader=types.SimpleNamespace(is_running=is_running),
+        run=lambda: None,
+        dispose=lambda: None,
+    )
+
+
+def _run_env(monkeypatch, tmp_path, *, is_running: bool) -> list[int]:
+    """A passable `engine run` environment: valid store, stub node builder, synchronous timer, and
+    a recording os._exit. Returns the list force-exit codes are recorded into."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)
+    (engine_cfg.store_dir / "BTC" / "EUR" / "240.parquet").write_bytes(b"")  # never read; the node is stubbed
+    monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(is_running))
+    monkeypatch.setattr(command.threading, "Timer", FakeTimer)
+    FakeTimer.instances.clear()
+    exits: list[int] = []
+    monkeypatch.setattr(command.os, "_exit", lambda code: exits.append(code))
+    return exits
+
+
+def test_run_require_config_aborts_without_zcrypto_toml(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no zcrypto.toml in the CWD
+    monkeypatch.setenv("ZCRYPTO_REQUIRE_CONFIG", "1")
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 1
+    assert "zcrypto.toml" in _output(result)
+    assert isinstance(result.exception, SystemExit)
+
+
+@pytest.mark.parametrize("store_state", ["missing", "empty"])
+def test_run_aborts_on_a_missing_or_empty_store(tmp_path, monkeypatch, store_state):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    if store_state == "empty":
+        (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)  # dirs but no */EUR/*.parquet series
+    monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 1
+    assert str(engine_cfg.store_dir) in _output(result)
+
+
+def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
+    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert f"engine run: exec_enabled=False, store_dir={tmp_path / 'store'}, journal_dir={tmp_path / 'journal'}" in out
+    assert exits == []
+
+
+def test_run_watchdog_force_exits_when_the_trader_never_runs(tmp_path, monkeypatch):
+    exits = _run_env(monkeypatch, tmp_path, is_running=False)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out  # os._exit is stubbed to record; run() then completes normally
+    assert exits == [1]
+    assert "trader not running" in out
+    (timer,) = FakeTimer.instances
+    assert timer.interval == pytest.approx(1.5 + 2.0 + 30.0)  # the node config's timeouts + the 30 s slack
+    assert timer.daemon is True
+    assert timer.started is True
+    assert timer.cancelled is True  # cancelled in the finally once node.run() returned
+
+
+def test_run_watchdog_does_nothing_when_the_trader_is_running(tmp_path, monkeypatch):
+    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 0, _output(result)
+    assert exits == []
+
+
+# --- --journal-dir overrides on replay/report ------------------------------------------------------
+
+
+def test_replay_journal_dir_overrides_the_configured_journal(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)  # the configured journal stays empty
+    pulled = tmp_path / "pulled-vps-journal"
+    _write_success_record(pulled, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    result = runner.invoke(app, ["engine", "replay", "--journal-dir", str(pulled)])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "replayed 1 success record(s)" in out
+    assert "1 ok" in out
+
+
+def test_report_journal_dir_overrides_the_configured_journal(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)  # the configured journal stays empty
+    pulled = tmp_path / "pulled-vps-journal"
+    day = datetime(2026, 7, 7, tzinfo=UTC)
+    for hour in (0, 4, 8, 12, 16, 20):
+        _write_success_record(pulled, day + timedelta(hours=hour))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 7, 21, 0, tzinfo=UTC))
+
+    result = runner.invoke(app, ["engine", "report", "--journal-dir", str(pulled)])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "6 journaled outcome(s)" in out
+    assert "streak: 1" in out

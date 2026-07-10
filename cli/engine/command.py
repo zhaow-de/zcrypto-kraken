@@ -9,7 +9,9 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -28,6 +30,7 @@ from cli.ohlc.dataset import read_parquet
 logger = get_logger("engine.command")
 
 CANONICAL_DIR = Path("data/ohlc-full")
+_WATCHDOG_SLACK_SECS = 30.0
 
 engine_app = typer.Typer(
     no_args_is_help=True,
@@ -133,18 +136,66 @@ def seed() -> None:
     )
 
 
+def _start_watchdog(node) -> threading.Timer:
+    """The supervision watchdog (spec 00042): a one-shot daemon timer firing timeout_connection +
+    timeout_reconciliation + 30 s slack after the node starts (the real nautilus TradingNodeConfig
+    attribute names; defaults 60 s + 30 s). A trader still not RUNNING then means the exec client
+    never connected/reconciled (bad key, IP/family mismatch, venue outage): log CRITICAL and
+    os._exit(1) -- the supervisor's restart (compose `restart: unless-stopped`) is the recovery, a
+    visible crash loop instead of a silent zombie burning gate days. A RUNNING trader means a
+    healthy start and the fired check does nothing; run() cancels the timer once node.run() returns."""
+    node_config = node._config  # TradingNode keeps its config private; there is no public accessor
+    delay = node_config.timeout_connection + node_config.timeout_reconciliation + _WATCHDOG_SLACK_SECS
+
+    def check() -> None:
+        try:
+            if node.trader.is_running:
+                return
+            reason = "trader not running -- exec connect/reconcile presumed failed"
+        except Exception as exc:  # cannot confirm health => assume wedged; never a silently disarmed watchdog
+            reason = f"health check itself raised ({exc!r})"
+        logger.critical(
+            "engine run: %s %.0f s after node start; force-exiting for the supervisor restart",
+            reason,
+            delay,
+        )
+        os._exit(1)
+
+    watchdog = threading.Timer(delay, check)
+    watchdog.daemon = True
+    watchdog.start()
+    return watchdog
+
+
 @engine_app.command()
 def run() -> None:
-    """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this)."""
+    """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this).
+    Fails fast on a missing zcrypto.toml (when ZCRYPTO_REQUIRE_CONFIG is set) or a missing/empty
+    store -- a node without them is always misconfigured, never a healthy default."""
+    if os.environ.get("ZCRYPTO_REQUIRE_CONFIG") and not Path("zcrypto.toml").exists():
+        raise _abort(
+            "ZCRYPTO_REQUIRE_CONFIG is set but no zcrypto.toml exists in the working directory -- a default-config "
+            "node (exec off, journal under the CWD) would run indistinguishably from a healthy one; fix the bind-mount"
+        )
     config = _load_engine_config()
+    if not any(config.store_dir.glob("*/EUR/*.parquet")):
+        raise _abort(
+            f"store_dir {config.store_dir} is missing or holds no */EUR/*.parquet series -- a node without a store is "
+            "always misconfigured; fix the bind-mount or run `zcrypto engine seed`"
+        )
+    logger.info(
+        "engine run: exec_enabled=%s, store_dir=%s, journal_dir=%s", config.exec_enabled, config.store_dir, config.journal_dir
+    )
     # Lazy: cli.engine.node imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
     from cli.engine.node import build_shadow_node
 
     node = build_shadow_node(config)
+    watchdog = _start_watchdog(node)
     logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
     try:
         node.run()
     finally:
+        watchdog.cancel()
         node.dispose()
 
 
@@ -225,6 +276,9 @@ def replay(
         None, "--date", help="Replay only this UTC day's journaled cycles (YYYY-MM-DD). Defaults to every journaled day."
     ),
     path: str = typer.Option("fast", "--path", help="Builder path: 'fast' (default) or 'verified' (the daily oracle spot replay)."),
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
 ) -> None:
     """Replay journaled success cycles through the builder and compare targets against the record;
     mismatches and validation failures are classified (never crash the sweep) and exit non-zero."""
@@ -236,11 +290,12 @@ def replay(
         except ValueError as exc:
             raise _abort(f"--date {date!r} is not a YYYY-MM-DD date") from exc
     config = _load_engine_config()
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
     pattern = date if date is not None else "*"
-    reader = _snapshot_reader(config.journal_dir)
+    reader = _snapshot_reader(journal_root)
 
-    records = _journal_artifacts(config.journal_dir, pattern, "cycle-*.json")
-    sidecars = _journal_artifacts(config.journal_dir, pattern, "failed-cycle-*.json")
+    records = _journal_artifacts(journal_root, pattern, "cycle-*.json")
+    sidecars = _journal_artifacts(journal_root, pattern, "failed-cycle-*.json")
     if not records and not sidecars:
         typer.echo("no journaled cycles found")
         return
@@ -283,15 +338,20 @@ def replay(
 
 
 @engine_app.command()
-def report() -> None:
+def report(
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
+) -> None:
     """Evaluate the ratified >= 14-clean-day gate over the whole journal (replay-on-demand, fast
     path): streak length, gate status, and the most recent failure."""
     config = _load_engine_config()
-    reader = _snapshot_reader(config.journal_dir)
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    reader = _snapshot_reader(journal_root)
 
     entries: list[CycleOutcome] = []
     replayed_ok = mismatches = validation_failures = 0
-    for boundary, record_path in _journal_artifacts(config.journal_dir, "*", "cycle-*.json"):
+    for boundary, record_path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
         try:
             record = from_json(record_path.read_text())
         except EngineJournalError:
@@ -313,7 +373,7 @@ def report() -> None:
         mismatches += not verdict.passed
         entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, compare_passed=verdict.passed))
     sidecar_count = 0
-    for boundary, sidecar_path in _journal_artifacts(config.journal_dir, "*", "failed-cycle-*.json"):
+    for boundary, sidecar_path in _journal_artifacts(journal_root, "*", "failed-cycle-*.json"):
         cycle_ts, completed_at, _ = _sidecar_fields(boundary, sidecar_path)
         entries.append(CycleOutcome(cycle_ts=cycle_ts, completed_at=completed_at, validation_failed=True))
         sidecar_count += 1
