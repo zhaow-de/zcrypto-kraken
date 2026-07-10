@@ -10,7 +10,7 @@ Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-versio
 
 - `cli/` — the application package; run via `uv run python -m cli`.
 - `.claude/rules/`, `.claude/skills/` — repo-specific Claude Code rules and skills.
-- **CLI subcommands** (`capture` is the first; library packages like `cli/portfolio` or `cli/engine` carry no command): when one is added, it is a sibling package `cli/<name>/` with a `command.py`. Single-command ones register in `cli/__main__.py` via `from cli.<name>.command import <fn>` + `app.command(name=...)(...)`; multi-command groups expose a Typer sub-app registered via `app.add_typer(...)`. Loggers are named `get_logger("<package>.<module>")`.
+- **CLI subcommands** (`capture` and the `engine` group are the two so far; library packages like `cli/portfolio` carry no command): when one is added, it is a sibling package `cli/<name>/` with a `command.py`. Single-command ones register in `cli/__main__.py` via `from cli.<name>.command import <fn>` + `app.command(name=...)(...)`; multi-command groups expose a Typer sub-app registered via `app.add_typer(...)`. Loggers are named `get_logger("<package>.<module>")`.
 - `zcrypto.toml` — the app's config, loaded by `cli/config.py`.
 - `docs/` — the knowledge tree: `research/` (master plan + phase reports), `open-topics/` (parked follow-ups + index), `iterations-history.md` (per-iteration changelog); specs/plans land in `docs/specs/`, `docs/plans/` (per `spec-plan-locations.md`).
 - `data/` — the gitignored data root (its own `.gitignore` ignores everything inside): the compiled/canonical datasets plus the engine's transactional dirs (`data/engine-store`, `data/engine-journal`).

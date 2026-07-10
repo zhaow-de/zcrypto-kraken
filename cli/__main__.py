@@ -5,6 +5,7 @@ from typing import Optional
 import typer
 
 from cli.capture.command import capture
+from cli.engine.command import engine_app
 from cli.logging import configure
 
 app = typer.Typer(
@@ -12,6 +13,7 @@ app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 app.command(name="capture")(capture)
+app.add_typer(engine_app, name="engine")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 

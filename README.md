@@ -13,8 +13,11 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
 - [Requirements](#requirements)
 - [Usage](#usage)
   - [`zcrypto capture`](#zcrypto-capture)
+  - [`zcrypto engine`](#zcrypto-engine)
+    - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
+  - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
 
 <!-- mdformat-toc end -->
 
@@ -55,6 +58,36 @@ zcrypto capture [OPTIONS]
 
 Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
 
+### `zcrypto engine`<a name="zcrypto-engine"></a>
+
+The Phase-6 shadow engine: a live price store seeded from the canonical dataset and kept warm by Kraken REST gap-fills, a Nautilus node that runs one shadow cycle per 4h UTC boundary (00/04/08/12/16/20), a per-day journal of cycle evidence (records, failed-cycle sidecars, input snapshots, `orders.jsonl`), and replay/report verification against the ratified concordance gate. Settings come from the [`[zcrypto.engine]`](#zcryptoengine-shadow-engine-settings) table.
+
+```bash
+zcrypto engine <subcommand> [OPTIONS]
+```
+
+| Subcommand | Description |
+| -- | -- |
+| `seed` | Seed/refresh the live price store (`store_dir`) from the canonical dataset (`data/ohlc-full`) plus a REST gap-fill; idempotent, prints the per-pair × grid seam-QA summary (overlap bars, appended/replaced counts). Also the documented repair for a poisoned store tail. |
+| `run` | Run the shadow TradingNode in the foreground — one journaled cycle per 4h boundary (the soak's systemd user service runs this). |
+| `cycle [--at ISO_TS] [--replace]` | Run one cycle manually. Defaults to the most recent elapsed boundary; `--at` must be an aware ISO-8601 timestamp exactly on the 4h UTC grid. A boundary that already has a record/sidecar is refused unless `--replace` (which deletes both artifacts plus the boundary's snapshots first). Exits non-zero when the cycle fails. |
+| `replay [--date YYYY-MM-DD] [--path fast\|verified]` | Replay journaled success cycles through the builder and compare recomputed targets against the journaled ones. Hash mismatches and validation failures are classified per cycle (the sweep never crashes), sidecars are listed as failed cycles, and any mismatch/validation failure exits non-zero. |
+| `report` | Rebuild every journaled cycle outcome by replay-on-demand (fast path) and evaluate the ratified ≥ 14-clean-day gate: prints streak length, gate status, and the most recent failure. Absent boundaries are scored missing, never fabricated. |
+
+#### Shadow soak service (systemd user unit)<a name="shadow-soak-service-systemd-user-unit"></a>
+
+`infra/systemd/zcrypto-engine-shadow.service` is a systemd **user**-unit template that keeps `zcrypto engine run` alive on a workstation (`Restart=on-failure`, `RestartSec=30`, `WantedBy=default.target`). Fill in its `<repo>`/`<uv>` placeholders (absolute paths), then:
+
+```bash
+loginctl enable-linger $USER            # prerequisite: without lingering the user service dies on logout
+loginctl show-user $USER -p Linger      # verify: prints Linger=yes
+mkdir -p ~/.config/systemd/user
+cp infra/systemd/zcrypto-engine-shadow.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now zcrypto-engine-shadow.service
+systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
+```
+
 ## Configuration<a name="configuration"></a>
 
 `zcrypto` reads configuration from **`zcrypto.toml`** in the current working directory (the repo root when running from the checkout). The file is committed with working defaults.
@@ -69,3 +102,15 @@ ohlcvt_source_dir = "../zcrypto-kraken-data/kraken-ohlcvt-updates"  # Kraken OHL
 ```
 
 Paths resolve via **flag → config → error**: if a path is neither passed as a CLI flag nor set in `zcrypto.toml`, the command exits immediately with a clear error message (`ERROR: no <name> configured — set [zcrypto].<name> in zcrypto.toml or pass --<flag> <path>`). There is no built-in fallback.
+
+### `[zcrypto.engine]`: shadow-engine settings<a name="zcryptoengine-shadow-engine-settings"></a>
+
+Optional table tuning the `zcrypto engine` shadow node. Every key has a built-in default living **in code** — the committed `zcrypto.toml` does not set any of them; add a key only to override it. Unknown keys are rejected.
+
+| Key | Default | Meaning |
+| -- | -- | -- |
+| `store_dir` | `data/engine-store` | The live price store: a per-pair × grid Parquet mirror of the canonical dataset, kept warm by REST gap-fills. |
+| `journal_dir` | `data/engine-journal` | The cycle journal root: per-day success records, failed-cycle sidecars, input snapshots, and `orders.jsonl`. |
+| `shadow_nav_eur` | `1000.0` | The shadow book's NAV; an intended order's notional is `Δtarget × shadow_nav_eur`. |
+| `exec_enabled` | `false` | Attach the Kraken execution client to the node. Keep `false` off the VPS — the trade key is IP-bound, so local runs are keyless. |
+| `settle_delay_secs` | `90` | Seconds after each 4h boundary before the cycle's first store refresh, letting the venue commit the boundary candle. |
