@@ -44,8 +44,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open-1"></a>
 
-- [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: an attended session authorizes the read-only depot connection).
+- [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: Stage 6b starts — the T1 connection rides alongside the §11 T2 probe window, per spec 00039).
 - [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation (ripe when: next attended capture-maintenance window, or on a recurrence).
+- [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap (shadow engine → deployment → 6b executor) with its cross-iteration constraints: cadence-agnostic engine keyed to the 00038 verdict, §8 hardening verified before the trade key lands, and the full 6b-executor scope incl. the D3(iii) T2 tax-probe set (ripe when: the iter-080 shadow-engine iteration is brainstormed).
 
 ### Partially done<a name="partially-done-1"></a>
 
