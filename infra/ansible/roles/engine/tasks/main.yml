@@ -87,11 +87,15 @@
       - engine_gate_sshd.rc == 0
       - engine_gate_sshd.stdout is search('(?m)^permitrootlogin no$')
       - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
-      - engine_gate_sshd.stdout is search('(?m)^allowusers .*\bdeploy\b')
+      # \\b (not \b): assert `that:` expressions unicode-escape the Jinja string literal, so a
+      # single \b reaches the regex as backspace (\x08) and silently never matches.
+      - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bdeploy\\b')
     fail_msg: >-
       §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): sshd -T must
       report permitrootlogin no, passwordauthentication no, and allowusers deploy before the
-      engine (and its trade key) may land.
+      engine (and its trade key) may land. Effective posture lines (rc={{ engine_gate_sshd.rc }}):
+      {{ engine_gate_sshd.stdout_lines | select("match", "^(allowusers|allowgroups|denyusers|denygroups|permitrootlogin|passwordauthentication)") | list }};
+      stderr: {{ engine_gate_sshd.stderr | default("") | trim }}
 
 # --- 2. The kraken-engine service account — created by this role itself, deliberately unlike
 # kraken-capture (which the base role creates): in-role creation keeps `--tags engine`
@@ -238,6 +242,7 @@
     owner: root
     group: root
     mode: "0644"
+  register: engine_unit_install
   notify: restart engine service
 
 - name: enable + start the engine service (boot resume)
@@ -246,6 +251,10 @@
     daemon_reload: true
     enabled: true
     state: started
+  # First-run check mode would fail here: the unit file above was never actually installed, so
+  # systemd cannot find the service. Skip exactly that case; every real converge still runs this,
+  # and a later dry-run (unit already on the host) still verifies the enabled/started state.
+  when: not (ansible_check_mode and engine_unit_install is changed)
 
 # --- 9. The journal pull channel: an rrsync forced-command key on the deploy account, pinned
 # read-only to the journal subtree regardless of deploy's other powers.
@@ -269,3 +278,9 @@
     name: deploy
     groups: kraken-engine
     append: true
+  # First-run check mode: the kraken-engine account (and thus its group) was never really
+  # created above, so the membership edit cannot resolve the group — skip exactly that case;
+  # every real converge still runs it (same guard rationale as the account lookup in section 2).
+  when: not (ansible_check_mode and not engine_account_known)
+  vars:
+    engine_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['kraken-engine'] | default(none)) is not none }}"

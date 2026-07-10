@@ -4,3 +4,6 @@
     name: zcrypto-engine.service
     daemon_reload: true
     state: restarted
+  # First-run check mode: the unit file was never really installed, so systemd cannot find the
+  # service — skip exactly that case (same guard as the enable+start task in tasks/main.yml).
+  when: not (ansible_check_mode and engine_unit_install is changed)
