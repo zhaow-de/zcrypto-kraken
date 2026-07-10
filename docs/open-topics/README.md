@@ -25,7 +25,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0011 — A2 refinements: 4h band, breakout-hold](T0011-a2-refinements.md) — the 2026 probe is done (iter-065, decision-support feeding T0009's stub question); the remaining follow-ups spend reserved A-family trials (ripe when: T0009 resolved).
+- [T0011 — A2 refinements](T0011-a2-refinements.md) — 2026 probe, 4h arms (three adopts, iter-074), and the cadence sweep (iter-075, A family closed 40/40) all done; sole remainder: run the cross-frequency P1 fold-in trial per the committed design `docs/specs/00038` (ripe now — the next research loop's first package).
 
 ### Resolved<a name="resolved"></a>
 
