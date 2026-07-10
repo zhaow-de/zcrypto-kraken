@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -62,6 +62,49 @@ def test_expand_no_lookahead():
 def test_expand_validation(daily_positions, daily_ts, intraday_ts):
     with pytest.raises(PortfolioError):
         expand_daily_positions(daily_positions, daily_ts, intraday_ts)
+
+
+def test_expand_close_indexed_daily_book_shifted_boundaries_day_aligned():
+    # Bar-START-stamped grids (this repo's parquet convention): a raw daily bar stamped day D spans
+    # D -> D+1, and a raw 4h bar stamped D 20:00 spans D 20:00 -> (D+1) 00:00 -- both close at the
+    # same instant, (D+1) 00:00. A close-indexed daily book's position k is decided from bar k's
+    # close, so feeding RAW stamps applies it to the wrong calendar day (one day early, look-ahead).
+    # Shifting both ts lists to close time (daily +1 day; intraday +4h, the bar interval here) lines
+    # position k up on the six 4h bars that actually compose close[k]->close[k+1].
+    day0 = datetime(2024, 1, 1)
+    day1 = datetime(2024, 1, 2)
+    day2 = datetime(2024, 1, 3)
+    day3 = datetime(2024, 1, 4)
+    daily_ts = [day0, day1, day2, day3]  # 3 daily positions: p0 (day0->day1), p1 (day1->day2), p2 (day2->day3)
+    positions = {"AAA": [10.0, 20.0, 30.0]}
+
+    # 4h bar-start grid spanning day0 -> day0+4days (4 days x 6 bars/day = 24 bars) -- one day longer
+    # than daily_ts so the close-time shift below has enough runway to resolve all six of p2's bars.
+    intraday_ts = [day0 + timedelta(hours=4 * i) for i in range(25)]
+
+    # (a) close-time-shifted inputs: daily stamp -> daily stamp + 1 day (bar D's close); intraday
+    # stamp -> intraday stamp + 4h (bar j's close, since these are 4h bars).
+    shifted_daily_ts = [ts + timedelta(days=1) for ts in daily_ts]
+    shifted_intraday_ts = [ts + timedelta(hours=4) for ts in intraday_ts]
+    shifted = expand_daily_positions(positions, shifted_daily_ts, shifted_intraday_ts)
+
+    expected_shifted = (
+        [0.0] * 5  # bars ending before day1's close (day1 00:00) -- book not decided into yet
+        + [10.0] * 6  # the six 4h bars composing close[0]->close[1] (calendar day1)
+        + [20.0] * 6  # close[1]->close[2] (calendar day2)
+        + [30.0] * 6  # close[2]->close[3] (calendar day3)
+        + [0.0] * 1  # past the book's life (day3's close already spent)
+    )
+    assert shifted["AAA"] == expected_shifted
+
+    # (b) raw (bar-start) stamps, the naive/buggy usage: position k lands on calendar day k itself
+    # (day0->day1, day1->day2, day2->day3) instead of day k+1 -- one day early, the look-ahead this
+    # test guards against.
+    raw = expand_daily_positions(positions, daily_ts, intraday_ts)
+    expected_raw = [10.0] * 6 + [20.0] * 6 + [30.0] * 6 + [0.0] * 6
+    assert raw["AAA"] == expected_raw
+
+    assert shifted["AAA"] != raw["AAA"]
 
 
 # --- daily_cadence_governor ---------------------------------------------------------------------

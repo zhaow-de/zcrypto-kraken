@@ -24,6 +24,16 @@ def expand_daily_positions(daily_positions: dict[str, list[float]], daily_ts: li
     Intraday return bar j (moving intraday_ts[j] -> intraday_ts[j+1]) gets daily_positions[.][k] where
     daily_ts[k] < intraday_ts[j+1] <= daily_ts[k+1]. Bars whose end lies at-or-before daily_ts[0], or
     after daily_ts[-1], get 0.0. Both ts arrays must be sorted; a single forward scan exploits that.
+
+    daily_ts and intraday_ts must share a common time convention -- the interval rule above is only
+    no-look-ahead when both sides mean the same instant by "timestamp". This repo's parquet bars are
+    stamped at bar START (a daily bar stamped day D spans D -> D+1; a 4h bar stamped D 20:00 spans
+    D 20:00 -> D+1 00:00 -- both close at the same instant). A close-indexed daily book's position k
+    is decided from bar k's CLOSE, so callers of such a book must pass close-time-shifted ts lists --
+    daily_ts[k] + 1 day, intraday_ts[j] + the bar interval -- not the raw bar-start stamps. Feeding
+    raw stamps applies position k one bar-length early (look-ahead): see
+    test_expand_close_indexed_daily_book_shifted_boundaries_day_aligned in
+    tests/test_portfolio_crossfreq.py for the regression pinning this contract.
     """
     if not isinstance(daily_positions, dict) or not daily_positions:
         raise PortfolioError(f"daily_positions must be a non-empty dict, got {daily_positions!r}")
