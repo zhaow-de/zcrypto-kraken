@@ -1047,6 +1047,7 @@ version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "nautilus-trader" },
+    { name = "numpy" },
     { name = "polars" },
     { name = "typer" },
     { name = "websockets" },
@@ -1065,6 +1066,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "nautilus-trader", specifier = "==1.230.0" },
+    { name = "numpy", specifier = ">=2.5.1" },
     { name = "polars", specifier = ">=1.42.1" },
     { name = "typer", specifier = ">=0.26.7" },
     { name = "websockets", specifier = ">=16.0" },

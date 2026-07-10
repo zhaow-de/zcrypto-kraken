@@ -1,19 +1,28 @@
-"""Tests for the record-44 verified builder (cli/portfolio/crossfreq_system.py).
+"""Tests for the record-44 builder (cli/portfolio/crossfreq_system.py): verified + fast paths.
 
-Unit tests run on synthetic two-asset grids (no dataset). The frozen-figure regression at the
-bottom needs the canonical data/ohlc-full machine and reproduces registry trial 44 end to end;
-it is slow (~4 min measured: the three A2 arms run twice — once inside the builder's ~2 min
-verified-path build, once for the driver-transcribed sleeve-anchor QA).
+Unit tests run on synthetic two-asset grids (no dataset), including the CI-unconditional
+fast-vs-verified equivalence checks. Two tests need the canonical data/ohlc-full machine: the
+frozen-figure regression reproduces registry trial 44 end to end and is slow (~4 min measured:
+the three A2 arms run twice — once inside the builder's ~2 min verified-path build, once for the
+driver-transcribed sleeve-anchor QA), and the fast-path full-history equivalence gate builds both
+paths once (~2 min, dominated by the verified build).
 """
 
 import math
 import statistics
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from cli.portfolio import CrossfreqSystemConfig, CrossfreqSystemResult, PortfolioError, build_crossfreq_system
+from cli.portfolio import (
+    CrossfreqSystemConfig,
+    CrossfreqSystemResult,
+    PortfolioError,
+    build_crossfreq_system,
+    build_crossfreq_system_fast,
+)
 
 CFG2 = CrossfreqSystemConfig(assets=("AAA", "BTC"))
 
@@ -44,20 +53,25 @@ def synthetic_grids(n_days: int, *, n_extra_h4: int = 0):
         {"assets": "BTC"},  # not a tuple
         {"spot_fee_per_side": 0.0},
         {"spot_fee_per_side": float("nan")},
+        {"spot_fee_per_side": True},  # bool is not a fee
         {"long_cap": -0.2},
+        {"long_cap": True},  # bool is not a cap
         {"short_cap": 0.0},
+        {"short_cap": True},  # bool is not a cap
         {"a2_arms": ()},
         {"a2_arms": (((20, 50, 100),),)},  # not a (lookbacks, target_vol) pair
         {"a2_arms": (((), 0.12),)},  # empty lookbacks
         {"a2_arms": (((20, 50, 1), 0.12),)},  # lookback < 2
         {"a2_arms": (((20, 50, 100), 0.0),)},  # target_vol <= 0
+        {"a2_arms": (((20, 50, 100), True),)},  # bool is not a target_vol
     ],
 )
-def test_invalid_config(kwargs):
+@pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
+def test_invalid_config(kwargs, builder):
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(3)
     cfg = CrossfreqSystemConfig(**{"assets": ("AAA", "BTC"), **kwargs})
     with pytest.raises(PortfolioError):
-        build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=cfg)
+        builder(d_prices, d_ts, h_prices, h_ts, config=cfg)
 
 
 def test_degenerate_inputs():
@@ -79,6 +93,18 @@ def test_degenerate_inputs():
     for args in cases:
         with pytest.raises(PortfolioError):
             build_crossfreq_system(*args, config=CFG2)
+
+
+def test_dummy_close_semantics():
+    # The synthetic forming-bar close reuses the last close; a None last close stays None (honest
+    # delisted-tail semantics — an asset absent at the snapshot's edge stays absent on the forming
+    # bar instead of being resurrected from an older price).
+    from cli.portfolio.crossfreq_system import _dummy_close
+
+    assert _dummy_close([100.0, 101.0]) == 101.0
+    assert _dummy_close([100.0, None, 102.0]) == 102.0
+    assert _dummy_close([100.0, 101.0, None]) is None
+    assert _dummy_close([None, None]) is None
 
 
 @pytest.fixture(scope="module")
@@ -187,6 +213,25 @@ def test_newest_row_extend_by_one_real_bar(base_build):
     assert ext.ungoverned_net[:n] == base_build.ungoverned_net
 
 
+def test_newest_row_extend_by_one_real_daily_bar(base_build):
+    # The daily-grid mirror of the 4h extend-by-one invariant: synthetic_grids(221) adds one REAL
+    # daily bar (and its day of real 4h bars); every previously-newest row — including the daily
+    # sleeves' forming-day row, now decided from a real daily close — must be reproduced exactly,
+    # and every completed-bar quantity is prefix-stable.
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(221)
+    ext = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+    n = base_build.n_periods
+    assert ext.n_periods == n + 6
+    for a in ("AAA", "BTC"):
+        assert ext.final_targets[a][: n + 1] == base_build.final_targets[a]
+        for sleeve in ("B", "A1", "A2"):
+            assert ext.sleeve_positions[sleeve][a][: n + 1] == base_build.sleeve_positions[sleeve][a]
+    assert ext.multipliers[: n + 1] == base_build.multipliers
+    assert ext.day_index[: n + 1] == base_build.day_index
+    assert ext.governed_net[:n] == base_build.governed_net
+    assert ext.ungoverned_net[:n] == base_build.ungoverned_net
+
+
 def test_newest_row_dummy_close_insensitivity(base_build, monkeypatch):
     # Invariant (c): the synthetic forming-bar close is a placeholder — perturbing it must leave
     # the entire result (newest row included) unchanged.
@@ -197,6 +242,70 @@ def test_newest_row_dummy_close_insensitivity(base_build, monkeypatch):
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(220)
     perturbed = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
     assert perturbed == base_build
+
+
+def assert_results_equivalent(fast: CrossfreqSystemResult, verified: CrossfreqSystemResult, tol: float = 1e-12):
+    # The equivalence gate's shape: exact on every integer field, elementwise <= tol on every float
+    # series (final_targets, both nets, multipliers, all sleeve positions).
+    assert fast.n_periods == verified.n_periods
+    assert fast.day_index == verified.day_index
+    assert fast.cap_breach_bars == verified.cap_breach_bars
+    assert fast.governor_engaged_bars == verified.governor_engaged_bars
+    assert set(fast.final_targets) == set(verified.final_targets)
+    for a in verified.final_targets:
+        assert max(abs(f - v) for f, v in zip(fast.final_targets[a], verified.final_targets[a], strict=True)) <= tol, a
+    assert set(fast.sleeve_positions) == set(verified.sleeve_positions)
+    for name in verified.sleeve_positions:
+        for a in verified.sleeve_positions[name]:
+            fast_s, ver_s = fast.sleeve_positions[name][a], verified.sleeve_positions[name][a]
+            assert max(abs(f - v) for f, v in zip(fast_s, ver_s, strict=True)) <= tol, (name, a)
+    for field in ("governed_net", "ungoverned_net", "multipliers"):
+        fast_s, ver_s = getattr(fast, field), getattr(verified, field)
+        assert max(abs(f - v) for f, v in zip(fast_s, ver_s, strict=True)) <= tol, field
+
+
+def test_fast_path_equivalence_mini_grid(base_build, grids220):
+    # The CI-unconditional equivalence check: on the synthetic 220-day fixture the fast path must
+    # reproduce the verified path on every field (exact integers, <= 1e-12 elementwise floats).
+    fast = build_crossfreq_system_fast(*grids220, config=CFG2)
+    assert_results_equivalent(fast, base_build)
+    # The paths are in fact bit-identical by construction — enforce it in CI, not just on the data machine.
+    assert fast == base_build
+
+
+def test_fast_path_equivalence_mini_grid_mid_day(base_build):
+    # Same gate on the live mid-day shape (one real 4h bar past the last daily close) — the grid
+    # geometry the engine's intraday cycles actually present.
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(220, n_extra_h4=1)
+    verified = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+    fast = build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+    assert_results_equivalent(fast, verified)
+    assert fast == verified
+    assert fast.n_periods == base_build.n_periods + 1
+
+
+def test_fast_path_equivalence_none_bearing_grid():
+    # None paths in CI: a late-listed asset with mid-history gaps and a delisted None tail, plus a
+    # mid-history BTC union gap — the shapes that exercise _trailing_stdevs' None counter,
+    # _map_own_to_union, ret_valid masking, and _dummy_close's None-tail semantics.
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(220)
+    for prices, span in ((d_prices, len(d_ts)), (h_prices, len(h_ts))):
+        aaa = list(prices["AAA"])
+        late_until = span // 4
+        for k in range(late_until):
+            aaa[k] = None  # late listing
+        aaa[span // 2] = None  # mid-history gap
+        aaa[span // 2 + 1] = None
+        for k in range(span - 3, span):
+            aaa[k] = None  # delisted tail
+        prices["AAA"] = aaa
+        btc = list(prices["BTC"])
+        btc[span // 3] = None  # BTC union gap (ffill path)
+        prices["BTC"] = btc
+    verified = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+    fast = build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+    assert_results_equivalent(fast, verified)
+    assert fast == verified
 
 
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "ohlc-full"
@@ -382,3 +491,57 @@ def test_frozen_figures_regression():
             got = res.sleeve_positions[name][a]
             assert len(got) == nh + 1
             assert max(abs(got[k] - recon[a][k]) for k in range(nh)) <= 1e-12, (name, a)
+
+
+def _load_union_guarded(interval):
+    # The full-history loader with the extent guard (per-pair bar count + last ts pinned to the
+    # frozen trial-43/44 oracle) — fails loudly before any figure comparison if the dataset drifts.
+    from cli.ohlc.dataset import read_parquet
+
+    frames = {a: read_parquet(DATA_ROOT / a / "EUR" / f"{interval}.parquet") for a in ASSETS}
+    for a in ASSETS:
+        ts = frames[a]["ts"].to_list()
+        assert len(ts) == EXTENT[interval][a] and ts[-1] == LAST_TS[interval], (
+            f"canonical dataset drifted — STOP: {a}/{interval} has {len(ts)} bars ending {ts[-1]}, expected "
+            f"{EXTENT[interval][a]} ending {LAST_TS[interval]}; data/ohlc-full is the frozen trial-44 regression "
+            "oracle and must never be appended to (the engine's live store is a separate root, T0018)"
+        )
+    union_ts = sorted(set().union(*[set(f["ts"].to_list()) for f in frames.values()]))
+    prices = {}
+    for a in ASSETS:
+        m = dict(zip(frames[a]["ts"].to_list(), frames[a]["close"].to_list()))
+        prices[a] = [m.get(t) for t in union_ts]
+    return union_ts, prices
+
+
+@pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
+def test_fast_path_full_history_equivalence():
+    """The equivalence gate (spec 00040, hard): fast vs verified over the full frozen history —
+    elementwise <= 1e-12 on final_targets and both net series, IDENTICAL cap_breach_bars and
+    governor_engaged_bars, headline Sharpes/maxDD rounding to the same 4dp values.
+
+    Measured wall-clock on the data machine (2026-07-10): verified 111.5 s, fast 1.9 s (~58x).
+    """
+    from cli.validation import sharpe
+
+    d_ts, d_prices = _load_union_guarded(1440)
+    h_ts, h_prices = _load_union_guarded(240)
+
+    t0 = time.perf_counter()
+    verified = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts)
+    t_verified = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    fast = build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts)
+    t_fast = time.perf_counter() - t0
+    print(f"\nwall-clock: verified {t_verified:.1f}s, fast {t_fast:.1f}s ({t_verified / t_fast:.1f}x)")
+
+    assert_results_equivalent(fast, verified)
+    # headline figures (registry record 44's set) round to the same 4dp values
+    assert round(sharpe(fast.governed_net, periods_per_year=2190), 4) == round(
+        sharpe(verified.governed_net, periods_per_year=2190), 4
+    )
+    assert round(sharpe(fast.governed_net[DECISIVE:], periods_per_year=2190), 4) == round(
+        sharpe(verified.governed_net[DECISIVE:], periods_per_year=2190), 4
+    )
+    assert round(max_dd(fast.governed_net), 4) == round(max_dd(verified.governed_net), 4)
+    assert round(max_dd(fast.ungoverned_net), 4) == round(max_dd(verified.ungoverned_net), 4)

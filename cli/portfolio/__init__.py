@@ -1,6 +1,11 @@
 from cli.portfolio.builder import CombinedSystemConfig, CombinedSystemResult, build_combined_system
 from cli.portfolio.crossfreq import daily_cadence_governor, expand_daily_positions
-from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, CrossfreqSystemResult, build_crossfreq_system
+from cli.portfolio.crossfreq_system import (
+    CrossfreqSystemConfig,
+    CrossfreqSystemResult,
+    build_crossfreq_system,
+    build_crossfreq_system_fast,
+)
 from cli.portfolio.errors import PortfolioError
 
 __all__ = [
@@ -11,6 +16,7 @@ __all__ = [
     "PortfolioError",
     "build_combined_system",
     "build_crossfreq_system",
+    "build_crossfreq_system_fast",
     "daily_cadence_governor",
     "expand_daily_positions",
 ]
