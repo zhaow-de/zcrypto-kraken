@@ -2,6 +2,7 @@
 memo.local.md
 .tmp
 .superpowers
+.ansible/
 
 # Claude Code
 **/.claude/settings.local.json
