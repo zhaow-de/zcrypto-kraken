@@ -1,0 +1,598 @@
+"""CLI tests for the `zcrypto engine` sub-app (spec 00041 SS The CLI): CliRunner over every
+subcommand with tmp dirs and monkeypatched seeder/cycle/builder stubs -- no network, no dataset,
+no live node. `run` is only asserted to exist and to import nautilus lazily (the subprocess check
+at the bottom); the attended soak is its live smoke."""
+
+import json
+import re
+import subprocess
+import sys
+import types
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import polars as pl
+import pytest
+from typer.testing import CliRunner
+
+import cli.engine.command as command
+from cli.__main__ import app
+from cli.config import AppConfig, ConfigError, EngineConfig, FetchConfig
+from cli.engine import concordance
+from cli.engine.cycle import CycleResult
+from cli.engine.errors import EngineError
+from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
+from cli.engine.store import SeedEntry, SeedReport
+from cli.ohlc.dataset import write_parquet
+
+runner = CliRunner()
+
+UTC = timezone.utc
+CYCLE_TS = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+PAIRS = ("BTC", "ETH")
+TARGETS = {"BTC": 0.2, "ETH": 0.05}
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _output(result) -> str:
+    # result.output carries stdout + stderr on this click version; strip rich's ANSI styling.
+    return _ANSI_RE.sub("", result.output)
+
+
+def _patch_config(monkeypatch, tmp_path: Path) -> EngineConfig:
+    """Point load_config (as cli.engine.command sees it) at tmp-dir engine paths."""
+    cfg = AppConfig(
+        data_dir=None,
+        backup_dir=None,
+        ohlcvt_source_dir=None,
+        fetch=FetchConfig(),
+        engine=EngineConfig(store_dir=tmp_path / "store", journal_dir=tmp_path / "journal"),
+    )
+    monkeypatch.setattr(command, "load_config", lambda: cfg)
+    return cfg.engine
+
+
+def _success_result(cycle_ts: datetime, journal_dir: Path) -> CycleResult:
+    return CycleResult(
+        status="success",
+        cycle_ts=cycle_ts,
+        record_path=journal_dir / f"{cycle_ts:%Y-%m-%d}" / f"cycle-{cycle_ts:%H}.json",
+        sidecar_path=None,
+        targets={"BTC": 0.2, "ETH": 0.0},
+        orders=[{"asset": "BTC", "side": "buy", "quantity": 0.001, "notional_eur": 200.0, "price": 200000.0}],
+        reason=None,
+        offending_pairs=None,
+    )
+
+
+# --- journal fixtures (real, replayable records -- the shapes run_cycle writes) --------------------
+
+
+def _series(cycle_ts: datetime, interval: int, base: float) -> tuple[list[datetime], list[float]]:
+    if interval == 240:
+        last, step, n = cycle_ts - timedelta(hours=4), timedelta(hours=4), 6
+    else:
+        last, step, n = cycle_ts.replace(hour=0) - timedelta(days=1), timedelta(days=1), 4
+    ts = [last - (n - 1 - i) * step for i in range(n)]
+    return ts, [base + i for i in range(n)]
+
+
+def _snapshot_frame(ts: list[datetime], closes: list[float]) -> pl.DataFrame:
+    return pl.DataFrame({"ts": ts, "close": closes}, schema={"ts": pl.Datetime("us", "UTC"), "close": pl.Float64})
+
+
+def _write_success_record(journal_dir: Path, cycle_ts: datetime, targets: dict[str, float] = TARGETS) -> Path:
+    rel_dir = Path(f"{cycle_ts:%Y-%m-%d}") / "snapshots" / f"cycle-{cycle_ts:%H}"
+    entries = []
+    for interval in (1440, 240):
+        for i, pair in enumerate(PAIRS):
+            ts, closes = _series(cycle_ts, interval, 100.0 * (i + 1))
+            rel_path = rel_dir / f"{pair}-{interval}.parquet"
+            write_parquet(_snapshot_frame(ts, closes), journal_dir / rel_path)
+            entries.append(
+                SnapshotEntry(
+                    pair=pair,
+                    grid=str(interval),
+                    n_bars=len(ts),
+                    first_ts=ts[0],
+                    last_ts=ts[-1],
+                    content_hash=snapshot_content_hash(ts, closes),
+                    path=rel_path.as_posix(),
+                )
+            )
+    record = CycleRecord(
+        schema_version=1,
+        cycle_ts=cycle_ts,
+        snapshots=tuple(entries),
+        final_targets=dict(targets),
+        started_at=cycle_ts + timedelta(seconds=95),
+        completed_at=cycle_ts + timedelta(minutes=3),
+        code_version="test",
+        builder_path="fast",
+    )
+    validate_record(record)
+    path = journal_dir / f"{cycle_ts:%Y-%m-%d}" / f"cycle-{cycle_ts:%H}.json"
+    path.write_text(to_json(record) + "\n")
+    return path
+
+
+def _write_sidecar(journal_dir: Path, cycle_ts: datetime, *, reason: str = "stale_pair", offending=("DOGE",)) -> Path:
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    path = day_dir / f"failed-cycle-{cycle_ts:%H}.json"
+    payload = {
+        "cycle_ts": cycle_ts.isoformat(),
+        "attempted_at": (cycle_ts + timedelta(seconds=95)).isoformat(),
+        "completed_at": (cycle_ts + timedelta(minutes=2)).isoformat(),
+        "reason": reason,
+        "offending_pairs": list(offending),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def _fake_builder(targets: dict[str, float]):
+    def builder(daily_prices, daily_ts, h4_prices, h4_ts, *, config=None):
+        n_periods = len(h4_ts) - 1
+        final = {a: [0.0] * n_periods + [targets[a]] for a in h4_prices}
+        return types.SimpleNamespace(final_targets=final, n_periods=n_periods)
+
+    return builder
+
+
+# --- seed ------------------------------------------------------------------------------------------
+
+
+def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    report = SeedReport(
+        entries=(
+            SeedEntry(pair="BTC", interval=1440, overlap_bars=98, appended=12, replaced_tail_rows=0),
+            SeedEntry(pair="BTC", interval=240, overlap_bars=621, appended=77, replaced_tail_rows=3),
+        )
+    )
+    calls = []
+    monkeypatch.setattr(command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or report)
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 0, _output(result)
+    assert calls == [(engine_cfg.store_dir, Path("data/ohlc-full"))]
+    out = _output(result)
+    assert "BTC" in out
+    assert "1440" in out and "240" in out
+    assert "98" in out and "621" in out  # per-pair x grid overlap_bars -- the seam-QA evidence
+    assert "12" in out and "77" in out  # appended
+    assert "3" in out  # replaced tail rows
+    assert "89" in out  # the appended total (12 + 77)
+
+
+def test_seed_engine_error_is_a_clean_exit_1(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+
+    def boom(store_dir, canonical_dir):
+        raise EngineError("window shortfall for BTC@240 -- use the quarterly OHLCVT dump")
+
+    monkeypatch.setattr(command, "seed_store", boom)
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 1
+    assert "OHLCVT" in _output(result)
+    assert isinstance(result.exception, SystemExit)  # clean typer.Exit, not an EngineError traceback
+
+
+def test_config_error_is_a_clean_exit_1(monkeypatch):
+    def bad_config():
+        raise ConfigError("zcrypto.toml is not valid TOML: boom")
+
+    monkeypatch.setattr(command, "load_config", bad_config)
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 1
+    assert "not valid TOML" in _output(result)
+    assert isinstance(result.exception, SystemExit)
+
+
+# --- cycle -----------------------------------------------------------------------------------------
+
+
+def test_cycle_defaults_to_the_most_recent_boundary(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 10, 9, 23, 45, tzinfo=UTC))
+    calls = []
+
+    def fake_run_cycle(cycle_ts, *, config):
+        calls.append((cycle_ts, config))
+        return _success_result(cycle_ts, config.journal_dir)
+
+    monkeypatch.setattr(command, "run_cycle", fake_run_cycle)
+
+    result = runner.invoke(app, ["engine", "cycle"])
+
+    assert result.exit_code == 0, _output(result)
+    assert calls == [(datetime(2026, 7, 10, 8, 0, tzinfo=UTC), engine_cfg)]
+    out = _output(result)
+    assert "success" in out
+    assert "cycle-08.json" in out
+
+
+def test_cycle_at_runs_the_given_on_grid_boundary(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_run_cycle(cycle_ts, *, config):
+        calls.append(cycle_ts)
+        return _success_result(cycle_ts, config.journal_dir)
+
+    monkeypatch.setattr(command, "run_cycle", fake_run_cycle)
+
+    result = runner.invoke(app, ["engine", "cycle", "--at", "2026-07-09T16:00:00+00:00"])
+
+    assert result.exit_code == 0, _output(result)
+    assert calls == [datetime(2026, 7, 9, 16, 0, tzinfo=UTC)]
+
+
+def test_cycle_at_normalizes_an_aware_non_utc_boundary(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_run_cycle(cycle_ts, *, config):
+        calls.append(cycle_ts)
+        return _success_result(cycle_ts, config.journal_dir)
+
+    monkeypatch.setattr(command, "run_cycle", fake_run_cycle)
+
+    # 10:00+02:00 == 08:00 UTC -- exactly on the grid once normalized.
+    result = runner.invoke(app, ["engine", "cycle", "--at", "2026-07-10T10:00:00+02:00"])
+
+    assert result.exit_code == 0, _output(result)
+    assert calls == [datetime(2026, 7, 10, 8, 0, tzinfo=UTC)]
+
+
+@pytest.mark.parametrize(
+    ("raw", "needle"),
+    [
+        ("2026-07-10T09:00:00+00:00", "grid"),  # off the 00/04/08/12/16/20 hour grid
+        ("2026-07-10T08:15:00+00:00", "grid"),  # non-zero minutes
+        ("2026-07-10T08:00:00", "naive"),  # naive -- the repo convention is aware-UTC
+        ("not-a-timestamp", "ISO-8601"),
+    ],
+)
+def test_cycle_at_rejections_never_reach_run_cycle(tmp_path, monkeypatch, raw, needle):
+    _patch_config(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(command, "run_cycle", lambda *a, **k: calls.append(1))
+
+    result = runner.invoke(app, ["engine", "cycle", "--at", raw])
+
+    assert result.exit_code == 1
+    assert needle in _output(result)
+    assert calls == []
+
+
+@pytest.mark.parametrize("existing", ["cycle-08.json", "failed-cycle-08.json"])
+def test_cycle_refuses_an_existing_boundary_artifact_without_replace(tmp_path, monkeypatch, existing):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    day_dir = engine_cfg.journal_dir / "2026-07-10"
+    day_dir.mkdir(parents=True)
+    (day_dir / existing).write_text("{}")
+    calls = []
+    monkeypatch.setattr(command, "run_cycle", lambda *a, **k: calls.append(1))
+
+    result = runner.invoke(app, ["engine", "cycle", "--at", "2026-07-10T08:00:00+00:00"])
+
+    assert result.exit_code == 1
+    assert "--replace" in _output(result)
+    assert calls == []
+    assert (day_dir / existing).exists()  # refused, never clobbered
+
+
+def test_cycle_replace_deletes_both_artifacts_and_snapshots_before_running(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    day_dir = engine_cfg.journal_dir / "2026-07-10"
+    snapshots_dir = day_dir / "snapshots" / "cycle-08"
+    snapshots_dir.mkdir(parents=True)
+    (snapshots_dir / "BTC-240.parquet").write_text("stale")
+    (day_dir / "cycle-08.json").write_text("{}")
+    (day_dir / "failed-cycle-08.json").write_text("{}")
+    seen = {}
+
+    def fake_run_cycle(cycle_ts, *, config):
+        seen["record_gone"] = not (day_dir / "cycle-08.json").exists()
+        seen["sidecar_gone"] = not (day_dir / "failed-cycle-08.json").exists()
+        seen["snapshots_gone"] = not snapshots_dir.exists()
+        return _success_result(cycle_ts, config.journal_dir)
+
+    monkeypatch.setattr(command, "run_cycle", fake_run_cycle)
+
+    result = runner.invoke(app, ["engine", "cycle", "--at", "2026-07-10T08:00:00+00:00", "--replace"])
+
+    assert result.exit_code == 0, _output(result)
+    assert seen == {"record_gone": True, "sidecar_gone": True, "snapshots_gone": True}
+
+
+def test_cycle_failed_result_prints_the_sidecar_summary_and_exits_nonzero(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    sidecar_path = engine_cfg.journal_dir / "2026-07-10" / "failed-cycle-08.json"
+
+    def fake_run_cycle(cycle_ts, *, config):
+        return CycleResult(
+            status="failed",
+            cycle_ts=cycle_ts,
+            record_path=None,
+            sidecar_path=sidecar_path,
+            targets=None,
+            orders=None,
+            reason="stale_pair",
+            offending_pairs=("DOGE",),
+        )
+
+    monkeypatch.setattr(command, "run_cycle", fake_run_cycle)
+
+    result = runner.invoke(app, ["engine", "cycle", "--at", "2026-07-10T08:00:00+00:00"])
+
+    assert result.exit_code == 1
+    out = _output(result)
+    assert "failed" in out
+    assert "stale_pair" in out
+    assert "DOGE" in out
+    assert "failed-cycle-08.json" in out
+
+
+# --- replay ----------------------------------------------------------------------------------------
+
+
+def test_replay_classifies_ok_hash_mismatch_and_sidecar_without_crashing(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    clean_ts = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+    corrupt_ts = datetime(2026, 7, 10, 4, 0, tzinfo=UTC)
+    sidecar_ts = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+    _write_success_record(journal, clean_ts)
+    _write_success_record(journal, corrupt_ts)
+    # Corrupt one journaled snapshot: same calendar/metadata, shifted closes -> a pure hash mismatch.
+    ts, closes = _series(corrupt_ts, 240, 100.0)
+    write_parquet(
+        _snapshot_frame(ts, [c + 1.0 for c in closes]),
+        journal / "2026-07-10" / "snapshots" / "cycle-04" / "BTC-240.parquet",
+    )
+    _write_sidecar(journal, sidecar_ts, reason="refresh_deadline", offending=("ETH",))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    result = runner.invoke(app, ["engine", "replay"])
+
+    out = _output(result)
+    assert result.exit_code == 1, out  # a mismatch is present
+    assert result.exception is None or isinstance(result.exception, SystemExit)  # classified, not crashed
+    lines = out.splitlines()
+    assert any(clean_ts.isoformat() in line and "ok" in line for line in lines)
+    assert any(corrupt_ts.isoformat() in line and "MISMATCH" in line for line in lines)
+    assert any(sidecar_ts.isoformat() in line and "failed cycle" in line and "refresh_deadline" in line for line in lines)
+    assert "1 ok" in out
+    assert "1 mismatch(es)" in out
+    assert "0 validation failure(s)" in out
+    assert "1 failed cycle(s)" in out
+
+
+def test_replay_classifies_a_validation_failure(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    record_path = _write_success_record(journal, CYCLE_TS)
+    payload = json.loads(record_path.read_text())
+    payload["schema_version"] = 2  # from_json still parses; replay_cycle's validate_record rejects
+    record_path.write_text(json.dumps(payload))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    result = runner.invoke(app, ["engine", "replay"])
+
+    out = _output(result)
+    assert result.exit_code == 1, out
+    assert "VALIDATION-FAILED" in out
+    assert "1 validation failure(s)" in out
+
+
+def test_replay_all_clean_exits_zero(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    _write_success_record(engine_cfg.journal_dir, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    result = runner.invoke(app, ["engine", "replay"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "1 ok" in out
+    assert "0 mismatch(es)" in out
+
+
+def test_replay_date_filter_restricts_the_sweep(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    day1_ts = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)
+    day2_ts = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+    _write_success_record(engine_cfg.journal_dir, day1_ts)
+    _write_success_record(engine_cfg.journal_dir, day2_ts)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    result = runner.invoke(app, ["engine", "replay", "--date", "2026-07-09"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert day1_ts.isoformat() in out
+    assert day2_ts.isoformat() not in out
+    assert "replayed 1 success record(s)" in out
+
+
+def test_replay_verified_path_uses_the_verified_builder(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    _write_success_record(engine_cfg.journal_dir, CYCLE_TS)
+    fast_calls, verified_calls = [], []
+
+    def _spy(calls, targets):
+        inner = _fake_builder(targets)
+
+        def builder(*args, **kwargs):
+            calls.append(1)
+            return inner(*args, **kwargs)
+
+        return builder
+
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _spy(fast_calls, TARGETS))
+    monkeypatch.setattr(concordance, "build_crossfreq_system", _spy(verified_calls, TARGETS))
+
+    result = runner.invoke(app, ["engine", "replay", "--path", "verified"])
+
+    assert result.exit_code == 0, _output(result)
+    assert verified_calls == [1]
+    assert fast_calls == []
+
+
+def test_replay_rejects_an_unknown_path(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["engine", "replay", "--path", "sloppy"])
+
+    assert result.exit_code == 1
+    assert "fast" in _output(result) and "verified" in _output(result)
+
+
+def test_replay_rejects_a_malformed_date(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["engine", "replay", "--date", "last-tuesday"])
+
+    assert result.exit_code == 1
+    assert "YYYY-MM-DD" in _output(result)
+
+
+def test_replay_empty_journal_reports_nothing_found(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["engine", "replay"])
+
+    assert result.exit_code == 0
+    assert "no journaled cycles" in _output(result)
+
+
+# --- report ----------------------------------------------------------------------------------------
+
+
+def test_report_end_to_end_over_a_mixed_journal(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    day1 = datetime(2026, 7, 7, tzinfo=UTC)
+    for hour in (0, 4, 8, 12, 16, 20):
+        _write_success_record(journal, day1 + timedelta(hours=hour))
+    day2 = datetime(2026, 7, 8, tzinfo=UTC)
+    for hour in (0, 12, 16, 20):
+        _write_success_record(journal, day2 + timedelta(hours=hour))
+    _write_sidecar(journal, day2 + timedelta(hours=4), reason="stale_pair", offending=("DOGE",))
+    # day2 08:00 is absent entirely -- NOT fabricated; evaluate_gate scores it missing.
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 8, 21, 0, tzinfo=UTC))  # aware-UTC now
+
+    result = runner.invoke(app, ["engine", "report"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "11 journaled outcome(s)" in out  # 10 success records + 1 sidecar; the absence adds nothing
+    assert "10 replayed ok" in out
+    assert "streak: 0" in out  # day1 clean (streak 1), day2's sidecar resets it
+    assert "not met" in out
+    # The most recent reset: day2's 04:00 sidecar (validation_failed) fires before the 08:00 absence.
+    assert "2026-07-08T04:00:00+00:00" in out
+    assert "validation failed" in out
+
+
+def test_report_clean_days_build_the_streak(tmp_path, monkeypatch):
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    day1 = datetime(2026, 7, 7, tzinfo=UTC)
+    for hour in (0, 4, 8, 12, 16, 20):
+        _write_success_record(engine_cfg.journal_dir, day1 + timedelta(hours=hour))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 7, 21, 0, tzinfo=UTC))
+
+    result = runner.invoke(app, ["engine", "report"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "streak: 1" in out
+    assert "not met" in out  # 1 < 14
+    assert "last failure: none" in out
+
+
+def test_report_empty_journal_is_a_zero_streak_not_an_error(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 8, 21, 0, tzinfo=UTC))
+
+    result = runner.invoke(app, ["engine", "report"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "0 journaled outcome(s)" in out
+    assert "streak: 0" in out
+
+
+# --- the sub-app itself ----------------------------------------------------------------------------
+
+
+def test_engine_help_lists_all_five_subcommands():
+    result = runner.invoke(app, ["engine", "--help"])
+
+    assert result.exit_code == 0
+    out = _output(result)
+    for name in ("seed", "run", "cycle", "replay", "report"):
+        assert name in out, f"{name!r} missing from `zcrypto engine --help`"
+
+
+def test_help_does_not_import_nautilus():
+    # Subprocess check (robust to other tests having already imported nautilus in this process):
+    # both the root help and the engine group help must never pay the ~1 s nautilus import.
+    code = (
+        "import sys\n"
+        "from typer.testing import CliRunner\n"
+        "from cli.__main__ import app\n"
+        "runner = CliRunner()\n"
+        "assert runner.invoke(app, ['--help']).exit_code == 0\n"
+        "assert runner.invoke(app, ['engine', '--help']).exit_code == 0\n"
+        "assert 'nautilus_trader' not in sys.modules, 'nautilus imported at --help time'\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_report_classifies_a_corrupt_snapshot_without_crashing(tmp_path, monkeypatch):
+    # A truncated snapshot parquet (the partial-rsync case) is bad evidence -> validation-failed
+    # CycleOutcome, streak reset, no traceback (the Task-4 review's hardening item).
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    day = datetime(2026, 7, 7, tzinfo=UTC)
+    for hour in (0, 4, 8, 12, 16, 20):
+        _write_success_record(journal, day + timedelta(hours=hour))
+    # truncate one journaled snapshot mid-file
+    victim = next((journal / "2026-07-07" / "snapshots" / "cycle-08").glob("*.parquet"))
+    victim.write_bytes(victim.read_bytes()[: victim.stat().st_size // 2])
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 7, 21, 0, tzinfo=UTC))
+
+    result = runner.invoke(app, ["engine", "report"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out  # report itself succeeds; the gate verdict carries the failure
+    assert "validation failed" in out
+    assert "2026-07-07T08:00:00+00:00" in out
+    assert "streak: 0" in out
+    assert "Traceback" not in out
+
+
+def test_cycle_rejects_a_future_boundary(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
+    called = []
+    monkeypatch.setattr(command, "run_cycle", lambda *a, **k: called.append(1))
+
+    result = runner.invoke(app, ["engine", "cycle", "--at", "2026-07-10T12:00:00+00:00"])
+
+    assert result.exit_code == 1
+    assert "has not elapsed" in _output(result)
+    assert called == []

@@ -27,11 +27,24 @@ class FetchConfig:
 
 
 @dataclass(frozen=True)
+class EngineConfig:
+    """Operational tuning for the `zcrypto engine` shadow node. Each field overrides a built-in
+    default via the [zcrypto.engine] table in zcrypto.toml."""
+
+    store_dir: Path = Path("data/engine-store")
+    journal_dir: Path = Path("data/engine-journal")
+    shadow_nav_eur: float = 1000.0
+    exec_enabled: bool = False
+    settle_delay_secs: int = 90
+
+
+@dataclass(frozen=True)
 class AppConfig:
     data_dir: Path | None
     backup_dir: Path | None
     ohlcvt_source_dir: Path | None
     fetch: FetchConfig
+    engine: EngineConfig
 
 
 def _read_path(table: dict, key: str, config_path: Path) -> Path | None:
@@ -61,9 +74,51 @@ def _build_fetch(table: dict, config_path: Path) -> FetchConfig:
     return FetchConfig(**overrides)
 
 
+def _build_engine(table: dict, config_path: Path) -> EngineConfig:
+    raw = table.get("engine", {})
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{CONFIG_TABLE}.engine] in {config_path} must be a table")
+    known = {f.name for f in fields(EngineConfig)}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ConfigError(f"[{CONFIG_TABLE}.engine] in {config_path} has unknown key(s): {', '.join(unknown)}")
+
+    overrides: dict = {}
+
+    for name in ("store_dir", "journal_dir"):
+        if name not in raw:
+            continue
+        value = raw[name]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].{name} in {config_path} must be a non-empty string")
+        overrides[name] = Path(value)
+
+    if "shadow_nav_eur" in raw:
+        value = raw["shadow_nav_eur"]
+        # bool is a subclass of int — reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].shadow_nav_eur in {config_path} must be a positive number")
+        overrides["shadow_nav_eur"] = float(value)
+
+    if "exec_enabled" in raw:
+        value = raw["exec_enabled"]
+        if not isinstance(value, bool):
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_enabled in {config_path} must be a boolean")
+        overrides["exec_enabled"] = value
+
+    if "settle_delay_secs" in raw:
+        value = raw["settle_delay_secs"]
+        # bool is a subclass of int — reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].settle_delay_secs in {config_path} must be a positive integer")
+        overrides["settle_delay_secs"] = value
+
+    return EngineConfig(**overrides)
+
+
 def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
     if not config_path.exists():
-        return AppConfig(data_dir=None, backup_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig())
+        return AppConfig(data_dir=None, backup_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig())
     try:
         raw = tomllib.loads(config_path.read_text())
     except tomllib.TOMLDecodeError as e:
@@ -76,6 +131,7 @@ def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
         backup_dir=_read_path(table, "backup_dir", config_path),
         ohlcvt_source_dir=_read_path(table, "ohlcvt_source_dir", config_path),
         fetch=_build_fetch(table, config_path),
+        engine=_build_engine(table, config_path),
     )
 
 

@@ -1,0 +1,30 @@
+# zcrypto shadow-engine soak -- a systemd USER unit template (spec 00041, the workstation soak).
+#
+# Placeholders: <repo> and <uv> are ABSOLUTE paths to fill in at install time --
+#   <repo> = the zcrypto-kraken checkout (e.g. /home/you/Projects/zcrypto-kraken)
+#   <uv>   = the uv binary (find it with `command -v uv`, e.g. /home/you/.local/bin/uv)
+#
+# Prerequisite -- lingering. Without it the user service dies on logout and the soak fails
+# silently:
+#   loginctl enable-linger $USER
+#   loginctl show-user $USER -p Linger    # verify: prints "Linger=yes"
+#
+# Install (after filling in the placeholders):
+#   mkdir -p ~/.config/systemd/user
+#   cp infra/systemd/zcrypto-engine-shadow.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now zcrypto-engine-shadow.service
+#   systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
+#   journalctl --user -u zcrypto-engine-shadow.service -f    # follow the node's logs
+
+[Unit]
+Description=zcrypto shadow engine (Phase 6a soak): one journaled shadow cycle per 4h UTC boundary
+
+[Service]
+WorkingDirectory=<repo>
+ExecStart=<uv> run zcrypto engine run
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

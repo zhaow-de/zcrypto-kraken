@@ -55,7 +55,7 @@ An **alternative** qualification path: the real-time USD value of eligible holdi
 
 - **Fee tier: Tier 1**, 30-day spot volume **$0.00** ("generate 10,001 USD more to reach the next tier"). Plan on the base tier — **0.40% maker / 0.80% taker** (new schedule). AoP is moot at our size.
 - **Per-pair max leverage** (the order-form Leverage dropdown) matches the iter-002 snapshot **exactly**: the EUR majors (BTC/EUR, ETH/EUR, SOL/EUR, XRP/EUR, ADA/EUR, LINK/EUR, DOGE/EUR, LTC/EUR, AVAX/EUR) 2–10×; **DOT/EUR 2–5×, ETH/BTC 2–5×, SOL/BTC 2–4×**.
-- **Read-only API key** created + **verified working** (Balance / Ledgers / TradesHistory all return OK → Query funds + Query ledger entries + Query closed orders & trades granted); placed in `.env`.
+- **Read-only API key** created + **verified working** (Balance / Ledgers / TradesHistory all return OK → Query funds + Query ledger entries + Query closed orders & trades granted).
 
 ## Spot-margin fees — confirmed per-base-currency (⏱ 2026-07-07; unchanged July 9)
 

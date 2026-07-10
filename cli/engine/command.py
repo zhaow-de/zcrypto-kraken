@@ -1,0 +1,336 @@
+"""The `zcrypto engine` Typer sub-app (spec 00041 SS the CLI): seed the live price store, run the
+shadow node, run one cycle manually, replay journaled cycles through the builder, and evaluate the
+ratified gate. Config errors and EngineErrors surface as clean one-line exits, never tracebacks.
+
+`cli.engine.node` (and with it nautilus-trader, ~1 s of import time) is imported lazily inside the
+command bodies that need it -- `zcrypto --help` must never pay the nautilus import.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional
+
+import typer
+
+from cli.config import ConfigError, EngineConfig, load_config
+from cli.engine.concordance import CycleOutcome, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
+from cli.engine.cycle import CycleResult, run_cycle
+from cli.engine.errors import EngineError, EngineJournalError
+from cli.engine.journal import SnapshotEntry, from_json
+from cli.engine.store import seed_store
+from cli.logging import get_logger
+from cli.ohlc.dataset import read_parquet
+
+logger = get_logger("engine.command")
+
+CANONICAL_DIR = Path("data/ohlc-full")
+
+engine_app = typer.Typer(
+    no_args_is_help=True,
+    help="The Phase-6 shadow engine: store seeding, the node, manual cycles, journal replay, and the gate report.",
+)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _abort(message: str) -> typer.Exit:
+    """A clean one-line error (printed, no traceback) + exit code 1. Usage: `raise _abort(...)`."""
+    typer.echo(f"ERROR: {message}", err=True)
+    return typer.Exit(code=1)
+
+
+def _load_engine_config() -> EngineConfig:
+    try:
+        return load_config().engine
+    except ConfigError as exc:
+        raise _abort(str(exc)) from exc
+
+
+def _parse_at(raw: str) -> datetime:
+    try:
+        at = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise _abort(f"--at {raw!r} is not an ISO-8601 timestamp") from exc
+    if at.tzinfo is None:
+        raise _abort(f"--at {raw!r} is naive -- pass an aware timestamp (e.g. 2026-07-10T08:00:00+00:00)")
+    at = at.astimezone(timezone.utc)
+    if at.hour % 4 or at.minute or at.second or at.microsecond:
+        raise _abort(f"--at {raw!r} is off the 4h boundary grid -- cycles run at 00/04/08/12/16/20 UTC exactly")
+    if at > _utc_now():
+        raise _abort(f"--at {raw!r} has not elapsed yet -- a future cycle would journal a spurious failure")
+    return at
+
+
+def _journal_artifacts(journal_dir: Path, pattern: str, name_glob: str) -> list[tuple[datetime, Path]]:
+    """(boundary, path) pairs for `<pattern>/<name_glob>` under the journal, sorted by boundary;
+    files whose day-dir/hour names don't parse are skipped (mirrors the cycle core's back-search)."""
+    out = []
+    for path in journal_dir.glob(f"{pattern}/{name_glob}"):
+        try:
+            day = datetime.strptime(path.parent.name, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            boundary = day + timedelta(hours=int(path.stem.rsplit("-", 1)[-1]))
+        except ValueError:
+            continue
+        out.append((boundary, path))
+    return sorted(out)
+
+
+def _snapshot_reader(journal_dir: Path):
+    """replay_cycle's reader closure: SnapshotEntry.path is journal-relative, resolved here."""
+
+    def reader(entry: SnapshotEntry) -> tuple[list[datetime], list[float | None]]:
+        path = journal_dir / entry.path
+        if not path.exists():
+            raise EngineJournalError(f"journaled snapshot missing on disk: {path}")
+        try:
+            frame = read_parquet(path)
+            return frame["ts"].to_list(), frame["close"].to_list()
+        except Exception as exc:  # a corrupt/truncated parquet (e.g. a partial rsync) is bad evidence, not a crash
+            raise EngineJournalError(f"journaled snapshot unreadable: {path}: {exc}") from exc
+
+    return reader
+
+
+def _sidecar_fields(boundary: datetime, path: Path) -> tuple[datetime, datetime, str]:
+    """(cycle_ts, completed_at, reason) from a failed-cycle sidecar, falling back to the
+    path-derived boundary when the JSON is unreadable -- the sweep classifies, never crashes."""
+    try:
+        payload = json.loads(path.read_text())
+        cycle_ts = datetime.fromisoformat(payload["cycle_ts"])
+        completed_at = datetime.fromisoformat(payload["completed_at"])
+        reason = str(payload["reason"])
+        offending = ", ".join(payload.get("offending_pairs", []))
+        return cycle_ts, completed_at, f"{reason}: {offending}" if offending else reason
+    except json.JSONDecodeError, KeyError, TypeError, ValueError, OSError:
+        return boundary, boundary, "unreadable sidecar"
+
+
+@engine_app.command()
+def seed() -> None:
+    """Seed/refresh the live price store from the canonical dataset plus a Kraken REST gap-fill
+    (idempotent; also the documented repair for a poisoned store tail)."""
+    config = _load_engine_config()
+    try:
+        report = seed_store(config.store_dir, CANONICAL_DIR)
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+    typer.echo(f"seeded {config.store_dir} from {CANONICAL_DIR} + REST gap-fill; seam QA per pair x grid:")
+    typer.echo(f"{'pair':<6} {'grid':>5} {'overlap_bars':>12} {'appended':>9} {'replaced':>9}")
+    for entry in report.entries:
+        typer.echo(
+            f"{entry.pair:<6} {entry.interval:>5} {entry.overlap_bars:>12} {entry.appended:>9} {entry.replaced_tail_rows:>9}"
+        )
+    appended = sum(entry.appended for entry in report.entries)
+    replaced = sum(entry.replaced_tail_rows for entry in report.entries)
+    typer.echo(
+        f"{len(report.entries)} series passed seam QA; appended {appended} bar(s), replaced {replaced} divergent tail row(s)"
+    )
+
+
+@engine_app.command()
+def run() -> None:
+    """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this)."""
+    config = _load_engine_config()
+    # Lazy: cli.engine.node imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
+    from cli.engine.node import build_shadow_node
+
+    node = build_shadow_node(config)
+    logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
+    try:
+        node.run()
+    finally:
+        node.dispose()
+
+
+def _echo_cycle_result(result: CycleResult) -> None:
+    typer.echo(f"cycle {result.cycle_ts.isoformat()}: {result.status}")
+    if result.status == "success":
+        typer.echo(f"  record: {result.record_path}")
+        for asset in sorted(result.targets):
+            typer.echo(f"  target {asset}: {result.targets[asset]:+.6f}")
+        if result.orders:
+            for order in result.orders:
+                typer.echo(
+                    f"  order: {order['side']} {order['quantity']:.8f} {order['asset']} "
+                    f"(~{order['notional_eur']:.2f} EUR @ {order['price']})"
+                )
+        else:
+            typer.echo("  orders: none (targets unchanged vs the previous journaled cycle)")
+    else:
+        typer.echo(f"  sidecar: {result.sidecar_path}")
+        typer.echo(f"  reason: {result.reason} ({', '.join(result.offending_pairs)})")
+
+
+@engine_app.command()
+def cycle(
+    at: Optional[str] = typer.Option(
+        None,
+        "--at",
+        help="Run the cycle at this aware ISO-8601 timestamp, exactly on the 4h grid (00/04/08/12/16/20 UTC). "
+        "Defaults to the most recent elapsed boundary.",
+    ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Delete the boundary's existing record/sidecar and snapshots, then re-run it. Without this flag an "
+        "already-journaled boundary is refused.",
+    ),
+) -> None:
+    """Run one shadow cycle manually; exits non-zero when the cycle fails (sidecar written)."""
+    config = _load_engine_config()
+    if at is None:
+        # Lazy: cli.engine.node imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
+        from cli.engine.node import most_recent_boundary
+
+        boundary = most_recent_boundary(_utc_now())
+    else:
+        boundary = _parse_at(at)
+
+    day_dir = config.journal_dir / f"{boundary:%Y-%m-%d}"
+    existing = [
+        path for path in (day_dir / f"cycle-{boundary:%H}.json", day_dir / f"failed-cycle-{boundary:%H}.json") if path.exists()
+    ]
+    if existing and not replace:
+        raise _abort(
+            f"{boundary.isoformat()} is already journaled ({', '.join(str(p) for p in existing)}) -- "
+            "pass --replace to overwrite; journaled soak evidence is never silently clobbered"
+        )
+    if replace:
+        for path in existing:
+            path.unlink()
+        snapshots_dir = day_dir / "snapshots" / f"cycle-{boundary:%H}"
+        if snapshots_dir.exists():
+            shutil.rmtree(snapshots_dir)
+        if existing:
+            logger.warning("cycle --replace: deleted %s's journaled artifact(s) before re-running", boundary.isoformat())
+
+    try:
+        result = run_cycle(boundary, config=config)
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+    _echo_cycle_result(result)
+    if result.status != "success":
+        raise typer.Exit(code=1)
+
+
+@engine_app.command()
+def replay(
+    date: Optional[str] = typer.Option(
+        None, "--date", help="Replay only this UTC day's journaled cycles (YYYY-MM-DD). Defaults to every journaled day."
+    ),
+    path: str = typer.Option("fast", "--path", help="Builder path: 'fast' (default) or 'verified' (the daily oracle spot replay)."),
+) -> None:
+    """Replay journaled success cycles through the builder and compare targets against the record;
+    mismatches and validation failures are classified (never crash the sweep) and exit non-zero."""
+    if path not in ("fast", "verified"):
+        raise _abort(f"--path must be 'fast' or 'verified', got {path!r}")
+    if date is not None:
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise _abort(f"--date {date!r} is not a YYYY-MM-DD date") from exc
+    config = _load_engine_config()
+    pattern = date if date is not None else "*"
+    reader = _snapshot_reader(config.journal_dir)
+
+    records = _journal_artifacts(config.journal_dir, pattern, "cycle-*.json")
+    sidecars = _journal_artifacts(config.journal_dir, pattern, "failed-cycle-*.json")
+    if not records and not sidecars:
+        typer.echo("no journaled cycles found")
+        return
+
+    ok = mismatches = validation_failures = 0
+    for boundary, record_path in records:
+        try:
+            record = from_json(record_path.read_text())
+            replayed = replay_cycle(record, reader, path=path)
+        except HashMismatchError as exc:
+            mismatches += 1
+            typer.echo(f"{boundary.isoformat()}  MISMATCH (corrupt evidence): {exc}")
+            continue
+        except EngineJournalError as exc:
+            validation_failures += 1
+            typer.echo(f"{boundary.isoformat()}  VALIDATION-FAILED: {exc}")
+            continue
+        verdict = compare_targets(record.final_targets, replayed)
+        if verdict.passed:
+            ok += 1
+            typer.echo(f"{boundary.isoformat()}  ok (worst |diff| {verdict.worst_abs_diff:.2e})")
+        else:
+            mismatches += 1
+            detail = (
+                "structural (asset sets differ)"
+                if verdict.structural_mismatch
+                else f"worst {verdict.worst_asset} |diff| {verdict.worst_abs_diff:.2e}"
+            )
+            typer.echo(f"{boundary.isoformat()}  MISMATCH: {detail}")
+    for boundary, sidecar_path in sidecars:
+        _, _, reason = _sidecar_fields(boundary, sidecar_path)
+        typer.echo(f"{boundary.isoformat()}  failed cycle ({reason})")
+
+    typer.echo(
+        f"replayed {len(records)} success record(s) via the {path} path: {ok} ok, {mismatches} mismatch(es), "
+        f"{validation_failures} validation failure(s); {len(sidecars)} failed cycle(s) (sidecars)"
+    )
+    if mismatches or validation_failures:
+        raise typer.Exit(code=1)
+
+
+@engine_app.command()
+def report() -> None:
+    """Evaluate the ratified >= 14-clean-day gate over the whole journal (replay-on-demand, fast
+    path): streak length, gate status, and the most recent failure."""
+    config = _load_engine_config()
+    reader = _snapshot_reader(config.journal_dir)
+
+    entries: list[CycleOutcome] = []
+    replayed_ok = mismatches = validation_failures = 0
+    for boundary, record_path in _journal_artifacts(config.journal_dir, "*", "cycle-*.json"):
+        try:
+            record = from_json(record_path.read_text())
+        except EngineJournalError:
+            validation_failures += 1
+            entries.append(CycleOutcome(cycle_ts=boundary, completed_at=boundary, validation_failed=True))
+            continue
+        try:
+            replayed = replay_cycle(record, reader, path="fast")
+        except HashMismatchError:
+            mismatches += 1
+            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, mismatch=True))
+            continue
+        except EngineJournalError:
+            validation_failures += 1
+            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, validation_failed=True))
+            continue
+        verdict = compare_targets(record.final_targets, replayed)
+        replayed_ok += verdict.passed
+        mismatches += not verdict.passed
+        entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, compare_passed=verdict.passed))
+    sidecar_count = 0
+    for boundary, sidecar_path in _journal_artifacts(config.journal_dir, "*", "failed-cycle-*.json"):
+        cycle_ts, completed_at, _ = _sidecar_fields(boundary, sidecar_path)
+        entries.append(CycleOutcome(cycle_ts=cycle_ts, completed_at=completed_at, validation_failed=True))
+        sidecar_count += 1
+    # Absent boundaries are NOT fabricated -- evaluate_gate scores them missing.
+
+    try:
+        status = evaluate_gate(entries, now=_utc_now())
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+
+    typer.echo(
+        f"{len(entries)} journaled outcome(s): {replayed_ok} replayed ok, {mismatches} mismatch(es), "
+        f"{validation_failures} validation failure(s), {sidecar_count} failed cycle(s) (sidecars)"
+    )
+    typer.echo(f"streak: {status.streak} consecutive clean day(s)")
+    typer.echo(f"gate (>= 14 clean days): {'MET' if status.gate_met else 'not met'}")
+    if status.last_failure is None:
+        typer.echo("last failure: none")
+    else:
+        typer.echo(f"last failure: {status.last_failure.cycle_ts.isoformat()} -- {status.last_failure.reason}")
