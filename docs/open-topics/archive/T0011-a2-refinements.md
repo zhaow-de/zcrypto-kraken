@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: ripe now — the construction design is committed (docs/specs/00038, iter-076); the next research loop runs the trial
+status: resolved
 ---
 
 # A2 refinements — native 4h band, breakout-hold sweep (2026 probe done)
@@ -24,6 +23,8 @@ iter-053: long/flat A2 net-of-cost 1.23–1.33 vs gated-B1 1.047 (point), correc
 - **2026 probe — done, iter-065** (no trial spend; decision-support run per the decomposition rule since it feeds T0009, not waits on it). Result: in the 2026 stub (Jan-Mar, ~90 bars) **every benchmark and the combined system sat at literal zero exposure** (gate off; their slices are degenerate and the worst-slice leg skips them), while the parked A2 long/flat arms diverged **(corrected in iter-066 — the first probe ran A2 at ~1/19 scale via a double √365 division)**: the fast arms (10–40) lost **−10.6 %/−12.7 %** (in-slice DD 12–14 %) at **~19 % mean gross exposure** — an economically real 2026 loss — while the slow arms (20–100) lost **−2.5 %** at **1.6 % exposure** (slice Sharpes −3.4…−4.0 across all four). Base-rate evidence for the stub question: across the full history, a 1.33-full-Sharpe book (the combined system) shows negative **89-bar** windows **41 %** of the time and negative **365-bar** windows **27 %** (rolling, step 10; benchmarks similar) — a negative quarter-length stub carries near-zero disqualifying information about a healthy book. Recorded in the iter-065 history entry; feeds T0009's worst-slice option (c).
 - **Breakout-hold/cadence sweep — done, iter-075** (registry trials 40–42, family-n 38–40; **the A-family budget is fully spent, 40/40**): all three cadence-held daily arms REJECT under the ratified bar — the fast grid on SPA; both (20,50,100) held arms on the **benchmark-relative worst-slice leg** (their worst year, 2018, is materially worse than the bench's worst: −0.145/−0.138 vs −0.089), the C=14 arm despite the project's highest recorded net-of-cost Sharpe (1.4348 full). The turnover mechanism worked (drag 2.86 → 1.72 %/yr); the tail cost of slow de-risking is why the ratified guard exists. Decisions log `[iter-075]`.
 
+- **Cross-frequency P1 combination trial — done, iter-080** (registry **trial 43**, family P1 n=3, **ADOPT**): governed net-of-cost Sharpe **1.5366** full / 1.5319 decisive, maxDD 13.31 %, every ratified leg passing vs the 4h-rebuilt benchmark (SPA max p 0.0190 over blocks 30/102 × seeds 42/7/1234; DSR ≈ 1.0; benchmark-relative worst-slice pass; ×1.5/×2 stress 1.3008/1.2400). Pre-run adversarial review caught a look-ahead in the daily→4h expansion mapping (fixed + regression-tested before any number; decisions log `[iter-080]`). The combination supersedes record 33 as the deployable-system candidate — Phase-6 scope tracked in T0018.
+
 ## Suggested next steps
 
-- **Run the cross-frequency P1 combination trial** per the committed design **`docs/specs/00038-cross-frequency-combination-design.md`** (iter-076): three sleeves (benchmark, A1-lf weekly, the equal-weight A2-4h ensemble) on the 4h calendar, §10 cap + day-cadence governor, verdicted under the `[iter-073]` DD-aware criterion vs the 4h-rebuilt frozen benchmark. ~2 h of compute; fully mechanical — the design settles every semantic.
+_(none — all sub-items done; see Done so far)_

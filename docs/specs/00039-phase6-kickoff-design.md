@@ -36,8 +36,8 @@ Scripted probes against the live account (scratchpad drivers, per the trial-driv
 
 ## Build roadmap (each its own spec/plan iteration; registered as open topic T0018 so the sequence and its constraints survive this spec)
 
-- **iter-080 — shadow engine**: package `cli/engine/` (node config, timer strategy, REST pull, **input-snapshot + intended-order journal**, concordance reporter), TDD, runs locally first. **Cadence-agnostic**: the deployable book is registry record 33 (daily) today, but the pending 00038 cross-frequency trial may adopt a 4h-calendar system — the engine takes the deployable record as input, not a hardcoded cadence.
-- **iter-081 — deployment**: engine Dockerfile/compose + `engine` ansible role + **the §8 hardening verification gate (decision 2) ahead of** the ansible-vault key delivery + log rotation → shadow live on the VPS; the 2–3-week Stage-6a clock starts.
+- **Shadow engine** *\[renumbered to iter-081 during execution — the 00038 trial, run first at the human's request, took iter-080\]*: package `cli/engine/` (node config, timer strategy, REST pull, **input-snapshot + intended-order journal**, concordance reporter), TDD, runs locally first. **Cadence-agnostic**: the deployable book is registry record 33 (daily) today, but the pending 00038 cross-frequency trial may adopt a 4h-calendar system — the engine takes the deployable record as input, not a hardcoded cadence.
+- **Deployment** *\[now iter-082\]*: engine Dockerfile/compose + `engine` ansible role + **the §8 hardening verification gate (decision 2) ahead of** the ansible-vault key delivery + log rotation → shadow live on the VPS; the 2–3-week Stage-6a clock starts.
 - **Then, behind the concordance gate**: the 6b executor (order submission, order state machine, reconciliation loop, kill-switch, weekly tracking-error report, cost-model recalibration from real fills) + tiny-live start (sleeve funding, D3(ii) second half) + the decision-7 T2 tax-probe execution.
 
 ## Deliverables this iteration
@@ -46,4 +46,4 @@ Committed spec (this file); the key ceremony done (key created, ansible-vault-en
 
 ## Out of scope
 
-Building the shadow engine or any deployment artifact (iter-080/081); any real margin *fill* (Stage 6b's T2 — zero-fill resting margin orders in probe 4 are in scope); changing the deployable system (registry record 33 stands unless a registered trial adopts); the 00038 trial itself (tonight's research loop).
+Building the shadow engine or any deployment artifact (the follow-on build iterations); any real margin *fill* (Stage 6b's T2 — zero-fill resting margin orders in probe 4 are in scope); changing the deployable system (registry record 33 stands unless a registered trial adopts); the 00038 trial itself (tonight's research loop).
