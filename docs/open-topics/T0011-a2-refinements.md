@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: next research iteration (the T0009 gate fired and was consumed in iter-074; the fold-in item additionally needs the cross-frequency construction design it names)
+ripe_when: ripe now — the construction design is committed (docs/specs/00038, iter-076); the next research loop runs the trial
 ---
 
 # A2 refinements — native 4h band, breakout-hold sweep (2026 probe done)
@@ -26,4 +26,4 @@ iter-053: long/flat A2 net-of-cost 1.23–1.33 vs gated-B1 1.047 (point), correc
 
 ## Suggested next steps
 
-- **Fold the adopted 4h arms into the combined system**: a new P1 combination trial (§12 default inverse-vol of sleeves; the `[iter-073]` pre-registered DD-aware adopt criterion applies) — requires a **cross-frequency construction design** first (a 4h sleeve beside the daily record-33 book: union-calendar/resampling semantics, cost attribution, governor cadence). Not conflicting survivors (same-direction books), so autonomous when picked.
+- **Run the cross-frequency P1 combination trial** per the committed design **`docs/specs/00038-cross-frequency-combination-design.md`** (iter-076): three sleeves (benchmark, A1-lf weekly, the equal-weight A2-4h ensemble) on the 4h calendar, §10 cap + day-cadence governor, verdicted under the `[iter-073]` DD-aware criterion vs the 4h-rebuilt frozen benchmark. ~2 h of compute; fully mechanical — the design settles every semantic.
