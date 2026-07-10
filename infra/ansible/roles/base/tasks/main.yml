@@ -66,6 +66,14 @@
     group: "{{ base_capture_user }}"
     mode: "0750"
 
+- name: single folder for the rotated capture console logs
+  ansible.builtin.file:
+    path: /var/log/zcrypto-capture
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: logrotate policy for the docker container console log (json-file driver)
   ansible.builtin.copy:
     dest: /etc/logrotate.d/zcrypto-capture-docker
@@ -81,4 +89,7 @@
         copytruncate
         missingok
         notifempty
+        dateext
+        olddir /var/log/zcrypto-capture
+        createolddir 0755 root root
       }
