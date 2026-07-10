@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: an attended session in which the human authorizes the read-only Blockpit<->Kraken depot connection
+ripe_when: Stage 6b (tiny-live) starts — run the T1 depot connection alongside the §11 T2 probe window (re-deferred by spec 00039, iter-079)
 ---
 
 # Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)
@@ -19,6 +19,7 @@ Tax treatment is a **net-return** input, not a nicety: §11/§3 note that a EUR-
 
 ## Findings so far
 
+- **Re-deferred to Stage 6b** (spec `docs/specs/00039-phase6-kickoff-design.md`, iter-079, 2026-07-10): the Phase-6 kickoff scheduled the T1 depot connection alongside the §11 T2 probe window in tiny-live, so both Blockpit checks land in one attended pass. This topic remains the **T1** check's home only — the T2 verification is §11/§12's own item (tracked via T0018's 6b-executor scope), not this topic's.
 - **Blockpit ratified** as the tax tool (§11, Phase 0, 2026-07-06). No connection attempted yet.
 - **Read-only Kraken key exists** (T0000, verified 2026-07-07: Query funds + Query ledger entries + Query closed orders & trades) — the natural read-only feed for Blockpit; no trade-scoped key is or should be involved.
 - Not a dependency of the Phase-2 validation harness (synthetic data) or Phases 3–4 (historical OHLCVT research); it feeds the **after-tax** view and live bookkeeping, so it is deferred without blocking research.
