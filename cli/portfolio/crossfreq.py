@@ -58,13 +58,15 @@ def expand_daily_positions(daily_positions: dict[str, list[float]], daily_ts: li
 
 
 def daily_cadence_governor(
-    intraday_returns: list[float], day_index: list[int], config: GovernorConfig = GovernorConfig()
+    intraday_returns: list[float], day_index: list[int], *, config: GovernorConfig = GovernorConfig()
 ) -> list[float]:
     """Compound intraday returns within each calendar day, govern the day series, broadcast per-bar.
 
-    day_index[j] is the calendar-day ordinal of intraday return bar j (non-decreasing, no gaps
-    required). day_return[d] = prod(1 + r_j for j in day d) - 1; the unchanged drawdown_governor
-    runs on that day series; bar j gets its own day's multiplier.
+    day_index[j] is the calendar-day ordinal of intraday return bar j (non-decreasing, contiguous —
+    consecutive values step by 0 or 1; a union calendar never has day gaps, and a gap would silently
+    compress calendar time out of the governor's cooldown/re-arm windows, so it is rejected).
+    day_return[d] = prod(1 + r_j for j in day d) - 1; the unchanged drawdown_governor runs on that
+    day series; bar j gets its own day's multiplier.
     """
     if not isinstance(intraday_returns, list) or not intraday_returns:
         raise PortfolioError(f"intraday_returns must be a non-empty list, got {intraday_returns!r}")
@@ -80,6 +82,8 @@ def daily_cadence_governor(
     for i in range(1, len(day_index)):
         if not isinstance(day_index[i], int) or day_index[i] < day_index[i - 1]:
             raise PortfolioError(f"day_index must be non-decreasing ints, got {day_index!r}")
+        if day_index[i] > day_index[i - 1] + 1:
+            raise PortfolioError(f"day_index must be contiguous (steps of 0 or 1), got {day_index!r}")
 
     unique_days: list[int] = []
     day_returns: list[float] = []

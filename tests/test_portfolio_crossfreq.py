@@ -88,6 +88,18 @@ def test_governor_custom_config():
     assert out == [direct.multipliers[0]] * 2 + [direct.multipliers[1]] * 2
 
 
+def test_governor_no_lookahead():
+    # Perturbing a later day's returns must not change any earlier day's bar-multipliers.
+    intraday_returns = [-0.011, -0.011, -0.011, 0.0, 0.0, 0.0, 0.01, 0.01]
+    day_index = [0, 0, 0, 1, 1, 1, 2, 2]
+    base = daily_cadence_governor(intraday_returns, day_index)
+    perturbed = list(intraday_returns)
+    perturbed[6] = -0.5  # day 2's bars
+    perturbed[7] = -0.5
+    pert = daily_cadence_governor(perturbed, day_index)
+    assert pert[:6] == base[:6]  # days 0 and 1 bit-identical
+
+
 def test_governor_identity_and_length():
     intraday_returns = [0.01, -0.02, 0.03, 0.0, 0.01, -0.01, 0.02]
     day_index = [0, 0, 1, 1, 1, 2, 2]
@@ -105,6 +117,7 @@ def test_governor_identity_and_length():
         ([0.01, 0.02], [0]),  # length mismatch (short)
         ([0.01, 0.02], [0, 1, 2]),  # length mismatch (long)
         ([0.01, 0.02], [-1, 0]),  # negative start
+        ([0.01, 0.02, 0.03], [0, 0, 2]),  # day-index gap (not contiguous)
         ([0.01, float("nan")], [0, 0]),  # non-finite return
         ([0.01, -1.0], [0, 0]),  # return <= -1
         ([], []),  # empty
