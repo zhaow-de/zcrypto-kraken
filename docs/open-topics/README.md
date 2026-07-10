@@ -46,11 +46,12 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: Stage 6b starts — the T1 connection rides alongside the §11 T2 probe window, per spec 00039).
 - [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation (ripe when: next attended capture-maintenance window, or on a recurrence).
-- [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap (shadow engine → deployment → 6b executor) with its cross-iteration constraints: the 00038 verdict LANDED (trials 43+44 adopted → the engine builds against the fixed-weight 4h cross-frequency combination, record 44), §8 hardening verified before the trade key lands, and the full 6b-executor scope incl. the D3(iii) T2 tax-probe set (ripe when: the shadow-engine iteration — next attended session — is brainstormed).
 
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the workstation pull/NAS sync + alerting drill + the 7-day clean run (ripe when: the ≥7-day clock completes ≈2026-07-15 + an attended workstation/NAS session).
+
+- [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; the record-44 builder + concordance core landed (iter-082), remainder = the node (iter-083: TradingNode, store + REST append before ≈ Jul 25, journal writing, CLI), deployment, and the 6b executor (ripe when: the node iteration — next attended session — is brainstormed).
 
 ### Resolved<a name="resolved-1"></a>
 
