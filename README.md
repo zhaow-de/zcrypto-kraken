@@ -13,8 +13,8 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
 - [Requirements](#requirements)
 - [Usage](#usage)
   - [`zcrypto capture`](#zcrypto-capture)
-  - [Configuration](#configuration)
-    - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
+- [Configuration](#configuration)
+  - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
 
 <!-- mdformat-toc end -->
 
@@ -55,11 +55,11 @@ zcrypto capture [OPTIONS]
 
 Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
 
-### Configuration<a name="configuration"></a>
+## Configuration<a name="configuration"></a>
 
 `zcrypto` reads configuration from **`zcrypto.toml`** in the current working directory (the repo root when running from the checkout). The file is committed with working defaults.
 
-#### `[zcrypto]`: dataset paths<a name="zcrypto-dataset-paths"></a>
+### `[zcrypto]`: dataset paths<a name="zcrypto-dataset-paths"></a>
 
 ```toml
 [zcrypto]
