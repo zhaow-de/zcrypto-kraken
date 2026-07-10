@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the next research loop picks packages (P1 family has trial budget headroom and the finding is one clean A/B)
+status: resolved
 ---
 
 # P1 fixed-weight combination variant
@@ -17,7 +16,11 @@ If a pre-registered trial confirms it, the deployable system gets *simpler* (one
 
 Trial 43 (registry, family P1 n=3, adopt): adaptive 1.5366 / fixed-⅓ counterfactual 1.5609 on identical sleeves, cap, costing, and governor (`stage1b_verify.py`, iter-080; decisions log `[iter-080]`). Sleeve correlations B–A2 0.563, A1–A2 0.592 — the win is three-way diversification, robust to removing the weighting entirely.
 
+## Done so far
+
+- **Trial run — iter-081** (human-ordered, same session as trial 43): pre-registered rule in the decisions log `[iter-081]`, then **registry trial 44 — ADOPT**: Sharpe 1.5609/1.5583 decisive, maxDD 13.57 %, every ratified leg passing (SPA grid max p 0.0060; DSR ≈ 1.0 at n=4; worst-slice pass; stress ×1.5/×2 1.3029/1.2106). The same driver reproduced trial 43 bit-identically before the weight change (cross-check gate).
+- **Fold-in**: trial 44 supersedes trial 43 as the deployable-system candidate; T0018's engine scope now targets record 44 (the adaptive-weighting mechanism is gone from the build).
+
 ## Suggested next steps
 
-- Pre-register and run a P1 trial: identical construction to trial 43 with weights fixed at ⅓ (degenerate-window convention then moot); verdict vs trial 43's 1.5366 under the ratified bar + the `[iter-073]` DD-aware criterion. One arm, cheap (~15 min compute with the iter-080 caches' methods).
-- If adopted, fold the simplification into the Phase-6 deployable record before the engine's builder work hardens (coordinate with T0018).
+_(none — resolved)_
