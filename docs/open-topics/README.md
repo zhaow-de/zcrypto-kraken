@@ -46,6 +46,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: Stage 6b starts — the T1 connection rides alongside the §11 T2 probe window, per spec 00039).
 - [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation (ripe when: next attended capture-maintenance window, or on a recurrence).
+- [T0020 — Grafana Cloud observability](T0020-grafana-cloud-observability.md) — execute spec 00043: Alloy + socket proxy ship both containers' logs + OS/container/app metrics to the provisioned Grafana Cloud instance, one committed dashboard, API-provisioned email alerts (ripe when: first attended ops window after iter-084 merges; capture exporter flip additionally after the ≥7-day clock ≈ 2026-07-15).
 
 ### Partially done<a name="partially-done-1"></a>
 
