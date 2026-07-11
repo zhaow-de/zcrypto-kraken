@@ -59,7 +59,7 @@ The test: every changed line traces directly to the user's request.
 ## Tooling
 
 - Package/dependency manager: **uv** (`pyproject.toml` + `uv.lock`). Do not edit `uv.lock` by hand.
-- Python is pinned to **3.14** (`.python-version`, `requires-python = "==3.14.*"`).
+- Python is pinned to **3.14**.
 - Run all Python through uv so the locked environment is used.
 
 ## Commands
@@ -71,21 +71,18 @@ uv run zcrypto [args]            # run the CLI via the installed console script
 uv run pytest                    # run tests
 uv run pytest path/to/test.py::test_name   # run a single test
 
-uv run ruff check --fix          # lint (import sorting) + autofix (while iterating)
-uv run ruff format               # format (while iterating)
-uv run pre-commit run -a         # full suite — run this before every commit (see Conventions)
+uv run pre-commit run -a         # full commit gate (ruff + format, yamllint, mdformat, hygiene)
 uv add <pkg>            # add new deps
 uv add --dev <pkg>      # add new dev deps
 ```
 
 Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
-The `uv run pytest` suite is ~1,150 tests: ~40 seconds without the data-dependent regression tests, ~7 minutes with them (they run when `data/ohlc-full` is present, else skip) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
+The `uv run pytest` suite runs in ~40 seconds without the data-dependent regression tests, ~7 minutes with them (they run when `data/ohlc-full` is present, else skip) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
 
 ## Conventions
 
-- **Ruff** is the linter and formatter: line length 132, double quotes, import sorting enabled (`select = ["I"]`). Run it directly only while iterating — the commit gate is the pre-commit suite below, which includes it.
-- **pre-commit** is the commit gate — it runs ruff, yamllint, mdformat, and standard hygiene hooks.
-- **Run the full suite *before* committing — not individual tools.** The flow is: edit → `uv run pre-commit run -a` (a run that rewrites files reports **Failed** — re-run until clean; the rewrites sit **unstaged** in the working tree) → **stage, including everything the hooks just rewrote** (re-stage if you had staged before running) → commit. Don't run `ruff` (or any single hook) piecemeal as the commit gate: the suite covers ruff, mdformat, yamllint, and the hygiene hooks, and running it up front lets any rewrites (mdformat reflow, end-of-file, trailing-whitespace) land *before* the commit — instead of the commit-time hook rewriting files, aborting the commit, and forcing a re-stage/re-commit loop. Semantics: `-a` checks **all tracked files** (not just staged); bare `pre-commit run` checks only the **staged** set; a brand-new file is invisible to both until `git add`ed. If the commit-time hook still rewrites something, re-stage and re-commit (never `--no-verify`).
+- **pre-commit** is the commit gate — it runs ruff (lint + format), yamllint, mdformat, and standard hygiene hooks.
+- **Run the full suite before committing** with `uv run pre-commit run -a` — not individual hooks (it covers ruff, mdformat, yamllint, and the hygiene hooks). A run that rewrites files reports **Failed** and leaves the rewrites **unstaged**: re-run until clean, then **stage everything the hooks rewrote** (re-stage even if you'd staged before) and commit. Semantics: `-a` checks all tracked files, bare `pre-commit run` only the staged set, and a brand-new file is invisible to both until `git add`ed. If the commit-time hook still rewrites something, re-stage and re-commit — never `--no-verify`.
 - **Versioning** is commitizen-managed (`.cz.toml`). `cz bump` (run by the `/release` skill) is the source of truth for the version and updates both `pyproject.toml` and the README `Version` badge — don't hand-edit either or they'll drift.
 - **Workflow conventions** live in `.claude/rules/`: branch model (`branch-workflow.md`), PR title/body + co-author trailer (`pull-requests.md`), commit messages (`commit-messages.md`), README Usage (`readme-usage.md`), when/where to write specs & plans (`spec-plan-locations.md`), the iterations-history entry every plan must end with (`iterations-history.md`), the open-topics convention for parking follow-up items (`open-topics.md`), and the decisions-log convention for recording subject-matter research decisions in the per-phase `.tmp/decisions-phase<N>.md` running logs (`decisions-log.md`). Consult them before branching, opening a PR, or releasing.
