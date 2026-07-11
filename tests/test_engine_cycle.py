@@ -484,3 +484,72 @@ def test_settle_pending_covers_the_daily_grid_at_midnight_boundaries(tmp_path):
         write_parquet(to_frame(h4), ok_store / asset / "EUR" / "240.parquet")
         write_parquet(to_frame(daily), ok_store / asset / "EUR" / "1440.parquet")
     assert _settle_pending(ok_store, non_midnight) == {}
+
+
+# --- the dead-man's-switch ping (spec 00042) -------------------------------------------------------
+
+HC_URL = "https://hc.example/ping/abc123"
+
+
+def test_success_pings_the_healthcheck_url(tmp_path, monkeypatch):
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    monkeypatch.setenv("HEALTHCHECK_URL", HC_URL)
+    pings = []
+    monkeypatch.setattr(cycle, "_hc_opener", lambda url, timeout: pings.append((url, timeout)))
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    assert result.status == "success"
+    assert pings == [(HC_URL, 10)]
+
+
+def test_failed_cycle_pings_the_fail_url(tmp_path, monkeypatch):
+    rows_by = _store_rows({("DOGE", 1440): _series_rows("DOGE", 1440, drop_last=1)})
+    stale_fetch = {(a, iv): rows[-2:] for (a, iv), rows in rows_by.items()}  # the venue never heals the lagging tail
+    config, _, _ = _env(tmp_path, monkeypatch, rows_by=rows_by)
+    monkeypatch.setenv("HEALTHCHECK_URL", HC_URL)
+    pings = []
+    monkeypatch.setattr(cycle, "_hc_opener", lambda url, timeout: pings.append((url, timeout)))
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=lambda k, iv: stale_fetch[(KEY_TO_ASSET[k], iv)], clock=_clock())
+
+    assert result.status == "failed"
+    assert pings == [(HC_URL + "/fail", 10)]
+
+
+def test_unset_healthcheck_url_never_opens(tmp_path, monkeypatch):
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
+    pings = []
+    monkeypatch.setattr(cycle, "_hc_opener", lambda url, timeout: pings.append((url, timeout)))
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    assert result.status == "success"
+    assert pings == []
+
+
+def test_raising_opener_leaves_the_result_identical_to_the_no_ping_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(cycle, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    def boom(url, timeout):
+        raise OSError("connection refused")
+
+    results = {}
+    for name in ("baseline", "raising"):
+        rows_by = _store_rows()
+        store = tmp_path / name / "store"
+        _write_store(store, rows_by)
+        config = EngineConfig(store_dir=store, journal_dir=tmp_path / name / "journal")
+        if name == "baseline":
+            monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
+        else:
+            monkeypatch.setenv("HEALTHCHECK_URL", HC_URL)
+            monkeypatch.setattr(cycle, "_hc_opener", boom)
+        results[name] = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    baseline, raising = results["baseline"], results["raising"]
+    assert raising.record_path.exists()  # the record landed before the ping even tried
+    for field in ("status", "cycle_ts", "targets", "orders", "reason", "offending_pairs", "sidecar_path"):
+        assert getattr(raising, field) == getattr(baseline, field)

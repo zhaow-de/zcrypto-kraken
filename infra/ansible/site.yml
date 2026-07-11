@@ -1,4 +1,4 @@
-- name: converge the capture host — hardening, host config, docker, capture (steady state)
+- name: converge the capture host — hardening, host config, docker, capture, engine (steady state)
   hosts: capture_host
   become: true
   pre_tasks:
@@ -27,3 +27,5 @@
       tags: [docker]
     - role: capture
       tags: [capture]
+    - role: engine
+      tags: [engine]

@@ -10,7 +10,9 @@ checks silently always-true).
 from __future__ import annotations
 
 import json
+import os
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
@@ -46,10 +48,32 @@ _BACKOFF_INITIAL_SECS = 5.0
 _BACKOFF_MAX_SECS = 60.0
 
 _sleep = time.sleep  # module-level so tests can stub the backoff wait
+_hc_opener = urllib.request.urlopen  # module-level so tests can stub the dead-man's-switch ping
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _ping_healthcheck(success: bool) -> None:
+    """The dead-man's-switch ping (spec 00042): once a completion artifact lands, GET
+    HEALTHCHECK_URL after the success record, or HEALTHCHECK_URL + "/fail" after the failed-cycle
+    sidecar -- no-op when the env var is unset (the workstation soak), one attempt, 10 s timeout,
+    ANY exception swallowed via logger.warning; the ping can never affect the CycleResult. The
+    third completion path is pinned by design: a PROPAGATING exception (poisoned store, disk
+    error) pings NOTHING -- the dead-man's switch alerts by silence once period + grace lapse, so
+    an alert WITHOUT a preceding /fail ping reads "the node is up but a cycle raised -- read the
+    logs, suspect the store", not "the container died"."""
+    url = os.environ.get("HEALTHCHECK_URL")
+    if not url:
+        return
+    if not success:
+        url += "/fail"
+    try:
+        with _hc_opener(url, timeout=10):
+            pass
+    except Exception as exc:
+        logger.warning("healthcheck ping failed url=%s error=%s", url, exc)
 
 
 @dataclass(frozen=True)
@@ -271,6 +295,7 @@ def _failed(
     day_dir.mkdir(parents=True, exist_ok=True)
     sidecar_path = day_dir / f"failed-cycle-{cycle_ts:%H}.json"
     sidecar_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    _ping_healthcheck(False)
     logger.warning("run_cycle: %s failed (%s: %s); sidecar at %s", cycle_ts.isoformat(), reason, ", ".join(offending), sidecar_path)
     return CycleResult(
         status="failed",
@@ -346,6 +371,7 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
     validate_record(record)
     record_path = day_dir / f"cycle-{cycle_ts:%H}.json"
     record_path.write_text(to_json(record) + "\n")
+    _ping_healthcheck(True)
     logger.info("run_cycle: %s journaled (%d snapshots, %d order(s))", cycle_ts.isoformat(), len(entries), len(orders))
     return CycleResult(
         status="success",

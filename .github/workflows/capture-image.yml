@@ -5,7 +5,9 @@ on:
     branches: [develop, main]
     tags: ["v*"]
     paths:
-      - "cli/capture/**"
+      - "cli/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "infra/docker/**"
   # Manual trigger: on-demand rebuilds, and a way to test this workflow itself — edits to this
   # file don't match the paths filter above, so a workflow-only change never auto-runs.
@@ -16,6 +18,7 @@ permissions:
   packages: write
 
 env:
+  # One image, two services: it serves both the capture daemon and the shadow engine (entrypoint overridden per service).
   IMAGE: ghcr.io/zhaow-de/zcrypto-capture
 
 jobs:

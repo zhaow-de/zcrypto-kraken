@@ -15,6 +15,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto capture`](#zcrypto-capture)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
+    - [VPS journal pull and daily gate ops (systemd user timer)](#vps-journal-pull-and-daily-gate-ops-systemd-user-timer)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -69,10 +70,10 @@ zcrypto engine <subcommand> [OPTIONS]
 | Subcommand | Description |
 | -- | -- |
 | `seed` | Seed/refresh the live price store (`store_dir`) from the canonical dataset (`data/ohlc-full`) plus a REST gap-fill; idempotent, prints the per-pair × grid seam-QA summary (overlap bars, appended/replaced counts). Also the documented repair for a poisoned store tail. |
-| `run` | Run the shadow TradingNode in the foreground — one journaled cycle per 4h boundary (the soak's systemd user service runs this). |
+| `run` | Run the shadow TradingNode in the foreground — one journaled cycle per 4h boundary (the soak's systemd user service runs this). Fails fast (exit 1) when the store is missing/empty, or when `ZCRYPTO_REQUIRE_CONFIG` is set and no `zcrypto.toml` exists; a startup watchdog force-exits if the trader is not running once the node's connect + reconcile timeouts (+ 30 s) lapse — the supervisor's restart is the recovery. Set `HEALTHCHECK_URL` to enable the per-cycle dead-man's-switch ping (success record → the URL, failed-cycle sidecar → `<url>/fail`; a propagating exception pings nothing and alerts by silence). |
 | `cycle [--at ISO_TS] [--replace]` | Run one cycle manually. Defaults to the most recent elapsed boundary; `--at` must be an aware ISO-8601 timestamp exactly on the 4h UTC grid. A boundary that already has a record/sidecar is refused unless `--replace` (which deletes both artifacts plus the boundary's snapshots first). Exits non-zero when the cycle fails. |
-| `replay [--date YYYY-MM-DD] [--path fast\|verified]` | Replay journaled success cycles through the builder and compare recomputed targets against the journaled ones. Hash mismatches and validation failures are classified per cycle (the sweep never crashes), sidecars are listed as failed cycles, and any mismatch/validation failure exits non-zero. |
-| `report` | Rebuild every journaled cycle outcome by replay-on-demand (fast path) and evaluate the ratified ≥ 14-clean-day gate: prints streak length, gate status, and the most recent failure. Absent boundaries are scored missing, never fabricated. |
+| `replay [--date YYYY-MM-DD] [--path fast\|verified] [--journal-dir <PATH>]` | Replay journaled success cycles through the builder and compare recomputed targets against the journaled ones. Hash mismatches and validation failures are classified per cycle (the sweep never crashes), sidecars are listed as failed cycles, and any mismatch/validation failure exits non-zero. `--journal-dir` reads a journal other than the configured one (e.g. a pulled VPS journal). |
+| `report [--journal-dir <PATH>]` | Rebuild every journaled cycle outcome by replay-on-demand (fast path) and evaluate the ratified ≥ 14-clean-day gate: prints streak length, gate status, and the most recent failure. Absent boundaries are scored missing, never fabricated. `--journal-dir` reads a journal other than the configured one. |
 
 #### Shadow soak service (systemd user unit)<a name="shadow-soak-service-systemd-user-unit"></a>
 
@@ -86,6 +87,33 @@ cp infra/systemd/zcrypto-engine-shadow.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
+```
+
+#### VPS journal pull and daily gate ops (systemd user timer)<a name="vps-journal-pull-and-daily-gate-ops-systemd-user-timer"></a>
+
+One-time setup: the sync private key is ansible-vault-encrypted in git (`infra/ansible/files/sync_ed25519`), so decrypt a working copy to `~/.ssh` — never `ansible-vault decrypt` in place, which would rewrite the tracked file as plaintext key material one `git add` away from being committed:
+
+```bash
+umask 077; uv run ansible-vault view --vault-password-file infra/ansible/scripts/vault-pass.sh \
+  infra/ansible/files/sync_ed25519 > ~/.ssh/zcrypto-sync_ed25519    # verify: 0600
+```
+
+Pull the VPS node's journal to the workstation (the rrsync forced command on the sync key pins the remote side to the journal subtree, so no remote source path is given):
+
+```bash
+rsync -az -e "ssh -i ~/.ssh/zcrypto-sync_ed25519 -o IdentitiesOnly=yes -p 10022" deploy@<vps-host>: data/engine-journal-vps/
+```
+
+`infra/systemd/zcrypto-engine-gateops.{service,timer}` (workstation **user** units) automate the daily gate ops: pull, then `replay --journal-dir data/engine-journal-vps --path verified` for UTC-yesterday, then `report --journal-dir data/engine-journal-vps` — report still runs when replay fails, and the replay's exit code is preserved. The timer fires daily at **06:30 UTC**, when all of UTC-yesterday's cycles are complete. Install (mirroring the soak unit's walkthrough; run the first pull attended before enabling the timer):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp infra/systemd/zcrypto-engine-gateops.service infra/systemd/zcrypto-engine-gateops.timer ~/.config/systemd/user/
+# fill in the copied service unit's placeholders: <repo> (absolute checkout path),
+# <uv> (absolute uv path, `command -v uv`), <vps-host> (the VPS hostname/IP)
+systemctl --user daemon-reload
+systemctl --user enable --now zcrypto-engine-gateops.timer     # the TIMER is what's enabled, not the service
+systemctl --user list-timers zcrypto-engine-gateops.timer      # confirm: next trigger at 06:30 UTC
 ```
 
 ## Configuration<a name="configuration"></a>
