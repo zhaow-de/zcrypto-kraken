@@ -26,7 +26,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090: `data/derivatives-funding/`, basket e08ea1a9…, 10 perps); OI backfill + the liquidations human decision remain (ripe when: B2 is picked for an iteration).
+- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations-source decided (option a, free live-only); the OI backfill + harness are autonomous when B2 is picked.
 
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
