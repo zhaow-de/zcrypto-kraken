@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: B1 is ripe NOW (T0009 legs decided iter-072; T0012's 15m substrate delivered iter-085 — data/ohlc-15m, basket 0fed24a6…); B2/B4-legs/B3/C3 ripe since iter-072 (B3/B4 additionally need the §10 portfolio-limits code first); C1 after weeks of captured L2 (T0003); C2 after a tick catalog exists (dropped in T0012's resolution — re-open it as its own topic when C2 goes live)
+status: partial
+ripe_when: B1 split out to T0022 (iter-086); B2 ripe NOW and C3 ripe since iter-072; B4-legs/B3 additionally need the §10 portfolio-limits code first; C1 after weeks of captured L2 (T0003); C2 after a tick catalog exists (dropped in T0012's resolution — re-open it as its own topic when C2 goes live)
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -19,6 +19,10 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 - Prerequisites: T0009 resolved (protocol legs → revised kill bar, iter-072); **T0012 resolved (iter-085): the 15m substrate exists** — `data/ohlc-15m`, basket_sha256 `0fed24a6…`, tick-reconciled bit-exact; note for B1 design: AVAX/LINK/DOT recent-year 15m density is 88–97% (real omitted no-trade slots — fill/skip policy is a B1 design decision). The tick catalog was dropped with T0012 — C2 must re-open it as its own topic. T0003 (captured L2 → C1) and T0014 (spread term → B1 maker realism, ripe ≈ 2026-07-22) unchanged.
 - Budgets pre-registered and untouched: **B = 25, C = 10**; A retains 8 reserved trials (T0009/T0011).
 
+## Done so far
+
+- **B1 split out (iter-086)**: the family opened as its own topic [T0022](T0022-b1-intraday-seasonality-family.md) with spec/plan `00045` — per this umbrella's own split rule. The umbrella's remainder is B2/B3/B4 and C1–C3.
+
 ## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
 
 - **Implement the remaining §10 portfolio limits as tested code first** — gross leverage 1.5×/2.0×, net-exposure band −0.5…+1.0×, margin-level floor ≥ 250 % — deferred in iter-059 because they never bind on the long-only P1 book (max gross 0.68×); any B4-leg/short/levered sleeve makes them binding (§10 mandates them "hard, enforced in code pre-trade").
@@ -26,5 +30,5 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Suggested next steps
 
-- When the first prerequisite set fires, split the family being started into its own topic/spec (per family, one hypothesis + kill-bar plan) — this umbrella then goes `partial`/`resolved` per the lifecycle.
-- Order per §5 ranking: B1 → B2 → B4-legs → B3 → C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).
+- Next family to split out when picked: B2 (ripe), then B4-legs/B3 (need the §10 portfolio-limits code first), then C3/C2/C1 per ranking.
+- Order per §5 ranking (B1 done): B2 → B4-legs → B3 → C2 → C3 → C1 (C1 last: taker economics near-certainly kill it without L2 maker realism).

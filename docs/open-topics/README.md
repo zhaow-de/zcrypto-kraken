@@ -20,9 +20,11 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
-- [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the un-started remainder of the §5 queue (B1/B2/B3/B4, C1–C3; budgets B=25/C=10), registered at the Phase-4 close (ripe when: per-family prerequisites — T0009 protocol legs, T0012 substrate, captured L2 for C1).
+- [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; conditioning-overlay trials on the adopted A2-4h ensemble against the 15m substrate, net-of-cost per T0009 (ripe when: live now — trials ride research iterations).
 
 ### Partially done<a name="partially-done"></a>
+
+- [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
 ### Resolved<a name="resolved"></a>
 
