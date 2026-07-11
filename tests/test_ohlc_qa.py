@@ -10,6 +10,7 @@ from cli.ohlc.qa import detect_gaps, price_discontinuities, qa_dataset, qa_serie
 
 BASE_TS = 1721174400  # 2024-07-17T00:00:00Z
 DAY = 86400
+QUARTER_HOUR = 900
 
 
 def _row(ts: int, *, high: str = "101.0", low: str = "99.0", close: str = "100.0", volume: str = "10.0") -> list:
@@ -37,6 +38,19 @@ def test_detect_gaps_contiguous_frame_has_no_gaps():
     frame = to_frame(_daily_rows(5))
 
     assert detect_gaps(frame, DAY) == []
+
+
+def test_detect_gaps_at_900s_flags_missing_bucket():
+    rows = [_row(BASE_TS + i * QUARTER_HOUR) for i in range(5)]
+    del rows[2]  # delete the mid-series bucket, leaving a 1800-s gap
+    frame = to_frame(rows)
+
+    gaps = detect_gaps(frame, QUARTER_HOUR)
+
+    assert len(gaps) == 1
+    assert gaps[0]["missing"] == 1
+    assert gaps[0]["after_ts"] == frame["ts"][1]
+    assert gaps[0]["before_ts"] == frame["ts"][2]
 
 
 def test_wick_outliers_flags_extreme_candle_only():

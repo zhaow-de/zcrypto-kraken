@@ -43,6 +43,18 @@ def test_backfill_pair_returns_frame_per_interval(tmp_path):
     assert frames["60"].height == 2
 
 
+def test_backfill_pair_15m_interval_returns_900s_spaced_frame(tmp_path):
+    source_dir = _make_source_dir(tmp_path)
+
+    frames = backfill_pair(source_dir, "BTC/EUR", ["15"])
+
+    assert set(frames) == {"15"}
+    frame = frames["15"]
+    assert frame.height == 8  # 120 one-minute bars = exactly 8 fifteen-minute buckets
+    deltas = (frame["ts"] - frame["ts"].shift(1)).dt.total_seconds().drop_nulls()
+    assert deltas.to_list() == [900] * 7
+
+
 def test_backfill_basket_writes_tree_and_returns_manifest(tmp_path):
     source_dir = _make_source_dir(tmp_path)
     out_root = tmp_path / "out"
