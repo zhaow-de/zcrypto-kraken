@@ -39,29 +39,16 @@ repos:
       additional_dependencies:
       - mdformat-gfm
       - mdformat-toc
-      # Allowlist of mdformat-managed docs: the READMEs + each research REPORT under docs/research/.
-      # Append each new research paper here when it lands. Verbatim docs (e.g. the
-      # decision log 01.3.phase0-decisions.md, whose option lists + "(Decision: N)" markers mdformat
-      # would restructure) are intentionally left off so they stay as-is.
+      # Allowlist of mdformat-managed docs: the three READMEs + EVERY report under docs/research/,
+      # matched by glob so a new research paper is covered automatically (no per-file edit here).
+      # Excluded by the negative lookahead: the verbatim decision logs — *-decisions.md and the
+      # *-cont-decisions-<K>.md continuations — whose option lists + "(Decision: N)" markers mdformat
+      # would restructure (see .claude/rules/decisions-log.md). Nothing else under docs/ is covered
+      # (reference/, specs/, plans/, open-topics topic files format by hand).
       files: |
         (?x)^(
             README\.md|
+            infra/README\.md|
             docs/open-topics/README\.md|
-            docs/research/00\.master-plan\.md|
-            docs/research/01\.1\.kraken-snapshot-register\.md|
-            docs/research/01\.2\.nautilus-kraken-adapter-memo\.md|
-            docs/research/01\.3\.phase0-closeout\.md|
-            docs/research/02\.phase1-data-foundation-closeout\.md|
-            docs/research/03\.phase2-validation-harness-closeout\.md|
-            docs/research/04\.phase3-benchmarks-closeout\.md|
-            docs/research/05\.phase4-orientation\.md|
-            docs/research/06\.phase4-a1-results\.md|
-            docs/research/07\.phase4-a1-cost-reality\.md|
-            docs/research/08\.phase4-a2-orientation\.md|
-            docs/research/09\.phase4-a2-results\.md|
-            docs/research/10\.phase4-closeout\.md|
-            docs/research/11\.phase5-stress-suite\.md|
-            docs/research/12\.phase5-system-spec-runbook\.md|
-            docs/research/13\.phase5-closeout\.md|
-            docs/research/14\.phase6-adapter-verification\.md
+            docs/research/(?!.*-(cont-decisions-\d+|decisions)\.md$).*\.md
         )$

@@ -5,7 +5,19 @@ Portable, scripted provisioning + deployment for the D2 forward-capture pipeline
 provider-agnostic: to move the pipeline to a new host you re-provision, point the inventory at the
 new address, and re-run — no edits to the config layer.
 
-## Layout
+<!-- mdformat-toc start --slug=github --maxlevel=4 --minlevel=2 -->
+
+- [Layout](#layout)
+- [Running it](#running-it)
+- [The two-firewall model — IMPORTANT](#the-two-firewall-model-%E2%80%94-important)
+- [Break-glass — you are locked out of SSH](#break-glass-%E2%80%94-you-are-locked-out-of-ssh)
+- [Rebuild from scratch (portability)](#rebuild-from-scratch-portability)
+- [Key rotation](#key-rotation)
+- [Deploy image note](#deploy-image-note)
+
+<!-- mdformat-toc end -->
+
+## Layout<a name="layout"></a>
 
 - `ansible/` — the source of truth. `bootstrap.yml` (one-time: root → `deploy@10022`), `site.yml`
   (steady-state converge: hardening → firewall → fail2ban → chrony → docker → capture), and the
@@ -15,7 +27,7 @@ new address, and re-run — no edits to the config layer.
 - `docker/` — the capture daemon's `Dockerfile` + reference `compose.yaml`. The image is
   `ghcr.io/zhaow-de/zcrypto-capture` (CI: `.github/workflows/capture-image.yml`).
 
-## Running it
+## Running it<a name="running-it"></a>
 
 ```bash
 cd infra/ansible
@@ -28,7 +40,7 @@ cd infra/ansible
 `run.sh` uses `scripts/vault-pass.sh` (`sops -d` → the ansible-vault password) — so a run needs the
 GPG private key for `zhaow.km@gmail.com` available/unlocked in your gpg-agent.
 
-## The two-firewall model — IMPORTANT
+## The two-firewall model — IMPORTANT<a name="the-two-firewall-model-%E2%80%94-important"></a>
 
 Inbound is filtered by **two independent layers, and a port must be opened in *both*:**
 
@@ -42,7 +54,7 @@ Inbound is filtered by **two independent layers, and a port must be opened in *b
 To open a new inbound port you must edit `roles/firewall/templates/nftables.conf.j2` **and** add the
 rule in the Linode Cloud Manager. Editing only one silently fails.
 
-## Break-glass — you are locked out of SSH
+## Break-glass — you are locked out of SSH<a name="break-glass-%E2%80%94-you-are-locked-out-of-ssh"></a>
 
 SSH is **key-only on port 10022**, root + password login are disabled, and port 22 no longer
 listens. If you lose `deploy@10022` access:
@@ -63,7 +75,7 @@ listens. If you lose `deploy@10022` access:
      private key.
 3. Once back in, re-run `./scripts/run.sh site.yml` to re-assert the intended (hardened) state.
 
-## Rebuild from scratch (portability)
+## Rebuild from scratch (portability)<a name="rebuild-from-scratch-portability"></a>
 
 1. Provision a fresh host (any provider/distro Ansible + dev-sec.io support; the roles target
    Debian-family here). Ensure the Linode/cloud firewall allows 22 (bootstrap) + 10022.
@@ -72,13 +84,13 @@ listens. If you lose `deploy@10022` access:
 3. `./scripts/run.sh site.yml` — hardens + installs Docker + deploys the capture container.
 4. Drop 22 from the cloud firewall once `deploy@10022` is confirmed.
 
-## Key rotation
+## Key rotation<a name="key-rotation"></a>
 
 Regenerate a keypair, `ansible-vault encrypt` the new private key into `files/`, update the matching
 `*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey),
 verify the new key works, then remove the old key's `authorized_key` entry and re-run.
 
-## Deploy image note
+## Deploy image note<a name="deploy-image-note"></a>
 
 The GHCR CI builds `ghcr.io/zhaow-de/zcrypto-capture` on push. **GHCR packages default to private** —
 after the first push, set the package to **Public** in GitHub (Packages → the package → Package
