@@ -15,8 +15,8 @@ bump_message = "chore(release): bump version $current_version → $new_version"
 # capture group, so the pattern wraps "type(scope)!" in ONE group to make the
 # breaking "!" visible to the "^.+!" key.
 #   MAJOR: "!" suffix or "BREAKING CHANGE"
-#   PATCH: fix, docs, ci, test, style, chore
+#   PATCH: fix, docs, ci, test, style, chore, claude
 #   MINOR: feat, perf, refactor, build, revert
 [tool.commitizen.customize]
-bump_pattern = "^((?:feat|fix|chore|docs|ci|test|style|perf|refactor|build|revert)(?:\\(.+\\))?!?|BREAKING[ -]CHANGE)"
-bump_map = {"^.+!" = "MAJOR", "^BREAKING" = "MAJOR", "fix" = "PATCH", "docs" = "PATCH", "ci" = "PATCH", "test" = "PATCH", "style" = "PATCH", "chore" = "PATCH", "feat" = "MINOR", "perf" = "MINOR", "refactor" = "MINOR", "build" = "MINOR", "revert" = "MINOR"}
+bump_pattern = "^((?:feat|fix|chore|docs|ci|test|style|perf|refactor|build|revert|claude)(?:\\(.+\\))?!?|BREAKING[ -]CHANGE)"
+bump_map = {"^.+!" = "MAJOR", "^BREAKING" = "MAJOR", "fix" = "PATCH", "docs" = "PATCH", "ci" = "PATCH", "test" = "PATCH", "style" = "PATCH", "chore" = "PATCH", "claude" = "PATCH", "feat" = "MINOR", "perf" = "MINOR", "refactor" = "MINOR", "build" = "MINOR", "revert" = "MINOR"}
