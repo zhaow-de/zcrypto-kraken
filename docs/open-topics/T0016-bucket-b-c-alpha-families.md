@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: B1 is ripe NOW (T0009 legs decided iter-072; T0012's 15m substrate delivered iter-085 — data/ohlc-15m, basket 0fed24a6…); B2/B4-legs/B3/C3 ripe since iter-072 (B3/B4 additionally need the §10 portfolio-limits code first); C1 after weeks of captured L2 (T0003); C2 after a tick catalog exists (dropped in T0012's resolution — re-open it as its own topic when C2 goes live)
+ripe_when: B1 split out to T0022 (iter-086); B2 ripe NOW and C3 ripe since iter-072; B4-legs/B3 additionally need the §10 portfolio-limits code first; C1 after weeks of captured L2 (T0003); C2 after a tick catalog exists (dropped in T0012's resolution — re-open it as its own topic when C2 goes live)
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue

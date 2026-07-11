@@ -15,12 +15,13 @@ B1 is the §5 ranked queue's top un-started family — the "genuinely new freque
 
 ## Findings so far
 
+- **Trial 1 (iter-086): REJECT** — registry trial 45 (`B1`, n=1). Arm B failed the kill bar's SPA leg uniformly (p ≈ 0.31 across the grid) while arm A passed the identical bar; head-to-head B ≤ A (p 1.0). **The mechanism inverted**: the vol scaler's state flips ADDED +33.8% turnover (the hypothesized reduction), and hold-through worsened maxDD (30.07% vs 21.54%). Engagement was proven before the verdict; the benchmark and all three arms reconstructed elementwise < 1e-12 against the iter-074 caches. The informative residue: the seasonality-gate mechanism alone (window-only, no scaler) remains untested — the scaler is what added the turnover.
+
 - Hypothesis + trial-1 pre-registration: decisions log `[iter-086]` — the conditioning A/B on the adopted A2-4h ensemble (arm A = trials 37–39 equal-weight as adopted; arm B = + hour-of-day/day-of-week favorable-window gating and intraday-vol-state scaling from the 15m substrate), one knob, judged per T0009's revised kill bar vs the frozen B3+vt-dynamic benchmark.
 - Substrate QA input (iter-085): AVAX/LINK/DOT recent-year 15m density 88–97% (omitted no-trade slots) — the vol-state features must define behavior on missing 15m bars explicitly.
 - Budget: **B = 25 shared across Bucket B** (pre-registered, hard); B1 trials count against it under the family's registry key.
 
 ## Suggested next steps
 
-- Execute spec/plan `00045` (harness: leak-free seasonality/vol-state features + conditioning overlay + fold-internal estimation, TDD; then trial 1 as pre-registered).
-- Subsequent trials (if trial 1 survives or teaches): vol-state-only arm, window-only arm (attribution split), and the 1h-cadence variant — each a fresh `[iter-NNN]` pre-registration, same registry family key.
+- Candidate trial 2 (needs a fresh `[iter-NNN]` pre-registration before running): the **window-only arm** — gates without the vol scaler, isolating the mechanism trial 1's finding exonerates (hold-through saved trades; the scaler added them). A hysteresis/banded scaler is the other candidate. Same family key, budget B shared.
 - Kill discipline: an honest kill closes this topic (archive with the verdict); budget exhaustion or a family kill-bar hit does the same. Expanding past the shared B budget is a parked human decision, never autonomous.
