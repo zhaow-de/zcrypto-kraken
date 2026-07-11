@@ -48,6 +48,10 @@ Iteration **iter-038** (interactive design → unattended build; spec `docs/spec
 
 ## Suggested next steps
 
+**Plan (decided 2026-07-11):** build the workstation pull service + monitoring in an attended session **after the current open-topics review round**; verify the ≥7-day clean run **≈ Jul 15**.
+
+**Constraint — the workstation is NOT online 24×7 (not even daily).** This bounds the pull design: the **safe-offline window ≈ the VPS ring-buffer depth (~7 days)** — if the workstation stays offline longer than the ring buffer holds, the VPS evicts un-pulled segments and that L2 is **permanently lost** (unbackfillable). The ~74 GB VPS disk (~10 GB/day) can't hold a much deeper buffer, so the operational requirement is: **bring the workstation online at least every few days**, and the pull must (a) run on every boot / whenever the host is up (`systemd` timer `Persistent=true`, catch-up on wake), and (b) **alert loudly when the workstation hasn't successfully pulled in ~5 days** (a dead-man before the ~7-day eviction cliff), so an impending gap is visible in time to act.
+
 Remainder (the wall-clock drill + the sync/alerting half). The incident recovery + deploy-path re-alignment (above) and GHCR public-visibility are **done**; what's left:
 
 - **(autonomous)** **Workstation pull service** — install rsync on the host, a pull-only forced-command (`rrsync`-restricted) SSH key, a workstation systemd timer that rsyncs the VPS ring buffer → hash-verifies each segment vs its manifest → deletes-on-VPS-after-verified → nightly compaction to the NAS `../zcrypto-kraken-data/`. (The VPS ring buffer holds ≥7 days, so this can lag without loss — but build it before the ~74 GB disk fills.)
