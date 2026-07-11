@@ -52,7 +52,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: Stage 6b starts — the T1 connection rides alongside the §11 T2 probe window, per spec 00039).
 - [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation (ripe when: next attended capture-maintenance window, or on a recurrence).
-- [T0020 — Grafana Cloud observability](T0020-grafana-cloud-observability.md) — execute spec 00043: Alloy + socket proxy ship both containers' logs + OS/container/app metrics to the provisioned Grafana Cloud instance, one committed dashboard, API-provisioned email alerts (ripe when: first attended ops window after iter-084 merges; capture exporter flip additionally after the ≥7-day clock ≈ 2026-07-15).
 - [T0021 — VPS journal retention](T0021-vps-journal-retention.md) — prune-after-verified-pull design for the append-only engine journal (~0.35 GiB/month measured) (ripe when: the 80% disk watermark — T0020's disk alert is the trigger mechanism — or an earlier attended ops window).
 
 ### Partially done<a name="partially-done-1"></a>
@@ -60,6 +59,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the workstation pull/NAS sync + alerting drill + the 7-day clean run (ripe when: the ≥7-day clock completes ≈2026-07-15 + an attended workstation/NAS session).
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
+
+- [T0020 — Grafana Cloud observability](T0020-grafana-cloud-observability.md) — Alloy + socket proxy ship both containers' logs + OS/container/app metrics to the provisioned Grafana Cloud instance, one committed dashboard, API-provisioned email alerts; the human credential fetch + vault is DONE (2026-07-11), remaining = the autonomous Tasks 1–3 build + the attended Task 4 deploy (ripe when: an observability build+deploy session; capture exporter flip additionally after the ≥7-day clock ≈ 2026-07-15).
 
 ### Resolved<a name="resolved-1"></a>
 
