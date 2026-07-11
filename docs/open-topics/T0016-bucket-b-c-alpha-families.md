@@ -25,7 +25,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 
 ## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
 
-- **Implement the remaining §10 portfolio limits as tested code first** — gross leverage 1.5×/2.0×, net-exposure band −0.5…+1.0×, margin-level floor ≥ 250 % — deferred in iter-059 because they never bind on the long-only P1 book (max gross 0.68×); any B4-leg/short/levered sleeve makes them binding (§10 mandates them "hard, enforced in code pre-trade").
+- **§10 portfolio limits — code DELIVERED (iter-088, spec/plan `00046`)**: `apply_gross_leverage_cap` (1.5×/2.0×), `apply_net_exposure_band` (−0.5…+1.0×), `margin_level` + `apply_margin_floor` (≥ 250 %, closed-form scaling, floor ≥ 1 domain) in `cli/risk/limits.py`, the `apply_position_caps` idiom throughout. **Remainder: wiring** into whichever family harness binds them first (B4-legs/B3's opening iteration) — composition order caps → gross → net → margin floor per the module docstring.
 - **Re-run the borrow-unavailable stress rung** on any combined system containing a short sleeve — dispositioned N/A-with-evidence for the long-only book in `docs/research/11.phase5-stress-suite.md` (iter-060); §12's stress list makes it mandatory again the moment shorts exist.
 
 ## Suggested next steps
