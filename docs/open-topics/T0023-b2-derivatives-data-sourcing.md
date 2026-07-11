@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: the B2 (derivatives-positioning) family is picked for an iteration — at which point the liquidations-history decision below must be made before the harness spec is written
 ---
 
@@ -23,11 +23,15 @@ The full source map (access model, history depth, granularity, exact endpoints/p
 - **Coverage / panel.** All 10 names have 5.8+ yr of perp history; a **balanced 10-name panel** is bounded by the last listing (~AVAX 2020-09), forfeiting the 2019-09→2020-09 window BTC/ETH alone would give. SOL & AVAX are the thinnest legs. Kraken EUR spot is far longer for the pre-2020 tokens (DOGE/LTC/XRP/LINK/ADA) — the derivatives layer is the short leg, so B2 features start years after the spot book does.
 - **Aggregators.** **Coinalyze** — free, all 10 names, dedicated funding/OI/**liquidation** history endpoints, 40 calls/min — but intraday history is a purged rolling window (1h ≈ 2–3 months, deleted daily) → **live-only, no multi-year backfill**; needs a free account + API key. **Coinglass v4** — deepest single-vendor backfill (native 8h, ~1 yr hourly, daily all-time) and the natural place to *buy* liquidation history, but **no free API tier** and commercial use licensed only from **$299/mo Standard**. **Laevitas** — Enterprise-gated (~$500/mo) or x402 pay-per-call; funding is an OI-weighted aggregate (won't map 1:1 to single-venue raw funding).
 
+## Done so far
+
+- **Funding substrate DELIVERED (iter-090, spec/plan `00047`)**: `cli/derivatives/funding.py` (checksum-verified Binance Vision monthly `fundingRate` backfill, bounded retry-with-backoff) built `data/derivatives-funding/` — 10 USDT-M perps, 68,281 realized-funding prints, **`basket_sha256 e08ea1a9…`**. QA matches this topic's coverage prediction exactly (balanced-panel start 2020-09-22, AVAX); the one flag — SOL's 4h→2h funding in the 2022-11 FTX-collapse window — is a real venue action preserved via `interval_hours`. This is the human-gate-independent half; **OI and liquidations remain**.
+
 ## Suggested next steps
 
 - **(human decision — the one gate, make it when B2 is picked): the liquidations approach.** Choose one, since it sets the family's scope and cannot be deferred past the harness spec:
   1. **Free, live-only liquidations** — accept liquidations as a self-collected, lossy (largest-only) live signal; **start recording the Binance WS `!forceOrder@arr` stream now** so a forward backtest window accrues; the initial B2 trials use only funding + OI (both free-backfillable) and add liquidations later once enough live tape exists. *(Zero cost, zero account — the recommended default; it lets B2 open immediately on funding+OI.)*
   2. **Free Coinalyze key for live liquidations** — a human signs up at **coinalyze.net**, generates a free API key (no payment/card), which is then vaulted; gives a cleaner aggregated live liquidation feed than the raw WS, still no historical backfill. *(Optional upgrade to option 1's live path.)*
   3. **Buy liquidation history** — budget **Coinglass Standard $299/mo** (commercial-use licensed) for a same-day multi-year liquidations backtest. *(A money decision — park under the standing "no spend without human sign-off" rule; only if a liquidations factor proves worth it on the free funding+OI base.)*
-- **(autonomous, when B2 opens) build the funding + OI backfill** from Binance Vision dumps into a new derived dataset (mirroring `data/ohlc-15m`'s hash-versioned pattern; new path, never touching canonical), QA'd (per-name start dates, the balanced-panel ~2020-09 start, checksum verification), with Bybit as the funding cross-check — this **feeds** the decision (it de-risks funding/OI regardless of the liquidations choice) and is **independent** of it, so it runs first in the B2 opening iteration.
+- **(autonomous, remaining) build the OI backfill** from Binance Vision daily `metrics` dumps (5m `sum_open_interest`/`_value`; ~10× the files of funding, so its own build) into `data/derivatives-oi/` — funding is done (above); OI is the remaining independent, human-gate-free half. Bybit funding cross-check still a nice-to-have.
 - **(autonomous) the B2 harness** consumes: funding (8h prints → cumulative/accrued carry, sign persistence for the 1h/4h horizon — derived, no finer native data), OI (5m → level, delta, momentum, z-score; + the free long/short ratios), and — per the chosen option — liquidations (per-bucket notional, long/short imbalance, spike flags, provenance-tagged as lower-bound if from the WS). All USDT-M perp features aligned to the Kraken spot decision grid with the venue gap carried explicitly.
