@@ -6,8 +6,8 @@ import polars as pl
 
 from cli.ohlc.dataset import read_parquet
 
-# 1d / 4h / 1h — matches `cli.ohlc.DEFAULT_INTERVALS`, keyed by the on-disk interval label.
-INTERVAL_SECONDS = {"1440": 86400, "240": 14400, "60": 3600}
+# 1d / 4h / 1h (matching `cli.ohlc.DEFAULT_INTERVALS`) plus 15m, keyed by the on-disk interval label.
+INTERVAL_SECONDS = {"1440": 86400, "240": 14400, "60": 3600, "15": 900}
 
 
 def detect_gaps(frame: pl.DataFrame, interval_secs: int) -> list[dict]:

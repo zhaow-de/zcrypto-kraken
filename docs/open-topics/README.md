@@ -19,7 +19,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-- [T0012 — 15m bars + tick storage for Bucket-B](T0012-15m-tick-storage-bucket-b.md) — split out of archived T0004's buried deferral (ripe when: first B1 intraday iteration).
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the un-started remainder of the §5 queue (B1/B2/B3/B4, C1–C3; budgets B=25/C=10), registered at the Phase-4 close (ripe when: per-family prerequisites — T0009 protocol legs, T0012 substrate, captured L2 for C1).
 
@@ -39,6 +38,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0017 — holdout window ratification](archive/T0017-holdout-window-ratification.md) — resolved in iter-073 (attended): window ratified (out-of-time 2026-04-01 → freeze), the look executed same night (degenerate gate-off window, reading **EQUALS**), ledger created, budget → 0.
 - [T0011 — A2 refinements](archive/T0011-a2-refinements.md) — resolved in iter-080: the 2026 probe, the 4h arms (three adopts), the cadence sweep (family closed 40/40), and finally the cross-frequency P1 trial — **trial 43 ADOPT** (governed 1.5366, all ratified legs) — the combination supersedes record 33 as the deployable candidate (Phase-6 scope → T0018).
 - [T0019 — P1 fixed-weight combination variant](archive/T0019-p1-fixed-weight-variant.md) — resolved in iter-081 (same session): the pre-registered fixed-⅓ trial — **trial 44 ADOPT** (1.5609, SPA grid max p 0.0060, all legs) — supersedes trial 43 as the deployable candidate and deletes the adaptive-weight mechanism from the Phase-6 engine's scope.
+- [T0012 — 15m bars + tick storage for Bucket-B](archive/T0012-15m-tick-storage-bucket-b.md) — resolved in iter-085: `data/ohlc-15m/` built from the 1m dumps via `cli/backfill` (basket 0fed24a6…), tick-reconciled bit-exact + count-proven seam; tick catalog explicitly dropped (re-opens under C2/C1).
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 
