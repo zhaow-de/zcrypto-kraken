@@ -101,7 +101,7 @@ umask 077; uv run ansible-vault view --vault-password-file infra/ansible/scripts
 Pull the VPS node's journal to the workstation (the rrsync forced command on the sync key pins the remote side to the journal subtree, so no remote source path is given):
 
 ```bash
-rsync -az -e "ssh -i ~/.ssh/zcrypto-sync_ed25519 -p 10022" deploy@<vps-host>: data/engine-journal-vps/
+rsync -az -e "ssh -i ~/.ssh/zcrypto-sync_ed25519 -o IdentitiesOnly=yes -p 10022" deploy@<vps-host>: data/engine-journal-vps/
 ```
 
 `infra/systemd/zcrypto-engine-gateops.{service,timer}` (workstation **user** units) automate the daily gate ops: pull, then `replay --journal-dir data/engine-journal-vps --path verified` for UTC-yesterday, then `report --journal-dir data/engine-journal-vps` — report still runs when replay fails, and the replay's exit code is preserved. The timer fires daily at **06:30 UTC**, when all of UTC-yesterday's cycles are complete. Install (mirroring the soak unit's walkthrough; run the first pull attended before enabling the timer):

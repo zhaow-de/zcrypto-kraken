@@ -33,6 +33,9 @@
 # below writes %% for date's %F and $$ for every shell $ -- the shell receives single % and $.
 # The single-% `%h` in the ssh -i path is DELIBERATE: systemd expands it to the user's home
 # (a `~` inside the double-quoted -e string would not be tilde-expanded by sh).
+# IdentitiesOnly=yes is load-bearing: without it a loaded ssh-agent offers its keys first and
+# exhausts the server's auth tries before the -i key is ever tried ("Too many authentication
+# failures" — observed on the attended first pull).
 #
 # Install (after filling in the placeholders; zcrypto-engine-gateops.timer does the scheduling):
 #   mkdir -p ~/.config/systemd/user
@@ -50,4 +53,4 @@ Description=zcrypto engine gate-ops: VPS journal pull + verified replay of UTC-y
 [Service]
 Type=oneshot
 WorkingDirectory=<repo>
-ExecStart=/bin/sh -c 'rsync -az -e "ssh -i %h/.ssh/zcrypto-sync_ed25519 -p 10022" deploy@<vps-host>: data/engine-journal-vps/ || exit 1; d="$$(date -u +%%F -d yesterday)"; <uv> run zcrypto engine replay --journal-dir data/engine-journal-vps --path verified --date "$$d"; rc=$$?; <uv> run zcrypto engine report --journal-dir data/engine-journal-vps; exit $$rc'
+ExecStart=/bin/sh -c 'rsync -az -e "ssh -i %h/.ssh/zcrypto-sync_ed25519 -o IdentitiesOnly=yes -p 10022" deploy@<vps-host>: data/engine-journal-vps/ || exit 1; d="$$(date -u +%%F -d yesterday)"; <uv> run zcrypto engine replay --journal-dir data/engine-journal-vps --path verified --date "$$d"; rc=$$?; <uv> run zcrypto engine report --journal-dir data/engine-journal-vps; exit $$rc'

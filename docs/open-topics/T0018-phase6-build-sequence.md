@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the shadow-engine iteration is brainstormed (the next attended Phase-6 build session)
+ripe_when: the Stage-6a gate is met (≥ 14 consecutive clean complete-UTC days on the VPS journal, clock started 2026-07-11 00:00 UTC) and the human convenes the 6b executor session
 ---
 
 # Phase-6 build sequence and its cross-iteration constraints
@@ -26,12 +26,12 @@ Three constraints bind *future* iterations and would otherwise be invisible at p
 
 ## Done so far
 
-- **iter-083 (spec/plan `00041`, PR pending)**: the shadow node end-to-end — live price store + seeder (seeded 2026-07-10, seam QA clean), the cycle core (settle-verify both grids, union-aligned snapshots, failed-cycle sidecars, aware-UTC), the Nautilus node wrapper (restart-safe timer arithmetic), the `zcrypto engine` CLI (seed/run/cycle/replay/report), and the **workstation soak running** (systemd user service, linger enabled; first live cycle 2026-07-10 20:00 UTC journaled, fast AND verified replays bit-exact, dev evidence only — the gate clock starts on the VPS).
+- **iter-084 (spec/plan `00042`, merged)**: the engine on the VPS — constraint 2 honored (the §8-hardening gate ran as asserts *before* any secret rendered, and caught a real defect: the gate's own `\b` regex was Jinja-escaped to backspace, fixed + made self-diagnosing); the `engine` ansible role (secrets `0600 root:root` via `engine.env`, digest-pinned one-image/two-services compose, resource budget capture-first, rrsync read-only journal channel); the dead-man's switch (healthchecks.io `zcrypto-engine-shadow`, armed by the first cycle's ping); fail-fast `engine run` + supervision watchdog; `--journal-dir` overrides; the store delivered from the warm workstation copy (constraint 3's fallback path — read-verified on the host). **The Stage-6a gate clock started at the first VPS cycle: 2026-07-11 00:00 UTC, completed 00:01:39, verified replay bit-exact (0.00e+00), arming ping received.** Daily gate ops automated (workstation user timer 06:30 UTC: pull → verified replay of UTC-yesterday → report; attended first run clean). Both soaks run in parallel until the 6a exit review.
 
-- **iter-082 (spec/plan `00040`, PR pending)**: the record-44 builder (verified + bit-identical fast path, frozen-figure regression tests, newest-row contract) and the `cli/engine` concordance core (journal contract with no-peek invariants, replay, compare, the ratified 4h gate evaluator); runbook record-44 section. Constraint 1's builder scope is delivered — the node work remains.
+- **iter-083 (spec/plan `00041`, merged — PR #105)**: the shadow node end-to-end — live price store + seeder (seeded 2026-07-10, seam QA clean), the cycle core (settle-verify both grids, union-aligned snapshots, failed-cycle sidecars, aware-UTC), the Nautilus node wrapper (restart-safe timer arithmetic), the `zcrypto engine` CLI (seed/run/cycle/replay/report), and the **workstation soak running** (systemd user service, linger enabled; first live cycle 2026-07-10 20:00 UTC journaled, fast AND verified replays bit-exact, dev evidence only — the gate clock starts on the VPS).
+
+- **iter-082 (spec/plan `00040`, merged)**: the record-44 builder (verified + bit-identical fast path, frozen-figure regression tests, newest-row contract) and the `cli/engine` concordance core (journal contract with no-peek invariants, replay, compare, the ratified 4h gate evaluator); runbook record-44 section. Constraint 1's builder scope is delivered — the node work remains.
 
 ## Suggested next steps
 
-- **Shadow engine node (iter-083, next attended session)**: the TradingNode, scheduler, price store + REST append (constraint 3's ≈ Jul 25 window), journal writing, `zcrypto engine` CLI — on iter-082's builder + concordance core. Interface caveat (corrected iter-083): the engine's pinned convention is **aware-UTC everywhere** (spec 00041 §cycle 8); `evaluate_gate` gets an aware `now` and the CLI enforces awareness at every boundary.
-- **Deployment (the iteration after)**: honoring constraint 2; starts the 2–3-week Stage-6a clock.
-- **6b iteration**: executor + tiny-live start per constraint 4.
+- **6b executor iteration** (the sole remainder; convene when the Stage-6a gate is met): order submission + order state machine + reconciliation loop + kill-switch, §12's weekly tracking-error report in full, cost-model recalibration from real fills, tiny-live sleeve funding (D3(ii) second half, human money action), and the D3(iii) T2 tax-probe set within the first two 6b weeks — per constraint 4. T0005's Blockpit T1 check rides alongside. The 6a exit review also decides retiring the workstation soak.
