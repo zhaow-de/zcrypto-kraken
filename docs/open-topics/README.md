@@ -21,9 +21,10 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; conditioning-overlay trials on the adopted A2-4h ensemble against the 15m substrate, net-of-cost per T0009 (ripe when: live now — trials ride research iterations).
-- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — the free funding/OI/liquidation data landscape mapped for the B2 family; funding+OI are keyless-backfillable (Binance Vision dumps), liquidations are not free-backfillable — the one human decision (ripe when: B2 is picked for an iteration).
 
 ### Partially done<a name="partially-done"></a>
+
+- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090: `data/derivatives-funding/`, basket e08ea1a9…, 10 perps); OI backfill + the liquidations human decision remain (ripe when: B2 is picked for an iteration).
 
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
