@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: per family — B1/B2/B4-legs/B3 after T0009's protocol legs are decided (the revised kill bar governs new trials) and, for B1, T0012's 15m/tick substrate; C1 additionally after weeks of captured L2 (T0003 pipeline mature); C2 after the tick archive is query-ready (T0012); C3 anytime after T0009
+ripe_when: B1 is ripe NOW (T0009 legs decided iter-072; T0012's 15m substrate delivered iter-085 — data/ohlc-15m, basket 0fed24a6…); B2/B4-legs/B3/C3 ripe since iter-072 (B3/B4 additionally need the §10 portfolio-limits code first); C1 after weeks of captured L2 (T0003); C2 after a tick catalog exists (dropped in T0012's resolution — re-open it as its own topic when C2 goes live)
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -16,7 +16,7 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 ## Findings so far
 
 - The A-family arc's binding lessons transfer wholesale: judge net-of-cost from the first verdict; the short's borrow carry is a structural ~5 %/yr drag; benchmark warm-up asymmetries must be windowed out; the worst-slice leg is exposure-blind pending T0009.
-- Prerequisites already tracked elsewhere: T0009 (protocol legs → revised kill bar), T0012 (15m/tick storage for B1/C2), T0003 (captured L2 accumulating since 2026-07-08 → C1), T0014 (captured-spread cost term — directly upgrades B1's maker-fill realism).
+- Prerequisites: T0009 resolved (protocol legs → revised kill bar, iter-072); **T0012 resolved (iter-085): the 15m substrate exists** — `data/ohlc-15m`, basket_sha256 `0fed24a6…`, tick-reconciled bit-exact; note for B1 design: AVAX/LINK/DOT recent-year 15m density is 88–97% (real omitted no-trade slots — fill/skip policy is a B1 design decision). The tick catalog was dropped with T0012 — C2 must re-open it as its own topic. T0003 (captured L2 → C1) and T0014 (spread term → B1 maker realism, ripe ≈ 2026-07-22) unchanged.
 - Budgets pre-registered and untouched: **B = 25, C = 10**; A retains 8 reserved trials (T0009/T0011).
 
 ## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
