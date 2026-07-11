@@ -21,6 +21,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; conditioning-overlay trials on the adopted A2-4h ensemble against the 15m substrate, net-of-cost per T0009 (ripe when: live now — trials ride research iterations).
+- [T0024 — universe spread-cap criterion](T0024-universe-spread-cap-criterion.md) — add the pending `spread_cap` filter to universe selection once captured L2 exists; shares T0014/T0003's L2 dependency (ripe when: synced L2 copy, ≈2026-07-22).
+- [T0025 — full symbol & corporate-action ledger](T0025-full-corporate-action-ledger.md) — extend iter-002's alias ledger to a full point-in-time record (redenominations, migrations, delistings) for survivorship (ripe when: a universe pair has a corporate action, or before a live-trading universe refresh).
 
 ### Partially done<a name="partially-done"></a>
 

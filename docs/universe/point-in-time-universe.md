@@ -84,8 +84,11 @@ own merits.
 
 ## Deferred / follow-ups
 
-- **Spread-cap criterion** — needs the L2 capture daemon (VPS-gated, not built). Parked per the design's non-goals.
-- **Full-history volume** improves once T0001's OHLCVT backfill lands (currently ~2 years from the REST 720-candle
-  cap; the median window is only 30 days, so this affects data depth, not the current selection).
-- Full symbol & corporate-action ledger (redenominations, quote-book migrations) beyond iter-002's alias ledger
-  (XBT=BTC, XDG=DOGE) is a follow-up, per the design's non-goals.
+- **Spread-cap criterion** — needs the L2 capture daemon (VPS-gated). Registered as **T0024**
+  (`docs/open-topics/T0024-universe-spread-cap-criterion.md`); shares T0014/T0003's captured-L2 dependency.
+- **Full-history volume** — **resolved / dropped**: T0001's OHLCVT backfill landed (iter-008, full history
+  2013→2026), but the volume signal uses a 30-day median window whose recent data is identical in the REST and
+  full-history datasets, so the selection is unchanged and no re-run is needed. (Regenerating the file against the
+  canonical `data/ohlc-full` is a provenance nicety, not a pending decision.)
+- **Full symbol & corporate-action ledger** (redenominations, quote-book migrations, delistings) beyond iter-002's
+  alias ledger (XBT=BTC, XDG=DOGE) — registered as **T0025** (`docs/open-topics/T0025-full-corporate-action-ledger.md`).
