@@ -29,7 +29,7 @@ Iteration **iter-039** (spec `docs/specs/00028-tick-reconciliation-design.md`, p
   or a ZIP member), `ticks_to_bars` (left-closed epoch-aligned OHLCV bars + `count` + **true**
   tick-weighted `vwap` = Σpv/Σv), `reconcile` (per-interval O/H/L/C match vs the canonical OHLCVT,
   worst-mismatch surfacing), and the `XBT→BTC`/`XDG→DOGE` pair map. TDD, 25 synthetic-fixture tests.
-- **Sample reconciliation** (`docs/tick-reconciliation-report.md`): all 10 EUR majors, Q1-2026,
+- **Sample reconciliation** (`docs/research/02.phase1-tick-reconciliation-report.md`): all 10 EUR majors, Q1-2026,
   ~7.98 M ticks → **100.000 % O/H/L/C match within 1e-6 on all 30 pair×interval cells (1h/4h/1d), at
   100.0000 % coverage** — clears the ≥99.5 % exit-bar tolerance test for the sample. The true tick
   VWAP differs from the stored close-weighted proxy by ~1 bp (liquid) up to ~200 bps tails (illiquid).
@@ -42,7 +42,7 @@ Iteration **iter-042** added the complete-dataset reader + a **full-history** BT
   is a plausible Unix timestamp `≥ 1e9` → `ts,price,volume` with null side; a small first field is
   still a malformed 4-field row and errors). TDD (2 new tests; the disambiguation keeps the existing
   malformed-row tests green).
-- **Full-history BTC/EUR reconciliation** (`docs/tick-reconciliation-report.md`): 102.4 M ticks
+- **Full-history BTC/EUR reconciliation** (`docs/research/02.phase1-tick-reconciliation-report.md`): 102.4 M ticks
   (2013-09-10 → 2025-12-31) → 106,626 hourly bars, **100.0000 % coverage**. Match: **99.94 % within
   1 %, 97.23 % within 10 bp**, but only 77 % at 1e-6 — the strict miss is sub-10-bp cross-source
   storage-precision noise (median close reldiff 0.000 bps every year; same code gives 100 % on
@@ -52,7 +52,7 @@ Iteration **iter-042** added the complete-dataset reader + a **full-history** BT
   **660,343 hourly bars, 100.0000 % coverage**; **9 of 10 pairs match ≥ 99.7 % within 1 %**, total
   1088 bars (0.165 %) diverge > 1 %, all in each pair's early-illiquid history. Weakest is LTC/EUR
   (99.37 % within 1 %; 606 of its 611 outliers in 2013–2017, near-clean from 2018). Precision-noise-
-  limited at 1e-6 (77–91 %). Table + per-year LTC breakdown in `docs/tick-reconciliation-report.md`.
+  limited at 1e-6 (77–91 %). Table + per-year LTC breakdown in `docs/research/02.phase1-tick-reconciliation-report.md`.
 
 ## Resolution (2026-07-09, iter-044 open-topics sweep)
 

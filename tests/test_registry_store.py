@@ -443,7 +443,7 @@ def test_live_registry_file_loads_clean():
     # Read-only: exercises the v2/v3 loader against the real, committed registry. Never write to this file.
     # The registry is append-only, so records 1-32 (the pre-v3 era) are a frozen historical fact asserted
     # verbatim; the total count grows with every registered trial and is only floored, never pinned.
-    reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "research" / "trial-registry.jsonl")
+    reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl")
     assert len(reg) >= 33  # 32 pre-v3 + the first v3-era record (iter-059, P1)
     pre_v3 = reg.records[:32]
     assert all(r.schema_version == 2 for r in pre_v3)

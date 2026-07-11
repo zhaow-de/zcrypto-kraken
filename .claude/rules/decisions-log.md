@@ -1,45 +1,36 @@
 # Decisions log
 
-`.tmp/decisions.md` (gitignored) is the running log of **subject-matter research decisions** — one paragraph per decision, each prefixed with `[iter-<NNN>]` (the current iteration number, the kind tracked in `docs/iterations-history.md`). It applies in **both** interactive and unattended modes — not only the research loop.
+The **per-phase** running logs `.tmp/decisions-phase<N>.md` (gitignored) record **subject-matter research decisions** — one paragraph per decision, prefixed `[iter-<NNN>]` (the iteration number tracked in `docs/iterations-history.md`); `<N>` is the master-plan-§12 phase whose subject matter the decision concerns (see *Phase persistence*). Applies in **both** interactive and unattended modes.
 
-## The gate — when to log, when to skip
+## The gate — when to log
 
-Log a question/decision **if and only if BOTH hold:**
-
-1. **It is about the subject matter** — research direction, choice of variants, subject scope, the R&D approach or hypothesis, the feature / model / label / universe / knob to try, and the like.
-2. **You are in a live research iteration** — an unattended `research-loop` iteration, **or** an interactive session where you are actively designing/running a research iteration (the kind recorded in `docs/iterations-history.md`).
-
-**Skip the log** (do NOT record) when either fails: you are **not** in a live research iteration; or the question is about permission/approval, engineering/tooling/infrastructure, process/admin, formatting, or anything that is not the research subject matter. Reversible tooling/process choices still get **decided** (autonomously, in the loop) — they just aren't logged here.
+Log **iff both** hold: (1) it's about the **subject matter** — research direction, choice of variants, scope, the R&D approach/hypothesis, the feature/model/label/universe/knob to try; and (2) you're in a **live research iteration** (an unattended `research-loop` iteration, or an interactive session actively designing/running one). **Skip** when either fails — not in a live iteration, or about permission/approval, engineering/tooling/infrastructure, process, or formatting. Reversible tooling/process choices are still *decided* (autonomously) — just not logged.
 
 ## What to log
 
-Only once the gate above passes (both predicates hold) — then, by mode:
-
-**Shared format.** One paragraph per decision, prefixed `[iter-<NNN>]`: the question, **2–3 options each with a short tradeoff**, and the resolution marked `(Decision: N)`. Lay the options out as fully as you would to present the decision. Example:
+One paragraph per decision prefixed `[iter-<NNN>]`: the question, **2–3 options each with a short tradeoff**, and the resolution marked `(Decision: N)` — options laid out as fully as you'd present them. Example:
 
 ```markdown
 [iter-042] Which feature/model variant to A/B next? (Decision: 2)
-  1. **New feature set, current model** — add momentum + realized-vol features on the existing model config. Cheap, isolates the feature contribution; limited upside if the model is the binding constraint.
-  2. **Same features, different model class** — swap the model for a regularized linear one as a clean A/B. One knob changes, so the comparison is interpretable. Recommended — highest information-per-iteration on what's prepared.
-  3. **New label horizon** — re-label to a longer forward return, same features + model. Probes a longer-horizon edge but changes the target, so it's not a like-for-like A/B, muddying attribution.
+  1. **New feature set, current model** — add momentum + realized-vol features on the existing config. Cheap, isolates the feature contribution; limited upside if the model is the binding constraint.
+  2. **Same features, different model class** — swap to a regularized linear model as a clean A/B. One knob changes, so the comparison is interpretable. Recommended — highest information-per-iteration.
+  3. **New label horizon** — re-label to a longer forward return. Probes a longer-horizon edge but changes the target, so it's not like-for-like, muddying attribution.
 ```
 
-**Unattended (autonomous) mode** — log the decision **you** made: list the options, pick the most beneficial, record the pick with the `(Decision: N)` marker plus a one-line why. (A parked irreversible / high-stakes step goes here too — recorded as parked, not decided.)
+- **Unattended:** log the decision **you** made — options, your pick with `(Decision: N)` + a one-line why. (A parked irreversible/high-stakes step goes here too, recorded as parked.)
+- **Interactive:** log what the **user** answered — the numbered pick (which + gist), any freestyle "Other" text, or a one-sentence summary if it was resolved by discussion rather than a clean pick.
 
-**Interactive mode** — log what the **user** answered:
+## Phase persistence — drain running logs into committed close-out siblings
 
-- They picked a numbered option → record that choice (which option, and the gist).
-- They also filled the **freestyle** input (the "Other" / last numbered option) → log that freestyle text too.
-- The resolution came from the **"Chat about this"** path (you discussed it instead of a clean option-pick) → summarize the chat's conclusion into key phrases or one sentence, and log that.
+Iterations only *append* to the running logs; git-persistence happens at a phase **close-out report**, never per iteration. **Route each decision by its subject-matter phase, not the iteration's home phase** — phases run concurrently (e.g. the attended Phase-6 build alongside resumed Phase-4/5 backlog), and one iteration can produce another phase's decision (iter-088 was Phase-4 backlog but its §10 risk-layer decision is Phase 5). The §12 phases: 1 data foundation, 2 validation harness, 3 benchmarks, 4 alpha sprints, 5 portfolio assembly & risk layer, 6 execution — so alpha-family research → 4, combining validated sleeves into a deployable + the §10 risk layer → 5, execution/paper-trading → 6.
 
-## Phase persistence — the running log becomes a committed sibling of the phase's close-out report
+**Trigger: a phase's close-out report drains EVERY non-empty running log** — the report written when its exit bar is met (§12 "Exit bar"/"Artifacts"); interim orientation/progress memos never trigger, and a phase §12 names no single report for (e.g. Phase 0) still gets a short dedicated boundary report as its trigger. At that close-out:
 
-`.tmp/decisions.md` is a **running scratchpad, drained once per phase — not per iteration.** A research **phase** (the phased-plan unit of `docs/research/00.master-plan.md` §12 — data foundation, validation harness, benchmarks, alpha sprints, portfolio assembly) spans **several iterations** (the superpowers unit: one `specify → plan → execute → verify` pass). Every phase iteration only *appends* its subject-matter decisions here (each prefixed `[iter-<NNN>]`); they accumulate across the whole phase. Because the file is drained at each phase close-out (below), it holds exactly the **current** phase's entries — the contiguous `[iter-<NNN>]` range since the last drain.
+- **The closing phase's own log** → `<serial>.phase<N>-decisions.md`, `<serial>` = the close-out report's serial (e.g. `04.phase2-…-results.md` → `04.phase2-decisions.md`). One base file per phase.
+- **Each already-closed phase's floating log** (backlog decisions made *after* that phase closed) → `<closed-serial>.phase<N>-cont-decisions-<K>.md`, reusing the closed phase's own serial (`10` Phase 4, `13` Phase 5) with `<K>` a per-phase counter (next = highest existing + 1, from **0**). This groups every Phase-`<N>` doc under its serial while the base file stays immutable.
 
-**Trigger — the phase's close-out report, and only that one.** A phase may also emit interim documents (an orientation memo, a mid-phase progress note); **those do not trigger persistence.** Persistence fires **once per phase**, when the phase's **close-out report** — the report written when its exit bar is met (master plan §12 "Exit bar" / "Artifacts") — lands under `docs/research/`, authored in **either mode** (whoever writes it). **If §12 names no single "close-out report" for a phase** (e.g. Phase 0, whose artifacts are a ratification sheet + snapshot register + adapter memo), the phase still gets a **short dedicated phase-boundary close-out report** under `docs/research/`, authored when the exit bar is met — that report is the trigger. **Do not cross into the next phase's iterations with the prior phase's decisions still un-drained:** the Phase 0 → 1 boundary drifted exactly this way (the loop advanced on a "phase complete" note, leaving the decisions in the running log), fixed retroactively by `docs/research/01.3.phase0-closeout.md`. At that point, persist the phase's decisions into a committed **sibling of that report**:
+So a close-out **fans out**: at the Phase-6 close-out, `decisions-phase6.md` → `<serial>.phase6-decisions.md`, `decisions-phase4.md` → `10.phase4-cont-decisions-0.md`, `decisions-phase5.md` → `13.phase5-cont-decisions-0.md`; later Phase-4 backlog drains at the Phase-7 close-out → `10.phase4-cont-decisions-1.md`.
 
-- **Name & location:** same directory, named `<serial>.phase<N>-decisions.md`, where `<serial>` is the **close-out report's** serial prefix and `<N>` the phase number — e.g. close-out report `04.phase2-stage2-results.md` → sibling `04.phase2-decisions.md` (keep the serial, drop the report's descriptive tail). **One decisions file per phase**, keyed to the close-out report's serial.
-- **Persist = copy-then-truncate, not `mv`.** `.tmp/decisions.md` is gitignored and must survive for the next phase, so: **copy** its contents **verbatim** into the sibling, `git add` the sibling, then **truncate `.tmp/decisions.md` to empty** — never `mv` or delete the running file itself. Normally the whole content moves (it holds only this phase's entries, decisions + any parked / stop notes); if it somehow straddles phases, move only this phase's `[iter-<NNN>]` range and leave the rest for its own close-out.
-- **Verbatim — keep it OFF the mdformat allowlist.** Commit it as-is; do **not** add the `-decisions.md` file to the mdformat `files:` list in `.pre-commit-config.yaml`, and do **not** count it as a "research paper" for the CLAUDE.md allowlist-append rule — mdformat would renumber/reflow its option lists and the `(Decision: N)` markers. The close-out report itself may be on the allowlist; its `-decisions.md` sibling never is.
+Mechanics: **copy-then-truncate, never `mv`** — the gitignored running log must survive, so copy verbatim into the committed sibling, `git add`, then truncate it to empty. **Each continuation file opens with a one-paragraph memo** (what it continues, which close-out era drained it, the `[iter-<NNN>]` range), then the verbatim entries. **Decisions logs are verbatim** — never let a formatter restructure their option lists or `(Decision: N)` markers.
 
-**This is a phase close-out task, never an iteration one.** Iteration close-out only *appends* to the running `.tmp/decisions.md` (and to `docs/iterations-history.md`, per `iterations-history.md`); git-persistence of the decisions happens **once per phase**, when its close-out report is written — never per iteration.
+**Never cross a close-out with a running log un-drained** — the Phase 0 → 1 boundary drifted this way once (fixed retroactively by `docs/research/01.3.phase0-closeout.md`); the fan-out trigger sweeps **all** staged logs to prevent it.

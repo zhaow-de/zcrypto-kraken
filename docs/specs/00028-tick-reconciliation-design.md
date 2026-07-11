@@ -27,7 +27,7 @@ No full-universe full-history batch reconciliation this pass (12.5 GB / billions
 ## Testing / done
 
 - `cli/tick/` unit tests (synthetic): read (header + headerless + malformed), aggregate (OHLC + volume + count + true VWAP exact on hand-computed fixtures; bucket alignment), reconcile (all-match → 100 %, planted mismatch → caught + reported). `uv run pytest` green.
-- **Sample real-data reconciliation** committed as `docs/tick-reconciliation-report.md`: the tick-derived 1h/4h/1d bars for the sample pair/window vs the canonical OHLCVT bars — the % of intervals within tolerance (the exit-bar metric) + an honest read (any systematic offset, e.g. Kraken's OHLCVT VWAP proxy vs the true tick VWAP).
+- **Sample real-data reconciliation** committed as `docs/research/02.phase1-tick-reconciliation-report.md`: the tick-derived 1h/4h/1d bars for the sample pair/window vs the canonical OHLCVT bars — the % of intervals within tolerance (the exit-bar metric) + an honest read (any systematic offset, e.g. Kraken's OHLCVT VWAP proxy vs the true tick VWAP).
 
 ## Closeout (planned)
 

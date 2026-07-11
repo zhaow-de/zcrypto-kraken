@@ -16,7 +16,7 @@ a large feature warrants several. This is a menu, not a checklist — pick what 
 
 ## Checklist
 
-- [ ] Updated `docs/iterations-history.md` (see `.claude/rules/iterations-history.md`)
+- [ ] Updated the relevant `docs/iterations-history-phase<N>.md` (see `.claude/rules/iterations-history.md`)
 - [ ] README `## Usage` updated if CLI options changed (see `.claude/rules/readme-usage.md`)
 - [ ] Tests pass (`uv run pytest`)
 

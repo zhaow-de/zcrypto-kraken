@@ -4,7 +4,7 @@ import math
 
 from cli.costs.errors import CostModelError
 
-# Base crypto -> (low, high) fraction, charged per open AND per 4h rollover (docs/kraken-fee-schedule.md).
+# Base crypto -> (low, high) fraction, charged per open AND per 4h rollover (docs/reference/kraken-fee-schedule.md).
 MARGIN_RATES: dict[str, tuple[float, float]] = {
     "BTC": (0.0001, 0.0002),
     "ETH": (0.0002, 0.0004),

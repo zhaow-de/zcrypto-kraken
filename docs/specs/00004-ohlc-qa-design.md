@@ -41,4 +41,4 @@ Empty-interval reconstruction (fill no-trade candles), Binance-Vision cross-venu
 
 ## Closeout (planned)
 
-On merge: generate the QA report over the live v0 dataset → commit `docs/ohlc-qa-report.md`; append the `iter-006` iterations-history entry.
+On merge: generate the QA report over the live v0 dataset → commit `docs/research/02.phase1-ohlc-qa-report.md`; append the `iter-006` iterations-history entry.

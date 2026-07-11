@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- stdlib-only. Fee/margin values are EXACTLY per `docs/kraken-fee-schedule.md` (fractions).
+- stdlib-only. Fee/margin values are EXACTLY per `docs/reference/kraken-fee-schedule.md` (fractions).
 - Never crash weirdly: raise `CostModelError` on negative / non-finite numeric inputs, unknown base, bad band.
 - `spot_fee_rates` returns 1-based `tier`; `margin_carry` uses `n_rollovers = floor(hold_hours / 4)` (opening + one rollover per completed 4h). No spread, no AoP, no combined-cost function (deferred). No CLI/README change.
 
@@ -144,7 +144,7 @@ import math
 from cli.costs.errors import CostModelError
 
 # (min_30d_volume_usd, maker, taker) as fractions — Kraken spot schedule effective 2026-07-09
-# (docs/kraken-fee-schedule.md). Ascending by volume; tier is 1-based on this order.
+# (docs/reference/kraken-fee-schedule.md). Ascending by volume; tier is 1-based on this order.
 SPOT_FEE_TIERS: tuple[tuple[float, float, float], ...] = (
     (0, 0.0040, 0.0080),
     (2_500, 0.0030, 0.0060),
@@ -205,7 +205,7 @@ import math
 
 from cli.costs.errors import CostModelError
 
-# Base crypto -> (low, high) fraction, charged per open AND per 4h rollover (docs/kraken-fee-schedule.md).
+# Base crypto -> (low, high) fraction, charged per open AND per 4h rollover (docs/reference/kraken-fee-schedule.md).
 MARGIN_RATES: dict[str, tuple[float, float]] = {
     "BTC": (0.0001, 0.0002),
     "ETH": (0.0002, 0.0004),
@@ -268,6 +268,6 @@ __all__ = [
 
 **Files:** Modify: `docs/iterations-history.md`
 
-- [ ] **Step 1:** Append `## 2026-07-08 — iter-017: Kraken cost model — fees + margin (Phase 2)`: `cli/costs/` — the confirmed July-9 spot fee ladder (`spot_fee_rates`, Tier 1 0.40%/0.80% → volume tiers) + `round_trip_fee`; per-base margin `margin_rate` + `margin_carry` (open + floor(h/4) rollovers; BTC 0.01–0.02%/4h, alts 0.02–0.04%/4h). Data from `docs/kraken-fee-schedule.md` (T0000). Spread deferred (T0003), AoP omitted (YAGNI). Property-tested; `CostModelError` guards. §12 Phase-2 exit-bar component; spec/plan `00010`. Note the whole-branch review verdict.
+- [ ] **Step 1:** Append `## 2026-07-08 — iter-017: Kraken cost model — fees + margin (Phase 2)`: `cli/costs/` — the confirmed July-9 spot fee ladder (`spot_fee_rates`, Tier 1 0.40%/0.80% → volume tiers) + `round_trip_fee`; per-base margin `margin_rate` + `margin_carry` (open + floor(h/4) rollovers; BTC 0.01–0.02%/4h, alts 0.02–0.04%/4h). Data from `docs/reference/kraken-fee-schedule.md` (T0000). Spread deferred (T0003), AoP omitted (YAGNI). Property-tested; `CostModelError` guards. §12 Phase-2 exit-bar component; spec/plan `00010`. Note the whole-branch review verdict.
 
 - [ ] **Step 2: Commit** — `docs: iter-017 closeout — cost model (fees + margin)`.

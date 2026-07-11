@@ -8,7 +8,7 @@ status: resolved
 
 Resolved in **iter-044** (PR TBD). Built the look-ahead-free `dynamic_inverse_vol_basket`
 (`cli/benchmark/strategies.py`) over the union calendar with per-asset presence + warm-up, and ran
-the full-history finding-1 comparison (`docs/benchmark-b2-dynamic-report.md`). **Verdict:** over the
+the full-history finding-1 comparison (`docs/research/04.phase3-benchmark-b2-dynamic-report.md`). **Verdict:** over the
 full 2013→2026 history the dynamic 2→10 basket is *statistically indistinguishable* from single-asset
 BTC risk-adjusted (Sharpe 1.100 raw / 1.147 vol-targeted vs BTC 1.075 / 1.111; all four bootstrap CIs
 strictly positive but heavily overlapping). The fixed-window "basket loses to BTC" (0.68×, Sharpe

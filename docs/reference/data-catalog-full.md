@@ -49,4 +49,4 @@ Dataset root `data/ohlc-full/` (gitignored); `basket_sha256` `70c2728e0badf7015f
 
 ## Reconciliation vs v0 REST
 
-- See `docs/ohlcvt-backfill-reconciliation.md` — 36 overlapping series, min OHLC match rate 1.0000 over 9120 overlap rows.
+- See `docs/research/02.phase1-ohlcvt-backfill-reconciliation.md` — 36 overlapping series, min OHLC match rate 1.0000 over 9120 overlap rows.

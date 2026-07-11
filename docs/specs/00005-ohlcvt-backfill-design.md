@@ -16,7 +16,7 @@ Because 1-minute is full-history, we **reconstruct every canonical cadence (1h/4
 ## Goals
 
 - **`cli/backfill/`** — read the 1-minute OHLCVT rows for a pair (base dump + quarterly updates, merged + de-duped), aggregate them into canonical 1h/4h/1d bars (with a reconstructed vwap), write a **full-history dataset to a new path** (not overwriting the v0), and **reconcile** it against the v0 REST overlap. TDD on small synthetic ZIP fixtures (no reads of the 27 GB archive in tests).
-- **The full-history dataset** for the 12-name universe basket × 1h/4h/1d, cataloged (`docs/data-catalog-full.md`) and reconciled (`docs/ohlcvt-backfill-reconciliation.md`).
+- **The full-history dataset** for the 12-name universe basket × 1h/4h/1d, cataloged (`docs/reference/data-catalog-full.md`) and reconciled (`docs/research/02.phase1-ohlcvt-backfill-reconciliation.md`).
 
 ## Non-goals
 
@@ -63,4 +63,4 @@ Finer cadences (1m/5m/15m) and full-exchange breadth; empty-interval reconstruct
 
 ## Closeout (planned)
 
-On merge: run `backfill_basket` over the live archive → write `data/ohlc-full/` (gitignored) + `docs/data-catalog-full.md`; run `reconcile_dataset` vs `data/ohlc/` → commit `docs/ohlcvt-backfill-reconciliation.md`; flip **T0001 → resolved** (archive); append the `iter-008` iterations-history entry.
+On merge: run `backfill_basket` over the live archive → write `data/ohlc-full/` (gitignored) + `docs/reference/data-catalog-full.md`; run `reconcile_dataset` vs `data/ohlc/` → commit `docs/research/02.phase1-ohlcvt-backfill-reconciliation.md`; flip **T0001 → resolved** (archive); append the `iter-008` iterations-history entry.

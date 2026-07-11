@@ -19,7 +19,7 @@ The Phase-5 exit bar reads *"combined system beats or equals the frozen bar **on
 - No performance computation has touched post-2026-03-31 data (verified by the dataset span itself — the canonical dataset ends 2026-03-31 and is hash-frozen; registry record 1's `dataset_hash` binds it).
 - The §9 *budgeted-holdout ledger* was never built (no look has occurred yet).
 
-> **Resolution (2026-07-10, attended — iter-073).** Window ratified (out-of-time 2026-04-01 → freeze), the look executed in the human's presence the same night, the ledger created (`docs/research/holdout-ledger.md`, budget → 0). Result: a degenerate window — both systems at zero exposure throughout (gate off); exit-bar reading **EQUALS**, trivially.
+> **Resolution (2026-07-10, attended — iter-073).** Window ratified (out-of-time 2026-04-01 → freeze), the look executed in the human's presence the same night, the ledger created (`docs/research/13.phase5-holdout-ledger.md`, budget → 0). Result: a degenerate window — both systems at zero exposure throughout (gate off); exit-bar reading **EQUALS**, trivially.
 
 ## Done so far
 
@@ -28,4 +28,4 @@ The Phase-5 exit bar reads *"combined system beats or equals the frozen bar **on
 ## Suggested next steps
 
 - **[human + loop, at the event]** Execute the pre-registered mechanical procedure in the runbook §Holdout-look protocol verbatim: fresh OHLC pull for the 10 assets through the freeze date → dataset QA (gap/duplicate checks, hash the new manifest) → compute combined system and frozen benchmark net-of-cost on the ratified window only → stationary-bootstrap CI (mean_block 17, n_resamples 2000, seeds 42/7/1234) on the Sharpe difference → read *beats-or-equals* per the exit bar. One look. No parameter may change after seeing any number.
-- **[loop, at the event]** Create the §9 budgeted-holdout ledger (`docs/research/holdout-ledger.md`: date, window, dataset hash, who was present, figures, verdict; one row per look, budget 1) and record the look in it in the same change.
+- **[loop, at the event]** Create the §9 budgeted-holdout ledger (`docs/research/13.phase5-holdout-ledger.md`: date, window, dataset hash, who was present, figures, verdict; one row per look, budget 1) and record the look in it in the same change.
