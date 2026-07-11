@@ -11,7 +11,7 @@
 - [ ] Tests (synthetic): read variants, aggregate exact VWAP/OHLC/bucket, reconcile 100%/planted-mismatch. `uv run pytest` green.
 
 ## Task 2 — sample real-data reconciliation
-- [ ] Scratchpad run: extract a sample pair/window (e.g. BTC/EUR = XBTEUR.csv from the Q1-2026 ZIP) → tick bars 1h/4h/1d → reconcile vs `data/ohlc-full/BTC/EUR/{60,240,1440}.parquet` → `docs/tick-reconciliation-report.md` (% within tolerance + honest read of any VWAP-proxy offset).
+- [ ] Scratchpad run: extract a sample pair/window (e.g. BTC/EUR = XBTEUR.csv from the Q1-2026 ZIP) → tick bars 1h/4h/1d → reconcile vs `data/ohlc-full/BTC/EUR/{60,240,1440}.parquet` → `docs/research/02.phase1-tick-reconciliation-report.md` (% within tolerance + honest read of any VWAP-proxy offset).
 
 ## Task 3 — closeout
 - [ ] T0004 → partial/resolved + index; iter-039 iterations-history entry.

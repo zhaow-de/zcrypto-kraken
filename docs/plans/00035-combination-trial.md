@@ -176,7 +176,7 @@ Scratchpad `combination_trial_run.py` per spec §construction + §trial-protocol
 
 ### Task 3 (orchestrator-run): registry append
 
-Scratchpad append driver mirroring `a2_registry_write.py`: `family="P1"`, `variant="B3vtdyn+gov+cap"`, `n_trials_in_family=1`, `spec_hash=sha256(docs/specs/00035-…)`, `dataset_hash` verified == record 1's (STOP on mismatch), `seeds=[42, 7, 1234]`, metrics from Task 2, verdict per the pre-registered criteria, notes carrying the two governor properties + cap stats. Commit the updated `docs/research/trial-registry.jsonl` (registry data commit; reviewed as part of the branch).
+Scratchpad append driver mirroring `a2_registry_write.py`: `family="P1"`, `variant="B3vtdyn+gov+cap"`, `n_trials_in_family=1`, `spec_hash=sha256(docs/specs/00035-…)`, `dataset_hash` verified == record 1's (STOP on mismatch), `seeds=[42, 7, 1234]`, metrics from Task 2, verdict per the pre-registered criteria, notes carrying the two governor properties + cap stats. Commit the updated `docs/reference/trial-registry.jsonl` (registry data commit; reviewed as part of the branch).
 
 ### Task 4 (orchestrator-run, closeout): iterations-history + decisions log
 

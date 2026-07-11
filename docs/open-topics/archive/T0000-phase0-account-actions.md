@@ -4,7 +4,7 @@ status: resolved
 
 # Phase 0 human account actions & live-account confirmations (D3(i))
 
-**Resolved (iter-023 / Phase-2 close-out, 2026-07-08):** the human account actions + live confirmations completed 2026-07-07 (see `## Done so far`); the one deferred sub-item — folding the July-9 fee schedule (`docs/kraken-fee-schedule.md`) into the Phase-2 cost model — landed in **iter-017** (`cli/costs/` encodes the 17-tier July-9 spot ladder + the per-base margin open/rollover rates verbatim from that doc). Nothing remains.
+**Resolved (iter-023 / Phase-2 close-out, 2026-07-08):** the human account actions + live confirmations completed 2026-07-07 (see `## Done so far`); the one deferred sub-item — folding the July-9 fee schedule (`docs/reference/kraken-fee-schedule.md`) into the Phase-2 cost model — landed in **iter-017** (`cli/costs/` encodes the 17-tier July-9 spot ladder + the per-base margin open/rollover rates verbatim from that doc). Nothing remains.
 
 ## Context — what
 
@@ -16,12 +16,12 @@ These gate downstream work and cannot be done autonomously (they require logging
 
 ## Findings so far
 
-Researched and verified against official Kraken sources on 2026-07-07 (the full schedule lives in `docs/kraken-fee-schedule.md`). Two material corrections to the master-plan snapshot:
+Researched and verified against official Kraken sources on 2026-07-07 (the full schedule lives in `docs/reference/kraken-fee-schedule.md`). Two material corrections to the master-plan snapshot:
 
 - **Spot-margin eligibility: CONFIRMED by the account holder** (2026-07-07). Margin access is gated by verification tier + margin-enabled (not by account size); EEA retail at Intermediate+ qualifies.
 - **Margin "allowance" is set by Kraken's per-currency pool liquidity, NOT by verification tier** (the memo's "per-tier" framing was imprecise). Public ceilings ≈ EUR 12M / BTC 330 / ETH 4,000 / USD 40M; a $10k book at 2× borrows ≈ €9k / 0.1 BTC / 2.5 ETH → **<0.1% of any allowance**. The real leverage cap is **per-pair max leverage** (EUR majors 2–10×, DOT/EUR & ETH/BTC 2–5×, SOL/BTC 2–4×) + per-pair position-size limits, not allowance. "Far above our size" holds decisively.
-- **Fees roughly double on 2026-07-09, and the "$10k AoP" premise is false.** New base = 0.40% maker / 0.80% taker (was 0.25/0.40); the old 0.20/0.35 now requires $25k of 30-day volume (Tier 4). AoP qualification starts at **$20k held** (Tier 3) — $10k of AoP grants no discount, so our tier is driven by 30-day volume. Full volume-tier + AoP ladder in `docs/kraken-fee-schedule.md`.
-- **Margin open/rollover — confirmed per-base-currency** (2026-07-07, fee-schedule page): the fee is charged on the **extended (borrowed) currency** at that currency's rate, locked at execution. **BTC 0.01–0.02%** opening + same per 4h (~22–44%/yr); **ETH/SOL/XRP/ADA/LINK/DOGE/LTC/DOT/AVAX 0.02–0.04%** (~44–88%/yr). A short extends the base crypto → the table's rate; a margin long extends the fiat (~0.025% per the article's worked example). This **quantifies §4**: short BTC is ~2× cheaper than short alts — the alt-short carry is *worse* than the §4 ~22–44% assumption. Trade fees apply on open **and** close (none on settling in kind); 3% liquidation fee at index. Full table in `docs/kraken-fee-schedule.md`.
+- **Fees roughly double on 2026-07-09, and the "$10k AoP" premise is false.** New base = 0.40% maker / 0.80% taker (was 0.25/0.40); the old 0.20/0.35 now requires $25k of 30-day volume (Tier 4). AoP qualification starts at **$20k held** (Tier 3) — $10k of AoP grants no discount, so our tier is driven by 30-day volume. Full volume-tier + AoP ladder in `docs/reference/kraken-fee-schedule.md`.
+- **Margin open/rollover — confirmed per-base-currency** (2026-07-07, fee-schedule page): the fee is charged on the **extended (borrowed) currency** at that currency's rate, locked at execution. **BTC 0.01–0.02%** opening + same per 4h (~22–44%/yr); **ETH/SOL/XRP/ADA/LINK/DOGE/LTC/DOT/AVAX 0.02–0.04%** (~44–88%/yr). A short extends the base crypto → the table's rate; a margin long extends the fiat (~0.025% per the article's worked example). This **quantifies §4**: short BTC is ~2× cheaper than short alts — the alt-short carry is *worse* than the §4 ~22–44% assumption. Trade fees apply on open **and** close (none on settling in kind); 3% liquidation fee at index. Full table in `docs/reference/kraken-fee-schedule.md`.
 - **Live-account confirmations (2026-07-07):** fee tier **Tier 1**, 30-day spot volume **$0.00**; the order-form **Leverage dropdown matches the iter-002 snapshot exactly** (EUR majors 2–10×, DOT/EUR & ETH/BTC 2–5×, SOL/BTC 2–4×); the **read-only API key is created, in `.env`, and verified working** (Balance / Ledgers / TradesHistory all OK).
 
 ## Done so far
@@ -32,8 +32,8 @@ All Phase-0 human account actions and live confirmations are **complete** (2026-
 - **Read-only API key** — created (Settings → API; scopes enabled: Query funds + Query ledger entries + Query closed orders & trades; open-orders / WebSocket / all order + deposit + withdraw perms left off), placed in `.env`, and **verified working** (Balance / Ledgers / TradesHistory all return OK). A **trade-scoped** key is deferred to Phase 6.
 - **Fee tier** — Kraken Pro → Fee tab: **Tier 1**, 30-day spot volume **$0.00**; AoP moot at our size; plan on base 0.40 / 0.80 (new schedule).
 - **Per-major leverage** — the order-form Leverage dropdown matches the iter-002 snapshot exactly (EUR majors 2–10×, DOT/EUR & ETH/BTC 2–5×, SOL/BTC 2–4×). (Watch the live margin level once a real position exists: call ~80%, liquidation ~40%.)
-- **Margin open + rollover** — per-base-currency, recorded: **BTC 0.01–0.02%/4h; alts 0.02–0.04%/4h** (locked at execution). Full table + annualization in `docs/kraken-fee-schedule.md`.
+- **Margin open + rollover** — per-base-currency, recorded: **BTC 0.01–0.02%/4h; alts 0.02–0.04%/4h** (locked at execution). Full table + annualization in `docs/reference/kraken-fee-schedule.md`.
 
 ## Suggested next steps
 
-- **(✓ done — iter-017)** Fold the July-9 schedule (`docs/kraken-fee-schedule.md`) into the Phase-2 cost model — landed in `cli/costs/` (`SPOT_FEE_TIERS` + `MARGIN_RATES`). The master-plan §1/§4/§14 fee numbers (0.25 / 0.40 base) are superseded by this schedule.
+- **(✓ done — iter-017)** Fold the July-9 schedule (`docs/reference/kraken-fee-schedule.md`) into the Phase-2 cost model — landed in `cli/costs/` (`SPOT_FEE_TIERS` + `MARGIN_RATES`). The master-plan §1/§4/§14 fee numbers (0.25 / 0.40 base) are superseded by this schedule.

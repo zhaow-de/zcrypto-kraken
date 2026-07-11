@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extend `docs/benchmark-b0-b1-report.md` with the **§9.6 cost-stress panel** — re-run the four BTC strategies (B0, gated-B0, B1, gated-B1) through the backtester at the confirmed Tier-1 Kraken fees (0 / 0.40% maker base / 0.60% = 1.5× / 0.80% = 2× = taker) — answering the master plan's §9.6 deployment gate ("a strategy that dies at 1.5× costs is not deployable"), and recording the honest, non-trivial finding the stress surfaces.
+**Goal:** Extend `docs/research/04.phase3-benchmark-b0-b1-report.md` with the **§9.6 cost-stress panel** — re-run the four BTC strategies (B0, gated-B0, B1, gated-B1) through the backtester at the confirmed Tier-1 Kraken fees (0 / 0.40% maker base / 0.60% = 1.5× / 0.80% = 2× = taker) — answering the master plan's §9.6 deployment gate ("a strategy that dies at 1.5× costs is not deployable"), and recording the honest, non-trivial finding the stress surfaces.
 
 **Architecture:** No new code — a reproducible real-data run (scratchpad script) composing the existing `sma_gate`/`vol_target`/`buy_and_hold`/`returns_from_prices`/`run_backtest` with the `fee_rate` parameter, and an update to the committed report. The fee tiers come from `cli.costs.spot_fee_rates(0.0)` (Tier-1 maker 0.40% / taker 0.80%). Light doc iteration (no spec).
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **No code change** — the run uses existing components. The run script is a THROWAWAY scratchpad (not committed); the committed artifact is the updated report. `docs/benchmark-b0-b1-report.md` is NOT on the mdformat allowlist — write clean markdown by hand. No CLI/README change.
+- **No code change** — the run uses existing components. The run script is a THROWAWAY scratchpad (not committed); the committed artifact is the updated report. `docs/research/04.phase3-benchmark-b0-b1-report.md` is NOT on the mdformat allowlist — write clean markdown by hand. No CLI/README change.
 - **The fitted base cost is the Tier-1 maker fee, 0.40%** (`spot_fee_rates(0.0)["maker"]` = 0.0040). §9.6 stress multiples are **1.5× → 0.60%** and **2× → 0.80%** (which coincides with the Tier-1 taker fee 0.80%). Present zero-fee as the idealized reference column.
 - **Report the honest finding, not a headline.** The stress surfaces a Sharpe crossover (below) — the report must state it, per the distrust-the-instrument discipline. Do NOT claim gated-B1 is unconditionally best after costs.
 
@@ -18,7 +18,7 @@
 
 ### Task 1: Run + add the cost-stress section to the report
 
-**Files:** Modify `docs/benchmark-b0-b1-report.md`.
+**Files:** Modify `docs/research/04.phase3-benchmark-b0-b1-report.md`.
 
 - [ ] **Step 1: Write + run** a scratchpad script (e.g. under the session scratchpad dir, NOT committed) that loads `data/ohlc-full/BTC/EUR/1440.parquet`, builds the four strategies exactly as in the existing report —
   - **B0** = `buy_and_hold(len(rets))`
@@ -41,7 +41,7 @@
 
   gated-B1 supporting metrics (annualized / maxDD) across the same fee levels: annualized **11.12% → 9.85% → 9.22% → 8.59%**; maxDD **12.3% → 15.2% → 16.6% → 18.0%**. B0 is fee-immune (annualized ~66.6% at all levels, maxDD 82.5% flat) because it barely trades.
 
-- [ ] **Step 2: Add a `## Cost stress (§9.6)` section** to `docs/benchmark-b0-b1-report.md`, placed **after `## Interpretation`** and **before `## Distrust-the-instrument note`**. It must contain:
+- [ ] **Step 2: Add a `## Cost stress (§9.6)` section** to `docs/research/04.phase3-benchmark-b0-b1-report.md`, placed **after `## Interpretation`** and **before `## Distrust-the-instrument note`**. It must contain:
   - A one-line framing: §9.6 requires every headline result re-run at 1.5× and 2× the fitted cost model; the fitted base is the **Tier-1 Kraken maker fee 0.40%** (`cli.costs.spot_fee_rates`), so the stress ladder is 0.40% → 0.60% (1.5×) → 0.80% (2× = Tier-1 taker). The rule: a strategy that dies at 1.5× is not deployable.
   - The **Sharpe-by-fee-level table** above (real numbers from your run).
   - The interpretation, stated honestly:

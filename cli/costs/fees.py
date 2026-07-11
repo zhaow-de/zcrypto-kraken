@@ -5,7 +5,7 @@ import math
 from cli.costs.errors import CostModelError
 
 # (min_30d_volume_usd, maker, taker) as fractions — Kraken spot schedule effective 2026-07-09
-# (docs/kraken-fee-schedule.md). Ascending by volume; tier is 1-based on this order.
+# (docs/reference/kraken-fee-schedule.md). Ascending by volume; tier is 1-based on this order.
 SPOT_FEE_TIERS: tuple[tuple[float, float, float], ...] = (
     (0, 0.0040, 0.0080),
     (2_500, 0.0030, 0.0060),

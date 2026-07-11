@@ -184,7 +184,7 @@ def test_trial34_verdict_regression():
     stress15 = [book[k] - statistics.mean(turn_offsets[o][k] for o in range(cadence)) * 0.003 for k in range(n)]
     bench = build_combined_system(prices).benchmark_net_of_cost
 
-    reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "research" / "trial-registry.jsonl")
+    reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl")
     pps = [r.metrics["per_period_sharpe"] for r in reg.records if r.family == "A1" and "per_period_sharpe" in r.metrics]
     var_trials = statistics.variance(pps[:32])
 

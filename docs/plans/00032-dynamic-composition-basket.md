@@ -44,11 +44,11 @@
 
 ### Task 2: full-history run + report + finding-1 verdict
 
-**Files:** Create `docs/benchmark-b2-dynamic-report.md` (+ a scratchpad script under the scratchpad dir; not committed).
+**Files:** Create `docs/research/04.phase3-benchmark-b2-dynamic-report.md` (+ a scratchpad script under the scratchpad dir; not committed).
 
 - [ ] **Step 1** — scratchpad script: load the 10 majors' `data/ohlc-full/<BASE>/EUR/1440.parquet` via `cli.ohlc.dataset.read_parquet`; build the **union `ts` calendar** (sorted union of all `ts`); map each asset's close onto it (`None` where no bar); assert BTC spans 2013-09-10→2026-03-31 and composition grows (n present per period 2→10).
 - [ ] **Step 2** — run `dynamic_inverse_vol_basket(union_prices, lookback=30)` (raw) and a vol-targeted version (`vol_target(basket_returns, target_vol=0.10/365**0.5, lookback=30)` applied — mirror the B2 report's method) through `run_backtest(..., periods_per_year=365, fee_rate=0.0)`; compute total return / annualized / Sharpe / maxDD. Do the same for BTC B0 (buy-hold) + B1 (vol-target) over the **matched full-history window** and over the **fixed AVAX-limited window** (apples-to-apples vs the existing B2 report).
-- [ ] **Step 3** — plausibility gate: metrics finite, non-degenerate, composition grows as expected, dynamic-basket-over-fixed-window ≈ the committed B2 report's numbers (sanity cross-check). Only then write `docs/benchmark-b2-dynamic-report.md`: the results tables (full-history + fixed-window), the composition-growth summary, and the **finding-1 read** — does the full-history dynamic basket (raw and/or vol-targeted) beat single-asset BTC risk-adjusted, and is B2's Phase-3 weakness structural or a window artifact.
+- [ ] **Step 3** — plausibility gate: metrics finite, non-degenerate, composition grows as expected, dynamic-basket-over-fixed-window ≈ the committed B2 report's numbers (sanity cross-check). Only then write `docs/research/04.phase3-benchmark-b2-dynamic-report.md`: the results tables (full-history + fixed-window), the composition-growth summary, and the **finding-1 read** — does the full-history dynamic basket (raw and/or vol-targeted) beat single-asset BTC risk-adjusted, and is B2's Phase-3 weakness structural or a window artifact.
 - [ ] **Step 4 — commit** (`docs(benchmark): full-history dynamic-composition basket report + finding-1 verdict`).
 
 ### Task 3: closeout

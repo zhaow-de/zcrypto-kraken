@@ -1,7 +1,7 @@
 # Kraken Cost Model — Fee Ladder + Margin Accrual — Design (Phase 2)
 
 **Iteration:** iter-017 · **Phase:** 2 (Validation Harness & Cost Model First) · **Status:** design approved (unattended loop)
-**Master-plan refs:** §7/§8 (explicit cost model), §12 Phase 2 exit bar ("cost model validated…"), §4 (short carry). **Data source:** `docs/kraken-fee-schedule.md` (confirmed 2026-07-07, T0000). Opens `cli/costs/`.
+**Master-plan refs:** §7/§8 (explicit cost model), §12 Phase 2 exit bar ("cost model validated…"), §4 (short carry). **Data source:** `docs/reference/kraken-fee-schedule.md` (confirmed 2026-07-07, T0000). Opens `cli/costs/`.
 
 ## Problem & context
 
@@ -16,7 +16,7 @@ Post-July-9 base tier is **0.40% maker / 0.80% taker** (a taker round trip = 1.6
 ## Non-goals
 
 - **No spread term** — T0003-gated (captured L2); enters later as a parameter. No combined "total trade cost" function yet (it needs spread).
-- **No AoP path** — moot below $20k held (`docs/kraken-fee-schedule.md`: our tier is volume-driven); YAGNI, deferred until the account nears $20k AoP.
+- **No AoP path** — moot below $20k held (`docs/reference/kraken-fee-schedule.md`: our tier is volume-driven); YAGNI, deferred until the account nears $20k AoP.
 - No stablecoin/FX cheaper schedule (our universe is EUR/BTC-quoted, on the standard schedule); no futures.
 - No `zcrypto` CLI subcommand; no README change. No new deps.
 
@@ -34,7 +34,7 @@ New package `cli/costs/` (module + `errors.py` + `__init__.py`), mirroring `cli/
 
 **`cli/costs/margin.py`:**
 
-- `MARGIN_RATES: dict[str, tuple[float, float]]` — base symbol → `(low, high)` fraction per open **and** per 4h rollover (same band, per `docs/kraken-fee-schedule.md`): `BTC: (.0001, .0002)`; each of `ETH, SOL, XRP, ADA, LINK, DOGE, LTC, DOT, AVAX: (.0002, .0004)`.
+- `MARGIN_RATES: dict[str, tuple[float, float]]` — base symbol → `(low, high)` fraction per open **and** per 4h rollover (same band, per `docs/reference/kraken-fee-schedule.md`): `BTC: (.0001, .0002)`; each of `ETH, SOL, XRP, ADA, LINK, DOGE, LTC, DOT, AVAX: (.0002, .0004)`.
 - `margin_rate(base: str, *, band: str = "high") -> float` — the low/high rate for `base`. Raises `CostModelError` on an unknown base or `band not in {"low", "high"}`.
 - `margin_carry(notional: float, hold_hours: float, rate: float) -> float` — `notional * rate * (1 + n_rollovers)` where `n_rollovers = floor(hold_hours / 4)` (opening fee at open + one rollover per completed 4-hour interval; matches §4's 24h → 6 rollovers, and Kraken's "first rollover at +4h"). Raises `CostModelError` if `notional < 0`, `hold_hours < 0`, `rate < 0`, or any is non-finite.
 

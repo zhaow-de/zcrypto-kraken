@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **No code change.** Throwaway scratchpad (session scratchpad dir, not committed); committed artifacts are the two extended reports (`docs/benchmark-b0-b1-report.md`, `docs/benchmark-b2-basket-report.md`). No CLI/README change.
+- **No code change.** Throwaway scratchpad (session scratchpad dir, not committed); committed artifacts are the two extended reports (`docs/research/04.phase3-benchmark-b0-b1-report.md`, `docs/research/04.phase3-benchmark-b2-basket-report.md`). No CLI/README change.
 - **Reproducibility (pin everything):** `bootstrap_ci(net_series, statistic=annualized-Sharpe, mean_block=ℓ, n_resamples=2000, alpha=0.05, seed=42)`, where `statistic = lambda r: sharpe(r, periods_per_year=365)` and `net_series[t] = positions[t] * asset_returns[t]` (zero fee). Block length **ℓ ≈ n^(1/3)** (Politis-White rule of thumb): **ℓ=16** for the 4580-day BTC full history, **ℓ=12** for the 1561-day common window.
 - **Honest framing (the point):** the CIs show the Sharpe *differences* are not significant. Do NOT present the CIs as confirming gated-B1's superiority on Sharpe — they don't. gated-B1's case rests on point estimate + highest/robustly-positive lower bound + drawdown control, explicitly acknowledging the overlap.
 
@@ -18,7 +18,7 @@
 
 ### Task 1: Run + add CI sections to both reports
 
-**Files:** Modify `docs/benchmark-b0-b1-report.md` and `docs/benchmark-b2-basket-report.md`.
+**Files:** Modify `docs/research/04.phase3-benchmark-b0-b1-report.md` and `docs/research/04.phase3-benchmark-b2-basket-report.md`.
 
 - [ ] **Step 1: Write + run** a scratchpad script (session scratchpad dir, NOT committed) that:
   - **Full-history BTC family** (from `data/ohlc-full/BTC/EUR/1440.parquet`, full history): compute net-return series for B0 = `buy_and_hold`, gated-B0 = `sma_gate(prices, window=200)`, B1 = `vol_target(rets, target_vol=0.10/(365**0.5), lookback=30, max_leverage=1.0)`, gated-B1 = `sma_gate × B1`; bootstrap CI each with **ℓ=16**.
@@ -49,12 +49,12 @@
 
   (Robustness — the qualitative conclusions hold across ℓ∈{8,16,24} and seed∈{1,42,99}: gated-B1's full-history lower bound stays in ~[0.53, 0.64] > 0; every common-window CI keeps straddling zero.)
 
-- [ ] **Step 2: Add a `## Statistical significance (bootstrap CIs)` section to `docs/benchmark-b0-b1-report.md`** (placed after `## Interpretation` / the `### The 200-day regime gate` subsection, before `## Distrust-the-instrument note`):
+- [ ] **Step 2: Add a `## Statistical significance (bootstrap CIs)` section to `docs/research/04.phase3-benchmark-b0-b1-report.md`** (placed after `## Interpretation` / the `### The 200-day regime gate` subsection, before `## Distrust-the-instrument note`):
   - Method one-liner: 95% percentile CI on the annualized Sharpe under the stationary block bootstrap (`cli.validation.bootstrap_ci`, Politis-Romano), ℓ=16≈n^(1/3), 2000 resamples, seed=42.
   - The full-history 4-row CI table above.
   - Finding: **all four Sharpes are significantly positive** (lower bounds ~0.43–0.61 > 0) **but their CIs overlap heavily — the differences are not statistically distinguishable** from a single ~12-year path. gated-B1 has both the highest point (1.247) and the highest, robustly-positive lower bound (~0.61, stable across block lengths/seeds). So the bar is chosen on point estimate + best lower bound + drawdown control (12.3% vs 82.5%), **not** on a significant Sharpe edge over B0/B1 — which does not exist.
 
-- [ ] **Step 3: Add a `## Statistical significance (bootstrap CIs)` section to `docs/benchmark-b2-basket-report.md`** (placed after `## B3 and B4: gating and shorting the basket`, before `## Distrust-the-instrument note`):
+- [ ] **Step 3: Add a `## Statistical significance (bootstrap CIs)` section to `docs/research/04.phase3-benchmark-b2-basket-report.md`** (placed after `## B3 and B4: gating and shorting the basket`, before `## Distrust-the-instrument note`):
   - Same method one-liner but ℓ=12 (the 1561-day common window).
   - The common-window 6-row CI table above.
   - Finding: **every CI straddles zero** — over this short ~4.3-year window, not one strategy has a significantly-positive Sharpe, and B4's −0.136 is not significantly negative ([−1.05, 0.80]). The basket's underperformance and B4's disaster are directional point estimates, not significant results. This is a power problem: 1561 daily returns through a single bull→bear→recovery cycle cannot distinguish these Sharpes — reinforcing the case for the full-history basket (open topic **T0007**), which would have the horizon the common window lacks.

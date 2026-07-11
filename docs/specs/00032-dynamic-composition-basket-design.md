@@ -1,7 +1,7 @@
 # T0007 — full-history dynamic-composition inverse-vol basket — Design
 
 **Iteration:** iter-044 · **Phase:** 4 (Alpha sprints — the honest B2 base for A1's finding-1) · **Status:** design approved (unattended loop)
-**Refs:** open topic `docs/open-topics/archive/T0007-dynamic-composition-basket.md`, master-plan §9 (B2), `docs/research/05.phase4-orientation.md` finding 1, `docs/benchmark-b2-basket-report.md` (the fixed-window B2). Reuses `cli/benchmark/strategies.py` (`inverse_vol_basket`, `vol_target`, `returns_from_prices`) + `cli/backtest/engine.py` (`run_backtest`).
+**Refs:** open topic `docs/open-topics/archive/T0007-dynamic-composition-basket.md`, master-plan §9 (B2), `docs/research/05.phase4-orientation.md` finding 1, `docs/research/04.phase3-benchmark-b2-basket-report.md` (the fixed-window B2). Reuses `cli/benchmark/strategies.py` (`inverse_vol_basket`, `vol_target`, `returns_from_prices`) + `cli/backtest/engine.py` (`run_backtest`).
 
 ## Problem & context
 
@@ -15,11 +15,11 @@ The B2 benchmark (iter-030) is a **fixed 10-asset basket over the common window*
    - Weight qualifying assets by `1/stdev(trailing window)`, **renormalize over that period's qualifying set**, and `portfolio[t] = Σ wᵢ·ret_i[t]`. No qualifying asset (all-absent / warm-up / zero-vol) → `0.0`.
    - This is strictly causal: a period's weights use only returns **before** `t`, so they are invariant to that period's realized returns. Validation mirrors `inverse_vol_basket` (`BenchmarkError` on bad `lookback`/empty dict/unequal lengths; `None` is the only allowed non-finite).
 
-2. **Full-history run + report** (`docs/benchmark-b2-dynamic-report.md`, driven by a scratchpad script — mirroring the fixed-window B2 report): build the union-calendar `prices_by_asset` from `data/ohlc-full/<BASE>/EUR/1440.parquet` (10 majors; the union = the sorted union of all `ts`, `None` where an asset has no bar), run `dynamic_inverse_vol_basket` (raw + vol-targeted to 10%/yr) and compare, over the **full 2013→2026 horizon**, against single-asset BTC B0 (buy-hold) and B1 (vol-target) — plus, for apples-to-apples, the same over the fixed AVAX-limited window. Record composition growth (n-assets over time) and the **finding-1 verdict**: does the full-history dynamic basket (raw and/or vol-targeted) beat single-asset BTC risk-adjusted?
+2. **Full-history run + report** (`docs/research/04.phase3-benchmark-b2-dynamic-report.md`, driven by a scratchpad script — mirroring the fixed-window B2 report): build the union-calendar `prices_by_asset` from `data/ohlc-full/<BASE>/EUR/1440.parquet` (10 majors; the union = the sorted union of all `ts`, `None` where an asset has no bar), run `dynamic_inverse_vol_basket` (raw + vol-targeted to 10%/yr) and compare, over the **full 2013→2026 horizon**, against single-asset BTC B0 (buy-hold) and B1 (vol-target) — plus, for apples-to-apples, the same over the fixed AVAX-limited window. Record composition growth (n-assets over time) and the **finding-1 verdict**: does the full-history dynamic basket (raw and/or vol-targeted) beat single-asset BTC risk-adjusted?
 
 ## Non-goals
 
-Not an alpha trial — this is a **B2 benchmark variant** (report + decision-log verdict, **no** trial-registry entry; the registry is for A/B/C alpha families). No dynamic B3 (gate × basket) / B4 (basket + short) this pass — noted as a follow-up once the basket base is characterized. No new metrics/backtester (reuse the stack). No cost model beyond what the B2 report used (benchmark idealization, zero-fee, consistent with `docs/benchmark-b2-basket-report.md`; A1's kill bar applies costs).
+Not an alpha trial — this is a **B2 benchmark variant** (report + decision-log verdict, **no** trial-registry entry; the registry is for A/B/C alpha families). No dynamic B3 (gate × basket) / B4 (basket + short) this pass — noted as a follow-up once the basket base is characterized. No new metrics/backtester (reuse the stack). No cost model beyond what the B2 report used (benchmark idealization, zero-fee, consistent with `docs/research/04.phase3-benchmark-b2-basket-report.md`; A1's kill bar applies costs).
 
 ## Testing / done (distrust the instrument)
 

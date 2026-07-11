@@ -29,7 +29,7 @@ Phase 1 needs the primary research dataset: per-pair OHLC bars in a canonical, t
 - `ingest.py` — `ingest_basket(pair_keys: dict[str,str], intervals: list[int], out_dir: Path, fetched_at: str, *, fetch_fn=fetch_ohlc) -> dict`: for each `(display_symbol -> kraken_pair_key)` × interval, fetch → `to_frame` → write `out_dir/{symbol}/{interval}.parquet`; return a **manifest** dict (per series: symbol, interval, rows, first_ts, last_ts, dataset_hash; plus `fetched_at`). `fetched_at`/`fetch_fn` injected for testability. Pair-key resolution reuses `cli.snapshot` (derive the Kraken pair key per candidate symbol from a live `AssetPairs`), so the two reference-data modules stay consistent.
 - `__init__.py` — re-exports + `DEFAULT_INTERVALS = [1440, 240, 60]` (1d / 4h / 1h — the §6 decision cadence).
 
-**Storage:** `data/ohlc/` (gitignored) holds the Parquet tree + `manifest.json`. The committed artifact is `docs/data-catalog.md` (NOT a research report → not on the mdformat allowlist; hand-formatted): the dataset's pairs/intervals/rows/span/hashes/fetched_at, so the dataset is reproducible-by-hash without committing the (large, changing) Parquet.
+**Storage:** `data/ohlc/` (gitignored) holds the Parquet tree + `manifest.json`. The committed artifact is `docs/reference/data-catalog.md` (NOT a research report → not on the mdformat allowlist; hand-formatted): the dataset's pairs/intervals/rows/span/hashes/fetched_at, so the dataset is reproducible-by-hash without committing the (large, changing) Parquet.
 
 ## Testing
 
@@ -45,4 +45,4 @@ Phase 1 needs the primary research dataset: per-pair OHLC bars in a canonical, t
 
 ## Closeout (planned)
 
-On merge: generate the live v0 dataset + `docs/data-catalog.md`; append the `iter-004` iterations-history entry.
+On merge: generate the live v0 dataset + `docs/reference/data-catalog.md`; append the `iter-004` iterations-history entry.
