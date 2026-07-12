@@ -26,6 +26,11 @@ CYCLE_TS = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
 PAIRS = ("BTC", "ETH")
 TARGETS = {"BTC": 0.2, "ETH": 0.05}
 
+# Multi-day fixtures (Fix 2 regression coverage): a day starting at hour 0 so evaluate_gate never
+# excludes it as a mid-day-start partial first day (see cli/engine/concordance.py).
+GATE_CYCLE_HOURS = (0, 4, 8, 12, 16, 20)
+DAY0 = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
+
 
 def _patch_config(monkeypatch, tmp_path: Path) -> EngineConfig:
     """Point load_config (as cli.engine.command sees it) at tmp-dir engine paths."""
@@ -56,7 +61,13 @@ def _snapshot_frame(ts: list[datetime], closes: list[float]) -> pl.DataFrame:
     return pl.DataFrame({"ts": ts, "close": closes}, schema={"ts": pl.Datetime("us", "UTC"), "close": pl.Float64})
 
 
-def _write_success_record(journal_dir: Path, cycle_ts: datetime, targets: dict[str, float] = TARGETS) -> Path:
+def _write_success_record(
+    journal_dir: Path,
+    cycle_ts: datetime,
+    targets: dict[str, float] = TARGETS,
+    *,
+    completed_at: datetime | None = None,
+) -> Path:
     rel_dir = Path(f"{cycle_ts:%Y-%m-%d}") / "snapshots" / f"cycle-{cycle_ts:%H}"
     entries = []
     for interval in (1440, 240):
@@ -81,7 +92,7 @@ def _write_success_record(journal_dir: Path, cycle_ts: datetime, targets: dict[s
         snapshots=tuple(entries),
         final_targets=dict(targets),
         started_at=cycle_ts + timedelta(seconds=95),
-        completed_at=cycle_ts + timedelta(minutes=3),
+        completed_at=completed_at if completed_at is not None else cycle_ts + timedelta(minutes=3),
         code_version="test",
         builder_path="fast",
     )
@@ -89,6 +100,19 @@ def _write_success_record(journal_dir: Path, cycle_ts: datetime, targets: dict[s
     path = journal_dir / f"{cycle_ts:%Y-%m-%d}" / f"cycle-{cycle_ts:%H}.json"
     path.write_text(to_json(record) + "\n")
     return path
+
+
+def _write_clean_day(journal_dir: Path, day: datetime, *, skip_hour: int | None = None, late_hour: int | None = None) -> None:
+    """Write a full 6-cycle day (00/04/08/12/16/20 UTC), mirroring how test_engine_concordance.py's
+    _clean_day builds multi-day gate fixtures -- optionally dropping one boundary (`skip_hour`, a
+    missing cycle) or pushing one boundary's completed_at outside the 30-minute freshness window
+    (`late_hour`, a late cycle)."""
+    for h in GATE_CYCLE_HOURS:
+        if h == skip_hour:
+            continue
+        cycle_ts = day.replace(hour=h)
+        completed_at = cycle_ts + timedelta(minutes=31) if h == late_hour else None
+        _write_success_record(journal_dir, cycle_ts, completed_at=completed_at)
 
 
 def _fake_builder(targets: dict[str, float]):
@@ -114,37 +138,93 @@ def clean_journal(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture
 def mismatch_journal(tmp_path, monkeypatch) -> Path:
-    """A success record whose schema_version is tampered with post-write -- replay_cycle's
-    validate_record rejects it, so _evaluate_journal counts a validation failure (a mismatch_total
-    contributor), same shape as test_replay_classifies_a_validation_failure."""
+    """A full DAY0 (6 cycles) whose 00:00 record's schema_version is tampered with post-write --
+    replay_cycle's validate_record rejects it, so _evaluate_journal counts a validation failure (a
+    mismatch_total contributor), same shape as test_replay_classifies_a_validation_failure. Wrapped
+    in a full evaluated day (not a lone mid-day cycle) so evaluate_gate actually SCORES the day
+    unclean -- Fix 2's `clean` check reads status.streak/last_failure, which only reflect complete,
+    scored days."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
-    record_path = _write_success_record(journal, CYCLE_TS)
+    _write_clean_day(journal, DAY0)
+    record_path = journal / f"{DAY0:%Y-%m-%d}" / f"cycle-{DAY0:%H}.json"
     payload = json.loads(record_path.read_text())
     payload["schema_version"] = 2
     record_path.write_text(json.dumps(payload))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
-    monkeypatch.setattr(command, "_utc_now", lambda: CYCLE_TS + timedelta(minutes=10))
+    monkeypatch.setattr(command, "_utc_now", lambda: DAY0.replace(hour=21))
     return journal
 
 
 @pytest.fixture
 def sidecar_journal(tmp_path, monkeypatch) -> Path:
-    """A journal with ONLY a failed-cycle sidecar (the normal stale_pair/refresh_deadline failure
-    path run_cycle writes) -- no success record. _evaluate_journal tallies it in sidecar_count and
-    evaluate_gate scores the day unclean, so mismatch_total must be >= 1 and the ping must be /fail."""
+    """DAY0's 12:00 boundary has ONLY a failed-cycle sidecar (the normal stale_pair/
+    refresh_deadline failure path run_cycle writes, no success record for that cycle); the other 5
+    boundaries are clean successes, so the day is fully scored. _evaluate_journal tallies the
+    sidecar in sidecar_count and evaluate_gate scores the day unclean, so mismatch_total must be
+    >= 1 and the ping must be /fail."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
-    day_dir = journal / f"{CYCLE_TS:%Y-%m-%d}"
-    day_dir.mkdir(parents=True)
+    _write_clean_day(journal, DAY0, skip_hour=12)
+    sidecar_ts = DAY0.replace(hour=12)
+    day_dir = journal / f"{DAY0:%Y-%m-%d}"
     payload = {
-        "cycle_ts": CYCLE_TS.isoformat(),
-        "completed_at": (CYCLE_TS + timedelta(minutes=1)).isoformat(),
+        "cycle_ts": sidecar_ts.isoformat(),
+        "completed_at": (sidecar_ts + timedelta(minutes=1)).isoformat(),
         "reason": "stale_pair",
         "offending_pairs": ["BTC"],
     }
-    (day_dir / f"failed-cycle-{CYCLE_TS:%H}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    monkeypatch.setattr(command, "_utc_now", lambda: CYCLE_TS + timedelta(minutes=10))
+    (day_dir / f"failed-cycle-{sidecar_ts:%H}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: DAY0.replace(hour=21))
+    return journal
+
+
+@pytest.fixture
+def missing_cycle_journal(tmp_path, monkeypatch) -> Path:
+    """DAY0's only complete day is missing its 12:00 boundary entirely. _evaluate_journal never
+    fabricates absent entries, so mismatch_total stays 0 -- the exact blind spot Fix 2 closes:
+    evaluate_gate's streak/last_failure (missing cycle) must still drive the dead-man to /fail."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    _write_clean_day(journal, DAY0, skip_hour=12)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: DAY0.replace(hour=21))
+    return journal
+
+
+@pytest.fixture
+def late_cycle_journal(tmp_path, monkeypatch) -> Path:
+    """DAY0's only complete day has all 6 boundaries present, but the 08:00 cycle's completed_at
+    falls outside the 30-minute freshness window. Same blind spot as missing_cycle_journal:
+    replay/compare both pass (mismatch_total stays 0), only evaluate_gate's streak reset catches it."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    _write_clean_day(journal, DAY0, late_hour=8)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: DAY0.replace(hour=21))
+    return journal
+
+
+@pytest.fixture
+def recovered_gate_journal(tmp_path, monkeypatch) -> Path:
+    """DAY0 breaks (its 00:00 record's schema_version is tampered with post-write -> a validation
+    failure), then DAY0+1 and DAY0+2 are fully clean -- the gate recovers to streak=2 even though
+    mismatch_total stays >=1 (a cumulative counter over the whole journal). This is the
+    /fail-forever regression: the old `mismatch_total == 0` gate would never clean-ping again once
+    ANY cycle in journal history had failed; the new streak-based gate correctly pings clean."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    day1, day2 = DAY0 + timedelta(days=1), DAY0 + timedelta(days=2)
+    _write_clean_day(journal, DAY0)
+    corrupt_path = journal / f"{DAY0:%Y-%m-%d}" / f"cycle-{DAY0:%H}.json"
+    payload = json.loads(corrupt_path.read_text())
+    payload["schema_version"] = 2
+    corrupt_path.write_text(json.dumps(payload))
+    _write_clean_day(journal, day1)
+    _write_clean_day(journal, day2)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: day2.replace(hour=21))
     return journal
 
 
@@ -211,6 +291,81 @@ def test_gate_export_sidecar_failure_counts_and_pings_fail(tmp_path, monkeypatch
     assert res.exit_code == 0
     assert _prom(out.read_text())["zcrypto_gate_mismatch_total"] >= 1
     assert pings == [("http://hc", False)]
+
+
+def test_gate_export_missing_cycle_in_last_complete_day_pings_fail(tmp_path, monkeypatch, missing_cycle_journal):
+    # A missing cycle breaks evaluate_gate's streak but contributes NOTHING to mismatch_total (Fix
+    # 2's bug: the old `clean = mismatch_total == 0` check was blind to this break entirely).
+    out = tmp_path / "gate.prom"
+    pings: list[tuple[str, bool]] = []
+    monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
+    res = runner.invoke(
+        app,
+        [
+            "engine",
+            "gate-export",
+            "--journal-dir",
+            str(missing_cycle_journal),
+            "--textfile",
+            str(out),
+            "--healthcheck-url",
+            "http://hc",
+        ],
+    )
+    assert res.exit_code == 0
+    assert _prom(out.read_text())["zcrypto_gate_mismatch_total"] == 0
+    assert pings == [("http://hc", False)]
+
+
+def test_gate_export_late_cycle_in_last_complete_day_pings_fail(tmp_path, monkeypatch, late_cycle_journal):
+    # Same blind spot as the missing-cycle case: a late cycle resets the streak but is invisible to
+    # mismatch_total (replay/compare both pass -- only the freshness-window check in evaluate_gate
+    # catches it).
+    out = tmp_path / "gate.prom"
+    pings: list[tuple[str, bool]] = []
+    monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
+    res = runner.invoke(
+        app,
+        [
+            "engine",
+            "gate-export",
+            "--journal-dir",
+            str(late_cycle_journal),
+            "--textfile",
+            str(out),
+            "--healthcheck-url",
+            "http://hc",
+        ],
+    )
+    assert res.exit_code == 0
+    assert _prom(out.read_text())["zcrypto_gate_mismatch_total"] == 0
+    assert pings == [("http://hc", False)]
+
+
+def test_gate_export_recovered_gate_pings_clean_despite_historical_mismatch(tmp_path, monkeypatch, recovered_gate_journal):
+    # The /fail-forever fix: a historical break (still counted in the cumulative mismatch_total)
+    # must not keep pinging /fail once the gate has recovered to a fresh clean streak.
+    out = tmp_path / "gate.prom"
+    pings: list[tuple[str, bool]] = []
+    monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
+    res = runner.invoke(
+        app,
+        [
+            "engine",
+            "gate-export",
+            "--journal-dir",
+            str(recovered_gate_journal),
+            "--textfile",
+            str(out),
+            "--healthcheck-url",
+            "http://hc",
+        ],
+    )
+    assert res.exit_code == 0
+    m = _prom(out.read_text())
+    assert m["zcrypto_gate_mismatch_total"] >= 1  # the historical break is still counted (cumulative)
+    assert m["zcrypto_gate_streak_days"] == 2  # but the gate has since recovered
+    assert pings == [("http://hc", True)]
 
 
 def test_gate_export_stale_journal_pings_fail(tmp_path, monkeypatch, clean_journal):

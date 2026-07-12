@@ -39,9 +39,14 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
    `docs/open-topics/T0029-nas-cpu-no-avx-polars.md`). Read the digest with
    `docker buildx imagetools inspect ghcr.io/zhaow-de/zcrypto-capture:latest-compat`. The image
    already contains the `zcrypto` CLI, so there is no NAS-side build.
-7. Set the deploy-time env vars (see below) in an adjacent `.env` file next to `compose.yaml`, or
+7. Create a new healthchecks.io check (e.g. named `zcrypto-gate-verify`) and copy its ping URL into
+   `GATE_HEALTHCHECK_URL` (Deploy step 8) — a **new, dedicated** check, distinct from the engine's
+   own `HEALTHCHECK_URL`. This is the **sole Alloy-independent paging path** for the gate (spec
+   00049): if Alloy or the whole Grafana pipeline is down, this dead-man still pages, so it is
+   required, not optional.
+8. Set the deploy-time env vars (see below) in an adjacent `.env` file next to `compose.yaml`, or
    export them in the shell that runs `docker compose`.
-8. Start the stack: `/usr/local/bin/docker compose -f compose.yaml up -d` (the full path — Docker
+9. Start the stack: `/usr/local/bin/docker compose -f compose.yaml up -d` (the full path — Docker
    is off the login `PATH` on the NAS). Confirm with
    `/usr/local/bin/docker compose -f compose.yaml ps` that `archive-pull` is `Up` and running as
    `1000:1000`.
@@ -60,7 +65,7 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 | `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` (optional) |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles; the entrypoint defaults to `3600` (hourly) if unset. | deploy-time `.env`, or leave unset for the hourly default |
 | `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, Deploy step 5) |
-| `GATE_HEALTHCHECK_URL` | Dead-man's-switch base URL for `gate-export`: GET on a clean gate, GET `<url>/fail` otherwise. Omit to skip the ping. | deploy-time `.env` (optional) |
+| `GATE_HEALTHCHECK_URL` | Dead-man's-switch base URL for `gate-export`: GET on a clean gate, GET `<url>/fail` otherwise. **Required** — the sole Alloy-independent paging path (Deploy step 7); a new, dedicated healthchecks.io check, distinct from the engine's own `HEALTHCHECK_URL`. | deploy-time `.env` |
 
 ## Reading pull-lag + verify failures
 
@@ -151,3 +156,33 @@ No Docker on the machine this was authored on, so `alloy validate` / `alloy fmt`
 written carefully against the River config language and 00043's design; live `alloy validate` (a
 throwaway `grafana/alloy` container, offline/stub creds) is deferred to the NAS deploy shakedown —
 run it before trusting this file in production.
+
+## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
+
+The committed-as-code dashboard (`infra/grafana/zcrypto-dashboard.json`) and alert rules
+(`infra/grafana/alerts.yaml`) are provisioned onto the already-live Grafana Cloud instance by
+`scripts/grafana-push.sh` — run from any machine with network access to that instance (not
+NAS-side; this is a one-off/on-change push, not a running service). Idempotent: re-run after any
+commit to `infra/grafana/`.
+
+### Deploy
+
+1. Set these env vars (vault-sourced — the Grafana Cloud service-account token, same out-of-band
+   distribution as the other vaulted secrets above):
+   - `GRAFANA_URL` — the Grafana Cloud stack base URL, e.g. `https://<stack>.grafana.net`.
+   - `GRAFANA_SA_TOKEN` — a Grafana service-account token with dashboards + alerting-provisioning
+     write scope.
+   - `GRAFANA_PROM_DS_UID` — the Prometheus datasource UID on the instance (alert-rule queries).
+   - `GRAFANA_LOKI_DS_UID` — the Loki datasource UID on the instance (the ERROR-logs rule).
+   - `GRAFANA_ALERT_FOLDER_UID` — the folder UID the alert rules provision into.
+2. Create the `email` contact point in Grafana (Alerting → Contact points → New contact point,
+   name it exactly `email`, integration `Email`, enter the destination address(es)) — every alert
+   rule in `alerts.yaml` routes to `notification_settings.receiver: email` by name, so the rules
+   fail to notify anywhere until this contact point exists.
+3. Run `scripts/grafana-push.sh` with the env vars from step 1 exported. It pushes the dashboard
+   (overwriting by its fixed uid `zcrypto-main`) then upserts each alert rule (by its own stable
+   `uid`).
+4. On first load of the dashboard, confirm (or set as the template-variable defaults) that its
+   `${DS_PROMETHEUS}`/`${DS_LOKI}` datasource variables resolve to the correct Prometheus/Loki
+   datasources — Grafana auto-binds these on import, but an instance with more than one datasource
+   of either type needs the operator to confirm/select the right one.

@@ -5,7 +5,7 @@
 # its own stable `uid` (GET to check whether it already exists, then POST to create or PUT to
 # update) -- safe to re-run after any commit to infra/grafana/.
 #
-# Env (vault-sourced -- see infra/nas/README.md's Grafana Cloud creds section):
+# Env (vault-sourced -- see infra/nas/README.md's "Grafana dashboard + alerts" section):
 #   GRAFANA_URL                Grafana Cloud stack base URL, e.g. https://<stack>.grafana.net
 #   GRAFANA_SA_TOKEN           Service-account token, dashboards + alerting-provisioning write scope
 #   GRAFANA_PROM_DS_UID        Prometheus datasource UID on the instance (alert rule queries)

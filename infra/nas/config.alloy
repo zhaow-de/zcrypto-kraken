@@ -94,8 +94,20 @@ discovery.relabel "archive_pull_only" {
 
   rule {
     source_labels = ["__meta_docker_container_name"]
-    regex         = "/archive-pull"
-    action        = "keep"
+    // Unanchored: compose sets no `container_name:`, so the real name is project-prefixed (e.g.
+    // `/zcrypto-archive-archive-pull-1`), same prefix the cadvisor panels already match against
+    // (`name=~".*(archive-pull|alloy).*"`).
+    regex  = ".*archive-pull.*"
+    action = "keep"
+  }
+
+  // loki.source.docker attaches no `container` label of its own -- promote a static one so the
+  // shipped streams carry `container="archive-pull"`, matching the dashboard/alert queries
+  // (infra/grafana/alerts.yaml's ERROR-logs rule: `{container="archive-pull"}`). A static
+  // replacement is correct here since this block already filters to only that container.
+  rule {
+    target_label = "container"
+    replacement  = "archive-pull"
   }
 }
 

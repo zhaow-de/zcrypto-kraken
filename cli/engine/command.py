@@ -501,5 +501,13 @@ def gate_export(
         raise _abort(f"could not write gate textfile {textfile}: {exc}") from exc
 
     if healthcheck_url:
-        clean = mismatch_total == 0 and lag is not None and lag <= lag_fail_seconds
+        # The dead-man reflects the gate's CURRENT health across ALL break reasons (missing / late /
+        # mismatch / validation / sidecar -- evaluate_gate resets streak on any of them in the most recent
+        # COMPLETE day), not just the counted mismatch_total. streak>0 => the last complete day is clean
+        # (progressing, at any streak length); streak==0 with no last_failure => no complete day is
+        # evaluable yet (early phase -> liveness only, not a break); streak==0 WITH a last_failure => the
+        # most recent complete day broke -> not clean. A recovered gate (broke earlier, clean since) has
+        # streak>0 => clean, matching Grafana's windowed increase() and fixing the /fail-forever divergence.
+        gate_healthy = status.streak > 0 or status.last_failure is None
+        clean = gate_healthy and lag is not None and lag <= lag_fail_seconds
         _gate_ping(healthcheck_url, clean)
