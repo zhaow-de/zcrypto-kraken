@@ -19,7 +19,18 @@ ENV UV_LINK_MODE=copy \
 # README.md is copied too: hatchling (the build backend) reads `[project].readme` at build time.
 COPY pyproject.toml uv.lock README.md ./
 COPY cli/ cli/
+# POLARS_RUNTIME=default -> keeps the AVX-optimized `polars-runtime-32` (the VPS, AMD EPYC).
+# POLARS_RUNTIME=compat  -> swaps to `polars-runtime-compat` and drops the AVX runtime, so the
+#   image runs on CPUs without AVX/AVX2 (the Synology NAS, Intel Atom Goldmont). Same polars
+#   version either way; see docs/open-topics/T0029-nas-cpu-no-avx-polars.md.
+ARG POLARS_RUNTIME=default
 RUN uv sync --frozen --no-dev \
+    && if [ "$POLARS_RUNTIME" = "compat" ]; then \
+         V="$(uv pip show --python /app/.venv/bin/python polars | awk '/^Version:/{print $2}')"; \
+         uv pip install --python /app/.venv/bin/python "polars-runtime-compat==$V"; \
+         uv pip uninstall --python /app/.venv/bin/python polars-runtime-32; \
+       fi \
+    && /app/.venv/bin/python -c "import polars; polars.DataFrame({'a':[1]}).select('a')" \
     && chown -R capture:capture /app
 
 USER capture
