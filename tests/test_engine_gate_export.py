@@ -128,6 +128,26 @@ def mismatch_journal(tmp_path, monkeypatch) -> Path:
     return journal
 
 
+@pytest.fixture
+def sidecar_journal(tmp_path, monkeypatch) -> Path:
+    """A journal with ONLY a failed-cycle sidecar (the normal stale_pair/refresh_deadline failure
+    path run_cycle writes) -- no success record. _evaluate_journal tallies it in sidecar_count and
+    evaluate_gate scores the day unclean, so mismatch_total must be >= 1 and the ping must be /fail."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    day_dir = journal / f"{CYCLE_TS:%Y-%m-%d}"
+    day_dir.mkdir(parents=True)
+    payload = {
+        "cycle_ts": CYCLE_TS.isoformat(),
+        "completed_at": (CYCLE_TS + timedelta(minutes=1)).isoformat(),
+        "reason": "stale_pair",
+        "offending_pairs": ["BTC"],
+    }
+    (day_dir / f"failed-cycle-{CYCLE_TS:%H}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    monkeypatch.setattr(command, "_utc_now", lambda: CYCLE_TS + timedelta(minutes=10))
+    return journal
+
+
 def _prom(text: str) -> dict[str, float]:
     return {ln.split()[0]: float(ln.split()[1]) for ln in text.splitlines() if ln and not ln.startswith("#")}
 
@@ -174,6 +194,21 @@ def test_gate_export_mismatch_pings_fail_and_counts(tmp_path, monkeypatch, misma
     )
 
     assert result.exit_code == 0, result.output  # emit succeeded; mismatch is a finding
+    assert _prom(out.read_text())["zcrypto_gate_mismatch_total"] >= 1
+    assert pings == [("http://hc", False)]
+
+
+def test_gate_export_sidecar_failure_counts_and_pings_fail(tmp_path, monkeypatch, sidecar_journal):
+    # A failed-cycle sidecar breaks the gate day: it must count in mismatch_total AND flip the
+    # dead-man to /fail (the regression the review caught -- sidecars were invisible to both).
+    out = tmp_path / "gate.prom"
+    pings: list[tuple[str, bool]] = []
+    monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
+    res = runner.invoke(
+        app,
+        ["engine", "gate-export", "--journal-dir", str(sidecar_journal), "--textfile", str(out), "--healthcheck-url", "http://hc"],
+    )
+    assert res.exit_code == 0
     assert _prom(out.read_text())["zcrypto_gate_mismatch_total"] >= 1
     assert pings == [("http://hc", False)]
 

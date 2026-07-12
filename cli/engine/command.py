@@ -191,6 +191,10 @@ def _write_prom_textfile(path: Path, *, status: GateStatus, lag_seconds: float |
     ]
     if lag_seconds is not None:
         lines.append(f"zcrypto_gate_journal_pull_lag_seconds {lag_seconds}")
+    lines.append(
+        "# HELP zcrypto_gate_mismatch_total journaled cycles that broke a clean day: "
+        "replay mismatches + corrupt records + failed-cycle sidecars"
+    )
     lines.append(f"zcrypto_gate_mismatch_total {mismatch_total}")
     lines.append(f"zcrypto_gate_export_timestamp_seconds {now.timestamp()}")
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -485,7 +489,11 @@ def gate_export(
         raise _abort(str(exc)) from exc
 
     lag = (now - newest_ts).total_seconds() if newest_ts is not None else None
-    mismatch_total = counts.mismatches + counts.validation_failures
+    # Every not-clean outcome that breaks a gate day: replay mismatches, corrupt records, AND
+    # failed-cycle sidecars (the normal stale_pair/refresh_deadline failure path -- these break
+    # the streak but are tallied in sidecar_count, so omitting them would let the metric read 0
+    # and the dead-man ping "clean" through a real gate failure).
+    mismatch_total = counts.mismatches + counts.validation_failures + counts.sidecar_count
 
     try:
         _write_prom_textfile(textfile, status=status, lag_seconds=lag, mismatch_total=mismatch_total, now=now)
