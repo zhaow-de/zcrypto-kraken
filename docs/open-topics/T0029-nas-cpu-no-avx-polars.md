@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: LIVE BLOCKER now — the three-tier NAS deploy (spec 00048) cannot run until the image strategy is chosen
+status: partial
+ripe_when: before Role B (Increment 2) — resolve whether the NAS's compat runtime can bit-identically replay the VPS's AVX-computed journal targets, or Role B must run on the VPS
 ---
 
 # NAS CPU has no AVX — the zcrypto image's polars crashes there
@@ -23,12 +23,13 @@ The VPS is fine (AMD EPYC 7713, has AVX2). Only the NAS is affected.
 
 - CPU: `Intel(R) Atom(TM) CPU C3538` — `/proc/cpuinfo` shows no `avx`/`fma`/`bmi` flags. Confirmed.
 - `POLARS_SKIP_CPU_CHECK` does **not** help — it silences the warning but the illegal AVX instruction still executes and crashes.
-- **`polars-lts-cpu`** is polars' drop-in wheel compiled without AVX2 (works on Goldmont); same API, marginally slower on modern CPUs.
+- **`polars-lts-cpu` is deprecated** ([polars#26534](https://github.com/pola-rs/polars/issues/26534): "no longer being updated"), stuck at 1.33.1 vs our 1.42.1. The maintainer's replacement is the **`rtcompat`** extra: polars 1.42.1 is now a Python package + a separate Rust *runtime* package (`polars-runtime-32` = AVX; `polars-runtime-compat` = baseline). `pip install polars[rtcompat]` adds the compat runtime — **same polars version**, no downgrade.
+- **Empirically verified (2026-07-12):** a default `polars` install loads `_polars_runtime_32` (AVX); `polars[rtcompat]` installs BOTH runtimes but polars then loads **compat even on an AVX CPU** — so a single `[rtcompat]` image would slow the VPS. Uninstalling `polars-runtime-32` leaves a clean compat-only install (import + `read_parquet` verified). → **two variants, same version**, NAS lean (compat-only).
 
-## Suggested next steps — choose the image strategy (human decision)
+## Done so far
 
-- **(A) A second `polars-lts-cpu` image variant for the NAS** (VPS keeps the standard AVX image). Pro: **no VPS touch** — the capture daemon is never disturbed. Con: a two-variant CI build to maintain.
-- **(B) One `polars-lts-cpu` image everywhere** (swap `polars` → `polars-lts-cpu` in `pyproject.toml`, rebuild the single image, redeploy both). Pro: one image, simplest. Con: requires a **careful VPS redeploy** (a digest bump that restarts the capture container — a brief, budgeted gap like the incident recovery) + marginally slower polars on the VPS (negligible: capture is I/O-bound, the engine is light compute).
-- **(C) Make Role A polars-free + lazy-load the CLI** (a dedicated `python -m cli.archive` entrypoint that never imports capture/engine/polars, and a polars-free `verify_manifest`). Pro: Role A deploys **now** on the current image, no rebuild, no VPS touch. Con: only fixes Role A — Roles B/C still need (A) or (B) later, so it defers the real fix.
+- **Decision (2026-07-12): Option A, done right with `rtcompat`.** Two image variants, same polars 1.42.1: the **default** (multi-arch, `polars-runtime-32`/AVX) for the VPS — **byte-identical to today's image, never touched** — and an amd64 **`-compat`** variant (`polars-runtime-compat`, `-32` removed) for the NAS. Implemented as a `POLARS_RUNTIME` build arg in `infra/docker/Dockerfile` + a 2-entry CI matrix in `.github/workflows/capture-image.yml`. Spec `00048`'s wrong "runs the exact image unchanged" line corrected.
 
-Whichever is chosen, correct spec `00048`'s "x86_64 is load-bearing / runs the exact image unchanged" line.
+## Suggested next steps
+
+- **(Increment 2, Role B — the residual) Resolve replay determinism across runtimes.** Role B replays the VPS's journaled cycles and must match `worst |diff| 0.00e+00`; the NAS runs the **compat** runtime while the VPS's targets were computed on **AVX** (`-32`), and SIMD-vs-scalar float reductions can differ in the last bits. Options: run Role B **on the VPS** (same runtime → trivially bit-identical), or measure whether the compat-vs-AVX delta stays within `compare_targets`' tolerance. Decide when Role B is built. (Role A's pull and Role C's independent capture don't need cross-runtime bit-identity.)

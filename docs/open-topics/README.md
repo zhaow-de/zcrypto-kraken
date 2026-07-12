@@ -55,7 +55,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0021 — VPS journal retention](T0021-vps-journal-retention.md) — prune-after-verified-pull design for the append-only engine journal (~0.35 GiB/month measured) (ripe when: the 80% disk watermark — T0020's disk alert is the trigger mechanism — or an earlier attended ops window).
 - [T0026 — reconnect trade-snapshot overwrite](T0026-reconnect-trade-snapshot-overwrite.md) — on a full WS reconnect the trade snapshot silently overwrites already-finalized past-hour trade segments (manifest regenerated, so hash-invisible); books unaffected, trades REST-backfillable (ripe when: next attended capture-maintenance window; loss-quantification is autonomous now).
 - [T0028 — NAS pull re-hashes the whole archive](T0028-nas-pull-incremental-verify.md) — Role A's `verify_tree` sha256-re-verifies the entire (unbounded) archive every hourly cycle → O(archive) per cycle, stalls the loop in ~2 months; verify only rsync-transferred files instead (ripe when: the verify sweep approaches the pull interval, ~250–600 GB in).
-- [T0029 — NAS CPU has no AVX; polars crashes](T0029-nas-cpu-no-avx-polars.md) — **LIVE BLOCKER**: the NAS is an Atom C3538 (Denverton, no AVX/AVX2), so the image's polars hits `Illegal instruction` → every three-tier NAS role (A/B/C) crashes; needs a `polars-lts-cpu` image strategy (ripe: now — blocks the three-tier deploy).
 
 ### Partially done<a name="partially-done-1"></a>
 
@@ -66,6 +65,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0020 — Grafana Cloud observability](T0020-grafana-cloud-observability.md) — Alloy + socket proxy ship both containers' logs + OS/container/app metrics to the provisioned Grafana Cloud instance, one committed dashboard, API-provisioned email alerts; the human credential fetch + vault is DONE (2026-07-11), remaining = the autonomous Tasks 1–3 build + the attended Task 4 deploy (ripe when: an observability build+deploy session; capture exporter flip additionally after the ≥7-day clock ≈ 2026-07-15).
 
 - [T0027 — unattended auto-reboot policy](T0027-unattended-reboot-policy.md) — unattended-upgrades auto-reboots the VPS at 04:00 UTC on kernel updates (2026-07-11: both containers recovered clean, ~83 s capture gap, engine day-1 gate cycle verified intact — the 04:00 cycle re-ran and replays bit-identical); remaining = the human ops-policy decision + confirming order-state reconciliation survives a mid-order-submission reboot before live 6b (ripe when: before the Stage-6b executor session, or on the next disruptive auto-reboot).
+
+- [T0029 — NAS CPU has no AVX; polars crashes](T0029-nas-cpu-no-avx-polars.md) — the Atom Goldmont NAS can't run the AVX-compiled polars; resolved via two image variants (VPS keeps AVX `polars-runtime-32` untouched; NAS gets an amd64 `-compat` build with `polars-runtime-compat`, same polars 1.42.1 — `polars-lts-cpu` is deprecated, `rtcompat` is the replacement); remaining = Role B's cross-runtime replay determinism (ripe when: before Role B / Increment 2).
 
 ### Resolved<a name="resolved-1"></a>
 
