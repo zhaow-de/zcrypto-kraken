@@ -40,9 +40,9 @@ auth=(-H "Authorization: Bearer ${GRAFANA_SA_TOKEN}")
 
 echo "grafana-push: pushing dashboard"
 dashboard_payload=$(python3 -c '
-import json, sys
+import json, os, sys
 d = json.load(open(sys.argv[1]))
-print(json.dumps({"dashboard": d, "overwrite": True}))
+print(json.dumps({"dashboard": d, "folderUid": os.environ["GRAFANA_ALERT_FOLDER_UID"], "overwrite": True}))
 ' "${root}/infra/grafana/zcrypto-dashboard.json")
 curl -fsS -X POST "${GRAFANA_URL}/api/dashboards/db" \
   "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
