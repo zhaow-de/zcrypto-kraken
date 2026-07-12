@@ -27,11 +27,20 @@ def _utc_now() -> datetime:
 
 
 def _run_rsync(source: str, dest: Path) -> int:
-    ssh_key = os.environ["ARCHIVE_SSH_KEY"]
+    ssh_key = os.environ.get("ARCHIVE_SSH_KEY")
+    if not ssh_key:
+        # No transport identity -> the pull can't even be attempted. Signal a transport-class
+        # failure (pull() maps any non-zero to exit 2), never the bare KeyError that Click would
+        # surface as exit 1 -- the contract reserves exit 1 for a hash mismatch.
+        logger.error("archive pull: ARCHIVE_SSH_KEY is not set; cannot establish the ssh transport")
+        return 2
     ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
-    # CheckHostIP=no: the hostname key is pinned via known_hosts; the extra IP-keyed check would
-    # try to append the IP's key on every pull, which fails against the read-only /keys mount.
-    ssh_opts = f"-i {ssh_key} -p {ssh_port} -o StrictHostKeyChecking=accept-new -o CheckHostIP=no"
+    # StrictHostKeyChecking=yes fails closed: the VPS key must already be in the pinned known_hosts
+    # (accept-new would silently trust a new key). IdentitiesOnly=yes offers only the -i key, so a
+    # stray agent/other key can't burn auth attempts and trip the rrsync forced command.
+    # CheckHostIP=no: the hostname key is pinned; the extra IP-keyed check would try to append the
+    # IP's key on every pull, which fails against the read-only /keys mount.
+    ssh_opts = f"-i {ssh_key} -p {ssh_port} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no"
     known_hosts = os.environ.get("ARCHIVE_SSH_KNOWN_HOSTS")
     if known_hosts:  # a pre-seeded, mounted known_hosts pins the VPS host key across restarts
         ssh_opts += f" -o UserKnownHostsFile={known_hosts}"

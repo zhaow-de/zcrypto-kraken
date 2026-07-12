@@ -97,6 +97,15 @@ def test_pull_transport_failure_exits_two(tmp_path, monkeypatch):
     assert res.exit_code == 2
 
 
+def test_pull_missing_ssh_key_exits_two(tmp_path, monkeypatch):
+    # No _run_rsync monkeypatch: exercise the real guard. With ARCHIVE_SSH_KEY unset the ssh
+    # transport can't start, so it must exit 2 (transport class) -- never the bare KeyError that
+    # Click would surface as exit 1, colliding with the hash-mismatch code.
+    monkeypatch.delenv("ARCHIVE_SSH_KEY", raising=False)
+    res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(tmp_path)])
+    assert res.exit_code == 2
+
+
 def test_pull_no_verify_skips_verification(tmp_path, monkeypatch):
     dest = tmp_path / "arch"
     dest.mkdir()

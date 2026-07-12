@@ -22,12 +22,18 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 2. Drop the `sync_capture` private key at `/volume1/docker/zcrypto-archive/keys/sync_capture`,
    mode `0600` (the vaulted keypair from plan Task 6; the public half is installed on the VPS as
    a read-only `rrsync` forced-command channel for the capture segments).
-3. Pin the image: edit `compose.yaml`'s `image:` line from `ghcr.io/zhaow-de/zcrypto-capture:latest`
-   to the digest-pinned form `ghcr.io/zhaow-de/zcrypto-capture@sha256:<digest>` (same image the
-   VPS capture/engine containers run — it already contains the `zcrypto` CLI, no NAS-side build).
-4. Set the deploy-time env vars (see below) in an adjacent `.env` file next to `compose.yaml`, or
+3. Pre-seed the pinned VPS host key at `/volume1/docker/zcrypto-archive/keys/known_hosts`.
+   DSM ships no `ssh-keyscan`, so run it from a machine that has one (e.g. the workstation):
+   `ssh-keyscan -p 10022 <vps-host>` and copy its output to that path. Host-key checking is strict
+   (`StrictHostKeyChecking=yes`), so an unseeded or stale file fails the pull closed.
+4. Pin the image to the **`-compat`** variant digest: `ghcr.io/zhaow-de/zcrypto-capture@sha256:<digest>`
+   (the NAS Atom has no AVX, so it runs the `-compat` build, not the VPS's default AVX image — see
+   `docs/open-topics/T0029-nas-cpu-no-avx-polars.md`). Read the digest with
+   `docker buildx imagetools inspect ghcr.io/zhaow-de/zcrypto-capture:latest-compat`. The image
+   already contains the `zcrypto` CLI, so there is no NAS-side build.
+5. Set the deploy-time env vars (see below) in an adjacent `.env` file next to `compose.yaml`, or
    export them in the shell that runs `docker compose`.
-5. Start the stack: `/usr/local/bin/docker compose -f compose.yaml up -d` (the full path — Docker
+6. Start the stack: `/usr/local/bin/docker compose -f compose.yaml up -d` (the full path — Docker
    is off the login `PATH` on the NAS). Confirm with
    `/usr/local/bin/docker compose -f compose.yaml ps` that `archive-pull` is `Up` and running as
    `1000:1000`.
@@ -41,7 +47,7 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 | `JOURNAL_SOURCE` | rsync source spec for the engine journal, e.g. `deploy@<vps-host>:` (same `rrsync` forced-command pattern, the existing journal channel). | deploy-time `.env` |
 | `JOURNAL_DEST` | Local archive path the journal lands in. | defaults to `/archive/engine-journal` in `compose.yaml` |
 | `ARCHIVE_SSH_KEY` | Private key path inside the container for the rsync-over-ssh transport. | fixed to `/keys/sync_capture` in `compose.yaml` (matches the `./keys:/keys:ro` mount) |
-| `ARCHIVE_SSH_KNOWN_HOSTS` | `UserKnownHostsFile` path — pre-seed it (`ssh-keyscan -p 10022 <vps> > keys/known_hosts`) to pin the VPS host key across container restarts. | fixed to `/keys/known_hosts` in `compose.yaml` |
+| `ARCHIVE_SSH_KNOWN_HOSTS` | `UserKnownHostsFile` path pinning the VPS host key. Host-key checking is strict (`StrictHostKeyChecking=yes`), so this file must be pre-seeded (Deploy step 3) — an unseeded or stale key fails the pull closed. | fixed to `/keys/known_hosts` in `compose.yaml` |
 | `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` (optional) |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles; the entrypoint defaults to `3600` (hourly) if unset. | deploy-time `.env`, or leave unset for the hourly default |
 
