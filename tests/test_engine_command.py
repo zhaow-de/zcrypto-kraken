@@ -537,12 +537,12 @@ def test_report_empty_journal_is_a_zero_streak_not_an_error(tmp_path, monkeypatc
 # --- the sub-app itself ----------------------------------------------------------------------------
 
 
-def test_engine_help_lists_all_five_subcommands():
+def test_engine_help_lists_all_six_subcommands():
     result = runner.invoke(app, ["engine", "--help"])
 
     assert result.exit_code == 0
     out = _output(result)
-    for name in ("seed", "run", "cycle", "replay", "report"):
+    for name in ("seed", "run", "cycle", "replay", "report", "gate-export"):
         assert name in out, f"{name!r} missing from `zcrypto engine --help`"
 
 
