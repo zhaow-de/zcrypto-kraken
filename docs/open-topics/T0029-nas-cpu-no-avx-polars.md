@@ -28,7 +28,7 @@ The VPS is fine (AMD EPYC 7713, has AVX2). Only the NAS is affected.
 
 ## Done so far
 
-- **Decision (2026-07-12): Option A, done right with `rtcompat`.** Two image variants, same polars 1.42.1: the **default** (multi-arch, `polars-runtime-32`/AVX) for the VPS — **byte-identical to today's image, never touched** — and an amd64 **`-compat`** variant (`polars-runtime-compat`, `-32` removed) for the NAS. Implemented as a `POLARS_RUNTIME` build arg in `infra/docker/Dockerfile` + a 2-entry CI matrix in `.github/workflows/capture-image.yml`. Spec `00048`'s wrong "runs the exact image unchanged" line corrected.
+- **Decision (2026-07-12): Option A, done right with `rtcompat`.** Two image variants, same polars 1.42.1: the **default** (multi-arch, `polars-runtime-32`/AVX) for the VPS — **its polars runtime untouched** (the shared image also gained rsync/openssh-client and a fixed uid-1000 default user for Role A, but both are inert on the VPS, whose compose overrides `user:` and whose services don't shell out to rsync) — and an amd64 **`-compat`** variant (`polars-runtime-compat`, `-32` removed) for the NAS. Implemented as a `POLARS_RUNTIME` build arg in `infra/docker/Dockerfile` + a 2-entry CI matrix in `.github/workflows/capture-image.yml`. Spec `00048`'s wrong "runs the exact image unchanged" line corrected.
 
 ## Suggested next steps
 

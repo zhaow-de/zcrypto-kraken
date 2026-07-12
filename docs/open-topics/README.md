@@ -58,7 +58,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done-1"></a>
 
-- [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the pull/archive, now redesigned as the always-on **NAS three-tier** model (decision 2026-07-11, spec forthcoming) + the alerting drill + the ≥7-day clean-run verification (ripe when: the three-tier spec, and the ≥7-day verification ≈2026-07-15).
+- [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A of the three-tier model) landed iter-093 (spec/plan 00048); remainder = the alerting drill + the ≥7-day clean-run verification + Roles B/C (gate-verify + redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
 

@@ -14,7 +14,7 @@ The current design pins two duties that *want* an always-on home onto the one bo
 The NAS resolves both. A read-only probe (2026-07-11) confirmed it is a capable, always-on compute node, not just storage:
 
 - **`synology_denverton_1618+`, x86_64, 4 cores, 32 GB RAM, 27 TB** (`/volume1`, RAID-5 across 6 disks, healthy `[6/6]`), **Docker 24.0.2** (Container Manager) at `/usr/local/bin/docker`.
-- **x86_64 matches, but the microarchitecture does NOT**: the NAS is an Atom C3538 (Denverton / Goldmont) with **no AVX/AVX2/FMA/BMI**, so the standard image's `polars` wheel crashes with `Illegal instruction` (found in the iter-093 deploy — [[T0029]]). The NAS needs a **`polars-lts-cpu`** image (or a polars-free Role A); it cannot run the exact VPS image unchanged. Image strategy is an open decision (T0029). *(Original assumption — now corrected — was that x86_64 alone let the NAS run the exact `ghcr.io/zhaow-de/zcrypto-*` images unchanged.)*
+- **x86_64 matches, but the microarchitecture does NOT**: the NAS is an Atom C3538 (Denverton / Goldmont) with **no AVX/AVX2/FMA/BMI**, so the standard image's `polars` wheel crashes with `Illegal instruction` (found in the iter-093 deploy — [[T0029]]); it cannot run the exact VPS image unchanged. **Resolved** as a two-variant image (same polars 1.42.1): the VPS keeps its AVX `polars-runtime-32` build, the NAS runs an amd64 `-compat` build (`polars-runtime-compat`) — see [[T0029]]. *(Original assumption — now corrected — was that x86_64 alone let the NAS run the exact `ghcr.io/zhaow-de/zcrypto-*` images unchanged.)*
 - The workstation mounts `/volume1/ZhaoCrypto` as `/home/zhaow/Projects/zcrypto-kraken-data` (1 GB/s), so anything the NAS archives is immediately visible to R&D.
 
 ## The three-tier topology
