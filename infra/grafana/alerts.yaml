@@ -1,12 +1,30 @@
-# Grafana alert-rule provisioning file (spec 00049, Role B / Task 4) for the one canonical
-# dashboard's series (infra/grafana/zcrypto-dashboard.json). Pushed by scripts/grafana-push.sh.
+# Grafana alert-rule provisioning source (spec 00049, Role B / Task 4) for the one canonical
+# dashboard's series (infra/grafana/zcrypto-dashboard.json). Pushed by scripts/grafana-push.sh,
+# ONE rule per `POST`/`PUT /api/v1/provisioning/alert-rules[/:uid]` call against Grafana's
+# **Alerting Provisioning HTTP API** -- that endpoint takes a single alert-rule JSON object per
+# call; it is NOT the `apiVersion: 1` / `groups:` file-provisioning shape (that shape is for
+# Grafana's config-file provisioner only and is rejected by this HTTP endpoint, which isn't
+# usable on Grafana Cloud SaaS anyway). This file is YAML (superset of JSON) purely for the
+# inline comments -- the script converts it to the API's per-rule JSON before each push. See:
+#   https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/
+#   https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/alerting_provisioning/
 #
-# Placeholders wired at deploy time (see infra/nas/README.md for the vaulted Grafana Cloud
-# creds this instance already uses):
-#   - `datasourceUid: PROMETHEUS_DS_UID` / `LOKI_DS_UID` -- the two datasource UIDs on the
-#     already-provisioned Grafana Cloud instance. Same portability idea as the dashboard JSON's
-#     ${DS_PROMETHEUS}/${DS_LOKI} template variables, but alert-rule provisioning has no template
-#     substitution, so these are literal placeholders to swap for the real UIDs before push.
+# Each rule's `data` array is a query node (refId A, the Prometheus/Loki datasource, an instant
+# query so it already reduces to one number) feeding a `type: threshold` expression node (refId
+# C, datasourceUid `__expr__`). The threshold node's own model field is **`expression`**, not
+# `expr` -- Grafana's threshold expression (pkg/expr `ThresholdCommand`) reads `expression` to
+# find which prior refId to compare; an empty/misnamed field errors "no variable specified to
+# reference" and hard-fails the rule's condition on every evaluation.
+#
+# Placeholders wired at deploy time (see infra/nas/README.md for the vaulted Grafana Cloud creds
+# this instance already uses). These are literal `${VAR}` tokens that scripts/grafana-push.sh
+# substitutes from its own environment before sending each rule -- Grafana's alert-rule
+# provisioning API has no server-side template substitution (unlike the dashboard JSON's
+# `${DS_PROMETHEUS}`/`${DS_LOKI}` variables, which Grafana itself resolves on dashboard import):
+#   - `${GRAFANA_PROM_DS_UID}` / `${GRAFANA_LOKI_DS_UID}` -- the two datasource UIDs on the
+#     already-provisioned Grafana Cloud instance.
+#   - `${GRAFANA_ALERT_FOLDER_UID}` -- the folder UID the rules provision into (the API needs
+#     the folder's UID, not its display name).
 #   - `notification_settings.receiver: email` -- a contactPoint named "email" the deploy wires
 #     (its underlying address is provisioned separately, not committed here).
 #
@@ -17,228 +35,265 @@
 # The ERROR-logs rule uses `or on() vector(0)` (00043's own pattern) so a clean window evaluates
 # to 0 rather than NoData, and is marked noDataState: OK to match -- a blanket no-data->alert
 # would otherwise leave it permanently firing when healthy.
-apiVersion: 1
+rules:
+  - uid: zcrypto-gate-not-met
+    title: "Gate · not MET"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # NOTE (per task-4 brief): the gate hasn't been MET yet during the shadow-scoring phase,
+    # so a simple `status == 0` fires continuously until the first MET day -- accepted for
+    # now. Once the gate has been MET at least once, the sharper condition is an edge (MET
+    # -> not-MET), e.g. `zcrypto_gate_status == 0 and changes(zcrypto_gate_status[1d]) > 0`;
+    # revisit at that point.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_gate_status
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}  # status < 1 == status == 0 (0/1 gauge)
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The >=14-clean-day gate is not MET."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
 
-groups:
-  - orgId: 1
-    name: zcrypto-gate
-    folder: zcrypto
-    interval: 1m
-    rules:
-      - uid: zcrypto-gate-not-met
-        title: "Gate · not MET"
-        # NOTE (per task-4 brief): the gate hasn't been MET yet during the shadow-scoring phase,
-        # so a simple `status == 0` fires continuously until the first MET day -- accepted for
-        # now. Once the gate has been MET at least once, the sharper condition is an edge (MET
-        # -> not-MET), e.g. `zcrypto_gate_status == 0 and changes(zcrypto_gate_status[1d]) > 0`;
-        # revisit at that point.
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: PROMETHEUS_DS_UID
-            model:
-              expr: zcrypto_gate_status
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                - evaluator: {type: lt, params: [1]}  # status < 1 == status == 0 (0/1 gauge)
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 5m
-        annotations:
-          summary: "The >=14-clean-day gate is not MET."
-        labels:
-          severity: warning
-        notification_settings:
-          receiver: email
+  - uid: zcrypto-gate-mismatch
+    title: "Gate · mismatch in the last day"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: increase(zcrypto_gate_mismatch_total[1d])
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "At least one replay mismatch/validation failure in the last 24h of journaled cycles."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
 
-      - uid: zcrypto-gate-mismatch
-        title: "Gate · mismatch in the last day"
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: PROMETHEUS_DS_UID
-            model:
-              expr: increase(zcrypto_gate_mismatch_total[1d])
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                - evaluator: {type: gt, params: [0]}
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 5m
-        annotations:
-          summary: "At least one replay mismatch/validation failure in the last 24h of journaled cycles."
-        labels:
-          severity: critical
-        notification_settings:
-          receiver: email
+  - uid: zcrypto-gate-pull-lag
+    title: "Gate · journal pull lag high"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_gate_journal_pull_lag_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [18000]}  # 5h, matching gate-export's own --lag-fail-seconds default
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The newest journaled cycle is more than 5h old -- the NAS journal pull is stuck or the VPS engine has stalled."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
 
-      - uid: zcrypto-gate-pull-lag
-        title: "Gate · journal pull lag high"
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: PROMETHEUS_DS_UID
-            model:
-              expr: zcrypto_gate_journal_pull_lag_seconds
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                - evaluator: {type: gt, params: [18000]}  # 5h, matching gate-export's own --lag-fail-seconds default
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 5m
-        annotations:
-          summary: "The newest journaled cycle is more than 5h old -- the NAS journal pull is stuck or the VPS engine has stalled."
-        labels:
-          severity: critical
-        notification_settings:
-          receiver: email
+  - uid: zcrypto-gate-exporter-stale
+    title: "Gate · exporter stale"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_gate_export_timestamp_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [7200]}  # 2h -- no successful gate-export run in that window
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "No successful `zcrypto engine gate-export` run in over 2h -- the NAS archive-pull loop or the gate-export step itself is broken."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
 
-      - uid: zcrypto-gate-exporter-stale
-        title: "Gate · exporter stale"
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: PROMETHEUS_DS_UID
-            model:
-              expr: time() - zcrypto_gate_export_timestamp_seconds
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                - evaluator: {type: gt, params: [7200]}  # 2h -- no successful gate-export run in that window
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 5m
-        annotations:
-          summary: "No successful `zcrypto engine gate-export` run in over 2h -- the NAS archive-pull loop or the gate-export step itself is broken."
-        labels:
-          severity: critical
-        notification_settings:
-          receiver: email
+  - uid: zcrypto-nas-disk-low
+    title: "NAS · /volume1 free space low"
+    ruleGroup: zcrypto-nas
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_avail_bytes{mountpoint="/volume1"}
+            / node_filesystem_size_bytes{mountpoint="/volume1"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.1]}  # < 10% free
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "/volume1 has less than 10% free space -- the archive keeps growing into it."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
 
-  - orgId: 1
-    name: zcrypto-nas
-    folder: zcrypto
-    interval: 1m
-    rules:
-      - uid: zcrypto-nas-disk-low
-        title: "NAS · /volume1 free space low"
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: PROMETHEUS_DS_UID
-            model:
-              expr: >-
-                node_filesystem_avail_bytes{mountpoint="/volume1"}
-                / node_filesystem_size_bytes{mountpoint="/volume1"}
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                - evaluator: {type: lt, params: [0.1]}  # < 10% free
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 5m
-        annotations:
-          summary: "/volume1 has less than 10% free space -- the archive keeps growing into it."
-        labels:
-          severity: warning
-        notification_settings:
-          receiver: email
+  - uid: zcrypto-nas-load-high
+    title: "NAS · load high"
+    ruleGroup: zcrypto-nas
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: node_load1
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # The NAS Atom has 4 cores (infra/nas/README.md) -- 1-min load above that is
+            # sustained saturation, not a transient burst.
+            - evaluator: {type: gt, params: [4]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "1-minute load average exceeds the NAS's 4 cores."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
 
-      - uid: zcrypto-nas-load-high
-        title: "NAS · load high"
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 600, to: 0}
-            datasourceUid: PROMETHEUS_DS_UID
-            model:
-              expr: node_load1
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                # The NAS Atom has 4 cores (infra/nas/README.md) -- 1-min load above that is
-                # sustained saturation, not a transient burst.
-                - evaluator: {type: gt, params: [4]}
-        noDataState: Alerting
-        execErrState: Alerting
-        for: 5m
-        annotations:
-          summary: "1-minute load average exceeds the NAS's 4 cores."
-        labels:
-          severity: warning
-        notification_settings:
-          receiver: email
-
-      - uid: zcrypto-nas-archive-pull-errors
-        title: "NAS · archive-pull ERROR logs"
-        condition: B
-        data:
-          - refId: A
-            relativeTimeRange: {from: 900, to: 0}
-            datasourceUid: LOKI_DS_UID
-            model:
-              expr: >-
-                sum(count_over_time({container="archive-pull"} |= "ERROR" [15m])) or on() vector(0)
-              instant: true
-              refId: A
-          - refId: B
-            datasourceUid: __expr__
-            model:
-              type: threshold
-              expr: ""
-              refId: B
-              conditions:
-                - evaluator: {type: gt, params: [0]}
-        noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
-        execErrState: Alerting
-        for: 0s
-        annotations:
-          summary: "ERROR-level log lines from the archive-pull container in the last 15 minutes."
-        labels:
-          severity: warning
-        notification_settings:
-          receiver: email
+  - uid: zcrypto-nas-archive-pull-errors
+    title: "NAS · archive-pull ERROR logs"
+    ruleGroup: zcrypto-nas
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({container="archive-pull"} |= "ERROR" [15m])) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR-level log lines from the archive-pull container in the last 15 minutes."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
