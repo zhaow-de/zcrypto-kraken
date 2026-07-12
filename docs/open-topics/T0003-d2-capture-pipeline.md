@@ -46,6 +46,12 @@ Iteration **iter-038** (interactive design → unattended build; spec `docs/spec
 
 **Beware quiet logs.** Because iter-038 made the desync warning fire only on the *transition* into desync, a pair that is **stuck** desynced logs nothing further — the `checksum desync` spam stops even though the pair is still broken. **The true health signal is the withheld healthcheck ping (→ healthchecks.io check goes DOWN), not the absence of log warnings.**
 
+## Reboot note — 2026-07-11 04:00 UTC: kernel auto-reboot absorbed cleanly (mission unaffected)
+
+`unattended-upgrades` rebooted the VPS at 04:00 UTC for kernel `6.12.88 → 6.12.95`. Capture auto-restarted (container `ExitCode 0` = graceful SIGTERM `close()`, `RestartCount 0`, up within ~1 min; system down 04:00:11 → 04:01:09). **Book (mission-critical) impact = a single ~83 s gap** — last update 03:59:59.9 → first update 04:01:23.3, identical across pairs — ≈ **0.014 %** of a 7-day window, comfortably inside the `<0.1 %` budget. **Zero segment loss** (every hour 10/10 segments + 10/10 manifests; the only `.part` files are the live current hour), and books re-synced with **zero "Already subscribed"** (the iter-039 stuck-desync bug did **not** recur). A within-budget gap is not a corruption event, so the ≥7-day clean-run clock **continues from 2026-07-08** (still ≈ 2026-07-15) — the reboot did **not** reset it. Two follow-ups registered: the auto-reboot recurrence/ops policy ([[T0027]]) and the reconnect trade-snapshot overwrite ([[T0026]], trades only — books were untouched).
+
+**Gap-accounting blind spot (for the verification design below):** `GapMonitor` state is in-process and **resets on restart**, so a reboot/restart gap is invisible to the daemon's own `<0.1 %` counters. The ≥7-day exit-bar verification must derive gap time from **segment-timestamp continuity end-to-end**, not from the daemon's live gap counters, or it will silently undercount every restart gap.
+
 ## Suggested next steps
 
 **Plan (decided 2026-07-11):** build the workstation pull service + monitoring in an attended session **after the current open-topics review round**; verify the ≥7-day clean run **≈ Jul 15**.
