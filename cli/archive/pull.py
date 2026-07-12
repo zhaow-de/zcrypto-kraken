@@ -36,7 +36,7 @@ def verify_tree(root: Path, *, now: datetime) -> VerifyResult:
         checked += 1
         try:
             verified = verify_manifest(p)
-        except CaptureError:
+        except CaptureError, IndexError:
             failed.append(str(p))
         else:
             if verified:

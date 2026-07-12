@@ -56,6 +56,17 @@ def test_verify_tree_missing_sidecar_counts_failed(tmp_path):
     assert any("ETH/EUR/trades/2026/07/12/09.parquet" in f for f in r.failed)
 
 
+def test_verify_tree_empty_sidecar_counts_failed(tmp_path):
+    d = tmp_path / "BTC/EUR/book/2026/07/12"
+    d.mkdir(parents=True)
+    p = d / "10.parquet"
+    pl.DataFrame({"x": [1, 2, 3]}).write_parquet(p)
+    (d / "10.parquet.sha256").write_text("")  # malformed sidecar: empty, no digest to split()[0]
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+    assert r.checked == 1 and r.ok == 0
+    assert any("BTC/EUR/book/2026/07/12/10.parquet" in f for f in r.failed)
+
+
 def test_pull_ok_exits_zero(tmp_path, monkeypatch):
     dest = tmp_path / "arch"
     dest.mkdir()
@@ -84,3 +95,16 @@ def test_pull_transport_failure_exits_two(tmp_path, monkeypatch):
     monkeypatch.setattr(command, "_run_rsync", lambda source, d: 23)
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(tmp_path)])
     assert res.exit_code == 2
+
+
+def test_pull_no_verify_skips_verification(tmp_path, monkeypatch):
+    dest = tmp_path / "arch"
+    dest.mkdir()
+    d = dest / "engine-journal"
+    d.mkdir(parents=True)
+    pl.DataFrame({"x": [1, 2, 3]}).write_parquet(d / "snapshot.parquet")  # no .sha256 sidecar
+    from cli.archive import command
+
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    res = CliRunner().invoke(app, ["archive", "pull", "--no-verify", "deploy@h:/src/", str(dest)])
+    assert res.exit_code == 0

@@ -2,7 +2,8 @@
 # In-container scheduler for the NAS archive-pull stack (spec 00048 Role A). Runs as the
 # container's ENTRYPOINT (infra/nas/compose.yaml) — no systemd, no DSM Task Scheduler, per the
 # NAS-runtime constraint. Every $ARCHIVE_PULL_INTERVAL seconds it pulls+verifies the capture
-# segments, then the engine journal. The loop itself is the availability guarantee: a single
+# segments, then pulls the engine journal (--no-verify: no .sha256 sidecars, Role B verifies it
+# via replay). The loop itself is the availability guarantee: a single
 # failed pull is logged but never exits the loop; the pull-lag figure `zcrypto archive pull`
 # logs on each run is the dead-man signal that a stuck pull gets noticed.
 set -eu
@@ -23,7 +24,7 @@ while true; do
 	if ! zcrypto archive pull "$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
 		echo "pull-entrypoint: capture pull failed (source=$CAPTURE_SOURCE dest=$CAPTURE_DEST), continuing" >&2
 	fi
-	if ! zcrypto archive pull "$JOURNAL_SOURCE" "$JOURNAL_DEST"; then
+	if ! zcrypto archive pull --no-verify "$JOURNAL_SOURCE" "$JOURNAL_DEST"; then
 		echo "pull-entrypoint: journal pull failed (source=$JOURNAL_SOURCE dest=$JOURNAL_DEST), continuing" >&2
 	fi
 

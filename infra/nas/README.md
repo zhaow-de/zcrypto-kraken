@@ -1,11 +1,13 @@
 # NAS archive-pull stack (spec 00048, Role A)
 
 The always-on NAS pull/archive tier: a single container (`archive-pull`) that pulls the VPS
-capture segments and the engine journal on a schedule, hash-verifies each pulled segment against
-its `.sha256` manifest sidecar, and archives the result to `/volume1/ZhaoCrypto` — decoupling
-data durability from the intermittently-online workstation (see
-`docs/specs/00048-three-tier-topology-design.md`, Role A). It supersedes T0003's workstation-pull
-approach.
+capture segments and the engine journal on a schedule and archives the result to
+`/volume1/ZhaoCrypto` — decoupling data durability from the intermittently-online workstation
+(see `docs/specs/00048-three-tier-topology-design.md`, Role A). It supersedes T0003's
+workstation-pull approach. The capture-segments pull is hash-verified against each segment's
+`.sha256` manifest sidecar; the engine-journal pull runs `--no-verify` (its `.parquet` snapshots
+have no sidecars — their integrity is a JSON `snapshot_content_hash`, verified later by Role B on
+replay).
 
 Everything runs **inside the container** under Synology Container Manager: no systemd units, no
 DSM Task Scheduler entries, no NAS-OS config. `infra/nas/pull-entrypoint.sh` is the in-container
@@ -47,11 +49,14 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 `docker logs` on the container surfaces `zcrypto archive pull`'s own log lines (see
 `cli/archive/command.py`):
 
-- `pull complete source=... checked=N ok=N failed=N lag_s=...` — one line per pull, for each of
-  the two sources. `lag_s` is the pull-lag dead-man signal: the age (seconds) of the newest
-  verified segment. A growing `lag_s` across cycles means the scheduler loop is stuck or the
-  transport is failing — check for the `pull-entrypoint: ... pull failed` line right above it.
-- `archive pull: verify failed path=...` (ERROR) — a pulled segment's hash mismatched its
+- `pull complete source=... checked=N ok=N failed=N lag_s=...` — one line per pull, for the
+  capture-segments source. `lag_s` is the pull-lag dead-man signal: the age (seconds) of the
+  newest verified segment. A growing `lag_s` across cycles means the scheduler loop is stuck or
+  the transport is failing — check for the `pull-entrypoint: ... pull failed` line right above it.
+- `archive pull complete (no verify) source=... dest=...` — the engine-journal pull (run with
+  `--no-verify`, see above); no hash-verify pass runs, so this line replaces the
+  `pull complete ... checked=...` line for that source.
+- `archive pull: verify failed path=...` (ERROR) — a pulled capture segment's hash mismatched its
   manifest; it is logged, not archived as good. Re-pull on the next cycle picks it up again.
 - `archive pull: rsync failed source=... dest=... returncode=...` (ERROR) — a transport failure;
   the pull is never verified as authoritative. The loop logs

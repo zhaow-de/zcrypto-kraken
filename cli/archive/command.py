@@ -38,6 +38,12 @@ def _run_rsync(source: str, dest: Path) -> int:
 def pull(
     source: str = typer.Argument(..., help="rsync source spec, e.g. deploy@host:/var/lib/zcrypto-capture/segments/"),
     dest: Path = typer.Argument(..., help="Local destination directory to rsync into and verify."),
+    verify: bool = typer.Option(
+        True,
+        "--verify/--no-verify",
+        help="Hash-verify pulled segments against their .sha256 sidecars (default). Use --no-verify "
+        "for archive-only sources like the engine journal, which has no sidecars.",
+    ),
 ) -> None:
     """Pull `source` into `dest` via rsync-over-ssh, then hash-verify every segment against its
     manifest sidecar. Exits 2 on a transport failure (partial pull, never verified as authoritative),
@@ -46,6 +52,10 @@ def pull(
     if returncode != 0:
         logger.error("archive pull: rsync failed source=%s dest=%s returncode=%s", source, dest, returncode)
         raise typer.Exit(2)
+
+    if not verify:
+        logger.info("archive pull complete (no verify) source=%s dest=%s", source, dest)
+        return
 
     result = verify_tree(dest, now=_utc_now())
     lag_s = pull_lag_seconds(result, now=_utc_now())
