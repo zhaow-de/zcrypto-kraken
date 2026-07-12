@@ -30,10 +30,20 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
    DSM ships no `ssh-keyscan`, so run it from a machine that has one (e.g. the workstation):
    `ssh-keyscan -p 10022 <vps-host>` and copy its output to that path. Host-key checking is strict
    (`StrictHostKeyChecking=yes`), so an unseeded or stale file fails the pull closed.
-5. Create the shared textfile-collector directory
-   `/volume1/docker/zcrypto-archive/textfile`, writable by uid 1000 — `archive-pull` writes
-   `gate.prom` there after each journal pull; Task 3 also mounts it (read-only) into Alloy for
-   scraping.
+5. Create the shared textfile-collector directory `/volume1/docker/zcrypto-archive/textfile`,
+   owned `1000:1000` and `chmod 0775`:
+
+   ```bash
+   mkdir -p /volume1/docker/zcrypto-archive/textfile
+   chown 1000:1000 /volume1/docker/zcrypto-archive/textfile
+   chmod 0775 /volume1/docker/zcrypto-archive/textfile
+   ```
+
+   The explicit `chmod` matters: a Synology DSM ACL granting the host uid write access is **not**
+   honored inside the container, which only sees the underlying POSIX mode — so real
+   owner-writable bits (`0775`) are required, not just an ACL grant. `archive-pull` writes
+   `gate.prom` there after each journal pull; Alloy also mounts it (read-only) for scraping (Task
+   3 below).
 6. Pin the image to the **`-compat`** variant digest: `ghcr.io/zhaow-de/zcrypto-capture@sha256:<digest>`
    (the NAS Atom has no AVX, so it runs the `-compat` build, not the VPS's default AVX image — see
    `docs/open-topics/T0029-nas-cpu-no-avx-polars.md`). Read the digest with
@@ -94,10 +104,18 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 
 Two more services on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence
 above: **Grafana Alloy** + a GET-only **`docker-socket-proxy`**, shipping NAS host metrics (load,
-memory, free disk space, network IO), container metrics (`archive-pull`, `alloy`, the proxy
-itself), the Role B gate metrics (Task 2's `gate.prom` textfile), and the `archive-pull`
-container's logs to the already-provisioned Grafana Cloud instance. See
-`docs/specs/00043-observability-design.md` for the design this is adapted from (the VPS
+memory, free disk space, network IO), the Role B gate metrics (Task 2's `gate.prom` textfile), and
+the `archive-pull` container's logs to the already-provisioned Grafana Cloud instance.
+
+**Container-level metrics (CPU/mem/fs per container) are NOT collected on this NAS.** `cadvisor`
+SIGSEGVs on Synology DSM — a nil-pointer panic because DSM's kernel has no CPU cgroup hierarchy for
+it to walk — and the panic takes down all of Alloy with it, so `prometheus.exporter.cadvisor` is
+not run here at all. Only host metrics + the gate metrics + the `archive-pull` logs flow off this
+NAS; the `docker-socket-proxy` is retained solely so Alloy's `discovery.docker` can find the
+`archive-pull` container for Loki log-tailing (it needs the `NETWORKS` read-only endpoint too, or
+discovery 403s — see `compose.yaml`).
+
+See `docs/specs/00043-observability-design.md` for the design this is adapted from (the VPS
 counterpart) and `infra/nas/config.alloy` for the Alloy pipeline itself — everything here runs
 under Container Manager as plain compose services, no ansible/systemd.
 
@@ -121,15 +139,25 @@ under Container Manager as plain compose services, no ansible/systemd.
    `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
    stays secret-free and diffable (only `env_file: ./alloy-secrets.env` references the file by
    name).
-3. Create `/volume1/docker/zcrypto-archive/alloy-data/` owned by **uid/gid 473** (`sudo chown -R
-   473:473 …/alloy-data`) — this is Alloy's `--storage.path`: the remote_write WAL and Loki log
-   read-positions persist here so a container replacement doesn't re-ship each source's retained
-   backlog into the ingest quota. The compose file pins `user: "473:473"` because the upstream
-   `grafana/alloy` image does **not** activate its non-root user by default (its Dockerfile keeps
-   `USER root`); running as root with the `/:/host/root:ro` mount would expose every 0600 host
-   secret, so the override is load-bearing. Confirm the image's `alloy` uid is still 473 at deploy
-   (`docker run --rm --entrypoint id grafana/alloy:latest alloy`); if it differs, update both the
-   compose `user:` and this directory's ownership to match.
+3. Create `/volume1/docker/zcrypto-archive/alloy-data/`, owned `1000:1000` and `chmod 0775`:
+
+   ```bash
+   mkdir -p /volume1/docker/zcrypto-archive/alloy-data
+   chown 1000:1000 /volume1/docker/zcrypto-archive/alloy-data
+   chmod 0775 /volume1/docker/zcrypto-archive/alloy-data
+   ```
+
+   This is Alloy's `--storage.path`: the remote_write WAL and Loki log read-positions persist here
+   so a container replacement doesn't re-ship each source's retained backlog into the ingest
+   quota. The compose file pins `user: "1000:1000"` — **not** the upstream image's built-in uid-473
+   `alloy` user. Two reasons: (1) the upstream `grafana/alloy` image does not activate its non-root
+   user by default (its Dockerfile keeps `USER root`), so running root with the `/:/host/root:ro`
+   mount would expose every 0600 host secret, making a non-root override load-bearing; and (2) uid
+   473 is not a Synology-recognized user, so the DSM ACL on this bind mount denies it write
+   (`mkdir /var/lib/alloy/...: permission denied`). uid 1000 (`zcrypto`) is a real DSM user, stays
+   non-root, and — because the `chmod 0775` above sets the actual POSIX mode, which is what the
+   container sees (the DSM ACL granting host-uid write is **not** honored inside the container) —
+   has real write access to the volume.
 4. Pin both new images to a digest, same pattern as the capture image (Deploy step 6 above):
    `docker buildx imagetools inspect grafana/alloy:latest` and
    `docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:latest`, then replace
@@ -142,20 +170,25 @@ under Container Manager as plain compose services, no ansible/systemd.
 
 ### Resource budget
 
-Same tuning as the VPS design (`docs/specs/00043-observability-design.md`), reused as-is since the
-NAS Atom is comparably weak and cadvisor's per-second housekeeping is the CPU hog on either host:
-Alloy `cpus: "0.5"`, `memory: 512m`, `cpu_shares: 256`, `GOMEMLIMIT=460MiB` (Go's GC overshoots a
-small cap under default behavior otherwise); `docker-socket-proxy` `cpus: "0.1"`, `memory: 64m`.
-`docker_only` + the disabled cadvisor network metrics group keep container-metric collection cheap.
-32 GB NAS RAM makes the ceiling arithmetic comfortable — these are caps, not reservations.
+Diverges from the VPS design (`docs/specs/00043-observability-design.md`) here: the Synology DSM
+kernel has no CPU CFS cgroup, so this stack sets **no `cpus:`/`cpu_shares:` limits** at all — a
+`NanoCPUs` limit fails hard (`NanoCPUs can not be set ... cgroup is not mounted`) and blocks the
+whole `compose up`. Only `memory` limits work (a separate, mounted cgroup): Alloy `memory: 512m`,
+`GOMEMLIMIT=460MiB` (Go's GC overshoots a small cap under default behavior otherwise);
+`docker-socket-proxy` `memory: 64m`. cadvisor is not run on the NAS at all (see above), which also
+removes the one component that would have needed its own CPU budget. 32 GB NAS RAM makes the
+memory ceiling arithmetic comfortable — these are caps, not reservations.
 
 ### Verification note
 
-No Docker on the machine this was authored on, so `alloy validate` / `alloy fmt` against
-`config.alloy` and a pulling `docker compose config` could not be run here. `config.alloy` was
-written carefully against the River config language and 00043's design; live `alloy validate` (a
-throwaway `grafana/alloy` container, offline/stub creds) is deferred to the NAS deploy shakedown —
-run it before trusting this file in production.
+The NAS deploy shakedown ran this stack live on the actual Synology DSM host and surfaced several
+DSM-specific incompatibilities, all now fixed in `compose.yaml`/`config.alloy` and reflected above:
+cadvisor SIGSEGVs on DSM's cgroup-less kernel (removed entirely — see the container-metrics note
+above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy now runs as uid
+1000 — see Deploy step 3 above), `discovery.docker` 403s without the socket-proxy's `NETWORKS`
+endpoint (added), and a `cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel
+(removed — see Resource budget above). This file now reflects a live-verified deploy, not just the
+originally-authored design.
 
 ## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
 

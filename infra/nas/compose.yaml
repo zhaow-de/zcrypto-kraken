@@ -46,21 +46,21 @@ services:
     image: ghcr.io/tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     environment:
-      # Read-only guard: CONTAINERS is the only endpoint this stack needs (cadvisor's
-      # list/inspect/stats calls). POST=0 is the master mutating-operation switch -- every
-      # create/start/stop/kill/exec call is a POST, so this one flag is the entire security
-      # boundary Alloy operates behind (00043's posture, adopted verbatim: a misbehaving or
-      # compromised Alloy can read container metadata through this proxy but can never touch the
-      # archive-pull container's control plane). The rest are listed explicitly, all disabled, for
-      # the same reason -- explicit over relying on the image's own (already-restrictive) defaults.
+      # Read-only guard: CONTAINERS + NETWORKS + INFO are the only endpoints this stack needs
+      # (Alloy's discovery.docker enumerates containers + their networks for the Loki log targets).
+      # POST=0 is the master mutating-operation switch -- every create/start/stop/kill/exec call is
+      # a POST, so this one flag is the entire security boundary Alloy operates behind (00043's
+      # posture: a misbehaving/compromised Alloy can READ container metadata through this proxy but
+      # can never touch the archive-pull container's control plane). The rest are explicit + disabled
+      # for the same reason -- explicit over relying on the image's own (already-restrictive) defaults.
       CONTAINERS: 1
-      # cadvisor's Docker client calls /info (storage-driver / rootfs detection) on init; the proxy
-      # defaults INFO=0, which 403s that call and breaks container-metric startup. GET-only, safe.
       INFO: 1
+      # NETWORKS (GET/read): Alloy's discovery.docker computes per-container network labels for the
+      # Loki log-tailing targets; without it the proxy 403s and log discovery fails. Read-only.
+      NETWORKS: 1
       POST: 0
       EXEC: 0
       IMAGES: 0
-      NETWORKS: 0
       VOLUMES: 0
       SERVICES: 0
       TASKS: 0
@@ -82,7 +82,9 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.1"
+          # No `cpus:` -- the Synology DSM kernel has no CPU CFS scheduler / cpu cgroup, so a
+          # NanoCPUs limit fails hard ("NanoCPUs can not be set ... cgroup is not mounted") and
+          # blocks the whole `compose up`. Memory uses a separate, mounted cgroup and works.
           memory: 64m
     logging:
       driver: json-file
@@ -95,12 +97,19 @@ services:
     # access; see infra/nas/README.md.
     image: grafana/alloy:latest
     restart: unless-stopped
-    # Run non-root (00043's §8 posture): the upstream grafana/alloy image ships a UID/GID-473
-    # `alloy` user but does NOT activate it (its Dockerfile keeps USER root, calling non-root
-    # "experimental"), so WITHOUT this override Alloy runs as root and the /host/root:ro mount
-    # below would expose every 0600 host secret. Pin 473 (confirm at deploy) and chown ./alloy-data
-    # to 473 so the RW WAL mount stays writable -- see infra/nas/README.md.
-    user: "473:473"
+    # Run non-root (00043's §8 posture): WITHOUT a `user:` override the upstream grafana/alloy image
+    # runs as ROOT (its Dockerfile keeps USER root; the built-in uid-473 `alloy` user is not
+    # activated), and the /host/root:ro mount below would then expose every 0600 host secret. We
+    # pin 1000 (`zcrypto`), NOT the image's 473: 473 is not a Synology-recognized user, so the DSM
+    # ACL on the persistent ./alloy-data bind mount denies it write (Alloy crash-loops on
+    # `mkdir /var/lib/alloy/...: permission denied`). uid 1000 is a real DSM user with write access
+    # to the volume and is still non-root, so the posture holds. chown ./alloy-data to 1000 at
+    # deploy -- see infra/nas/README.md.
+    # NAMED RESIDUAL (§8): uid 1000 also owns the 0600 rrsync pull keys, so a compromised Alloy could
+    # read them via /host/root:ro (uid 473 could not). Accepted -- the keys are read-only,
+    # rrsync-jailed, the image is Grafana-signed + digest-pinned, and 473 is a hard DSM blocker; the
+    # named-volume hardening that would let a non-key-owning uid write alloy-data is tracked as T0030.
+    user: "1000:1000"
     network_mode: host
     depends_on:
       - docker-socket-proxy
@@ -123,7 +132,10 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-      - /var/lib/docker:/var/lib/docker:ro
+      # No `/var/lib/docker` mount: on Synology DSM the Docker root is /volume1/@docker (root-only),
+      # unreadable by the non-root Alloy -- and cadvisor (the only component that would use it) is not
+      # run here at all (see config.alloy: it SIGSEGVs on DSM's cgroup-less kernel). Host metrics (the
+      # requested load / netdev / disk-free) come from the unix exporter's /host mounts, not here.
       # Same shared textfile dir Task 2's archive-pull mounts RW and writes gate.prom into.
       - /volume1/docker/zcrypto-archive/textfile:/textfile:ro
       - ./config.alloy:/etc/alloy/config.alloy:ro
@@ -133,9 +145,9 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
+          # No `cpus:`/`cpu_shares:` -- the Synology DSM kernel has no CPU cgroup (see the
+          # socket-proxy service); `GOMEMLIMIT` above bounds Alloy's Go heap regardless.
           memory: 512m
-    cpu_shares: 256
     logging:
       driver: json-file
       options:

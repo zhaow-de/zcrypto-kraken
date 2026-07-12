@@ -27,28 +27,17 @@ prometheus.exporter.unix "host" {
   }
 }
 
-// ---- Container metrics ---------------------------------------------------------------------
-// Talks to Docker exclusively through the read-only docker-socket-proxy (compose.yaml) -- a
-// misbehaving/compromised Alloy can read container metadata but can never stop/kill/exec the
-// archive-pull container (00043's security posture, adopted verbatim). docker_only restricts
-// cadvisor to Docker containers (no host-cgroup sweep); the network metrics group is disabled --
-// net IO is already tracked via the unix exporter's netdev collector above, and cadvisor's
-// per-second network housekeeping is the known CPU cost on weak hardware (00043).
-prometheus.exporter.cadvisor "containers" {
-  docker_host      = "tcp://127.0.0.1:2375"
-  docker_only      = true
-  disabled_metrics = ["network"]
-}
+// ---- Container metrics: intentionally NOT collected on the NAS -----------------------------
+// cadvisor is incompatible with Synology DSM: it SIGSEGVs (nil-pointer in
+// manager.createContainerLocked) because DSM's kernel lacks the CPU cgroup hierarchy cadvisor
+// walks, and the panic takes down ALL of Alloy. So no `prometheus.exporter.cadvisor` here --
+// container CPU/mem is not scraped on the NAS. The docker-socket-proxy is retained purely for the
+// Loki docker-log discovery below (Docker API, cgroup-free -> unaffected). Host metrics
+// (load / netdev / disk-free -- the requested telemetry) come from the unix exporter above.
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
 prometheus.scrape "host" {
   targets         = prometheus.exporter.unix.host.targets
-  forward_to      = [prometheus.remote_write.grafana.receiver]
-  scrape_interval = "60s"
-}
-
-prometheus.scrape "containers" {
-  targets         = prometheus.exporter.cadvisor.containers.targets
   forward_to      = [prometheus.remote_write.grafana.receiver]
   scrape_interval = "60s"
 }
@@ -75,7 +64,7 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*|container_cpu_usage_seconds_total|container_memory_usage_bytes|container_memory_working_set_bytes|container_fs_usage_bytes|container_fs_limit_bytes|container_last_seen|container_start_time_seconds|machine_cpu_cores|machine_memory_bytes"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*"
       action        = "keep"
     }
   }
@@ -95,8 +84,7 @@ discovery.relabel "archive_pull_only" {
   rule {
     source_labels = ["__meta_docker_container_name"]
     // Unanchored: compose sets no `container_name:`, so the real name is project-prefixed (e.g.
-    // `/zcrypto-archive-archive-pull-1`), same prefix the cadvisor panels already match against
-    // (`name=~".*(archive-pull|alloy).*"`).
+    // `/zcrypto-archive-archive-pull-1`); an anchored `/archive-pull` would never match.
     regex  = ".*archive-pull.*"
     action = "keep"
   }
