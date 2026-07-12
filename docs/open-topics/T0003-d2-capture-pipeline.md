@@ -1,9 +1,9 @@
 ---
 status: partial
-ripe_when: the >=7-day clean-run clock completes (~2026-07-15) AND an attended session has workstation/NAS access for the pull + sync + alerting drill
+ripe_when: the pull/archive is redesigned under the three-tier NAS topology (decision 2026-07-11; design spec forthcoming — this supersedes the workstation-pull plan below), AND the >=7-day clean-run is verified (~2026-07-15)
 ---
 
-# D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)
+# D2 forward-capture pipeline (VPS daemon → NAS archive)
 
 ## Context — what
 
@@ -46,7 +46,17 @@ Iteration **iter-038** (interactive design → unattended build; spec `docs/spec
 
 **Beware quiet logs.** Because iter-038 made the desync warning fire only on the *transition* into desync, a pair that is **stuck** desynced logs nothing further — the `checksum desync` spam stops even though the pair is still broken. **The true health signal is the withheld healthcheck ping (→ healthchecks.io check goes DOWN), not the absence of log warnings.**
 
+## Reboot note — 2026-07-11 04:00 UTC: kernel auto-reboot absorbed cleanly (mission unaffected)
+
+`unattended-upgrades` rebooted the VPS at 04:00 UTC for kernel `6.12.88 → 6.12.95`. Capture auto-restarted (container `ExitCode 0` = graceful SIGTERM `close()`, `RestartCount 0`, up within ~1 min; system down 04:00:11 → 04:01:09). **Book (mission-critical) impact = a single ~83 s gap** — last update 03:59:59.9 → first update 04:01:23.3, identical across pairs — ≈ **0.014 %** of a 7-day window, comfortably inside the `<0.1 %` budget. **Zero segment loss** (every hour 10/10 segments + 10/10 manifests; the only `.part` files are the live current hour), and books re-synced with **zero "Already subscribed"** (the iter-039 stuck-desync bug did **not** recur). A within-budget gap is not a corruption event, so the ≥7-day clean-run clock **continues from 2026-07-08** (still ≈ 2026-07-15) — the reboot did **not** reset it. Two follow-ups registered: the auto-reboot recurrence/ops policy ([[T0027]]) and the reconnect trade-snapshot overwrite ([[T0026]], trades only — books were untouched).
+
+**Gap-accounting blind spot (for the verification design below):** `GapMonitor` state is in-process and **resets on restart**, so a reboot/restart gap is invisible to the daemon's own `<0.1 %` counters. The ≥7-day exit-bar verification must derive gap time from **segment-timestamp continuity end-to-end**, not from the daemon's live gap counters, or it will silently undercount every restart gap.
+
 ## Suggested next steps
+
+**Plan — SUPERSEDED 2026-07-11 by the three-tier topology decision.** The pull/archive moves off the intermittent workstation onto the **always-on NAS** (an x86 Synology Docker host): NAS pull + archive, always-on gate-verification, and redundant NAS capture (dual-L2). The human gates were cleared 2026-07-11 and the design spec is forthcoming; the workstation drops out of the durability path. Independent of the pull redesign, the **≥7-day clean-run verification** (still **≈ Jul 15**) and the alerting drill remain — the three-tier build subsumes them. _(The original workstation-pull-service plan is now moot.)_
+
+**Constraint — the workstation is NOT online 24×7 (not even daily).** This bounds the pull design: the **safe-offline window ≈ the VPS ring-buffer depth (~7 days)** — if the workstation stays offline longer than the ring buffer holds, the VPS evicts un-pulled segments and that L2 is **permanently lost** (unbackfillable). The ~74 GB VPS disk (~10 GB/day) can't hold a much deeper buffer, so the operational requirement is: **bring the workstation online at least every few days**, and the pull must (a) run on every boot / whenever the host is up (`systemd` timer `Persistent=true`, catch-up on wake), and (b) **alert loudly when the workstation hasn't successfully pulled in ~5 days** (a dead-man before the ~7-day eviction cliff), so an impending gap is visible in time to act.
 
 Remainder (the wall-clock drill + the sync/alerting half). The incident recovery + deploy-path re-alignment (above) and GHCR public-visibility are **done**; what's left:
 

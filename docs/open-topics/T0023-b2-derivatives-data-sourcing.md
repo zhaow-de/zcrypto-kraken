@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the B2 (derivatives-positioning) family is picked for an iteration — at which point the liquidations-history decision below must be made before the harness spec is written
+ripe_when: the B2 (derivatives-positioning) family is picked for an iteration — the liquidations-source decision is now made (option a, below), so B2 opens autonomously (OI backfill + harness)
 ---
 
 # B2 derivatives-positioning data sourcing (funding / OI / liquidations)
@@ -29,9 +29,6 @@ The full source map (access model, history depth, granularity, exact endpoints/p
 
 ## Suggested next steps
 
-- **(human decision — the one gate, make it when B2 is picked): the liquidations approach.** Choose one, since it sets the family's scope and cannot be deferred past the harness spec:
-  1. **Free, live-only liquidations** — accept liquidations as a self-collected, lossy (largest-only) live signal; **start recording the Binance WS `!forceOrder@arr` stream now** so a forward backtest window accrues; the initial B2 trials use only funding + OI (both free-backfillable) and add liquidations later once enough live tape exists. *(Zero cost, zero account — the recommended default; it lets B2 open immediately on funding+OI.)*
-  2. **Free Coinalyze key for live liquidations** — a human signs up at **coinalyze.net**, generates a free API key (no payment/card), which is then vaulted; gives a cleaner aggregated live liquidation feed than the raw WS, still no historical backfill. *(Optional upgrade to option 1's live path.)*
-  3. **Buy liquidation history** — budget **Coinglass Standard $299/mo** (commercial-use licensed) for a same-day multi-year liquidations backtest. *(A money decision — park under the standing "no spend without human sign-off" rule; only if a liquidations factor proves worth it on the free funding+OI base.)*
+- **Liquidations approach — DECIDED (human, 2026-07-11): option (a), free live-only.** Liquidations are a self-collected, lossy (largest-only) live signal — no paid history, no account. The initial B2 trials use funding + OI only (both free-backfillable); liquidations join later once enough live tape has accrued. Follow-up (autonomous, small): stand up a recorder for the Binance WS `!forceOrder@arr` stream so a forward backtest window starts accruing now (persist to a new gitignored `data/derivatives-liquidations/`; provenance-tag it as a largest-only lower bound). Rejected: (b) a free Coinalyze key (cleaner live feed but adds an account + still no history) and (c) paid Coinglass $299/mo (history, but a money spend not justified before a liquidations factor proves out on funding+OI).
 - **(autonomous, remaining) build the OI backfill** from Binance Vision daily `metrics` dumps (5m `sum_open_interest`/`_value`; ~10× the files of funding, so its own build) into `data/derivatives-oi/` — funding is done (above); OI is the remaining independent, human-gate-free half. Bybit funding cross-check still a nice-to-have.
 - **(autonomous) the B2 harness** consumes: funding (8h prints → cumulative/accrued carry, sign persistence for the 1h/4h horizon — derived, no finer native data), OI (5m → level, delta, momentum, z-score; + the free long/short ratios), and — per the chosen option — liquidations (per-bucket notional, long/short imbalance, spike flags, provenance-tagged as lower-bound if from the WS). All USDT-M perp features aligned to the Kraken spot decision grid with the venue gap carried explicitly.

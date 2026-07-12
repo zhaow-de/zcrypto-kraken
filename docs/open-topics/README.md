@@ -21,10 +21,12 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; conditioning-overlay trials on the adopted A2-4h ensemble against the 15m substrate, net-of-cost per T0009 (ripe when: live now — trials ride research iterations).
+- [T0024 — universe spread-cap criterion](T0024-universe-spread-cap-criterion.md) — add the pending `spread_cap` filter to universe selection once captured L2 exists; shares T0014/T0003's L2 dependency (ripe when: synced L2 copy, ≈2026-07-22).
+- [T0025 — full symbol & corporate-action ledger](T0025-full-corporate-action-ledger.md) — extend iter-002's alias ledger to a full point-in-time record (redenominations, migrations, delistings) for survivorship (ripe when: a universe pair has a corporate action, or before a live-trading universe refresh).
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090: `data/derivatives-funding/`, basket e08ea1a9…, 10 perps); OI backfill + the liquidations human decision remain (ripe when: B2 is picked for an iteration).
+- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations-source decided (option a, free live-only); the OI backfill + harness are autonomous when B2 is picked.
 
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
@@ -50,14 +52,18 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: Stage 6b starts — the T1 connection rides alongside the §11 T2 probe window, per spec 00039).
 - [T0008 — robust book-desync recovery](T0008-desync-recovery-robustness.md) — the iter-039 resubscribe fix heals on the common path but its single fire-and-forget attempt can still leave a pair stuck; add retry / ack-correlation / reconnect-escalation (ripe when: next attended capture-maintenance window, or on a recurrence).
-- [T0020 — Grafana Cloud observability](T0020-grafana-cloud-observability.md) — execute spec 00043: Alloy + socket proxy ship both containers' logs + OS/container/app metrics to the provisioned Grafana Cloud instance, one committed dashboard, API-provisioned email alerts (ripe when: first attended ops window after iter-084 merges; capture exporter flip additionally after the ≥7-day clock ≈ 2026-07-15).
 - [T0021 — VPS journal retention](T0021-vps-journal-retention.md) — prune-after-verified-pull design for the append-only engine journal (~0.35 GiB/month measured) (ripe when: the 80% disk watermark — T0020's disk alert is the trigger mechanism — or an earlier attended ops window).
+- [T0026 — reconnect trade-snapshot overwrite](T0026-reconnect-trade-snapshot-overwrite.md) — on a full WS reconnect the trade snapshot silently overwrites already-finalized past-hour trade segments (manifest regenerated, so hash-invisible); books unaffected, trades REST-backfillable (ripe when: next attended capture-maintenance window; loss-quantification is autonomous now).
 
 ### Partially done<a name="partially-done-1"></a>
 
-- [T0003 — D2 forward-capture pipeline (VPS daemon → workstation sync → NAS)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the workstation pull/NAS sync + alerting drill + the 7-day clean run (ripe when: the ≥7-day clock completes ≈2026-07-15 + an attended workstation/NAS session).
+- [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); remainder = the pull/archive, now redesigned as the always-on **NAS three-tier** model (decision 2026-07-11, spec forthcoming) + the alerting drill + the ≥7-day clean-run verification (ripe when: the three-tier spec, and the ≥7-day verification ≈2026-07-15).
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
+
+- [T0020 — Grafana Cloud observability](T0020-grafana-cloud-observability.md) — Alloy + socket proxy ship both containers' logs + OS/container/app metrics to the provisioned Grafana Cloud instance, one committed dashboard, API-provisioned email alerts; the human credential fetch + vault is DONE (2026-07-11), remaining = the autonomous Tasks 1–3 build + the attended Task 4 deploy (ripe when: an observability build+deploy session; capture exporter flip additionally after the ≥7-day clock ≈ 2026-07-15).
+
+- [T0027 — unattended auto-reboot policy](T0027-unattended-reboot-policy.md) — unattended-upgrades auto-reboots the VPS at 04:00 UTC on kernel updates (2026-07-11: both containers recovered clean, ~83 s capture gap, engine day-1 gate cycle verified intact — the 04:00 cycle re-ran and replays bit-identical); remaining = the human ops-policy decision + confirming order-state reconciliation survives a mid-order-submission reboot before live 6b (ripe when: before the Stage-6b executor session, or on the next disruptive auto-reboot).
 
 ### Resolved<a name="resolved-1"></a>
 
