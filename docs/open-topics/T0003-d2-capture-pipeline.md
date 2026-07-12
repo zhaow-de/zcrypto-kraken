@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the >=7-day clean-run is verified (~2026-07-15) and the alerting drill runs — the three-tier pull/archive (Role A) landed iter-093; remaining are the monitoring/alerting drill, the clean-run gate, and Roles B/C (gate-verify + redundant capture)
+ripe_when: the >=7-day clean-run is verified (~2026-07-15) and the alerting drill runs — the three-tier pull/archive (Role A) landed iter-093, gate-verify (Role B) landed iter-094; remaining are the monitoring/alerting drill, the clean-run gate, and Role C (redundant capture)
 ---
 
 # D2 forward-capture pipeline (VPS daemon → NAS archive)
@@ -54,7 +54,11 @@ Iteration **iter-038** (interactive design → unattended build; spec `docs/spec
 
 ## Three-tier pull/archive — Role A landed 2026-07-12 (iter-093)
 
-The pull/archive half moved off the intermittent workstation onto the always-on NAS (spec + plan `00048`, this PR). **Role A** (`zcrypto archive pull` + the NAS `archive-pull` container) pulls the VPS capture segments hourly over the read-only `rrsync` forced-command channel, hash-verifies each against its `.sha256` manifest (distinct exit codes for transport vs hash failure), and archives to `/volume1/ZhaoCrypto` owned `1000:1000` at `0664/0775`. Deployed + verified end-to-end on the NAS (the `-compat` image for the no-AVX Atom, [[T0029]]): first pull `checked=1962 ok=1962 failed=0`, VPS host key pinned. This **supersedes the workstation-pull-service** bullet below. Remaining three-tier increments — **Role B** (always-on gate-verify replay) and **Role C** (redundant NAS capture) — are the durability path's not-yet-built half; follow-ups registered: [[T0028]] (O(archive) re-hash per cycle) and [[T0029]] (Role B cross-runtime replay determinism).
+The pull/archive half moved off the intermittent workstation onto the always-on NAS (spec + plan `00048`, this PR). **Role A** (`zcrypto archive pull` + the NAS `archive-pull` container) pulls the VPS capture segments hourly over the read-only `rrsync` forced-command channel, hash-verifies each against its `.sha256` manifest (distinct exit codes for transport vs hash failure), and archives to `/volume1/ZhaoCrypto` owned `1000:1000` at `0664/0775`. Deployed + verified end-to-end on the NAS (the `-compat` image for the no-AVX Atom, [[T0029]]): first pull `checked=1962 ok=1962 failed=0`, VPS host key pinned. This **supersedes the workstation-pull-service** bullet below. The remaining three-tier increment — **Role C** (redundant NAS capture) — is the durability path's not-yet-built piece; [[T0028]] (O(archive) re-hash per cycle) stays open. [[T0029]] (Role B cross-runtime replay determinism) is resolved — see the Role B section below.
+
+## Three-tier pull/archive — Role B landed 2026-07-12 (iter-094)
+
+Role B (always-on gate-verify replay) landed on the NAS (spec + plan `00049`). `zcrypto engine gate-export` scores the Stage-6a gate on the NAS's fast path, measured **bit-identical** to the VPS's AVX-computed targets across 8/8 journaled cycles (worst `|diff| 0.00e+00`) — resolving [[T0029]]'s cross-runtime replay-determinism precondition by measurement, not tolerance-relaxation. The NAS pulls the VPS engine journal over its **own** least-privilege SSH key (`sync_journal`, distinct from Role A's `sync_capture` key). Deployed + verified live in production: `gate.prom` reports `mismatch_total 0`. A NAS Grafana Alloy telemetry stack was stood up alongside it — host metrics + the gate metric + `archive-pull`'s logs → Grafana Cloud, verified live (`samples_failed 0`, `loki sent 7`, healthcheck up) — with one canonical dashboard + alert rules and `scripts/grafana-push.sh` (see [[T0020]] for that build). The workstation `zcrypto-engine-gateops` timer (spec 00042) is retired. Only **Role C** (redundant NAS capture) remains of the three-tier model.
 
 ## Suggested next steps
 
@@ -65,7 +69,8 @@ The pull/archive half moved off the intermittent workstation onto the always-on 
 Remainder (the wall-clock drill + the sync/alerting half). The incident recovery + deploy-path re-alignment (above) and GHCR public-visibility are **done**; what's left:
 
 - **DONE via Role A (iter-093, above)** — ~~Workstation pull service~~ superseded by the always-on NAS `archive-pull` container: the read-only `rrsync` forced-command key, hourly pull, and per-segment hash-verify all landed (spec/plan `00048`). Delete-after-verified is deliberately NOT done (the NAS archives; the VPS ring buffer self-evicts).
-- **(autonomous) Role B + Role C** — the remaining three-tier increments: **Role B** (always-on gate-verify replay of the VPS journal) and **Role C** (redundant NAS L2 capture). Role B's cross-runtime replay-determinism precondition is [[T0029]].
+- **DONE via Role B (iter-094, above)** — always-on gate-verify replay of the VPS journal, deployed + verified live on the NAS (spec/plan `00049`); [[T0029]]'s cross-runtime replay-determinism precondition resolved by measurement.
+- **(autonomous) Role C** — the remaining three-tier increment: redundant NAS L2 capture.
 - **(autonomous)** **Full monitoring role** — beyond the liveness heartbeat, wire disk-watermark + gap-rate alerts, and run the **alerting drill** (stop the daemon → confirm the alert fires) that the exit bar requires.
 - **(autonomous)** **The ≥7-day clean-run** — let it run ≥7 consecutive days (clock restarts from the 2026-07-08 recovery); verify \<0.1 % gap time + zero segment loss + all hashes match end-to-end → satisfies this slice of the Phase-1 exit bar (then flip to `resolved`). Watch for the first natural desync to self-heal on the deployed fix (see the Incident note + [T0008](T0008-desync-recovery-robustness.md)).
 - **(autonomous, smaller)** Wire the `ansible-lint` pre-commit hook (scoped `^infra/`) + the repo-wide `name[casing]` cleanup; fix the `capture` role's `getent`-fact access (it uses the top-level `getent_passwd` var → an ansible-core deprecation warning; switch to `ansible_facts['getent_passwd']`); add REST trade-backfill to the daemon (deferred — gaps are logged, not backfilled).

@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: before Role B (Increment 2) — resolve whether the NAS's compat runtime can bit-identically replay the VPS's AVX-computed journal targets, or Role B must run on the VPS
+status: resolved
 ---
 
 # NAS CPU has no AVX — the zcrypto image's polars crashes there
@@ -30,6 +29,6 @@ The VPS is fine (AMD EPYC 7713, has AVX2). Only the NAS is affected.
 
 - **Decision (2026-07-12): Option A, done right with `rtcompat`.** Two image variants, same polars 1.42.1: the **default** (multi-arch, `polars-runtime-32`/AVX) for the VPS — **its polars runtime untouched** (the shared image also gained rsync/openssh-client and a fixed uid-1000 default user for Role A, but both are inert on the VPS, whose compose overrides `user:` and whose services don't shell out to rsync) — and an amd64 **`-compat`** variant (`polars-runtime-compat`, `-32` removed) for the NAS. Implemented as a `POLARS_RUNTIME` build arg in `infra/docker/Dockerfile` + a 2-entry CI matrix in `.github/workflows/capture-image.yml`. Spec `00048`'s wrong "runs the exact image unchanged" line corrected.
 
-## Suggested next steps
+## Resolution — determinism measured, Role B is bit-identical on the NAS (iter-094, 2026-07-12)
 
-- **(Increment 2, Role B — the residual) Resolve replay determinism across runtimes.** Role B replays the VPS's journaled cycles and must match `worst |diff| 0.00e+00`; the NAS runs the **compat** runtime while the VPS's targets were computed on **AVX** (`-32`), and SIMD-vs-scalar float reductions can differ in the last bits. Options: run Role B **on the VPS** (same runtime → trivially bit-identical), or measure whether the compat-vs-AVX delta stays within `compare_targets`' tolerance. Decide when Role B is built. (Role A's pull and Role C's independent capture don't need cross-runtime bit-identity.)
+The residual is closed by **measurement**, not tolerance-relaxation. Against the 8 VPS-journaled cycles on the **real Atom NAS** (`polars-runtime-compat` + baseline numpy), the **fast path** (the gate path, `zcrypto engine report`/`gate-export`) replays the VPS's AVX-computed targets at **`worst |diff| 0.00e+00` on 8/8 cycles**, matching the AVX control exactly — the exact-rational big-integer builder routes no float reductions through polars/numpy on that path, so it is a genuine cross-runtime *portability* property. (The verified path carries inherent ~`1e-18` same-runtime float noise and is too slow on the Atom, so Role B does not use it.) Role B is deployed + verified live on the NAS: `gate.prom` reports `mismatch_total 0` — the compat replay agrees with the VPS in production. Role B runs on the maximally-independent always-on NAS at the strict `0.00e+00` bar. See spec/plan `00049`, iter-094.
