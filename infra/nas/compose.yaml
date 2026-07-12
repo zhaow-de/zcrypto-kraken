@@ -33,3 +33,105 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # NAS telemetry stack (spec 00049 Role B, Task 3) — Grafana Alloy + a GET-only Docker-socket
+  # proxy, ships host/container metrics and the archive-pull container's logs to the
+  # already-provisioned Grafana Cloud instance. Adapted from docs/specs/00043-observability-design.md
+  # (the VPS counterpart) for plain `docker compose` under Container Manager -- no ansible/systemd
+  # here. See infra/nas/config.alloy for the Alloy pipeline and infra/nas/README.md for the deploy
+  # steps + secrets file + resource-budget rationale.
+  docker-socket-proxy:
+    # Pin this to a digest at deploy time (plan Task 3) -- resolved offline here, no registry
+    # access; see infra/nas/README.md.
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      # Read-only guard: CONTAINERS is the only endpoint this stack needs (cadvisor's
+      # list/inspect/stats calls). POST=0 is the master mutating-operation switch -- every
+      # create/start/stop/kill/exec call is a POST, so this one flag is the entire security
+      # boundary Alloy operates behind (00043's posture, adopted verbatim: a misbehaving or
+      # compromised Alloy can read container metadata through this proxy but can never touch the
+      # archive-pull container's control plane). The rest are listed explicitly, all disabled, for
+      # the same reason -- explicit over relying on the image's own (already-restrictive) defaults.
+      CONTAINERS: 1
+      POST: 0
+      EXEC: 0
+      IMAGES: 0
+      NETWORKS: 0
+      VOLUMES: 0
+      SERVICES: 0
+      TASKS: 0
+      NODES: 0
+      SWARM: 0
+      SECRETS: 0
+      CONFIGS: 0
+      PLUGINS: 0
+      SYSTEM: 0
+      DISTRIBUTION: 0
+      BUILD: 0
+      COMMIT: 0
+      SESSION: 0
+      AUTH: 0
+    ports:
+      - "127.0.0.1:2375:2375"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  alloy:
+    # Pin this to a digest at deploy time (plan Task 3) -- resolved offline here, no registry
+    # access; see infra/nas/README.md.
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    # Non-root by default in the upstream image (00043's posture: 0600 root:root secrets on the
+    # /host/root mount below stay unreadable through it) -- do not add a `user:` override without
+    # confirming the upstream uid first, or the RW alloy-data mount below ends up owned wrong.
+    network_mode: host
+    depends_on:
+      - docker-socket-proxy
+    environment:
+      # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
+      GOMEMLIMIT: 460MiB
+    env_file:
+      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
+      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, distributed out-of-band, never committed.
+      # See infra/nas/README.md.
+      - ./alloy-secrets.env
+    command:
+      - run
+      - --storage.path=/var/lib/alloy
+      - --server.http.listen-addr=127.0.0.1:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      # Alternate-path RO mounts (mounting over Alloy's own container /proc//sys is impossible) --
+      # config.alloy points procfs_path/sysfs_path/rootfs_path at these.
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      # Same shared textfile dir Task 2's archive-pull mounts RW and writes gate.prom into.
+      - /volume1/docker/zcrypto-archive/textfile:/textfile:ro
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
+      # redeploy re-ships the retained log backlog into the ingest quota (00043).
+      - ./alloy-data:/var/lib/alloy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+    cpu_shares: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

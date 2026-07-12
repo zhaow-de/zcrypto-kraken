@@ -84,3 +84,68 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 ```bash
 /usr/local/bin/docker compose -f compose.yaml logs -f archive-pull
 ```
+
+## Alloy telemetry stack (spec 00049 Role B, Task 3)
+
+Two more services on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence
+above: **Grafana Alloy** + a GET-only **`docker-socket-proxy`**, shipping NAS host metrics (load,
+memory, free disk space, network IO), container metrics (`archive-pull`, `alloy`, the proxy
+itself), the Role B gate metrics (Task 2's `gate.prom` textfile), and the `archive-pull`
+container's logs to the already-provisioned Grafana Cloud instance. See
+`docs/specs/00043-observability-design.md` for the design this is adapted from (the VPS
+counterpart) and `infra/nas/config.alloy` for the Alloy pipeline itself — everything here runs
+under Container Manager as plain compose services, no ansible/systemd.
+
+### Deploy
+
+1. Place `config.alloy` (this directory) alongside the already-deployed `compose.yaml` under
+   `/volume1/docker/zcrypto-archive/`.
+2. Create the secrets file `/volume1/docker/zcrypto-archive/alloy-secrets.env`, mode `0600`,
+   **never committed** — distributed out-of-band the same way the `sync_capture`/`sync_journal`
+   keys are (Deploy steps 2–3 above). Contents (one `KEY=value` per line, no quoting):
+
+   ```
+   GRAFANA_PROM_URL=https://<prometheus-remote-write-endpoint>/api/prom/push
+   GRAFANA_PROM_USERNAME=<prometheus-instance-id>
+   GRAFANA_PROM_PASSWORD=<prometheus-access-token>
+   GRAFANA_LOKI_URL=https://<loki-push-endpoint>/loki/api/v1/push
+   GRAFANA_LOKI_USERNAME=<loki-instance-id>
+   GRAFANA_LOKI_PASSWORD=<loki-access-token>
+   ```
+
+   `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
+   stays secret-free and diffable (only `env_file: ./alloy-secrets.env` references the file by
+   name).
+3. Create `/volume1/docker/zcrypto-archive/alloy-data/`, writable by the `alloy` container's
+   (non-root) runtime uid — this is Alloy's `--storage.path`: the remote_write WAL and Loki log
+   read-positions persist here so a container replacement doesn't re-ship each source's retained
+   backlog into the ingest quota. The upstream `grafana/alloy` image already runs non-root by
+   default; confirm its uid at deploy time (`docker run --rm grafana/alloy:latest id`, or inspect
+   the pulled image) before locking down this directory's ownership tighter than
+   world-writable.
+4. Pin both new images to a digest, same pattern as the capture image (Deploy step 6 above):
+   `docker buildx imagetools inspect grafana/alloy:latest` and
+   `docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:latest`, then replace
+   the `:latest` tags on the `alloy` and `docker-socket-proxy` services in `compose.yaml` with
+   `@sha256:<digest>`.
+5. Start (or restart to pick up the two new services):
+   `/usr/local/bin/docker compose -f compose.yaml up -d`. Confirm with
+   `/usr/local/bin/docker compose -f compose.yaml ps` that `docker-socket-proxy` and `alloy` are
+   both `Up`.
+
+### Resource budget
+
+Same tuning as the VPS design (`docs/specs/00043-observability-design.md`), reused as-is since the
+NAS Atom is comparably weak and cadvisor's per-second housekeeping is the CPU hog on either host:
+Alloy `cpus: "0.5"`, `memory: 512m`, `cpu_shares: 256`, `GOMEMLIMIT=460MiB` (Go's GC overshoots a
+small cap under default behavior otherwise); `docker-socket-proxy` `cpus: "0.1"`, `memory: 64m`.
+`docker_only` + the disabled cadvisor network metrics group keep container-metric collection cheap.
+32 GB NAS RAM makes the ceiling arithmetic comfortable — these are caps, not reservations.
+
+### Verification note
+
+No Docker on the machine this was authored on, so `alloy validate` / `alloy fmt` against
+`config.alloy` and a pulling `docker compose config` could not be run here. `config.alloy` was
+written carefully against the River config language and 00043's design; live `alloy validate` (a
+throwaway `grafana/alloy` container, offline/stub creds) is deferred to the NAS deploy shakedown —
+run it before trusting this file in production.
