@@ -29,7 +29,9 @@ def _utc_now() -> datetime:
 def _run_rsync(source: str, dest: Path) -> int:
     ssh_key = os.environ["ARCHIVE_SSH_KEY"]
     ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
-    ssh_opts = f"-i {ssh_key} -p {ssh_port} -o StrictHostKeyChecking=accept-new"
+    # CheckHostIP=no: the hostname key is pinned via known_hosts; the extra IP-keyed check would
+    # try to append the IP's key on every pull, which fails against the read-only /keys mount.
+    ssh_opts = f"-i {ssh_key} -p {ssh_port} -o StrictHostKeyChecking=accept-new -o CheckHostIP=no"
     known_hosts = os.environ.get("ARCHIVE_SSH_KNOWN_HOSTS")
     if known_hosts:  # a pre-seeded, mounted known_hosts pins the VPS host key across restarts
         ssh_opts += f" -o UserKnownHostsFile={known_hosts}"

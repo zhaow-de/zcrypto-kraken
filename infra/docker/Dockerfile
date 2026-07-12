@@ -11,10 +11,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends rsync openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root runtime user. `compose.yaml` overrides the container's `user:` to the host's
-# `kraken-capture` uid/gid at deploy time (so bind-mounted segment files land with the right
-# host ownership); this user is just the image's own sane default for a standalone `docker run`.
-RUN groupadd --system capture && useradd --system --gid capture --create-home --shell /usr/sbin/nologin capture
+# Non-root runtime user, fixed at uid/gid 1000. The VPS capture/engine compose files override
+# `user:` to the host's `kraken-capture`/`kraken-engine` *system* uids (100-999), so this default
+# is inert there. The NAS archive-pull runs as `1000:1000` (spec 00048) and shells out to `ssh`,
+# which calls getpwuid(getuid()) at startup and exits 255 ("No user exists for uid 1000") if the
+# running uid has no /etc/passwd entry — so uid 1000 must exist in the image. (1000 is unused in
+# the base image; the VPS system uids never collide with it.)
+RUN groupadd --gid 1000 capture && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin capture
 
 WORKDIR /app
 ENV UV_LINK_MODE=copy \
