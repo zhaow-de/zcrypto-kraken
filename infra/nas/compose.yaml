@@ -97,19 +97,18 @@ services:
     # access; see infra/nas/README.md.
     image: grafana/alloy:latest
     restart: unless-stopped
-    # Run non-root (00043's §8 posture): WITHOUT a `user:` override the upstream grafana/alloy image
-    # runs as ROOT (its Dockerfile keeps USER root; the built-in uid-473 `alloy` user is not
-    # activated), and the /host/root:ro mount below would then expose every 0600 host secret. We
-    # pin 1000 (`zcrypto`), NOT the image's 473: 473 is not a Synology-recognized user, so the DSM
-    # ACL on the persistent ./alloy-data bind mount denies it write (Alloy crash-loops on
-    # `mkdir /var/lib/alloy/...: permission denied`). uid 1000 is a real DSM user with write access
-    # to the volume and is still non-root, so the posture holds. chown ./alloy-data to 1000 at
-    # deploy -- see infra/nas/README.md.
-    # NAMED RESIDUAL (§8): uid 1000 also owns the 0600 rrsync pull keys, so a compromised Alloy could
-    # read them via /host/root:ro (uid 473 could not). Accepted -- the keys are read-only,
-    # rrsync-jailed, the image is Grafana-signed + digest-pinned, and 473 is a hard DSM blocker; the
-    # named-volume hardening that would let a non-key-owning uid write alloy-data is tracked as T0030.
-    user: "1000:1000"
+    # Run as the dedicated non-root, non-secret-owning user `zcrypto-dummy` (uid 1031, gid 1000 -- the
+    # `zcrypto` group -- created on the NAS at deploy). §8 posture + T0030: WITHOUT a `user:` override
+    # the upstream grafana/alloy image runs as ROOT, and the /host/root:ro mount below would expose
+    # every 0600 host secret. The image's built-in uid-473 user can't be used -- 473 is not a
+    # Synology-recognized user, so the DSM ACL denies it write to the persistent alloy-data mount
+    # (Alloy crash-loops on `mkdir /var/lib/alloy/...: permission denied`). uid 1031 is a real DSM
+    # user, so it writes alloy-data (chmod 0775 + chown 1031:1000 at deploy), and -- crucially -- it
+    # is NOT the owner of the 0600 rrsync pull keys (owner is uid 1000), so a compromised Alloy cannot
+    # read them through /host/root (this closes T0030). Note gid 1000 IS the key-owning group, so the
+    # protection rests on the keys being 0600 -- owner-only, group has no read (verified live) -- not
+    # on group isolation; keep the keys 0600. See infra/nas/README.md.
+    user: "1031:1000"
     network_mode: host
     depends_on:
       - docker-socket-proxy

@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: a NAS observability-hardening pass, or before the Stage-6b go-live (any tightening of the NAS's compromise blast radius)
+status: resolved
 ---
 
 # NAS Alloy runs as uid 1000 and can read the rrsync pull keys via /host/root
@@ -19,7 +18,12 @@ Defense-in-depth (§8). The 00043 §8 precedent that Role B leans on — "a non-
 - uid 1000 writes it fine (real DSM user) and Alloy is stable + shipping, but owns the pull keys.
 - The residual is documented in `infra/nas/compose.yaml` (the `NAMED RESIDUAL (§8)` comment on the `alloy` service `user:`) and `infra/nas/README.md`.
 
-## Suggested next steps
+## Resolution (iter-094, 2026-07-13)
 
-- **(autonomous, needs the NAS)** Switch `alloy-data` from the `./alloy-data` bind mount to a **Docker-managed named volume**, then one-time (as root) `chown` that volume's `_data` dir to a **dedicated, non-1000, non-key-owning uid** (e.g. 4747), and set the `alloy` service `user:` to that uid. A named volume sidesteps the DSM bind-mount-ACL bug (docker initializes it writable for the container), and the dedicated uid does not own the `0600` keys, so a compromised Alloy can no longer read them via `/host/root`. Verify: Alloy starts, ships metrics + logs, and the remote_write WAL + Loki positions persist across a container recreate and a NAS reboot.
-- Alternatively, drop the `/:/host/root:ro` mount and give the unix exporter's `filesystem` collector a narrower rootfs view — but disk-free reporting needs a broad rootfs, so this is likely worse than the dedicated-uid fix.
+Resolved in the same PR (iter-094, `feat/role-b-gate-verify` → #117) by running Alloy as a **dedicated, non-key-owning DSM user** rather than reusing uid 1000. The human created `zcrypto-dummy` (**uid 1031, gid 1000** — the `zcrypto` group) on the NAS — a real DSM user (so it can write the DSM-ACL'd `alloy-data` mount, which uid 473 could not) that is **not the owner** of the `0600` rrsync pull keys (uid 1000 is). `infra/nas/compose.yaml` now pins the `alloy` service to `user: "1031:1000"`; the deploy chowns `alloy-data` to `1031:1000` + `chmod 0775`.
+
+`zcrypto-dummy`'s primary group is 1000 (`zcrypto`), which **is** the group that owns the keys — so the protection rests on the keys being `0600` (owner-only; the group has no read bit), not on group isolation. A dedicated non-1000 gid would be marginally stronger defense-in-depth (protection independent of file mode), but the keys are `0600` and that is enforced + verified, so uid 1031 cannot read them as owner (it isn't the owner) or as group (0600 grants the group nothing). Keep the keys `0600`.
+
+This keeps the bind mount (no switch to a named volume needed — the dedicated real-user uid was the missing piece, not the volume type) and preserves the requested host metrics (the `/:/host/root:ro` mount stays, so the unix exporter still reports disk-free across the full rootfs).
+
+**Verified live on the NAS** (iter-094 deploy shakedown, container `User=[1031:1000] running rc=0`): Alloy ships metrics (`prometheus_remote_storage_samples_failed_total 0`, `samples_total 134`) and logs (`loki_write_sent_entries_total ≥1`, all `dropped_entries_total 0`), and reads `gate.prom` (0664, other-readable). The T0030 proof, re-run with the real key-owning gid 1000: as `1031:1000`, reading `/host/root/volume1/docker/zcrypto-archive/keys/sync_journal` → **permission denied** — a compromised Alloy cannot read the pull keys through the rootfs mount. The §8 "non-root Alloy can't read the secrets via `/host/root`" precedent now holds for real, since Alloy's uid no longer owns them.

@@ -55,7 +55,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0021 — VPS journal retention](T0021-vps-journal-retention.md) — prune-after-verified-pull design for the append-only engine journal (~0.35 GiB/month measured) (ripe when: the 80% disk watermark — the NAS Alloy `/volume1` disk-free alert (T0020) is the trigger mechanism, live once its push runs — or an earlier attended ops window).
 - [T0026 — reconnect trade-snapshot overwrite](T0026-reconnect-trade-snapshot-overwrite.md) — on a full WS reconnect the trade snapshot silently overwrites already-finalized past-hour trade segments (manifest regenerated, so hash-invisible); books unaffected, trades REST-backfillable (ripe when: next attended capture-maintenance window; loss-quantification is autonomous now).
 - [T0028 — NAS pull re-hashes the whole archive](T0028-nas-pull-incremental-verify.md) — Role A's `verify_tree` sha256-re-verifies the entire (unbounded) archive every hourly cycle → O(archive) per cycle, stalls the loop in ~2 months; verify only rsync-transferred files instead (ripe when: the verify sweep approaches the pull interval, ~250–600 GB in).
-- [T0030 — NAS Alloy uid-key exposure](T0030-nas-alloy-uid-key-exposure.md) — Role B's Alloy runs as uid 1000 (uid 473 can't write the DSM-ACL'd `alloy-data` mount) and so can read the `0600` rrsync pull keys via `/host/root`; accepted named residual (keys are read-only rrsync-jailed), harden with a Docker named volume + a dedicated non-key-owning uid (ripe when: a NAS observability-hardening pass, or before Stage-6b go-live).
 
 ### Partially done<a name="partially-done-1"></a>
 
@@ -71,3 +70,4 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0000 — Phase 0 human account actions & live-account confirmations](archive/T0000-phase0-account-actions.md) — resolved in iter-023 (Phase-2 close-out): account actions + live confirmations done 2026-07-07; the deferred July-9 fee-schedule fold-in landed in iter-017 (`cli/costs/`).
 - [T0029 — NAS CPU has no AVX; polars crashes](archive/T0029-nas-cpu-no-avx-polars.md) — resolved — determinism measured, Role B bit-identical on the NAS (iter-094).
+- [T0030 — NAS Alloy uid-key exposure](archive/T0030-nas-alloy-uid-key-exposure.md) — resolved (iter-094, same PR): Alloy runs as the dedicated non-key-owning user `zcrypto-dummy` (uid 1031, gid 1000), verified live — ships metrics + logs, `gate.prom` readable, and the `0600` pull keys denied through `/host/root`.

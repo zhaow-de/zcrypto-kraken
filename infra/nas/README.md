@@ -139,25 +139,30 @@ under Container Manager as plain compose services, no ansible/systemd.
    `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
    stays secret-free and diffable (only `env_file: ./alloy-secrets.env` references the file by
    name).
-3. Create `/volume1/docker/zcrypto-archive/alloy-data/`, owned `1000:1000` and `chmod 0775`:
+3. Create the dedicated Alloy user **`zcrypto-dummy` (uid 1031, gid 1000 — the `zcrypto` group)** on
+   the NAS if it doesn't exist (DSM → Control Panel → User & Group, or `synouser --add`), then create
+   Alloy's `--storage.path` dir owned by it and `chmod 0775`:
 
    ```bash
    mkdir -p /volume1/docker/zcrypto-archive/alloy-data
-   chown 1000:1000 /volume1/docker/zcrypto-archive/alloy-data
+   chown 1031:1000 /volume1/docker/zcrypto-archive/alloy-data
    chmod 0775 /volume1/docker/zcrypto-archive/alloy-data
    ```
 
-   This is Alloy's `--storage.path`: the remote_write WAL and Loki log read-positions persist here
-   so a container replacement doesn't re-ship each source's retained backlog into the ingest
-   quota. The compose file pins `user: "1000:1000"` — **not** the upstream image's built-in uid-473
-   `alloy` user. Two reasons: (1) the upstream `grafana/alloy` image does not activate its non-root
-   user by default (its Dockerfile keeps `USER root`), so running root with the `/:/host/root:ro`
-   mount would expose every 0600 host secret, making a non-root override load-bearing; and (2) uid
-   473 is not a Synology-recognized user, so the DSM ACL on this bind mount denies it write
-   (`mkdir /var/lib/alloy/...: permission denied`). uid 1000 (`zcrypto`) is a real DSM user, stays
-   non-root, and — because the `chmod 0775` above sets the actual POSIX mode, which is what the
-   container sees (the DSM ACL granting host-uid write is **not** honored inside the container) —
-   has real write access to the volume.
+   This dir holds the remote_write WAL and Loki log read-positions, which persist across a container
+   replacement so a redeploy doesn't re-ship each source's retained backlog into the ingest quota.
+   The compose file pins `user: "1031:1000"` (`zcrypto-dummy`) — **not** the image's built-in uid-473
+   `alloy` user, nor uid 1000. Rationale: (1) the upstream `grafana/alloy` image runs as `root` by
+   default (its Dockerfile keeps `USER root`), and the `/:/host/root:ro` mount would then expose
+   every 0600 host secret, so a non-root override is load-bearing; (2) uid 473 is not a
+   Synology-recognized user, so the DSM ACL denies it write (`mkdir /var/lib/alloy/...: permission
+   denied`) — a real DSM user is required, and the `chmod 0775` above sets the actual POSIX mode the
+   container honors (the DSM ACL granting host-uid write is **not** seen inside the container); and
+   (3) uid 1031 is a **dedicated, non-secret-owning** user — it is **not** the owner of the `0600`
+   rrsync pull keys (uid 1000 is), so a compromised Alloy cannot read them through `/host/root`. Note
+   `zcrypto-dummy`'s gid 1000 IS the key-owning group, so this protection rests on the keys being
+   `0600` — owner-only, group has no read — not on group isolation; keep the keys `0600`. (This closes
+   [[T0030]]; verified live as 1031:1000: the key read is denied while metrics + logs still ship.)
 4. Pin both new images to a digest, same pattern as the capture image (Deploy step 6 above):
    `docker buildx imagetools inspect grafana/alloy:latest` and
    `docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:latest`, then replace
@@ -184,8 +189,9 @@ memory ceiling arithmetic comfortable — these are caps, not reservations.
 The NAS deploy shakedown ran this stack live on the actual Synology DSM host and surfaced several
 DSM-specific incompatibilities, all now fixed in `compose.yaml`/`config.alloy` and reflected above:
 cadvisor SIGSEGVs on DSM's cgroup-less kernel (removed entirely — see the container-metrics note
-above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy now runs as uid
-1000 — see Deploy step 3 above), `discovery.docker` 403s without the socket-proxy's `NETWORKS`
+above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy runs as the
+dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see Deploy step 3 above), `discovery.docker`
+403s without the socket-proxy's `NETWORKS`
 endpoint (added), and a `cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel
 (removed — see Resource budget above). This file now reflects a live-verified deploy, not just the
 originally-authored design.
