@@ -4,6 +4,7 @@ from typing import Optional
 
 import typer
 
+from cli.archive.command import archive_app
 from cli.capture.command import capture
 from cli.engine.command import engine_app
 from cli.logging import configure
@@ -14,6 +15,7 @@ app = typer.Typer(
 )
 app.command(name="capture")(capture)
 app.add_typer(engine_app, name="engine")
+app.add_typer(archive_app, name="archive")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 

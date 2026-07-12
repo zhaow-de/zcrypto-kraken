@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+from typer.testing import CliRunner
 
+from cli.__main__ import app
 from cli.archive.pull import pull_lag_seconds, verify_tree
 
 
@@ -52,3 +54,33 @@ def test_verify_tree_missing_sidecar_counts_failed(tmp_path):
     r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
     assert r.checked == 2 and r.ok == 1
     assert any("ETH/EUR/trades/2026/07/12/09.parquet" in f for f in r.failed)
+
+
+def test_pull_ok_exits_zero(tmp_path, monkeypatch):
+    dest = tmp_path / "arch"
+    dest.mkdir()
+    _seg(dest, "BTC/EUR", "book", "10")
+    from cli.archive import command
+
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(dest)])
+    assert res.exit_code == 0
+
+
+def test_pull_mismatch_exits_one(tmp_path, monkeypatch):
+    dest = tmp_path / "arch"
+    dest.mkdir()
+    _seg(dest, "BTC/EUR", "book", "10", corrupt=True)
+    from cli.archive import command
+
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 0)
+    res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(dest)])
+    assert res.exit_code == 1
+
+
+def test_pull_transport_failure_exits_two(tmp_path, monkeypatch):
+    from cli.archive import command
+
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: 23)
+    res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(tmp_path)])
+    assert res.exit_code == 2

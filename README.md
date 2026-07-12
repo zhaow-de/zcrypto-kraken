@@ -16,6 +16,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
     - [VPS journal pull and daily gate ops (systemd user timer)](#vps-journal-pull-and-daily-gate-ops-systemd-user-timer)
+  - [`zcrypto archive`](#zcrypto-archive)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -115,6 +116,21 @@ systemctl --user daemon-reload
 systemctl --user enable --now zcrypto-engine-gateops.timer     # the TIMER is what's enabled, not the service
 systemctl --user list-timers zcrypto-engine-gateops.timer      # confirm: next trigger at 06:30 UTC
 ```
+
+### `zcrypto archive`<a name="zcrypto-archive"></a>
+
+The always-on NAS pull/archive tier (Role A, spec `00048`): pull a source tree via rsync-over-ssh, then hash-verify every segment against its `.sha256` manifest sidecar.
+
+```bash
+zcrypto archive pull <source> <dest>
+```
+
+| Argument | Description |
+| -- | -- |
+| `source` | rsync source spec, e.g. `deploy@host:/var/lib/zcrypto-capture/segments/`. |
+| `dest` | Local destination directory to rsync into and verify. |
+
+`pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required) and `ARCHIVE_SSH_PORT` (default `10022`).
 
 ## Configuration<a name="configuration"></a>
 
