@@ -5,5 +5,6 @@ capture_image: ghcr.io/zhaow-de/zcrypto-capture
 healthchecks_project_id: "32eaee6f-cb82-4773-9471-4b802136adc1"
 deploy_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOO82sGb3FN50G4/javc3F9aAaoA5uU+I9XCgh7c4TQ zcrypto-deploy"
 sync_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM3nknO1BYgFJ5EvqT9nKG2bgs79TUWit4DusU+iDcxt zcrypto-sync-pullonly"
+sync_capture_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKts2Ug+E4Y5bwy0Qb2Vqo8crP2CfQCFnUG9L89yjlAv zcrypto-sync-capture-pullonly"
 ansible_user: deploy
 ansible_port: 10022

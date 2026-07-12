@@ -5,10 +5,19 @@ LABEL org.opencontainers.image.source="https://github.com/zhaow-de/zcrypto-krake
 # Pinned, static uv binary copied from the official image — no apt/curl install step needed.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
 
-# Non-root runtime user. `compose.yaml` overrides the container's `user:` to the host's
-# `kraken-capture` uid/gid at deploy time (so bind-mounted segment files land with the right
-# host ownership); this user is just the image's own sane default for a standalone `docker run`.
-RUN groupadd --system capture && useradd --system --gid capture --create-home --shell /usr/sbin/nologin capture
+# rsync + ssh client: the archive-pull service (Role A, spec 00048) shells out to `rsync -e ssh`
+# to pull segments from the VPS. The capture/engine services don't use them but share this image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rsync openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root runtime user, fixed at uid/gid 1000. The VPS capture/engine compose files override
+# `user:` to the host's `kraken-capture`/`kraken-engine` *system* uids (100-999), so this default
+# is inert there. The NAS archive-pull runs as `1000:1000` (spec 00048) and shells out to `ssh`,
+# which calls getpwuid(getuid()) at startup and exits 255 ("No user exists for uid 1000") if the
+# running uid has no /etc/passwd entry — so uid 1000 must exist in the image. (1000 is unused in
+# the base image; the VPS system uids never collide with it.)
+RUN groupadd --gid 1000 capture && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin capture
 
 WORKDIR /app
 ENV UV_LINK_MODE=copy \
@@ -19,7 +28,18 @@ ENV UV_LINK_MODE=copy \
 # README.md is copied too: hatchling (the build backend) reads `[project].readme` at build time.
 COPY pyproject.toml uv.lock README.md ./
 COPY cli/ cli/
+# POLARS_RUNTIME=default -> keeps the AVX-optimized `polars-runtime-32` (the VPS, AMD EPYC).
+# POLARS_RUNTIME=compat  -> swaps to `polars-runtime-compat` and drops the AVX runtime, so the
+#   image runs on CPUs without AVX/AVX2 (the Synology NAS, Intel Atom Goldmont). Same polars
+#   version either way; see docs/open-topics/T0029-nas-cpu-no-avx-polars.md.
+ARG POLARS_RUNTIME=default
 RUN uv sync --frozen --no-dev \
+    && if [ "$POLARS_RUNTIME" = "compat" ]; then \
+         V="$(uv pip show --python /app/.venv/bin/python polars | awk '/^Version:/{print $2}')"; \
+         uv pip install --python /app/.venv/bin/python "polars-runtime-compat==$V"; \
+         uv pip uninstall --python /app/.venv/bin/python polars-runtime-32; \
+       fi \
+    && /app/.venv/bin/python -c "import polars; polars.DataFrame({'a':[1]}).select('a')" \
     && chown -R capture:capture /app
 
 USER capture

@@ -24,6 +24,19 @@ env:
 jobs:
   build-push:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # default: the AVX-optimized polars-runtime-32 (the VPS, AMD EPYC); multi-arch.
+          - runtime: default
+            platforms: linux/amd64,linux/arm64
+            suffix: ""
+          # compat: polars-runtime-compat, no AVX needed (the Synology NAS, Atom Goldmont). amd64
+          # only — the compat runtime is an x86 baseline build (see T0029).
+          - runtime: compat
+            platforms: linux/amd64
+            suffix: "-compat"
     steps:
       - uses: actions/checkout@v7
 
@@ -45,10 +58,12 @@ jobs:
         with:
           context: .
           file: infra/docker/Dockerfile
-          # amd64 = the current Linode host; arm64 = an ARM VPS / Apple-silicon local run. Both base
+          # default variant is multi-arch (amd64 Linode + arm64); compat is amd64-only. Both base
           # images (python:3.14-slim, ghcr.io/astral-sh/uv) are multi-arch and `uv sync` installs
-          # wheels, so no Dockerfile change is needed.
-          platforms: linux/amd64,linux/arm64
+          # wheels, so no Dockerfile change is needed for the arch split.
+          platforms: ${{ matrix.platforms }}
+          build-args: |
+            POLARS_RUNTIME=${{ matrix.runtime }}
           # Disable SLSA provenance attestations: they publish an extra `unknown/unknown` manifest in
           # GHCR's "OS/Arch" list (an attestation blob, not a runnable image). Off = the list shows
           # exactly linux/amd64 + linux/arm64. (Re-enable with provenance: mode=max if supply-chain
@@ -56,17 +71,17 @@ jobs:
           provenance: false
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}${{ matrix.suffix }}
+            ${{ env.IMAGE }}:latest${{ matrix.suffix }}
 
       - name: Write image digest to the job summary
         run: |
           {
-            echo "### Capture image pushed"
+            echo "### Capture image pushed (runtime: ${{ matrix.runtime }})"
             echo
-            echo "- Image: \`${{ env.IMAGE }}\`"
-            echo "- Platforms: \`linux/amd64\`, \`linux/arm64\`"
-            echo "- Tags: \`${{ github.sha }}\`, \`latest\`"
+            echo "- Image: \`${{ env.IMAGE }}\` (runtime: \`${{ matrix.runtime }}\`)"
+            echo "- Platforms: \`${{ matrix.platforms }}\`"
+            echo "- Tags: \`${{ github.sha }}${{ matrix.suffix }}\`, \`latest${{ matrix.suffix }}\`"
             echo "- Digest: \`${{ steps.push.outputs.digest }}\`"
             echo
             echo "Pin the Ansible deploy var with (the multi-arch index digest; docker pull picks the host's arch):"

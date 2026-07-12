@@ -60,3 +60,34 @@
     daemon_reload: true
     enabled: true
     state: started
+
+# --- The segments pull channel: an rrsync forced-command key on the deploy account, pinned
+# read-only to the capture data dir regardless of deploy's other powers (mirrors the engine
+# role's journal pull channel, section 9 of infra/ansible/roles/engine/tasks/main.yml).
+- name: ensure rsync (which ships the rrsync helper) is installed
+  ansible.builtin.package:
+    name: rsync
+    state: present
+
+# rrsync lives at /usr/bin/rrsync on Debian 13 (trixie) — the rsync package installs it there
+# since bookworm (rsync 3.2.4 promoted it out of /usr/share/doc/rsync/scripts/). The absolute
+# path keeps the forced command independent of the login shell's PATH.
+- name: install the sync_capture pubkey as a forced-command entry in deploy's authorized_keys (segments read-only)
+  ansible.posix.authorized_key:
+    user: deploy
+    exclusive: false
+    key: "{{ sync_capture_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ capture_data_dir }}",restrict'
+
+- name: add deploy to the kraken-capture group (makes the 0750 capture data dir traversable for the pull)
+  ansible.builtin.user:
+    name: deploy
+    groups: kraken-capture
+    append: true
+  # First-run check mode: the kraken-capture account is created by the base role, which itself
+  # no-ops under --check — so on a first-run dry run the account (and its group) doesn't really
+  # exist yet and this membership edit cannot resolve it. Skip exactly that case; every real
+  # converge still runs it (same guard rationale as the engine role's journal pull channel).
+  when: not (ansible_check_mode and not capture_account_known)
+  vars:
+    capture_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['kraken-capture'] | default(none)) is not none }}"
