@@ -54,6 +54,9 @@ services:
       # archive-pull container's control plane). The rest are listed explicitly, all disabled, for
       # the same reason -- explicit over relying on the image's own (already-restrictive) defaults.
       CONTAINERS: 1
+      # cadvisor's Docker client calls /info (storage-driver / rootfs detection) on init; the proxy
+      # defaults INFO=0, which 403s that call and breaks container-metric startup. GET-only, safe.
+      INFO: 1
       POST: 0
       EXEC: 0
       IMAGES: 0
@@ -92,9 +95,12 @@ services:
     # access; see infra/nas/README.md.
     image: grafana/alloy:latest
     restart: unless-stopped
-    # Non-root by default in the upstream image (00043's posture: 0600 root:root secrets on the
-    # /host/root mount below stay unreadable through it) -- do not add a `user:` override without
-    # confirming the upstream uid first, or the RW alloy-data mount below ends up owned wrong.
+    # Run non-root (00043's §8 posture): the upstream grafana/alloy image ships a UID/GID-473
+    # `alloy` user but does NOT activate it (its Dockerfile keeps USER root, calling non-root
+    # "experimental"), so WITHOUT this override Alloy runs as root and the /host/root:ro mount
+    # below would expose every 0600 host secret. Pin 473 (confirm at deploy) and chown ./alloy-data
+    # to 473 so the RW WAL mount stays writable -- see infra/nas/README.md.
+    user: "473:473"
     network_mode: host
     depends_on:
       - docker-socket-proxy

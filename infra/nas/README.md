@@ -116,13 +116,15 @@ under Container Manager as plain compose services, no ansible/systemd.
    `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
    stays secret-free and diffable (only `env_file: ./alloy-secrets.env` references the file by
    name).
-3. Create `/volume1/docker/zcrypto-archive/alloy-data/`, writable by the `alloy` container's
-   (non-root) runtime uid — this is Alloy's `--storage.path`: the remote_write WAL and Loki log
+3. Create `/volume1/docker/zcrypto-archive/alloy-data/` owned by **uid/gid 473** (`sudo chown -R
+   473:473 …/alloy-data`) — this is Alloy's `--storage.path`: the remote_write WAL and Loki log
    read-positions persist here so a container replacement doesn't re-ship each source's retained
-   backlog into the ingest quota. The upstream `grafana/alloy` image already runs non-root by
-   default; confirm its uid at deploy time (`docker run --rm grafana/alloy:latest id`, or inspect
-   the pulled image) before locking down this directory's ownership tighter than
-   world-writable.
+   backlog into the ingest quota. The compose file pins `user: "473:473"` because the upstream
+   `grafana/alloy` image does **not** activate its non-root user by default (its Dockerfile keeps
+   `USER root`); running as root with the `/:/host/root:ro` mount would expose every 0600 host
+   secret, so the override is load-bearing. Confirm the image's `alloy` uid is still 473 at deploy
+   (`docker run --rm --entrypoint id grafana/alloy:latest alloy`); if it differs, update both the
+   compose `user:` and this directory's ownership to match.
 4. Pin both new images to a digest, same pattern as the capture image (Deploy step 6 above):
    `docker buildx imagetools inspect grafana/alloy:latest` and
    `docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:latest`, then replace
