@@ -188,7 +188,7 @@ fi
 ### Task 4: One canonical Grafana dashboard + alerts + push script
 
 **Files:**
-- Create: `infra/grafana/zcrypto-dashboard.json`, `infra/grafana/alerts.yaml`, `scripts/grafana-push.sh`
+- Create: `infra/grafana/zcrypto-dashboard.json`, `infra/grafana/alerts.yaml`, `infra/scripts/grafana-push.sh`
 
 **Interfaces:**
 - Consumes: the series from Tasks 1 & 3 (`zcrypto_gate_*`, `node_*` host, `container_*`), Grafana Cloud service-account token (vaulted).
@@ -198,9 +198,9 @@ fi
 
 - [ ] **Step 2: Alerts.** `alerts.yaml` (Grafana provisioning format), each with explicit no-data handling: gate not-MET when it had been MET; `increase(zcrypto_gate_mismatch_total[…]) > 0`; `zcrypto_gate_journal_pull_lag_seconds > 18000`; `time() - zcrypto_gate_export_timestamp_seconds > 7200` (exporter stale); `node_filesystem_avail_bytes{mountpoint="/volume1"}` low; `node_load1` high; ERROR logs in the archive-pull container. Route to email.
 
-- [ ] **Step 3: Push script.** `scripts/grafana-push.sh` (~20 lines, `set -euo pipefail`): POST the dashboard JSON to `/api/dashboards/db` and the alert rules to the provisioning API, using a service-account token read from an env var (documented as vault-sourced). Idempotent (overwrite=true). `shellcheck`-clean.
+- [ ] **Step 3: Push script.** `infra/scripts/grafana-push.sh` (~20 lines, `set -euo pipefail`): POST the dashboard JSON to `/api/dashboards/db` and the alert rules to the provisioning API, using a service-account token read from an env var (documented as vault-sourced). Idempotent (overwrite=true). `shellcheck`-clean.
 
-- [ ] **Step 4: Verify.** `python -c "import json,sys; json.load(open('infra/grafana/zcrypto-dashboard.json'))"` (valid JSON); `shellcheck scripts/grafana-push.sh`; `yamllint infra/grafana/alerts.yaml`.
+- [ ] **Step 4: Verify.** `python -c "import json,sys; json.load(open('infra/grafana/zcrypto-dashboard.json'))"` (valid JSON); `shellcheck infra/scripts/grafana-push.sh`; `yamllint infra/grafana/alerts.yaml`.
 
 - [ ] **Step 5: Commit** — `feat(grafana): the one canonical dashboard + gate/host alerts + push script`.
 

@@ -194,7 +194,7 @@ originally-authored design.
 
 The committed-as-code dashboard (`infra/grafana/zcrypto-dashboard.json`) and alert rules
 (`infra/grafana/alerts.yaml`) are provisioned onto the already-live Grafana Cloud instance by
-`scripts/grafana-push.sh` — run from any machine with network access to that instance (not
+`infra/scripts/grafana-push.sh` — run from any machine with network access to that instance (not
 NAS-side; this is a one-off/on-change push, not a running service). Idempotent: re-run after any
 commit to `infra/grafana/`.
 
@@ -212,7 +212,7 @@ commit to `infra/grafana/`.
    name it exactly `email`, integration `Email`, enter the destination address(es)) — every alert
    rule in `alerts.yaml` routes to `notification_settings.receiver: email` by name, so the rules
    fail to notify anywhere until this contact point exists.
-3. Run `scripts/grafana-push.sh` with the env vars from step 1 exported. It pushes the dashboard
+3. Run `infra/scripts/grafana-push.sh` with the env vars from step 1 exported. It pushes the dashboard
    (overwriting by its fixed uid `zcrypto-main`) then upserts each alert rule (by its own stable
    `uid`).
 4. On first load of the dashboard, confirm (or set as the template-variable defaults) that its

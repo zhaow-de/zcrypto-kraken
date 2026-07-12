@@ -24,7 +24,7 @@ Riding the same commits (two-line hygiene fixes): the dead-man **ping-URL warnin
 
 ## Dashboard — one, committed as code, pushed by API
 
-`infra/grafana/zcrypto-dashboard.json`: a host row (CPU/RAM/disk-free/network), a containers row (capture + engine CPU/mem/fs + restart-resets), an engine row (target weights, orders, cycle age/duration/status), a capture row (gap ratio per pair, desynced pairs, WS reconnects, segment throughput), and a Loki logs panel (both containers, level filter). **Provisioning is scripted, not clicked**: a small helper (`scripts/grafana-push.sh`, ~20 lines) POSTs the dashboard JSON (`/api/dashboards/db`) and the alert rules (provisioning API) to the instance using a **service-account token from the vault** — the committed JSON/YAML is authoritative, edits round-trip through re-export + commit + re-push, and the attended step reduces to one script run.
+`infra/grafana/zcrypto-dashboard.json`: a host row (CPU/RAM/disk-free/network), a containers row (capture + engine CPU/mem/fs + restart-resets), an engine row (target weights, orders, cycle age/duration/status), a capture row (gap ratio per pair, desynced pairs, WS reconnects, segment throughput), and a Loki logs panel (both containers, level filter). **Provisioning is scripted, not clicked**: a small helper (`infra/scripts/grafana-push.sh`, ~20 lines) POSTs the dashboard JSON (`/api/dashboards/db`) and the alert rules (provisioning API) to the instance using a **service-account token from the vault** — the committed JSON/YAML is authoritative, edits round-trip through re-export + commit + re-push, and the attended step reduces to one script run.
 
 ## Alerts — Grafana Cloud alerting → email
 

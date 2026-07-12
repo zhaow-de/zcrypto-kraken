@@ -35,7 +35,7 @@ python3 -c "import yaml" >/dev/null 2>&1 \
   || { echo "grafana-push: python3's PyYAML module is required (pip install pyyaml)" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "grafana-push: jq is required" >&2; exit 1; }
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 auth=(-H "Authorization: Bearer ${GRAFANA_SA_TOKEN}")
 
 echo "grafana-push: pushing dashboard"

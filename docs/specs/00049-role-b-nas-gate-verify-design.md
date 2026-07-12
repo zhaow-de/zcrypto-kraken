@@ -75,11 +75,11 @@ Two new compose services alongside `archive-pull`, config adapted from spec `000
 
 ### 4. Grafana — one dashboard for everything + alerts (created here)
 
-`infra/grafana/` and `scripts/grafana-push.sh` do not exist yet (spec 00043 / T0020 is parked), so this increment **creates the single canonical dashboard** and the push tooling, designed so T0020 later adds the VPS rows to the **same file**:
+`infra/grafana/` and `infra/scripts/grafana-push.sh` do not exist yet (spec 00043 / T0020 is parked), so this increment **creates the single canonical dashboard** and the push tooling, designed so T0020 later adds the VPS rows to the **same file**:
 
 - `infra/grafana/zcrypto-dashboard.json` — the one dashboard, with a **NAS host row** (load / mem / disk-free / netdev), a **NAS containers row** (archive-pull / Alloy CPU-mem-fs), and a **gate row** (gate status, streak days, journal pull-lag, mismatch count, a Loki logs panel for archive-pull). Rows are namespaced so the VPS rows slot in later without collision.
 - `infra/grafana/alerts.yaml` — alert rules: **gate** (status → not-MET, `mismatch_total` increases, streak resets, journal pull-lag > threshold, `gate_export_timestamp` stale) → email; **host** (disk-free low, load high); **ERROR logs** (archive-pull). Per-rule `no-data` semantics per 00043.
-- `scripts/grafana-push.sh` (~20 lines) — POSTs the dashboard JSON (`/api/dashboards/db`) and the alert rules (provisioning API) using a **service-account token from the vault**; the committed JSON/YAML is authoritative (edits round-trip through re-export + commit + re-push). One attended script run.
+- `infra/scripts/grafana-push.sh` (~20 lines) — POSTs the dashboard JSON (`/api/dashboards/db`) and the alert rules (provisioning API) using a **service-account token from the vault**; the committed JSON/YAML is authoritative (edits round-trip through re-export + commit + re-push). One attended script run.
 
 ### 5. Retire the workstation gate-ops timer
 

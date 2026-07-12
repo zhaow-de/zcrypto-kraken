@@ -1,5 +1,5 @@
 # Grafana alert-rule provisioning source (spec 00049, Role B / Task 4) for the one canonical
-# dashboard's series (infra/grafana/zcrypto-dashboard.json). Pushed by scripts/grafana-push.sh,
+# dashboard's series (infra/grafana/zcrypto-dashboard.json). Pushed by infra/scripts/grafana-push.sh,
 # ONE rule per `POST`/`PUT /api/v1/provisioning/alert-rules[/:uid]` call against Grafana's
 # **Alerting Provisioning HTTP API** -- that endpoint takes a single alert-rule JSON object per
 # call; it is NOT the `apiVersion: 1` / `groups:` file-provisioning shape (that shape is for
@@ -17,7 +17,7 @@
 # reference" and hard-fails the rule's condition on every evaluation.
 #
 # Placeholders wired at deploy time (see infra/nas/README.md for the vaulted Grafana Cloud creds
-# this instance already uses). These are literal `${VAR}` tokens that scripts/grafana-push.sh
+# this instance already uses). These are literal `${VAR}` tokens that infra/scripts/grafana-push.sh
 # substitutes from its own environment before sending each rule -- Grafana's alert-rule
 # provisioning API has no server-side template substitution (unlike the dashboard JSON's
 # `${DS_PROMETHEUS}`/`${DS_LOKI}` variables, which Grafana itself resolves on dashboard import):

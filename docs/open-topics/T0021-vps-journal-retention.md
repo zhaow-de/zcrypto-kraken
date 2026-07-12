@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the VPS root filesystem crosses the 80% disk watermark — the trigger mechanism is the NAS Alloy `/volume1` disk-free alert (T0020's `zcrypto-nas-disk-low` rule, live once its `scripts/grafana-push.sh` provisioning runs); the workstation gate-ops read that used to be the interim watch is retired (iter-094, superseded by Role B's NAS gate-export) — or an attended ops window wants it earlier
+ripe_when: the VPS root filesystem crosses the 80% disk watermark — the trigger mechanism is the NAS Alloy `/volume1` disk-free alert (T0020's `zcrypto-nas-disk-low` rule, live once its `infra/scripts/grafana-push.sh` provisioning runs); the workstation gate-ops read that used to be the interim watch is retired (iter-094, superseded by Role B's NAS gate-export) — or an attended ops window wants it earlier
 ---
 
 # VPS engine-journal retention — prune-after-verified-pull
