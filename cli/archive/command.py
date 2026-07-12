@@ -29,7 +29,11 @@ def _utc_now() -> datetime:
 def _run_rsync(source: str, dest: Path) -> int:
     ssh_key = os.environ["ARCHIVE_SSH_KEY"]
     ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
-    ssh_command = f"ssh -i {ssh_key} -p {ssh_port} -o StrictHostKeyChecking=accept-new"
+    ssh_opts = f"-i {ssh_key} -p {ssh_port} -o StrictHostKeyChecking=accept-new"
+    known_hosts = os.environ.get("ARCHIVE_SSH_KNOWN_HOSTS")
+    if known_hosts:  # a pre-seeded, mounted known_hosts pins the VPS host key across restarts
+        ssh_opts += f" -o UserKnownHostsFile={known_hosts}"
+    ssh_command = f"ssh {ssh_opts}"
     argv = ["rsync", "-a", "-e", ssh_command, source, str(dest)]
     return subprocess.run(argv).returncode
 

@@ -130,7 +130,7 @@ zcrypto archive pull <source> <dest>
 | `source` | rsync source spec, e.g. `deploy@host:/var/lib/zcrypto-capture/segments/`. |
 | `dest` | Local destination directory to rsync into and verify. |
 
-`pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required) and `ARCHIVE_SSH_PORT` (default `10022`).
+`pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required), `ARCHIVE_SSH_PORT` (default `10022`), and optionally `ARCHIVE_SSH_KNOWN_HOSTS` (a `UserKnownHostsFile` path — pre-seed it with the remote host key to pin it).
 
 ## Configuration<a name="configuration"></a>
 

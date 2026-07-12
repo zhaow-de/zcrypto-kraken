@@ -5,6 +5,12 @@ LABEL org.opencontainers.image.source="https://github.com/zhaow-de/zcrypto-krake
 # Pinned, static uv binary copied from the official image — no apt/curl install step needed.
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /usr/local/bin/
 
+# rsync + ssh client: the archive-pull service (Role A, spec 00048) shells out to `rsync -e ssh`
+# to pull segments from the VPS. The capture/engine services don't use them but share this image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rsync openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root runtime user. `compose.yaml` overrides the container's `user:` to the host's
 # `kraken-capture` uid/gid at deploy time (so bind-mounted segment files land with the right
 # host ownership); this user is just the image's own sane default for a standalone `docker run`.
