@@ -1,0 +1,29 @@
+# The NAS archive-pull stack (spec 00048 Role A) — always-on pull + hash-verify of the VPS
+# capture segments + engine journal into /volume1/ZhaoCrypto. Runs standalone under Synology
+# Container Manager (no Ansible rendering, no NAS-OS config — plain `docker compose up -d`; see
+# infra/nas/README.md for the deploy steps and the env-var contract).
+services:
+  archive-pull:
+    # Pin this to a digest at deploy time (plan Task 6) -- the same x86 image the VPS capture
+    # daemon runs; it already contains the `zcrypto` CLI, so no separate NAS build is needed.
+    image: ghcr.io/zhaow-de/zcrypto-capture:latest
+    entrypoint: ["/opt/pull-entrypoint.sh"]
+    user: "1000:1000"
+    restart: unless-stopped
+    environment:
+      CAPTURE_SOURCE: ${CAPTURE_SOURCE}
+      CAPTURE_DEST: ${CAPTURE_DEST:-/archive/capture-segments}
+      JOURNAL_SOURCE: ${JOURNAL_SOURCE}
+      JOURNAL_DEST: ${JOURNAL_DEST:-/archive/engine-journal}
+      ARCHIVE_SSH_KEY: /keys/sync_capture
+      ARCHIVE_SSH_PORT: ${ARCHIVE_SSH_PORT}
+      ARCHIVE_PULL_INTERVAL: ${ARCHIVE_PULL_INTERVAL}
+    volumes:
+      - /volume1/ZhaoCrypto:/archive
+      - ./pull-entrypoint.sh:/opt/pull-entrypoint.sh:ro
+      - ./keys:/keys:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
