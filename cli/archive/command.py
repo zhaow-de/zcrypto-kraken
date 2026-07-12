@@ -36,7 +36,10 @@ def _run_rsync(source: str, dest: Path) -> int:
     if known_hosts:  # a pre-seeded, mounted known_hosts pins the VPS host key across restarts
         ssh_opts += f" -o UserKnownHostsFile={known_hosts}"
     ssh_command = f"ssh {ssh_opts}"
-    argv = ["rsync", "-a", "-e", ssh_command, source, str(dest)]
+    # --chmod forces the archived tree to the mandated 0775 dirs / 0664 files (spec 00048): the NAS
+    # share is plain POSIX (no ACL inheritance), so without this rsync -a would preserve the VPS's
+    # 0644 source perms and the tree would not be group-writable. Applied every pull -> idempotent.
+    argv = ["rsync", "-a", "--chmod=D0775,F0664", "-e", ssh_command, source, str(dest)]
     return subprocess.run(argv).returncode
 
 
