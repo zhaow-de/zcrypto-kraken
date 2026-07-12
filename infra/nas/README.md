@@ -39,7 +39,7 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 | `JOURNAL_SOURCE` | rsync source spec for the engine journal, e.g. `deploy@<vps-host>:` (same `rrsync` forced-command pattern, the existing journal channel). | deploy-time `.env` |
 | `JOURNAL_DEST` | Local archive path the journal lands in. | defaults to `/archive/engine-journal` in `compose.yaml` |
 | `ARCHIVE_SSH_KEY` | Private key path inside the container for the rsync-over-ssh transport. | fixed to `/keys/sync_capture` in `compose.yaml` (matches the `./keys:/keys:ro` mount) |
-| `ARCHIVE_SSH_PORT` | VPS SSH port (10022, matching the capture/engine channels). | deploy-time `.env` |
+| `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` (optional) |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles; the entrypoint defaults to `3600` (hourly) if unset. | deploy-time `.env`, or leave unset for the hourly default |
 
 ## Reading pull-lag + verify failures

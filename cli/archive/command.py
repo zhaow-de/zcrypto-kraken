@@ -28,7 +28,7 @@ def _utc_now() -> datetime:
 
 def _run_rsync(source: str, dest: Path) -> int:
     ssh_key = os.environ["ARCHIVE_SSH_KEY"]
-    ssh_port = os.environ.get("ARCHIVE_SSH_PORT", "10022")
+    ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
     ssh_command = f"ssh -i {ssh_key} -p {ssh_port} -o StrictHostKeyChecking=accept-new"
     argv = ["rsync", "-a", "-e", ssh_command, source, str(dest)]
     return subprocess.run(argv).returncode
