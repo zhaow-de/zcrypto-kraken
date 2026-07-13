@@ -42,30 +42,57 @@ def _extract_level(raw: dict) -> tuple[Decimal, Decimal]:
 class OrderBook:
     """Per-pair L2 book state, rebuilt from a WS v2 snapshot and kept current via updates.
 
-    Maintains the *full* book (every level Kraken sent, not just the top 10) so that the top-10
-    checksum window stays correct as levels are removed. `ingest_snapshot`/`ingest_update` apply
-    the payload and validate Kraken's per-message CRC32 `checksum`, tracking `desynced` so the
-    caller (the WS client / gap monitor) can react to a mismatch.
+    The book is kept **congruent with Kraken's subscribed depth window** (`depth` levels per side)
+    -- see `_prune`. `ingest_snapshot`/`ingest_update` apply the payload and validate Kraken's
+    per-message CRC32 `checksum`, tracking `desynced` so the caller (the WS client / gap monitor)
+    can react to a mismatch.
+
+    `depth` is deliberately **required**: a depth-limited book cannot be maintained correctly
+    without it, and defaulting it would silently reintroduce T0008 (below).
     """
 
-    def __init__(self, symbol: str) -> None:
+    def __init__(self, symbol: str, depth: int) -> None:
         self.symbol = symbol
+        self.depth = depth
         self.bids: dict[Decimal, Decimal] = {}
         self.asks: dict[Decimal, Decimal] = {}
         self.desynced = False
+
+    def _prune(self) -> None:
+        """Drop everything beyond the subscribed depth, so the book mirrors Kraken's window exactly.
+
+        Load-bearing (T0008). Kraken only sends deltas for levels **inside** the depth-N window; a
+        level we retain beyond it is one Kraken has stopped telling us about, so it goes stale --
+        its quantity changes, or it is cancelled, and we never hear. When the window later shifts
+        back, that stale level re-enters our top-10 as a **phantom** and the checksum fails. The
+        daemon then calls it a "desync", resubscribes for a fresh snapshot, and immediately starts
+        re-accumulating.
+
+        Measured on three independent hosts (2026-07-13): without this the live book grew to 810
+        bids / 468 asks against Kraken's 100, and replaying one real captured hour produced 482
+        checksum failures. Pruning takes that to **zero** on every host. T0008's ~200 "desyncs"/day
+        were never network loss -- they were this.
+        """
+        if len(self.asks) > self.depth:  # asks: best == lowest price
+            self.asks = dict(sorted(self.asks.items())[: self.depth])
+        if len(self.bids) > self.depth:  # bids: best == highest price
+            self.bids = dict(sorted(self.bids.items(), reverse=True)[: self.depth])
 
     def ingest_snapshot(self, data: dict) -> bool:
         """Replace the book with a `type: snapshot` payload's `bids`/`asks`. Returns whether the
         rebuilt book's checksum matches `data["checksum"]`."""
         self.bids = dict(_extract_level(level) for level in data.get("bids", []))
         self.asks = dict(_extract_level(level) for level in data.get("asks", []))
+        self._prune()
         return self.validate(data["checksum"])
 
     def ingest_update(self, data: dict) -> bool:
-        """Apply a `type: update` payload's bid/ask deltas (qty `0` removes the level), then
-        validate the resulting book's checksum against `data["checksum"]`."""
+        """Apply a `type: update` payload's bid/ask deltas (qty `0` removes the level), prune back
+        to the subscribed depth, then validate the resulting book's checksum against
+        `data["checksum"]`."""
         self._apply_side(self.bids, data.get("bids", []))
         self._apply_side(self.asks, data.get("asks", []))
+        self._prune()
         return self.validate(data["checksum"])
 
     @staticmethod
