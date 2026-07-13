@@ -1,6 +1,9 @@
 import asyncio
 import json
+import os
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -11,7 +14,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.book import OrderBook
-from cli.capture.command import _default_pairs, _parse_ts
+from cli.capture.command import _default_pairs, _parse_ts, single_instance_lock
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter, verify_manifest
 
@@ -277,3 +280,75 @@ def test_healthcheck_withheld_when_disk_watermark_breached(monkeypatch):
     # Breached: the daemon is writing NOTHING. The dead-man must fire, not report healthy.
     pings = _run_healthcheck_once(monkeypatch, free_bytes=10)  # below min_free_bytes
     assert pings == [], "a watermark breach stops all writes -- the dead-man must NOT keep pinging"
+
+
+# --- T0036: exactly ONE process may write the segment tree ---------------------------------------
+#
+# `SegmentWriter._flush_buffer` derives the next part sequence from the hour directory and names the
+# part deterministically, so two processes pick the SAME sequence and write the SAME file — shredding
+# each other's rows (measured: 70 of 120 destroyed). Within one process the 20 writers are safe
+# (disjoint pair/kind roots); nothing prevented a SECOND process — an overlapping restart, or a human
+# running `zcrypto capture` beside the service.
+
+_TAKE_THE_LOCK = """
+import sys
+from pathlib import Path
+from cli.capture.command import single_instance_lock
+from cli.capture.errors import CaptureError
+
+try:
+    with single_instance_lock(Path(sys.argv[1])):
+        sys.exit(0)   # got it
+except CaptureError:
+    sys.exit(3)       # correctly refused
+"""
+
+
+def test_a_second_os_process_cannot_take_the_segment_tree_lock(tmp_path):
+    # A real second interpreter, holding a real kernel lock — the shape production has (an
+    # overlapping restart, a human at the console) rather than a same-process stand-in.
+    with single_instance_lock(tmp_path):
+        held = subprocess.run([sys.executable, "-c", _TAKE_THE_LOCK, str(tmp_path)], capture_output=True)
+    assert held.returncode == 3, held.stderr.decode()
+
+    # ... and the lock dies with the holder: nothing to clean up after a SIGKILL, no stale lockfile
+    # to explain to a human at 3am.
+    freed = subprocess.run([sys.executable, "-c", _TAKE_THE_LOCK, str(tmp_path)], capture_output=True)
+    assert freed.returncode == 0, freed.stderr.decode()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the directory's write bit")
+def test_an_unwritable_data_dir_does_not_crash_loop_the_daemon(tmp_path):
+    # The lock must not re-create the crash loop the `.tmp` cleanup guard just removed. On a
+    # read-only remount — the aftermath of the very ENOSPC condition DiskWatermark exists for — the
+    # lockfile cannot be created; under `restart: always` a raise there loops the daemon forever on
+    # exactly the failure we most need it to survive and REPORT. An unwritable disk has nothing to
+    # corrupt, so the lock is skipped, loudly, and the daemon runs (its writes fail loudly too).
+    tmp_path.chmod(0o500)
+    try:
+        with single_instance_lock(tmp_path):  # must not raise
+            pass
+    finally:
+        tmp_path.chmod(0o700)
+
+
+def test_a_lock_failure_that_is_not_contention_is_not_reported_as_contention(tmp_path, monkeypatch):
+    # Only EWOULDBLOCK means "someone else holds it". Reporting ENOLCK / EOPNOTSUPP (a mount without
+    # flock support) as "another capture process is already writing" would send a human hunting a
+    # process that does not exist — and refuse to start over a filesystem quirk.
+    def _no_locks(fd, op):
+        raise OSError(37, "No locks available")  # ENOLCK
+
+    monkeypatch.setattr("cli.capture.command.fcntl.flock", _no_locks)
+    with single_instance_lock(tmp_path):  # must not raise, must not claim contention
+        pass
+
+
+def test_capture_refuses_to_start_beside_another_writer(tmp_path, monkeypatch):
+    monkeypatch.setattr("cli.capture.command.CaptureClient", _FakeClient)
+    with single_instance_lock(tmp_path):
+        result = runner.invoke(app, ["capture", "--pairs", "BTC/EUR", "--data-dir", str(tmp_path), "--duration", "1"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, CaptureError)
+    assert "already writing" in str(result.exception)
+    assert not list(tmp_path.rglob("*.parquet"))  # and it wrote nothing on its way out

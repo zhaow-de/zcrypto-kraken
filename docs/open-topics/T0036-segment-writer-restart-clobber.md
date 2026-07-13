@@ -73,37 +73,92 @@ mid-hour restart would have cost ~600 s and taken the run to ~0.157 %, failing t
 
 The fix rests on one invariant: **`<HH>.parquet` on disk is always a committed, complete final.** The
 old writer breaks it (its `close()` publishes the open hour), so the on-disk state has to be migrated
-**once**, by hand, while the daemon is stopped. Skipping it is not catastrophic — the new writer
-refuses to write to an hour that already has a final, and refuses to touch parts sitting beside one —
-but the stop hour then loses its remaining rows and stays half-published.
+**once**, by hand, while the daemon is stopped.
 
-Run on the capture VPS, with `SEG=/var/lib/zcrypto-capture/segments`:
+**Skipping the migration is not catastrophic, but it is not cheap either.** Measured against a replica
+built with the actual old writer (10 pairs × {book,trades}, 6 days, 2,797 finals, 12,141,620 events):
+skipping it loses **1,361,359 events (9.4 %)** — zero duplicates, zero corruption, every loss loudly
+logged, but it is *the entire rest of the stop hour*. Deploy at :05 past and you lose ~55 min × 20
+streams: the same magnitude as the bug being fixed. Run the migration.
 
-1. **Stop the old daemon gracefully and confirm it finished.** `systemctl stop zcrypto-capture`, then
-   `systemctl is-active zcrypto-capture` must print `inactive`, and
-   `journalctl -u zcrypto-capture -n 100 | grep -c 'segment written'` must show 20 (one per
-   pair×kind). A graceful stop runs the old `close()`, which finalizes the open hour and unlinks its
-   parts — that is the state step 2 expects.
-2. **Demote each stream's stop-hour final back to a part**, so the new writer resumes the hour instead
-   of treating it as closed. For every `<pair>/<kind>` whose newest `<H>.parquet` has **no**
-   `<H>.part*.parquet` beside it:
-   `mv $D/<H>.parquet $D/<H>.part0000.parquet && rm -f $D/<H>.parquet.sha256`
-   Expected result: the hour dir holds `<H>.part0000.parquet` and no `<H>.parquet`.
-3. **Resolve any hour that has BOTH a `<H>.parquet` and `<H>.part*.parquet`** — this means the stop was
-   *not* graceful (SIGKILL / OOM / power loss), and the state is genuinely ambiguous: the old writer
-   sank the final **before** unlinking its parts, so the parts may be rows the final already holds
-   (re-merging duplicates the hour) *or* rows flushed after an earlier `close()` (dropping them loses
-   the hour). The new writer will log `parts beside a readable final — ambiguous, left untouched` and
-   do nothing. Resolve by reading the rows:
-   `uv run python -c "import polars as pl,sys; f,ps=sys.argv[1],sys.argv[2:]; a=pl.read_parquet(f); b=pl.concat([pl.read_parquet(p) for p in ps]); print('ALREADY MERGED' if a.height>=b.height and a.tail(b.height).equals(b) else 'DISJOINT')" $D/<H>.parquet $D/<H>.part*.parquet`
-   - `ALREADY MERGED` → the parts are inside the final: `rm $D/<H>.part*.parquet`, then go to step 2.
-   - `DISJOINT` → the final is a partial hour and the parts are its continuation: rebuild the hour in
-     order (final first), `rm` the parts, and rewrite the sidecar with `sha256sum`.
-4. **Backfill any missing or empty sidecar** (the new writer no longer blesses finals it did not
-   produce): `find $SEG -name '*.parquet' ! -name '*.part*' | while read -r f; do [ -s "$f.sha256" ] || (cd "$(dirname "$f")" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256"); done`
-   Expected result — this prints nothing:
-   `find $SEG -name '*.parquet' ! -name '*.part*' | while read -r f; do (cd "$(dirname "$f")" && sha256sum -c --quiet "$(basename "$f").sha256"); done`
-5. Start the new binary. First-hour check: `journalctl -u zcrypto-capture | grep -E 'dropping late event|ambiguous|merge failed'` must be empty.
+The runbook below was **verified by executing it** against that replica (idempotent across 3 runs;
+14,527,197 rows in / 14,527,197 out / 0 missing / 0 duplicates / stop hour's first ts `08:00:00`).
+Note `SEG` — the tree is `<root>/BTC/EUR/book/2026/07/13/08.parquet`; there is **no `segments/`
+directory** (`capture_data_dir` in `infra/ansible/group_vars/capture_host/vars.yml`).
+
+````bash
+SEG=/var/lib/zcrypto-capture; DAY=2026/07/13; H=08   # H = the UTC hour the daemon was STOPPED in
+test -d "$SEG/BTC/EUR/book" || { echo "WRONG SEG"; exit 1; }        # expect: no output
+
+# 1. stop
+systemctl stop zcrypto-capture
+systemctl is-active zcrypto-capture                                  # expect: inactive
+journalctl -u zcrypto-capture -n 200 | grep -c 'segment written'     # expect: 20
+
+# 2. demote ONLY the stop hour. guarded (never clobbers a part), idempotent.
+find "$SEG" -mindepth 3 -maxdepth 3 -type d | sort | while read -r s; do
+  D="$s/$DAY"; [ -f "$D/$H.parquet" ] || continue
+  if ls "$D/$H".part*.parquet >/dev/null 2>&1; then echo "AMBIGUOUS -> step 3: $D/$H"; continue; fi
+  mv -n "$D/$H.parquet" "$D/$H.part0000.parquet" && rm -f "$D/$H.parquet.sha256"
+done
+# expect: one "AMBIGUOUS" line per non-graceful stream, nothing else.
+
+# 3. ONLY for streams step 2 flagged AMBIGUOUS. Verdict first:
+uv run python -c "import polars as pl,sys; f,ps=sys.argv[1],sys.argv[2:]; a=pl.read_parquet(f); b=pl.concat([pl.read_parquet(p) for p in ps]); print('ALREADY MERGED' if a.height>=b.height and a.tail(b.height).equals(b) else 'DISJOINT')" $D/$H.parquet $D/$H.part*.parquet
+#   ALREADY MERGED -> rm -f $D/$H.part*.parquet && mv -n $D/$H.parquet $D/$H.part0000.parquet && rm -f $D/$H.parquet.sha256
+#   DISJOINT       -> merge final+parts into ONE part0000 (NOT a final), checking order first:
+uv run python -c "
+import polars as pl, sys, pathlib
+d=pathlib.Path(sys.argv[1]); h=sys.argv[2]
+ins=[d/f'{h}.parquet']+sorted(d.glob(f'{h}.part*.parquet'), key=lambda p:int(p.name.split('.part')[1].split('.')[0]))
+df=pl.concat([pl.read_parquet(p) for p in ins])
+ts=df['ts'].to_list(); inv=sum(1 for i in range(1,len(ts)) if ts[i]<ts[i-1])
+if inv: sys.exit(f'STOP: {inv} ts inversions - mixed-provenance parts, do NOT merge blindly')
+tmp=d/f'{h}.part0000.parquet.new'; df.write_parquet(tmp, compression='zstd')
+for p in ins: p.unlink()
+tmp.rename(d/f'{h}.part0000.parquet')" "$D" "$H"
+rm -f $D/$H.parquet.sha256
+#   a torn file raises here -> leave it; the new writer quarantines it and rebuilds the hour correctly.
+
+# 4. backfill sidecars — ONLY for finals that actually DECODE
+find "$SEG" -name '*.parquet' ! -name '*.part*' | while read -r f; do
+  [ -s "$f.sha256" ] && continue
+  if uv run python -c "import polars as pl,sys; pl.scan_parquet(sys.argv[1]).select(pl.all().null_count()).collect(engine='streaming')" "$f" 2>/dev/null
+  then (cd "$(dirname "$f")" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256")
+  else echo "REFUSED (unreadable, leave for the writer to quarantine): $f"; fi
+done
+# verify — expect: no output, AND a non-zero count
+find "$SEG" -name '*.parquet' ! -name '*.part*' | while read -r f; do (cd "$(dirname "$f")" && sha256sum -c --quiet "$(basename "$f").sha256"); done
+find "$SEG" -name '*.parquet' ! -name '*.part*' | wc -l              # expect: ~2797, NOT 0
+
+# 5. pre-start gate — expect: no output
+find "$SEG" -mindepth 3 -maxdepth 3 -type d | while read -r s; do [ -f "$s/$DAY/$H.parquet" ] && echo "!! $s still has $H.parquet"; done
+
+systemctl start zcrypto-capture
+
+# 6. post-start success gate — a POSITIVE check, not an empty-grep
+for s in $(find "$SEG" -mindepth 3 -maxdepth 3 -type d); do
+  f="$s/$DAY/$H.parquet"; [ -f "$f" ] && uv run python -c "
+import polars as pl,sys; print(pl.read_parquet(sys.argv[1])['ts'][0], sys.argv[1])" "$f"
+done   # every line must read <H>:00:00 — that IS the fix
+````
+
+### Reading the logs after the start — what is healthy
+
+- **`dropping late event` lines are EXPECTED and HEALTHY.** On every (re)connect `ws_client`
+  resubscribes with `snapshot=True` and Kraken **replays** prints it has already sent (T0026). Those
+  belong to an hour that is now committed, and the writer correctly refuses to write them beside a
+  committed final. On the verified migration run they printed **120 lines while the result was
+  measurably perfect** (0 missing, 0 duplicates). They are not a failure signal, and an
+  "must be empty" grep over them would roll back a good deploy.
+- `ambiguous — left untouched` after the start means a stream step 3 was supposed to resolve was
+  missed. No data is at risk (the writer touches nothing), but go back and resolve it.
+- `merge failed`, `quarantined unreadable file`, `ignoring a future-dated segment` and
+  `could not remove a stale tmp` are the ones to actually read.
+- The daemon now takes an **exclusive `flock`** on `$SEG/.capture.lock` at startup: a second writer
+  (an overlapping restart, or a human running `zcrypto capture` by hand beside the service) refuses
+  to start rather than race. Two writers derive the same part sequence from the same directory and
+  destroy each other's rows — do not try to defeat this lock.
 
 ## Suggested next steps
 

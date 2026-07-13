@@ -1,6 +1,6 @@
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -67,11 +67,16 @@ class _Clock:
 def clock(monkeypatch) -> _Clock:
     """Pin `_utcnow()`.
 
-    The writer's hour state is read from disk and from the event stream — never from this clock — so
-    no test has to move it in lockstep with the events it feeds. It is consulted in exactly one
-    place: `_implausible()`, where it is one of the two witnesses that must BOTH call a `ts` garbage
-    before a row is dropped. Pinned an hour ahead of the events the tests feed, so an ordinary event
-    is plausible and only a genuinely far-future one is not.
+    The writer's hour state is read from disk and from the event stream — never from this clock. The
+    clock is consulted in two places, and in neither can it close an hour: `_implausible()`, where it
+    is one of the two witnesses that must BOTH call a `ts` garbage before a row is dropped, and
+    `_recover()`, where it may only refuse to believe a segment dated in the FUTURE.
+
+    Pinned an hour ahead of the events the tests feed, so an ordinary event is plausible and only a
+    genuinely far-future one is not. A test that feeds events across a LONG stream gap must advance
+    this clock as real time would: `_implausible`'s stream witness measures the stream against the
+    clock's RATE (which is what makes it immune to a constant offset — see its docstring), so a
+    frozen clock plus a stream that jumps an hour is, correctly, a suspicious combination.
     """
     clk = _Clock()
     monkeypatch.setattr(segment_writer, "_utcnow", lambda: clk.now)
@@ -783,6 +788,7 @@ def test_a_leading_clock_at_startup_cannot_drop_the_live_stream(tmp_path, clock)
 
     for i in range(60):
         w.append(_hour10_event(i, i))
+    clock.now = _ts(11, 0)  # time passes, as it does: the corrected clock reaches the boundary too
     w.append(_book_event(11, 0))
 
     assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(60))
@@ -836,8 +842,12 @@ def test_a_lagging_clock_can_never_black_out_the_stream(tmp_path, clock, history
     # *slews* an offset that appears after startup, so the lag can last hours, and `Restart=always`
     # re-enters the state on every restart.) There are exactly two ways to have no second witness:
     # a brand-new stream, and — if the witness is seeded off disk — an outage longer than the seed's
-    # own resolution, which is precisely the reboot this whole fix exists for. So: no witness, no
-    # drop. The clock is never allowed to judge live data on its own.
+    # own resolution, which is precisely the reboot this whole fix exists for.
+    #
+    # So the clock's solo veto over the very first event — which is what stops one garbage far-future
+    # stamp from opening the hour in 2027 and dropping the whole stream behind it — is CAPPED. It
+    # costs MAX_CONSECUTIVE_DROPS rows here, and then the guard stands down, the stream is accepted,
+    # and the two witnesses re-anchor. Bounded, loud, and never the stream.
     if history == "after-a-long-outage":
         w1 = _new_writer(tmp_path, flush_rows=5)
         w1.append(_book_event(2, 0, checksum=1))
@@ -848,9 +858,12 @@ def test_a_lagging_clock_can_never_black_out_the_stream(tmp_path, clock, history
     w2 = _new_writer(tmp_path, flush_rows=5)
     for i in range(20):
         w2.append(_book_event(11, i // 60, i % 60, checksum=100 + i))
+    clock.now = _ts(8, 0)  # time passes; the clock still lags by the same ~4 hours
     w2.append(_book_event(12, 0))
 
-    assert pl.read_parquet(_segment_path(tmp_path, 11))["checksum"].to_list() == list(range(100, 120))
+    kept = pl.read_parquet(_segment_path(tmp_path, 11))["checksum"].to_list()
+    assert kept == list(range(100 + segment_writer.MAX_CONSECUTIVE_DROPS, 120))  # the cap's cost, and no more
+    assert kept[-1] == 119  # the stream is alive and stays alive — never blacked out
 
 
 def test_a_quiet_stream_is_never_bricked_by_the_plausibility_guard(tmp_path, clock):
@@ -867,6 +880,193 @@ def test_a_quiet_stream_is_never_bricked_by_the_plausibility_guard(tmp_path, clo
     w.append(_trade_event(15, 0, 3))
 
     assert pl.read_parquet(_segment_path(tmp_path, 14, "trades"))["trade_id"].to_list() == [2]
+
+
+# --- what recovery is allowed to TRUST -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("damage", ["bit-rot", "truncated"])
+def test_an_unreadable_merging_file_is_quarantined_and_the_hour_rebuilt_from_its_parts(tmp_path, damage):
+    # `_commit` hashes the merging file, unlinks the parts and renames it onto the final — decoding
+    # NOTHING. So an unreadable `.merging` (bit-rot, a lying fsync, a partial restore) became an
+    # unreadable `<HH>.parquet` whose sha256 was minted FROM the corrupt bytes: verify_manifest()
+    # returned True over it — the one corruption detector this dataset has, certifying the
+    # corruption — while the parts that still held every row were deleted. The merging file is the
+    # ONE input the protocol trusted without reading, and it is the one it uses to justify deleting
+    # the only other copy. Read it first; if it does not decode, quarantine it (never delete) and let
+    # the hour be rebuilt from the parts, which are right there and readable.
+    hour_dir = _crash_inside_merge(tmp_path, stage="unlink")  # parts + .merging, the kill window
+    merging = hour_dir / "10.parquet.merging"
+    if damage == "bit-rot":
+        _corrupt_body(merging)
+    else:
+        merging.write_bytes(merging.read_bytes()[:20])
+
+    w = _new_writer(tmp_path, flush_rows=5)  # construction must NOT commit it
+    w.append(_book_event(11, 0, checksum=999))  # ... and the sweep rebuilds the hour from the parts
+
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(20))  # zero rows lost
+    assert verify_manifest(path) is True  # and the sidecar blesses the REBUILT hour, not the rot
+    assert (hour_dir / "10.parquet.merging.corrupt").exists()  # evidence, kept
+    assert not list(hour_dir.glob("*.merging"))
+    assert not list(hour_dir.glob("10.part*.parquet"))  # consumed by the rebuild, not by the rot
+
+
+def test_an_unremovable_tmp_file_cannot_crash_loop_the_daemon(tmp_path):
+    # `_recover`'s `.tmp` cleanup is the one unguarded operation in `__init__`, and `__init__` runs
+    # for all 20 streams before the daemon connects. A read-only remount — precisely the aftermath of
+    # the ENOSPC condition DiskWatermark exists for — makes that unlink raise PermissionError, so
+    # every restart crash-loops the whole capture. A leftover tmp is re-derivable garbage; failing to
+    # delete it is not worth the daemon.
+    hour_dir = _segment_path(tmp_path, 10).parent
+    hour_dir.mkdir(parents=True)
+    (hour_dir / "10.part0000.parquet.tmp").write_bytes(b"half a part")
+    hour_dir.chmod(0o500)  # r-x: the file cannot be unlinked from here
+    try:
+        w = _new_writer(tmp_path, flush_rows=5)  # must not raise
+        w.append(_book_event(11, 0, checksum=1))  # nor may this
+    finally:
+        hour_dir.chmod(0o700)
+
+    assert (hour_dir / "10.part0000.parquet.tmp").exists()  # left behind, logged — but nothing died
+
+
+# --- what the plausibility guard is allowed to accept, and what it may never cost ----------------
+
+
+def test_a_bogus_stamp_inside_the_old_window_cannot_truncate_the_live_hour(tmp_path, clock):
+    # Both witnesses used a 1-hour window, so a stamp up to +1h sailed through BOTH: with the clock
+    # correct at 10:05 and the stream at 10:04, one corrupt `11:00` stamp rotated the LIVE hour —
+    # publishing it, manifest-verified, as a "committed and complete" segment holding only its first
+    # five minutes, and then dropping every genuine row of the rest of the hour as late. The window
+    # has to be narrow enough that a stamp which is ahead of both witnesses is refused.
+    clock.now = _ts(10, 5)
+    w = _new_writer(tmp_path, flush_rows=5)
+    for i in range(5):
+        w.append(_hour10_event(i * 60, i))  # 10:00 .. 10:04 — the live hour so far
+    w.append(_book_event(11, 0, checksum=999))  # the bogus stamp: 56 min ahead of the stream AND the clock
+    for i in range(5, 60):
+        clock.now = _ts(10, i)
+        w.append(_hour10_event(i * 60, i))  # 10:05 .. 10:59 — the rest of the live hour
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=1000))  # the GENUINE boundary
+
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))  # the whole hour, not 5 minutes of it
+    assert verify_manifest(path) is True
+
+
+def test_a_garbage_first_stamp_after_a_restart_cannot_black_out_the_stream(tmp_path, clock):
+    # `_max_ts is None` -> `return False`: the first event after ANY restart was never validated at
+    # all. One garbage far-future stamp therefore opened the hour in the future, and the late-event
+    # guard then dropped EVERY genuine row for the life of the process. With no stream witness yet
+    # the clock is all there is, so the clock decides — bounded by the drop cap below, so it can
+    # never be the sole judge for more than a moment.
+    clock.now = _ts(10, 5)
+    w = _new_writer(tmp_path, flush_rows=5)
+    w.append(_book_event(23, 59, checksum=999))  # the very first event: garbage
+    for i in range(20):
+        w.append(_hour10_event(i, i))
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=1000))
+
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(20))  # every genuine row kept
+    assert not _segment_path(tmp_path, 23).exists()  # and the garbage hour was never opened
+    assert not list(path.parent.glob("23.part*.parquet"))
+
+
+def test_a_coherently_garbage_stream_can_never_be_written_to_the_archive(tmp_path, clock):
+    # The two witnesses share ONE blind spot: a stream that is COHERENTLY wrong. A systematic bad
+    # stamp — a `_parse_ts` unit bug, an exchange-side clock fault — advances at the normal rate, so
+    # the stream witness is satisfied by it BY CONSTRUCTION, and an AND can then never drop it
+    # whatever the clock says. Worse, the drop cap is a way IN: a run of them stands the guard down
+    # and the next one is accepted. Measured against the pre-fix writer, a coherent far-future stream
+    # poisons the archive from its FIRST stamp (hour opens in 2030, the late-event guard drops every
+    # genuine row behind it, and the startup sweep publishes the live hour truncated).
+    #
+    # MAX_TS_ABSURD is checked before the cap and answers to no witness: a ts a DAY ahead of our
+    # clock is not data under any reading, and a clock is wrong by minutes or hours, never by days.
+    clock.now = _ts(10, 5)
+    w = _new_writer(tmp_path, flush_rows=5)
+    garbage = datetime(2030, 7, 8, 1, 0, tzinfo=timezone.utc)
+    for i in range(10):  # a systematic source: ten coherent, normally-advancing garbage stamps
+        w.append({**_book_event(10, 0, checksum=900 + i), "ts": garbage + timedelta(seconds=i)})
+    for i in range(20):  # ... and the genuine live stream, still flowing underneath it
+        w.append(_hour10_event(i, i))
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=1000))
+
+    assert w._current_hour == _ts(11, 0)  # the far-future hour was NEVER opened
+    assert not list(tmp_path.rglob("2030/**/*.parquet"))  # and nothing of it reached the archive
+    assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(20))
+
+
+def test_a_future_dated_final_can_never_brick_the_stream(tmp_path, clock):
+    # The poison pill. A far-future `<HH>.parquet` (what one accepted garbage stamp leaves behind)
+    # seeds `_floor` on EVERY future restart — so every genuine event is dropped as "late", forever,
+    # on every restart, until a human finds the file. An hour that has not happened yet cannot have
+    # been committed: a future-dated final is nonsense and is ignored, loudly.
+    clock.now = _ts(10, 5)
+    future_dir = tmp_path / "BTC/EUR" / "book" / "2027" / "01" / "01"
+    future_dir.mkdir(parents=True)
+    pl.DataFrame([_book_event(10, 0, checksum=1)], schema=BOOK_SCHEMA).write_parquet(future_dir / "01.parquet", compression="zstd")
+
+    w = _new_writer(tmp_path, flush_rows=5)
+    assert w._floor is None  # the nonsense final is not "the newest closed hour"
+    for i in range(20):
+        w.append(_hour10_event(i, i))
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=1000))
+
+    assert pl.read_parquet(_segment_path(tmp_path, 10))["checksum"].to_list() == list(range(20))
+    assert (future_dir / "01.parquet").exists()  # ignored, never deleted — it is evidence
+
+
+def test_a_quiet_pair_under_a_lagging_clock_loses_nothing(tmp_path, clock):
+    # The two failure modes MEET here, and a bare `_max_ts` stream witness cannot survive the meeting:
+    # a pair quiet for longer than the window (routine overnight on a thin EUR alt) makes it fire, a
+    # clock lagging by more than the window makes the clock witness fire, so BOTH fire on the same
+    # genuine, live print — and since a dropped event never advances `_max_ts`, every print after it
+    # is dropped too. Measured on a bare-`_max_ts` AND at a 5-minute window: a pair printing every
+    # 10 minutes under a 10-minute lagging clock loses 12 of 12 prints and never recovers.
+    #
+    # A constant offset is what a wrong clock IS, and carrying `_max_ts` forward by the ELAPSED time
+    # (rather than comparing against it raw) cancels a constant offset exactly. So: nothing is lost.
+    clock.now = _ts(9, 50)  # the host clock lags a steady 10 minutes, all the way through
+    w = _new_trade_writer(tmp_path, flush_rows=5)
+    for i in range(segment_writer.MAX_CONSECUTIVE_DROPS + 1):
+        w.append(_trade_event(10, i, i))  # the day's first prints — they anchor the stream witness
+    clock.now = _ts(14, 20)  # ... and then 4.5 hours of silence on the pair (it is really 14:30)
+    for i in range(10):
+        w.append(_trade_event(14, 30 * 60 + i, 100 + i))  # 14:30:00.. — genuine, live prints
+    clock.now = _ts(15, 20)
+    w.append(_trade_event(15, 30 * 60, 999))
+
+    ids = pl.read_parquet(_segment_path(tmp_path, 14, "trades"))["trade_id"].to_list()
+    assert ids == list(range(100, 110))  # every genuine print, not one dropped
+
+
+def test_a_clock_step_costs_a_bounded_few_rows_and_never_the_stream(tmp_path, clock):
+    # What the elapsed-time witness cannot absorb is a clock that STEPS (chrony's first correction),
+    # because a step breaks the "our clock's rate matches the exchange's" assumption for exactly one
+    # interval — and a dropped event never advances the reference, so without a cap that one interval
+    # would black the pair out FOREVER. A run of refusals means the guard is what is broken: it
+    # stands down, the first accepted event re-anchors it, and the loss is capped.
+    clock.now = _ts(10, 0)  # a correct clock: the print below anchors both witnesses
+    w = _new_trade_writer(tmp_path, flush_rows=5)
+    w.append(_trade_event(10, 0, 1))
+    clock.now = _ts(14, 0)  # the pair goes quiet, and chrony STEPS the clock back 30 min (it is 14:30)
+    for i in range(10):
+        w.append(_trade_event(14, 30 * 60 + i, 100 + i))
+    clock.now = _ts(15, 0)
+    w.append(_trade_event(15, 30 * 60, 999))
+
+    ids = pl.read_parquet(_segment_path(tmp_path, 14, "trades"))["trade_id"].to_list()
+    assert ids  # the pair is NOT blacked out ...
+    assert ids[-1] == 109  # ... and it stays alive: re-anchored, the guard never fires again
+    assert len(ids) == 10 - segment_writer.MAX_CONSECUTIVE_DROPS  # the loss is exactly the cap
 
 
 # --- T0026: a reconnect replays recent trade prints ---------------------------------------------

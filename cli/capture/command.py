@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import json
 import os
 import signal
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
@@ -28,6 +30,53 @@ HEALTHCHECK_ENV_VAR = "HEALTHCHECK_URL"
 HEALTHCHECK_INTERVAL_SECONDS = 60
 DISK_WATERMARK_INTERVAL_SECONDS = 30
 UNIVERSE_RELATIVE_PATH = Path("universe") / "point-in-time-universe.json"
+LOCKFILE_NAME = ".capture.lock"
+
+
+@contextlib.contextmanager
+def single_instance_lock(data_dir: Path) -> Iterator[None]:
+    """Hold an exclusive lock on `data_dir` for as long as this process is writing segments.
+
+    `SegmentWriter` derives the next part sequence by globbing the hour directory and names the part
+    deterministically, so two processes pick the SAME sequence and write the SAME file: they clobber
+    each other's parts and shred the hour (measured: 70 of 120 rows destroyed). Within one process
+    the 20 writers are safe — disjoint `pair/kind` roots — but nothing stopped a SECOND process: an
+    overlapping restart, or a human running `zcrypto capture` beside the service. These rows are
+    unbackfillable, so refuse to start rather than race.
+
+    `flock` because the kernel releases it when the process dies, however it dies — a SIGKILL, an OOM
+    kill or a power loss leaves no stale lockfile for a human to reason about at 3am. It is held on
+    the data dir itself, so it spans the container boundary too (the compose file bind-mounts the
+    host path straight through).
+
+    Only CONTENTION refuses the start. Failing to create or lock the file at all does not: on a
+    read-only remount — the aftermath of the very ENOSPC condition `DiskWatermark` exists for — the
+    `mkdir`/`open` raises, and refusing to start there would crash-loop the daemon under
+    `restart: always` on exactly the failure we most need it to survive and report (the same trap as
+    `_recover`'s tmp cleanup). An unwritable disk has nothing to corrupt, so we log and run on.
+    """
+    fd = None
+    path = data_dir / LOCKFILE_NAME
+    try:
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            # The ONLY thing that means "someone else holds it". Anything else does not.
+            raise CaptureError(
+                f"another capture process is already writing {data_dir} (lock: {path}) — refusing to "
+                "start. Two writers overwrite each other's part files and destroy rows. Stop the "
+                "running one first (`systemctl stop zcrypto-capture`)."
+            ) from exc
+        except OSError:
+            # A read-only filesystem, a mount without flock support (ENOLCK / EOPNOTSUPP). Not
+            # evidence of a second writer, and not worth the daemon.
+            logger.exception("could not take the single-instance lock — running UNLOCKED path=%s", path)
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)  # releases the lock
 
 
 def _default_pairs(universe_path: Path) -> list[str]:
@@ -257,4 +306,5 @@ def capture(
         resolved_data_dir,
         duration,
     )
-    asyncio.run(_run(resolved_pairs, depth, resolved_data_dir, duration, healthcheck_url))
+    with single_instance_lock(resolved_data_dir):
+        asyncio.run(_run(resolved_pairs, depth, resolved_data_dir, duration, healthcheck_url))

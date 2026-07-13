@@ -39,7 +39,46 @@ DEFAULT_FLUSH_ROWS = 5_000
 # How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
 # rather than data (see `_implausible`). Rotation follows the event's ts, so one far-future stamp
 # would close the live hour early and then have the late-event guard drop every genuine row after it.
-MAX_TS_AHEAD = timedelta(hours=1)
+#
+# The window is what a bad stamp gets away with: at +1h a stamp of `08:00` arriving at 07:05 passed
+# BOTH witnesses (`>` is strict) and truncated the live hour to its first five minutes — published,
+# manifest-verified, asserting "committed and complete". Five minutes bounds that to five minutes.
+MAX_TS_AHEAD = timedelta(minutes=5)
+
+# How many CONSECUTIVE timestamps the guard may refuse before it stands down (see `_implausible`).
+#
+# A DROPPED event never advances the guard's own reference, so a guard that is wrong about the stream
+# stays wrong about it forever — every failure of this guard is therefore a PERMANENT blackout of the
+# pair unless the run is capped. A run of refusals is the signature of a broken guard rather than a
+# broken stream: real streams do not emit garbage back to back, but a wrong reference refuses
+# everything. So the guard gets a bounded run, then stands down, and the first accepted event
+# re-anchors it. This is what makes the guard's worst case a bounded, self-healing loss instead of a
+# blackout: the stream ALWAYS makes progress, at worst losing this many timestamps per accepted one.
+# (Executed: a clock lagging a constant 10 min on a pair printing every 10 min costs 3 rows once, at
+# the cold start, and nothing thereafter. Only a clock that does not advance AT ALL — which no live
+# host has — sustains the worst case, and even then a quarter of the prints get through.)
+#
+# DISTINCT timestamps, because one depth-100 book snapshot is ~200 rows that all share one ts: a
+# single bad message must never exhaust the run and thereby let the rest of itself in (executed: a
+# bogus 200-row far-future snapshot admits 0 of 200, and the hour is never opened in the future).
+MAX_CONSECUTIVE_DROPS = 3
+
+# The one bound that is NEVER stood down and needs no second witness (see `_implausible`).
+#
+# Two witnesses protect each other, but they share a blind spot: a stream that is COHERENTLY wrong.
+# A systematic bad stamp — a `_parse_ts` unit bug, an exchange-side clock fault — advances normally,
+# so the stream witness is perfectly satisfied by it, and an AND can then never drop it whatever the
+# clock says. Executed against the pre-fix writer: a coherent far-future stream poisons the archive
+# from its FIRST stamp (the hour opens in 2030, the late-event guard drops every genuine row behind
+# it, and the startup sweep publishes the live hour truncated). The run cap narrows that to the 4th
+# stamp, which is better and still not safe.
+#
+# So one bound answers to no witness at all: a `ts` a whole DAY ahead of our clock is not data under
+# any reading. It is the one judgement the clock can be trusted to make alone, because a clock is
+# wrong by minutes or hours — chrony's slew, an RTC read before the first step — and never by days,
+# and because it can only ever fire on a ts that no plausible clock error could produce. It is
+# deliberately far outside MAX_TS_AHEAD: this is a sanity floor, not a second guess at the window.
+MAX_TS_ABSURD = timedelta(days=1)
 
 
 def _utcnow() -> datetime:
@@ -140,7 +179,9 @@ class SegmentWriter:
     before chrony's first step) would otherwise seed that state wrong and silently drop the entire
     live stream for up to 59:59. Which hours are over is likewise read from the event stream — the
     exchange's clock — not ours: the startup sweep runs on the first event, and finalizes every hour
-    that still holds parts and is strictly before it.
+    that still holds parts and is strictly before it. The clock is never allowed to declare an hour
+    closed; it is allowed only to refuse to believe one that is dated in the FUTURE, which is
+    nonsense no reading of the invariant produces (`_recover`).
 
     Nothing unreadable is ever deleted: it is quarantined to `<name>.corrupt` (never clobbering an
     earlier one) and kept as evidence.
@@ -166,9 +207,12 @@ class SegmentWriter:
         self._dedup_key = dedup_key
         self._buffer: list[dict] = []
         self._current_hour: datetime | None = None  # the open hour; None until the first event
-        self._max_ts: datetime | None = None
+        self._max_ts: datetime | None = None  # the newest ts accepted...
+        self._max_at: datetime = _utcnow()  # ... and our clock when we accepted it (see `_implausible`)
         self._seen: set = set()
         self._floor: datetime | None = None  # oldest hour still open, per the segments on disk
+        self._drops = 0  # consecutive timestamps the plausibility guard has refused
+        self._last_drop_ts: datetime | None = None
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -176,8 +220,13 @@ class SegmentWriter:
         if `event["ts"]` has crossed into a new hour."""
         ts = event["ts"]
         if self._implausible(ts):
+            if ts != self._last_drop_ts:  # one bad message is one bad ts, however many rows it carries
+                self._last_drop_ts = ts
+                self._drops += 1
             logger.warning("dropping implausible event ts pair=%s kind=%s ts=%s", self._pair, self._kind, ts)
             return
+        self._drops = 0  # the guard accepted a ts, so its references are good: re-arm the run cap
+        self._last_drop_ts = None
         hour = _hour_start(ts)
         floor = self._current_hour or self._floor
         if floor is not None and hour < floor:
@@ -200,6 +249,7 @@ class SegmentWriter:
             self._seen.add(key)
         if self._max_ts is None or ts > self._max_ts:
             self._max_ts = ts
+            self._max_at = _utcnow()  # anchored together: the witness is the PAIR, not either half
         self._buffer.append(event)
         if len(self._buffer) >= self._flush_rows:
             self._flush_buffer()
@@ -212,26 +262,61 @@ class SegmentWriter:
         self._flush_buffer()
 
     def _implausible(self, ts: datetime) -> bool:
-        """True only if `ts` is far ahead of BOTH our own clock AND the stream itself.
+        """True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
+        own clock — and only while the guard has not already refused MAX_CONSECUTIVE_DROPS in a row.
 
         Two witnesses must agree before a row is thrown away, because either one alone has a failure
-        mode that silently costs the whole stream for as long as it lasts:
+        mode that costs the whole stream for as long as it lasts:
 
         * the clock alone — a local clock lagging by more than MAX_TS_AHEAD rejects every live event
           (and chrony only *slews* an offset that appears after startup, so it can last hours);
-        * the stream alone — a pair can genuinely go an hour without a print (the thin EUR alts do,
+        * the stream alone — a pair can genuinely go hours without a print (the thin EUR alts do,
           overnight), and the next real trade would then be rejected against a reference that can
           never advance again, since a DROPPED event does not advance it.
 
-        Before this process has accepted an event there is no second witness at all, so nothing is
-        dropped: the clock is never the sole judge of live data. (Seeding the witness from the newest
-        segment on disk looks tempting and is worse than useless — an outage longer than
-        MAX_TS_AHEAD leaves it stale by exactly the length of the outage, so both witnesses then fire
-        on the first genuine event of the recovery and the stream stays dark.)
+        The stream witness is the last ACCEPTED ts carried forward by the time that has passed since
+        we accepted it — not the bare `_max_ts`. That distinction is the whole guard. Bare `_max_ts`
+        made the two witnesses' blind spots OVERLAP: a pair quiet for longer than the window makes it
+        fire, and a lagging clock makes the clock witness fire, so both fire on the same genuine live
+        print and the pair goes dark (a 10-minute lag on a pair printing every 10 minutes: 12 of 12
+        dropped, and it never recovers). Carrying it forward measures the stream against the clock's
+        RATE instead of its VALUE, so a constant offset — which is what a wrong clock is — cancels
+        out entirely, and a quiet pair under a lagging clock loses nothing. It is also sharper on the
+        real target: after a 4-hour silence the reference is *now*, so a far-future stamp is still
+        caught, where bare `_max_ts` would have let anything through for the next 4 hours.
+
+        The run cap is the backstop for what is left: a clock that STEPS (chrony's first correction)
+        breaks the rate assumption for exactly one interval, and a run of refusals is the signature
+        of a broken guard rather than a broken stream — real streams do not emit garbage back to
+        back, but a wrong reference refuses everything. So the guard stands down, and the first
+        accepted event re-anchors it.
+
+        That cap is also what lets the clock judge the FIRST event alone. It must be allowed to:
+        before this process has accepted anything there is no stream witness, and returning False
+        unconditionally meant one garbage far-future stamp — arriving as the first event after ANY
+        restart — opened the hour in the future and had the late-event guard drop every genuine row
+        after it, for the life of the process. A lagging clock now costs the first few rows; it can
+        no longer cost the stream. (Seeding the stream witness from the newest segment on disk
+        instead is worse than useless: an outage longer than MAX_TS_AHEAD leaves it stale by exactly
+        the length of the outage, so it fires on the first genuine event of the recovery — which is
+        the reboot this whole fix exists for.)
+
+        MAX_TS_ABSURD is checked FIRST and answers to none of that — not to the second witness, not
+        to the cap. Both witnesses share one blind spot, a stream that is COHERENTLY wrong, and the
+        cap is a way IN to that blind spot: a systematic bad stamp satisfies the stream witness by
+        construction, and a run of them stands the guard down and is then accepted. Nothing below can
+        reach a `ts` a day ahead of our clock, so the blind spot is closed at its only entrance.
         """
-        if self._max_ts is None:
+        now = _utcnow()
+        if ts > now + MAX_TS_ABSURD:
+            return True  # not data under any reading of any clock — and never stood down
+        if self._drops >= MAX_CONSECUTIVE_DROPS:
             return False
-        return ts > self._max_ts + MAX_TS_AHEAD and ts > _utcnow() + MAX_TS_AHEAD
+        if self._max_ts is None:
+            return ts > now + MAX_TS_AHEAD
+        # Clamped: a clock stepped BACKWARD must only ever make the guard laxer, never tighter.
+        elapsed = max(now - self._max_at, timedelta(0))
+        return ts > self._max_ts + elapsed + MAX_TS_AHEAD and ts > now + MAX_TS_AHEAD
 
     def _hour_dir(self, hour: datetime) -> Path:
         return self._base_dir / self._pair / self._kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
@@ -442,7 +527,14 @@ class SegmentWriter:
             # Re-derivable: a merge tmp from the parts (still on disk), a part tmp from rows that
             # never reached a part file (the same loss as an unflushed buffer).
             if tmp.is_file():
-                tmp.unlink(missing_ok=True)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    # The one operation in `__init__` that could raise — and a read-only remount (the
+                    # aftermath of the very ENOSPC condition DiskWatermark exists for) makes it do so
+                    # for all 20 streams, on every restart: a crash loop, the worst outcome there is.
+                    # A leftover tmp is re-derivable garbage. It is not worth the daemon.
+                    logger.exception("could not remove a stale tmp pair=%s kind=%s path=%s", self._pair, self._kind, tmp)
         for merging_path in sorted(root.rglob("*.parquet.merging")):
             final_path = merging_path.with_name(merging_path.name.removesuffix(".merging"))
             try:
@@ -458,6 +550,17 @@ class SegmentWriter:
                         merging_path,
                     )
                     continue
+                failure = _read_failure(merging_path)
+                if failure is not None:
+                    # `_commit` hashes these bytes, unlinks the parts they came from and renames them
+                    # onto the final — decoding nothing. So bit-rot (or a lying fsync, or a partial
+                    # restore) here published an unreadable `<HH>.parquet` whose sha256 was minted
+                    # FROM the rot: verify_manifest() returned True over it, the one corruption
+                    # detector this dataset has certifying the corruption — while the parts that
+                    # still held every row were deleted. Quarantine it (never delete) and fall
+                    # through: the parts are untouched, so `_sweep` rebuilds the hour losslessly.
+                    self._quarantine(merging_path, failure)
+                    continue
                 self._commit(merging_path, final_path)
                 logger.warning("committed an interrupted merge pair=%s kind=%s path=%s", self._pair, self._kind, final_path)
             except Exception:
@@ -468,11 +571,21 @@ class SegmentWriter:
         # that would not commit above: its bytes may be the hour's only copy (the parts are already
         # unlinked), and an hour left open here could be re-opened by the live stream and its merge
         # would then sink straight over them.
-        hours = [
-            hour
-            for path in (*root.rglob("*.parquet"), *root.rglob("*.parquet.merging"))
-            if ".part" not in path.name and (hour := _hour_of(path.parent, path.name.split(".")[0])) is not None
-        ]
+        hours = []
+        for path in (*root.rglob("*.parquet"), *root.rglob("*.parquet.merging")):
+            if ".part" in path.name or (hour := _hour_of(path.parent, path.name.split(".")[0])) is None:
+                continue
+            if hour > _utcnow() + MAX_TS_AHEAD:
+                # An hour that has not happened cannot have been committed: a future-dated segment is
+                # nonsense, and it is what a single accepted garbage stamp leaves behind. Seeding the
+                # floor from it drops EVERY genuine event, on EVERY restart, forever — the pair is
+                # bricked until a human finds the file. So it is ignored, loudly, and never deleted.
+                # (Under a lagging clock this merely ignores a real recent final, which is fail-safe:
+                # the hour is re-opened, the new part lands beside the final, and `_merge_hour`'s
+                # "ambiguous — left untouched" branch then preserves every byte of both.)
+                logger.error("ignoring a future-dated segment pair=%s kind=%s path=%s", self._pair, self._kind, path)
+                continue
+            hours.append(hour)
         self._floor = max(hours) + timedelta(hours=1) if hours else None
 
     def _sweep(self, before: datetime) -> None:

@@ -24,6 +24,12 @@ after a restart. ~54 min × 20 streams, permanent.
 `_implausible()` does not catch it: it drops a stamp only when it is more than `MAX_TS_AHEAD` ahead of
 **both** our clock and the stream itself, and `+1 h` is inside that window by construction.
 
+**Blast radius reduced (T0036 round 5), not removed.** `MAX_TS_AHEAD` is now **5 minutes**, so a stamp
+must be within 5 minutes of *both* witnesses to be trusted — a `14:00` stamp at 13:05 is now dropped.
+What survives is the residual: a bogus stamp **≤5 min ahead, landing in the last 5 minutes of an
+hour**, still rotates the hour early, and the truncation is still permanent. Bounded to ~5 min of one
+stream rather than ~55 min of all 20, but the mechanism is untouched, and only corroboration closes it.
+
 ## Why this matters
 
 L2 is unbackfillable, and this is the same blast radius as the T0036 clock bug it outlived
@@ -40,14 +46,30 @@ Never observed in production. It is a hardening gap, not a live incident.
 
 - Reproduced by a review subagent against `251e064` (`_implausible`, `segment_writer.py:42`;
   rotation, `:173-186`; floor, `:436`).
-- Shrinking `MAX_TS_AHEAD` does **not** fix it: the window is what keeps the two witnesses'
-  failure modes from overlapping. At 5 min, a clock lagging >5 min plus a >5 min gap between trades
-  on a thin pair (routine, overnight) makes both witnesses fire on live data → silent blackout. The
-  window trades "a garbage stamp within W passes" against "a clock lag > W *and* a stream gap > W
-  blacks the stream out", and there is no W that is safe on both sides.
+- **The "no safe W" finding was right about the *bare* `_max_ts` witness, and it has since been
+  dissolved.** The original argument: at W = 5 min, a clock lagging >5 min plus a >5 min gap between
+  trades on a thin pair makes both witnesses fire on live data → silent blackout (executed: a pair
+  printing every 10 min under a constant 10-min lagging clock loses **12 of 12** prints and never
+  recovers, since a dropped event never advances `_max_ts`). The flaw was in the witness, not in W:
+  comparing against `_max_ts` **raw** measures the stream against the clock's *value*. Carrying
+  `_max_ts` forward by the time elapsed since it was accepted measures it against the clock's *rate*
+  instead — and a constant offset, which is what a wrong clock is, then cancels exactly. The same
+  quiet pair under the same lagging clock now loses **nothing**. That let W drop to 5 min (T0036
+  round 5), which is what bounds this topic's blast radius; see the `_implausible` docstring.
 - A wall-clock veto on the rotation (`refuse to close hour H while our clock says H is not over`) is
-  the same trade in another shape: it blacks out the stream whenever the clock lags. The clock is not
-  trustworthy enough to gate live data — that is the whole finding of T0036.
+  still not available: it blacks out the stream whenever the clock lags. The clock is not trustworthy
+  enough to gate live data — that is the whole finding of T0036.
+- **The two witnesses share one blind spot, and corroboration would not close it either.** A stream
+  that is *coherently* wrong — a systematic bad stamp (a `_parse_ts` unit bug, an exchange-side clock
+  fault) — advances at the normal rate, so it satisfies the stream witness **by construction**, and an
+  AND can then never drop it whatever the clock says. Two events would also happily "agree" on the
+  same wrong hour, so T0037's corroboration rule does not help here. Executed against the pre-fix
+  writer: a coherent far-future stream poisons the archive from its **first** stamp (the hour opens in
+  2030, the late-event guard drops every genuine row behind it, and the startup sweep publishes the
+  live hour truncated). Closed in T0036 round 5 by `MAX_TS_ABSURD` (1 day) — a bound that answers to
+  no witness and is never stood down, on the grounds that a clock is wrong by minutes or hours and
+  never by days. What remains in the **band between MAX_TS_AHEAD and MAX_TS_ABSURD** is this topic:
+  a systematic stamp that is wrong by, say, an hour is still accepted, and lands in the wrong hour.
 - The only sound fix found is **corroboration**: a new hour is opened, and the old one finalized, only
   once **two** events agree on it. A lone stamp then never rotates. Sketch: hold the first event of a
   candidate hour in a small pending list; a second event in the same hour confirms it (flush the held
