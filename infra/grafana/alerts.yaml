@@ -36,24 +36,31 @@
 # to 0 rather than NoData, and is marked noDataState: OK to match -- a blanket no-data->alert
 # would otherwise leave it permanently firing when healthy.
 rules:
-  - uid: zcrypto-gate-not-met
-    title: "Gate · not MET"
+  - uid: zcrypto-gate-streak-reset
+    title: "Gate · streak reset"
     ruleGroup: zcrypto-gate
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
-    # NOTE (per task-4 brief): the gate hasn't been MET yet during the shadow-scoring phase,
-    # so a simple `status == 0` fires continuously until the first MET day -- accepted for
-    # now. Once the gate has been MET at least once, the sharper condition is an edge (MET
-    # -> not-MET), e.g. `zcrypto_gate_status == 0 and changes(zcrypto_gate_status[1d]) > 0`;
-    # revisit at that point.
+    # SUPERSEDES the old "Gate · not MET" rule (uid zcrypto-gate-not-met), which alerted on
+    # `zcrypto_gate_status == 0`. That rule's own NOTE conceded the flaw and it duly bit: the gate
+    # is MET only after >=14 consecutive clean days, so `status == 0` is the CORRECT, EXPECTED state
+    # for the entire accumulation window -- it would have emailed daily for ~12 days to report that
+    # we were, correctly, still waiting. That is alarm fatigue, and it trains the reader to ignore
+    # gate alerts exactly when one of them matters. It was also redundant: the real failure modes
+    # already have their own rules (mismatch / exporter stale / journal pull lag).
+    #
+    # The signal that actually means something BROKE is the streak going BACKWARDS. `streak_days`
+    # only ever increments (a clean complete UTC day) or resets to 0 (a day failed), so a negative
+    # delta IS the failure, and nothing else produces one. It fires once on the break and
+    # auto-resolves as the 6h window rolls past -- one alert per broken run, not a drumbeat.
     condition: C
     data:
       - refId: A
         queryType: ""
-        relativeTimeRange: {from: 600, to: 0}
+        relativeTimeRange: {from: 21600, to: 0}  # 6h, matching the delta window below
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: zcrypto_gate_status
+          expr: delta(zcrypto_gate_streak_days[6h])
           instant: true
           refId: A
       - refId: C
@@ -66,12 +73,16 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: lt, params: [1]}  # status < 1 == status == 0 (0/1 gauge)
-    noDataState: Alerting
+            - evaluator: {type: lt, params: [0]}  # the streak went BACKWARDS == a clean run broke
+    # OK, not Alerting: a missing metric means the exporter is dead, which `Gate · exporter stale`
+    # already pages for. Alerting here too would just double-page the same fault.
+    noDataState: OK
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The >=14-clean-day gate is not MET."
+      summary: >-
+        The Stage-6a clean-day streak went BACKWARDS — a clean run broke and the >=14-day gate clock
+        has restarted. (The gate merely being not-MET while it accumulates is normal and no longer alerts.)
     labels:
       severity: warning
     notification_settings:
@@ -268,15 +279,33 @@ rules:
     orgId: 1
     condition: C
     data:
+      # `queryType: instant` is load-bearing and Loki-specific: the `instant: true` MODEL field that
+      # the Prometheus rules above use is a Prometheus-datasource setting, and Loki ignores it. Without
+      # this the query ran as a RANGE query and returned a time series, so the threshold node rejected
+      # it with "invalid format of evaluation results ... looks like time series data, only reduced
+      # data can be alerted on" -- the rule was erroring instead of evaluating.
       - refId: A
-        queryType: ""
+        queryType: instant
         relativeTimeRange: {from: 900, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
             sum(count_over_time({container="archive-pull"} |= "ERROR" [15m])) or on() vector(0)
-          instant: true
+          queryType: instant
           refId: A
+      # Reduce A to a single value before the threshold. Belt-and-braces alongside the instant query:
+      # this is the canonical A -> B(reduce) -> C(threshold) chain Grafana's own UI emits, and it keeps
+      # the rule valid even if the datasource ever hands back a series again.
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
       - refId: C
         queryType: ""
         relativeTimeRange: {from: 0, to: 0}
@@ -284,7 +313,7 @@ rules:
         model:
           datasource: {type: "__expr__", uid: "__expr__"}
           type: threshold
-          expression: "A"
+          expression: "B"
           refId: C
           conditions:
             - evaluator: {type: gt, params: [0]}
