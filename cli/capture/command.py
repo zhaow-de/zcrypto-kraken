@@ -46,9 +46,14 @@ def _default_pairs(universe_path: Path) -> list[str]:
 
 def _parse_ts(raw: str) -> datetime:
     try:
-        return datetime.fromisoformat(raw)
+        ts = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise CaptureError(f"unparseable timestamp from Kraken WS: {raw!r}") from exc
+    # Kraken stamps UTC. Should it ever drop the trailing `Z`, the result is naive — and every
+    # comparison the writer makes against it (`_implausible`, the late-event floor) would raise
+    # TypeError out of `append()`, i.e. out of the single consumer task: capture dies for all 10
+    # pairs and both kinds, on one missing character.
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
 async def _handle_book_message(
@@ -180,7 +185,10 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     books = {pair: OrderBook(pair, depth) for pair in pairs}
     book_writers = {pair: SegmentWriter(data_dir, pair, "book", BOOK_SCHEMA) for pair in pairs}
-    trade_writers = {pair: SegmentWriter(data_dir, pair, "trades", TRADE_SCHEMA) for pair in pairs}
+    # `dedup_key`: on every (re)connect `ws_client` resubscribes with snapshot=True and Kraken
+    # REPLAYS its recent trade prints (T0026). `trade_id` is globally unique, so a replayed print
+    # that is already in the open hour is recognized and dropped instead of stored twice.
+    trade_writers = {pair: SegmentWriter(data_dir, pair, "trades", TRADE_SCHEMA, dedup_key="trade_id") for pair in pairs}
     monitor = GapMonitor()
     watermark = DiskWatermark(data_dir)
     client = CaptureClient(pairs, depth)

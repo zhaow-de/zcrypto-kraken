@@ -69,6 +69,42 @@ mid-hour restart would have cost ~600 s and taken the run to ~0.157 %, failing t
 - No stale part files from past hours currently exist on the VPS (only the live hour's), so there is no
   orphaned data to recover — the losses above are already merged away and unrecoverable.
 
+## Deploy migration — MUST run on the VPS before the new binary starts
+
+The fix rests on one invariant: **`<HH>.parquet` on disk is always a committed, complete final.** The
+old writer breaks it (its `close()` publishes the open hour), so the on-disk state has to be migrated
+**once**, by hand, while the daemon is stopped. Skipping it is not catastrophic — the new writer
+refuses to write to an hour that already has a final, and refuses to touch parts sitting beside one —
+but the stop hour then loses its remaining rows and stays half-published.
+
+Run on the capture VPS, with `SEG=/var/lib/zcrypto-capture/segments`:
+
+1. **Stop the old daemon gracefully and confirm it finished.** `systemctl stop zcrypto-capture`, then
+   `systemctl is-active zcrypto-capture` must print `inactive`, and
+   `journalctl -u zcrypto-capture -n 100 | grep -c 'segment written'` must show 20 (one per
+   pair×kind). A graceful stop runs the old `close()`, which finalizes the open hour and unlinks its
+   parts — that is the state step 2 expects.
+2. **Demote each stream's stop-hour final back to a part**, so the new writer resumes the hour instead
+   of treating it as closed. For every `<pair>/<kind>` whose newest `<H>.parquet` has **no**
+   `<H>.part*.parquet` beside it:
+   `mv $D/<H>.parquet $D/<H>.part0000.parquet && rm -f $D/<H>.parquet.sha256`
+   Expected result: the hour dir holds `<H>.part0000.parquet` and no `<H>.parquet`.
+3. **Resolve any hour that has BOTH a `<H>.parquet` and `<H>.part*.parquet`** — this means the stop was
+   *not* graceful (SIGKILL / OOM / power loss), and the state is genuinely ambiguous: the old writer
+   sank the final **before** unlinking its parts, so the parts may be rows the final already holds
+   (re-merging duplicates the hour) *or* rows flushed after an earlier `close()` (dropping them loses
+   the hour). The new writer will log `parts beside a readable final — ambiguous, left untouched` and
+   do nothing. Resolve by reading the rows:
+   `uv run python -c "import polars as pl,sys; f,ps=sys.argv[1],sys.argv[2:]; a=pl.read_parquet(f); b=pl.concat([pl.read_parquet(p) for p in ps]); print('ALREADY MERGED' if a.height>=b.height and a.tail(b.height).equals(b) else 'DISJOINT')" $D/<H>.parquet $D/<H>.part*.parquet`
+   - `ALREADY MERGED` → the parts are inside the final: `rm $D/<H>.part*.parquet`, then go to step 2.
+   - `DISJOINT` → the final is a partial hour and the parts are its continuation: rebuild the hour in
+     order (final first), `rm` the parts, and rewrite the sidecar with `sha256sum`.
+4. **Backfill any missing or empty sidecar** (the new writer no longer blesses finals it did not
+   produce): `find $SEG -name '*.parquet' ! -name '*.part*' | while read -r f; do [ -s "$f.sha256" ] || (cd "$(dirname "$f")" && sha256sum "$(basename "$f")" > "$(basename "$f").sha256"); done`
+   Expected result — this prints nothing:
+   `find $SEG -name '*.parquet' ! -name '*.part*' | while read -r f; do (cd "$(dirname "$f")" && sha256sum -c --quiet "$(basename "$f").sha256"); done`
+5. Start the new binary. First-hour check: `journalctl -u zcrypto-capture | grep -E 'dropping late event|ambiguous|merge failed'` must be empty.
+
 ## Suggested next steps
 
 - Make the **on-disk state the source of truth**, not process memory:

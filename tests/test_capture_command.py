@@ -159,11 +159,6 @@ def test_capture_propagates_consumer_crash_even_with_duration_set(tmp_path, monk
 
 def test_capture_end_to_end_writes_segments_with_fake_client(tmp_path, monkeypatch):
     monkeypatch.setattr("cli.capture.command.CaptureClient", _FakeClient)
-    # The writer refuses events from an hour that is already over (T0036), so the wall clock has to
-    # sit in the hour _FakeClient's events are stamped in — as it does in production — and then move
-    # on before the next process comes up to finalize that hour.
-    clock = [datetime(2026, 7, 8, 14, 30, tzinfo=timezone.utc)]
-    monkeypatch.setattr("cli.capture.segment_writer._utcnow", lambda: clock[0])
     # A not-yet-existing data dir (the realistic first-run case — nothing has provisioned
     # /var/lib/zcrypto-capture/segments yet) must not crash the disk-watermark check.
     data_dir = tmp_path / "does" / "not" / "exist" / "yet"
@@ -186,12 +181,35 @@ def test_capture_end_to_end_writes_segments_with_fake_client(tmp_path, monkeypat
     book_path = data_dir / "BTC/EUR" / "book" / "2026" / "07" / "08" / "14.parquet"
     trade_path = data_dir / "BTC/EUR" / "trades" / "2026" / "07" / "08" / "14.parquet"
     # The run is stopped mid-hour, and a stop never publishes a partial hour as a segment (T0036):
-    # the rows are on disk as parts, and the hour is finalized by the next process to come up.
+    # the rows are on disk as parts, and the hour is finalized by the next process — on its first
+    # event, whose ts is what says hour 14 is over (the writer holds no wall clock).
     assert not book_path.exists()
     assert list(book_path.parent.glob("14.part*.parquet"))
-    clock[0] = datetime(2026, 7, 8, 15, 5, tzinfo=timezone.utc)  # the restart lands after the boundary
-    SegmentWriter(data_dir, "BTC/EUR", "book", BOOK_SCHEMA)
-    SegmentWriter(data_dir, "BTC/EUR", "trades", TRADE_SCHEMA)
+    next_hour = datetime(2026, 7, 8, 15, 0, tzinfo=timezone.utc)
+    book_writer = SegmentWriter(data_dir, "BTC/EUR", "book", BOOK_SCHEMA)
+    book_writer.append(
+        {
+            "ts": next_hour,
+            "symbol": "BTC/EUR",
+            "type": "update",
+            "side": "bid",
+            "price": 100.0,
+            "qty": 1.0,
+            "checksum": 1,
+        }
+    )
+    trade_writer = SegmentWriter(data_dir, "BTC/EUR", "trades", TRADE_SCHEMA, dedup_key="trade_id")
+    trade_writer.append(
+        {
+            "ts": next_hour,
+            "symbol": "BTC/EUR",
+            "side": "buy",
+            "price": 100.0,
+            "qty": 1.0,
+            "ord_type": "market",
+            "trade_id": 2,
+        }
+    )
 
     assert book_path.exists()
     assert trade_path.exists()
