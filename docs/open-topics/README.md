@@ -51,10 +51,16 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open-1"></a>
 
 - [T0005 — Blockpit T1 tax check](T0005-blockpit-t1-tax-check.md) — connect the Kraken depot read-only, verify import scope + historical labeling, write the T1 memo; human-gated on the Blockpit/depot authorize step (ripe when: Stage 6b starts — the T1 connection rides alongside the §11 T2 probe window, per spec 00039).
+
 - [T0021 — VPS journal retention](T0021-vps-journal-retention.md) — prune-after-verified-pull design for the append-only engine journal (~0.35 GiB/month measured) (ripe when: the 80% disk watermark — the NAS Alloy `/volume1` disk-free alert (T0020) is the trigger mechanism, now live (provisioned) — or an earlier attended ops window).
+
 - [T0026 — reconnect trade-snapshot overwrite](T0026-reconnect-trade-snapshot-overwrite.md) — on a full WS reconnect the trade snapshot silently overwrites already-finalized past-hour trade segments (manifest regenerated, so hash-invisible); books unaffected, trades REST-backfillable (ripe when: next attended capture-maintenance window; loss-quantification is autonomous now).
+
 - [T0028 — NAS pull re-hashes the whole archive](T0028-nas-pull-incremental-verify.md) — Role A's `verify_tree` sha256-re-verifies the entire (unbounded) archive every hourly cycle → O(archive) per cycle; verify only rsync-transferred files instead (ripe when: the verify sweep approaches the pull interval, ~250–600 GB in — now ~1–2 years out, since the real growth is 0.48 GB/day, not the 10 GB/day the estimate assumed; see T0032).
+
 - [T0031 — re-pin NAS capture image after merge](T0031-nas-image-repin-after-merge.md) — the NAS pins a branch-built capture digest (`dfda2580`) that the merge (which deletes the branch) can leave unpullable; re-pin to the develop-built `-compat` digest (ripe when: PR #117 merged + develop CI has published the new image).
+
+- [T0036 — a restart silently truncates the hour it lands in](T0036-segment-writer-restart-clobber.md) — `SegmentWriter` keeps its part-file bookkeeping in process memory, so a restarted process renumbers from `part0000`, **overwrites** the pre-restart parts, and finalizes `<HH>.parquet` from only its own list — the hour is truncated to whatever happened after the restart, and the `.sha256` is regenerated over it so the loss is hash-invisible; **70 truncated pair-hours / ~1,748 pair-minutes of unbackfillable L2 already destroyed**, and `GapMonitor` undercounts it ~50× because it measures WS downtime, not the clobbered hour (ripe when: live now — every restart, reboot, crash and deploy destroys data until fixed).
 
 ### Partially done<a name="partially-done-1"></a>
 
