@@ -15,7 +15,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto capture`](#zcrypto-capture)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
-    - [VPS journal pull and daily gate ops (systemd user timer)](#vps-journal-pull-and-daily-gate-ops-systemd-user-timer)
+    - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
   - [`zcrypto archive`](#zcrypto-archive)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
@@ -75,6 +75,7 @@ zcrypto engine <subcommand> [OPTIONS]
 | `cycle [--at ISO_TS] [--replace]` | Run one cycle manually. Defaults to the most recent elapsed boundary; `--at` must be an aware ISO-8601 timestamp exactly on the 4h UTC grid. A boundary that already has a record/sidecar is refused unless `--replace` (which deletes both artifacts plus the boundary's snapshots first). Exits non-zero when the cycle fails. |
 | `replay [--date YYYY-MM-DD] [--path fast\|verified] [--journal-dir <PATH>]` | Replay journaled success cycles through the builder and compare recomputed targets against the journaled ones. Hash mismatches and validation failures are classified per cycle (the sweep never crashes), sidecars are listed as failed cycles, and any mismatch/validation failure exits non-zero. `--journal-dir` reads a journal other than the configured one (e.g. a pulled VPS journal). |
 | `report [--journal-dir <PATH>]` | Rebuild every journaled cycle outcome by replay-on-demand (fast path) and evaluate the ratified ≥ 14-clean-day gate: prints streak length, gate status, and the most recent failure. Absent boundaries are scored missing, never fabricated. `--journal-dir` reads a journal other than the configured one. |
+| `gate-export --textfile <PATH> [--journal-dir <PATH>] [--healthcheck-url <URL>] [--lag-fail-seconds <SECS>]` | Evaluate the gate (same replay-on-demand pass as `report`) and atomically write it as a Prometheus node-exporter textfile, then ping an independent dead-man's-switch healthcheck. Emits `zcrypto_gate_status` (1/0), `zcrypto_gate_streak_days`, `zcrypto_gate_journal_pull_lag_seconds` (omitted when the journal is empty), `zcrypto_gate_mismatch_total` (every not-clean cycle: replay mismatches + validation failures + failed-cycle sidecars), and `zcrypto_gate_export_timestamp_seconds`. `--healthcheck-url` pings clean (GET the URL) iff `mismatch_total == 0` and the journal-pull lag is within `--lag-fail-seconds` (default `18000`, 5h); otherwise pings `<url>/fail`. Omit `--healthcheck-url` to skip the ping. Exits 0 even when the gate has a mismatch or is stale (those are findings, surfaced via the metrics/ping); non-zero only on an operational failure (unreadable journal, unwritable textfile). |
 
 #### Shadow soak service (systemd user unit)<a name="shadow-soak-service-systemd-user-unit"></a>
 
@@ -90,31 +91,16 @@ systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
 ```
 
-#### VPS journal pull and daily gate ops (systemd user timer)<a name="vps-journal-pull-and-daily-gate-ops-systemd-user-timer"></a>
+#### VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)<a name="vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094"></a>
 
-One-time setup: the sync private key is ansible-vault-encrypted in git (`infra/ansible/files/sync_ed25519`), so decrypt a working copy to `~/.ssh` — never `ansible-vault decrypt` in place, which would rewrite the tracked file as plaintext key material one `git add` away from being committed:
+**Retired.** The daily gate ops (journal pull → verified replay → report) ran on the workstation as a systemd `--user` timer; it lagged whenever the workstation was offline. It is superseded by **Role B** on the always-on NAS — the `archive-pull` container pulls the journal and runs `zcrypto engine gate-export` (fast-path gate scoring, emitted to Grafana + a dead-man ping) on every cycle (spec `docs/specs/00049-role-b-nas-gate-verify-design.md`, `infra/nas/`). The `infra/systemd/zcrypto-engine-gateops.{service,timer}` templates are removed.
 
-```bash
-umask 077; uv run ansible-vault view --vault-password-file infra/ansible/scripts/vault-pass.sh \
-  infra/ansible/files/sync_ed25519 > ~/.ssh/zcrypto-sync_ed25519    # verify: 0600
-```
-
-Pull the VPS node's journal to the workstation (the rrsync forced command on the sync key pins the remote side to the journal subtree, so no remote source path is given):
+On a workstation that still has the old timer installed, disable it:
 
 ```bash
-rsync -az -e "ssh -i ~/.ssh/zcrypto-sync_ed25519 -o IdentitiesOnly=yes -p 10022" deploy@<vps-host>: data/engine-journal-vps/
-```
-
-`infra/systemd/zcrypto-engine-gateops.{service,timer}` (workstation **user** units) automate the daily gate ops: pull, then `replay --journal-dir data/engine-journal-vps --path verified` for UTC-yesterday, then `report --journal-dir data/engine-journal-vps` — report still runs when replay fails, and the replay's exit code is preserved. The timer fires daily at **06:30 UTC**, when all of UTC-yesterday's cycles are complete. Install (mirroring the soak unit's walkthrough; run the first pull attended before enabling the timer):
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp infra/systemd/zcrypto-engine-gateops.service infra/systemd/zcrypto-engine-gateops.timer ~/.config/systemd/user/
-# fill in the copied service unit's placeholders: <repo> (absolute checkout path),
-# <uv> (absolute uv path, `command -v uv`), <vps-host> (the VPS hostname/IP)
+systemctl --user disable --now zcrypto-engine-gateops.timer
+rm -f ~/.config/systemd/user/zcrypto-engine-gateops.service ~/.config/systemd/user/zcrypto-engine-gateops.timer ~/.ssh/zcrypto-sync_ed25519
 systemctl --user daemon-reload
-systemctl --user enable --now zcrypto-engine-gateops.timer     # the TIMER is what's enabled, not the service
-systemctl --user list-timers zcrypto-engine-gateops.timer      # confirm: next trigger at 06:30 UTC
 ```
 
 ### `zcrypto archive`<a name="zcrypto-archive"></a>

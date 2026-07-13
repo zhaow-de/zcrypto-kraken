@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
-# In-container scheduler for the NAS archive-pull stack (spec 00048 Role A). Runs as the
+# In-container scheduler for the NAS archive-pull stack (spec 00048 Role A/B). Runs as the
 # container's ENTRYPOINT (infra/nas/compose.yaml) — no systemd, no DSM Task Scheduler, per the
 # NAS-runtime constraint. Every $ARCHIVE_PULL_INTERVAL seconds it pulls+verifies the capture
-# segments, and — only when JOURNAL_SOURCE is set (Increment 2 / Role B, which supplies the
-# journal's own rrsync key) — pulls the engine journal (--no-verify: no .sha256 sidecars, Role B
-# verifies it via replay). The loop itself is the availability guarantee: a single
-# failed pull is logged but never exits the loop; the pull-lag figure `zcrypto archive pull`
-# logs on each run is the dead-man signal that a stuck pull gets noticed.
+# segments (own key: CAPTURE_SSH_KEY), and — only when JOURNAL_SOURCE is set (Role B) — pulls the
+# engine journal with its OWN least-privilege key (JOURNAL_SSH_KEY; --no-verify: no .sha256
+# sidecars, Role B verifies it via replay) and then runs `zcrypto engine gate-export` to score the
+# gate and emit it as a Prometheus textfile-collector metric. The loop itself is the availability
+# guarantee: a single failed pull or export is logged but never exits the loop; the pull-lag
+# figure `zcrypto archive pull` logs on each run is the dead-man signal that a stuck pull gets
+# noticed.
 set -eu
 umask 0002
 
@@ -22,16 +24,26 @@ on_term() {
 trap on_term TERM INT
 
 while true; do
-	if ! zcrypto archive pull "$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
+	# capture pull uses the capture channel's own least-privilege key
+	if ! ARCHIVE_SSH_KEY="$CAPTURE_SSH_KEY" zcrypto archive pull "$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
 		echo "pull-entrypoint: capture pull failed (source=$CAPTURE_SOURCE dest=$CAPTURE_DEST), continuing" >&2
 	fi
-	# The journal pull is wired in Increment 2 (Role B): it supplies JOURNAL_SOURCE and the
-	# journal's OWN rrsync key (the capture and journal channels use distinct least-privilege
-	# keys, so a single ARCHIVE_SSH_KEY cannot serve both). In the Increment-1 capture-only
-	# deploy JOURNAL_SOURCE is unset, so this is skipped.
+	# The journal pull only runs once JOURNAL_SOURCE is set (Role B). It uses its OWN
+	# least-privilege key (JOURNAL_SSH_KEY) -- the capture and journal channels use distinct
+	# keys, so a single ARCHIVE_SSH_KEY cannot serve both; `zcrypto archive pull` reads whichever
+	# value ARCHIVE_SSH_KEY holds at call time (cli/archive/command.py's `_run_rsync`). In the
+	# Increment-1 capture-only deploy JOURNAL_SOURCE is unset, so this whole block is skipped.
 	if [ -n "${JOURNAL_SOURCE:-}" ]; then
-		if ! zcrypto archive pull --no-verify "$JOURNAL_SOURCE" "$JOURNAL_DEST"; then
+		if ! ARCHIVE_SSH_KEY="$JOURNAL_SSH_KEY" zcrypto archive pull --no-verify "$JOURNAL_SOURCE" "$JOURNAL_DEST"; then
 			echo "pull-entrypoint: journal pull failed (source=$JOURNAL_SOURCE dest=$JOURNAL_DEST), continuing" >&2
+		fi
+		# Role B: score the gate on the freshly-pulled journal and emit it as a Prometheus
+		# textfile-collector metric (spec 00042/Task 1's `zcrypto engine gate-export`);
+		# best-effort, same as the pulls above -- a failure here is logged but never exits the
+		# loop.
+		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
+				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
+			echo "pull-entrypoint: gate-export failed (dest=$JOURNAL_DEST), continuing" >&2
 		fi
 	fi
 

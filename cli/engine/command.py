@@ -1,6 +1,7 @@
 """The `zcrypto engine` Typer sub-app (spec 00041 SS the CLI): seed the live price store, run the
-shadow node, run one cycle manually, replay journaled cycles through the builder, and evaluate the
-ratified gate. Config errors and EngineErrors surface as clean one-line exits, never tracebacks.
+shadow node, run one cycle manually, replay journaled cycles through the builder, evaluate the
+ratified gate, and export the gate as machine-readable metrics + a dead-man's-switch ping. Config
+errors and EngineErrors surface as clean one-line exits, never tracebacks.
 
 `cli.engine.node` (and with it nautilus-trader, ~1 s of import time) is imported lazily inside the
 command bodies that need it -- `zcrypto --help` must never pay the nautilus import.
@@ -12,6 +13,8 @@ import json
 import os
 import shutil
 import threading
+import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -19,7 +22,7 @@ from typing import Optional
 import typer
 
 from cli.config import ConfigError, EngineConfig, load_config
-from cli.engine.concordance import CycleOutcome, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
+from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import SnapshotEntry, from_json
@@ -31,10 +34,11 @@ logger = get_logger("engine.command")
 
 CANONICAL_DIR = Path("data/ohlc-full")
 _WATCHDOG_SLACK_SECS = 30.0
+_urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-export healthcheck ping
 
 engine_app = typer.Typer(
     no_args_is_help=True,
-    help="The Phase-6 shadow engine: store seeding, the node, manual cycles, journal replay, and the gate report.",
+    help="The Phase-6 shadow engine: store seeding, the node, manual cycles, journal replay, the gate report, and gate export.",
 )
 
 
@@ -112,6 +116,90 @@ def _sidecar_fields(boundary: datetime, path: Path) -> tuple[datetime, datetime,
         return cycle_ts, completed_at, f"{reason}: {offending}" if offending else reason
     except json.JSONDecodeError, KeyError, TypeError, ValueError, OSError:
         return boundary, boundary, "unreadable sidecar"
+
+
+@dataclass(frozen=True)
+class JournalCounts:
+    """_evaluate_journal's per-outcome tallies, in the order `report` echoes them."""
+
+    replayed_ok: int
+    mismatches: int
+    validation_failures: int
+    sidecar_count: int
+
+
+def _evaluate_journal(journal_root: Path) -> tuple[list[CycleOutcome], JournalCounts, datetime | None]:
+    """Replay every journaled cycle-*.json (fast path) and classify every failed-cycle-*.json
+    sidecar into CycleOutcome entries -- report's and gate-export's shared evidence-gathering pass.
+    Absent boundaries are NOT fabricated -- evaluate_gate scores them missing. The third element is
+    the newest cycle_ts seen across every outcome (None when the journal is empty)."""
+    reader = _snapshot_reader(journal_root)
+
+    entries: list[CycleOutcome] = []
+    replayed_ok = mismatches = validation_failures = 0
+    for boundary, record_path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
+        try:
+            record = from_json(record_path.read_text())
+        except EngineJournalError:
+            validation_failures += 1
+            entries.append(CycleOutcome(cycle_ts=boundary, completed_at=boundary, validation_failed=True))
+            continue
+        try:
+            replayed = replay_cycle(record, reader, path="fast")
+        except HashMismatchError:
+            mismatches += 1
+            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, mismatch=True))
+            continue
+        except EngineJournalError:
+            validation_failures += 1
+            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, validation_failed=True))
+            continue
+        verdict = compare_targets(record.final_targets, replayed)
+        replayed_ok += verdict.passed
+        mismatches += not verdict.passed
+        entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, compare_passed=verdict.passed))
+    sidecar_count = 0
+    for boundary, sidecar_path in _journal_artifacts(journal_root, "*", "failed-cycle-*.json"):
+        cycle_ts, completed_at, _ = _sidecar_fields(boundary, sidecar_path)
+        entries.append(CycleOutcome(cycle_ts=cycle_ts, completed_at=completed_at, validation_failed=True))
+        sidecar_count += 1
+
+    newest_ts = max((entry.cycle_ts for entry in entries), default=None)
+    return entries, JournalCounts(replayed_ok, mismatches, validation_failures, sidecar_count), newest_ts
+
+
+def _gate_ping(url: str, success: bool) -> None:
+    """The gate-export dead-man's-switch ping (spec 00042, mirroring cli/engine/cycle.py's
+    _ping_healthcheck): GET `url` on a clean gate, GET `url + "/fail"` otherwise -- one attempt,
+    10 s timeout, ANY exception swallowed via logger.warning; the ping can never fail the export."""
+    ping_url = url if success else url + "/fail"
+    try:
+        with _urlopen(ping_url, timeout=10):
+            pass
+    except Exception as exc:
+        logger.warning("gate-export healthcheck ping failed url=%s error=%s", ping_url, exc)
+
+
+def _write_prom_textfile(path: Path, *, status: GateStatus, lag_seconds: float | None, mismatch_total: int, now: datetime) -> None:
+    """Atomically write the gate-export Prometheus textfile-collector metrics: write to a `.tmp`
+    sibling then `os.replace` onto `path`, so a node-exporter scrape never observes a partial file
+    and a write failure (e.g. an unwritable parent) leaves no partial artifact behind."""
+    lines = [
+        "# HELP zcrypto_gate_status 1 if the >=14-clean-day gate is MET else 0",
+        f"zcrypto_gate_status {1 if status.gate_met else 0}",
+        f"zcrypto_gate_streak_days {status.streak}",
+    ]
+    if lag_seconds is not None:
+        lines.append(f"zcrypto_gate_journal_pull_lag_seconds {lag_seconds}")
+    lines.append(
+        "# HELP zcrypto_gate_mismatch_total journaled cycles that broke a clean day: "
+        "replay mismatches + corrupt records + failed-cycle sidecars"
+    )
+    lines.append(f"zcrypto_gate_mismatch_total {mismatch_total}")
+    lines.append(f"zcrypto_gate_export_timestamp_seconds {now.timestamp()}")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text("\n".join(lines) + "\n")
+    os.replace(tmp_path, path)
 
 
 @engine_app.command()
@@ -347,37 +435,7 @@ def report(
     path): streak length, gate status, and the most recent failure."""
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
-    reader = _snapshot_reader(journal_root)
-
-    entries: list[CycleOutcome] = []
-    replayed_ok = mismatches = validation_failures = 0
-    for boundary, record_path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
-        try:
-            record = from_json(record_path.read_text())
-        except EngineJournalError:
-            validation_failures += 1
-            entries.append(CycleOutcome(cycle_ts=boundary, completed_at=boundary, validation_failed=True))
-            continue
-        try:
-            replayed = replay_cycle(record, reader, path="fast")
-        except HashMismatchError:
-            mismatches += 1
-            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, mismatch=True))
-            continue
-        except EngineJournalError:
-            validation_failures += 1
-            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, validation_failed=True))
-            continue
-        verdict = compare_targets(record.final_targets, replayed)
-        replayed_ok += verdict.passed
-        mismatches += not verdict.passed
-        entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, compare_passed=verdict.passed))
-    sidecar_count = 0
-    for boundary, sidecar_path in _journal_artifacts(journal_root, "*", "failed-cycle-*.json"):
-        cycle_ts, completed_at, _ = _sidecar_fields(boundary, sidecar_path)
-        entries.append(CycleOutcome(cycle_ts=cycle_ts, completed_at=completed_at, validation_failed=True))
-        sidecar_count += 1
-    # Absent boundaries are NOT fabricated -- evaluate_gate scores them missing.
+    entries, counts, _ = _evaluate_journal(journal_root)
 
     try:
         status = evaluate_gate(entries, now=_utc_now())
@@ -385,8 +443,8 @@ def report(
         raise _abort(str(exc)) from exc
 
     typer.echo(
-        f"{len(entries)} journaled outcome(s): {replayed_ok} replayed ok, {mismatches} mismatch(es), "
-        f"{validation_failures} validation failure(s), {sidecar_count} failed cycle(s) (sidecars)"
+        f"{len(entries)} journaled outcome(s): {counts.replayed_ok} replayed ok, {counts.mismatches} mismatch(es), "
+        f"{counts.validation_failures} validation failure(s), {counts.sidecar_count} failed cycle(s) (sidecars)"
     )
     typer.echo(f"streak: {status.streak} consecutive clean day(s)")
     typer.echo(f"gate (>= 14 clean days): {'MET' if status.gate_met else 'not met'}")
@@ -394,3 +452,62 @@ def report(
         typer.echo("last failure: none")
     else:
         typer.echo(f"last failure: {status.last_failure.cycle_ts.isoformat()} -- {status.last_failure.reason}")
+
+
+@engine_app.command(name="gate-export")
+def gate_export(
+    textfile: Path = typer.Option(
+        ..., "--textfile", help="Prometheus node-exporter textfile-collector path to atomically write the gate metrics to."
+    ),
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
+    healthcheck_url: Optional[str] = typer.Option(
+        None,
+        "--healthcheck-url",
+        help="Dead-man's-switch base URL: GET on a clean gate, GET <url>/fail otherwise. Omit to skip the ping.",
+    ),
+    lag_fail_seconds: float = typer.Option(
+        18000.0,
+        "--lag-fail-seconds",
+        help="Journal-pull staleness threshold in seconds beyond which the ping counts as unclean (default 18000, 5h).",
+    ),
+) -> None:
+    """Emit the >= 14-clean-day gate as machine-readable Prometheus metrics (atomic textfile write)
+    and ping an independent dead-man's-switch healthcheck. Exits 0 on a successful emit even when
+    the gate has a mismatch or the journal is stale (those are findings, surfaced via the metrics
+    and a /fail ping); non-zero only on an operational failure (unreadable journal, unwritable
+    textfile)."""
+    config = _load_engine_config()
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    entries, counts, newest_ts = _evaluate_journal(journal_root)
+
+    now = _utc_now()
+    try:
+        status = evaluate_gate(entries, now=now)
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+
+    lag = (now - newest_ts).total_seconds() if newest_ts is not None else None
+    # Every not-clean outcome that breaks a gate day: replay mismatches, corrupt records, AND
+    # failed-cycle sidecars (the normal stale_pair/refresh_deadline failure path -- these break
+    # the streak but are tallied in sidecar_count, so omitting them would let the metric read 0
+    # and the dead-man ping "clean" through a real gate failure).
+    mismatch_total = counts.mismatches + counts.validation_failures + counts.sidecar_count
+
+    try:
+        _write_prom_textfile(textfile, status=status, lag_seconds=lag, mismatch_total=mismatch_total, now=now)
+    except OSError as exc:
+        raise _abort(f"could not write gate textfile {textfile}: {exc}") from exc
+
+    if healthcheck_url:
+        # The dead-man reflects the gate's CURRENT health across ALL break reasons (missing / late /
+        # mismatch / validation / sidecar -- evaluate_gate resets streak on any of them in the most recent
+        # COMPLETE day), not just the counted mismatch_total. streak>0 => the last complete day is clean
+        # (progressing, at any streak length); streak==0 with no last_failure => no complete day is
+        # evaluable yet (early phase -> liveness only, not a break); streak==0 WITH a last_failure => the
+        # most recent complete day broke -> not clean. A recovered gate (broke earlier, clean since) has
+        # streak>0 => clean, matching Grafana's windowed increase() and fixing the /fail-forever divergence.
+        gate_healthy = status.streak > 0 or status.last_failure is None
+        clean = gate_healthy and lag is not None and lag <= lag_fail_seconds
+        _gate_ping(healthcheck_url, clean)

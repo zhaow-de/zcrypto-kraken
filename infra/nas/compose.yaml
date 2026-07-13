@@ -15,14 +15,138 @@ services:
       CAPTURE_DEST: ${CAPTURE_DEST:-/archive/capture-segments}
       JOURNAL_SOURCE: ${JOURNAL_SOURCE}
       JOURNAL_DEST: ${JOURNAL_DEST:-/archive/engine-journal}
-      ARCHIVE_SSH_KEY: /keys/sync_capture
+      CAPTURE_SSH_KEY: /keys/sync_capture
+      JOURNAL_SSH_KEY: /keys/sync_journal
       ARCHIVE_SSH_KNOWN_HOSTS: /keys/known_hosts
       ARCHIVE_SSH_PORT: ${ARCHIVE_SSH_PORT:-10022}
       ARCHIVE_PULL_INTERVAL: ${ARCHIVE_PULL_INTERVAL}
+      GATE_TEXTFILE: /textfile/gate.prom
+      GATE_HEALTHCHECK_URL: ${GATE_HEALTHCHECK_URL:-}
     volumes:
       - /volume1/ZhaoCrypto:/archive
       - ./pull-entrypoint.sh:/opt/pull-entrypoint.sh:ro
       - ./keys:/keys:ro
+      - ./zcrypto.toml:/app/zcrypto.toml:ro
+      - /volume1/docker/zcrypto-archive/textfile:/textfile
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # NAS telemetry stack (spec 00049 Role B, Task 3) — Grafana Alloy + a GET-only Docker-socket
+  # proxy, ships host/container metrics and the archive-pull container's logs to the
+  # already-provisioned Grafana Cloud instance. Adapted from docs/specs/00043-observability-design.md
+  # (the VPS counterpart) for plain `docker compose` under Container Manager -- no ansible/systemd
+  # here. See infra/nas/config.alloy for the Alloy pipeline and infra/nas/README.md for the deploy
+  # steps + secrets file + resource-budget rationale.
+  docker-socket-proxy:
+    # Pin this to a digest at deploy time (plan Task 3) -- resolved offline here, no registry
+    # access; see infra/nas/README.md.
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      # Read-only guard: CONTAINERS + NETWORKS + INFO are the only endpoints this stack needs
+      # (Alloy's discovery.docker enumerates containers + their networks for the Loki log targets).
+      # POST=0 is the master mutating-operation switch -- every create/start/stop/kill/exec call is
+      # a POST, so this one flag is the entire security boundary Alloy operates behind (00043's
+      # posture: a misbehaving/compromised Alloy can READ container metadata through this proxy but
+      # can never touch the archive-pull container's control plane). The rest are explicit + disabled
+      # for the same reason -- explicit over relying on the image's own (already-restrictive) defaults.
+      CONTAINERS: 1
+      INFO: 1
+      # NETWORKS (GET/read): Alloy's discovery.docker computes per-container network labels for the
+      # Loki log-tailing targets; without it the proxy 403s and log discovery fails. Read-only.
+      NETWORKS: 1
+      POST: 0
+      EXEC: 0
+      IMAGES: 0
+      VOLUMES: 0
+      SERVICES: 0
+      TASKS: 0
+      NODES: 0
+      SWARM: 0
+      SECRETS: 0
+      CONFIGS: 0
+      PLUGINS: 0
+      SYSTEM: 0
+      DISTRIBUTION: 0
+      BUILD: 0
+      COMMIT: 0
+      SESSION: 0
+      AUTH: 0
+    ports:
+      - "127.0.0.1:2375:2375"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          # No `cpus:` -- the Synology DSM kernel has no CPU CFS scheduler / cpu cgroup, so a
+          # NanoCPUs limit fails hard ("NanoCPUs can not be set ... cgroup is not mounted") and
+          # blocks the whole `compose up`. Memory uses a separate, mounted cgroup and works.
+          memory: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  alloy:
+    # Pin this to a digest at deploy time (plan Task 3) -- resolved offline here, no registry
+    # access; see infra/nas/README.md.
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    # Run as the dedicated non-root, non-secret-owning user `zcrypto-dummy` (uid 1031, gid 1000 -- the
+    # `zcrypto` group -- created on the NAS at deploy). §8 posture + T0030: WITHOUT a `user:` override
+    # the upstream grafana/alloy image runs as ROOT, and the /host/root:ro mount below would expose
+    # every 0600 host secret. The image's built-in uid-473 user can't be used -- 473 is not a
+    # Synology-recognized user, so the DSM ACL denies it write to the persistent alloy-data mount
+    # (Alloy crash-loops on `mkdir /var/lib/alloy/...: permission denied`). uid 1031 is a real DSM
+    # user, so it writes alloy-data (chmod 0775 + chown 1031:1000 at deploy), and -- crucially -- it
+    # is NOT the owner of the 0600 rrsync pull keys (owner is uid 1000), so a compromised Alloy cannot
+    # read them through /host/root (this closes T0030). Note gid 1000 IS the key-owning group, so the
+    # protection rests on the keys being 0600 -- owner-only, group has no read (verified live) -- not
+    # on group isolation; keep the keys 0600. See infra/nas/README.md.
+    user: "1031:1000"
+    network_mode: host
+    depends_on:
+      - docker-socket-proxy
+    environment:
+      # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
+      GOMEMLIMIT: 460MiB
+    env_file:
+      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
+      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, distributed out-of-band, never committed.
+      # See infra/nas/README.md.
+      - ./alloy-secrets.env
+    command:
+      - run
+      - --storage.path=/var/lib/alloy
+      - --server.http.listen-addr=127.0.0.1:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      # Alternate-path RO mounts (mounting over Alloy's own container /proc//sys is impossible) --
+      # config.alloy points procfs_path/sysfs_path/rootfs_path at these.
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      # No `/var/lib/docker` mount: on Synology DSM the Docker root is /volume1/@docker (root-only),
+      # unreadable by the non-root Alloy -- and cadvisor (the only component that would use it) is not
+      # run here at all (see config.alloy: it SIGSEGVs on DSM's cgroup-less kernel). Host metrics (the
+      # requested load / netdev / disk-free) come from the unix exporter's /host mounts, not here.
+      # Same shared textfile dir Task 2's archive-pull mounts RW and writes gate.prom into.
+      - /volume1/docker/zcrypto-archive/textfile:/textfile:ro
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
+      # redeploy re-ships the retained log backlog into the ingest quota (00043).
+      - ./alloy-data:/var/lib/alloy
+    deploy:
+      resources:
+        limits:
+          # No `cpus:`/`cpu_shares:` -- the Synology DSM kernel has no CPU cgroup (see the
+          # socket-proxy service); `GOMEMLIMIT` above bounds Alloy's Go heap regardless.
+          memory: 512m
     logging:
       driver: json-file
       options:

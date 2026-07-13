@@ -1,0 +1,117 @@
+// Grafana Alloy config for the NAS telemetry stack (spec 00049, Role B / Task 3), adapted from
+// the VPS design in docs/specs/00043-observability-design.md for plain `docker compose` under
+// Container Manager -- no ansible/systemd rendering here, this file is committed and mounted
+// read-only as-is (infra/nas/compose.yaml). Grafana Cloud credentials are NOT in this file: they
+// arrive as environment variables from an out-of-band, 0600, never-committed secrets file
+// (infra/nas/alloy-secrets.env, see infra/nas/README.md), read here via the `sys.env(...)` stdlib
+// function.
+
+// ---- Host metrics -------------------------------------------------------------------------
+// The three alternate-path RO mounts (compose.yaml: /proc->/host/proc, /sys->/host/sys,
+// /->/host/root) let this exporter see the NAS host's own /proc, /sys and rootfs without
+// colliding with Alloy's own container /proc//sys. set_collectors is explicit -- only these six
+// run, matching the requested host telemetry (system load, network IO, free disk space) plus the
+// Role B gate metrics via the textfile collector.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  textfile {
+    // Task 2's `zcrypto engine gate-export` writes gate.prom here after every journal pull
+    // (infra/nas/pull-entrypoint.sh); mounted read-only into this container at the same path the
+    // archive-pull container mounts read-write (compose.yaml).
+    directory = "/textfile"
+  }
+}
+
+// ---- Container metrics: intentionally NOT collected on the NAS -----------------------------
+// cadvisor is incompatible with Synology DSM: it SIGSEGVs (nil-pointer in
+// manager.createContainerLocked) because DSM's kernel lacks the CPU cgroup hierarchy cadvisor
+// walks, and the panic takes down ALL of Alloy. So no `prometheus.exporter.cadvisor` here --
+// container CPU/mem is not scraped on the NAS. The docker-socket-proxy is retained purely for the
+// Loki docker-log discovery below (Docker API, cgroup-free -> unaffected). Host metrics
+// (load / netdev / disk-free -- the requested telemetry) come from the unix exporter above.
+
+// ---- Scrape -> remote_write ------------------------------------------------------------------
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.remote_write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USERNAME")
+      password = sys.env("GRAFANA_PROM_PASSWORD")
+    }
+
+    // Series minimization is a design principle, not an afterthought (00043): drop Alloy's own
+    // self-metrics first (defense in depth -- nothing scraped above is Alloy's own /metrics
+    // endpoint, so this is normally a no-op), then keep-only the host/container/gate series this
+    // stack actually wants. Target: comfortably under 1k active series. This list is provisional
+    // -- confirm the actual active-series count at the NAS deploy shakedown and trim/extend here.
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "go_.*|process_.*|alloy_.*"
+      action        = "drop"
+    }
+
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*"
+      action        = "keep"
+    }
+  }
+}
+
+// ---- Logs: archive-pull container only ------------------------------------------------------
+// Discover every container visible through the proxy, then keep only archive-pull -- neither
+// Alloy's own container nor the socket-proxy container's logs are shipped (out of this task's
+// scope, which asks for the archive-pull container's logs specifically).
+discovery.docker "containers" {
+  host = "tcp://127.0.0.1:2375"
+}
+
+discovery.relabel "archive_pull_only" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    // Unanchored: compose sets no `container_name:`, so the real name is project-prefixed (e.g.
+    // `/zcrypto-archive-archive-pull-1`); an anchored `/archive-pull` would never match.
+    regex  = ".*archive-pull.*"
+    action = "keep"
+  }
+
+  // loki.source.docker attaches no `container` label of its own -- promote a static one so the
+  // shipped streams carry `container="archive-pull"`, matching the dashboard/alert queries
+  // (infra/grafana/alerts.yaml's ERROR-logs rule: `{container="archive-pull"}`). A static
+  // replacement is correct here since this block already filters to only that container.
+  rule {
+    target_label = "container"
+    replacement  = "archive-pull"
+  }
+}
+
+loki.source.docker "archive_pull" {
+  host       = "tcp://127.0.0.1:2375"
+  targets    = discovery.relabel.archive_pull_only.output
+  forward_to = [loki.write.grafana.receiver]
+}
+
+loki.write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_LOKI_USERNAME")
+      password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}
