@@ -195,3 +195,53 @@ def test_capture_end_to_end_writes_segments_with_fake_client(tmp_path, monkeypat
     assert _FakeClient.last_instance.pairs == ["BTC/EUR"]
     assert _FakeClient.last_instance.depth == 100
     assert _FakeClient.last_instance.resubscribed == []  # checksum was correct - no desync
+
+
+# --- T0032: a disk-watermark breach must STOP the dead-man ping ------------------------------
+#
+# On breach the daemon stops writing every row (_handle_book_message / _handle_trade_message
+# return early) but the WS stays connected and no gap opens -- so without this guard the
+# healthchecks.io dead-man keeps reporting GREEN while the unbackfillable L2 stream is lost.
+
+
+class _StubClient:
+    def __init__(self, connected=True):
+        self.connected = connected
+
+
+class _FakeUsage:
+    def __init__(self, free):
+        self.free = free
+
+
+def _run_healthcheck_once(monkeypatch, *, free_bytes):
+    """Drive _healthcheck_loop for a few iterations and report whether it pinged."""
+    from cli.capture import command as cmd
+    from cli.capture.gap_monitor import DiskWatermark, GapMonitor
+
+    pings: list[str | None] = []
+    monkeypatch.setattr(cmd, "ping_healthcheck", lambda url: pings.append(url))
+
+    watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=lambda p: _FakeUsage(free=free_bytes))
+    watermark.check()  # establish the breach state, as _disk_watermark_loop does
+
+    async def drive():
+        task = asyncio.create_task(
+            cmd._healthcheck_loop("https://hc-ping.com/x", _StubClient(), GapMonitor(), ["BTC/EUR"], 0.01, watermark)
+        )
+        await asyncio.sleep(0.06)
+        task.cancel()
+
+    asyncio.run(drive())
+    return pings
+
+
+def test_healthcheck_pings_while_disk_is_healthy(monkeypatch):
+    pings = _run_healthcheck_once(monkeypatch, free_bytes=10_000)  # above the watermark
+    assert pings, "a connected, in-sync capture with disk headroom must ping the dead-man"
+
+
+def test_healthcheck_withheld_when_disk_watermark_breached(monkeypatch):
+    # Breached: the daemon is writing NOTHING. The dead-man must fire, not report healthy.
+    pings = _run_healthcheck_once(monkeypatch, free_bytes=10)  # below min_free_bytes
+    assert pings == [], "a watermark breach stops all writes -- the dead-man must NOT keep pinging"

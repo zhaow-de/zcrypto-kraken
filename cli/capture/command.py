@@ -148,13 +148,25 @@ async def _consume(
         # heartbeat / subscribe_ack / unsubscribe_ack / other -> nothing to do
 
 
-async def _healthcheck_loop(url: str | None, client: CaptureClient, monitor: GapMonitor, pairs: list[str], interval: int) -> None:
+async def _healthcheck_loop(
+    url: str | None,
+    client: CaptureClient,
+    monitor: GapMonitor,
+    pairs: list[str],
+    interval: int,
+    watermark: DiskWatermark,
+) -> None:
     while True:
         await asyncio.sleep(interval)
         # Dead-man's-switch: ping only while the WS is actually connected AND books are healthy, so
         # a connectivity loss (stuck in reconnect/backoff, no book updates flowing) stops the ping
         # and healthchecks.io alerts — not just checksum desyncs.
-        if client.connected and monitor.is_healthy(pairs):
+        #
+        # `not watermark.breached` is load-bearing (T0032): on a breach the message handlers return
+        # early and the daemon writes NOTHING, yet the WS stays connected and no gap opens — so
+        # without this term the dead-man would keep reporting GREEN while the unbackfillable L2
+        # stream is silently lost. Withholding the ping is what turns a silent death into a page.
+        if client.connected and monitor.is_healthy(pairs) and not watermark.breached:
             ping_healthcheck(url)
 
 
@@ -181,7 +193,9 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
                 loop.add_signal_handler(sig, main_task.cancel)
 
     consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark))
-    health = asyncio.create_task(_healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS))
+    health = asyncio.create_task(
+        _healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS, watermark)
+    )
     disk_check = asyncio.create_task(_disk_watermark_loop(watermark, DISK_WATERMARK_INTERVAL_SECONDS))
 
     try:

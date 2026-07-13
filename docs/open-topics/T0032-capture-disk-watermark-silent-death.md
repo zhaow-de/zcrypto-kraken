@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: live now — the dead-man fix is a ~2-line change and should land at the next capture-daemon deploy; the disk-fill deadline itself is ≈2026-11-23 at the measured fill rate
+status: partial
+ripe_when: the retention/eviction remainder is ripe now (design work is autonomous); the disk-fill deadline itself is ≈2026-11-23 at the measured fill rate — but the breach is no longer silent, so it now pages instead of losing data unnoticed
 ---
 
 # Capture stops silently when the disk watermark breaches — and the dead-man still reports healthy
@@ -54,22 +54,41 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
 - The daemon is otherwise very lean (measured live): capture uses **102 MiB RAM** and ~24% of one core
   (max 53%) at ~58% of the peak hour's message rate.
 
-## Suggested next steps
+## Done so far
 
-- **(autonomous, ~2 lines + TDD test)** Make the dead-man actually fire. Withhold the healthcheck ping
-  while the watermark is breached, so healthchecks.io alerts instead of reporting green:
+- **The silent half is fixed.** `_healthcheck_loop` now withholds the dead-man ping while the watermark is
+  breached, so a breach **pages** instead of reporting green:
   ```python
   if client.connected and monitor.is_healthy(pairs) and not watermark.breached:
       ping_healthcheck(url)
   ```
-  Test: breach the watermark (injectable `usage_fn` already exists on `DiskWatermark`) → assert no ping.
-  This closes the *silent* half of the bug and is the highest value-per-line change available.
-- **(autonomous)** Correct the **0.48 GB/day** figure in [[T0003]] (and the derived "7-day buffer" /
-  "online every few days" framing) and in `00048`'s eviction non-goal rationale — several design
-  constraints are calibrated against a 20×-wrong number.
-- **(autonomous)** Decide and implement **retention** for the capture segments (prune-after-verified-pull,
-  the same shape as [[T0021]]'s journal retention), or accept the disk growth and add a **VPS disk-free
-  alert** — but note an alert alone still needs the VPS `obs` role ([[T0020]]) to exist. The dead-man fix
-  above is the only mitigation that works with today's infrastructure.
-- **(verification)** Re-measure the fill rate once the **second capture host** exists (it pulls to the same
-  archive, roughly doubling archive growth — though not the *VPS's* own disk, which stays ~0.48 GB/day).
+  Two TDD tests cover it (`tests/test_capture_command.py`): the dead-man pings with disk headroom, and
+  **stops** on a breach. This converts a silent, total, unbackfillable-data loss into a loud, actionable
+  alert — the highest value-per-line change available. *(Deliberately NOT implemented via
+  `GapMonitor.start_gap`, which looked more elegant but interacts badly: `start_gap` is idempotent, so a
+  concurrent `checksum_resync` gap would swallow the watermark gap, and its `end_gap` would then resume
+  pinging **while still breached** — reintroducing the very bug.)*
+- **The 20×-wrong disk figure is corrected** in [[T0003]] (measured **0.48 GB/day**, not ~10 GB/day),
+  along with the "~7-day ring buffer / bring the workstation online every few days" framing it produced.
+
+**Not yet deployed:** the fix ships with the next capture-image rollout (there is ~135 days of runway on
+the disk, and the rollout is needed for Role C anyway).
+
+## Suggested next steps
+
+- **(autonomous)** **Book the breach window into the exit-bar gap accounting.** The dead-man now *pages*
+  on a breach, but the lost time is still **not** recorded in `GapMonitor`'s `gap_seconds` / `gap_ratio` —
+  the metric behind the **§12 `<0.1 %` gap-time exit bar**. So a breach landing inside a ≥7-day clean-run
+  window would page the operator while the **automated exit-bar metric reads clean for a period that
+  actually lost data**. Fix it with a dedicated counter (or a `reason`-aware key in `GapMonitor._open`)
+  that is *independent* of the ping-withholding mechanism — deliberately **not** by calling
+  `GapMonitor.start_gap`, for the idempotency reason recorded above. *(Surfaced by the review of the
+  dead-man fix, 2026-07-13.)*
+- **(autonomous)** Decide and implement **retention** for the capture segments — prune-after-verified-pull,
+  the same shape as [[T0021]]'s journal retention. **There is no ring buffer anywhere**: nothing prunes
+  capture segments on any host, so the disk simply fills. With the dead-man fix this now *pages* rather
+  than silently losing data, but the underlying growth is unbounded. (Spec `00050`'s D9 adds a retention
+  timer to the *secondary* capture host; the **primary** still has none.)
+- **(autonomous)** Correct `00048`'s eviction non-goal rationale — "the 7-day buffer's 12× margin makes
+  delete-after-verified unnecessary" is reasoning from the same 20×-wrong number.
+- **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.
