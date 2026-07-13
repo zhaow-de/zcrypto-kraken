@@ -45,28 +45,28 @@ def _snapshot(bids=_KRAKEN_BIDS, asks=_KRAKEN_ASKS, checksum=_KRAKEN_CHECKSUM):
 
 
 def test_checksum_matches_kraken_documented_example():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     book.bids = {Decimal(b["price"]): Decimal(b["qty"]) for b in _KRAKEN_BIDS}
     book.asks = {Decimal(a["price"]): Decimal(a["qty"]) for a in _KRAKEN_ASKS}
     assert book.checksum() == _KRAKEN_CHECKSUM
 
 
 def test_ingest_snapshot_with_correct_checksum_is_in_sync():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     ok = book.ingest_snapshot(_snapshot())
     assert ok is True
     assert book.desynced is False
 
 
 def test_ingest_snapshot_with_wrong_checksum_marks_desynced():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     ok = book.ingest_snapshot(_snapshot(checksum=1))
     assert ok is False
     assert book.desynced is True
 
 
 def test_ingest_update_recovers_from_desync_once_checksum_matches_again():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     book.ingest_snapshot(_snapshot(checksum=1))
     assert book.desynced is True
     # A no-op update (no bid/ask changes) should reproduce the same, now-correct checksum.
@@ -76,7 +76,7 @@ def test_ingest_update_recovers_from_desync_once_checksum_matches_again():
 
 
 def test_ingest_update_with_corrupted_checksum_is_detected():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     book.ingest_snapshot(_snapshot())
     assert book.desynced is False
     # Change a qty without updating checksum to match -> corrupted/desynced.
@@ -92,7 +92,7 @@ def test_ingest_update_with_corrupted_checksum_is_detected():
 
 
 def test_qty_zero_removes_the_price_level():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     book.ingest_snapshot(_snapshot())
     assert Decimal("45283.5") in book.bids
     book._apply_side(book.bids, [{"price": Decimal("45283.5"), "qty": Decimal("0")}])
@@ -100,7 +100,7 @@ def test_qty_zero_removes_the_price_level():
 
 
 def test_checksum_ignores_levels_beyond_top_10():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     book.bids = {Decimal(b["price"]): Decimal(b["qty"]) for b in _KRAKEN_BIDS}
     book.asks = {Decimal(a["price"]): Decimal(a["qty"]) for a in _KRAKEN_ASKS}
     baseline = book.checksum()
@@ -119,12 +119,89 @@ def test_format_level_strips_decimal_point_and_leading_zeros():
 
 
 def test_missing_price_raises_capture_error():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     with pytest.raises(CaptureError):
         book.ingest_snapshot({"bids": [{"qty": Decimal("1")}], "asks": [], "checksum": 0})
 
 
 def test_non_decimal_value_raises_capture_error():
-    book = OrderBook("BTC/USD")
+    book = OrderBook("BTC/USD", depth=10)
     with pytest.raises(CaptureError):
         book.ingest_snapshot({"bids": [{"price": "not-a-number", "qty": "1"}], "asks": [], "checksum": 0})
+
+
+# --- T0008: the book must stay congruent with Kraken's depth window ---------------------------
+#
+# Kraken only sends deltas for levels INSIDE the subscribed depth-N window. A level we retain
+# beyond it is one Kraken has stopped telling us about: it goes stale (its qty changes, or it is
+# cancelled, and we never hear), and when the window later shifts back it re-enters our top-10 as
+# a PHANTOM -- and the checksum fails.
+#
+# Measured on three independent hosts (2026-07-13): the live book grew to 810 bids / 468 asks
+# against Kraken's 100, and replaying a real captured hour produced 482 checksum failures. Pruning
+# each side to the subscribed depth takes that to ZERO on every host. Those "desyncs" (~200/day,
+# tracked as T0008) were never network loss -- they were this bug.
+
+
+def test_book_never_exceeds_its_subscribed_depth():
+    book = OrderBook("BTC/USD", depth=2)
+    book.ingest_snapshot(
+        {
+            "bids": [],
+            "asks": [
+                {"price": Decimal("100.0"), "qty": Decimal("1")},
+                {"price": Decimal("101.0"), "qty": Decimal("1")},
+            ],
+            "checksum": 0,
+        }
+    )
+    # Two better asks arrive. Kraken's window is now {98.0, 99.0}; 100.0/101.0 have fallen out of
+    # it, and Kraken will never mention them again.
+    book.ingest_update(
+        {
+            "bids": [],
+            "asks": [
+                {"price": Decimal("99.0"), "qty": Decimal("1")},
+                {"price": Decimal("98.0"), "qty": Decimal("1")},
+            ],
+            "checksum": 0,
+        }
+    )
+    assert len(book.asks) <= 2
+    assert set(book.asks) == {Decimal("98.0"), Decimal("99.0")}
+
+
+def test_a_level_pushed_out_of_the_window_cannot_re_enter_as_a_phantom():
+    """The exact live failure: a stale out-of-window level resurfacing in the top of book."""
+    book = OrderBook("BTC/USD", depth=2)
+    book.ingest_snapshot(
+        {
+            "bids": [],
+            "asks": [
+                {"price": Decimal("100.0"), "qty": Decimal("1")},
+                {"price": Decimal("101.0"), "qty": Decimal("1")},
+            ],
+            "checksum": 0,
+        }
+    )
+    # A better ask enters -> Kraken's window becomes {99.5, 100.0}; 101.0 drops out of it.
+    book.ingest_update({"bids": [], "asks": [{"price": Decimal("99.5"), "qty": Decimal("1")}], "checksum": 0})
+    # While 101.0 sits OUTSIDE the window it is cancelled in the real book. Kraken never tells us,
+    # because it only reports levels inside the window.
+    #
+    # Now 99.5 is consumed: Kraken removes it and back-fills the window with 102.0. Kraken's book
+    # is {100.0, 102.0}. A book that kept stale 101.0 would report {100.0, 101.0} -- a phantom top
+    # of book, and a failed checksum.
+    book.ingest_update(
+        {
+            "bids": [],
+            "asks": [
+                {"price": Decimal("99.5"), "qty": Decimal("0")},
+                {"price": Decimal("102.0"), "qty": Decimal("1")},
+            ],
+            "checksum": 0,
+        }
+    )
+    assert set(book.asks) == {Decimal("100.0"), Decimal("102.0")}, (
+        "a level pushed out of the depth window went stale and resurfaced in the top of book"
+    )

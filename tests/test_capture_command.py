@@ -91,7 +91,7 @@ class _FakeClient:
         _FakeClient.last_instance = self
 
     async def stream(self):
-        book = OrderBook("BTC/EUR")
+        book = OrderBook("BTC/EUR", depth=100)
         book.bids = {Decimal("100.0"): Decimal("1.0")}
         book.asks = {Decimal("101.0"): Decimal("1.0")}
         checksum = book.checksum()
