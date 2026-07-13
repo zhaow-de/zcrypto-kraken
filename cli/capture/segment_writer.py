@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -35,6 +36,12 @@ TRADE_SCHEMA: dict[str, pl.DataType] = {
 
 DEFAULT_FLUSH_ROWS = 5_000
 
+# How far ahead of our own clock an event's `ts` may plausibly be. Rotation follows the event's ts,
+# so one garbage far-future stamp would close the live hour early and then have the late-event guard
+# drop every genuine row after it, for the life of the process. An hour of slack absorbs any credible
+# skew between us and Kraken (the sweep already trusts this clock to say which hour is over).
+MAX_TS_AHEAD = timedelta(hours=1)
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -42,6 +49,41 @@ def _utcnow() -> datetime:
 
 def _hour_start(ts: datetime) -> datetime:
     return ts.replace(minute=0, second=0, microsecond=0)
+
+
+def _read_failure(path: Path) -> Exception | None:
+    """`None` if every row of `path` can be read, else the exception the read failed with.
+
+    Decodes all data pages — aggregating rather than materializing, so memory stays bounded. A
+    Parquet file's footer can be perfectly intact while its body is not (bit-rot, a half-written
+    page), and `collect_schema()`, which reads only the footer, passes such a file happily. Nothing
+    may certify a segment — or trust a final over the parts beside it — on the footer alone.
+    """
+    try:
+        pl.scan_parquet(path).select(pl.all().null_count()).collect(engine="streaming")
+    except Exception as exc:
+        return exc
+    return None
+
+
+def _replace_durably(tmp_path: Path, dest: Path) -> None:
+    """`os.replace` into `dest`, fsyncing the data and then the directory entry.
+
+    `replace` is atomic but not durable: on a machine power loss (as opposed to a process kill) the
+    rename can reach the disk while the blocks it points at have not, leaving a torn file where an
+    atomic one was promised. This dataset is unbackfillable, so take the durability.
+    """
+    fd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    tmp_path.replace(dest)
+    dir_fd = os.open(dest.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def _part_index(path: Path) -> int:
@@ -72,12 +114,16 @@ class SegmentWriter:
 
     * `close()` **flushes but never finalizes**. A stop mid-hour therefore leaves parts, never a
       partial `<HH>.parquet` published as if it were a whole hour.
-    * an hour is finalized exactly once, so `<HH>.parquet` existing *is* the commit marker: any part
-      still sitting beside it has already been merged into it, and re-merging it would silently
-      DUPLICATE every row (corrupting a reconstructed book exactly as badly as losing rows).
+    * an hour is finalized exactly once, so a `<HH>.parquet` that **reads** is the commit marker: any
+      part still sitting beside it has already been merged into it, and re-merging it would silently
+      DUPLICATE every row (corrupting a reconstructed book exactly as badly as losing rows). Whether
+      it reads is *checked against the file*, never assumed from its existence: a pre-T0036 process
+      killed inside its non-atomic final write leaves a torn `<HH>.parquet` beside parts that still
+      hold the whole hour, and there the parts — not the final — are the truth.
 
     The hour the process dies in is therefore finished by whoever comes next — this process's own
-    rotation, or the next process's construction sweep.
+    rotation, or the next process's construction sweep. Nothing that cannot be read is ever deleted:
+    it is quarantined to `<name>.corrupt` (never clobbering an earlier one) and kept as evidence.
 
     Segment layout: `<base_dir>/<pair>/<kind>/<YYYY>/<MM>/<DD>/<HH>.parquet`.
     """
@@ -97,14 +143,25 @@ class SegmentWriter:
         self._schema = schema
         self._flush_rows = flush_rows
         self._buffer: list[dict] = []
-        self._current_hour: datetime | None = None
+        # The oldest hour this writer may still write to. Seeded from the clock — never left unset —
+        # so the late-event guard below is live from the very FIRST event: `ws_client` resubscribes
+        # with `snapshot=True` on every (re)connect, so after a restart the first event can be a
+        # replayed print stamped before the hour boundary (T0026). Left ungated it would reopen an
+        # hour that is already over — writing rows into a part beside its final (deleted at the next
+        # merge), or, if the daemon was down across that hour, publishing a handful of replayed
+        # prints as a complete, manifested segment for an hour that was never captured.
+        self._current_hour = _hour_start(_utcnow())
+        self._adopt_pending = True
         self._recover()
 
     def append(self, event: dict) -> None:
         """Append one event dict (keys matching `schema`). Rotates the previous hour's segment first
         if `event["ts"]` has crossed into a new hour."""
+        if event["ts"] > _utcnow() + MAX_TS_AHEAD:
+            logger.warning("dropping implausible event ts pair=%s kind=%s ts=%s", self._pair, self._kind, event["ts"])
+            return
         hour = _hour_start(event["ts"])
-        if self._current_hour is not None and hour < self._current_hour:
+        if hour < self._current_hour:
             # A row whose hour is already closed (a reconnect's trade snapshot replays prints from
             # before the boundary — T0026). Reopening that hour would either clobber its segment or
             # duplicate the rows it already holds, so the row is dropped rather than mis-filed.
@@ -112,7 +169,10 @@ class SegmentWriter:
                 "dropping late event pair=%s kind=%s ts=%s hour=%s", self._pair, self._kind, event["ts"], self._current_hour
             )
             return
-        if self._current_hour is not None and hour > self._current_hour:
+        if self._adopt_pending:
+            self._adopt_pending = False
+            self._adopt_partial_final(hour)
+        if hour > self._current_hour:
             self._finalize_hour(self._current_hour)
         self._current_hour = hour
         self._buffer.append(event)
@@ -136,7 +196,6 @@ class SegmentWriter:
     def _flush_buffer(self) -> None:
         if not self._buffer:
             return
-        assert self._current_hour is not None
         hour_dir = self._hour_dir(self._current_hour)
         hour_dir.mkdir(parents=True, exist_ok=True)
         hh = f"{self._current_hour:%H}"
@@ -148,7 +207,7 @@ class SegmentWriter:
         tmp_path = part_path.with_name(part_path.name + ".tmp")
         df = pl.DataFrame(self._buffer, schema=self._schema)
         df.write_parquet(tmp_path, compression="zstd")
-        tmp_path.replace(part_path)  # atomic: a kill mid-write can never leave a torn part behind
+        _replace_durably(tmp_path, part_path)  # atomic + durable: a kill can never leave a torn part
         self._buffer = []
 
     def _finalize_hour(self, hour: datetime) -> None:
@@ -161,33 +220,63 @@ class SegmentWriter:
         Idempotent, because every crash point of the sequence below recovers by re-running it:
 
         * killed before the `replace` -> only parts (plus a dead tmp) exist: merge again;
-        * killed after it -> the final exists, so the parts beside it are its own already-merged
-          inputs: drop them (re-merging would duplicate every row) and (re)write the manifest, which
-          heals a kill that landed between the `replace` and the manifest write.
+        * killed after it -> the final exists **and reads**, so the parts beside it are its own
+          already-merged inputs: drop them (re-merging would duplicate every row) and write the
+          manifest if it is missing, which heals a kill between the `replace` and the manifest write.
+
+        The final's authority is *read from the file*, never inferred from its existence. A
+        pre-T0036 process killed inside its non-atomic `sink_parquet` — the slow, IO-heavy step of an
+        ordinary rotation — leaves a torn `<HH>.parquet` beside all the parts, which still hold the
+        complete hour: there the final is worthless and the parts are the truth, so the final is
+        quarantined and the hour rebuilt from them.
 
         Rows are concatenated in part order and are **never sorted**: L2 book deltas carry absolute
         quantities, so reordering rows that share a `ts` would silently corrupt the rebuilt book.
         """
         final_path = hour_dir / f"{hh}.parquet"
+        manifest_path = final_path.with_name(final_path.name + ".sha256")
         parts = self._parts_for(hour_dir, hh)
         if final_path.exists():
-            if parts:
-                logger.warning(
-                    "dropping %d already-merged part(s) pair=%s kind=%s path=%s", len(parts), self._pair, self._kind, final_path
-                )
-                for part in parts:
-                    part.unlink()
-                self._write_manifest(final_path)
-            return
+            failure = _read_failure(final_path)
+            if failure is None:
+                if parts:
+                    logger.warning(
+                        "dropping %d already-merged part(s) pair=%s kind=%s path=%s",
+                        len(parts),
+                        self._pair,
+                        self._kind,
+                        final_path,
+                    )
+                    for part in parts:
+                        part.unlink()
+                if not manifest_path.exists():
+                    # An EXISTING sidecar is never rewritten: a digest that no longer matches its
+                    # file is real corruption (bit-rot, tampering), and re-blessing it would destroy
+                    # the only detector this unbackfillable dataset has.
+                    self._write_manifest(final_path)
+                return
+            if not parts:
+                logger.error("unreadable segment left in place pair=%s kind=%s path=%s", self._pair, self._kind, final_path)
+                return  # nothing better to put there — quarantining it would leave the hour empty
+            self._quarantine(final_path, failure)
+            manifest_path.unlink(missing_ok=True)  # a digest of bytes the quarantine still holds
         frames = [frame for part in parts if (frame := self._scan_part(part)) is not None]
         if not frames:
             return
         # Not `*.parquet`, so a tmp stranded by a crash is invisible to the archive's globs.
         tmp_path = hour_dir / f"{hh}.parquet.tmp"
-        # An explicit per-file scan list: a multi-path `scan_parquet` may parallelize and does not
-        # contractually preserve inter-file row order. `sink_parquet` still streams.
-        pl.concat(frames, how="vertical").sink_parquet(tmp_path, compression="zstd")
-        tmp_path.replace(final_path)
+        try:
+            # An explicit per-file scan list: a multi-path `scan_parquet` may parallelize and does
+            # not contractually preserve inter-file row order. `sink_parquet` still streams.
+            pl.concat(frames, how="vertical").sink_parquet(tmp_path, compression="zstd")
+        except Exception:
+            # The merge runs on the rotation path too, and nothing between here and `_run` catches:
+            # a raise would kill capture for every pair and both kinds. Leave the parts untouched —
+            # the next restart's sweep retries the hour, and no row has been destroyed.
+            tmp_path.unlink(missing_ok=True)
+            logger.exception("merge failed pair=%s kind=%s path=%s", self._pair, self._kind, final_path)
+            return
+        _replace_durably(tmp_path, final_path)
         self._write_manifest(final_path)  # before the unlinks: while parts remain, recovery re-runs
         for part in parts:
             part.unlink(missing_ok=True)  # missing: an unreadable part was quarantined, not scanned
@@ -199,17 +288,34 @@ class SegmentWriter:
         An unreadable part must never abort the merge: this runs from `__init__`, so a raise would
         propagate out of every `SegmentWriter(...)` the daemon builds at startup and crash-loop the
         whole capture — no pair, no kind, until a human intervenes. That is unbounded loss, far
-        worse than the one part. The file is renamed aside, **never deleted**: it is evidence, and
-        rows may still be salvageable from it by hand.
+        worse than the one part.
         """
-        frame = pl.scan_parquet(part)
-        try:
-            frame.collect_schema()  # reads the footer — where a torn part gives itself away
-        except Exception as exc:
-            part.rename(part.with_name(part.name + ".corrupt"))
-            logger.error("quarantined unreadable part pair=%s kind=%s path=%s error=%s", self._pair, self._kind, part, exc)
+        failure = _read_failure(part)
+        if failure is not None:
+            self._quarantine(part, failure)
             return None
-        return frame
+        return pl.scan_parquet(part)
+
+    def _quarantine(self, path: Path, failure: Exception) -> None:
+        """Rename an unreadable file aside, **never delete it**: it is evidence, and rows may still
+        be salvageable from it by hand. The target is never clobbered — a rename would silently
+        overwrite an earlier quarantine's bytes, and the same name does recur (the part sequence
+        globs `<HH>.part*.parquet`, which `.corrupt` files do not match, so once every part of an
+        hour has been quarantined the numbering restarts at 0000)."""
+        dest = path.with_name(path.name + ".corrupt")
+        seq = 0
+        while dest.exists():
+            seq += 1
+            dest = path.with_name(f"{path.name}.corrupt.{seq}")
+        path.rename(dest)
+        logger.error(
+            "quarantined unreadable file pair=%s kind=%s path=%s dest=%s error=%s",
+            self._pair,
+            self._kind,
+            path,
+            dest,
+            failure,
+        )
 
     def _recover(self) -> None:
         """Repair what a previous process left behind. Runs at construction and must not raise: the
@@ -221,8 +327,7 @@ class SegmentWriter:
             # only rows that never reached a part file (same loss as an unflushed buffer).
             tmp.unlink(missing_ok=True)
 
-        now_hour = _hour_start(_utcnow())
-        self._adopt_partial_final(now_hour)
+        now_hour = self._current_hour  # one clock read, shared with the late-event guard's seed
         for hour_dir in sorted({p.parent for p in root.rglob("*.part*.parquet")}):
             for hh in sorted({p.name.split(".part")[0] for p in hour_dir.glob("*.part*.parquet")}):
                 try:
@@ -235,17 +340,24 @@ class SegmentWriter:
                     )
         self._bless_unmanifested_finals(root)
 
-    def _adopt_partial_final(self, now_hour: datetime) -> None:
-        """Demote a `<HH>.parquet` for the hour still in progress back to `part0000`.
+    def _adopt_partial_final(self, hour: datetime) -> None:
+        """Demote a `<HH>.parquet` for the hour this writer is opening back to `part0000`.
 
         Only a pre-T0036 process writes one: its `close()` published the open hour on a graceful
         stop, so the rows are in the final but in no part file. Left alone, the rest of the hour's
         parts would be dropped by `_merge_hour` as "already merged" and the hour would end at the
         restart. Demoting is content-preserving in every reading of the file — it simply becomes the
         merge's first input, so its rows land in the final exactly once, in order.
+
+        Keyed on the hour of the **first event this writer accepts**, not on the wall clock: rotation
+        follows Kraken's exchange time, so a lagging (or backward-stepped) local clock would put a
+        restart in a window where a cleanly committed final looks like the hour still in progress —
+        demoting it and leaving the hour unpublished for the daemon's whole uptime. The late-event
+        guard has already rejected every hour that is over, so the first accepted event's hour is by
+        construction the one still open.
         """
-        hour_dir = self._hour_dir(now_hour)
-        hh = f"{now_hour:%H}"
+        hour_dir = self._hour_dir(hour)
+        hh = f"{hour:%H}"
         final_path = hour_dir / f"{hh}.parquet"
         if not final_path.exists() or self._parts_for(hour_dir, hh):
             return  # with parts beside it, the final is a committed one: `_merge_hour`'s rule holds
@@ -266,10 +378,15 @@ class SegmentWriter:
             manifest_path = final_path.with_name(final_path.name + ".sha256")
             if ".part" in final_path.name or manifest_path.exists():
                 continue
-            try:
-                pl.scan_parquet(final_path).collect_schema()  # never bless a torn segment as verified
-            except Exception:
-                logger.exception("unreadable segment left unmanifested pair=%s kind=%s path=%s", self._pair, self._kind, final_path)
+            failure = _read_failure(final_path)  # never bless a segment we cannot read as verified
+            if failure is not None:
+                logger.error(
+                    "unreadable segment left unmanifested pair=%s kind=%s path=%s error=%s",
+                    self._pair,
+                    self._kind,
+                    final_path,
+                    failure,
+                )
                 continue
             self._write_manifest(final_path)
             logger.warning("wrote missing manifest pair=%s kind=%s path=%s", self._pair, self._kind, final_path)
