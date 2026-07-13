@@ -12,7 +12,7 @@ from cli.__main__ import app
 from cli.capture.book import OrderBook
 from cli.capture.command import _default_pairs, _parse_ts
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import verify_manifest
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter, verify_manifest
 
 runner = CliRunner()
 
@@ -179,6 +179,13 @@ def test_capture_end_to_end_writes_segments_with_fake_client(tmp_path, monkeypat
 
     book_path = data_dir / "BTC/EUR" / "book" / "2026" / "07" / "08" / "14.parquet"
     trade_path = data_dir / "BTC/EUR" / "trades" / "2026" / "07" / "08" / "14.parquet"
+    # The run is stopped mid-hour, and a stop never publishes a partial hour as a segment (T0036):
+    # the rows are on disk as parts, and the hour is finalized by the next process to come up.
+    assert not book_path.exists()
+    assert list(book_path.parent.glob("14.part*.parquet"))
+    SegmentWriter(data_dir, "BTC/EUR", "book", BOOK_SCHEMA)
+    SegmentWriter(data_dir, "BTC/EUR", "trades", TRADE_SCHEMA)
+
     assert book_path.exists()
     assert trade_path.exists()
     assert verify_manifest(book_path) is True
