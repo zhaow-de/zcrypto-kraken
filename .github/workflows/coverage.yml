@@ -22,5 +22,10 @@ jobs:
         uses: coverallsapp/github-action@v2
         with:
           file: coverage.lcov
+          # The test suite above is the gate; this upload is informational. The action defaults to
+          # fail-on-error: true, which hands a third-party service a veto over every merge in the repo
+          # -- a coveralls.io outage (two 504s on 2026-07-13 alone) turned green test runs into red
+          # checks and blocked PRs that had nothing wrong with them. Degrade the upload to a warning.
+          fail-on-error: false
         env:
           COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
