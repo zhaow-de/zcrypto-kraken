@@ -31,7 +31,7 @@ def verify_tree(root: Path, *, now: datetime) -> VerifyResult:
     failed: list[str] = []
     newest: datetime | None = None
     for p in sorted(root.rglob("*.parquet")):
-        if ".part" in p.name:  # in-progress current-hour part, no manifest yet
+        if ".part" in p.name or ".held" in p.name:  # in-progress part / quarantined held-spill, no manifest
             continue
         checked += 1
         try:

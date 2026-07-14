@@ -206,15 +206,19 @@ def _replace_durably(tmp_path: Path, dest: Path) -> None:
         os.close(dir_fd)
 
 
-def _part_index(path: Path) -> int | None:
+def _part_index(path: Path, *, marker: str = ".part") -> int | None:
     """`"<HH>.part0007.parquet"` -> `7`; `None` if the name is not one of ours.
 
     Numeric, so part9999 sorts before part10000. Never raises: it runs on the `append()` path, and a
     `<HH>.part0000-copy.parquet` (a human's backup, an rsync artefact) would otherwise take down
     capture for every pair and both kinds, on every restart.
+
+    `marker` distinguishes the two file families this writer sequences: ordinary parts (`.part`,
+    merged into the hour's final) and held-spills (`.held`, quarantined rows the oracle never
+    confirmed — see `_hold` / `_redeem_held`).
     """
     try:
-        return int(path.name.split(".part")[1].split(".")[0])
+        return int(path.name.split(marker)[1].split(".")[0])
     except IndexError, ValueError:
         return None
 
@@ -291,6 +295,7 @@ class SegmentWriter:
         self._dedup_key = dedup_key
         self._oracle = oracle
         self._held: dict[datetime, list[dict]] = {}  # rows for hours the oracle has not yet confirmed
+        self._held_seen: dict[datetime, set] = {}  # per held hour: dedup keys, seeded from disk (see _hold)
         self._buffer: list[dict] = []
         self._current_hour: datetime | None = None  # the open hour; None until the first event
         self._max_ts: datetime | None = None  # the newest ts accepted...
@@ -333,6 +338,7 @@ class SegmentWriter:
             confirmed = self._oracle.confirmed_hour()
             for held_hour in sorted(h for h in self._held if h <= hour and confirmed is not None and h <= confirmed):
                 rows = self._held.pop(held_hour)
+                self._held_seen.pop(held_hour, None)
                 self._enter_hour(held_hour)
                 for row in rows:
                     self._admit(row)
@@ -343,17 +349,22 @@ class SegmentWriter:
         self._admit(event)
 
     def close(self) -> None:
-        """Flush the buffer — and any held rows — to part files (idempotent). Deliberately does
-        **not** finalize the open hour: `<HH>.parquet` means "committed and complete", and publishing
-        a stop's half-hour under that name is what made crash recovery ambiguous. The hour is
+        """Flush the buffer — and any held rows — to disk (idempotent). Deliberately does **not**
+        finalize the open hour: `<HH>.parquet` means "committed and complete", and publishing a
+        stop's half-hour under that name is what made crash recovery ambiguous. The hour is
         finalized by whoever crosses its boundary — this process, or the next one's sweep. Held rows
-        (an hour the oracle has not confirmed yet) become parts of the hour their ts names: parts
-        commit nothing, and the next process's `_open_hour` / sweep picks them up mechanically."""
+        (an hour the oracle never confirmed) spill as HELD-SPILL files (`<HH>.held####.parquet`) of
+        the hour their ts names — never as parts: a part is merged by the sweep, and a bogus stamp
+        spilled at a stop used to become the SOLE, manifest-certified content of an hour that was
+        never genuinely captured. A held-spill commits nothing and is invisible to the sweep; it is
+        redeemed into parts only when a live, quorum-confirmed stream opens its hour
+        (`_redeem_held`) — until then it is quarantine, kept and never deleted."""
         self._flush_buffer()
         for hour, rows in self._held.items():
             if rows:
-                self._write_part(rows, hour)
+                self._write_part(rows, hour, marker=".held")
         self._held = {}
+        self._held_seen = {}
 
     def _enter_hour(self, hour: datetime) -> None:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
@@ -386,8 +397,28 @@ class SegmentWriter:
         """Park a row whose hour the oracle has not confirmed. It still advances the stream witness
         (it passed the plausibility guard, and a witness that ignores it would re-fire on its
         successors), and RAM stays bounded: a held hour that reaches `flush_rows` is spilled to that
-        hour's part files — parts commit nothing, so an hour that never confirms in this process is
-        simply picked up when it genuinely arrives (or by the next process)."""
+        hour's HELD-SPILL files (`.held`, quarantine the sweep never merges — see `_redeem_held`),
+        so an hour that never confirms in this process is redeemed when it genuinely arrives.
+
+        Held rows pass the SAME de-dup as stored ones. `_admit`'s `_seen` covers only the open
+        hour, so a T0026 reconnect replay landing in a hold window used to be held blind — and a
+        stop before confirmation spilled BOTH copies, which the next process merged into the
+        committed final: duplicated prints, as permanent as lost ones. The held set is seeded from
+        the hour's on-disk parts AND held-spills (the originals a previous process — or an earlier
+        spill of this one — already wrote), then tracks what this hold window has taken.
+        """
+        if self._dedup_key is not None:
+            seen = self._held_seen.get(hour)
+            if seen is None:
+                hour_dir = self._hour_dir(hour)
+                hh = f"{hour:%H}"
+                files = [*self._parts_for(hour_dir, hh), *self._parts_for(hour_dir, hh, marker=".held")]
+                seen = self._held_seen[hour] = self._disk_keys(files)
+            key = event[self._dedup_key]
+            if key in seen:
+                logger.warning("dropping replayed event pair=%s kind=%s %s=%s", self._pair, self._kind, self._dedup_key, key)
+                return
+            seen.add(key)
         rows = self._held.setdefault(hour, [])
         rows.append(event)
         ts = event["ts"]
@@ -395,7 +426,7 @@ class SegmentWriter:
             self._max_ts = ts
             self._max_at = _utcnow()
         if len(rows) >= self._flush_rows:
-            self._write_part(rows, hour)
+            self._write_part(rows, hour, marker=".held")
             self._held[hour] = []
 
     def _implausible(self, ts: datetime) -> bool:
@@ -458,14 +489,17 @@ class SegmentWriter:
     def _hour_dir(self, hour: datetime) -> Path:
         return self._base_dir / self._pair / self._kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
 
-    def _parts_for(self, hour_dir: Path, hh: str) -> list[Path]:
-        """Every part file on disk for `<HH>`, in ascending sequence order. A name whose sequence
+    def _parts_for(self, hour_dir: Path, hh: str, *, marker: str = ".part") -> list[Path]:
+        """Every `marker` file on disk for `<HH>`, in ascending sequence order. A name whose sequence
         does not parse is not one of ours: it is skipped, never guessed at and never fatal."""
-        indexed = [(seq, path) for path in hour_dir.glob(f"{hh}.part*.parquet") if (seq := _part_index(path)) is not None]
+        indexed = [
+            (seq, path) for path in hour_dir.glob(f"{hh}{marker}*.parquet") if (seq := _part_index(path, marker=marker)) is not None
+        ]
         return [path for _, path in sorted(indexed)]
 
     def _open_hour(self, hour: datetime) -> None:
         self._current_hour = hour
+        self._redeem_held(hour)
         self._seen = set()
         if self._dedup_key is None:
             return
@@ -475,20 +509,46 @@ class SegmentWriter:
         # them and the hour's segment would hold each replayed print twice. Duplicated rows corrupt a
         # reconstructed book exactly as badly as lost ones.
         parts = self._parts_for(self._hour_dir(hour), f"{hour:%H}")
-        if not parts:
-            return
+        if parts:
+            self._seen = self._disk_keys(parts)
+
+    def _redeem_held(self, hour: datetime) -> None:
+        """Redeem `hour`'s held-spill files (`<HH>.held####.parquet`) into ordinary parts.
+
+        A held-spill holds rows the oracle could not corroborate when they hit disk (spilled at
+        `flush_rows`, or by `close()`). Under its own name it is quarantine — the sweep and the
+        merge ignore it — so an uncorroborated stamp can never fabricate a committed final for an
+        hour that was never genuinely captured. Opening the hour IS the missing corroboration:
+        quorum has confirmed it and a live event stream is entering it, so the quarantined rows
+        become parts, sequenced ahead of anything this process writes (they are older). The rename
+        is atomic and this never raises (it runs on the rotation path): a rename that fails just
+        leaves the row where it was — quarantined, never lost, never duplicated.
+        """
+        hour_dir = self._hour_dir(hour)
+        hh = f"{hour:%H}"
+        for held in self._parts_for(hour_dir, hh, marker=".held"):
+            parts = self._parts_for(hour_dir, hh)
+            seq = (_part_index(parts[-1]) or 0) + 1 if parts else 0
+            try:
+                held.rename(hour_dir / f"{hh}.part{seq:04d}.parquet")
+            except OSError:
+                logger.exception("could not redeem a held spill pair=%s kind=%s path=%s", self._pair, self._kind, held)
+
+    def _disk_keys(self, files: list[Path]) -> set:
+        """The de-dup keys held by `files`, tolerating unreadable inputs. One unreadable file must
+        not silently empty the whole set — that is how a replay gets written a second time. Take
+        the keys of every file that CAN be read; one that cannot is quarantined at the merge, so
+        its rows never reach the segment and a replay of them is a recovery, not a duplicate."""
         try:
-            self._seen = set(self._keys_of(parts))
+            return set(self._keys_of(files)) if files else set()
         except Exception:
-            # One unreadable part must not silently empty the whole set — that is how the replay
-            # gets written a second time. Take the keys of every part that CAN be read; a part that
-            # cannot is quarantined at the merge, so its rows never reach the segment and a replay of
-            # them is a recovery, not a duplicate.
-            for part in parts:
+            keys: set = set()
+            for file in files:
                 try:
-                    self._seen |= set(self._keys_of([part]))
+                    keys |= set(self._keys_of([file]))
                 except Exception:
-                    logger.exception("could not read de-dup keys pair=%s kind=%s path=%s", self._pair, self._kind, part)
+                    logger.exception("could not read de-dup keys pair=%s kind=%s path=%s", self._pair, self._kind, file)
+            return keys
 
     def _keys_of(self, parts: list[Path]) -> pl.Series:
         return pl.scan_parquet(parts).select(self._dedup_key).collect()[self._dedup_key]
@@ -499,16 +559,16 @@ class SegmentWriter:
         self._write_part(self._buffer, self._current_hour)
         self._buffer = []
 
-    def _write_part(self, rows: list[dict], hour: datetime) -> None:
+    def _write_part(self, rows: list[dict], hour: datetime, *, marker: str = ".part") -> None:
         hour_dir = self._hour_dir(hour)
         hh = f"{hour:%H}"
         try:
             hour_dir.mkdir(parents=True, exist_ok=True)
             # The next sequence number is read from disk, so a writer resuming a half-written hour
             # starts *past* the highest part already there and can never overwrite it.
-            parts = self._parts_for(hour_dir, hh)
-            seq = (_part_index(parts[-1]) or 0) + 1 if parts else 0
-            part_path = hour_dir / f"{hh}.part{seq:04d}.parquet"
+            parts = self._parts_for(hour_dir, hh, marker=marker)
+            seq = (_part_index(parts[-1], marker=marker) or 0) + 1 if parts else 0
+            part_path = hour_dir / f"{hh}{marker}{seq:04d}.parquet"
             tmp_path = part_path.with_name(part_path.name + ".tmp")
             df = pl.DataFrame(rows, schema=self._schema)
             df.write_parquet(tmp_path, compression="zstd")
@@ -710,10 +770,14 @@ class SegmentWriter:
         # Which hours are closed. A `<HH>.parquet` is one, by the invariant. So is a `.merging` file
         # that would not commit above: its bytes may be the hour's only copy (the parts are already
         # unlinked), and an hour left open here could be re-opened by the live stream and its merge
-        # would then sink straight over them.
+        # would then sink straight over them. A held-spill (`.held`) closes nothing: it is
+        # quarantine, and letting it seed the floor would drop every genuine row of the very hour
+        # it names, on every restart.
         hours = []
         for path in (*root.rglob("*.parquet"), *root.rglob("*.parquet.merging")):
-            if ".part" in path.name or (hour := _hour_of(path.parent, path.name.split(".")[0])) is None:
+            if ".part" in path.name or ".held" in path.name:
+                continue
+            if (hour := _hour_of(path.parent, path.name.split(".")[0])) is None:
                 continue
             if hour > _utcnow() + MAX_TS_AHEAD:
                 # An hour that has not happened cannot have been committed: a future-dated segment is

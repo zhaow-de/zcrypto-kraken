@@ -1410,10 +1410,11 @@ def test_t0037_a_lone_stream_rotation_is_clock_paced_and_never_lost(tmp_path, cl
     assert {1, 2, 3, 4} <= set(_disk_column(tmp_path, "trade_id", kind="trades"))
 
 
-def test_t0037_close_spills_held_rows_to_parts_that_a_restart_merges_and_dedups(tmp_path, clock):
+def test_t0037_close_spills_held_rows_that_a_restart_redeems_merges_and_dedups(tmp_path, clock):
     # close() must not lose held rows, and must not FINALIZE (T0036 intact): the held rows become
-    # PARTS of the hour their ts names. A restart then merges them, and a replay of a held print is
-    # deduped via the part-seeded `_seen` — no loss, no duplicate.
+    # HELD-SPILL files of the hour their ts names — quarantine, invisible to the sweep. A restart
+    # that genuinely opens the hour redeems them into parts and merges them, and a replay of a held
+    # print is deduped via the part-seeded `_seen` — no loss, no duplicate.
     clock.now = _ts(10, 3)
     w1 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
     for i in range(3):  # held (a lone stream, clock < 10:05 -> hour 10 not yet confirmed)
@@ -1423,8 +1424,8 @@ def test_t0037_close_spills_held_rows_to_parts_that_a_restart_merges_and_dedups(
 
     trades_dir = _segment_path(tmp_path, 10, "trades").parent
     assert not _segment_path(tmp_path, 10, "trades").exists()  # close() never finalizes
-    spilled = pl.concat([pl.read_parquet(p) for p in trades_dir.glob("10.part*.parquet")])
-    assert sorted(spilled["trade_id"].to_list()) == [0, 1, 2]  # the held rows are safe on disk as parts
+    spilled = pl.concat([pl.read_parquet(p) for p in trades_dir.glob("10.held*.parquet")])
+    assert sorted(spilled["trade_id"].to_list()) == [0, 1, 2]  # the held rows are safe on disk, quarantined
 
     clock.now = _ts(10, 6)
     w2 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
@@ -1520,6 +1521,121 @@ def test_t0037_a_poisoned_witness_can_never_second_a_lone_bogus_stamp(tmp_path, 
     b.close()
     a.close()
     assert genuine <= set(_disk_column(tmp_path, "checksum"))
+
+
+def test_t0037_a_replay_into_an_unconfirmed_hour_is_deduped_not_duplicated(tmp_path, clock):
+    # T0026 x T0037: a reconnect replay landing while its hour is still UNCONFIRMED used to be held
+    # without consulting the de-dup at all, and close() spilled both copies to disk; the next
+    # process merged them into the committed, manifest-certified final (executed pre-fix:
+    # trade_ids [0,1,2,3,4,0,1,2,3,4,10]). Duplicated prints corrupt a reconstructed book exactly
+    # as badly as lost ones. Held rows now pass the same trade_id de-dup as stored ones.
+    clock.now = _ts(10, 0, 30)
+    w1 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
+    for i in range(5):
+        w1.append(_trade_event(10, i, i))  # held: hour 10 is unconfirmed (lone stream, clock < 10:05)
+    for i in range(5):
+        w1.append(_trade_event(10, i, i))  # the reconnect REPLAYS the same prints into the hold window
+    w1.close()  # stop before confirmation — the held rows spill to disk
+
+    clock.now = _ts(10, 6)
+    w2 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
+    w2.append(_trade_event(10, 6 * 60, 10))  # hour 10 confirms (stream + clock): the spill is picked up
+    clock.now = _ts(11, 0)
+    w2.append(_trade_event(11, 0, 100))
+    clock.now = _ts(11, 5)
+    w2.append(_trade_event(11, 5 * 60, 101))  # hour 11 confirmed -> hour 10 finalizes
+    w2.close()
+
+    ids = pl.read_parquet(_segment_path(tmp_path, 10, "trades"))["trade_id"].to_list()
+    assert sorted(ids) == [0, 1, 2, 3, 4, 10]  # exactly ONE copy of every held print
+    assert len(ids) == len(set(ids))
+
+
+def test_t0037_a_replay_of_an_on_disk_print_never_survives_a_held_spill(tmp_path, clock):
+    # The restart shape (executed pre-fix as S2): the ORIGINAL prints are already in an on-disk
+    # part from the previous process; the replay lands while the hour is UNCONFIRMED (a restart
+    # inside the hour's first 5 minutes), is held, and is spilled before confirmation — so the
+    # replay reached disk beside its original and the finalize committed both. The hold path now
+    # seeds its de-dup from the hour's on-disk files, so the replay never reaches disk at all.
+    oracle1 = HourOracle()
+    a = _oracle_writer(tmp_path, oracle1, kind="trades", schema=TRADE_SCHEMA, flush_rows=50, dedup_key="trade_id")
+    b = _oracle_writer(tmp_path, oracle1, pair="ETH/EUR")
+    clock.now = _ts(10, 1)
+    b.append(_book_event_for("ETH/EUR", 10, 1))  # a second stream seconds hour 10...
+    a.append(_trade_event(10, 70, 1))  # ...so the prints are ADMITTED
+    a.append(_trade_event(10, 80, 2))
+    a.close()  # part [1, 2] on disk; the process dies
+
+    clock.now = _ts(10, 3)  # restart INSIDE the hour's first 5 minutes: hour 10 unconfirmed again
+    w2 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, flush_rows=3, dedup_key="trade_id")
+    for tid in (1, 2):  # Kraken replays the prints already on disk — held pre-fix, without de-dup
+        w2.append(_trade_event(10, 60 + 10 * tid, tid))
+    for tid in (3, 4, 5):  # ...and genuinely new prints; flush_rows=3 spills the hold to disk
+        w2.append(_trade_event(10, 180 + tid, tid))
+    clock.now = _ts(10, 6)
+    w2.append(_trade_event(10, 6 * 60, 6))  # hour 10 confirms
+    clock.now = _ts(11, 0)
+    w2.append(_trade_event(11, 0, 100))
+    clock.now = _ts(11, 5)
+    w2.append(_trade_event(11, 5 * 60, 101))  # hour 10 finalizes
+    w2.close()
+
+    ids = pl.read_parquet(_segment_path(tmp_path, 10, "trades"))["trade_id"].to_list()
+    assert sorted(ids) == [1, 2, 3, 4, 5, 6]  # the replays are recognized against the on-disk part
+    assert len(ids) == len(set(ids))
+
+
+def test_t0037_a_never_confirmed_held_spill_cannot_fabricate_an_hour(tmp_path, clock):
+    # A held bogus stamp spilled at a stop used to become an ordinary part — and if the process
+    # then slept through the stamp's hour, the next start's sweep merged it into a
+    # manifest-certified final for an hour that had NO genuine capture: a fabricated hour,
+    # published as "committed and complete" (executed pre-fix: 11.parquet == [999] with a valid
+    # sidecar). Never-confirmed held rows now spill under a held-spill name (`<HH>.held####`) the
+    # sweep and the merge ignore; they are redeemed as parts only when a live, quorum-confirmed
+    # event stream OPENS their hour. Quarantined, never deleted — never a committed final alone.
+    w = _oracle_writer(tmp_path, HourOracle())
+    for mnt in range(0, 57):
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    clock.now = _ts(10, 57)
+    w.append(_book_event(11, 0, checksum=999))  # a lone in-window bogus stamp — held, unconfirmed
+    w.close()  # the process stops, and stays down through the whole of hour 11
+
+    clock.now = _ts(13, 30)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    w2.append(_book_event(13, 30, checksum=1))  # the first genuine event after the outage -> sweep
+
+    path10 = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path10)["checksum"].to_list() == list(range(57))  # the genuine hour: swept
+    assert verify_manifest(path10) is True
+    assert not _segment_path(tmp_path, 11).exists()  # NO fabricated hour-11 final
+    held = list(path10.parent.glob("11.held*.parquet"))
+    assert held  # the bogus row is quarantined, never deleted...
+    assert pl.read_parquet(held[0])["checksum"].to_list() == [999]  # ...and still readable, as evidence
+
+
+def test_t0037_a_held_spill_never_marks_its_hour_closed(tmp_path, clock):
+    # A held-spill file is quarantine, not a final: it must not seed the recovery floor (an hour is
+    # closed by `<HH>.parquet` ALONE), or a restart would drop every genuine row of the very hour
+    # the spill named — and when the hour IS genuinely captured, opening it redeems the spill, so
+    # the quarantined row still lands in the hour its ts names, ahead of the new rows.
+    clock.now = _ts(10, 57)
+    w1 = _oracle_writer(tmp_path, HourOracle())
+    w1.append(_book_event(11, 0, checksum=999))  # a lone in-window bogus stamp: held
+    w1.close()  # spilled as a held-spill file
+
+    clock.now = _ts(11, 30)  # restart inside hour 11 — the hour is genuinely live this time
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    for mnt in (30, 31, 32):
+        clock.now = _ts(11, mnt)
+        w2.append(_book_event(11, mnt, checksum=mnt))  # must be admitted, not dropped as late
+    clock.now = _ts(12, 0)
+    w2.append(_book_event(12, 0, checksum=100))
+    clock.now = _ts(12, 5)
+    w2.append(_book_event(12, 5, checksum=105))  # hour 12 confirms -> hour 11 finalizes
+    path = _segment_path(tmp_path, 11)
+    assert pl.read_parquet(path)["checksum"].to_list() == [999, 30, 31, 32]  # redeemed + genuine, in order
+    assert verify_manifest(path) is True
 
 
 def test_t0037_a_coherently_fast_walk_cannot_poison_the_witness(tmp_path, clock):
