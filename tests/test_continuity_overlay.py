@@ -68,3 +68,20 @@ def test_overlay_mode_adds_a_separate_canonical_section_without_the_exit_bar_ver
     assert "ETH/EUR" in canonical_section  # canonical view picks up the healed-only hour
     assert raw_section.count("EXIT BAR") == 1  # only the raw report is the T0003 instrument
     assert "EXIT BAR" not in canonical_section
+
+
+def test_an_empty_raw_tree_still_prints_the_canonical_section(tmp_path, capsys, monkeypatch):
+    # The raw mirror being empty is exactly when the overlay's healed hours matter most; the raw
+    # report's own failure (rc 1, "no segments found") must not swallow the canonical view.
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    overlay = tmp_path / "overlay"
+    _write_hour(overlay, "ETH/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw), "--overlay", str(overlay)])
+
+    rc = continuity.main()
+    out = capsys.readouterr().out
+
+    assert rc == 1  # the raw report's verdict is still the exit status
+    assert "CANONICAL" in out
+    assert "ETH/EUR" in out

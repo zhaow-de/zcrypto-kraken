@@ -36,8 +36,6 @@ from pathlib import Path
 
 import polars as pl
 
-from cli.archive.reader import canonical_segments
-
 FINAL = re.compile(r"^\d{2}$")
 
 
@@ -56,20 +54,25 @@ def segments(root: Path, kind: str) -> dict[str, list[tuple[dt.datetime, Path]]]
 
 def _canonical_streams(root: Path, overlay_root: Path, kind: str) -> dict[str, list[tuple[dt.datetime, Path]]]:
     """The reconciled-first view of `root`, healed by `overlay_root` (see `cli.archive.reader`)."""
+    # Imported here, not at module top: the default raw-only invocation is the T0003 exit-bar
+    # instrument and must keep running on a host with only stdlib + polars — the cli package is
+    # needed only when `--overlay` is passed.
+    from cli.archive.reader import canonical_segments
+
     out: dict[str, list[tuple[dt.datetime, Path]]] = {}
     for pair, hour, p in canonical_segments(root, overlay_root, kind=kind):
         out.setdefault(pair, []).append((hour, p))
     return out
 
 
-def report(
-    streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.datetime, quiet: bool, show_exit_bar: bool = True
-) -> int:
+def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.datetime, quiet: bool, show_exit_bar: bool) -> int:
     """Print the per-pair continuity table + summary. Returns 0, or 1 if `streams` is empty.
 
     `show_exit_bar` gates ONLY the `EXIT BAR (<0.1% gap time): PASS/FAIL` verdict line: the raw
-    report (the default call) always gets it; the `--overlay` canonical report never does, so an
-    overlay run can never bank a T0003 exit-bar PASS (spec 00050, exit-bar isolation).
+    report always gets it; the `--overlay` canonical report never does, so an overlay run can never
+    bank a T0003 exit-bar PASS (spec 00050, exit-bar isolation). Required, with no default, so a
+    future caller must SAY which report it is — a defaulted True would let a forgotten flag silently
+    bank an exit bar.
     """
     if not streams:
         print("no segments found")
@@ -162,20 +165,19 @@ def main() -> int:
     a = build_parser().parse_args()
 
     since = dt.datetime.fromisoformat(a.since).replace(tzinfo=dt.UTC) if a.since else dt.datetime.min.replace(tzinfo=dt.UTC)
-    streams = segments(a.root, a.kind)
-    rc = report(streams, since=since, quiet=a.quiet)
-    if rc != 0:
-        return rc
+    rc = report(segments(a.root, a.kind), since=since, quiet=a.quiet, show_exit_bar=True)
 
     if a.overlay is not None:
+        # Printed even when the raw report came up empty (rc 1): an empty raw mirror is exactly when
+        # the overlay's healed hours matter most. The exit status stays the RAW report's — it is the
+        # T0003 instrument; the canonical view is informational.
         print()
         print(
             f"=== CANONICAL VIEW (reconciled-first, healed from {a.overlay}) "
             f"-- informational only, NOT the T0003 exit-bar instrument ==="
         )
-        canonical = _canonical_streams(a.root, a.overlay, a.kind)
-        report(canonical, since=since, quiet=a.quiet, show_exit_bar=False)
-    return 0
+        report(_canonical_streams(a.root, a.overlay, a.kind), since=since, quiet=a.quiet, show_exit_bar=False)
+    return rc
 
 
 if __name__ == "__main__":

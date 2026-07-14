@@ -37,14 +37,15 @@ def _hours(root: Path, kind: str) -> Iterator[tuple[str, datetime, Path]]:
 def canonical_segments(
     primary_root: Path, reconciled_root: Path | None = None, *, kind: str = "book"
 ) -> Iterator[tuple[str, datetime, Path]]:
-    """Yield `(pair, hour, path)` for every canonical hour: reconciled-first, primary otherwise."""
-    overlay = {}
+    """Yield `(pair, hour, path)` for every canonical hour: reconciled-first, primary otherwise.
+
+    Yields are sorted by `(pair, hour)` — overlay-only hours (a wholly-missing primary hour, healed
+    from the secondary) included, IN sequence, never appended after later raw hours. The order is a
+    contract: consumers concatenate hours in yield order and may never re-sort rows by `ts` (L2 rows
+    carry absolute quantities), so an out-of-sequence healed hour would splice a different book.
+    """
+    merged = {(pair, hour): p for pair, hour, p in _hours(primary_root, kind)}
     if reconciled_root is not None and reconciled_root.exists():
-        overlay = {(pair, hour): p for pair, hour, p in _hours(reconciled_root, kind)}
-    seen = set()
-    for pair, hour, p in _hours(primary_root, kind):
-        seen.add((pair, hour))
-        yield pair, hour, overlay.get((pair, hour), p)
-    for (pair, hour), p in sorted(overlay.items()):
-        if (pair, hour) not in seen:  # a wholly-missing primary hour, healed from the secondary
-            yield pair, hour, p
+        merged.update({(pair, hour): p for pair, hour, p in _hours(reconciled_root, kind)})  # reconciled-first
+    for (pair, hour), p in sorted(merged.items()):
+        yield pair, hour, p
