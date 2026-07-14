@@ -85,14 +85,17 @@
   ansible.builtin.assert:
     that:
       - engine_gate_sshd.rc == 0
-      - engine_gate_sshd.stdout is search('(?m)^permitrootlogin no$')
+      # `prohibit-password` (key-only root break-glass, decided 2026-07-14) is accepted alongside
+      # `no`: the gate's substance is that NO password-based access exists anywhere, and key-only
+      # root satisfies it. `yes` (password root) still fails.
+      - engine_gate_sshd.stdout is search('(?m)^permitrootlogin (no|prohibit-password)$')
       - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
       # \\b (not \b): assert `that:` expressions unicode-escape the Jinja string literal, so a
       # single \b reaches the regex as backspace (\x08) and silently never matches.
       - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bdeploy\\b')
     fail_msg: >-
       §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): sshd -T must
-      report permitrootlogin no, passwordauthentication no, and allowusers deploy before the
+      report permitrootlogin no|prohibit-password, passwordauthentication no, and allowusers deploy before the
       engine (and its trade key) may land. Effective posture lines (rc={{ engine_gate_sshd.rc }}):
       {{ engine_gate_sshd.stdout_lines | select("match", "^(allowusers|allowgroups|denyusers|denygroups|permitrootlogin|passwordauthentication)") | list }};
       stderr: {{ engine_gate_sshd.stderr | default("") | trim }}

@@ -24,3 +24,5 @@ hardening_extra_sysctl:
   kernel.dmesg_restrict: 1
   kernel.yama.ptrace_scope: 1
   net.ipv4.ip_forward: 1
+# TTYs root may log in on at the console; ttyS0 is the provider serial console (break-glass).
+hardening_root_ttys: [console, tty1, tty2, tty3, tty4, tty5, tty6, ttyS0]

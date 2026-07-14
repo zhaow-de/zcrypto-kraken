@@ -21,3 +21,8 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 
 - Root SSH is key-only break-glass; the operator installs the master pubkey manually at bootstrap.
 - Day-to-day access: `deploy` user (passwordless sudo) — `ssh zcrypto` / `ssh red` / `ssh nas` / `ssh hp`.
+
+## Ansible secrets
+
+- **Never run `ansible-inventory --host` or `--list`.** `infra/ansible/ansible.cfg` sets `vault_password_file`, so both silently decrypt the vault and print every secret (incl. the live Kraken trade key) in cleartext. Use `--graph` / `--list-tags`, or pipe through a key-names-only filter.
+- Run playbooks via `infra/ansible/scripts/run.sh` (loads the vaulted deploy key into a throwaway agent). Preview with `--check --diff` before any converge.

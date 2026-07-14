@@ -64,6 +64,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — always-on i7-13700/64 GB/4 TB box lifting the Atom's compute ceiling (CRC archive verification, Role B verified path, 24×7 research loop); hardware provisioned 2026-07-14; storage topology (NFS vs local NVMe) is the open human decision (ripe when: Role C lands — spec 00050 v2's reconcile QA runs there).
 
+- [T0039 — the reconciler's `--min-gap-seconds` needs cross-host validation](T0039-min-gap-seconds-needs-cross-host-validation.md) — spec 00050's 5 s default sits **below the measured 14.78 s maximum natural quiescence**, so on a quiet market only an untested assumption about Kraken's per-connection coalescing prevents a phantom splice (an unaudited data swap that inflates `healed_gap_seconds` and blinds the very alert meant to spot a degrading primary); raise the default to 30 s and pin it from a detect-only soak (ripe when: the secondary is live — the measurement needs two concurrent streams, which do not exist yet).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A) landed iter-093 (spec/plan 00048), NAS gate-verify (Role B) landed iter-094 (spec/plan 00049, measured bit-identical cross-runtime); remainder = the alerting drill + the ≥7-day clean-run verification + Role C (redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).

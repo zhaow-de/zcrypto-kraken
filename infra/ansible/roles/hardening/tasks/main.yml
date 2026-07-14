@@ -19,6 +19,11 @@
     name: devsec.hardening.os_hardening
   vars:
     sysctl_overwrite: "{{ hardening_extra_sysctl }}"
+    # Keep ttyS0 — the provider's serial console (Linode Lish/Glish), the operator's last
+    # break-glass path when SSH is unreachable. The devsec default omits it, so without this
+    # every converge would silently strip the hand-added entry (same class of bug as purging
+    # /root/.ssh/authorized_keys). Decided 2026-07-14 with the key-only root SSH posture.
+    os_auth_root_ttys: "{{ hardening_root_ttys }}"
 
 - name: apply devsec.hardening.ssh_hardening baseline (port 10022, key-only, root key-only)
   ansible.builtin.include_role:
