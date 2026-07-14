@@ -30,6 +30,13 @@ class GapMonitor:
     def __init__(self) -> None:
         self._open: dict[str, _OpenGap] = {}
         self._closed_seconds: dict[str, float] = {}
+        # The disk-watermark breach window (T0032). A breach stops EVERY write, so it is ONE global
+        # window, not a per-pair gap — and it is tracked INDEPENDENTLY of `_open`. It is deliberately
+        # not routed through `start_gap`: that is idempotent per pair, so a concurrent checksum_resync
+        # gap already open on a pair would swallow the breach, and its `end_gap` would then resume the
+        # dead-man ping while the disk is STILL breached — reintroducing the very silent-loss bug.
+        self._watermark_open: datetime | None = None
+        self._watermark_seconds: float = 0.0
 
     def start_gap(self, pair: str, reason: str, *, at: datetime) -> None:
         """Open a gap window for `pair`. Idempotent: a second `start_gap` before the matching
@@ -51,15 +58,40 @@ class GapMonitor:
         logger.warning("gap end pair=%s reason=%s seconds=%.3f", pair, open_gap.reason, duration)
         return duration
 
+    def start_watermark_gap(self, *, at: datetime) -> None:
+        """Open the global disk-watermark breach window (T0032). Idempotent on its OWN state — the
+        earliest breach time wins — so the 30 s watermark poll can call it every breached tick. See
+        `__init__` for why this is a dedicated window rather than a `start_gap` call."""
+        if self._watermark_open is not None:
+            return
+        self._watermark_open = at
+        logger.warning("gap start reason=disk_watermark at=%s", at.isoformat())
+
+    def end_watermark_gap(self, *, at: datetime) -> float:
+        """Close the breach window, accumulating its duration into the global watermark total. Returns
+        the closed window's seconds (0.0 if none was open)."""
+        if self._watermark_open is None:
+            return 0.0
+        duration = (at - self._watermark_open).total_seconds()
+        if duration < 0:
+            raise CaptureError(f"watermark gap end {at} precedes start {self._watermark_open}")
+        self._watermark_seconds += duration
+        self._watermark_open = None
+        logger.warning("gap end reason=disk_watermark seconds=%.3f", duration)
+        return duration
+
     def is_open(self, pair: str) -> bool:
         return pair in self._open
 
     def gap_seconds(self, pair: str, *, at: datetime | None = None) -> float:
-        """Total closed gap seconds for `pair`, plus its still-open gap's duration as of `at` (if any)."""
-        total = self._closed_seconds.get(pair, 0.0)
+        """Total closed gap seconds for `pair` — its own gaps plus the global disk-watermark breach
+        (T0032), which lost data for every pair — plus any still-open windows' duration as of `at`."""
+        total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds
         open_gap = self._open.get(pair)
         if open_gap is not None and at is not None:
             total += (at - open_gap.start).total_seconds()
+        if self._watermark_open is not None and at is not None:
+            total += (at - self._watermark_open).total_seconds()
         return total
 
     def gap_ratio(self, pair: str, *, window_seconds: float, at: datetime | None = None) -> float:

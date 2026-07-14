@@ -224,9 +224,18 @@ async def _healthcheck_loop(
             ping_healthcheck(url)
 
 
-async def _disk_watermark_loop(watermark: DiskWatermark, interval: int) -> None:
+async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, interval: int) -> None:
     while True:
-        watermark.check()
+        healthy = watermark.check()
+        # T0032: withholding the dead-man ping PAGES the operator, but the breach's lost time must
+        # also be BOOKED into the exit-bar gap accounting, or the automated <0.1% gap-time bar reads
+        # clean for a window that lost data. Bridge the breach state into GapMonitor's dedicated
+        # watermark window here — both calls are idempotent, so the poll can drive them every tick.
+        now = datetime.now(UTC)
+        if healthy:
+            monitor.end_watermark_gap(at=now)
+        else:
+            monitor.start_watermark_gap(at=now)
         await asyncio.sleep(interval)
 
 
@@ -259,7 +268,7 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     health = asyncio.create_task(
         _healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS, watermark)
     )
-    disk_check = asyncio.create_task(_disk_watermark_loop(watermark, DISK_WATERMARK_INTERVAL_SECONDS))
+    disk_check = asyncio.create_task(_disk_watermark_loop(watermark, monitor, DISK_WATERMARK_INTERVAL_SECONDS))
 
     try:
         if duration is not None:

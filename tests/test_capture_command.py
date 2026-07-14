@@ -282,6 +282,31 @@ def test_healthcheck_withheld_when_disk_watermark_breached(monkeypatch):
     assert pings == [], "a watermark breach stops all writes -- the dead-man must NOT keep pinging"
 
 
+def test_disk_watermark_loop_books_the_breach_into_gap_accounting():
+    # T0032: withholding the dead-man ping PAGES the operator, but the lost time must ALSO reach
+    # GapMonitor's gap_seconds -- the exit-bar metric -- or the automated bar reads clean for a window
+    # that actually lost data. The watermark loop opens the dedicated breach window on a breach and
+    # closes it when the disk clears, independent of the ping-withholding.
+    from cli.capture import command as cmd
+    from cli.capture.gap_monitor import DiskWatermark, GapMonitor
+
+    monitor = GapMonitor()
+    free = {"v": 10}  # start breached
+    watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=lambda p: _FakeUsage(free=free["v"]))
+
+    async def drive():
+        task = asyncio.create_task(cmd._disk_watermark_loop(watermark, monitor, 0.01))
+        await asyncio.sleep(0.05)  # let the breach window accumulate
+        free["v"] = 10_000  # disk clears -> the loop closes the breach window
+        await asyncio.sleep(0.03)
+        task.cancel()
+
+    asyncio.run(drive())
+    # The breach was booked as gap time (a closed window, so it shows without an `at`), for every pair.
+    assert monitor.gap_seconds("BTC/EUR") > 0
+    assert monitor.gap_seconds("ETH/EUR") > 0
+
+
 # --- T0036: exactly ONE process may write the segment tree ---------------------------------------
 #
 # `SegmentWriter._flush_buffer` derives the next part sequence from the hour directory and names the
