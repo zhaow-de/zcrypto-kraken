@@ -160,6 +160,7 @@ def _totals(records: list[dict]) -> dict[str, float]:
             "spliced_hours",
             "union_hours",
             "healed_seconds",
+            "healable_seconds",
             "residual_seconds",
             "deficit_primary",
             "deficit_secondary",
@@ -179,6 +180,13 @@ def _totals(records: list[dict]) -> dict[str, float]:
             if key in measured:
                 continue
             measured.add(key)
+            # `healable` is the gap rate, and it must exist in DETECT-ONLY -- minting stays off for the
+            # whole T0039 soak, so `healed` (minted only) is pinned at 0 exactly when the signal is most
+            # needed. A degrading primary whose every gap the secondary quietly heals trips neither the
+            # residual-gap rule nor either dead-man; the rate is the only thing that reveals it. Counted
+            # here, inside the per-(pair,kind,hour) dedup, because the flip to --mint re-ledgers the same
+            # hour as `minted`: one gap, not two.
+            totals["healable_seconds"] += float(record.get("healed_seconds") or 0.0)
             totals["deficit_primary"] += float(record.get("trades_added") or 0)
             totals["deficit_secondary"] += float(record.get("trades_secondary_deficit") or 0)
             totals["dedup_rows"] += float(record.get("trades_deduped") or 0)
@@ -208,10 +216,22 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
     """
     lines: list[str] = []
 
+    def _fmt(value: float) -> str:
+        # Prometheus's text format spells the non-finite values `+Inf` / `-Inf` / `NaN`; Python's f-string
+        # renders them `inf` / `-inf` / `nan`, which node-exporter's textfile collector rejects -- and it
+        # rejects the WHOLE file on one bad line, dropping every zcrypto_reconcile_* series for that
+        # scrape. A +Inf source_lag (an empty mirror) is a real, expected value the source-lag rule is
+        # meant to fire on, so it must be emitted parseably rather than poisoning the file.
+        if math.isinf(value):
+            return "+Inf" if value > 0 else "-Inf"
+        if math.isnan(value):
+            return "NaN"
+        return str(value)
+
     def _emit(name: str, kind: str, help_: str, samples: list[tuple[str, float]]) -> None:
         lines.append(f"# HELP zcrypto_reconcile_{name} {help_}")
         lines.append(f"# TYPE zcrypto_reconcile_{name} {kind}")
-        lines.extend(f"zcrypto_reconcile_{name}{labels} {value}" for labels, value in samples)
+        lines.extend(f"zcrypto_reconcile_{name}{labels} {_fmt(value)}" for labels, value in samples)
 
     _emit(
         "last_success_timestamp_seconds",
@@ -232,6 +252,15 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "counter",
         "Primary book silence covered by a secondary block.",
         [("", totals["healed_seconds"])],
+    )
+    _emit(
+        "healable_gap_seconds_total",
+        "counter",
+        "Primary book silence the secondary WITNESSED and could cover, whether or not it was minted. "
+        "Unlike healed_gap_seconds_total this is non-zero in detect-only, so the gap RATE -- the only "
+        "signal that reveals a degrading primary whose gaps are always healed -- is visible during the "
+        "T0039 soak.",
+        [("", totals["healable_seconds"])],
     )
     _emit(
         "residual_gap_seconds_total",

@@ -230,3 +230,46 @@ def test_book_stream_keeps_the_old_behaviour_when_it_has_no_witness() -> None:
     available = {H - timedelta(hours=1), H + timedelta(hours=1)}
 
     assert is_total_loss(H, available=available, span=(min(available), max(available)), alive_witness=None) is True
+
+
+# --- the gap-rate signal must exist in DETECT-ONLY, or its alert is a decoration ------------------
+#
+# `healed_gap_seconds_total` counts only `minted` records, and minting stays OFF for the whole T0039
+# soak. So the "chronically gappy primary" alarm -- the one the plan says discharges T0003's
+# gap-rate-alert item -- would be pinned at 0 for the entire period it is most needed, while looking
+# like working alerting. A degrading primary whose every gap the secondary quietly heals trips neither
+# the residual-gap rule nor either dead-man; the gap RATE is the only thing that reveals it.
+#
+# `would_mint` already carries `healed_seconds` (the seconds the secondary witnessed and COULD heal),
+# so the signal exists in the ledger -- it just was not exported. `healable` counts it in both modes;
+# `healed` stays honest and counts only what was actually written. The per-(pair,kind,hour) dedup
+# matters because the flip to --mint re-ledgers the same hour as `minted`: one gap, not two.
+
+
+def _totals_of(records: list[dict]) -> dict[str, float]:
+    from cli.archive.command import _totals
+
+    return _totals(records)
+
+
+def test_healable_gap_seconds_counts_would_mint_so_the_gap_rate_is_visible_in_detect_only() -> None:
+    records = [
+        {"state": "would_mint", "pair": "BTC/EUR", "kind": "book", "hour": "2026-07-14T02:00:00+00:00", "healed_seconds": 120.0},
+        {"state": "would_mint", "pair": "ETH/EUR", "kind": "book", "hour": "2026-07-14T02:00:00+00:00", "healed_seconds": 80.0},
+    ]
+    totals = _totals_of(records)
+
+    assert totals["healable_seconds"] == 200.0, "detect-only must still expose the gap rate"
+    assert totals["healed_seconds"] == 0.0, "nothing was minted, so nothing was healed -- keep that honest"
+
+
+def test_healable_does_not_double_count_when_a_would_mint_hour_is_later_minted() -> None:
+    """The flip to --mint re-ledgers the same hour. One gap, not two."""
+    records = [
+        {"state": "would_mint", "pair": "BTC/EUR", "kind": "book", "hour": "2026-07-14T02:00:00+00:00", "healed_seconds": 120.0},
+        {"state": "minted", "pair": "BTC/EUR", "kind": "book", "hour": "2026-07-14T02:00:00+00:00", "healed_seconds": 120.0},
+    ]
+    totals = _totals_of(records)
+
+    assert totals["healable_seconds"] == 120.0, "the same hour measured twice is still one gap"
+    assert totals["healed_seconds"] == 120.0, "it WAS minted, so it was genuinely healed"

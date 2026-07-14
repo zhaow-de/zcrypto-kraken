@@ -354,6 +354,10 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
         'zcrypto_reconcile_source_lag_seconds{source="secondary"}',
         "zcrypto_reconcile_spliced_hours_total",
         "zcrypto_reconcile_union_hours_total",
+        # `healable` is the gap RATE, and it must be non-zero in detect-only: `healed` counts only
+        # minted hours, and minting stays off for the whole T0039 soak, so the degrading-primary
+        # alarm would be pinned at 0 exactly when it is most needed.
+        "zcrypto_reconcile_healable_gap_seconds_total",
         "zcrypto_reconcile_healed_gap_seconds_total",
         "zcrypto_reconcile_residual_gap_seconds_total",
         'zcrypto_reconcile_trade_deficit_rows_total{host="primary"}',
@@ -486,3 +490,44 @@ def test_a_non_monotonic_source_segment_is_reported_not_sorted(tmp_path, monkeyp
     assert [(r["pair"], r["hour"]) for r in failed] == [("BTC/EUR", H.isoformat())]
     # the healthy hour after it was still reconciled — one bad segment is not a cycle-wide outage
     assert _seg_path(rec, "BTC/EUR", "book", H + timedelta(hours=1)).exists()
+
+
+def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
+    """An empty mirror (no finals at all) has +Inf lag, and it MUST be spelled the Prometheus way.
+
+    `_lag` returns math.inf for a mirror with zero hours, and the exporter's own comment says that
+    "+Inf trips the source-lag rule". But an f-string renders math.inf as the literal `inf`, which the
+    Prometheus text format does not accept -- and node-exporter's textfile collector rejects the WHOLE
+    file on one bad line, so a single infinite lag would drop EVERY zcrypto_reconcile_* series for that
+    scrape. Reachable at cold bring-up (a mirror that exists but has not committed a final yet) or a
+    total loss on one host -- exactly when source-lag most needs to fire.
+    """
+    import math
+
+    from cli.archive.command import _write_textfile
+
+    out = tmp_path / "reconcile.prom"
+    _write_textfile(
+        out,
+        now=SETTLED,
+        totals=dict.fromkeys(
+            (
+                "spliced_hours",
+                "union_hours",
+                "healed_seconds",
+                "healable_seconds",
+                "residual_seconds",
+                "deficit_primary",
+                "deficit_secondary",
+                "dedup_rows",
+            ),
+            0.0,
+        ),
+        lags={"primary": math.inf, "secondary": 100.0},
+    )
+    text = out.read_text()
+
+    lag_lines = [ln for ln in text.splitlines() if ln.startswith("zcrypto_reconcile_source_lag_seconds{")]
+    assert 'source="primary"} +Inf' in " ".join(lag_lines), f"primary lag not +Inf: {lag_lines}"
+    assert 'source="secondary"} 100.0' in " ".join(lag_lines)
+    assert " inf" not in text.lower(), f"bare 'inf' would break the whole textfile: {text!r}"

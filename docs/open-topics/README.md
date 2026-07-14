@@ -29,6 +29,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0043 — a genuinely lost trades file is invisible when its book sibling survives](T0043-lost-trades-file-with-surviving-book-is-invisible.md) — the `total_loss` fix judges an absent trades hour against its pair's book hour (a quiet pair really does go an hour without a print), which trades a demonstrated false **positive** for a theoretical false **negative**: a trades segment lost on BOTH mirrors while its book survives is now silent, and no other signal in the stack would catch it — continuity.py is book-only by design, and the manifests only verify files that exist (ripe when: any such absence is ever observed, or before the overlay feeds a production consumer).
 
+- [T0044 — correcting the reconcile ledger resets the Prometheus counters](T0044-reconcile-ledger-correction-resets-counters.md) — the reconcile counters are summed from an append-only ledger, so a correction/rebuild DECREASES them and Prometheus reads it as a reset; the two `increase()` alert rules are now guarded with `resets()==0` so a correction can't false-page, but the correction procedure is undocumented and the O(ledger) per-cycle scan is unbounded (ripe when: the ledger needs another correction, or the ~17-min Atom cycle slows).
+
 ### Partially done<a name="partially-done"></a>
 
 - [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations-source decided (option a, free live-only); the OI backfill + harness are autonomous when B2 is picked.

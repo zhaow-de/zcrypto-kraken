@@ -401,3 +401,197 @@ rules:
       severity: critical
     notification_settings:
       receiver: email
+
+  # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C, task 11) -------
+  # Pushed only after the `zcrypto_reconcile_*` series were confirmed VISIBLE in Grafana Cloud. A rule
+  # armed before its metric exists evaluates against nothing and sits silent forever, looking healthy
+  # -- the same class of failure as T0034. Alloy's keep-regex must carry `zcrypto_reconcile_.*` or the
+  # series never leave the NAS (infra/nas/config.alloy).
+
+  - uid: zcrypto-reconcile-exporter-stale
+    title: "Reconciler · exporter stale"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The dead-man for the reconciler itself. Every other rule below reads a metric the reconciler
+      # publishes, so all of them go quiet -- not red -- if it simply stops running. This one inverts
+      # that: it fires on the silence. The textfile is scraped in place, so a dead reconciler leaves the
+      # last value being scraped forever; only the TIMESTAMP reveals it, which is why the gauge exists.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_reconcile_last_success_timestamp_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10800]}  # 3h. The cycle is ~1.2h (the sleep follows the pull+reconcile work), so this is ~2 missed cycles of headroom
+    noDataState: Alerting  # no series at all = the NAS, Alloy, or the reconciler is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "No successful `zcrypto archive reconcile` cycle in over 3h. The reconciler is the only thing that heals primary gaps from the secondary -- while it is down, gaps accumulate unhealed and unmeasured."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-reconcile-residual-gap
+    title: "Reconciler · residual gap increased (permanent loss)"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # PERMANENT LOSS. Residual seconds are silence that NEITHER mirror covered -- both_streams_silent
+      # (the fleet went dark together) or total_loss (the hour is on neither host). No later cycle can
+      # heal it: there is no witness, and L2 is unbackfillable. Any increase at all is worth waking up
+      # for, hence `> 0` rather than a tolerance.
+      #
+      # The counter is derived by SUMMING an append-only ledger, so it normally only grows. The one
+      # thing that DECREASES it is a deliberate ledger correction (e.g. the classifier-bug record purged
+      # with the owner's approval on 2026-07-14, 6261.8 -> 2661.8 s). Prometheus reads that decrease as a
+      # counter reset, and a bare `increase()` would then report the whole post-reset value as fresh
+      # permanent loss -- paging the highest-severity alert in the system on an artifact of a correction.
+      # The `and resets(...) == 0` guard suppresses exactly that: the rule fires only on an increase with
+      # NO reset in the window. A genuine new loss is monotone (no reset) and still fires; a correction
+      # (reset) is silenced for one window. Cost: a real loss in the SAME 1h window as a correction is
+      # delayed until the reset ages out -- rare, bounded, and the dashboard panel shows the trend
+      # regardless. `or on() vector(0)` keeps the healthy state an explicit 0 rather than NoData. See T0044.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: "(increase(zcrypto_reconcile_residual_gap_seconds_total[1h]) > 0 and resets(zcrypto_reconcile_residual_gap_seconds_total[1h]) == 0) or on() vector(0)"
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # the exporter-stale rule above owns "the reconciler is gone"; this one owns loss.
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the both_streams_silent / total_loss records behind it."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-reconcile-source-lag
+    title: "Reconciler · capture mirror lagging"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Per-mirror, so the alert instance names WHICH host went quiet -- `source="primary"` and
+      # `source="secondary"` fire independently. This is dataflow-based and therefore independent of
+      # both hosts' healthchecks.io dead-men: a host can keep pinging while its capture writes nothing.
+      #
+      # Threshold 3h against a measured normal of ~1h: a final only commits after its hour closes and
+      # the NAS pulls hourly, so ~1-2h of lag is the healthy steady state. 3h means a mirror has missed
+      # a whole cycle beyond that.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: max by (source) (zcrypto_reconcile_source_lag_seconds)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10800]}  # 3h
+    noDataState: OK  # owned by the exporter-stale rule above
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "A capture mirror's newest committed final is over 3h old -- that host has stopped producing data, or its pull channel is broken. If it is the SECONDARY, the fleet has no witness and the next primary gap is permanent."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-reconcile-healable-gap-rate
+    title: "Reconciler · primary gap rate high (degrading host)"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The degrading-primary detector, and T0003's outstanding gap-rate-alert item.
+      #
+      # A primary that is quietly falling apart -- reconnecting constantly, dropping seconds at a time --
+      # trips NOTHING else: every gap is healed by the secondary, so residual stays flat; it keeps
+      # pinging, so its dead-man stays green; it keeps producing finals, so source-lag stays low. The
+      # RATE at which it needs healing is the only thing that reveals it.
+      #
+      # Reads `healable`, not `healed`: minting is OFF for the whole T0039 soak, so `healed_gap_seconds`
+      # (minted only) is pinned at 0 exactly when this signal is most needed. `healable` counts the
+      # seconds the secondary WITNESSED and could cover, in both modes.
+      #
+      # 600s/24h is a starting threshold, not a measured one: ~10 minutes of primary silence a day that
+      # the secondary had to cover. T0039's soak recalibrates it from the real cross-host distribution --
+      # until then treat a firing as "look at the ledger", not as a verdict.
+      #
+      # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule, and MORE so
+      # here: this window is 24h, so without the guard a ledger correction would false-page for a full
+      # day. A rebuild of the ledger resets this counter too. See T0044.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: "(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]) > 0 and resets(zcrypto_reconcile_healable_gap_seconds_total[24h]) == 0) or on() vector(0)"
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [600]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The primary needed more than 10 minutes of healing in the last 24h. Every gap was covered, so nothing else fires -- but a host that needs this much healing is degrading. Check the reconcile ledger's would_mint/minted records for the pattern."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email

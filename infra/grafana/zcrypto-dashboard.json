@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "zcrypto-main",
-  "title": "zcrypto — Gate + NAS",
+  "title": "zcrypto — Data Pipeline Health",
   "description": "The one canonical zcrypto dashboard (spec 00049, Role B / Task 4). Rows are namespaced (Gate · ..., NAS · ...) so a later VPS telemetry increment (T0020) can add its own namespaced rows to this same file without collision.",
   "tags": [
     "zcrypto",
@@ -11,7 +11,7 @@
   "schemaVersion": 39,
   "version": 0,
   "editable": true,
-  "graphTooltip": 0,
+  "graphTooltip": 2,
   "fiscalYearStartMonth": 0,
   "liveNow": false,
   "links": [],
@@ -481,6 +481,363 @@
         "tooltip": {
           "mode": "multi"
         }
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Reconciler · Redundant capture & gap healing",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "panels": []
+    },
+    {
+      "id": 301,
+      "type": "stat",
+      "title": "Permanent loss (residual)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Silence NEITHER mirror covered. Unhealable and unbackfillable -- it can only grow. Any increase pages.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_residual_gap_seconds_total",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 302,
+      "type": "stat",
+      "title": "Healable gap (24h)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Primary silence the secondary witnessed and could cover, last 24h. Non-zero in DETECT-ONLY too -- the degrading-primary signal, and the only thing that reveals a host whose every gap is quietly healed.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_healable_gap_seconds_total[24h])",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 303,
+      "type": "stat",
+      "title": "Primary mirror lag",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Age of the primary mirror's newest committed final. ~1-2h is the healthy steady state.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_source_lag_seconds{source=\"primary\"}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10800
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 304,
+      "type": "stat",
+      "title": "Secondary mirror lag",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Age of the SECONDARY mirror's newest final. If this climbs the fleet has no witness and the next primary gap is permanent -- a redundant stream that can die silently is not redundancy.",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_source_lag_seconds{source=\"secondary\"}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10800
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 305,
+      "type": "timeseries",
+      "title": "Gap seconds — healable vs permanent",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "The two outcomes of a primary gap. Watch the RATIO: a primary falling apart shows a rising healable line while residual stays flat -- and nothing else in the stack would tell you.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_healable_gap_seconds_total[1h])",
+          "refId": "A",
+          "legendFormat": "healable (secondary covered it)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_residual_gap_seconds_total[1h])",
+          "refId": "B",
+          "legendFormat": "residual (PERMANENT loss)"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 306,
+      "type": "timeseries",
+      "title": "Reconcile output (hours)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Hours actually written to the healed overlay. Flat at zero during the T0039 soak BY DESIGN -- reconcile is detect-only until the soak pins --min-gap-seconds. If these rise before that flip, minting got enabled.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_spliced_hours_total",
+          "refId": "A",
+          "legendFormat": "spliced (book)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_union_hours_total",
+          "refId": "B",
+          "legendFormat": "union (trades)"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
       }
     }
   ],
