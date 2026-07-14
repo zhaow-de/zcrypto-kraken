@@ -1,0 +1,488 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import polars as pl
+import pytest
+from typer.testing import CliRunner
+
+from cli.__main__ import app
+from cli.archive import command
+from cli.archive.pull import verify_tree
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
+
+H = datetime(2026, 7, 16, 9, tzinfo=UTC)
+SETTLED = H + timedelta(hours=2)  # the earliest `now` at which hour H is considered
+LATE = H + timedelta(hours=6)  # past the late deadline: a secondary-only hour may be minted
+PAIRS = ("BTC/EUR", "ETH/EUR")
+
+
+# --- fixtures: real segment trees, real parquet, real sidecars ------------------------------------
+
+
+def _seg_path(root: Path, pair: str, kind: str, hour: datetime) -> Path:
+    base, quote = pair.split("/")
+    return root / base / quote / kind / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}" / f"{hour:%H}.parquet"
+
+
+def _write(root: Path, pair: str, kind: str, hour: datetime, frame: pl.DataFrame) -> Path:
+    path = _seg_path(root, pair, kind, hour)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.write_parquet(path, compression="zstd")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    path.with_name(path.name + ".sha256").write_text(f"{digest}  {path.name}\n")
+    return path
+
+
+def _book(pair: str, hour: datetime, rows: list[tuple[float, str]]) -> pl.DataFrame:
+    """rows = [(offset_seconds, type)] — one wire message per row."""
+    return pl.DataFrame(
+        {
+            "ts": [hour + timedelta(seconds=o) for o, _ in rows],
+            "symbol": [pair] * len(rows),
+            "type": [t for _, t in rows],
+            "side": ["bid"] * len(rows),
+            "price": [float(o) for o, _ in rows],
+            "qty": [1.0] * len(rows),
+            "checksum": [0] * len(rows),
+        },
+        schema=BOOK_SCHEMA,
+    )
+
+
+def _trades(pair: str, hour: datetime, ids: list[int]) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "ts": [hour + timedelta(seconds=i) for i in ids],
+            "symbol": [pair] * len(ids),
+            "side": ["buy"] * len(ids),
+            "price": [float(i) for i in ids],
+            "qty": [1.0] * len(ids),
+            "ord_type": ["limit"] * len(ids),
+            "trade_id": ids,
+        },
+        schema=TRADE_SCHEMA,
+    )
+
+
+def _dense(seconds: range = range(0, 3600, 10)) -> list[tuple[float, str]]:
+    """A healthy hour: a book message every 10 s, well under any threshold."""
+    return [(float(s), "update") for s in seconds]
+
+
+def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
+    pri, sec, rec = tmp_path / "primary", tmp_path / "secondary", tmp_path / "reconciled"
+    for root in (pri, sec):
+        root.mkdir(parents=True, exist_ok=True)
+    return pri, sec, rec
+
+
+def _healthy(pri: Path, sec: Path, hour: datetime, *, pairs: tuple[str, ...] = PAIRS) -> None:
+    """Both hosts recording both pairs, no gaps anywhere."""
+    for pair in pairs:
+        _write(pri, pair, "book", hour, _book(pair, hour, _dense()))
+        _write(sec, pair, "book", hour, _book(pair, hour, _dense(range(3, 3600, 10))))
+
+
+def _plant_primary_gap(pri: Path, sec: Path, hour: datetime, pair: str = "BTC/EUR") -> None:
+    """The primary goes silent 600 s -> 1200 s; the secondary keeps updating through it."""
+    quiet = [s for s in range(0, 3600, 10) if not 600 < s < 1200]
+    _write(pri, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in quiet]))
+    _write(sec, pair, "book", hour, _book(pair, hour, _dense(range(3, 3600, 10))))
+
+
+def _run(args: list[str], *, now: datetime, monkeypatch) -> object:
+    monkeypatch.setattr(command, "_utc_now", lambda: now)
+    return CliRunner().invoke(app, ["archive", "reconcile", *args])
+
+
+def _ledger(rec: Path) -> list[dict]:
+    path = rec / "reconcile-ledger.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _states(rec: Path) -> list[str]:
+    return [r["state"] for r in _ledger(rec)]
+
+
+def _series(textfile: Path) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for line in textfile.read_text().splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        name, _, value = line.rpartition(" ")
+        out[name] = float(value)
+    return out
+
+
+# --- the default: detect-only ---------------------------------------------------------------------
+
+
+def test_detect_only_is_the_default_and_mints_nothing(tmp_path, monkeypatch):
+    """The load-bearing default. `--min-gap-seconds` is not yet validated cross-host (T0039): the
+    measured single-host max natural quiescence is 14.78 s and one secondary update row is enough to
+    witness, so a coalescing artifact could trip a phantom splice — an unaudited data swap into an
+    unbackfillable archive. Detect-only ledgers what it WOULD do and writes no parquet."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    result = _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert list(rec.rglob("*.parquet")) == []  # nothing minted
+    would = [r for r in _ledger(rec) if r["state"] == "would_mint"]
+    assert [(r["pair"], r["kind"]) for r in would] == [("BTC/EUR", "book")]
+    assert would[0]["healed_seconds"] == pytest.approx(600.0)  # 600 -> 1200, the covered silence
+    assert would[0]["gaps_healed"][0]["seconds"] == pytest.approx(600.0)
+
+
+def test_mint_writes_the_healed_hour_into_the_overlay(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    final = _seg_path(rec, "BTC/EUR", "book", H)
+    assert final.exists()
+    assert [p.name for p in sorted(rec.rglob("*.parquet"))] == ["09.parquet"]  # only the gappy pair
+    assert verify_tree(rec, now=SETTLED).failed == ()  # the overlay verifies like a raw mirror
+    provenance = json.loads(final.with_name("09.provenance.json").read_text())
+    assert [b["source"] for b in provenance["blocks"]] == ["primary", "secondary", "primary"]
+    assert _states(rec) == ["minted"]
+
+
+def test_a_detect_only_rerun_never_re_ledgers_the_same_hour(tmp_path, monkeypatch):
+    """The ledger is the counters' backing store AND detect-only's only output. Re-appending the same
+    `would_mint` every cycle would inflate every cumulative counter by up to --window-hours and bias
+    T0039's soak distribution toward the hours that sat in the window longest."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    for _ in range(3):
+        assert _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _states(rec) == ["would_mint"]
+
+
+def test_a_mint_rerun_is_a_no_op(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    before = _seg_path(rec, "BTC/EUR", "book", H).read_bytes()
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert _seg_path(rec, "BTC/EUR", "book", H).read_bytes() == before
+    assert _states(rec) == ["minted"]
+
+
+def test_a_soaked_would_mint_hour_still_mints_when_the_flag_flips(tmp_path, monkeypatch):
+    """T0039's end state: the soak ledgers `would_mint`, the threshold is pinned, the operator flips
+    to --mint. Hours still inside the window must be healed, not skipped as already-decided."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert _seg_path(rec, "BTC/EUR", "book", H).exists()
+    assert _states(rec) == ["would_mint", "minted"]
+
+
+# --- the settle rule ------------------------------------------------------------------------------
+
+
+def test_an_hour_younger_than_the_settle_delay_is_not_considered(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    # 10:59 — hour 09 finalized at 10:00 but the pull cycle that carries it has not run yet.
+    result = _run([str(pri), str(sec), str(rec)], now=H + timedelta(hours=1, minutes=59), monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert _ledger(rec) == []
+
+
+def test_a_missing_primary_hour_waits_for_the_late_deadline_then_mints(tmp_path, monkeypatch):
+    """Before the deadline the primary's file may still be in flight — minting a full-secondary hour
+    would shadow primary data that arrives an hour later. Past it, nothing arriving can add coverage."""
+    pri, sec, rec = _roots(tmp_path)
+    for hour in (H - timedelta(hours=1), H + timedelta(hours=1)):
+        _healthy(pri, sec, hour)  # so the absent hour is not a total_loss: the secondary HAS it
+    _healthy(pri, sec, H, pairs=("ETH/EUR",))
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, _dense()))  # secondary only
+
+    early = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    assert early.exit_code == 0
+    assert not _seg_path(rec, "BTC/EUR", "book", H).exists()
+    assert _ledger(rec) == []
+
+    late = _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
+    assert late.exit_code == 0
+    final = _seg_path(rec, "BTC/EUR", "book", H)
+    assert final.exists()
+    provenance = json.loads(final.with_name("09.provenance.json").read_text())
+    assert [b["source"] for b in provenance["blocks"]] == ["secondary"]  # the whole hour
+    assert pl.read_parquet(final).height == 360
+
+
+# --- correlated loss: unconditional, never spliced -------------------------------------------------
+
+
+def test_both_streams_silent_is_ledgered_paged_and_never_minted(tmp_path, monkeypatch):
+    """The case the witness-based detector structurally cannot see: when BOTH streams are dark there
+    is nothing to witness with. Every pair, both hosts, the same window — at depth 100 across the
+    top-10 that has no benign explanation. Permanent loss: ledger it, book it as residual, never
+    splice it (a correlated event hits every host at the same exchange event)."""
+    pri, sec, rec = _roots(tmp_path)
+    dark = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
+    for pair in PAIRS:
+        _write(pri, pair, "book", H, _book(pair, H, dark))
+        _write(sec, pair, "book", H, _book(pair, H, dark))
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert list(rec.rglob("*.parquet")) == []  # NEVER spliced
+    silent = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert len(silent) == 1
+    assert silent[0]["windows"][0]["seconds"] == pytest.approx(610.0)
+    assert silent[0]["residual_seconds"] == pytest.approx(1220.0)  # 610 s x 2 dark book streams
+
+
+def test_one_pair_going_quiet_alone_is_never_both_streams_silent(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    quiet = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, quiet))
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, quiet))
+
+    result = _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert "both_streams_silent" not in _states(rec)  # ETH ticked right through it
+
+
+def test_an_hour_absent_from_both_mirrors_is_a_total_loss(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H - timedelta(hours=1))
+    _healthy(pri, sec, H + timedelta(hours=1))  # H itself exists nowhere
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert list(rec.rglob("*.parquet")) == []
+    lost = [r for r in _ledger(rec) if r["state"] == "total_loss"]
+    assert {(r["pair"], r["kind"]) for r in lost} == {(p, "book") for p in PAIRS}
+    assert all(r["hour"] == H.isoformat() for r in lost)
+    assert all(r["residual_seconds"] == 3600.0 for r in lost)
+    # and the hour is NOT double-booked as both_streams_silent: no file exists to be dark
+    assert "both_streams_silent" not in _states(rec)
+
+
+def test_the_hours_before_a_pairs_first_capture_are_not_a_total_loss(tmp_path, monkeypatch):
+    """Adding a pair to the universe must not page 46 permanent-loss alarms for the hours of the
+    window that predate its first capture — nor book them into a counter that cannot be walked back."""
+    pri, sec, rec = _roots(tmp_path)
+    for hour in (H, H + timedelta(hours=1)):
+        _healthy(pri, sec, hour, pairs=("BTC/EUR",))
+    _healthy(pri, sec, H + timedelta(hours=1), pairs=("ETH/EUR",))  # ETH starts an hour late
+
+    result = _run([str(pri), str(sec), str(rec)], now=LATE, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert _states(rec) == []
+
+
+# --- trades ---------------------------------------------------------------------------------------
+
+
+def test_a_primary_trade_deficit_is_unioned_and_a_secondary_one_is_only_a_qa_signal(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _write(pri, "BTC/EUR", "trades", H, _trades("BTC/EUR", H, [1, 2, 5]))
+    _write(sec, "BTC/EUR", "trades", H, _trades("BTC/EUR", H, [1, 2, 3, 4, 5]))
+    _write(pri, "ETH/EUR", "trades", H, _trades("ETH/EUR", H, [7, 8, 9]))
+    _write(sec, "ETH/EUR", "trades", H, _trades("ETH/EUR", H, [7, 8]))  # the SECONDARY is deficient
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    btc = _seg_path(rec, "BTC/EUR", "trades", H)
+    assert pl.read_parquet(btc)["trade_id"].to_list() == [1, 2, 3, 4, 5]
+    assert not _seg_path(rec, "ETH/EUR", "trades", H).exists()  # a secondary deficit never mints
+    by_pair = {(r["pair"], r["kind"]): r for r in _ledger(rec)}
+    assert by_pair[("BTC/EUR", "trades")]["state"] == "minted"
+    assert by_pair[("BTC/EUR", "trades")]["trades_added"] == 2
+    assert by_pair[("ETH/EUR", "trades")]["state"] == "trade_deficit"
+    assert by_pair[("ETH/EUR", "trades")]["trades_secondary_deficit"] == 1
+
+
+# --- the exporter ---------------------------------------------------------------------------------
+
+
+def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+    _write(pri, "BTC/EUR", "trades", H, _trades("BTC/EUR", H, [1, 2, 5]))
+    _write(sec, "BTC/EUR", "trades", H, _trades("BTC/EUR", H, [1, 2, 3, 4, 5]))
+    out = tmp_path / "textfile" / "reconcile.prom"
+    out.parent.mkdir()
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(out)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    series = _series(out)
+    assert set(series) == {
+        "zcrypto_reconcile_last_success_timestamp_seconds",
+        'zcrypto_reconcile_source_lag_seconds{source="primary"}',
+        'zcrypto_reconcile_source_lag_seconds{source="secondary"}',
+        "zcrypto_reconcile_spliced_hours_total",
+        "zcrypto_reconcile_union_hours_total",
+        "zcrypto_reconcile_healed_gap_seconds_total",
+        "zcrypto_reconcile_residual_gap_seconds_total",
+        'zcrypto_reconcile_trade_deficit_rows_total{host="primary"}',
+        'zcrypto_reconcile_trade_deficit_rows_total{host="secondary"}',
+        "zcrypto_reconcile_trade_dedup_rows_total",
+    }
+    assert series["zcrypto_reconcile_last_success_timestamp_seconds"] == SETTLED.timestamp()
+    assert series["zcrypto_reconcile_spliced_hours_total"] == 1.0
+    assert series["zcrypto_reconcile_union_hours_total"] == 1.0
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(600.0)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == 0.0
+    assert series['zcrypto_reconcile_trade_deficit_rows_total{host="primary"}'] == 2.0
+    # both mirrors hold hour 09; `now` is 11:00 -> the newest final is 2 h old
+    assert series['zcrypto_reconcile_source_lag_seconds{source="primary"}'] == 7200.0
+    assert series['zcrypto_reconcile_source_lag_seconds{source="secondary"}'] == 7200.0
+    assert list(out.parent.iterdir()) == [out]  # no .tmp left behind
+
+
+def test_a_half_written_textfile_is_never_published(tmp_path, monkeypatch):
+    """A textfile is scraped in place: a partial write is scraped as garbage. The publish is a rename
+    over a fully-written temp file in the same directory, so a scrape sees the old file or the new
+    one, never half of either."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    out = tmp_path / "reconcile.prom"
+    out.write_text("zcrypto_reconcile_last_success_timestamp_seconds 1\n")
+
+    def _boom(self, *args, **kwargs):
+        raise OSError("disk full mid-write")
+
+    monkeypatch.setattr(command.Path, "write_text", _boom)  # the temp write dies half way
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(out)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1
+    assert out.read_text() == "zcrypto_reconcile_last_success_timestamp_seconds 1\n"  # the old one stands
+
+
+def test_the_counters_are_cumulative_across_runs(tmp_path, monkeypatch):
+    """`_total` is a Prometheus COUNTER and the reconciler is a one-shot process: the only state it
+    has is the ledger. A run that exported just its own cycle's numbers would reset the counter to 0
+    on the next quiet hour — Prometheus reads that as a restart, and `increase()` then invents a
+    permanent-loss page out of nothing. Totals are therefore derived from the whole ledger."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+    out = tmp_path / "reconcile.prom"
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(out)], now=SETTLED, monkeypatch=monkeypatch)
+    assert _series(out)["zcrypto_reconcile_spliced_hours_total"] == 1.0
+
+    # a later, entirely clean cycle: the counter must HOLD, not reset to this cycle's zero
+    later = H + timedelta(hours=3)
+    _healthy(pri, sec, H + timedelta(hours=1))
+    _run(
+        [str(pri), str(sec), str(rec), "--mint", "--textfile", str(out)],
+        now=later + timedelta(hours=2),
+        monkeypatch=monkeypatch,
+    )
+    series = _series(out)
+    assert series["zcrypto_reconcile_spliced_hours_total"] == 1.0
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(600.0)
+
+
+def test_a_mirror_with_no_finals_at_all_reports_infinite_lag(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H, pairs=("BTC/EUR",))
+    (sec / "BTC" / "EUR" / "book" / "2026" / "07" / "16" / "09.parquet").unlink()
+    out = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(out)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    assert _series(out)['zcrypto_reconcile_source_lag_seconds{source="secondary"}'] == float("inf")
+
+
+# --- exit codes -----------------------------------------------------------------------------------
+
+
+def test_an_absent_mirror_exits_two(tmp_path, monkeypatch):
+    """Transport class. Silently treating an absent secondary mirror as "no witness available" would
+    let the reconciler report all-clean forever while the redundancy is simply not there."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+
+    assert _run([str(pri), str(tmp_path / "nope"), str(rec)], now=SETTLED, monkeypatch=monkeypatch).exit_code == 2
+    assert _run([str(tmp_path / "nope"), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch).exit_code == 2
+
+
+def test_an_unreadable_segment_exits_one_and_never_mints_that_hour(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+    _seg_path(pri, "BTC/EUR", "book", H).write_bytes(b"not a parquet file")
+    out = tmp_path / "reconcile.prom"
+
+    result = _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(out)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1
+    assert not _seg_path(rec, "BTC/EUR", "book", H).exists()
+    assert _states(rec) == ["failed"]
+    assert not out.exists()  # a failed cycle publishes no textfile: last_success goes stale -> page
+
+
+def test_a_corrupt_ledger_line_exits_one_and_never_under_counts(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    rec.mkdir(parents=True)
+    (rec / "reconcile-ledger.jsonl").write_text('{"state": "minted"}\nnot json at all\n')
+
+    result = _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1
+
+
+def test_a_non_monotonic_source_segment_is_reported_not_sorted(tmp_path, monkeypatch):
+    """`_message_ts` refuses out-of-order input rather than sorting it (L2 rows carry absolute
+    quantities). The command must turn that into one ledgered failure + exit 1, not a crash that
+    abandons the other 47 hours of the window."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _healthy(pri, sec, H + timedelta(hours=1))
+    _plant_primary_gap(pri, sec, H + timedelta(hours=1))
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(0, "update"), (900, "update"), (10, "update")]))
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1
+    failed = [r for r in _ledger(rec) if r["state"] == "failed"]
+    assert [(r["pair"], r["hour"]) for r in failed] == [("BTC/EUR", H.isoformat())]
+    # the healthy hour after it was still reconciled — one bad segment is not a cycle-wide outage
+    assert _seg_path(rec, "BTC/EUR", "book", H + timedelta(hours=1)).exists()
