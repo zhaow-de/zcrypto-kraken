@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
-from cli.archive.reconcile import Gap, find_book_gaps, secondary_covers
+from cli.archive.reconcile import Gap, find_book_gaps, secondary_covers, splice_book
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
 
@@ -81,3 +81,34 @@ def test_secondary_covers_requires_an_update_row_strictly_inside():
     assert secondary_covers(_book([]), gap) is False
     # boundary rows are NOT inside (strict inequalities keep same-ts wire messages intact)
     assert secondary_covers(_book([(0, "update"), (120, "update")]), gap) is False
+
+
+def test_splice_orders_blocks_primary_secondary_primary_and_never_sorts():
+    primary = _book([(0, "update"), (120, "update")])
+    secondary = _book([(0, "update"), (40, "update"), (80, "update"), (120, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30)
+    blocks = splice_book(primary, secondary, gaps)
+    assert [b.source for b in blocks] == ["primary", "secondary", "primary"]
+    out = pl.concat([b.frame for b in blocks])
+    # every primary row survives, the secondary fills only the window, nothing is reordered
+    assert out["ts"].to_list() == [H, H + timedelta(seconds=40), H + timedelta(seconds=80), H + timedelta(seconds=120)]
+
+
+def test_a_shared_ts_wire_message_is_never_split_across_blocks():
+    # two rows share ts=0 (one message, two levels). The primary block must keep BOTH.
+    primary = pl.concat([_book([(0, "update"), (0, "update")]), _book([(120, "update")])])
+    secondary = _book([(0, "update"), (60, "update"), (120, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30)
+    blocks = splice_book(primary, secondary, gaps)
+    assert blocks[0].frame.height == 2  # both level-rows of the ts=0 message
+    assert blocks[1].source == "secondary"
+    assert blocks[1].frame["ts"].to_list() == [H + timedelta(seconds=60)]
+
+
+def test_a_missing_primary_hour_becomes_one_full_secondary_block():
+    primary = _book([])
+    secondary = _book([(1, "update"), (3599, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30)
+    blocks = splice_book(primary, secondary, gaps)
+    assert [b.source for b in blocks] == ["secondary"]
+    assert blocks[0].frame.height == 2

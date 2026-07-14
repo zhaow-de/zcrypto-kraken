@@ -79,3 +79,62 @@ def find_book_gaps(primary: pl.DataFrame, secondary: pl.DataFrame, *, min_gap_se
         if secondary_covers(secondary, gap):
             gaps.append(gap)
     return gaps
+
+
+@dataclass(frozen=True)
+class Block:
+    """One contiguous run of rows from one source. Blocks concatenate in list order — never sorted."""
+
+    source: str
+    frame: pl.DataFrame
+    from_ts: datetime | None
+    to_ts: datetime | None
+
+
+def _span(frame: pl.DataFrame) -> tuple[datetime | None, datetime | None]:
+    if frame.height == 0:
+        return None, None
+    return frame["ts"].min(), frame["ts"].max()
+
+
+def _block(source: str, frame: pl.DataFrame) -> Block:
+    lo, hi = _span(frame)
+    return Block(source=source, frame=frame, from_ts=lo, to_ts=hi)
+
+
+def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap]) -> list[Block]:
+    """Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
+
+    Boundaries are **strict** on the secondary side (`start < ts < end`) and **inclusive** on the
+    primary side (`ts <= start`, `ts >= end`), so the rows of one wire message — which all share a
+    `ts` — always stay together in the same block. Rows are concatenated in source order and NEVER
+    sorted: L2 updates carry absolute quantities, so reordering within a `ts` changes the book.
+    """
+    if not gaps:
+        return [_block("primary", primary)] if primary.height else []
+
+    if primary.height == 0:
+        # The primary is wholly absent for the hour, so `gaps` is the single degenerate gap that
+        # `find_book_gaps` builds from the secondary's OWN first/last message (see its `covered`
+        # comment) -- there is no primary wire message at either edge to protect from splitting, so
+        # the strict secondary-side boundary below would wrongly exclude those two rows, which are
+        # the only ones that exist. Take the secondary verbatim, in its own order.
+        return [_block("secondary", secondary)] if secondary.height else []
+
+    blocks: list[Block] = []
+    cursor: datetime | None = None
+    for gap in gaps:
+        head = primary.filter(pl.col("ts") <= gap.start)
+        if cursor is not None:
+            head = head.filter(pl.col("ts") >= cursor)
+        if head.height:
+            blocks.append(_block("primary", head))
+        middle = secondary.filter((pl.col("ts") > gap.start) & (pl.col("ts") < gap.end))
+        if middle.height:
+            blocks.append(_block("secondary", middle))
+        cursor = gap.end
+
+    tail = primary.filter(pl.col("ts") >= cursor) if cursor is not None else primary
+    if tail.height:
+        blocks.append(_block("primary", tail))
+    return blocks
