@@ -78,6 +78,16 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
   still breached). So a breach inside a ≥7-day clean run now both **pages** *and* shows in the
   automated `<0.1 %` gap-time bar. Six executed tests (`tests/test_capture_gap_monitor.py`,
   `tests/test_capture_command.py`).
+- **The watermark loop itself can no longer die silently.** Adversarial verification executed a
+  backward wall-clock step (chrony makestep) across an open breach window: `end_watermark_gap`
+  raised `CaptureError` inside `_disk_watermark_loop` — a task nothing awaits until shutdown — so
+  polling stopped for the life of the process (`breached` froze, later real breaches never withheld
+  the ping: the same silent death, reintroduced), and the corpse's exception re-raised in `_run`'s
+  shutdown ahead of the writer-close loop. Fixed three ways, each with an executed regression test:
+  `end_watermark_gap` clamps a negative window to zero instead of raising; the loop survives any
+  exception from its body (a flaky mount's `OSError` out of `disk_usage` included) and keeps
+  polling; and `_run`'s shutdown awaits log-and-continue on a task's non-`CancelledError` corpse so
+  every writer still flushes on the way out.
 
 **Not yet deployed:** the fix ships with the next capture-image rollout (there is ~135 days of runway on
 the disk, and the rollout is needed for Role C anyway).
