@@ -4,7 +4,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -160,6 +160,51 @@ def test_capture_propagates_consumer_crash_even_with_duration_set(tmp_path, monk
     assert isinstance(result.exception, RuntimeError)
 
 
+class _CrashAfterDataFakeClient:
+    """Yields one trade (which lands in a writer's buffer) and then blows up."""
+
+    def __init__(self, pairs, depth):
+        pass
+
+    async def stream(self):
+        yield {
+            "channel": "trade",
+            "type": "update",
+            "data": [
+                {
+                    "symbol": "BTC/EUR",
+                    "side": "buy",
+                    "price": 100.5,
+                    "qty": 0.01,
+                    "ord_type": "market",
+                    "trade_id": 7,
+                    "timestamp": "2026-07-08T14:00:01.000000Z",
+                }
+            ],
+        }
+        raise RuntimeError("boom")
+
+    async def resubscribe_book(self, pair):
+        pass
+
+
+def test_a_consumer_crash_still_flushes_every_writer_at_shutdown(tmp_path, monkeypatch):
+    # T0032 corollary: a task that died with a non-CancelledError re-raises its corpse's exception
+    # at the shutdown `await task` — pre-fix that escaped `_run`'s finally BEFORE the writer-close
+    # loop, so a crash lost up to flush_rows buffered rows per stream ON TOP of itself. The crash
+    # must still propagate (the supervisor is what restarts capture), but every writer flushes first.
+    monkeypatch.setattr("cli.capture.command.CaptureClient", _CrashAfterDataFakeClient)
+    result = runner.invoke(
+        app,
+        ["capture", "--pairs", "BTC/EUR", "--data-dir", str(tmp_path), "--duration", "5"],
+    )
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)  # the crash still propagates...
+    parts = list((tmp_path / "BTC/EUR" / "trades" / "2026" / "07" / "08").glob("14.part*.parquet"))
+    assert parts, "writer.close() must run at shutdown even when a task died with an exception"
+    assert pl.concat([pl.read_parquet(p) for p in parts])["trade_id"].to_list() == [7]
+
+
 def test_capture_end_to_end_writes_segments_with_fake_client(tmp_path, monkeypatch):
     monkeypatch.setattr("cli.capture.command.CaptureClient", _FakeClient)
     # A not-yet-existing data dir (the realistic first-run case — nothing has provisioned
@@ -305,6 +350,73 @@ def test_disk_watermark_loop_books_the_breach_into_gap_accounting():
     # The breach was booked as gap time (a closed window, so it shows without an `at`), for every pair.
     assert monitor.gap_seconds("BTC/EUR") > 0
     assert monitor.gap_seconds("ETH/EUR") > 0
+
+
+def test_disk_watermark_loop_survives_a_backward_clock_step_across_a_breach(monkeypatch):
+    # T0032: a breach opens; chrony steps the wall clock BACK past the window's start; the disk
+    # clears; then a SECOND real breach. Pre-fix, end_watermark_gap raised on the stepped clock and
+    # the loop task died silently (nothing awaits it until shutdown): watermark.check() never ran
+    # again, breached froze at False, and the dead-man kept pinging green while the second breach
+    # dropped every write — the exact silent death this loop exists to prevent.
+    from cli.capture import command as cmd
+    from cli.capture.gap_monitor import DiskWatermark, GapMonitor
+
+    t = {"now": datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc)}
+
+    class _SteppedClock:
+        @staticmethod
+        def now(tz):
+            return t["now"]
+
+    monkeypatch.setattr(cmd, "datetime", _SteppedClock)
+    monitor = GapMonitor()
+    free = {"v": 10}  # breached from the first tick
+    watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=lambda p: _FakeUsage(free=free["v"]))
+
+    async def drive():
+        task = asyncio.create_task(cmd._disk_watermark_loop(watermark, monitor, 0.01))
+        await asyncio.sleep(0.03)  # the breach window opens at 10:00
+        t["now"] -= timedelta(minutes=2)  # chrony steps the clock back...
+        free["v"] = 10_000  # ...and the disk clears: pre-fix this tick killed the task
+        await asyncio.sleep(0.03)
+        assert not task.done(), "the watermark loop must survive a backward-stepped clock"
+        free["v"] = 10  # the SECOND, real breach
+        await asyncio.sleep(0.03)
+        assert watermark.breached is True  # detected: the dead-man gate withholds the ping (pages)
+        t["now"] += timedelta(seconds=45)  # time passes on the breached disk
+        assert monitor.gap_seconds("BTC/EUR", at=t["now"]) >= 45.0  # and BOOKED into gap accounting
+        task.cancel()
+
+    asyncio.run(drive())
+
+
+def test_disk_watermark_loop_survives_a_failing_usage_probe(monkeypatch):
+    # The same silent-death channel, via the other exit: check() reads the filesystem, and a flaky
+    # mount raising OSError out of disk_usage would kill the loop task just as permanently. Any
+    # exception from the loop body must be logged and survived — polling is the whole point.
+    from cli.capture import command as cmd
+    from cli.capture.gap_monitor import DiskWatermark, GapMonitor
+
+    monitor = GapMonitor()
+    state = {"mode": "raise", "free": 10_000}
+
+    def usage(path):
+        if state["mode"] == "raise":
+            raise OSError("flaky mount")
+        return _FakeUsage(free=state["free"])
+
+    watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=usage)
+
+    async def drive():
+        task = asyncio.create_task(cmd._disk_watermark_loop(watermark, monitor, 0.01))
+        await asyncio.sleep(0.03)  # several ticks raise inside check()...
+        assert not task.done(), "the watermark loop must survive an exception from check()"
+        state.update(mode="ok", free=10)  # ...then a REAL breach
+        await asyncio.sleep(0.03)
+        assert watermark.breached is True  # still detected: polling never stopped
+        task.cancel()
+
+    asyncio.run(drive())
 
 
 # --- T0036: exactly ONE process may write the segment tree ---------------------------------------

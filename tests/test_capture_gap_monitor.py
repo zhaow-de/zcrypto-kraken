@@ -178,6 +178,21 @@ def test_open_watermark_window_counts_as_of_at():
     assert monitor.gap_seconds("BTC/EUR") == 0.0  # without `at`, only closed breach time counts
 
 
+def test_end_watermark_gap_clamps_a_backward_stepped_clock():
+    # A wall clock stepped BACKWARD (chrony makestep, a VM snapshot-restore) across an open breach
+    # window must never raise: end_watermark_gap runs inside _disk_watermark_loop, a task nothing
+    # awaits until shutdown, so an escaping exception silently ENDS watermark polling for the life
+    # of the process — breached freezes, and a later REAL breach goes undetected while the dead-man
+    # pings green (the exact T0032 silent death). The stepped clock cannot measure the window, so
+    # it books zero, closes it, and the next breach is trackable again.
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(120))
+    assert monitor.end_watermark_gap(at=_at(0)) == 0.0  # the clock stepped back past the start: clamped
+    monitor.start_watermark_gap(at=_at(200))  # the window really closed — the NEXT breach books normally
+    assert monitor.end_watermark_gap(at=_at(230)) == 30.0
+    assert monitor.gap_seconds("BTC/EUR") == 30.0
+
+
 @dataclass
 class _FakeUsage:
     free: int

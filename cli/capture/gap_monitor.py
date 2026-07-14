@@ -69,12 +69,17 @@ class GapMonitor:
 
     def end_watermark_gap(self, *, at: datetime) -> float:
         """Close the breach window, accumulating its duration into the global watermark total. Returns
-        the closed window's seconds (0.0 if none was open)."""
+        the closed window's seconds (0.0 if none was open).
+
+        A negative duration — the wall clock stepped BACKWARD across the open window (chrony
+        makestep, a VM snapshot-restore) — is clamped to zero, never raised: this runs inside
+        `_disk_watermark_loop`, a task nothing awaits until shutdown, and an escaping exception
+        silently ends watermark polling for the life of the process. A frozen `breached` means a
+        later REAL breach never withholds the dead-man ping — the exact T0032 silent death.
+        """
         if self._watermark_open is None:
             return 0.0
-        duration = (at - self._watermark_open).total_seconds()
-        if duration < 0:
-            raise CaptureError(f"watermark gap end {at} precedes start {self._watermark_open}")
+        duration = max((at - self._watermark_open).total_seconds(), 0.0)
         self._watermark_seconds += duration
         self._watermark_open = None
         logger.warning("gap end reason=disk_watermark seconds=%.3f", duration)

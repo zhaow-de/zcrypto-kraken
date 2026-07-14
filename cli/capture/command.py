@@ -226,16 +226,23 @@ async def _healthcheck_loop(
 
 async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, interval: int) -> None:
     while True:
-        healthy = watermark.check()
-        # T0032: withholding the dead-man ping PAGES the operator, but the breach's lost time must
-        # also be BOOKED into the exit-bar gap accounting, or the automated <0.1% gap-time bar reads
-        # clean for a window that lost data. Bridge the breach state into GapMonitor's dedicated
-        # watermark window here — both calls are idempotent, so the poll can drive them every tick.
-        now = datetime.now(UTC)
-        if healthy:
-            monitor.end_watermark_gap(at=now)
-        else:
-            monitor.start_watermark_gap(at=now)
+        try:
+            healthy = watermark.check()
+            # T0032: withholding the dead-man ping PAGES the operator, but the breach's lost time must
+            # also be BOOKED into the exit-bar gap accounting, or the automated <0.1% gap-time bar reads
+            # clean for a window that lost data. Bridge the breach state into GapMonitor's dedicated
+            # watermark window here — both calls are idempotent, so the poll can drive them every tick.
+            now = datetime.now(UTC)
+            if healthy:
+                monitor.end_watermark_gap(at=now)
+            else:
+                monitor.start_watermark_gap(at=now)
+        except Exception:
+            # check() reads the filesystem (a flaky mount raises OSError out of disk_usage), and this
+            # task is awaited by NOTHING until shutdown: an escaping exception silently ENDS watermark
+            # polling — `breached` freezes, and a later real breach goes undetected while the dead-man
+            # pings green (the exact T0032 silent death). Log and keep polling.
+            logger.exception("disk watermark check failed — retrying in %ss", interval)
         await asyncio.sleep(interval)
 
 
@@ -283,8 +290,16 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
         for task in (consumer, health, disk_check):
             task.cancel()
         for task in (consumer, health, disk_check):
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # A task that DIED earlier re-raises its corpse's exception here — already surfaced
+                # (or about to be, by the try block's own re-raise). Letting it escape this loop
+                # would skip writer.close() below for all 20 writers, losing up to flush_rows
+                # buffered rows per stream on top of the original failure.
+                logger.exception("background task failed during shutdown")
         for writer in (*book_writers.values(), *trade_writers.values()):
             writer.close()
 
