@@ -88,7 +88,11 @@
       # `prohibit-password` (key-only root break-glass, decided 2026-07-14) is accepted alongside
       # `no`: the gate's substance is that NO password-based access exists anywhere, and key-only
       # root satisfies it. `yes` (password root) still fails.
-      - engine_gate_sshd.stdout is search('(?m)^permitrootlogin (no|prohibit-password)$')
+      # NOTE `sshd -T` normalizes `prohibit-password` to its legacy alias `without-password`, so the
+      # config value and the effective value spell it differently — both must be accepted or this
+      # gate fails on a host that is correctly configured. (A --check run cannot catch this: check
+      # mode never writes sshd_config, so `sshd -T` still reports the OLD value and the gate passes.)
+      - engine_gate_sshd.stdout is search('(?m)^permitrootlogin (no|prohibit-password|without-password)$')
       - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
       # \\b (not \b): assert `that:` expressions unicode-escape the Jinja string literal, so a
       # single \b reaches the regex as backspace (\x08) and silently never matches.
