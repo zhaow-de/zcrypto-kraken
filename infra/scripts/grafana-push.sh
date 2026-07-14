@@ -97,4 +97,50 @@ while IFS= read -r uid; do
   fi
 done <<<"${rule_uids}"
 
+# --- Read the rules back and assert each datasource (T0034) ---------------------------------------
+# The provisioning API accepts a wrong datasourceUid happily and reports health=ok, so a typo or a
+# drifted default silently repoints a rule at grafanacloud-usage / -alert-state-history and it never
+# fires on the data it should. Read every rule we just pushed back and fail if any query node points
+# at a datasource that is neither the prom nor the loki UID we intended.
+echo "grafana-push: verifying datasources on the pushed rules" >&2
+ds_bad=0
+while IFS= read -r uid; do
+  [ -n "${uid}" ] || continue
+  live=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}")
+  # every query node's datasourceUid, excluding the expression node (__expr__)
+  bad=$(jq -r --arg prom "${GRAFANA_PROM_DS_UID}" --arg loki "${GRAFANA_LOKI_DS_UID}" '
+    [.data[].datasourceUid] | map(select(. != "__expr__" and . != $prom and . != $loki)) | .[]
+  ' <<<"${live}")
+  if [ -n "${bad}" ]; then
+    echo "grafana-push: !! ${uid} points at an UNEXPECTED datasource: ${bad}" >&2
+    ds_bad=1
+  fi
+done <<<"${rule_uids}"
+[ "${ds_bad}" = "0" ] || { echo "grafana-push: datasource check FAILED — a rule is pointing at the wrong data (T0034)" >&2; exit 1; }
+
+# --- Prune orphaned rules (T0034) ----------------------------------------------------------------
+# The push upserts but never deletes: a rule removed from alerts.yaml keeps evaluating and emailing
+# forever, and a rule that changed uid leaves the old one live beside the new. List every rule live in
+# OUR folder whose uid is absent from alerts.yaml. Deleting an alert rule is NOT reversible from the
+# repo, so this is DRY-RUN by default: it only reports the orphans. Re-run with GRAFANA_PRUNE=1 to
+# actually delete them (scoped to GRAFANA_ALERT_FOLDER_UID so a rule in another folder is never touched).
+echo "grafana-push: checking for orphaned rules in folder ${GRAFANA_ALERT_FOLDER_UID}" >&2
+all_live=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules")
+orphans=$(jq -r --arg folder "${GRAFANA_ALERT_FOLDER_UID}" --argjson keep "$(jq '[.[].uid]' <<<"${rules_json}")" '
+  .[] | select((.folderUID // .folderUid) == $folder) | select([.uid] | inside($keep) | not) | .uid
+' <<<"${all_live}")
+if [ -z "${orphans}" ]; then
+  echo "grafana-push: no orphaned rules" >&2
+else
+  while IFS= read -r uid; do
+    [ -n "${uid}" ] || continue
+    if [ "${GRAFANA_PRUNE:-0}" = "1" ]; then
+      curl -fsS -X DELETE "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}" >/dev/null
+      echo "grafana-push: DELETED orphaned rule ${uid}" >&2
+    else
+      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 to delete" >&2
+    fi
+  done <<<"${orphans}"
+fi
+
 echo "grafana-push: done"
