@@ -1,0 +1,16 @@
+# Installed by the `capture` Ansible role at /etc/systemd/system/zcrypto-capture-prune.timer —
+# do not hand-edit on the host, edit this file and re-converge instead.
+[Unit]
+Description=Daily prune of aged capture segments (spec 00050 D8)
+
+[Timer]
+# Off the hour boundary (segment rotation), clear of both maintenance windows (21:25 / 22:25 UTC)
+# and of the 4h bar boundaries. The host's timezone is UTC (base role), so this is 03:17 UTC.
+OnCalendar=*-*-* 03:17:00
+# A host that was down at 03:17 prunes on the next boot instead of skipping the day — retention is
+# a disk-capacity guarantee, and the secondary's 50 GB is the binding constraint.
+Persistent=true
+Unit=zcrypto-capture-prune.service
+
+[Install]
+WantedBy=timers.target

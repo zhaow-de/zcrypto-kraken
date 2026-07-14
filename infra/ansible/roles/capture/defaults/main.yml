@@ -12,3 +12,10 @@ capture_log_max_file: "5"
 # Optional healthchecks.io ping URL (the `monitoring` role provisions + supplies this once it
 # lands); empty means the daemon simply skips liveness pings.
 capture_healthcheck_url: ""
+
+# Local retention of committed hour segments, in days (spec 00050 D8, T0032). The durable archive is
+# the NAS mirror — an hourly, hash-verified pull whose worst observed outage is 14 h — so 14 days of
+# local spool is a >= 20x margin over the time an hour needs to reach it. The prune deletes only
+# `<HH>.parquet` finals + their `.sha256` sidecars; never `.part` / `.held` / `.corrupt` (live hour,
+# quarantine, evidence). Raising this is safe; lowering it below a day is not, and the timer refuses.
+capture_retention_days: 14

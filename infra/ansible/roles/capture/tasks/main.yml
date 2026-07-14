@@ -91,3 +91,40 @@
   when: not (ansible_check_mode and not capture_account_known)
   vars:
     capture_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['kraken-capture'] | default(none)) is not none }}"
+
+# --- Segment retention (spec 00050 D8, closes T0032's retention half): a daily timer bounds the
+# host's local spool at `capture_retention_days` of committed hours. The NAS mirror is the durable
+# archive; this disk is not. The script is the load-bearing part — it deletes finals + sidecars and
+# nothing else (never .part / .held / .corrupt) — and is tested directly by tests/test_capture_prune.py.
+- name: install the segment-prune script
+  ansible.builtin.copy:
+    src: zcrypto-capture-prune.sh
+    dest: /usr/local/sbin/zcrypto-capture-prune
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the segment-prune systemd unit
+  ansible.builtin.template:
+    src: zcrypto-capture-prune.service.j2
+    dest: /etc/systemd/system/zcrypto-capture-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: install the segment-prune systemd timer
+  ansible.builtin.copy:
+    src: zcrypto-capture-prune.timer
+    dest: /etc/systemd/system/zcrypto-capture-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+# Only the TIMER is enabled: the service is the oneshot it triggers, and enabling that too would
+# run a prune on every boot.
+- name: enable + start the segment-prune timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-capture-prune.timer
+    daemon_reload: true
+    enabled: true
+    state: started
