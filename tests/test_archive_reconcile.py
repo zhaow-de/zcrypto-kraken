@@ -3,9 +3,10 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
-from cli.archive.reconcile import Gap, find_book_gaps, secondary_covers, splice_book
+from cli.archive.reconcile import Gap, _message_ts, find_book_gaps, secondary_covers, splice_book
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
+HOUR_END = H + timedelta(hours=1)
 
 
 def _book(rows: list[tuple[float, str]]) -> pl.DataFrame:
@@ -75,12 +76,33 @@ def test_an_empty_primary_hour_is_one_whole_hour_gap():
 
 
 def test_secondary_covers_requires_an_update_row_strictly_inside():
-    gap = Gap(start=H, end=H + timedelta(seconds=120), seconds=120.0)
+    gap = Gap(
+        start=H,
+        end=H + timedelta(seconds=120),
+        seconds=120.0,
+        start_is_primary_message=True,
+        end_is_primary_message=True,
+    )
     assert secondary_covers(_book([(60, "update")]), gap) is True
     assert secondary_covers(_book([(60, "snapshot")]), gap) is False
     assert secondary_covers(_book([]), gap) is False
     # boundary rows are NOT inside (strict inequalities keep same-ts wire messages intact)
     assert secondary_covers(_book([(0, "update"), (120, "update")]), gap) is False
+
+
+def test_secondary_covers_is_inclusive_on_a_boundary_that_is_not_a_primary_message():
+    # C2: an hour-boundary / secondary-owned edge belongs to NOBODY. Excluding it would silently
+    # drop the only witness there is, and with it every row of that message.
+    gap = Gap(
+        start=H,
+        end=H + timedelta(seconds=120),
+        seconds=120.0,
+        start_is_primary_message=False,
+        end_is_primary_message=False,
+    )
+    assert secondary_covers(_book([(0, "update")]), gap) is True
+    assert secondary_covers(_book([(120, "update")]), gap) is True
+    assert secondary_covers(_book([(0, "snapshot"), (120, "snapshot")]), gap) is False
 
 
 def test_splice_orders_blocks_primary_secondary_primary_and_never_sorts():
@@ -112,3 +134,141 @@ def test_a_missing_primary_hour_becomes_one_full_secondary_block():
     blocks = splice_book(primary, secondary, gaps)
     assert [b.source for b in blocks] == ["secondary"]
     assert blocks[0].frame.height == 2
+
+
+# --- C1: silence before the first / after the last primary message ----------------------------
+
+
+def test_a_crashed_primary_leaves_a_tail_gap():
+    # THE crash shape: the primary records for 5 minutes, then dies. The rest of the hour is silent
+    # -- there is no "next primary message" to pair with, so consecutive-pairing alone sees nothing.
+    primary = _book([(0, "update"), (150, "update"), (300, "update")])
+    secondary = _book([(0, "update"), (300, "update"), (900, "update"), (3500, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert len(gaps) == 1
+    assert gaps[0].start == H + timedelta(seconds=300)
+    assert gaps[0].end == HOUR_END
+    assert gaps[0].seconds == pytest.approx(3300.0)
+    assert gaps[0].start_is_primary_message is True
+    assert gaps[0].end_is_primary_message is False  # the hour boundary is nobody's message
+
+
+def test_a_late_starting_primary_leaves_a_head_gap():
+    primary = _book([(1800, "update"), (1900, "update")])
+    secondary = _book([(0, "update"), (600, "update"), (1800, "update"), (1900, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert len(gaps) == 1
+    assert gaps[0].start == H
+    assert gaps[0].end == H + timedelta(seconds=1800)
+    assert gaps[0].start_is_primary_message is False
+    assert gaps[0].end_is_primary_message is True
+
+
+def test_a_single_message_hour_yields_both_a_head_and_a_tail_gap():
+    primary = _book([(1800, "update")])
+    secondary = _book([(600, "update"), (1800, "update"), (3000, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert [(g.start, g.end) for g in gaps] == [
+        (H, H + timedelta(seconds=1800)),
+        (H + timedelta(seconds=1800), HOUR_END),
+    ]
+    assert [(g.start_is_primary_message, g.end_is_primary_message) for g in gaps] == [(False, True), (True, False)]
+
+
+def test_a_head_or_tail_gap_still_needs_a_secondary_witness():
+    # The primary crashed at 300 s -- but the secondary is just as silent afterwards, so nothing was
+    # lost: a quiet market must never be "healed".
+    primary = _book([(0, "update"), (300, "update")])
+    secondary = _book([(0, "update"), (300, "update"), (3000, "snapshot")])
+    assert find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END) == []
+
+
+def test_a_healthy_hour_has_no_head_or_tail_gap():
+    # A healthy stream's file begins at :00:00.0x and ends just shy of the next hour: the head and
+    # tail silences are real but far below the threshold, so probing the edges must not fire here.
+    primary = _book([(0.03, "update"), (1800, "update"), (3599.97, "update")])
+    secondary = _book([(0.02, "update"), (1800, "update"), (3599.98, "update")])
+    assert find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END) == []
+
+
+# --- C2: boundary ownership -- the splice must not drop the secondary's edge rows ---------------
+
+
+def test_splicing_a_tail_gap_keeps_every_secondary_row_after_the_crash():
+    primary = _book([(0, "update"), (300, "update")])
+    secondary = _book([(0, "update"), (300, "update"), (900, "update"), (3599, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    blocks = splice_book(primary, secondary, gaps)
+    assert [b.source for b in blocks] == ["primary", "secondary"]
+    out = pl.concat([b.frame for b in blocks])
+    assert out["ts"].to_list() == [
+        H,
+        H + timedelta(seconds=300),  # the primary owns its own last message
+        H + timedelta(seconds=900),
+        H + timedelta(seconds=3599),  # ... and the secondary's last row is NOT dropped
+    ]
+
+
+def test_splicing_a_head_gap_keeps_a_secondary_row_sitting_on_the_hour_boundary():
+    # The hour boundary is not a primary message, so nothing owns it: a strict `>` there would
+    # silently drop every row of the secondary's first message.
+    primary = _book([(1800, "update"), (1900, "update")])
+    secondary = _book([(0, "update"), (600, "update"), (1800, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    blocks = splice_book(primary, secondary, gaps)
+    assert [b.source for b in blocks] == ["secondary", "primary"]
+    out = pl.concat([b.frame for b in blocks])
+    assert out["ts"].to_list() == [
+        H,  # exactly on the hour boundary -- kept
+        H + timedelta(seconds=600),
+        H + timedelta(seconds=1800),  # the primary's own first message, from the primary block
+        H + timedelta(seconds=1900),
+    ]
+
+
+def test_an_absent_primary_hour_with_bounds_yields_every_secondary_row():
+    primary = _book([])
+    secondary = _book([(0, "update"), (1800, "update"), (3599, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert [(g.start, g.end) for g in gaps] == [(H, HOUR_END)]
+    assert (gaps[0].start_is_primary_message, gaps[0].end_is_primary_message) == (False, False)
+    blocks = splice_book(primary, secondary, gaps)
+    assert [b.source for b in blocks] == ["secondary"]
+    assert blocks[0].frame.height == 3  # including the row on the hour boundary itself
+
+
+# --- pinned behaviour: threshold, one-message-many-rows, arrival order --------------------------
+
+
+def test_silence_exactly_at_the_threshold_is_not_a_gap():
+    # The spec's rule is silence STRICTLY GREATER than the threshold.
+    secondary = _book([(0, "update"), (15, "update"), (31, "update")])
+    at = _book([(0, "update"), (30, "update")])
+    assert find_book_gaps(at, secondary, min_gap_seconds=30) == []
+    over = _book([(0, "update"), (30.001, "update")])
+    gaps = find_book_gaps(over, secondary, min_gap_seconds=30)
+    assert len(gaps) == 1
+    assert gaps[0].seconds == pytest.approx(30.001)
+
+
+def test_message_ts_collapses_the_level_rows_of_one_wire_message():
+    # One Kraken message carries many book levels: many ROWS, one `ts`. Gap detection counts
+    # messages, not rows -- three levels of one message are not three messages.
+    frame = _book([(0, "update"), (0, "update"), (0, "update"), (120, "update"), (120, "update")])
+    assert _message_ts(frame) == [H, H + timedelta(seconds=120)]
+
+
+def test_message_ts_preserves_arrival_order_and_never_sorts():
+    # PINNED HAZARD, not a feature: `ts` is assumed non-decreasing (empirically true, T0037) but is
+    # NOT enforced, and sorting is forbidden (L2 rows carry absolute quantities). On out-of-order
+    # input the detector fabricates one wide gap that SWALLOWS the interleaved primary message --
+    # the splice below drops the row at 100 s. This test exists so that behaviour is a known,
+    # deliberate consequence rather than an accident.
+    primary = _book([(100, "update"), (0, "update"), (200, "update")])
+    secondary = _book([(50, "update"), (150, "update")])
+    assert _message_ts(primary) == [H + timedelta(seconds=100), H, H + timedelta(seconds=200)]
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30)
+    assert [(g.start, g.end) for g in gaps] == [(H, H + timedelta(seconds=200))]  # 100 s is swallowed
+    blocks = splice_book(primary, secondary, gaps)
+    out = pl.concat([b.frame for b in blocks])
+    assert H + timedelta(seconds=100) not in out["ts"].to_list()  # the primary row is LOST
