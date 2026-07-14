@@ -54,6 +54,15 @@ The git-vs-live divergence is the same class of bug as the deployed-compose drif
   `grafanacloud-usage` + `grafanacloud-alert-state-history` and repointed all 7 rules at the wrong
   data while still reporting `health=ok`.
 
+- **The dashboard had the same defect, one layer over (2026-07-14).** `zcrypto-dashboard.json` used
+  `datasource`-type template variables (`DS_PROMETHEUS` / `DS_LOKI`) with `current: null` — so no
+  datasource was pinned and every panel queried whatever Grafana's "first datasource of this type"
+  happened to be, i.e. `grafanacloud-usage` (billing metrics) and `grafanacloud-alert-state-history`.
+  The dashboard was therefore rendering the wrong data unless a human re-picked the right source from
+  the dropdown on every visit. Both variables are deleted and all 19 panels now hard-pin
+  `grafanacloud-prom` / `grafanacloud-logs`; the dropdowns are gone. Verified by reading the live
+  dashboard back after the push.
+
 ## Suggested next steps
 
 - **The prune half is still open.** The push never deletes: a rule removed from `alerts.yaml` keeps

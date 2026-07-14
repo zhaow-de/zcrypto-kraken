@@ -102,18 +102,17 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 
 ## Alloy telemetry stack (spec 00049 Role B, Task 3)
 
-Two more services on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence
-above: **Grafana Alloy** + a GET-only **`docker-socket-proxy`**, shipping NAS host metrics (load,
-memory, free disk space, network IO), the Role B gate metrics (Task 2's `gate.prom` textfile), and
-the `archive-pull` container's logs to the already-provisioned Grafana Cloud instance.
+One more service on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence above:
+**Grafana Alloy**, shipping NAS host metrics (load, memory, free disk space, network IO), the Role B
+gate metrics (Task 2's `gate.prom` textfile), and every container's logs to the already-provisioned
+Grafana Cloud instance.
+
+Alloy reads the Docker socket **directly**. A GET-only `docker-socket-proxy` (tecnativa) used to sit in front of it with `POST=0` as the boundary; it was removed on 2026-07-14 because it corrupted the logs it existed to carry — its HAProxy `timeout client/server 10m` severed Docker's long-lived `/containers/<id>/logs?follow=1` stream whenever a container went quiet, and Alloy's reconnect (inclusive `since=<second>`) re-ingested the last line each time, duplicating it every 10 minutes forever. **Accepted residual:** anything holding the Docker API is root-equivalent — `:ro` on the socket mount is not a boundary, since the API can create a privileged container — so a compromised Alloy could reach the rrsync keys that pull from the capture VPS. Alloy is still kept non-root (uid 1031 + `group_add: "0"`), which preserves T0030's protection of the `0600` keys against the `/host/root:ro` mount. Tracked in `docs/open-topics/T0042-*` — revisit before go-live.
 
 **Container-level metrics (CPU/mem/fs per container) are NOT collected on this NAS.** `cadvisor`
 SIGSEGVs on Synology DSM — a nil-pointer panic because DSM's kernel has no CPU cgroup hierarchy for
 it to walk — and the panic takes down all of Alloy with it, so `prometheus.exporter.cadvisor` is
-not run here at all. Only host metrics + the gate metrics + the `archive-pull` logs flow off this
-NAS; the `docker-socket-proxy` is retained solely so Alloy's `discovery.docker` can find the
-`archive-pull` container for Loki log-tailing (it needs the `NETWORKS` read-only endpoint too, or
-discovery 403s — see `compose.yaml`).
+not run here at all. Only host metrics + the gate metrics + the container logs flow off this NAS.
 
 See `docs/specs/00043-observability-design.md` for the design this is adapted from (the VPS
 counterpart) and `infra/nas/config.alloy` for the Alloy pipeline itself — everything here runs
@@ -163,15 +162,12 @@ under Container Manager as plain compose services, no ansible/systemd.
    `zcrypto-dummy`'s gid 1000 IS the key-owning group, so this protection rests on the keys being
    `0600` — owner-only, group has no read — not on group isolation; keep the keys `0600`. (This closes
    [[T0030]]; verified live as 1031:1000: the key read is denied while metrics + logs still ship.)
-4. Pin both new images to a digest, same pattern as the capture image (Deploy step 6 above):
-   `docker buildx imagetools inspect grafana/alloy:latest` and
-   `docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:latest`, then replace
-   the `:latest` tags on the `alloy` and `docker-socket-proxy` services in `compose.yaml` with
-   `@sha256:<digest>`.
-5. Start (or restart to pick up the two new services):
+4. Pin the Alloy image to a digest, same pattern as the capture image (Deploy step 6 above):
+   `docker buildx imagetools inspect grafana/alloy:latest`, then replace the `:latest` tag on the
+   `alloy` service in `compose.yaml` with `@sha256:<digest>`.
+5. Start (or restart to pick up the new service):
    `/usr/local/bin/docker compose -f compose.yaml up -d`. Confirm with
-   `/usr/local/bin/docker compose -f compose.yaml ps` that `docker-socket-proxy` and `alloy` are
-   both `Up`.
+   `/usr/local/bin/docker compose -f compose.yaml ps` that `alloy` is `Up`.
 
 ### Resource budget
 
@@ -179,8 +175,8 @@ Diverges from the VPS design (`docs/specs/00043-observability-design.md`) here: 
 kernel has no CPU CFS cgroup, so this stack sets **no `cpus:`/`cpu_shares:` limits** at all — a
 `NanoCPUs` limit fails hard (`NanoCPUs can not be set ... cgroup is not mounted`) and blocks the
 whole `compose up`. Only `memory` limits work (a separate, mounted cgroup): Alloy `memory: 512m`,
-`GOMEMLIMIT=460MiB` (Go's GC overshoots a small cap under default behavior otherwise);
-`docker-socket-proxy` `memory: 64m`. cadvisor is not run on the NAS at all (see above), which also
+`GOMEMLIMIT=460MiB` (Go's GC overshoots a small cap under default behavior otherwise).
+cadvisor is not run on the NAS at all (see above), which also
 removes the one component that would have needed its own CPU budget. 32 GB NAS RAM makes the
 memory ceiling arithmetic comfortable — these are caps, not reservations.
 
@@ -190,11 +186,9 @@ The NAS deploy shakedown ran this stack live on the actual Synology DSM host and
 DSM-specific incompatibilities, all now fixed in `compose.yaml`/`config.alloy` and reflected above:
 cadvisor SIGSEGVs on DSM's cgroup-less kernel (removed entirely — see the container-metrics note
 above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy runs as the
-dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see Deploy step 3 above), `discovery.docker`
-403s without the socket-proxy's `NETWORKS`
-endpoint (added), and a `cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel
-(removed — see Resource budget above). This file now reflects a live-verified deploy, not just the
-originally-authored design.
+dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see Deploy step 3 above), and a
+`cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel (removed — see Resource budget
+above). This file now reflects a live-verified deploy, not just the originally-authored design.
 
 ## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
 

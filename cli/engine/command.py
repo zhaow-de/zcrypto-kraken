@@ -47,8 +47,15 @@ def _utc_now() -> datetime:
 
 
 def _abort(message: str) -> typer.Exit:
-    """A clean one-line error (printed, no traceback) + exit code 1. Usage: `raise _abort(...)`."""
-    typer.echo(f"ERROR: {message}", err=True)
+    """A clean one-line error (logged, no traceback) + exit code 1. Usage: `raise _abort(...)`.
+
+    LOGS rather than `typer.echo`s. The line has to carry a level, or Alloy cannot label it at
+    ingest (infra/nas/config.alloy) and the level-based alerting never sees it -- `engine
+    gate-export` reports every failure through one of this helper's call sites. The older text-grep
+    alert matched the literal `ERROR:` prefix this used to print; the label-based rule that replaced
+    it did not, which is exactly the blindness T0041 records.
+    """
+    logger.error(message)
     return typer.Exit(code=1)
 
 

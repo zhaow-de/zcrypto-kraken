@@ -64,6 +64,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0039 — the reconciler's `--min-gap-seconds` needs cross-host validation](T0039-min-gap-seconds-needs-cross-host-validation.md) — spec 00050's 5 s default sits **below the measured 14.78 s maximum natural quiescence**, so on a quiet market only an untested assumption about Kraken's per-connection coalescing prevents a phantom splice (an unaudited data swap that inflates `healed_gap_seconds` and blinds the very alert meant to spot a degrading primary); raise the default to 30 s and pin it from a detect-only soak (ripe when: the secondary is live — the measurement needs two concurrent streams, which do not exist yet).
 
+- [T0042 — Alloy holds root-equivalent Docker access (accepted)](T0042-alloy-holds-root-equivalent-docker-access.md) — the GET-only `docker-socket-proxy` was removed on 2026-07-14 (it was severing Docker's long-lived log stream every 10 min and duplicating every line into Loki forever), so Alloy now talks to the socket directly; the Docker API is root-equivalent regardless of the `:ro` mount, and the NAS holds the rrsync keys to the capture VPS — deliberately accepted, with the two-line fix that would restore the boundary recorded (ripe when: before go-live, or before this stack ships to a capture host).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A) landed iter-093 (spec/plan 00048), NAS gate-verify (Role B) landed iter-094 (spec/plan 00049, measured bit-identical cross-runtime); remainder = the alerting drill + the ≥7-day clean-run verification + Role C (redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).
@@ -86,8 +88,16 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Resolved<a name="resolved-1"></a>
 
+- [T0040 — alert on docker-socket-proxy denials and non-routine calls](archive/T0040-docker-socket-proxy-denial-alert.md) — closed unbuilt: the proxy it would have watched was removed the same day, so the denial stream it depended on no longer exists; the security residual that replaces it is [T0042](T0042-alloy-holds-root-equivalent-docker-access.md).
+
 - [T0000 — Phase 0 human account actions & live-account confirmations](archive/T0000-phase0-account-actions.md) — resolved in iter-023 (Phase-2 close-out): account actions + live confirmations done 2026-07-07; the deferred July-9 fee-schedule fold-in landed in iter-017 (`cli/costs/`).
+
 - [T0029 — NAS CPU has no AVX; polars crashes](archive/T0029-nas-cpu-no-avx-polars.md) — resolved — determinism measured, Role B bit-identical on the NAS (iter-094).
+
 - [T0030 — NAS Alloy uid-key exposure](archive/T0030-nas-alloy-uid-key-exposure.md) — resolved (iter-094, same PR): Alloy runs as the dedicated non-key-owning user `zcrypto-dummy` (uid 1031, gid 1000), verified live — ships metrics + logs, `gate.prom` readable, and the `0600` pull keys denied through `/host/root`.
+
 - [T0036 — a restart silently truncates the hour it lands in](archive/T0036-segment-writer-restart-clobber.md) — resolved 2026-07-14: committed-final invariant + atomic parts + validated recovery + cross-stream rotation quorum (T0037), deployed with a validated 1 s-downtime migration; post-deploy verified (hour-04 finals begin at :00:00, 0 desyncs, CRC-clean splice, no new truncation).
+
 - [T0031 — re-pin NAS capture image after merge](archive/T0031-nas-image-repin-after-merge.md) — resolved 2026-07-13: the develop-built `-compat` image was published after the Role B merge and the NAS compose re-pinned to it (`sha256:ec180cde…`), replacing the branch-only digest; pull + verify green on the new image.
+
+- [T0041 — archive-pull failures do not page](archive/T0041-archive-pull-failures-do-not-page.md) — resolved 2026-07-14: every error path now goes through `logging` so it carries the `level` label the alert selects on (`_abort` logged rather than printed — closing a regression the label-based rule itself introduced; uncaught exceptions logged via a new `run()` entry point; `pull-entrypoint.sh` emitting the Python log shape), plus a new dead-man rule that fires when no successful pull is seen for 3h — the only rule that catches silence.

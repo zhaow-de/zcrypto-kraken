@@ -28,10 +28,12 @@
 set -euo pipefail
 
 : "${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}"
-GRAFANA_URL="${GRAFANA_URL:-https://zcrypto2026.grafana.net}"
-GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
-GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
-GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
+# `export` is load-bearing: the python3 heredocs below read these from os.environ, so a plain shell
+# assignment is invisible to them (they used to be exported by whoever supplied them).
+export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto2026.grafana.net}"
+export GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
+export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
+export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
 echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID" >&2
 
 command -v python3 >/dev/null 2>&1 || { echo "grafana-push: python3 is required" >&2; exit 1; }
@@ -42,14 +44,19 @@ command -v jq >/dev/null 2>&1 || { echo "grafana-push: jq is required" >&2; exit
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 auth=(-H "Authorization: Bearer ${GRAFANA_SA_TOKEN}")
 
-echo "grafana-push: pushing dashboard"
-dashboard_payload=$(python3 -c '
+# Every dashboard under infra/grafana/*-dashboard.json is pushed, keyed by its own `uid` — add a
+# file, it ships. (Metrics and logs are separate dashboards: mixing them puts log-only filters on a
+# metrics board, where they do nothing.)
+for dash in "${root}"/infra/grafana/*-dashboard.json; do
+  echo "grafana-push: pushing dashboard $(basename "${dash}")"
+  dashboard_payload=$(python3 -c '
 import json, os, sys
 d = json.load(open(sys.argv[1]))
 print(json.dumps({"dashboard": d, "folderUid": os.environ["GRAFANA_ALERT_FOLDER_UID"], "overwrite": True}))
-' "${root}/infra/grafana/zcrypto-dashboard.json")
-curl -fsS -X POST "${GRAFANA_URL}/api/dashboards/db" \
-  "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
+' "${dash}")
+  curl -fsS -X POST "${GRAFANA_URL}/api/dashboards/db" \
+    "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
+done
 
 echo "grafana-push: pushing alert rules"
 # One-time YAML -> JSON conversion (the file is YAML only for its inline comments); everything

@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-zcrypto = "cli.__main__:app"
+zcrypto = "cli.__main__:run"
 
 [build-system]
 requires = ["hatchling"]

@@ -31,9 +31,8 @@ prometheus.exporter.unix "host" {
 // cadvisor is incompatible with Synology DSM: it SIGSEGVs (nil-pointer in
 // manager.createContainerLocked) because DSM's kernel lacks the CPU cgroup hierarchy cadvisor
 // walks, and the panic takes down ALL of Alloy. So no `prometheus.exporter.cadvisor` here --
-// container CPU/mem is not scraped on the NAS. The docker-socket-proxy is retained purely for the
-// Loki docker-log discovery below (Docker API, cgroup-free -> unaffected). Host metrics
-// (load / netdev / disk-free -- the requested telemetry) come from the unix exporter above.
+// container CPU/mem is not scraped on the NAS. Host metrics (load / netdev / disk-free -- the
+// requested telemetry) come from the unix exporter above.
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
 prometheus.scrape "host" {
@@ -70,39 +69,144 @@ prometheus.remote_write "grafana" {
   }
 }
 
-// ---- Logs: archive-pull container only ------------------------------------------------------
-// Discover every container visible through the proxy, then keep only archive-pull -- neither
-// Alloy's own container nor the socket-proxy container's logs are shipped (out of this task's
-// scope, which asks for the archive-pull container's logs specifically).
+// ---- Logs: every container on this host -----------------------------------------------------
+// Discover and ship every container on this host -- the logs dashboard filters by
+// `container`, so there is no keep/drop here; adding one would silently shrink what the dashboard
+// can show. Discovery is host-wide, not per-compose-project, so this ships whatever else the NAS ever
+// runs. Verified 2026-07-14: exactly two containers exist (archive-pull, alloy). If a DSM package
+// ever adds one, it lands here too -- the intended default (see it, then decide), not an oversight.
+//
+// Talks to the Docker socket DIRECTLY. A GET-only docker-socket-proxy used to sit in front of it;
+// removed 2026-07-14 because its HAProxy `timeout client/server 10m` severed this very log stream
+// every 10 minutes on a quiet container, and Alloy's reconnect (inclusive `since`) re-ingested the
+// last line each time -- duplicating it forever. Rationale + accepted residual: infra/nas/compose.yaml
+// and T0042.
 discovery.docker "containers" {
-  host = "tcp://127.0.0.1:2375"
+  host = "unix:///var/run/docker.sock"
 }
 
-discovery.relabel "archive_pull_only" {
+discovery.relabel "container_logs" {
   targets = discovery.docker.containers.targets
 
+  // Ship EVERY container on this host, not just archive-pull. `loki.source.docker` attaches no
+  // `container` label of its own, so derive one from the Docker name: compose sets no
+  // `container_name:`, so the real name is project-prefixed and slash-led (e.g.
+  // `/zcrypto-archive-archive-pull-1`). Strip the leading `/`, the compose project prefix and the
+  // trailing replica index, leaving the service name (`archive-pull`, `alloy`, …) — which is what
+  // the alert rules and the logs dashboard select on.
   rule {
     source_labels = ["__meta_docker_container_name"]
-    // Unanchored: compose sets no `container_name:`, so the real name is project-prefixed (e.g.
-    // `/zcrypto-archive-archive-pull-1`); an anchored `/archive-pull` would never match.
-    regex  = ".*archive-pull.*"
-    action = "keep"
+    regex         = "/?(?:zcrypto-archive-)?(.*?)(?:-[0-9]+)?"
+    target_label  = "container"
+    replacement   = "$1"
+    action        = "replace"
   }
 
-  // loki.source.docker attaches no `container` label of its own -- promote a static one so the
-  // shipped streams carry `container="archive-pull"`, matching the dashboard/alert queries
-  // (infra/grafana/alerts.yaml's ERROR-logs rule: `{container="archive-pull"}`). A static
-  // replacement is correct here since this block already filters to only that container.
+  // A `host` label so logs can be filtered by origin machine. Static because Alloy runs only on the
+  // NAS today; when the capture hosts get an obs role (T0020) each ships its own value and the
+  // dashboard's host selector becomes multi-valued with no dashboard change.
   rule {
-    target_label = "container"
-    replacement  = "archive-pull"
+    target_label = "host"
+    replacement  = "nas"
   }
 }
 
-loki.source.docker "archive_pull" {
-  host       = "tcp://127.0.0.1:2375"
-  targets    = discovery.relabel.archive_pull_only.output
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_logs.output
+  forward_to = [loki.process.parse.receiver]
+}
+
+// Parse ONCE, here at ingest -- never at query time. A dashboard regex over the raw line is fragile
+// (it silently blanks or mangles any line that does not match, and every panel re-implements it);
+// doing it here means the line reaches Loki already clean, `level` is a real label the UI can filter
+// on, and the entry timestamp is the application's own rather than Docker's capture time.
+//
+// Why the line looks duplicated in Grafana today: Python's logging writes `<asctime> <LEVEL> ...`
+// into the message, while Loki independently stores an entry timestamp and derives `detected_level`.
+// Grafana renders its own two columns beside the app's copy of the same two fields. (The `,562` vs
+// `.563` is NOT a locale artifact -- `logging.Formatter.default_msec_format` is the literal `'%s,%03d'`
+// in CPython, and the ~2 h offset is just the browser rendering UTC in Europe/Berlin.)
+loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
+
+  // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.archive.command [command.py:75] - msg`
+  // Scoped by container, so a container with a different format can never be mangled by this regex.
+  stage.match {
+    selector = "{container=\"archive-pull\"}"
+
+    stage.regex {
+      expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
+    }
+
+    // Use the app's own stamp as the entry time (Go layout; the comma is literal). A line the regex
+    // missed keeps `ts` unset, and the stage's default action_on_failure ("fudge") then stamps it at
+    // the stream's last good timestamp + 1ns -- NOT at Docker's capture time. That is the behaviour we
+    // want: a traceback's continuation lines land immediately after the record they belong to instead
+    // of being scattered. Either way the line is passed through, never dropped.
+    stage.timestamp {
+      source   = "ts"
+      format   = "2006-01-02 15:04:05,000"
+      location = "UTC"
+    }
+
+    // Canonical level spelling = Python's own level names (DEBUG/INFO/WARNING/ERROR/CRITICAL), so
+    // the dashboard matches what `zcrypto` prints on a console. Already uppercase here; the stage is
+    // kept so the two sources are normalised in the same place and cannot drift.
+    stage.template {
+      source   = "level"
+      template = "{{ ToUpper .Value }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    // Emit only the part Grafana does NOT already show: logger, source location, message.
+    stage.output {
+      source = "rest"
+    }
+  }
+
+  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`. Grafana already renders
+  // the entry timestamp and the level in its own columns, so leaving `ts=` and `level=` in the line
+  // prints both of them twice; and burying `msg` between them hides the one field a reader actually
+  // scans. Lift `msg` to the front and append the remaining key=value attributes after it, dropping
+  // only the two fields the UI already shows.
+  //
+  // The selector's line filter is a guard, not an optimisation: only lines that ARE this shape enter
+  // the block, so the regex below cannot miss and stage.output can never blank a line. Anything else
+  // Alloy prints (a panic, a non-logfmt line) skips the block untouched and ships verbatim.
+  stage.match {
+    selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
+
+    stage.regex {
+      expression = "^ts=\\S+ level=(?P<level>\\w+) msg=(?:\"(?P<msg>(?:[^\"\\\\]|\\\\.)*)\"|(?P<msg_bare>\\S+))\\s*(?P<rest>.*)$"
+    }
+
+    // Alloy speaks logfmt with short, lowercase names (`warn`, `info`). Uppercasing alone is not
+    // enough: it would yield WARN beside Python's WARNING — two spellings of one level, so a
+    // dropdown selection would silently miss half the lines. Map onto Python's names.
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    // Message first, attributes after. `.Entry` (the untouched original line) is the fallback, so even
+    // if the regex somehow yielded no msg the line would ship as-is rather than empty.
+    stage.template {
+      source   = "line"
+      template = "{{ if .msg }}{{ .msg }}{{ if .rest }} {{ .rest }}{{ end }}{{ else if .msg_bare }}{{ .msg_bare }}{{ if .rest }} {{ .rest }}{{ end }}{{ else }}{{ .Entry }}{{ end }}"
+    }
+
+    stage.output {
+      source = "line"
+    }
+  }
 }
 
 loki.write "grafana" {

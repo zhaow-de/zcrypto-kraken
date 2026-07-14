@@ -7,7 +7,7 @@ import typer
 from cli.archive.command import archive_app
 from cli.capture.command import capture
 from cli.engine.command import engine_app
-from cli.logging import configure
+from cli.logging import configure, get_logger
 
 app = typer.Typer(
     add_completion=False,
@@ -67,5 +67,25 @@ def main(
         raise typer.Exit()
 
 
+def run() -> None:
+    """Console-script entry point (`zcrypto`), and the target of `python -m cli`.
+
+    Exists so an unhandled exception is LOGGED before the process dies. Typer installs its own
+    `sys.excepthook`, which renders a Rich traceback straight to stderr without ever going through
+    `logging` -- so a crash carries no timestamp and no level, Alloy cannot label it at ingest
+    (infra/nas/config.alloy), and the level-based alerting is blind to the single worst failure of
+    the unbackfillable archive path: the pull loop dying. See T0041.
+
+    Catches `Exception`, not `BaseException`: click already turns its own errors (usage, abort,
+    `typer.Exit`) into `SystemExit`, which must pass through untouched, and a KeyboardInterrupt is
+    an operator action rather than a fault.
+    """
+    try:
+        app()
+    except Exception:
+        get_logger("main").exception("unhandled exception -- aborting")
+        raise SystemExit(1) from None
+
+
 if __name__ == "__main__":
-    app()
+    run()

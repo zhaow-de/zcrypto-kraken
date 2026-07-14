@@ -279,6 +279,10 @@ rules:
     orgId: 1
     condition: C
     data:
+      # Selects on the `level` LABEL, not a `|= "ERROR"` grep of the line. Alloy now parses our
+      # Python log format at ingest (infra/nas/config.alloy) and strips the level out of the message,
+      # so a text grep for "ERROR" would match NOTHING — silently blind, exactly the failure this rule
+      # already had once. The label also catches `critical`, which the grep never did.
       # `queryType: instant` is load-bearing and Loki-specific: the `instant: true` MODEL field that
       # the Prometheus rules above use is a Prometheus-datasource setting, and Loki ignores it. Without
       # this the query ran as a RANGE query and returned a time series, so the threshold node rejected
@@ -290,7 +294,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({container="archive-pull"} |= "ERROR" [15m])) or on() vector(0)
+            sum(count_over_time({container="archive-pull", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
           queryType: instant
           refId: A
       # Reduce A to a single value before the threshold. Belt-and-braces alongside the instant query:
@@ -324,5 +328,76 @@ rules:
       summary: "ERROR-level log lines from the archive-pull container in the last 15 minutes."
     labels:
       severity: warning
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-nas-archive-pull-stalled
+    title: "NAS · archive-pull stalled (dead-man)"
+    ruleGroup: zcrypto-nas
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The DEAD-MAN, and the only rule that fires on SILENCE. Every other rule needs the archive-pull
+      # container to still be alive and talking: `NAS · archive-pull ERROR logs` fires on an ERROR
+      # line, so it is green when the container is gone, the pull loop has exited, or the NAS is down
+      # -- i.e. exactly when nothing is protecting the unbackfillable archive any more. This one
+      # inverts that: it fires when the loop STOPS saying it succeeded.
+      #
+      # `failed=0` is load-bearing, not decoration. Matching `pull complete` alone would ALSO be
+      # satisfied by (a) the JOURNAL pull -- "archive pull complete (no verify) ..."
+      # (cli/archive/command.py:104) -- and (b) a CAPTURE pull whose hash verification FAILED, because
+      # :109 logs "pull complete ... failed=N" *before* the :118 check raises. Either would hold this
+      # rule quiet while the capture mirror -- the unbackfillable thing it exists to protect -- was not
+      # advancing at all. `failed=0` appears only on a fully-clean capture pull: the journal line
+      # carries no `failed=` field, and a verify failure carries a non-zero one. So this rule tracks
+      # the capture mirror specifically. A pull that fails LOUDLY is the ERROR rule's job; this one
+      # owns silence.
+      #
+      # 3h window against a pull that runs hourly (`${ARCHIVE_PULL_INTERVAL:-3600}` in
+      # infra/nas/pull-entrypoint.sh): the loop gets three chances to report before this pages, so a
+      # single slow or restarted cycle is not enough to wake anyone.
+      #
+      # `or on() vector(0)` is what makes the dead-man work at all: when the container is gone Loki
+      # returns NO series, and a bare `sum(count_over_time(...))` would then evaluate to NoData
+      # rather than to zero -- the rule would sit in NoData instead of firing, which is the precise
+      # failure it exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 10800, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({container="archive-pull"} |= "pull complete" |= "failed=0" [3h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting  # NoData here means the log pipeline itself died -- that IS the alarm
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "archive-pull has not reported a successful pull for 3h -- the loop, the container, the NAS, or the log pipeline is down. The L2 archive is unbackfillable; the NAS mirror is going stale."
+    labels:
+      severity: critical
     notification_settings:
       receiver: email

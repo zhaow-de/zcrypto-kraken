@@ -1,8 +1,8 @@
 {
   "id": null,
   "uid": "zcrypto-main",
-  "title": "zcrypto \u2014 Gate + NAS",
-  "description": "The one canonical zcrypto dashboard (spec 00049, Role B / Task 4). Rows are namespaced (Gate \u00b7 ..., NAS \u00b7 ...) so a later VPS telemetry increment (T0020) can add its own namespaced rows to this same file without collision.",
+  "title": "zcrypto — Gate + NAS",
+  "description": "The one canonical zcrypto dashboard (spec 00049, Role B / Task 4). Rows are namespaced (Gate · ..., NAS · ...) so a later VPS telemetry increment (T0020) can add its own namespaced rows to this same file without collision.",
   "tags": [
     "zcrypto",
     "gate",
@@ -19,7 +19,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "Gate \u00b7 Verify Status",
+      "title": "Gate · Verify Status",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -32,10 +32,10 @@
     {
       "id": 101,
       "type": "stat",
-      "title": "Gate \u00b7 Status",
+      "title": "Gate · Status",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 4,
@@ -47,7 +47,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "zcrypto_gate_status",
           "refId": "A"
@@ -101,10 +101,10 @@
     {
       "id": 102,
       "type": "stat",
-      "title": "Gate \u00b7 Streak (days)",
+      "title": "Gate · Streak (days)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 4,
@@ -116,7 +116,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "zcrypto_gate_streak_days",
           "refId": "A"
@@ -150,10 +150,10 @@
     {
       "id": 103,
       "type": "stat",
-      "title": "Gate \u00b7 Journal Pull Lag",
+      "title": "Gate · Journal Pull Lag",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 4,
@@ -165,7 +165,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "zcrypto_gate_journal_pull_lag_seconds",
           "refId": "A"
@@ -203,10 +203,10 @@
     {
       "id": 104,
       "type": "stat",
-      "title": "Gate \u00b7 Mismatches (1d)",
+      "title": "Gate · Mismatches (1d)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 4,
@@ -218,7 +218,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "increase(zcrypto_gate_mismatch_total[1d])",
           "refId": "A"
@@ -254,39 +254,9 @@
       }
     },
     {
-      "id": 105,
-      "type": "logs",
-      "title": "Gate \u00b7 Logs (archive-pull)",
-      "datasource": {
-        "type": "loki",
-        "uid": "${DS_LOKI}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "${DS_LOKI}"
-          },
-          "expr": "{container=\"archive-pull\"}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
-      }
-    },
-    {
       "id": 200,
       "type": "row",
-      "title": "NAS \u00b7 Host",
+      "title": "NAS · Host",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -299,10 +269,10 @@
     {
       "id": 201,
       "type": "timeseries",
-      "title": "NAS \u00b7 Load (1m)",
+      "title": "NAS · Load (1m)",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 8,
@@ -314,7 +284,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "node_load1",
           "refId": "A",
@@ -353,10 +323,10 @@
     {
       "id": 202,
       "type": "timeseries",
-      "title": "NAS \u00b7 Memory Available %",
+      "title": "NAS · Memory Available %",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 8,
@@ -368,7 +338,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
           "refId": "A",
@@ -403,10 +373,10 @@
     {
       "id": 203,
       "type": "timeseries",
-      "title": "NAS \u00b7 /volume1 Free %",
+      "title": "NAS · /volume1 Free %",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 8,
@@ -418,7 +388,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "node_filesystem_avail_bytes{mountpoint=\"/volume1\"} / node_filesystem_size_bytes{mountpoint=\"/volume1\"}",
           "refId": "A",
@@ -457,10 +427,10 @@
     {
       "id": 204,
       "type": "timeseries",
-      "title": "NAS \u00b7 Network IO",
+      "title": "NAS · Network IO",
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "grafanacloud-prom"
       },
       "gridPos": {
         "h": 8,
@@ -472,7 +442,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "rate(node_network_receive_bytes_total[5m])",
           "refId": "A",
@@ -481,7 +451,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
+            "uid": "grafanacloud-prom"
           },
           "expr": "rate(node_network_transmit_bytes_total[5m])",
           "refId": "B",
@@ -523,26 +493,7 @@
   },
   "timepicker": {},
   "templating": {
-    "list": [
-      {
-        "current": {},
-        "hide": 0,
-        "label": "Prometheus",
-        "name": "DS_PROMETHEUS",
-        "query": "prometheus",
-        "refresh": 1,
-        "type": "datasource"
-      },
-      {
-        "current": {},
-        "hide": 0,
-        "label": "Loki",
-        "name": "DS_LOKI",
-        "query": "loki",
-        "refresh": 1,
-        "type": "datasource"
-      }
-    ]
+    "list": []
   },
   "annotations": {
     "list": [
