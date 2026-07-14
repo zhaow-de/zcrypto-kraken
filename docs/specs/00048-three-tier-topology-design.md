@@ -1,5 +1,35 @@
 # Three-tier data-continuity topology — design (spec 00048)
 
+> **AMENDMENT (2026-07-13) — Role C moves off the NAS to a second Linode; three findings below are
+> corrected.** Roles A and B are unchanged and live. Spec `00050` supersedes the parts of this document
+> named here; everything else (the failure-domain map, the RAID-5 + dual-capture durability floor, the
+> egress-only home tier, keeping Grafana Cloud as the external watcher) stands.
+>
+> - **§ Role C — the redundant capture stream is now a second Linode 2 GB (1 vCPU) in a *different
+>   datacenter*, not a NAS container.** Measurement (2026-07-13, live, read-only) showed capture is cheap
+>   — **102 MiB RAM, ~41 % of one core at the busiest captured hour** — so a 1-vCPU host carries it, and a
+>   second DC gives a failure domain uncorrelated with the primary *and* datacenter-grade uptime (the home
+>   tier has residential-ISP, power, and backup/upgrade windows). Its reboot window is **22:25 UTC**, never
+>   overlapping the primary's 21:25 (both re-decided 2026-07-14 from measured book traffic — see
+>   `.claude/rules/capture-deploys.md`; the 02:00/06:00 figures in the original amendment are superseded). **Accepted residual:** both capture hosts are on Linode, so a
+>   provider-wide outage remains a common-mode failure (consciously accepted).
+> - **§ Role C — "No attempt to merge two overlapping book streams update-for-update (their checksum
+>   chains are independent)" is FALSE and is superseded by 00050's D4.** The chains are *not* independent:
+>   Kraken's `checksum` is a CRC32 of the **true** book, echoed on every message, so the same update
+>   carries the same `(ts, checksum)` in both streams. A message-level union is therefore well-defined —
+>   and it is the *only* model that repairs the dominant loss mode ([[T0008]]: 159 desyncs in 19.2 h, all
+>   under 1.8 s, i.e. **message-level holes with no time-gap signature**), which a gap-threshold detector
+>   would score CLEAN.
+> - **§ Archive layout — "reconciliation writes to a new canonical path" is superseded by 00050's D5/§5.**
+>   The reconciled tree is **sparse** (repaired hours only) and the canonical *view* is an overlay reader,
+>   not a directory.
+> - **§ Non-goals — "delete-after-verified eviction … the 7-day buffer's 12× margin makes it unnecessary"
+>   rests on a 20×-wrong figure.** Real growth is **0.48 GB/day**, not ~10 GB/day (T0003's number). The
+>   safe-offline window is therefore ~4 months, not ~7 days — but with **no eviction implemented at all**,
+>   the primary's disk fills ≈2026-11-23 and capture then **stops silently**. See [[T0032]].
+> - The **home compute tier** (an i7-13700 ops node) is deferred to [[T0033]]; it is a capability upgrade
+>   (CRC verification, Role B's verified path, a 24×7 research loop), **not** a Role C dependency.
+
 ## Goal
 
 Introduce the NAS as an always-on **middle tier** between the 24×7 producer (the Linode VPS) and the intermittent consumer (the workstation), so that durable data archival, gate verification, and L2-capture redundancy no longer depend on the workstation being online. This supersedes T0003's workstation-pull approach.
