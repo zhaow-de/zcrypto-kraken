@@ -21,7 +21,7 @@ import polars as pl
 import typer
 
 from cli.archive.mint import already_minted, ledger_append, mint_hour
-from cli.archive.pull import VerifyResult, pull_lag_seconds, verify_tree
+from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
 from cli.archive.reconcile import Block, find_book_gaps, splice_book, union_trades
 from cli.archive.settle import (
     fleet_dark_windows,
@@ -106,13 +106,20 @@ def pull(
 
     result = verify_tree(dest, now=_utc_now())
     lag_s = pull_lag_seconds(result, now=_utc_now())
+    # T0038: drain the parts of every VERIFIED hour on the NAS. Safe by construction (only where the
+    # final verified against its manifest), independent of any failed hours, and it clears the backlog
+    # on the first cycle. Not gated on `result.failed`: each verified final independently justifies
+    # pruning its own parts, and a single bad hour should not keep a majority-stale mirror stale.
+    pruned_hours, pruned_parts = prune_stale_parts(result.verified)
     logger.info(
-        "pull complete source=%s checked=%d ok=%d failed=%d lag_s=%s",
+        "pull complete source=%s checked=%d ok=%d failed=%d lag_s=%s pruned_parts=%d pruned_hours=%d",
         source,
         result.checked,
         result.ok,
         len(result.failed),
         lag_s,
+        pruned_parts,
+        pruned_hours,
     )
     if result.failed:
         for path in result.failed:
