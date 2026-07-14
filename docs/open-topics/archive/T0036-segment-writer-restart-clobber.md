@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the code fix is fully landed and dry-run-validated; remaining is the production deploy (run the migration in the stop window) + the post-deploy verification
+status: resolved
 ---
 
 # A restart silently truncates the hour it lands in (segment-writer part clobber)
@@ -183,11 +182,13 @@ done   # every line must read <H>:00:00 — that IS the fix
   to start rather than race. Two writers derive the same part sequence from the same directory and
   destroy each other's rows — do not try to defeat this lock.
 
-## Suggested next steps
-
-- **(deploy)** Run the migration (`migrate_stop_hour.py`, validated by dry run) in the stop window
-  of the image rollout, per the runbook above, then start the new image.
-- **(verification)** Post-deploy: the stop hour's `<HH>.parquet` on every stream begins at
-  `:00:00.0x` (the assertion that IS this fix); no `quarantined`/`ambiguous`/`merge failed` log
-  lines; segment-continuity gap measurement shows the truncated-hours count unchanged at 20 (no new
-  ones). Then flip this topic to `resolved`.
+- **Deployed and verified in production, 2026-07-14.** PR #122 merged; image
+  `sha256:63708539…` rolled to the primary at 04:00:42 UTC with **1 s downtime** (stop → validated
+  `migrate_stop_hour.py` demoted 17 stop-hour finals, 0 refused → start). Post-deploy verification
+  at the 05:00 boundary: **all 10 book streams' hour-04 finals begin at `04:00:00.0x`** (the
+  assertion that is this fix), every pre-stop row preserved (all 7 demoted trades finals show
+  pre-stop first rows), manifests verify, 0 error-class log lines, **0 desyncs at T+1h** (T0008,
+  baseline ~16/h), and the spliced hour CRC-replays perfectly through the production book
+  (**210,856 messages from the first snapshot on, 0 failures**). Segment-continuity measurement:
+  truncated-hours count unchanged at 20 (no new truncation), worst stream 0.0856 % — the deploy
+  cost ≈ 1 s of gap. The restart-clobber class is closed.
