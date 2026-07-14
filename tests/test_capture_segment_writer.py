@@ -1477,4 +1477,84 @@ def test_t0037_a_held_hour_above_the_event_hour_is_not_drained_out_of_order(tmp_
     # interleaved with the bogus 999, which was held above the event hour and lands in hour 11.
     assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))
     w.close()
+
+
+def test_t0037_a_poisoned_witness_can_never_second_a_lone_bogus_stamp(tmp_path, clock):
+    # The T0037 truncation, re-attacked through the oracle itself: a garbage burst on stream A
+    # stands its plausibility guard down (MAX_CONSECUTIVE_DROPS), and the stamp that then slips
+    # through used to set A's shared witness ~20 h ahead — forever, since witnesses never expire.
+    # A LONE in-window bogus stamp on stream B then had its quorum met by A's poisoned witness,
+    # publishing B's live hour truncated (executed pre-fix: fed=60, LOST=[56..59],
+    # manifest-certified, surviving restarts). An unconfirmed stamp may vouch that time has
+    # reached T only while the wall clock is itself within MAX_TS_AHEAD of T: witnesses are
+    # clamped at now + MAX_TS_AHEAD when observed, so A's burst vouches for nothing beyond 10:25.
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+    b = _oracle_writer(tmp_path, oracle)
+    genuine = set()
+    for mnt in range(0, 20):  # B's genuine live hour 10 begins
+        clock.now = _ts(10, mnt)
+        b.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    clock.now = _ts(10, 20)
+    for i in range(4):  # A's burst: 3 distinct stamps eaten by the run cap, the 4th slips through
+        a.append({**_book_event_for("ETH/EUR", 10, 0, checksum=800 + i), "ts": _ts(10, 0) + timedelta(hours=20, minutes=i)})
+    for mnt in range(20, 56):  # B's hour continues under the poisoned witness
+        clock.now = _ts(10, mnt)
+        b.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    clock.now = _ts(10, 56, 30)
+    b.append(_book_event(11, 0, checksum=999))  # the lone in-window bogus stamp on B
+    assert not _segment_path(tmp_path, 10).exists()  # A's poisoned witness seconded NOTHING
+    for mnt in (56, 57, 58, 59):  # pre-fix these were dropped as late — fed=60, LOST=[56..59]
+        clock.now = _ts(10, mnt)
+        b.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    clock.now = _ts(11, 0)
+    b.append(_book_event(11, 0, checksum=100))
+    clock.now = _ts(11, 5)
+    b.append(_book_event(11, 5, checksum=105))  # the clock seconds hour 11 -> hour 10 finalizes WHOLE
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))  # every genuine row
+    assert verify_manifest(path) is True
+    b.close()
+    a.close()
+    assert genuine <= set(_disk_column(tmp_path, "checksum"))
+
+
+def test_t0037_a_coherently_fast_walk_cannot_poison_the_witness(tmp_path, clock):
+    # The stand-down burst is not the only way in: an IN-BAND walk — stamps each exactly
+    # MAX_TS_AHEAD ahead of the last, so the plausibility guard passes every one — used to carry
+    # stream A's witness ~100 minutes into the future while the wall still read 10:00 (the
+    # coherently-wrong-stream adversary the topic doc declares in scope). Same truncation on B as
+    # the burst shape. The clamp pins A's witness at 10:05: however far the walk's stamps name,
+    # the stream cannot vouch past the wall's own reach.
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+    b = _oracle_writer(tmp_path, oracle)
+    clock.now = _ts(10, 0)
+    for i in range(1, 21):  # 10:05, 10:10, ... 11:40 — each within the window of the last accepted
+        a.append({**_book_event_for("ETH/EUR", 10, 0, checksum=800 + i), "ts": _ts(10, 0) + timedelta(minutes=5 * i)})
+    genuine = set()
+    for mnt in range(1, 56):  # B's genuine live hour 10
+        clock.now = _ts(10, mnt)
+        b.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    clock.now = _ts(10, 56, 30)
+    b.append(_book_event(11, 0, checksum=999))  # the lone in-window bogus stamp on B
+    assert not _segment_path(tmp_path, 10).exists()  # the walked witness seconded NOTHING
+    for mnt in (56, 57, 58, 59):
+        clock.now = _ts(10, mnt)
+        b.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    clock.now = _ts(11, 0)
+    b.append(_book_event(11, 0, checksum=100))
+    clock.now = _ts(11, 5)
+    b.append(_book_event(11, 5, checksum=105))
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(1, 60))  # not one genuine row lost
+    assert verify_manifest(path) is True
+    b.close()
+    a.close()
+    assert genuine <= set(_disk_column(tmp_path, "checksum"))
     assert 999 in set(_disk_column(tmp_path, "checksum"))

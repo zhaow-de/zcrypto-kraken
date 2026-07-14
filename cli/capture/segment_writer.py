@@ -111,9 +111,10 @@ class HourOracle:
     within seconds, and a bogus stamp hits exactly one. So a writer may act on a boundary only once
     `HOUR_QUORUM` witnesses have seen time reach it.
 
-    Witnesses are each stream's newest ACCEPTED ts (reported by `observe`) plus the wall clock,
-    handicapped by CLOCK_WITNESS_MARGIN so a leading clock cannot second a bogus stamp until the
-    stamp's hour is genuinely near. The clock can only ever help CONFIRM a boundary — it has no veto,
+    Witnesses are each stream's newest plausible ts (reported by `observe`, clamped at the wall
+    clock + MAX_TS_AHEAD — see `observe` for why an unclamped witness re-opens the truncation) plus
+    the wall clock, handicapped by CLOCK_WITNESS_MARGIN so a leading clock cannot second a bogus
+    stamp until the stamp's hour is genuinely near. The clock can only ever help CONFIRM a boundary — it has no veto,
     so a wrong clock can never darken a stream (the T0036 rule); at worst it delays a rotation that
     no second stream is around to confirm, and a delayed rotation loses nothing (`SegmentWriter`
     holds the new hour's rows and keeps the old hour open for appends).
@@ -132,7 +133,23 @@ class HourOracle:
         self._confirmed: datetime | None = None
 
     def observe(self, stream: tuple[str, str], ts: datetime) -> None:
-        """Record that `stream` accepted an event stamped `ts` (its plausibility guard already ran)."""
+        """Record that `stream` saw a plausible event stamped `ts` (its guard already ran).
+
+        The witness is CLAMPED at `now + MAX_TS_AHEAD`: a stream may vouch that time has reached T
+        only once the wall clock is itself within MAX_TS_AHEAD of T. Unclamped, an UNCONFIRMED
+        stamp corroborated: a garbage burst that stood the guard down (or an in-band walk of
+        stamps each within the window of the last) parked one stream's witness hours ahead —
+        forever, witnesses never expire — after which a single lone in-window stamp on any OTHER
+        stream met quorum and truncated its live hour: the exact loss this oracle exists to close,
+        rebuilt out of its own state. With the clamp every witness (the handicapped clock
+        included) is <= now + MAX_TS_AHEAD, so no quorum, however poisoned, can confirm an hour
+        more than MAX_TS_AHEAD before the wall clock reaches it — restoring the documented bound:
+        an early publish now takes TWO streams stamped bogus inside the same closing window, and
+        costs at most the window. A clock LAGGING by more than the window merely delays
+        confirmation (rows are held and spilled, drained the moment the wall catches up — never
+        dropped): the clock gains no veto over data, only over earliness.
+        """
+        ts = min(ts, _utcnow() + MAX_TS_AHEAD)
         prev = self._witnessed.get(stream)
         if prev is None or ts > prev:
             self._witnessed[stream] = ts
