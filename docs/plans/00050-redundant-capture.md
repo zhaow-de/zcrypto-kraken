@@ -116,13 +116,24 @@ Expected: `uid=0(root)`. If this fails the change is cosmetic — investigate be
 ```python
 @dataclass(frozen=True)
 class Gap:
-    start: datetime      # t1: last primary row before the silence
-    end: datetime        # t2: first primary row after it
+    start: datetime
+    end: datetime
     seconds: float
+    start_is_primary_message: bool   # False when `start` is the hour boundary (nothing owns it)
+    end_is_primary_message: bool     # False when `end` is the hour boundary
 
-def find_book_gaps(primary: pl.DataFrame, secondary: pl.DataFrame, *, min_gap_seconds: float) -> list[Gap]
+def find_book_gaps(primary: pl.DataFrame, secondary: pl.DataFrame, *, min_gap_seconds: float,
+                   hour_start: datetime, hour_end: datetime) -> list[Gap]   # bounds are REQUIRED
 def secondary_covers(secondary: pl.DataFrame, gap: Gap) -> bool
 ```
+
+> **Two corrections landed after review — later tasks MUST honour them:**
+> 1. **The hour bounds are required, not optional.** `find_book_gaps` pairs consecutive *boundaries* — `hour_start`, every primary message, `hour_end` — so head, tail, interior and absent-primary all collapse into one rule. Without the bounds the detector is **blind to the crash-shaped hour** (primary sends a few messages at :00, then dies → the 55-minute tail gap was reported as *no gap at all*). An optional bound on a permanent-loss detector is a footgun: a caller that forgets it gets silent blindness with no test failing. They are required so the failure is a `TypeError`, not a hole in the archive.
+> 2. **Boundary ownership is explicit.** The secondary filter is **strict** (`>`/`<`) on a boundary that IS a primary message — the primary block owns that message's rows, and all rows of one wire message share a `ts` — and **inclusive** (`>=`/`<=`) on a boundary that is not (the hour edge; nothing owns it, so excluding it silently drops real rows). `_inside(gap)` is the single place this rule is written; `secondary_covers` and `splice_book` both call it so they cannot drift.
+>
+> `_message_ts` now **raises `CaptureError` on non-monotonic timestamps.** Kraken's `ts` is non-decreasing across 3.15M measured production rows (T0037), so this should never fire — which is what makes it a good assertion. Out-of-order input would otherwise fabricate one huge gap and silently swallow the interleaved real message. **Never "fix" it by sorting** (absolute quantities).
+>
+> `splice_book`'s output is **block-ordered, not necessarily time-ordered**. A consumer must never sort it. Secondary **snapshot** rows are deliberately kept in the middle block: a snapshot is a full book state, so it re-anchors a replaying consumer at the splice boundary — that is also what makes the CRC-replay-across-boundaries check meaningful.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -550,6 +561,9 @@ def union_trades(primary: pl.DataFrame, secondary: pl.DataFrame) -> TradeUnion:
 
 **Interfaces — Consumes:** `Block`, `Gap` (Tasks 2–3). **Produces:**
 ```python
+# NOTE: callers pass `hour_end` as the EXCLUSIVE next-hour boundary (e.g. 10:00:00 for the 09:00
+# hour). Passing 09:59:59.999999 instead makes the tail block filter admit primary rows AFTER the
+# secondary block. Assert it.
 def mint_hour(reconciled_root: Path, pair: str, kind: str, hour: datetime, blocks: list[Block],
               *, gaps_healed: list[Gap], residual_gaps: list[Gap], schema: dict,
               tool_version: str) -> Path        # returns the minted final's path
