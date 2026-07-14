@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
-from cli.archive.reconcile import Gap, _message_ts, find_book_gaps, secondary_covers, splice_book
+from cli.archive.reconcile import Gap, _message_ts, find_book_gaps, secondary_covers, splice_book, union_trades
 from cli.capture.errors import CaptureError
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
@@ -279,3 +279,57 @@ def test_out_of_order_timestamps_raise_instead_of_corrupting_silently():
         _message_ts(primary)
     with pytest.raises(CaptureError, match="non-monotonic"):
         find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+
+
+# --- trade union: row-level, trade_id-keyed, primary priority (spec 00050 constraint 2) ---------
+
+
+def _trades(ids: list[int], *, offset: int = 0) -> pl.DataFrame:
+    # `trade_id` is `int` here, not `str`: `TRADE_SCHEMA` (cli/capture/segment_writer.py) declares it
+    # `pl.Int64`, and the capture writer stores `int(trade["trade_id"])` — matching production dtype
+    # matters because a string column would sort LEXICOGRAPHICALLY ("10" < "9"), silently breaking
+    # the union's claimed chronological order.
+    return pl.DataFrame(
+        {
+            "ts": [H + timedelta(seconds=i + offset) for i in ids],
+            "symbol": ["BTC/EUR"] * len(ids),
+            "side": ["buy"] * len(ids),
+            "price": [1.0] * len(ids),
+            "qty": [1.0] * len(ids),
+            "trade_id": ids,
+        }
+    )
+
+
+def test_primary_deficit_is_healed_from_the_secondary_ordered_by_trade_id():
+    u = union_trades(_trades([1, 2, 5]), _trades([1, 2, 3, 4, 5]))
+    assert u.added_from_secondary == 2
+    assert u.frame["trade_id"].to_list() == [1, 2, 3, 4, 5]
+    assert u.deduped_rows == 0
+
+
+def test_no_deficit_is_a_no_op():
+    u = union_trades(_trades([1, 2, 3]), _trades([1, 2, 3]))
+    assert u.added_from_secondary == 0
+
+
+def test_a_secondary_only_deficit_is_a_qa_signal_not_a_mint():
+    u = union_trades(_trades([1, 2, 3]), _trades([1, 2]))
+    assert u.added_from_secondary == 0
+    assert u.secondary_deficit == 1
+
+
+def test_intra_stream_duplicate_ids_are_deduped_with_a_count_primary_wins():
+    # a pre-T0037 archive hour (T0026 reconnect replay) genuinely contains duplicate trade_ids
+    primary = pl.concat([_trades([1, 2]), _trades([2])])  # id 2 twice
+    u = union_trades(primary, _trades([1, 2, 3]))
+    assert u.frame["trade_id"].to_list() == [1, 2, 3]
+    assert u.deduped_rows == 1
+    assert u.added_from_secondary == 1
+
+
+def test_union_is_idempotent():
+    once = union_trades(_trades([1, 2]), _trades([1, 2, 3]))
+    twice = union_trades(once.frame, _trades([1, 2, 3]))
+    assert twice.added_from_secondary == 0
+    assert twice.frame["trade_id"].to_list() == once.frame["trade_id"].to_list()

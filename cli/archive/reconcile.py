@@ -223,3 +223,53 @@ def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap])
     if tail.height:
         blocks.append(_block("primary", tail))
     return blocks
+
+
+@dataclass(frozen=True)
+class TradeUnion:
+    """The healed hour's trades, plus what changed and what the secondary was missing.
+
+    `secondary_deficit` counts ids the secondary lacks that the primary has. That is evidence about
+    the SECONDARY's own health — a QA signal — and must never trigger a mint: this reconciler only
+    ever heals a primary deficit, never the reverse.
+    """
+
+    frame: pl.DataFrame
+    added_from_secondary: int
+    deduped_rows: int
+    secondary_deficit: int
+
+
+def union_trades(primary: pl.DataFrame, secondary: pl.DataFrame) -> TradeUnion:
+    """Heal a primary trade deficit from the secondary. Row-level union is safe here — and ONLY
+    here in the reconciler — because `trade_id` is globally unique and identical across hosts (spec
+    00050 constraint 2), unlike book rows, which carry absolute quantities and may never be
+    interleaved across hosts.
+
+    Ordered by `trade_id`. That column is `TRADE_SCHEMA`'s `Int64` (`cli/capture/segment_writer.py`,
+    populated by `int(trade["trade_id"])`) — never a string — so `sort("trade_id")` is a numeric
+    sort, not a lexicographic one. `trade_id` is per-pair monotone, so the numeric sort is also a
+    chronological one and the result is deterministic.
+
+    Deduped with primary priority: the deployed writer dedups intra-hour at capture time (T0037), but
+    pre-fix archive hours genuinely contain reconnect-replay duplicates (T0026), and this must handle
+    that history. Concatenating primary-then-added-secondary and keeping the FIRST occurrence per
+    `trade_id` means a duplicated primary row always wins over a later copy of itself; an added
+    secondary row is never itself a duplicate, since it was, by construction, absent from the primary.
+    """
+    pri_ids = set(primary["trade_id"].to_list()) if primary.height else set()
+    sec_ids = set(secondary["trade_id"].to_list()) if secondary.height else set()
+
+    missing = sec_ids - pri_ids
+    to_add = secondary.filter(pl.col("trade_id").is_in(list(missing))) if missing else secondary.head(0)
+
+    combined = pl.concat([primary, to_add]) if to_add.height else primary
+    before = combined.height
+    deduped = combined.unique(subset=["trade_id"], keep="first", maintain_order=True).sort("trade_id")
+
+    return TradeUnion(
+        frame=deduped,
+        added_from_secondary=len(missing),
+        deduped_rows=before - deduped.height,
+        secondary_deficit=len(pri_ids - sec_ids),
+    )
