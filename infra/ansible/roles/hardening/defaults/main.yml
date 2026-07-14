@@ -1,5 +1,5 @@
 hardening_ssh_port: "10022"
-hardening_ssh_allow_users: deploy
+hardening_ssh_allow_users: deploy root
 
 # devsec.hardening.ssh_hardening hard-codes ssh_listen_to: [0.0.0.0] by default even though
 # network_ipv6_enable defaults to true (AddressFamily any) — list both explicitly so sshd

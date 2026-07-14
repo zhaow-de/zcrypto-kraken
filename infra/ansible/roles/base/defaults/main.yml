@@ -10,7 +10,12 @@ base_packages:
 # No mailer/relay is wired up for this host yet — "root" is the safe, always-present
 # local recipient (readable via the local mail spool even without an MTA); override
 # with a real address once alerting/monitoring lands.
-base_unattended_upgrades_reboot_time: "02:00"
+# Reboot slot decided from measured capture traffic (2026-07-14, 6 days of archive): the book-row
+# trough is 20:00-21:00 UTC (~136k rows/pair-hr vs 242k at the old 02:00 slot, peak 359k at 14:00).
+# Criteria: >=1h from any 4h bar boundary (00/04/08/12/16/20), off the hour boundary, low book
+# traffic (books are the unbackfillable loss currency; trades are REST-backfillable). The
+# redundant capture host overrides this with "22:25" in its host_vars (+1h separation).
+base_unattended_upgrades_reboot_time: "21:25"
 base_unattended_upgrades_mail_to: root
 
 base_capture_user: kraken-capture
