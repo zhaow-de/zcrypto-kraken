@@ -44,11 +44,35 @@ def test_end_gap_with_no_open_gap_returns_zero():
     assert monitor.end_gap("BTC/EUR", at=_at(0)) == 0.0
 
 
-def test_end_gap_before_start_raises():
+def test_end_gap_clamps_a_backward_stepped_clock():
+    # T0032 mirror for the per-pair windows: `at` comes straight from the wall clock, so an end
+    # before the start is a backward clock step (chrony makestep), not a caller bug. Pre-fix this
+    # raised CaptureError inside the consumer task and killed the daemon; the stepped clock cannot
+    # measure the window, so it books zero, closes it, and the next gap is trackable again.
     monitor = GapMonitor()
-    monitor.start_gap("BTC/EUR", "reconnect", at=_at(10))
-    with pytest.raises(CaptureError):
-        monitor.end_gap("BTC/EUR", at=_at(5))
+    monitor.start_gap("BTC/EUR", "reconnect", at=_at(120))
+    assert monitor.end_gap("BTC/EUR", at=_at(0)) == 0.0  # clamped, not raised
+    assert monitor.is_open("BTC/EUR") is False  # the window really closed ...
+    monitor.start_gap("BTC/EUR", "reconnect", at=_at(200))  # ... so the NEXT gap books normally
+    assert monitor.end_gap("BTC/EUR", at=_at(230)) == 30.0
+    assert monitor.gap_seconds("BTC/EUR") == 30.0
+
+
+def test_gap_seconds_clamps_open_pair_window_under_backward_clock():
+    # A reviewer measured gap_seconds(at=09:58) == -120.0 with a window opened at 10:00: an open
+    # window's contribution must clamp to >= 0, and must not eat other pairs'/windows' booked time.
+    monitor = GapMonitor()
+    monitor.start_gap("BTC/EUR", "reconnect", at=_at(0))
+    monitor.end_gap("BTC/EUR", at=_at(30))  # 30 s legitimately booked
+    monitor.start_gap("BTC/EUR", "checksum_resync", at=_at(120))
+    assert monitor.gap_seconds("BTC/EUR", at=_at(0)) == 30.0  # open window contributes 0, not -120
+    assert monitor.gap_ratio("BTC/EUR", window_seconds=60.0, at=_at(0)) == pytest.approx(0.5)
+
+
+def test_gap_seconds_clamps_open_watermark_window_under_backward_clock():
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(120))
+    assert monitor.gap_seconds("BTC/EUR", at=_at(0)) == 0.0  # not -120
 
 
 def test_gap_seconds_includes_still_open_window_when_at_given():
