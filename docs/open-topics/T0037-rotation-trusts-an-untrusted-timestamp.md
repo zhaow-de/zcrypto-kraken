@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: live now — one bad `timestamp` field from Kraken permanently truncates the hour it lands in, on every affected stream
+status: partial
+ripe_when: the core residual is FIXED (cross-stream quorum, iter shipped); the two accepted residuals below are each ripe only if ever OBSERVED in production — (a) two independent streams stamped bogus into the SAME hour within one MAX_TS_AHEAD window, (b) a clock leading >5 min AND a bogus stamp landing together
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early
@@ -79,16 +79,45 @@ Never observed in production. It is a hardening gap, not a live incident.
 - Not attempted in the T0036 round: it is new state on `append()`'s hot path, which is where every
   round of this fix has drawn its criticals, and it needs its own TDD cycle and its own review.
 
+## Done so far
+
+**The core residual is closed by cross-stream quorum (design C, chosen by a judge over three executed
+alternatives).** `HourOracle` (one instance shared by all 20 writers) makes a writer act on an hour
+boundary — finalize the previous hour, open the new one — only once `HOUR_QUORUM` (2) witnesses have
+seen time reach it. Witnesses are each stream's newest ACCEPTED `ts` plus the wall clock, handicapped
+by `CLOCK_WITNESS_MARGIN` (5 min) so a leading clock cannot second a bogus stamp. A row for an
+unconfirmed hour is **held**, never dropped — the live hour stays open (no genuine row behind the
+stamp is refused) and the held row is written the moment its hour is corroborated, in arrival order,
+into the hour its `ts` names (T0037's own "store it, never delete" recommendation). `close()` spills
+held rows to parts of their named hour and never finalizes, so T0036 is untouched (nothing is
+published early, so nothing is ever reopened). The plausibility guard (`_implausible`, `MAX_TS_AHEAD`,
+`MAX_CONSECUTIVE_DROPS`, `MAX_TS_ABSURD`) is UNCHANGED — the oracle sits behind it. `oracle=None`
+preserves the pre-change writer byte-for-byte (`command.py` passes one shared oracle to all writers).
+
+- Landed: `cli/capture/segment_writer.py` (`HourOracle`, `_held`, `_enter_hour`/`_admit`/`_hold`,
+  `_write_part`), `cli/capture/command.py` (one shared `HourOracle`).
+- 10 executed regression tests in `tests/test_capture_segment_writer.py` (`test_t0037_*`): the lone
+  in-window bogus stamp in the last 5 min (0 loss, bogus stored in its named hour, publishes on the
+  second witness); the bogus-first-stamp-after-restart (cannot sweep-publish the live hour); a genuine
+  two-stream boundary (publishes within one event, streams-only, clock lagging); a 10-min lagging
+  clock (loss set-EQUAL to the `oracle=None` baseline — zero added); a 10-min leading clock (no early
+  publish); three escalating in-window stamps on one stream (0 loss — the attack that beats designs A
+  and B); a stand-down burst (future hour never published); a lone clock-paced stream (rotation ≤300 s,
+  lone print never lost); `close()`→parts merged and replay-deduped by a restart; and the drain-order
+  bounds. The pre-fix loss was reproduced against HEAD `189a56a` (57/58/59 dropped in the core and
+  escalating scenarios; the live hour sweep-published on a bogus first stamp).
+- **Deploy note for ops:** finals for a quiet-market hour may now appear up to ~5 min later than
+  before, when only the clock witness paces the rotation. No on-disk format change; no migration.
+
 ## Suggested next steps
 
-- Implement the corroboration rule above in `SegmentWriter.append()`, TDD, with regression tests for:
-  a lone far-future stamp (must not rotate, must not publish); a genuine boundary (must rotate on the
-  second event, losing nothing); a lone print in an otherwise empty hour (must still be published);
-  out-of-order events straddling a boundary (must land in their own hours, not be dropped as late);
-  and `close()` (the held events must not be silently lost).
-- Decide what to do with the held stamp itself once its hour is corroborated — it is a real book delta
-  with a wrong `ts`. Storing it in the hour its `ts` names is the current behaviour and keeps the
-  "hour H's file holds hour H's rows" invariant; dropping it loses a real row. Prefer storing it.
-- Consider whether `MAX_TS_AHEAD` earns its keep at all once rotation is corroborated: its only job
-  then is to stop a far-future stamp from being *stored* in a wrong-hour segment, which is a much
-  smaller harm than either of the failure modes the guard itself can cause.
+Only two accepted, documented residuals remain — both deliberately un-addressed now (the knob for
+each starves a legitimate case), each ripe only **if ever observed in production**:
+
+- **(a) Two independent streams bogus into the SAME hour within one `MAX_TS_AHEAD` window** defeats
+  `k=2` (they would corroborate each other). Never observed; bounded by `MAX_TS_AHEAD` (executed: 10
+  rows land in the wrong hour, none lost). A higher quorum would starve small `--pairs` runs. Revisit
+  only if two streams are ever seen agreeing on a bogus boundary.
+- **(b) A clock leading >5 min AND a bogus stamp landing together** truncates by lead-minus-5min. The
+  knob — require two DISTINCT requester `ts` before the clock may second — is rejected now because it
+  starves lone sparse streams. Revisit only if a leading-clock + bogus-stamp truncation is observed.

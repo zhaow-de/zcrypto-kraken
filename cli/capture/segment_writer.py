@@ -80,6 +80,72 @@ MAX_CONSECUTIVE_DROPS = 3
 # deliberately far outside MAX_TS_AHEAD: this is a sanity floor, not a second guess at the window.
 MAX_TS_ABSURD = timedelta(days=1)
 
+# How many witnesses must vouch that an hour has BEGUN before any stream may act on the boundary —
+# i.e. finalize the previous hour and open the new one (see `HourOracle`). Witnesses are the streams
+# themselves (each one's newest accepted ts) plus the wall clock, which is deliberately handicapped:
+# it vouches for an hour only once it believes the hour is CLOCK_WITNESS_MARGIN old.
+#
+# 2, because the asymmetry this exploits is already decisive at 2: a genuine boundary crosses every
+# active stream within seconds, while a bogus stamp hits exactly ONE stream — so requiring any second
+# witness (another stream, or the handicapped clock) is what a lone stamp can never produce. Higher
+# would buy nothing against a single bad field and would starve a small `--pairs` run (one pair is
+# only 2 streams), forcing every rotation to wait out the clock margin.
+HOUR_QUORUM = 2
+
+# The clock witness's handicap: it vouches for hour H only once it reads H's start plus this margin.
+# The margin is what a LEADING clock would otherwise get away with: an unhandicapped clock witness
+# plus one bogus stamp re-opens exactly the truncation this oracle exists to close. With the margin,
+# that compound failure (a leading clock AND a bogus stamp, together) is bounded to lead-minus-margin
+# minutes; either fault alone is harmless. A LAGGING clock never delays anything the streams can
+# confirm themselves — the clock is one witness among many, never a veto (T0036's hard rule).
+CLOCK_WITNESS_MARGIN = MAX_TS_AHEAD
+
+
+class HourOracle:
+    """Cross-stream corroboration that an hour has genuinely begun (T0037).
+
+    Rotation trusts the event's own `ts` — a field Kraken sends — so one bogus stamp inside the
+    plausibility window used to finalize the live hour early, permanently truncating it (the T0036
+    invariant correctly refuses to reopen a committed final). The one signal no single bad field can
+    forge is AGREEMENT: 20 writers share this process, a genuine hour boundary crosses all of them
+    within seconds, and a bogus stamp hits exactly one. So a writer may act on a boundary only once
+    `HOUR_QUORUM` witnesses have seen time reach it.
+
+    Witnesses are each stream's newest ACCEPTED ts (reported by `observe`) plus the wall clock,
+    handicapped by CLOCK_WITNESS_MARGIN so a leading clock cannot second a bogus stamp until the
+    stamp's hour is genuinely near. The clock can only ever help CONFIRM a boundary — it has no veto,
+    so a wrong clock can never darken a stream (the T0036 rule); at worst it delays a rotation that
+    no second stream is around to confirm, and a delayed rotation loses nothing (`SegmentWriter`
+    holds the new hour's rows and keeps the old hour open for appends).
+
+    `confirmed_hour()` is monotone: once an hour is confirmed it stays confirmed, so a clock stepping
+    backwards (chrony) can never un-confirm a boundary a writer already acted on.
+
+    Shared mutable state across the 20 writers — safe because the daemon appends from ONE consumer
+    task; there is no concurrency here by construction. The coupling is read-only at the decision
+    point: a writer never waits ON another writer, it only reads how far time has provably got, so a
+    quiet market cannot deadlock anything (no events -> no rotation attempted -> nothing is waiting).
+    """
+
+    def __init__(self) -> None:
+        self._witnessed: dict[tuple[str, str], datetime] = {}  # (pair, kind) -> newest accepted ts
+        self._confirmed: datetime | None = None
+
+    def observe(self, stream: tuple[str, str], ts: datetime) -> None:
+        """Record that `stream` accepted an event stamped `ts` (its plausibility guard already ran)."""
+        prev = self._witnessed.get(stream)
+        if prev is None or ts > prev:
+            self._witnessed[stream] = ts
+
+    def confirmed_hour(self) -> datetime | None:
+        """The newest hour whose beginning HOUR_QUORUM witnesses have seen; None until any is."""
+        witnesses = sorted([*self._witnessed.values(), _utcnow() - CLOCK_WITNESS_MARGIN], reverse=True)
+        if len(witnesses) >= HOUR_QUORUM:
+            candidate = _hour_start(witnesses[HOUR_QUORUM - 1])
+            if self._confirmed is None or candidate > self._confirmed:
+                self._confirmed = candidate
+        return self._confirmed
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -198,6 +264,7 @@ class SegmentWriter:
         *,
         flush_rows: int = DEFAULT_FLUSH_ROWS,
         dedup_key: str | None = None,
+        oracle: HourOracle | None = None,
     ) -> None:
         self._base_dir = Path(base_dir)
         self._pair = pair
@@ -205,6 +272,8 @@ class SegmentWriter:
         self._schema = schema
         self._flush_rows = flush_rows
         self._dedup_key = dedup_key
+        self._oracle = oracle
+        self._held: dict[datetime, list[dict]] = {}  # rows for hours the oracle has not yet confirmed
         self._buffer: list[dict] = []
         self._current_hour: datetime | None = None  # the open hour; None until the first event
         self._max_ts: datetime | None = None  # the newest ts accepted...
@@ -235,18 +304,60 @@ class SegmentWriter:
             # committed final would either duplicate rows it already holds or strand them.
             logger.warning("dropping late event pair=%s kind=%s ts=%s floor=%s", self._pair, self._kind, ts, floor)
             return
+        if self._oracle is not None:
+            # T0037: acting on a boundary — finalizing the live hour because one ts says a new hour
+            # has begun — needs corroboration, because the ts is a field Kraken sends and one bad one
+            # used to truncate the hour permanently. A row for an UNCONFIRMED hour is held, never
+            # dropped: the live hour stays open (so no genuine row behind the stamp is ever refused),
+            # and the held row is written the moment its hour is corroborated — by a second stream
+            # crossing it, or by the handicapped clock. Held hours are drained in ascending order and
+            # only up to this event's own hour, so every row still lands in the hour its ts names.
+            self._oracle.observe((self._pair, self._kind), ts)
+            confirmed = self._oracle.confirmed_hour()
+            for held_hour in sorted(h for h in self._held if h <= hour and confirmed is not None and h <= confirmed):
+                rows = self._held.pop(held_hour)
+                self._enter_hour(held_hour)
+                for row in rows:
+                    self._admit(row)
+            if confirmed is None or hour > confirmed:
+                self._hold(hour, event)
+                return
+        self._enter_hour(hour)
+        self._admit(event)
+
+    def close(self) -> None:
+        """Flush the buffer — and any held rows — to part files (idempotent). Deliberately does
+        **not** finalize the open hour: `<HH>.parquet` means "committed and complete", and publishing
+        a stop's half-hour under that name is what made crash recovery ambiguous. The hour is
+        finalized by whoever crosses its boundary — this process, or the next one's sweep. Held rows
+        (an hour the oracle has not confirmed yet) become parts of the hour their ts names: parts
+        commit nothing, and the next process's `_open_hour` / sweep picks them up mechanically."""
+        self._flush_buffer()
+        for hour, rows in self._held.items():
+            if rows:
+                self._write_part(rows, hour)
+        self._held = {}
+
+    def _enter_hour(self, hour: datetime) -> None:
+        """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
+        A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
         if self._current_hour is None:
             self._sweep(hour)  # deferred to here: the first event's hour is exchange time
             self._open_hour(hour)
         elif hour > self._current_hour:
             self._finalize_hour(self._current_hour)
             self._open_hour(hour)
+
+    def _admit(self, event: dict) -> None:
+        """The write path proper: de-dup, advance the stream witness, buffer, flush. The event's
+        hour is already open."""
         if self._dedup_key is not None:
             key = event[self._dedup_key]
             if key in self._seen:
                 logger.warning("dropping replayed event pair=%s kind=%s %s=%s", self._pair, self._kind, self._dedup_key, key)
                 return
             self._seen.add(key)
+        ts = event["ts"]
         if self._max_ts is None or ts > self._max_ts:
             self._max_ts = ts
             self._max_at = _utcnow()  # anchored together: the witness is the PAIR, not either half
@@ -254,12 +365,21 @@ class SegmentWriter:
         if len(self._buffer) >= self._flush_rows:
             self._flush_buffer()
 
-    def close(self) -> None:
-        """Flush the buffer to a part file (idempotent). Deliberately does **not** finalize the open
-        hour: `<HH>.parquet` means "committed and complete", and publishing a stop's half-hour under
-        that name is what made crash recovery ambiguous. The hour is finalized by whoever crosses its
-        boundary — this process, or the next one's sweep."""
-        self._flush_buffer()
+    def _hold(self, hour: datetime, event: dict) -> None:
+        """Park a row whose hour the oracle has not confirmed. It still advances the stream witness
+        (it passed the plausibility guard, and a witness that ignores it would re-fire on its
+        successors), and RAM stays bounded: a held hour that reaches `flush_rows` is spilled to that
+        hour's part files — parts commit nothing, so an hour that never confirms in this process is
+        simply picked up when it genuinely arrives (or by the next process)."""
+        rows = self._held.setdefault(hour, [])
+        rows.append(event)
+        ts = event["ts"]
+        if self._max_ts is None or ts > self._max_ts:
+            self._max_ts = ts
+            self._max_at = _utcnow()
+        if len(rows) >= self._flush_rows:
+            self._write_part(rows, hour)
+            self._held[hour] = []
 
     def _implausible(self, ts: datetime) -> bool:
         """True only if `ts` is far ahead of BOTH where the stream should have got to by now AND our
@@ -359,8 +479,12 @@ class SegmentWriter:
     def _flush_buffer(self) -> None:
         if not self._buffer:
             return
-        hour_dir = self._hour_dir(self._current_hour)
-        hh = f"{self._current_hour:%H}"
+        self._write_part(self._buffer, self._current_hour)
+        self._buffer = []
+
+    def _write_part(self, rows: list[dict], hour: datetime) -> None:
+        hour_dir = self._hour_dir(hour)
+        hh = f"{hour:%H}"
         try:
             hour_dir.mkdir(parents=True, exist_ok=True)
             # The next sequence number is read from disk, so a writer resuming a half-written hour
@@ -369,7 +493,7 @@ class SegmentWriter:
             seq = (_part_index(parts[-1]) or 0) + 1 if parts else 0
             part_path = hour_dir / f"{hh}.part{seq:04d}.parquet"
             tmp_path = part_path.with_name(part_path.name + ".tmp")
-            df = pl.DataFrame(self._buffer, schema=self._schema)
+            df = pl.DataFrame(rows, schema=self._schema)
             df.write_parquet(tmp_path, compression="zstd")
             _replace_durably(tmp_path, part_path)  # atomic + durable: a kill can never leave a torn part
         except Exception:
@@ -379,7 +503,6 @@ class SegmentWriter:
             # 19 streams need not be. The dead-man's switch goes red on the watermark breach that
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)
-        self._buffer = []
 
     def _finalize_hour(self, hour: datetime) -> None:
         self._flush_buffer()

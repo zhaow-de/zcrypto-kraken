@@ -8,7 +8,7 @@ import pytest
 
 from cli.capture import segment_writer
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter, verify_manifest
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
 
 
 def _ts(hour: int, minute: int = 0, sec: int = 0) -> datetime:
@@ -39,8 +39,8 @@ def _trade_event(hour: int, sec: int, trade_id: int) -> dict:
     }
 
 
-def _segment_path(base_dir, hour: int, kind: str = "book"):
-    return base_dir / "BTC/EUR" / kind / "2026" / "07" / "08" / f"{hour:02d}.parquet"
+def _segment_path(base_dir, hour: int, kind: str = "book", pair: str = "BTC/EUR"):
+    return base_dir / pair / kind / "2026" / "07" / "08" / f"{hour:02d}.parquet"
 
 
 def _corrupt_body(path: Path) -> None:
@@ -1120,3 +1120,361 @@ def test_a_replayed_print_cannot_reopen_a_committed_hour(tmp_path):
     assert pl.read_parquet(path)["trade_id"].to_list() == list(range(20))  # the closed hour is intact
     assert verify_manifest(path) is True
     assert pl.read_parquet(_segment_path(tmp_path, 11, "trades"))["trade_id"].to_list() == list(range(101, 111))
+
+
+# --- T0037: cross-stream quorum — one untrusted `ts` can never rotate the hour ------------------
+#
+# Rotation trusts the event's own `ts`, so one bogus stamp inside the plausibility window used to
+# finalize the live hour early — permanently truncating it (T0036 refuses to reopen a committed
+# final). The `HourOracle` makes a writer act on a boundary only once HOUR_QUORUM witnesses (other
+# streams, or the 5-min-handicapped wall clock) have seen time reach it. A row for an unconfirmed
+# hour is HELD (never dropped), so the live hour stays open and no genuine row behind the stamp is
+# ever refused. Loss is measured as a set-difference off disk (parts + finals), never predicted.
+
+
+def _book_event_for(pair: str, hour: int, minute: int = 0, sec: int = 0, *, checksum: int = 42) -> dict:
+    return {
+        "ts": _ts(hour, minute, sec),
+        "symbol": pair,
+        "type": "update",
+        "side": "bid",
+        "price": 100.0,
+        "qty": 1.0,
+        "checksum": checksum,
+    }
+
+
+def _oracle_writer(tmp_path, oracle, *, pair="BTC/EUR", kind="book", schema=BOOK_SCHEMA, flush_rows=5, dedup_key=None):
+    return SegmentWriter(tmp_path, pair, kind, schema, flush_rows=flush_rows, dedup_key=dedup_key, oracle=oracle)
+
+
+def _disk_column(tmp_path, column: str, *, pair="BTC/EUR", kind="book") -> list:
+    """Every value of `column` across every parquet on disk for the stream — parts AND finals. This
+    is the ground truth for loss: a merge unlinks the parts it consumes, so nothing is double-counted
+    within an hour, and a held/spilled hour contributes its parts. Loss is a set-difference off this."""
+    files = sorted((tmp_path / pair / kind).rglob("*.parquet"))
+    if not files:
+        return []
+    return pl.concat([pl.read_parquet(f) for f in files])[column].to_list()
+
+
+def test_t0037_lone_in_window_bogus_stamp_never_truncates_the_live_hour(tmp_path, clock):
+    # THE core residual (T0037): a bogus stamp <=5 min ahead, landing in the last 5 min of the hour,
+    # is inside the plausibility window — so `_implausible` passes it — and pre-fix it rotated the
+    # live hour early, publishing it as a committed, verify-clean segment holding only its first rows
+    # and dropping every genuine row after as "late". With the oracle a single stream cannot second
+    # its own stamp: the bogus 11:00 is HELD, hour 10 stays open, and every later genuine row lands.
+    oracle = HourOracle()
+    w = _oracle_writer(tmp_path, oracle)
+    genuine = set()
+    for mnt in range(0, 57):  # 10:00 .. 10:56 — the live hour so far
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    clock.now = _ts(10, 56, 30)
+    w.append(_book_event(11, 0, checksum=999))  # the bogus stamp: 3.5 min ahead — inside the window
+    for mnt in (57, 58, 59):  # the rest of the live hour — pre-fix these were dropped as "late"
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+
+    # The bogus stamp corroborated nothing, so hour 10 is STILL OPEN — not finalized, not published.
+    assert not _segment_path(tmp_path, 10).exists()
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=100))  # a genuine hour-11 print — still only ONE witness
+    assert not _segment_path(tmp_path, 10).exists()  # a lone stream cannot confirm its own boundary
+
+    # The second witness arrives: the handicapped clock reaches 11:05, and the next event drains the
+    # held hour-11 rows and finalizes hour 10 — publishing it whole for the first time.
+    clock.now = _ts(11, 5)
+    w.append(_book_event(11, 5, checksum=105))
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))  # the WHOLE hour, in order
+    assert verify_manifest(path) is True
+    w.close()
+
+    # Zero genuine rows lost, and the bogus row is STORED in the hour its ts names (never deleted).
+    survived = set(_disk_column(tmp_path, "checksum"))
+    assert genuine <= survived
+    hour11_parts = sorted(_segment_path(tmp_path, 11).parent.glob("11.part*.parquet"))
+    hour11_cs = pl.concat([pl.read_parquet(p) for p in hour11_parts])["checksum"].to_list()
+    assert 999 in hour11_cs  # the bogus 11:00 row lands in hour 11, its named hour — not deleted
+
+
+def test_t0037_a_bogus_first_stamp_after_restart_cannot_sweep_publish_the_live_hour(tmp_path, clock):
+    # The restart shape: a previous process left hour-10 parts (crash mid-hour); exchange time is
+    # still inside hour 10. Pre-fix, a bogus in-window first stamp drove the startup SWEEP, which
+    # finalized (published, truncated) the live hour — and then dropped every genuine hour-10 row as
+    # "late", surviving further restarts. The first `_enter_hour` is now behind the oracle gate, so a
+    # garbage first stamp is HELD and the sweep never runs on it.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    for i in range(20):  # cs 0..19 flushed to 4 parts, hour 10 still live
+        clock.now = _ts(10, i)
+        w1.append(_book_event(10, i, checksum=i))
+    del w1  # hard crash
+
+    clock.now = _ts(10, 57)
+    w2 = _oracle_writer(tmp_path, HourOracle())
+    w2.append(_book_event(11, 0, checksum=999))  # the very first event of the new process: bogus
+
+    assert w2._current_hour is None  # nothing was entered — the bogus is held, the sweep never ran
+    assert not _segment_path(tmp_path, 10).exists()  # the live hour was NOT sweep-published
+    assert len(list(_segment_path(tmp_path, 10).parent.glob("10.part*.parquet"))) == 4  # parts untouched
+
+    for mnt in (57, 58, 59):  # the genuine rest of hour 10 — must be admitted, not dropped as late
+        clock.now = _ts(10, mnt)
+        w2.append(_book_event(10, mnt, checksum=20 + (mnt - 57)))
+    clock.now = _ts(11, 0)
+    w2.append(_book_event(11, 0, checksum=100))
+    clock.now = _ts(11, 5)
+    w2.append(_book_event(11, 5, checksum=105))  # the clock seconds hour 11 -> hour 10 finalizes
+
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(20)) + [20, 21, 22]  # every row
+    assert verify_manifest(path) is True
+
+
+def test_t0037_a_genuine_boundary_with_two_streams_publishes_within_one_event(tmp_path, clock):
+    # The property a single bad field can never forge: AGREEMENT. Two streams share one oracle; a
+    # genuine boundary crosses BOTH within seconds. The clock here LAGS by 4 min (inside the window,
+    # so nothing is dropped), so `clock - CLOCK_WITNESS_MARGIN` can never reach 11:00 while the
+    # streams do — proving the corroboration is the OTHER STREAM, not the clock. The moment the second
+    # stream crosses, hour 11 is confirmed and its hour 10 publishes on that very event.
+    oracle = HourOracle()
+    a = _oracle_writer(tmp_path, oracle, pair="BTC/EUR")
+    b = _oracle_writer(tmp_path, oracle, pair="ETH/EUR")
+
+    def feed(w, pair, hour, minute, cs):
+        clock.now = _ts(hour, minute) - timedelta(minutes=4)  # a steady 4-min lag: a constant offset
+        w.append(_book_event_for(pair, hour, minute, checksum=cs))
+
+    feed(a, "BTC/EUR", 10, 0, 0)  # A's first — held (only A witnessed, clock lags)
+    feed(b, "ETH/EUR", 10, 0, 10)  # B seconds hour 10 -> B admits
+    feed(a, "BTC/EUR", 10, 20, 1)  # A drains its held cs0, admits cs1
+    feed(b, "ETH/EUR", 10, 20, 11)
+    feed(a, "BTC/EUR", 10, 59, 2)
+    feed(b, "ETH/EUR", 10, 59, 12)
+
+    feed(a, "BTC/EUR", 11, 0, 3)  # A crosses first — only ONE stream at 11:00, hour 11 not confirmed
+    assert not _segment_path(tmp_path, 10, pair="BTC/EUR").exists()  # A holds; its hour 10 stays open
+
+    feed(b, "ETH/EUR", 11, 0, 13)  # B crosses — now TWO streams agree on 11:00, and the clock lags
+    assert _segment_path(tmp_path, 10, pair="ETH/EUR").exists()  # B's hour 10 publishes on this event
+    assert not _segment_path(tmp_path, 10, pair="BTC/EUR").exists()  # A's follows on A's next event
+
+    feed(a, "BTC/EUR", 11, 1, 4)  # A's next event drains its held cs3 and finalizes A's hour 10
+    a.close()
+    b.close()
+    assert pl.read_parquet(_segment_path(tmp_path, 10, pair="BTC/EUR"))["checksum"].to_list() == [0, 1, 2]
+    assert pl.read_parquet(_segment_path(tmp_path, 10, pair="ETH/EUR"))["checksum"].to_list() == [10, 11, 12]
+    assert verify_manifest(_segment_path(tmp_path, 10, pair="BTC/EUR")) is True
+    assert verify_manifest(_segment_path(tmp_path, 10, pair="ETH/EUR")) is True
+
+
+def _drive_lagging_clock_run(tmp_path, oracle, clock):
+    """A cold start under a 10-min lagging clock, then hour-11 traffic, a boundary and close(). The
+    guard's cold-start cap is what drops the first few rows — identically with or without the oracle,
+    since the oracle sits BEHIND the guard. Returns the surviving checksum set off disk."""
+    w = _oracle_writer(tmp_path, oracle)
+    for i in range(20):  # 11:00:00 .. 11:00:19, one distinct ts each (so the drop-cap can advance)
+        clock.now = _ts(11, 0, i) - timedelta(minutes=10)
+        w.append(_book_event(11, 0, i, checksum=100 + i))
+    clock.now = _ts(12, 0) - timedelta(minutes=10)
+    w.append(_book_event(12, 0, checksum=200))  # a boundary
+    w.close()
+    return set(_disk_column(tmp_path, "checksum"))
+
+
+def test_t0037_a_lagging_clock_adds_no_loss_over_the_oracle_free_baseline(tmp_path, clock):
+    # Criterion (2): the oracle must never DARKEN a stream — under a lagging clock it must lose
+    # EXACTLY what the oracle-free writer loses, no more. Both drop only the guard's cold-start cap
+    # (a dropped event never advances the stream witness, so the cap re-anchors it); the oracle adds
+    # zero. Asserted as set-EQUALITY against the real baseline, not against a hand-computed constant.
+    base_dir = tmp_path / "baseline"
+    orac_dir = tmp_path / "oracle"
+    base_dir.mkdir()
+    orac_dir.mkdir()
+
+    baseline = _drive_lagging_clock_run(base_dir, None, clock)  # oracle=None == the 189a56a writer
+    with_oracle = _drive_lagging_clock_run(orac_dir, HourOracle(), clock)
+
+    assert with_oracle == baseline  # identical survivors — the oracle costs nothing under a lag
+    assert baseline == set(range(100 + segment_writer.MAX_CONSECUTIVE_DROPS, 120)) | {200}  # only the cap
+
+
+def test_t0037_a_leading_clock_never_publishes_the_hour_early(tmp_path, clock):
+    # The other clock fault: a clock LEADING by 10 min. The handicapped clock witness (`clock - 5m`)
+    # then reads 11:00 while exchange time is only 10:55 — but it is only ONE witness, and the stream
+    # is the other, still at 10:55. So hour 11 cannot confirm until the STREAM genuinely crosses:
+    # a leading clock can never finalize (and truncate) hour 10 early, and loses nothing.
+    oracle = HourOracle()
+    w = _oracle_writer(tmp_path, oracle)
+    for mnt in range(0, 60):  # a full genuine hour 10, clock leading 10 min throughout
+        clock.now = _ts(10, mnt) + timedelta(minutes=10)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    # The clock says 11:09, but no hour-11 EVENT has arrived — hour 10 must still be open.
+    assert not _segment_path(tmp_path, 10).exists()
+
+    clock.now = _ts(11, 0) + timedelta(minutes=10)
+    w.append(_book_event(11, 0, checksum=100))  # the genuine crossing — NOW hour 11 is corroborated
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))  # whole hour, zero loss
+    assert verify_manifest(path) is True
+
+
+def test_t0037_three_escalating_in_window_stamps_on_one_stream_lose_nothing(tmp_path, clock):
+    # The attack that DEFEATS the intra-stream designs (A at 2, B at 3): a burst of escalating bogus
+    # stamps, each a little further ahead but all inside the 5-min window, on ONE stream. A design
+    # that corroborates within the stream re-opens the truncation once enough of them "agree". C's
+    # second witness is another stream or the handicapped clock, so one stream's escalating stamps
+    # confirm NOTHING — all held, every interleaved genuine row admitted, zero loss.
+    oracle = HourOracle()
+    w = _oracle_writer(tmp_path, oracle)
+    genuine = set()
+    for mnt in range(0, 56):
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+        genuine.add(mnt)
+    escalating = [(_ts(10, 56, 0), _ts(11, 0, 0), 900), (_ts(10, 57, 0), _ts(11, 2, 0), 901), (_ts(10, 58, 0), _ts(11, 4, 0), 902)]
+    tail = [56, 57, 58, 59]
+    for i, (wall, bogus_ts, cs) in enumerate(escalating):
+        clock.now = wall
+        w.append({**_book_event(10, 0, checksum=cs), "ts": bogus_ts})  # escalating bogus
+        clock.now = _ts(10, tail[i])
+        w.append(_book_event(10, tail[i], checksum=tail[i]))  # a genuine row right after it
+        genuine.add(tail[i])
+    clock.now = _ts(10, 59)
+    w.append(_book_event(10, 59, checksum=59))
+    genuine.add(59)
+
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=100))
+    clock.now = _ts(11, 5)
+    w.append(_book_event(11, 5, checksum=105))  # the clock seconds hour 11 -> hour 10 finalizes
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))  # not one genuine row lost
+    assert verify_manifest(path) is True
+    w.close()
+    assert genuine <= set(_disk_column(tmp_path, "checksum"))
+
+
+def test_t0037_a_stand_down_burst_never_publishes_the_future_hour(tmp_path, clock):
+    # B's other honest failure: a burst of far-future stamps stands the plausibility guard down
+    # (MAX_CONSECUTIVE_DROPS), so the stamps AFTER the cap slip past the guard — and pre-fix a design
+    # that acted on them published (truncated to) the future hour. Here they slip past the guard but
+    # the ORACLE holds them: the future hour is never confirmed, so it is never published, and the
+    # genuine live stream underneath loses nothing.
+    clock.now = _ts(10, 5)
+    w = _oracle_writer(tmp_path, oracle=HourOracle())
+    for i in range(5):  # five distinct far-future stamps: 3 caught by the cap, 2 slip the stood-down guard
+        w.append({**_book_event(10, 0, checksum=800 + i), "ts": _ts(15, i)})
+    genuine = set()
+    for i in range(20):  # the genuine live stream, still flowing under the burst
+        clock.now = _ts(10, 5) + timedelta(seconds=i)
+        w.append(_book_event(10, 5, i, checksum=i))
+        genuine.add(i)
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=100))
+    clock.now = _ts(11, 5)
+    w.append(_book_event(11, 5, checksum=105))  # hour 10 finalizes; hour 15 stays held
+    w.close()
+
+    assert not _segment_path(tmp_path, 15).exists()  # the future hour is NEVER published as a final
+    assert not list((tmp_path / "BTC/EUR" / "book" / "2026" / "07" / "08").glob("15.parquet"))
+    assert genuine <= set(_disk_column(tmp_path, "checksum"))  # the live stream lost nothing
+
+
+def test_t0037_a_lone_stream_rotation_is_clock_paced_and_never_lost(tmp_path, clock):
+    # S8: one live stream (a single pair whose trades fall silent across the boundary). With no second
+    # STREAM to second the boundary, rotation is paced by the handicapped clock — bounded to
+    # CLOCK_WITNESS_MARGIN (300 s) — and a lone print in an otherwise empty hour is admitted (never
+    # lost) the moment the clock confirms. Nothing is darkened; the rotation is merely a little later.
+    clock.now = _ts(10, 0)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    w.append(_trade_event(10, 0, 1))  # THE lone print of hour 10, then the pair goes quiet
+
+    clock.now = _ts(11, 0)
+    w.append(_trade_event(11, 0, 2))  # crosses the boundary; the lone hour-10 print is drained/admitted
+    assert not _segment_path(tmp_path, 10, "trades").exists()  # not published — clock only reads 10:55
+
+    clock.now = _ts(11, 4)
+    w.append(_trade_event(11, 4 * 60, 3))
+    assert not _segment_path(tmp_path, 10, "trades").exists()  # still within the 5-min margin: held
+
+    clock.now = _ts(11, 5)  # the margin elapses -> the clock seconds hour 11
+    w.append(_trade_event(11, 5 * 60, 4))
+    path = _segment_path(tmp_path, 10, "trades")
+    assert pl.read_parquet(path)["trade_id"].to_list() == [1]  # the lone print, published, never lost
+    assert verify_manifest(path) is True
+    w.close()
+    assert {1, 2, 3, 4} <= set(_disk_column(tmp_path, "trade_id", kind="trades"))
+
+
+def test_t0037_close_spills_held_rows_to_parts_that_a_restart_merges_and_dedups(tmp_path, clock):
+    # close() must not lose held rows, and must not FINALIZE (T0036 intact): the held rows become
+    # PARTS of the hour their ts names. A restart then merges them, and a replay of a held print is
+    # deduped via the part-seeded `_seen` — no loss, no duplicate.
+    clock.now = _ts(10, 3)
+    w1 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):  # held (a lone stream, clock < 10:05 -> hour 10 not yet confirmed)
+        w1.append(_trade_event(10, i, i))
+    assert w1._held  # the rows are held, not admitted
+    w1.close()
+
+    trades_dir = _segment_path(tmp_path, 10, "trades").parent
+    assert not _segment_path(tmp_path, 10, "trades").exists()  # close() never finalizes
+    spilled = pl.concat([pl.read_parquet(p) for p in trades_dir.glob("10.part*.parquet")])
+    assert sorted(spilled["trade_id"].to_list()) == [0, 1, 2]  # the held rows are safe on disk as parts
+
+    clock.now = _ts(10, 6)
+    w2 = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in (1, 2):  # the resubscribe REPLAYS held prints already on disk
+        w2.append(_trade_event(10, i, i))
+    for i in (3, 4):  # ... and genuinely new prints
+        w2.append(_trade_event(10, i, i))
+    clock.now = _ts(11, 0)
+    w2.append(_trade_event(11, 0, 100))
+    clock.now = _ts(11, 5)
+    w2.append(_trade_event(11, 5 * 60, 101))  # confirm hour 11 -> hour 10 finalizes
+    w2.close()
+
+    path = _segment_path(tmp_path, 10, "trades")
+    ids = pl.read_parquet(path)["trade_id"].to_list()
+    assert sorted(ids) == [0, 1, 2, 3, 4]  # the spilled parts merged, replays deduped — no dup, no loss
+    assert len(ids) == len(set(ids))
+    assert verify_manifest(path) is True
+
+
+def test_t0037_a_held_hour_above_the_event_hour_is_not_drained_out_of_order(tmp_path, clock):
+    # The load-bearing drain bounds: held hours drain ASCENDING, and only those `h <= event_hour`
+    # (draining a higher held hour on a lower-hour event would misfile the current row) and
+    # `h <= confirmed`. Cold-start holds hour-10 rows; they must drain in ARRIVAL order ahead of the
+    # confirming event. A bogus hour-11 row, held meanwhile, must NOT be drained by a later hour-10
+    # event even after the clock has moved on — it waits for a genuine hour-11 event.
+    oracle = HourOracle()
+    w = _oracle_writer(tmp_path, oracle)
+    for mnt in range(0, 3):  # 10:00..10:02 — held during the cold start (clock < 10:05)
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    assert w._held  # all three are held, none admitted yet
+    for mnt in range(3, 56):  # ... at 10:05 the clock confirms hour 10 and the held run drains ASCENDING
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+
+    clock.now = _ts(10, 56, 30)
+    w.append(_book_event(11, 0, checksum=999))  # a bogus hour-11 row — held
+    for mnt in (56, 57, 58, 59):  # later hour-10 events must NOT drain the held hour-11 row (h > event_hour)
+        clock.now = _ts(10, mnt)
+        w.append(_book_event(10, mnt, checksum=mnt))
+    assert not _segment_path(tmp_path, 10).exists()  # hour 10 never finalized by a lower-hour event
+
+    clock.now = _ts(11, 0)
+    w.append(_book_event(11, 0, checksum=100))
+    clock.now = _ts(11, 5)
+    w.append(_book_event(11, 5, checksum=105))
+    path = _segment_path(tmp_path, 10)
+    # Arrival order preserved through the cold-start drain (0..4 held, drained ascending) — never
+    # interleaved with the bogus 999, which was held above the event hour and lands in hour 11.
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(60))
+    w.close()
+    assert 999 in set(_disk_column(tmp_path, "checksum"))

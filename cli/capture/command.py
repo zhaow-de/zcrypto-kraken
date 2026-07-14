@@ -16,7 +16,7 @@ import typer
 from cli.capture.book import OrderBook
 from cli.capture.errors import CaptureError
 from cli.capture.gap_monitor import DiskWatermark, GapMonitor, ping_healthcheck
-from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter
 from cli.capture.ws_client import ALLOWED_DEPTHS, CaptureClient, classify
 from cli.config import load_config
 from cli.logging import get_logger
@@ -233,11 +233,17 @@ async def _disk_watermark_loop(watermark: DiskWatermark, interval: int) -> None:
 async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | None, healthcheck_url: str | None) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     books = {pair: OrderBook(pair, depth) for pair in pairs}
-    book_writers = {pair: SegmentWriter(data_dir, pair, "book", BOOK_SCHEMA) for pair in pairs}
+    # One oracle shared by all 20 writers (T0037): an hour boundary is acted on only once a second
+    # witness — another stream, or the handicapped wall clock — has seen time reach it, so a single
+    # bogus `timestamp` field can no longer finalize (and thereby permanently truncate) the live hour.
+    oracle = HourOracle()
+    book_writers = {pair: SegmentWriter(data_dir, pair, "book", BOOK_SCHEMA, oracle=oracle) for pair in pairs}
     # `dedup_key`: on every (re)connect `ws_client` resubscribes with snapshot=True and Kraken
     # REPLAYS its recent trade prints (T0026). `trade_id` is globally unique, so a replayed print
     # that is already in the open hour is recognized and dropped instead of stored twice.
-    trade_writers = {pair: SegmentWriter(data_dir, pair, "trades", TRADE_SCHEMA, dedup_key="trade_id") for pair in pairs}
+    trade_writers = {
+        pair: SegmentWriter(data_dir, pair, "trades", TRADE_SCHEMA, dedup_key="trade_id", oracle=oracle) for pair in pairs
+    }
     monitor = GapMonitor()
     watermark = DiskWatermark(data_dir)
     client = CaptureClient(pairs, depth)
