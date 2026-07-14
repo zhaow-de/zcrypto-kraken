@@ -45,6 +45,17 @@ def test_verify_tree_skips_partfiles(tmp_path):
     assert r.checked == 0
 
 
+def test_verify_tree_skips_held_spills(tmp_path):
+    # A held-spill (`<HH>.held####.parquet`) is quarantine the capture writer kept for rows whose
+    # hour was never quorum-confirmed (T0037): not a final, never manifested — verify must not
+    # count it failed, or every stop with an unconfirmed hold would page as archive corruption.
+    d = tmp_path / "BTC/EUR/trades/2026/07/12"
+    d.mkdir(parents=True)
+    pl.DataFrame({"x": [1]}).write_parquet(d / "12.held0000.parquet")
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+    assert r.checked == 0 and r.failed == ()
+
+
 def test_verify_tree_missing_sidecar_counts_failed(tmp_path):
     _seg(tmp_path, "BTC/EUR", "book", "10")
     d = tmp_path / "ETH/EUR/trades/2026/07/12"

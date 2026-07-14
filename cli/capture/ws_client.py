@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from decimal import Decimal
 
 import websockets
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from cli.capture.errors import CaptureError
 from cli.logging import get_logger
@@ -20,6 +20,7 @@ ALLOWED_DEPTHS = (10, 25, 100, 500, 1000)
 
 _BACKOFF_BASE_SECONDS = 1.0
 _BACKOFF_MAX_SECONDS = 60.0
+_RECONNECT_ERROR_EVERY = 10  # log an ERROR every N consecutive failed reconnect attempts (T0035)
 
 
 def build_subscribe_message(
@@ -136,11 +137,20 @@ class CaptureClient:
                         yield parse_message(raw)
             except ConnectionClosed as exc:
                 logger.warning("WS connection closed, reconnecting: %s", exc)
+            except (WebSocketException, OSError, TimeoutError) as exc:
+                # A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
+                # endpoint answers with while restarting (T0035), a refused/unroutable connect
+                # (OSError), or a handshake timeout — backs off and retries exactly like a drop
+                # of an established connection. asyncio.CancelledError deliberately propagates:
+                # it is the designed stop signal, and swallowing it would break shutdown.
+                logger.warning("WS connect attempt failed, reconnecting: %s", exc)
             finally:
                 self._ws = None
             delay = compute_backoff(attempt)
             attempt += 1
             logger.info("reconnecting in %.1fs (attempt %d)", delay, attempt)
+            if attempt % _RECONNECT_ERROR_EVERY == 0:
+                logger.error("WS reconnect still failing after %d consecutive attempts", attempt)
             await self._sleep(delay)
 
     async def _subscribe_all(self, ws) -> None:

@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from decimal import Decimal
 
 import pytest
-from websockets.exceptions import ConnectionClosedError
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.http11 import Response
 
 from cli.capture.errors import CaptureError
 from cli.capture.ws_client import (
@@ -188,6 +191,117 @@ def test_stream_reconnects_with_backoff_after_connection_closed():
         assert conn1.sent == conn2.sent  # both connections got identical subscribe frames
 
     asyncio.run(run())
+
+
+# --- T0035: a rejected reconnect ATTEMPT must back off and retry, not kill the daemon ------------
+#
+# Kraken restarted its WS service (close 1012) on 2026-07-13 and answered the reconnect handshake
+# with HTTP 503 while coming back up. `InvalidStatus` is not a `ConnectionClosed`, so pre-fix it
+# escaped stream()'s sole handler, propagated out of the async generator, and crashed the process —
+# the backoff/retry loop built for exactly this never ran past attempt 1.
+
+
+def _invalid_status_503():
+    """The real exception production saw: `InvalidStatus: server rejected WebSocket connection: HTTP 503`."""
+    return InvalidStatus(Response(503, "Service Unavailable", Headers()))
+
+
+def _connect_fn_scripted(*script):
+    """A connect_fn following `script` per call: raise the item if it is an exception, return it otherwise."""
+    calls = []
+    remaining = list(script)
+
+    def connect_fn(uri):
+        calls.append(uri)
+        item = remaining.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    return connect_fn, calls
+
+
+def test_stream_backs_off_and_reconnects_after_rejected_handshake():
+    async def run():
+        conn = _FakeConnection(['{"channel": "heartbeat"}'])
+        connect_fn, calls = _connect_fn_scripted(_invalid_status_503(), _invalid_status_503(), conn)
+        sleep_calls = []
+
+        async def fake_sleep(delay):
+            sleep_calls.append(delay)
+
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=fake_sleep)
+
+        results = []
+        async for msg in client.stream():
+            results.append(msg)
+            break
+
+        assert results == [{"channel": "heartbeat"}]
+        assert calls == ["wss://fake"] * 3  # two rejected handshakes, then the successful connect
+        assert sleep_calls == [1.0, 2.0]  # compute_backoff(0), compute_backoff(1) across the failures
+
+    asyncio.run(run())
+
+
+def test_stream_backs_off_and_reconnects_after_os_error():
+    # ConnectionRefusedError / DNS failures surface as OSError from the connect call — same treatment.
+    async def run():
+        conn = _FakeConnection(['{"channel": "heartbeat"}'])
+        connect_fn, calls = _connect_fn_scripted(ConnectionRefusedError("connection refused"), conn)
+        sleep_calls = []
+
+        async def fake_sleep(delay):
+            sleep_calls.append(delay)
+
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=fake_sleep)
+
+        results = []
+        async for msg in client.stream():
+            results.append(msg)
+            break
+
+        assert results == [{"channel": "heartbeat"}]
+        assert calls == ["wss://fake"] * 2
+        assert sleep_calls == [1.0]
+
+    asyncio.run(run())
+
+
+def test_stream_lets_cancellation_propagate():
+    # CancelledError is the designed stop signal — the widened handler must never swallow it.
+    async def run():
+        connect_fn, _ = _connect_fn_scripted(asyncio.CancelledError())
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=asyncio.sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in client.stream():
+                pass
+
+    asyncio.run(run())
+
+
+def test_stream_logs_error_every_10_consecutive_failed_reconnects(caplog):
+    # A genuinely prolonged venue outage must be LOUD: one ERROR per 10 consecutive failed
+    # attempts (not one per failure, and not merely the per-attempt INFO line).
+    async def run():
+        conn = _FakeConnection(['{"channel": "heartbeat"}'])
+        connect_fn, _ = _connect_fn_scripted(*[_invalid_status_503() for _ in range(10)], conn)
+
+        async def fake_sleep(delay):
+            pass
+
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=fake_sleep)
+
+        async for _ in client.stream():
+            break
+
+    with caplog.at_level(logging.INFO, logger="zcrypto.capture.ws_client"):
+        asyncio.run(run())
+
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1  # fired exactly at the 10th consecutive failure, not on every failure
+    assert "10" in errors[0].getMessage()
 
 
 def test_resubscribe_book_unsubscribes_then_subscribes():

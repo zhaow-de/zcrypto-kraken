@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import json
 import os
 import signal
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
@@ -14,7 +16,7 @@ import typer
 from cli.capture.book import OrderBook
 from cli.capture.errors import CaptureError
 from cli.capture.gap_monitor import DiskWatermark, GapMonitor, ping_healthcheck
-from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter
 from cli.capture.ws_client import ALLOWED_DEPTHS, CaptureClient, classify
 from cli.config import load_config
 from cli.logging import get_logger
@@ -28,6 +30,53 @@ HEALTHCHECK_ENV_VAR = "HEALTHCHECK_URL"
 HEALTHCHECK_INTERVAL_SECONDS = 60
 DISK_WATERMARK_INTERVAL_SECONDS = 30
 UNIVERSE_RELATIVE_PATH = Path("universe") / "point-in-time-universe.json"
+LOCKFILE_NAME = ".capture.lock"
+
+
+@contextlib.contextmanager
+def single_instance_lock(data_dir: Path) -> Iterator[None]:
+    """Hold an exclusive lock on `data_dir` for as long as this process is writing segments.
+
+    `SegmentWriter` derives the next part sequence by globbing the hour directory and names the part
+    deterministically, so two processes pick the SAME sequence and write the SAME file: they clobber
+    each other's parts and shred the hour (measured: 70 of 120 rows destroyed). Within one process
+    the 20 writers are safe — disjoint `pair/kind` roots — but nothing stopped a SECOND process: an
+    overlapping restart, or a human running `zcrypto capture` beside the service. These rows are
+    unbackfillable, so refuse to start rather than race.
+
+    `flock` because the kernel releases it when the process dies, however it dies — a SIGKILL, an OOM
+    kill or a power loss leaves no stale lockfile for a human to reason about at 3am. It is held on
+    the data dir itself, so it spans the container boundary too (the compose file bind-mounts the
+    host path straight through).
+
+    Only CONTENTION refuses the start. Failing to create or lock the file at all does not: on a
+    read-only remount — the aftermath of the very ENOSPC condition `DiskWatermark` exists for — the
+    `mkdir`/`open` raises, and refusing to start there would crash-loop the daemon under
+    `restart: always` on exactly the failure we most need it to survive and report (the same trap as
+    `_recover`'s tmp cleanup). An unwritable disk has nothing to corrupt, so we log and run on.
+    """
+    fd = None
+    path = data_dir / LOCKFILE_NAME
+    try:
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            # The ONLY thing that means "someone else holds it". Anything else does not.
+            raise CaptureError(
+                f"another capture process is already writing {data_dir} (lock: {path}) — refusing to "
+                "start. Two writers overwrite each other's part files and destroy rows. Stop the "
+                "running one first (`systemctl stop zcrypto-capture`)."
+            ) from exc
+        except OSError:
+            # A read-only filesystem, a mount without flock support (ENOLCK / EOPNOTSUPP). Not
+            # evidence of a second writer, and not worth the daemon.
+            logger.exception("could not take the single-instance lock — running UNLOCKED path=%s", path)
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)  # releases the lock
 
 
 def _default_pairs(universe_path: Path) -> list[str]:
@@ -46,9 +95,14 @@ def _default_pairs(universe_path: Path) -> list[str]:
 
 def _parse_ts(raw: str) -> datetime:
     try:
-        return datetime.fromisoformat(raw)
+        ts = datetime.fromisoformat(raw)
     except ValueError as exc:
         raise CaptureError(f"unparseable timestamp from Kraken WS: {raw!r}") from exc
+    # Kraken stamps UTC. Should it ever drop the trailing `Z`, the result is naive — and every
+    # comparison the writer makes against it (`_implausible`, the late-event floor) would raise
+    # TypeError out of `append()`, i.e. out of the single consumer task: capture dies for all 10
+    # pairs and both kinds, on one missing character.
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
 async def _handle_book_message(
@@ -170,17 +224,42 @@ async def _healthcheck_loop(
             ping_healthcheck(url)
 
 
-async def _disk_watermark_loop(watermark: DiskWatermark, interval: int) -> None:
+async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, interval: int) -> None:
     while True:
-        watermark.check()
+        try:
+            healthy = watermark.check()
+            # T0032: withholding the dead-man ping PAGES the operator, but the breach's lost time must
+            # also be BOOKED into the exit-bar gap accounting, or the automated <0.1% gap-time bar reads
+            # clean for a window that lost data. Bridge the breach state into GapMonitor's dedicated
+            # watermark window here — both calls are idempotent, so the poll can drive them every tick.
+            now = datetime.now(UTC)
+            if healthy:
+                monitor.end_watermark_gap(at=now)
+            else:
+                monitor.start_watermark_gap(at=now)
+        except Exception:
+            # check() reads the filesystem (a flaky mount raises OSError out of disk_usage), and this
+            # task is awaited by NOTHING until shutdown: an escaping exception silently ENDS watermark
+            # polling — `breached` freezes, and a later real breach goes undetected while the dead-man
+            # pings green (the exact T0032 silent death). Log and keep polling.
+            logger.exception("disk watermark check failed — retrying in %ss", interval)
         await asyncio.sleep(interval)
 
 
 async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | None, healthcheck_url: str | None) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     books = {pair: OrderBook(pair, depth) for pair in pairs}
-    book_writers = {pair: SegmentWriter(data_dir, pair, "book", BOOK_SCHEMA) for pair in pairs}
-    trade_writers = {pair: SegmentWriter(data_dir, pair, "trades", TRADE_SCHEMA) for pair in pairs}
+    # One oracle shared by all 20 writers (T0037): an hour boundary is acted on only once a second
+    # witness — another stream, or the handicapped wall clock — has seen time reach it, so a single
+    # bogus `timestamp` field can no longer finalize (and thereby permanently truncate) the live hour.
+    oracle = HourOracle()
+    book_writers = {pair: SegmentWriter(data_dir, pair, "book", BOOK_SCHEMA, oracle=oracle) for pair in pairs}
+    # `dedup_key`: on every (re)connect `ws_client` resubscribes with snapshot=True and Kraken
+    # REPLAYS its recent trade prints (T0026). `trade_id` is globally unique, so a replayed print
+    # that is already in the open hour is recognized and dropped instead of stored twice.
+    trade_writers = {
+        pair: SegmentWriter(data_dir, pair, "trades", TRADE_SCHEMA, dedup_key="trade_id", oracle=oracle) for pair in pairs
+    }
     monitor = GapMonitor()
     watermark = DiskWatermark(data_dir)
     client = CaptureClient(pairs, depth)
@@ -196,7 +275,7 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     health = asyncio.create_task(
         _healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS, watermark)
     )
-    disk_check = asyncio.create_task(_disk_watermark_loop(watermark, DISK_WATERMARK_INTERVAL_SECONDS))
+    disk_check = asyncio.create_task(_disk_watermark_loop(watermark, monitor, DISK_WATERMARK_INTERVAL_SECONDS))
 
     try:
         if duration is not None:
@@ -211,8 +290,16 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
         for task in (consumer, health, disk_check):
             task.cancel()
         for task in (consumer, health, disk_check):
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # A task that DIED earlier re-raises its corpse's exception here — already surfaced
+                # (or about to be, by the try block's own re-raise). Letting it escape this loop
+                # would skip writer.close() below for all 20 writers, losing up to flush_rows
+                # buffered rows per stream on top of the original failure.
+                logger.exception("background task failed during shutdown")
         for writer in (*book_writers.values(), *trade_writers.values()):
             writer.close()
 
@@ -249,4 +336,5 @@ def capture(
         resolved_data_dir,
         duration,
     )
-    asyncio.run(_run(resolved_pairs, depth, resolved_data_dir, duration, healthcheck_url))
+    with single_instance_lock(resolved_data_dir):
+        asyncio.run(_run(resolved_pairs, depth, resolved_data_dir, duration, healthcheck_url))

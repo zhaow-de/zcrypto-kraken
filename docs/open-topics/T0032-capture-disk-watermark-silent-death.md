@@ -70,20 +70,30 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
   pinging **while still breached** — reintroducing the very bug.)*
 - **The 20×-wrong disk figure is corrected** in [[T0003]] (measured **0.48 GB/day**, not ~10 GB/day),
   along with the "~7-day ring buffer / bring the workstation online every few days" framing it produced.
+- **The breach window is now booked into the exit-bar gap accounting.** `GapMonitor` gained a dedicated
+  global watermark window (`start_watermark_gap` / `end_watermark_gap`) that rolls into every pair's
+  `gap_seconds` / `gap_ratio`, driven from `_disk_watermark_loop`. It is tracked **independently** of the
+  per-pair `_open` gaps and of the ping-withholding — deliberately **not** via `GapMonitor.start_gap`
+  (idempotent per pair: a concurrent `checksum_resync` gap would swallow it and resume the ping while
+  still breached). So a breach inside a ≥7-day clean run now both **pages** *and* shows in the
+  automated `<0.1 %` gap-time bar. Six executed tests (`tests/test_capture_gap_monitor.py`,
+  `tests/test_capture_command.py`).
+- **The watermark loop itself can no longer die silently.** Adversarial verification executed a
+  backward wall-clock step (chrony makestep) across an open breach window: `end_watermark_gap`
+  raised `CaptureError` inside `_disk_watermark_loop` — a task nothing awaits until shutdown — so
+  polling stopped for the life of the process (`breached` froze, later real breaches never withheld
+  the ping: the same silent death, reintroduced), and the corpse's exception re-raised in `_run`'s
+  shutdown ahead of the writer-close loop. Fixed three ways, each with an executed regression test:
+  `end_watermark_gap` clamps a negative window to zero instead of raising; the loop survives any
+  exception from its body (a flaky mount's `OSError` out of `disk_usage` included) and keeps
+  polling; and `_run`'s shutdown awaits log-and-continue on a task's non-`CancelledError` corpse so
+  every writer still flushes on the way out.
 
 **Not yet deployed:** the fix ships with the next capture-image rollout (there is ~135 days of runway on
 the disk, and the rollout is needed for Role C anyway).
 
 ## Suggested next steps
 
-- **(autonomous)** **Book the breach window into the exit-bar gap accounting.** The dead-man now *pages*
-  on a breach, but the lost time is still **not** recorded in `GapMonitor`'s `gap_seconds` / `gap_ratio` —
-  the metric behind the **§12 `<0.1 %` gap-time exit bar**. So a breach landing inside a ≥7-day clean-run
-  window would page the operator while the **automated exit-bar metric reads clean for a period that
-  actually lost data**. Fix it with a dedicated counter (or a `reason`-aware key in `GapMonitor._open`)
-  that is *independent* of the ping-withholding mechanism — deliberately **not** by calling
-  `GapMonitor.start_gap`, for the idempotency reason recorded above. *(Surfaced by the review of the
-  dead-man fix, 2026-07-13.)*
 - **(autonomous)** Decide and implement **retention** for the capture segments — prune-after-verified-pull,
   the same shape as [[T0021]]'s journal retention. **There is no ring buffer anywhere**: nothing prunes
   capture segments on any host, so the disk simply fills. With the dead-man fix this now *pages* rather
@@ -91,4 +101,9 @@ the disk, and the rollout is needed for Role C anyway).
   timer to the *secondary* capture host; the **primary** still has none.)
 - **(autonomous)** Correct `00048`'s eviction non-goal rationale — "the 7-day buffer's 12× margin makes
   delete-after-verified unnecessary" is reasoning from the same 20×-wrong number.
+- **(autonomous)** **Probe-outage blind spot** (reviewer-measured 2026-07-14, minor): while the
+  `disk_usage` probe itself keeps failing, `DiskWatermark.breached` stays frozen at its last value —
+  so a disk that actually fills *during* a probe outage leaves the dead-man pinging GREEN (executed:
+  6 pings while the probe raised). The loop now survives the failure (logs + keeps polling), but a
+  sustained probe failure should itself withhold the ping (treat "cannot measure" as "not healthy").
 - **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.

@@ -44,11 +44,35 @@ def test_end_gap_with_no_open_gap_returns_zero():
     assert monitor.end_gap("BTC/EUR", at=_at(0)) == 0.0
 
 
-def test_end_gap_before_start_raises():
+def test_end_gap_clamps_a_backward_stepped_clock():
+    # T0032 mirror for the per-pair windows: `at` comes straight from the wall clock, so an end
+    # before the start is a backward clock step (chrony makestep), not a caller bug. Pre-fix this
+    # raised CaptureError inside the consumer task and killed the daemon; the stepped clock cannot
+    # measure the window, so it books zero, closes it, and the next gap is trackable again.
     monitor = GapMonitor()
-    monitor.start_gap("BTC/EUR", "reconnect", at=_at(10))
-    with pytest.raises(CaptureError):
-        monitor.end_gap("BTC/EUR", at=_at(5))
+    monitor.start_gap("BTC/EUR", "reconnect", at=_at(120))
+    assert monitor.end_gap("BTC/EUR", at=_at(0)) == 0.0  # clamped, not raised
+    assert monitor.is_open("BTC/EUR") is False  # the window really closed ...
+    monitor.start_gap("BTC/EUR", "reconnect", at=_at(200))  # ... so the NEXT gap books normally
+    assert monitor.end_gap("BTC/EUR", at=_at(230)) == 30.0
+    assert monitor.gap_seconds("BTC/EUR") == 30.0
+
+
+def test_gap_seconds_clamps_open_pair_window_under_backward_clock():
+    # A reviewer measured gap_seconds(at=09:58) == -120.0 with a window opened at 10:00: an open
+    # window's contribution must clamp to >= 0, and must not eat other pairs'/windows' booked time.
+    monitor = GapMonitor()
+    monitor.start_gap("BTC/EUR", "reconnect", at=_at(0))
+    monitor.end_gap("BTC/EUR", at=_at(30))  # 30 s legitimately booked
+    monitor.start_gap("BTC/EUR", "checksum_resync", at=_at(120))
+    assert monitor.gap_seconds("BTC/EUR", at=_at(0)) == 30.0  # open window contributes 0, not -120
+    assert monitor.gap_ratio("BTC/EUR", window_seconds=60.0, at=_at(0)) == pytest.approx(0.5)
+
+
+def test_gap_seconds_clamps_open_watermark_window_under_backward_clock():
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(120))
+    assert monitor.gap_seconds("BTC/EUR", at=_at(0)) == 0.0  # not -120
 
 
 def test_gap_seconds_includes_still_open_window_when_at_given():
@@ -123,6 +147,74 @@ def test_ping_healthcheck_swallows_transport_errors(monkeypatch):
 
     monkeypatch.setattr("cli.capture.gap_monitor.urllib.request.urlopen", fake_urlopen)
     ping_healthcheck("https://hc-ping.com/abc")  # must not raise
+
+
+# --- T0032: a disk-watermark breach must be BOOKED into the exit-bar gap accounting -------------
+#
+# A breach stops every write, but pre-fix the lost time never reached GapMonitor's gap_seconds --
+# the metric behind the SS12 <0.1% gap-time exit bar -- so a breach inside a clean run pages the
+# operator (the dead-man is withheld) while the automated bar reads CLEAN for a period that lost
+# data. The breach is booked via a DEDICATED window, independent of the per-pair `_open` gaps and
+# of the ping-withholding, and deliberately NOT via start_gap (whose idempotency a concurrent
+# checksum_resync gap would exploit to swallow it, resuming the ping while still breached).
+
+
+def test_watermark_gap_accumulates_into_every_pair_gap_seconds():
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(0))
+    duration = monitor.end_watermark_gap(at=_at(45))
+    assert duration == 45.0
+    # A breach loses data for ALL pairs at once, so it counts against every pair's gap budget.
+    assert monitor.gap_seconds("BTC/EUR") == 45.0
+    assert monitor.gap_seconds("ETH/EUR") == 45.0
+
+
+def test_watermark_gap_is_not_swallowed_by_a_concurrent_pair_gap():
+    # The exact idempotency trap the topic warns about: were the breach booked via start_gap, a
+    # checksum_resync gap already open on the pair would swallow it (start_gap no-ops when open) and
+    # its end_gap would resume the ping while still breached. A dedicated window can't be swallowed.
+    monitor = GapMonitor()
+    monitor.start_gap("BTC/EUR", "checksum_resync", at=_at(0))  # a per-pair gap is already open ...
+    monitor.start_watermark_gap(at=_at(10))  # ... and a breach lands during it
+    monitor.end_watermark_gap(at=_at(40))  # the breach clears -- the pair gap is untouched
+    assert monitor.is_open("BTC/EUR") is True  # the checksum_resync gap is STILL open, not ended
+    monitor.end_gap("BTC/EUR", at=_at(50))
+    assert monitor.gap_seconds("BTC/EUR") == 50.0 + 30.0  # both counted, neither swallowed the other
+    assert monitor.gap_seconds("ETH/EUR") == 30.0  # a pair with no gap of its own still sees the breach
+
+
+def test_start_watermark_gap_is_idempotent_earliest_start_wins():
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(0))
+    monitor.start_watermark_gap(at=_at(5))  # ignored -- already open, earliest breach time wins
+    assert monitor.end_watermark_gap(at=_at(10)) == 10.0
+
+
+def test_end_watermark_gap_with_none_open_returns_zero():
+    monitor = GapMonitor()
+    assert monitor.end_watermark_gap(at=_at(0)) == 0.0
+
+
+def test_open_watermark_window_counts_as_of_at():
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(0))
+    assert monitor.gap_seconds("BTC/EUR", at=_at(20)) == 20.0  # the still-open breach, as of `at`
+    assert monitor.gap_seconds("BTC/EUR") == 0.0  # without `at`, only closed breach time counts
+
+
+def test_end_watermark_gap_clamps_a_backward_stepped_clock():
+    # A wall clock stepped BACKWARD (chrony makestep, a VM snapshot-restore) across an open breach
+    # window must never raise: end_watermark_gap runs inside _disk_watermark_loop, a task nothing
+    # awaits until shutdown, so an escaping exception silently ENDS watermark polling for the life
+    # of the process — breached freezes, and a later REAL breach goes undetected while the dead-man
+    # pings green (the exact T0032 silent death). The stepped clock cannot measure the window, so
+    # it books zero, closes it, and the next breach is trackable again.
+    monitor = GapMonitor()
+    monitor.start_watermark_gap(at=_at(120))
+    assert monitor.end_watermark_gap(at=_at(0)) == 0.0  # the clock stepped back past the start: clamped
+    monitor.start_watermark_gap(at=_at(200))  # the window really closed — the NEXT breach books normally
+    assert monitor.end_watermark_gap(at=_at(230)) == 30.0
+    assert monitor.gap_seconds("BTC/EUR") == 30.0
 
 
 @dataclass
