@@ -20,9 +20,14 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Open<a name="open"></a>
 
 - [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
+
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; conditioning-overlay trials on the adopted A2-4h ensemble against the 15m substrate, net-of-cost per T0009 (ripe when: live now — trials ride research iterations).
+
 - [T0024 — universe spread-cap criterion](T0024-universe-spread-cap-criterion.md) — add the pending `spread_cap` filter to universe selection once captured L2 exists; shares T0014/T0003's L2 dependency (ripe when: synced L2 copy, ≈2026-07-22).
+
 - [T0025 — full symbol & corporate-action ledger](T0025-full-corporate-action-ledger.md) — extend iter-002's alias ledger to a full point-in-time record (redenominations, migrations, delistings) for survivorship (ripe when: a universe pair has a corporate action, or before a live-trading universe refresh).
+
+- [T0043 — a genuinely lost trades file is invisible when its book sibling survives](T0043-lost-trades-file-with-surviving-book-is-invisible.md) — the `total_loss` fix judges an absent trades hour against its pair's book hour (a quiet pair really does go an hour without a print), which trades a demonstrated false **positive** for a theoretical false **negative**: a trades segment lost on BOTH mirrors while its book survives is now silent, and no other signal in the stack would catch it — continuity.py is book-only by design, and the manifests only verify files that exist (ripe when: any such absence is ever observed, or before the overlay feeds a production consumer).
 
 ### Partially done<a name="partially-done"></a>
 

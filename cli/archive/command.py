@@ -343,13 +343,28 @@ def reconcile(
         logger.error("archive reconcile: %s pair=%s kind=%s hour=%s", reason, pair, kind, hour.isoformat())
         _ledger(state="failed", pair=pair, kind=kind, hour=hour.isoformat(), reason=reason, residual_seconds=0.0)
 
+    # A permanent-loss finding is announced ONCE, on the cycle that decides it -- both branches below
+    # are guarded by `_decided`, matching `_ledger`'s own dedupe ("already decided in an earlier cycle").
+    # These hours are, by definition, unfixable: they stay in the trailing window for 48 h, so re-logging
+    # them each cycle would re-fire the ERROR-log alert every hour for two days about a gap the operator
+    # already knows about and can do nothing about. A page that repeats until it is ignored is worse than
+    # no page. The ledger remains the durable record; the log is the announcement.
     for hour in settled_hours(now=now, window_hours=window_hours):
         hour_end = hour + timedelta(hours=1)
         late = is_late(hour, now=now)
 
-        # --- total_loss: unconditional, no witness needed --------------------------------------
+        # --- total_loss ------------------------------------------------------------------------
+        # `trades` is judged against its pair's BOOK hours. Book updates are continuous, trades are
+        # prints: an hour with no trades is ordinary for a quiet pair, and the book final for that same
+        # hour is the proof the stream was connected throughout. Without this witness the reconciler
+        # calls "nobody traded LINK for an hour" a permanent, unrecoverable loss -- ledgered, logged at
+        # ERROR (so it pages), and booked into a monotonic counter that can never be walked back. The
+        # book has no sibling to witness it and is judged on bracketing alone, as before.
         for (pair, kind), hours in sorted(available.items()):
-            if is_total_loss(hour, available=hours, span=spans[(pair, kind)]):
+            witness = available.get((pair, "book")) if kind == "trades" else None
+            if is_total_loss(hour, available=hours, span=spans[(pair, kind)], alive_witness=witness) and not _decided(
+                pair, kind, hour, "total_loss"
+            ):
                 logger.error("archive reconcile: total_loss pair=%s kind=%s hour=%s", pair, kind, hour.isoformat())
                 _ledger(
                     state="total_loss",
@@ -387,7 +402,7 @@ def reconcile(
         present = [pair for pair, frames in books.items() if any(f is not None for f in frames.values())]
         if present and not broken:
             windows = fleet_dark_windows(stamps, hour_start=hour, hour_end=hour_end, min_seconds=min_gap_seconds)
-            if windows:
+            if windows and not _decided("*", "book", hour, "both_streams_silent"):
                 residual = sum(w.seconds for w in windows) * len(present)  # seconds x dark book streams
                 logger.error(
                     "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f",

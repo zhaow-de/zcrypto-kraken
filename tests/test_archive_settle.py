@@ -177,3 +177,56 @@ def test_the_trailing_edge_of_a_still_dead_fleet_is_not_a_total_loss():
 
 def test_a_stream_with_no_data_at_all_is_not_a_total_loss():
     assert is_total_loss(H, available=set(), span=None) is False
+
+
+# --- total_loss must not fire on a legitimately EMPTY trades hour ---------------------------------
+#
+# Found in production on 2026-07-14, on the very first reconcile cycle: LINK/EUR trades hour 02 was
+# ledgered `total_loss` -- permanent, unrecoverable loss -- and logged at ERROR, which pages through
+# the archive-pull ERROR rule and books into the monotonic residual counter Task 11 wires to a
+# permanent-loss alarm. It was nothing of the kind: LINK/EUR traded 8 times in hour 01 and 9 times in
+# hour 04, and simply had ZERO prints in hour 02. The book segment for that same pair+hour EXISTS, so
+# the stream was demonstrably connected the whole time.
+#
+# Book updates are continuous; trades are event-driven and sparse. `is_total_loss`'s bracketing rule
+# ("an absence is only a HOLE when real data brackets it") is right for a continuous stream and wrong
+# for an event-driven one. The book hour is the witness that settles it: if the book committed a final
+# for that hour, the connection was alive and an absent trades hour means nobody traded.
+
+
+def test_absent_trades_hour_is_not_a_loss_when_the_book_hour_proves_the_stream_was_alive() -> None:
+    available = {H - timedelta(hours=1), H + timedelta(hours=1)}  # trades: hour H absent, bracketed
+    book_hours = {H - timedelta(hours=1), H, H + timedelta(hours=1)}  # book committed hour H
+
+    assert (
+        is_total_loss(
+            H,
+            available=available,
+            span=(min(available), max(available)),
+            alive_witness=book_hours,
+        )
+        is False
+    )
+
+
+def test_absent_trades_hour_IS_a_loss_when_the_book_hour_is_also_gone() -> None:
+    """Both streams absent for the hour = the stream really was dark. That is a genuine hole."""
+    available = {H - timedelta(hours=1), H + timedelta(hours=1)}
+    book_hours = {H - timedelta(hours=1), H + timedelta(hours=1)}  # book ALSO missing hour H
+
+    assert (
+        is_total_loss(
+            H,
+            available=available,
+            span=(min(available), max(available)),
+            alive_witness=book_hours,
+        )
+        is True
+    )
+
+
+def test_book_stream_keeps_the_old_behaviour_when_it_has_no_witness() -> None:
+    """The book IS the witness, so it is judged on bracketing alone -- unchanged."""
+    available = {H - timedelta(hours=1), H + timedelta(hours=1)}
+
+    assert is_total_loss(H, available=available, span=(min(available), max(available)), alive_witness=None) is True
