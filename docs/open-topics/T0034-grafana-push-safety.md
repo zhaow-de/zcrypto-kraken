@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: live now — both failure modes were hit for real on 2026-07-13, and the script is the only path we have for provisioning alerts
 ---
 
@@ -41,15 +41,24 @@ The git-vs-live divergence is the same class of bug as the deployed-compose drif
   `DELETE /api/v1/provisioning/alert-rules/zcrypto-gate-not-met` → `204`.
 - The live instance now holds exactly the 7 rules in `alerts.yaml`, all `health=ok`.
 
+
+## Done so far
+
+- **The mis-point half is closed (2026-07-14).** `infra/scripts/grafana-push.sh` no longer takes the
+  stack URL and datasource/folder UIDs as unvalidated required env vars: they now **default to this
+  project's real, verified values** (`https://zcrypto2026.grafana.net`, `grafanacloud-prom`,
+  `grafanacloud-logs`, folder `bfrxdfoybx98gb`), read back from the live stack and confirmed to match
+  `infra/grafana/alerts.yaml` (7 rules, titles in sync, both formerly-broken rules correct). The
+  script also echoes the resolved values before pushing, so a wrong target is visible rather than
+  silent. This removes the failure that actually happened: "first datasource of each type" grabbed
+  `grafanacloud-usage` + `grafanacloud-alert-state-history` and repointed all 7 rules at the wrong
+  data while still reporting `health=ok`.
+
 ## Suggested next steps
 
-- **(autonomous)** **Resolve the datasource UIDs in the script instead of trusting env vars.** Query
-  `/api/datasources` and select by *name/role*, not by "first of type" — e.g. the Prometheus one that is
-  `isDefault`, and the Loki one whose name ends `-logs`. Fail loudly if the choice is ambiguous. Keep the
-  env vars only as an explicit override.
-- **(autonomous)** **Make the push authoritative: prune orphans.** After upserting, list the provisioned
-  rules and **delete any whose `uid` is not in `alerts.yaml`** (guarded to the `zcrypto*` uid prefix /
-  the `zcrypto` folder so it can never touch anything else). Then the repo genuinely *is* the source of
-  truth, and deleting a rule from the file deletes it from the instance.
-- **(autonomous)** **Assert after pushing**: read the rules back and check each one's `datasourceUid` is
-  the expected one and `health=ok` — the push should verify itself rather than print "done".
+- **The prune half is still open.** The push never deletes: a rule removed from `alerts.yaml` keeps
+  evaluating and emailing forever, and a *renamed* rule (new `uid`) leaves the old one live beside it.
+  Add a prune step that lists the live rules in the folder and deletes any whose `uid` is absent from
+  `alerts.yaml` — with a dry-run first, since deleting an alert rule is not reversible from the repo.
+- **Always read the rules back after a push** and assert each `datasourceUid` — the API accepts a wrong
+  UID happily and reports `health=ok`.
