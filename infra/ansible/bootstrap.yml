@@ -5,6 +5,22 @@
     ansible_user: root
     ansible_port: 22
   tasks:
+    # Same guard as site.yml, same reason: this play targets `capture_host`, which now holds the live
+    # primary as well as the secondary. Bootstrapping the primary would rewrite its sshd drop-in to
+    # `PermitRootLogin no`, undoing the deliberate key-only root break-glass (commit 0971431). In
+    # practice it would fail unreachable first (the primary's sshd no longer listens on 22), but "it
+    # would probably fail anyway" is not a safety property.
+    - name: refuse to bootstrap the live primary unless explicitly asked
+      ansible.builtin.assert:
+        that: converge_primary | default(false) | bool
+        fail_msg: >-
+          REFUSING to bootstrap {{ inventory_hostname }} — it is the live host, already bootstrapped.
+          Re-running this would rewrite its sshd drop-in and disable the root break-glass. Bootstrap
+          the secondary with `--limit zcrypto-red`. If you are genuinely rebuilding the primary from
+          scratch, pass `-e converge_primary=true`.
+      when: inventory_hostname in groups['engine_host'] | default([])
+      tags: [always]
+
     - name: deploy sudo user
       ansible.builtin.user: {name: deploy, groups: sudo, shell: /bin/bash, create_home: true}
     - name: passwordless sudo for deploy (automation)

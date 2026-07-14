@@ -1,3 +1,23 @@
+# Docker's own install docs make this step a prerequisite, and it is not optional on a stock Linode
+# Debian 13 image: that image ships Debian's OWN docker packages, and `docker-buildx` (0.13.1+ds1-3)
+# owns /usr/libexec/docker/cli-plugins/docker-buildx -- the exact path Docker's `docker-buildx-plugin`
+# installs to. Installing Docker CE over it aborts mid-transaction with `trying to overwrite ...,
+# which is also in package docker-buildx`, leaving the CE packages unpacked-but-unconfigured (dpkg
+# `iU`) and the host with NO working docker at all. Purge first, then install. Idempotent: on a host
+# that never had them (the primary), this is a no-op.
+- name: remove Debian's own docker packages (they conflict with Docker CE)
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-doc
+      - docker-compose
+      - docker-buildx
+      - podman-docker
+      - containerd
+      - runc
+    state: absent
+    purge: true
+
 - name: install prerequisites for the Docker apt repo
   ansible.builtin.apt:
     name: [ca-certificates, curl]

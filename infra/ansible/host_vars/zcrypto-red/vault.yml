@@ -6,12 +6,11 @@
 #
 # `ansible_host` overrides the group's (host_vars beats group_vars): zcrypto-red.zhaow.me.
 #
-# !! capture_healthcheck_url is a PLACEHOLDER !!
-#   It decrypts to https://hc-ping.com/PLACEHOLDER-REPLACE-IN-TASK-9-zcrypto-capture-red — the real
-#   healthchecks.io check for this host is created during the attended bring-up (plan 00050 task 9),
-#   which re-encrypts the real ping URL over this value. Until then the daemon's pings 404 and log
-#   "healthcheck ping failed" every interval — deliberately loud: a silent placeholder would leave
-#   the secondary's dead-man switch dead and nobody would know.
+# capture_healthcheck_url is LIVE (the Task-9 placeholder is gone). It points at the healthchecks.io
+#   check `zcrypto-capture-red`, provisioned 2026-07-14 via the Management API using
+#   `healthchecks_api_key` (group_vars/capture_host/vault.yml). It mirrors the primary's
+#   `zcrypto-capture` exactly — timeout 600s, grace 600s — and has notification channels attached, so
+#   it actually pages. A dead-man with no channel is a detector nobody reads.
 #
 # NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
 # password, so both silently print every value below in cleartext.
@@ -25,11 +24,10 @@ ansible_host: !vault |
           65643032303237386231313962376662616632636131353138393933353139383465
 capture_healthcheck_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
-          61323766363638653231336632313539343363363163303762663133613834366165386132393735
-          3132306332343432636536373464323736326336323163610a306464333863316132373733373062
-          31376233313631363330663364623662303034383739643530383562663735323336303663343063
-          3832373133666363310a323939336165393562636636336462633761616333616533646431393637
-          37616530303062366430623831373837313136313764393935616165376236346436656236633937
-          64303038333836623561343839656237376237643038363065633533393832616637323666333238
-          37393861653337643337373131386331646139366130376137366262323362356434373266656335
-          39353663373832623366
+          37623661353061656336323561383065663333386235636236663461393831373466326466306563
+          3935613565646230376561623139396337386464346137320a636139393139383239303139663034
+          31633830316536323339343836636437313166636431373330396332356234376362396136643263
+          3763313864373330650a356565346265623230653461623033393031666533613330656165616465
+          36626330636532313134366633613861613036363837366430373066643938376238353466396630
+          33373536393764663332636565616637633032636535343766346664613136663235656332373831
+          346133343136646539396263613262633162

@@ -2,6 +2,44 @@
   hosts: capture_host
   become: true
   pre_tasks:
+    # The primary runs LIVE, UNBACKFILLABLE L2 capture: a converge that restarts it loses data that
+    # can never be re-fetched. Before the secondary existed, `capture_host` held only `zcrypto`, so
+    # every run of this play self-evidently MEANT "converge the primary". Now that `zcrypto-red` has
+    # joined the group, a bare `site.yml` would sweep the primary up alongside it and silently apply
+    # whatever role changes were written for the secondary. This guard makes that impossible to do by
+    # accident: touching the primary requires saying so.
+    #
+    #   secondary only : ./scripts/run.sh site.yml --limit zcrypto-red -e capture_image_digest=...
+    #   primary        : ./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e ...
+    #   engine only    : ./scripts/run.sh site.yml --tags engine -e converge_primary=true -e engine_image_digest=...
+    #
+    # It is a per-host assert, so a bare run fails ONLY the primary and still converges the rest --
+    # loud and safe rather than aborting the fleet. Keep it after the embargo lifts: the flag costs
+    # one argument and buys an explicit "yes, touch the live host".
+    #
+    # The flag gates the ENGINE play too, not just capture. This assert carries `tags: [always]`, so it
+    # fires even on a tag-scoped run; a failed host is dropped from every SUBSEQUENT play, so a bare
+    # `site.yml --tags engine` would skip the engine play entirely rather than deploy it. That fails
+    # closed (nothing converges), but it is the reason the message below talks about the host, not just
+    # the capture daemon.
+    #
+    # Keyed on engine_host membership, not a hardcoded name: the engine host IS the live primary by
+    # construction (it is where the live Kraken trade key renders), so this cannot drift if a third
+    # capture host joins or the primary is rebuilt under another inventory name.
+    - name: refuse to converge the live primary unless explicitly asked
+      ansible.builtin.assert:
+        that: converge_primary | default(false) | bool
+        fail_msg: >-
+          REFUSING to converge {{ inventory_hostname }} — it is the live host: unbackfillable L2
+          capture AND the trading engine. `site.yml` targets the whole capture fleet now that the
+          secondary has joined, so a bare run would restart the primary's capture daemon as a side
+          effect of converging the secondary. Pass `-e converge_primary=true` if you mean it (this
+          gates the engine play too — `--tags engine` needs it as well), and re-read
+          .claude/rules/capture-deploys.md first. To converge ONLY the secondary: `--limit zcrypto-red`.
+        success_msg: "converge_primary=true — this run WILL restart the primary's live capture and/or engine."
+      when: inventory_hostname in groups['engine_host'] | default([])
+      tags: [always]
+
     - name: note — assumes bootstrap.yml already ran
       ansible.builtin.debug:
         msg: >-

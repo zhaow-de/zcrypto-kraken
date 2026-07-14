@@ -29,12 +29,29 @@ new address, and re-run — no edits to the config layer.
 
 ## Running it<a name="running-it"></a>
 
+`site.yml` targets the whole `capture_host` group — the live primary `zcrypto` **and** the secondary `zcrypto-red`. The primary refuses to converge unless you pass `-e converge_primary=true`, because a converge restarts its live, unbackfillable L2 capture (and the engine). Say what you mean:
+
 ```bash
 cd infra/ansible
-./scripts/run.sh site.yml          # loads the vault-encrypted deploy key into a transient
-                                   # ssh-agent, then runs the playbook (needs the GPG key unlocked)
-./scripts/run.sh site.yml --check --diff   # dry-run
-./scripts/run.sh bootstrap.yml -e ansible_user=root -e ansible_port=22   # first-time only
+
+# secondary only — the everyday case
+./scripts/run.sh site.yml --limit zcrypto-red -e capture_image_digest=sha256:<...>
+
+# the live primary — restarts capture and/or the engine
+./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e capture_image_digest=sha256:<...>
+
+# engine deploy — the guard gates this too (a failed assert drops the host from later plays,
+# so WITHOUT the flag the engine play silently skips instead of deploying)
+./scripts/run.sh site.yml --tags engine -e converge_primary=true -e engine_image_digest=sha256:<...>
+
+# dry-run anything by appending --check --diff
+```
+
+`run.sh` loads the vault-encrypted deploy key into a transient ssh-agent, then runs the playbook (needs the GPG key unlocked). **It cannot bootstrap a virgin host** — a fresh box only answers to the operator's master key, which `run.sh` deliberately excludes; run `bootstrap.yml` directly (below).
+
+```bash
+# first-time only, on a NEW host, with your master key in the agent (NOT via run.sh):
+uv run ansible-playbook bootstrap.yml --limit <new-host> -e ansible_user=root -e ansible_port=22
 ```
 
 `run.sh` uses `scripts/vault-pass.sh` (`sops -d` → the ansible-vault password) — so a run needs the
@@ -73,21 +90,22 @@ listens. If you lose `deploy@10022` access:
      `cd infra/ansible && sops -d --extract '["vault_password"]' vault-password.sops.yaml` gives the
      vault password (needs the GPG key); `ansible-vault view files/deploy_ed25519` prints the
      private key.
-3. Once back in, re-run `./scripts/run.sh site.yml` to re-assert the intended (hardened) state.
+3. Once back in, re-assert the intended (hardened) state. For the primary that means `./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e capture_image_digest=sha256:<...>` — the flag is required, and it restarts live capture, so pick the moment.
 
 ## Rebuild from scratch (portability)<a name="rebuild-from-scratch-portability"></a>
 
 1. Provision a fresh host (any provider/distro Ansible + dev-sec.io support; the roles target
    Debian-family here). Ensure the Linode/cloud firewall allows 22 (bootstrap) + 10022.
-2. `./scripts/run.sh bootstrap.yml -e ansible_user=root -e ansible_port=22` — creates `deploy`,
-   moves SSH to 10022, disables root/password.
-3. `./scripts/run.sh site.yml` — hardens + installs Docker + deploys the capture container.
+2. `uv run ansible-playbook bootstrap.yml --limit <host> -e ansible_user=root -e ansible_port=22` — creates `deploy`,
+   moves SSH to 10022, disables root/password. Run it directly, not via `run.sh`: a virgin host only
+   answers to the operator's master key, which `run.sh`'s throwaway agent excludes.
+3. `./scripts/run.sh site.yml --limit <host> -e capture_image_digest=sha256:<...>` — hardens + installs Docker + deploys the capture container.
 4. Drop 22 from the cloud firewall once `deploy@10022` is confirmed.
 
 ## Key rotation<a name="key-rotation"></a>
 
 Regenerate a keypair, `ansible-vault encrypt` the new private key into `files/`, update the matching
-`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey),
+`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `-e converge_primary=true`),
 verify the new key works, then remove the old key's `authorized_key` entry and re-run.
 
 ## Deploy image note<a name="deploy-image-note"></a>

@@ -155,7 +155,9 @@
 #
 # VPS store-poisoning runbook (the code's `zcrypto engine seed` repair is workstation-only — the
 # image carries no canonical dataset): systemctl stop zcrypto-engine, rm -rf
-# <engine_state_dir>/store, re-run site.yml --tags engine (this only-when-absent copy
+# <engine_state_dir>/store, re-run
+# `site.yml --tags engine -e converge_primary=true -e engine_image_digest=sha256:<...>` (the flag is
+# required or the guard drops this host and the engine play silently skips; the only-when-absent copy
 # re-delivers), systemctl start zcrypto-engine.
 - name: probe whether the store was already delivered (BTC subtree present)
   ansible.builtin.stat:
