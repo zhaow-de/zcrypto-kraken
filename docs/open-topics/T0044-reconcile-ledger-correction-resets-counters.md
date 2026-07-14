@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: the reconcile ledger needs another correction or rebuild, or the ledger grows large enough that a reconcile cycle's O(ledger) scan noticeably slows (watch the ~17-min Atom cycle time)
 ---
 
@@ -19,8 +19,12 @@ Two `increase()`-based alert rules read these counters: `Reconciler · residual 
 - The correction itself was done by hand (a one-off Python filter that dropped exactly the matching record, asserted `len(dropped) == 1`, preserved valid JSONL, and backed the original up verbatim as `reconcile-ledger.jsonl.bak-<ts>`). There is no committed procedure for it — it was reconstructed from first principles under time pressure.
 - Related property of the same append-only-forever design: `_load_ledger` + `_totals` scan the entire ledger every cycle, so both are O(ledger size). There is no rotation or pruning (unlike the 14-day raw-mirror retention). Over the deployment's life this slowly erodes the reconcile cycle's headroom against the `source-lag` / `exporter-stale` thresholds.
 
+## Done so far
+
+- The two `increase()`-based alert rules are guarded with `resets(...) == 0`, so a ledger correction (which shows as a counter reset) cannot false-page (landed with the Task-11 alert commit; proven live — with the 2026-07-14 correction's reset still in-window, the guarded query read 0 while the bare `increase()` read 2706.9).
+- **The correction runbook is written** (`infra/nas/README.md` → "Correcting the reconcile ledger"): back up verbatim; filter by an exact-match predicate with a `len(dropped) == N` assertion; keep one-record-per-line JSONL; expect the two rules to go quiet for one window (the guard working).
+
 ## Suggested next steps
 
-- Write the ledger-correction procedure down as a short runbook (in `infra/nas/README.md` or a dedicated doc): back up verbatim; filter by an exact-match predicate with a `len(dropped) == N` assertion; preserve one-record-per-line JSONL (`_load_ledger` raises `CaptureError` on a malformed line); expect the reconcile counters to reset and the two `increase()` rules to go quiet for one window (that is the `resets()==0` guard working, not a fault). This turns a first-principles reconstruction into a checklist.
 - Decide whether a ledger correction should also emit a marker (a `state="correction"` record, or a bump to a dedicated `zcrypto_reconcile_ledger_corrections_total` counter) so the reset has a visible, queryable cause on the timeline rather than being an unexplained discontinuity six months later.
 - When the ledger grows large enough to matter (watch the cycle time), design rotation/compaction that preserves the summed totals — e.g. fold everything older than the retention horizon into a single opening `carried_forward` record so `_totals` stays exact while the scanned file stays bounded. Do NOT simply truncate: that would reset every counter.

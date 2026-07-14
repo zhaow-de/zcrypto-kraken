@@ -107,6 +107,35 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 /usr/local/bin/docker compose -f compose.yaml logs -f archive-pull
 ```
 
+## Correcting the reconcile ledger (T0044)
+
+The reconcile counters (`zcrypto_reconcile_residual_gap_seconds_total`, `_healable_gap_seconds_total`, the hour/deficit counters) are **summed from the whole append-only** `reconcile-ledger.jsonl` on every cycle, so they are monotone as long as the ledger only ever grows. The one operation that breaks that is a **correction** — removing a record a classifier bug wrote (as on 2026-07-14, a false `total_loss`). A correction *decreases* a counter, Prometheus reads the decrease as a **reset**, and a bare `increase()` would report the whole post-reset value as fresh change. The two `increase()`-based alert rules (`Reconciler · residual gap increased`, `Reconciler · primary gap rate high`) are guarded with `and resets(...) == 0` precisely so a correction cannot false-page — so **expect both to go quiet for one window after a correction; that is the guard working, not a fault.**
+
+The procedure (a deliberate, one-off exception to the ledger's append-only discipline):
+
+```bash
+L=/volume1/ZhaoCrypto/capture-reconciled/reconcile-ledger.jsonl
+sudo cp "$L" "$L.bak-$(date -u +%Y%m%d-%H%M%S)"        # 1. back up VERBATIM (the audit trail of the bug)
+# 2. filter by an EXACT-MATCH predicate, asserting the count you expect to drop:
+sudo python3 - "$L" <<'PY'
+import json, sys
+L = sys.argv[1]
+keep, dropped = [], []
+for line in open(L):
+    if not line.strip():
+        continue
+    r = json.loads(line)                               # raises on a malformed line -> never write a broken ledger
+    is_bad = r.get("state") == "total_loss" and r.get("pair") == "LINK/EUR" and r.get("hour", "").startswith("2026-07-14T02")
+    (dropped if is_bad else keep).append(r)
+assert len(dropped) == 1, f"expected exactly 1 record, found {len(dropped)}"   # 3. STOP if it does not match
+open("/tmp/ledger.new", "w").write("".join(json.dumps(r) + "\n" for r in keep))
+print(f"dropped {len(dropped)}, kept {len(keep)}")
+PY
+sudo cp /tmp/ledger.new "$L" && sudo chown zcrypto:zcrypto "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
+```
+
+Rules: keep **one record per line** (`_load_ledger` raises `CaptureError` on a malformed line, which fails the next cycle loudly); never truncate to shrink the file (that resets every counter — see [[T0044]] for the compaction design that preserves the totals); and confirm the two alert rules return to Normal within a window after the reset ages out.
+
 ## Alloy telemetry stack (spec 00049 Role B, Task 3)
 
 One more service on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence above:
