@@ -150,11 +150,27 @@ class DiskWatermark:
     min_free_bytes: int = DEFAULT_MIN_FREE_BYTES
     usage_fn: Callable[[Path], object] = shutil.disk_usage
     _breached: bool = field(default=False, init=False, repr=False)
+    _measurable: bool = field(default=True, init=False, repr=False)
 
     def check(self) -> bool:
         """Recompute breach state from current free space. Returns True iff healthy (not
-        breached). Logs only on the state transition, not on every call."""
-        free = self.usage_fn(self.path).free
+        breached). Logs only on the state transition, not on every call.
+
+        A probe that RAISES (a flaky mount) sets `measurable` False and re-raises. Freezing `breached`
+        at its last value while the probe is down -- and pinging the dead-man green through it -- is the
+        exact T0032 silent death: a disk that fills during the outage goes undetected. "Cannot measure"
+        is not "healthy", so `measurable` gates the ping too; the healthcheck's grace absorbs a
+        transient blip, and only a sustained probe failure withholds enough pings to page."""
+        try:
+            free = self.usage_fn(self.path).free
+        except Exception:
+            if self._measurable:
+                logger.error("disk watermark UNMEASURABLE path=%s -- treating as not-healthy (probe failing)", self.path)
+            self._measurable = False
+            raise
+        if not self._measurable:
+            logger.info("disk watermark measurable again path=%s", self.path)
+        self._measurable = True
         now_breached = free < self.min_free_bytes
         if now_breached and not self._breached:
             logger.error("disk watermark breached path=%s free=%d min_free_bytes=%d", self.path, free, self.min_free_bytes)
@@ -166,3 +182,9 @@ class DiskWatermark:
     @property
     def breached(self) -> bool:
         return self._breached
+
+    @property
+    def measurable(self) -> bool:
+        """False once a probe has raised without a later success -- so the ping loop can treat a
+        sustained-unmeasurable disk as not-healthy rather than pinging green on a frozen `breached`."""
+        return self._measurable
