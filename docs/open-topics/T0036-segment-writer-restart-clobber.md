@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: live now — every restart, reboot, crash and deploy destroys data until this is fixed
+status: partial
+ripe_when: the code fix is fully landed and dry-run-validated; remaining is the production deploy (run the migration in the stop window) + the post-deploy verification
 ---
 
 # A restart silently truncates the hour it lands in (segment-writer part clobber)
@@ -68,6 +68,29 @@ mid-hour restart would have cost ~600 s and taken the run to ~0.157 %, failing t
   **books are unaffected** is true only for in-process reconnects, not for restarts.
 - No stale part files from past hours currently exist on the VPS (only the live hour's), so there is no
   orphaned data to recover — the losses above are already merged away and unrecoverable.
+
+
+## Done so far
+
+- **The fix is complete on `fix/t0036-segment-writer-restart-clobber`** — five adversarial
+  rounds (10 reproduced criticals across them, every one found by execution), ending in the
+  committed-final invariant: parts are written atomically (tmp+fsync+rename), `close()` flushes but
+  never publishes, finalization commits via `<HH>.parquet.merging` → sidecar → unlink → rename, and
+  recovery validates everything it trusts (a torn/bit-rotted `.merging` or final is quarantined,
+  never deleted; parts are merged instead). `<HH>.parquet` on disk now always means "committed and
+  complete". Hour rotation is corroborated across streams (see [[T0037]]) so no single stamp can
+  publish early.
+- **Deploy migration validated by execution**: the runbook was itself adversarially tested (10
+  defects found and corrected — including a wrong `SEG`, a clobbering `mv`, and a circular sidecar
+  check), then the final `migrate_stop_hour.py` dry-ran against a 2.7 GB copy of the real
+  production tree: 840,000 pre-stop rows + post-restart rows all present, in order, exactly once;
+  demoted=10, refused=0, idempotent second pass.
+- Full suite green throughout (1,395 at branch tip); every fix TDD'd with tests that failed first.
+- **The exit-bar gap is re-derived from segment-timestamp continuity** (the [[T0003]] requirement this
+  topic exposed — `GapMonitor` undercounts restart damage ~50×): `infra/scripts/continuity.py`,
+  committed with this iteration. Measured baseline on the real archive since 2026-07-09: worst stream
+  0.0890% of the \<0.1% bar (the two truncation events consumed 86% of the budget). The full ≥7-day
+  verification run rides the clean-run gate (~2026-07-15).
 
 ## Deploy migration — MUST run on the VPS before the new binary starts
 
@@ -162,20 +185,9 @@ done   # every line must read <H>:00:00 — that IS the fix
 
 ## Suggested next steps
 
-- Make the **on-disk state the source of truth**, not process memory:
-  - derive the next part sequence by scanning the hour directory for existing `<HH>.part*.parquet`
-    (resume at `max(seq) + 1`) instead of always starting at `0000`;
-  - have `_finalize_hour` **glob every** `<HH>.part*.parquet` for the hour and merge them in sequence
-    order, rather than merging only `self._part_paths`;
-  - if a `<HH>.parquet` already exists (a previous `close()` finalized the hour early), merge it in as
-    the earliest input rather than overwriting it; write to a temp file and atomically rename, since
-    the destination may also be a scan input.
-  - **Never sort by `ts` when merging** — intra-timestamp order is load-bearing for book deltas
-    (absolute quantities). Concatenate in file order only.
-- Add a **startup sweep**: finalize any hour directory that still holds parts for an hour strictly
-  before the current one (a crash spanning an hour boundary would otherwise orphan them forever).
-- Regression tests for each restart shape: crash mid-hour (parts, no final), graceful stop mid-hour
-  (final + parts), restart crossing an hour boundary, and two restarts within one hour. Each must end
-  with a complete `<HH>.parquet` whose first row is at `:00:00`.
-- Re-derive the exit-bar gap from **segment-timestamp continuity** (per [[T0003]]), not from
-  `GapMonitor`, which cannot see restart truncation.
+- **(deploy)** Run the migration (`migrate_stop_hour.py`, validated by dry run) in the stop window
+  of the image rollout, per the runbook above, then start the new image.
+- **(verification)** Post-deploy: the stop hour's `<HH>.parquet` on every stream begins at
+  `:00:00.0x` (the assertion that IS this fix); no `quarantined`/`ambiguous`/`merge failed` log
+  lines; segment-continuity gap measurement shows the truncated-hours count unchanged at 20 (no new
+  ones). Then flip this topic to `resolved`.

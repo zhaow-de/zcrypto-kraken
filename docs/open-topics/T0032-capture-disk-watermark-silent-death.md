@@ -101,4 +101,9 @@ the disk, and the rollout is needed for Role C anyway).
   timer to the *secondary* capture host; the **primary** still has none.)
 - **(autonomous)** Correct `00048`'s eviction non-goal rationale — "the 7-day buffer's 12× margin makes
   delete-after-verified unnecessary" is reasoning from the same 20×-wrong number.
+- **(autonomous)** **Probe-outage blind spot** (reviewer-measured 2026-07-14, minor): while the
+  `disk_usage` probe itself keeps failing, `DiskWatermark.breached` stays frozen at its last value —
+  so a disk that actually fills *during* a probe outage leaves the dead-man pinging GREEN (executed:
+  6 pings while the probe raised). The loop now survives the failure (logs + keeps polling), but a
+  sustained probe failure should itself withhold the ping (treat "cannot measure" as "not healthy").
 - **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.

@@ -156,7 +156,7 @@ preserves the pre-change writer byte-for-byte (`command.py` passes one shared or
 
 ## Suggested next steps
 
-Only two accepted, documented residuals remain — both deliberately un-addressed now (the knob for
+Accepted, documented residuals — each deliberately un-addressed now (the knob for
 each starves a legitimate case), each ripe only **if ever observed in production**:
 
 - **(a) Two independent streams each taking a guard-passing bogus stamp inside the same hour's
@@ -173,3 +173,10 @@ each starves a legitimate case), each ripe only **if ever observed in production
 - **(b) A clock leading >5 min AND a bogus stamp landing together** truncates by lead-minus-5min. The
   knob — require two DISTINCT requester `ts` before the clock may second — is rejected now because it
   starves lone sparse streams. Revisit only if a leading-clock + bogus-stamp truncation is observed.
+
+- **Past-dated stamps** (reviewer-measured 2026-07-14, pre-existing — executed equal on the
+  `oracle=None` baseline): a bogus timestamp dated into a *past, un-published* hour can still
+  fabricate a committed final for that hour (and can redeem a quarantined `.held` spill on the way) —
+  the plausibility guard bounds the *future* direction only; Kraken ts is strictly non-decreasing in
+  3.15M measured production rows, so a backward stamp is anomalous but currently trusted. Ripe
+  together with residuals (a)/(b): only if ever observed.
