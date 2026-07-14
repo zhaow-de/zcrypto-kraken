@@ -187,3 +187,58 @@ def test_prune_leaves_parts_of_an_UNVERIFIABLE_final_alone(tmp_path: Path) -> No
     d = tmp_path / "BTC/EUR/book/2026/07/12"
     assert (d / "10.part0000.parquet").exists(), "parts of an unverifiable final must be kept"
     assert (hours, parts) == (0, 0)
+
+
+def test_prune_never_touches_a_held_spill_beside_a_verified_final(tmp_path: Path) -> None:
+    """A `.held` file is a quarantined spill -- potentially the only copy of some rows. The glob keys
+    on `.part`, so it must never match `.held`; this pins that a widening of the glob would be caught."""
+    from cli.archive.pull import prune_stale_parts, verify_tree
+
+    _seg(tmp_path, "BTC/EUR", "book", "10")
+    _part(tmp_path, "BTC/EUR", "book", "10", 0)
+    d = tmp_path / "BTC/EUR/book/2026/07/12"
+    held = d / "10.held0000.parquet"
+    held.write_bytes(b"quarantined spill")
+
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+    prune_stale_parts(r.verified)
+
+    assert held.exists(), "a held-spill must never be pruned"
+    assert list(d.glob("10.part*.parquet")) == [], "the real stale part was still pruned"
+
+
+def test_prune_leaves_parts_of_an_ERRORING_final_alone(tmp_path: Path) -> None:
+    """A final whose manifest is MISSING errors (CaptureError), not just mismatches -- it must land in
+    `failed`, never `verified`, so its parts (the only intact copy) are untouched."""
+    from cli.archive.pull import prune_stale_parts, verify_tree
+
+    _seg(tmp_path, "BTC/EUR", "book", "10")
+    (tmp_path / "BTC/EUR/book/2026/07/12/10.parquet.sha256").unlink()  # remove the manifest -> errors
+    _part(tmp_path, "BTC/EUR", "book", "10", 0)
+
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+    assert not any("10.parquet" in v for v in r.verified), "an erroring final must not be verified"
+    hours, parts = prune_stale_parts(r.verified)
+
+    d = tmp_path / "BTC/EUR/book/2026/07/12"
+    assert (d / "10.part0000.parquet").exists(), "parts of an erroring final must be kept"
+    assert (hours, parts) == (0, 0)
+
+
+def test_prune_leaves_a_nonstandard_partlike_name_alone(tmp_path: Path) -> None:
+    """A name the writer would never emit -- an rsync artefact / hand-made backup -- must be left, not
+    swept, even beside a verified final (strict `<HH>.part<digits>.parquet` only)."""
+    from cli.archive.pull import prune_stale_parts, verify_tree
+
+    _seg(tmp_path, "BTC/EUR", "book", "10")
+    _part(tmp_path, "BTC/EUR", "book", "10", 0)  # a real stale part -> pruned
+    d = tmp_path / "BTC/EUR/book/2026/07/12"
+    weird = d / "10.part0000-copy.parquet"
+    weird.write_bytes(b"a human backup")
+
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+    hours, parts = prune_stale_parts(r.verified)
+
+    assert weird.exists(), "a non-daemon part-like name must be left alone"
+    assert not (d / "10.part0000.parquet").exists(), "the real stale part was still pruned"
+    assert (hours, parts) == (1, 1)

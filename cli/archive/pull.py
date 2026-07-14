@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import verify_manifest
+from cli.logging import get_logger
+
+logger = get_logger("archive.pull")
 
 
 @dataclass(frozen=True)
@@ -71,12 +75,25 @@ def prune_stale_parts(verified_finals: tuple[str, ...]) -> tuple[int, int]:
     hours = parts = 0
     for final in verified_finals:
         fp = Path(final)
-        siblings = list(fp.parent.glob(f"{fp.stem}.part*.parquet"))
-        if siblings:
-            hours += 1
-            for part in siblings:
+        # STRICT `<HH>.part<digits>.parquet` only. The glob `{stem}.part*.parquet` also matches a
+        # non-daemon name -- an rsync artefact or a hand-made backup like `15.part0000-copy.parquet` --
+        # and this deletes from the only copy of unbackfillable data, so a name the writer would never
+        # emit is left ALONE, not swept (segment_writer's `_part_index` is the same paranoia).
+        pat = re.compile(rf"{re.escape(fp.stem)}\.part\d+\.parquet\Z")
+        siblings = [p for p in fp.parent.glob(f"{fp.stem}.part*.parquet") if pat.match(p.name)]
+        pruned_here = 0
+        for part in siblings:
+            try:
                 part.unlink()
-                parts += 1
+            except OSError as exc:
+                # Never let a single unlink failure escape as an unhandled exception: it would skip the
+                # pull command's failed-verify -> exit-1 path. Log and keep going; the part simply stays.
+                logger.warning("prune: could not delete stale part path=%s error=%s", part, exc)
+                continue
+            pruned_here += 1
+        if pruned_here:
+            hours += 1
+            parts += pruned_here
     return hours, parts
 
 
