@@ -15,7 +15,7 @@ Load-bearing constraints (spec 00050, constraints 1 + 2):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import polars as pl
 
@@ -66,12 +66,16 @@ def _message_ts(df: pl.DataFrame) -> list[datetime]:
     Kraken's `ts` is non-decreasing across every production row measured (3.15 M rows, T0037), so this
     assertion should never fire — which is exactly what makes it worth having.
 
+    The check runs on the RAW row order, before dedup: an exact-duplicate stamp reappearing after a
+    strictly newer one (raw `[0, 5, 0]`) is out of order, but `unique(maintain_order=True)` would
+    collapse it to `[0, 5]` first — which looks monotone. Checking the deduped list can't see that.
+
     `maintain_order=True` is load-bearing: plain `.unique()` does not preserve order.
     """
     if df.height == 0:
         return []
-    stamps: list[datetime] = df.select(pl.col("ts").unique(maintain_order=True)).to_series().to_list()
-    for previous, current in zip(stamps, stamps[1:], strict=False):
+    raw: list[datetime] = df["ts"].to_list()
+    for previous, current in zip(raw, raw[1:], strict=False):
         if current < previous:
             pair = df["symbol"][0] if "symbol" in df.columns else "?"
             raise CaptureError(
@@ -79,7 +83,7 @@ def _message_ts(df: pl.DataFrame) -> list[datetime]:
                 f"{current.isoformat()}. Refusing to reconcile — sorting is forbidden (L2 rows carry "
                 f"absolute quantities), so the input itself must be fixed."
             )
-    return stamps
+    return df.select(pl.col("ts").unique(maintain_order=True)).to_series().to_list()
 
 
 def secondary_covers(secondary: pl.DataFrame, gap: Gap) -> bool:
@@ -91,6 +95,41 @@ def secondary_covers(secondary: pl.DataFrame, gap: Gap) -> bool:
     if secondary.height == 0:
         return False
     return secondary.filter(_inside(gap) & (pl.col("type") == "update")).height > 0
+
+
+def _validate_hour_bounds(hour_start: datetime, hour_end: datetime) -> None:
+    """`hour_start`/`hour_end` must bound exactly one whole, tz-aware hour.
+
+    Both windows this function protects (see `find_book_gaps`'s docstring) exist ONLY by virtue of
+    these bounds, so a wrong one is not cosmetic: a too-EARLY `hour_end` truncates a genuine tail
+    gap — the remaining silence is real, secondary-witnessed loss that lands in no `Gap`, is never
+    ledgered, never spliced. A silent, permanent hole — the exact failure this system exists to
+    prevent. A too-LATE `hour_end` (or a misaligned `hour_start`) risks admitting rows from the wrong
+    hour into this hour's splice. Both are refused loudly here rather than left for a caller to
+    discover downstream.
+    """
+    if hour_start.tzinfo is None:
+        raise CaptureError(f"hour_start {hour_start!r} is not tz-aware")
+    if (hour_start.minute, hour_start.second, hour_start.microsecond) != (0, 0, 0):
+        raise CaptureError(f"hour_start {hour_start.isoformat()} is not aligned to an hour boundary")
+    if hour_end != hour_start + timedelta(hours=1):
+        raise CaptureError(
+            f"hour_end {hour_end!r} is not exactly one hour after hour_start {hour_start.isoformat()} "
+            f"— hour_end must be the EXCLUSIVE next-hour boundary"
+        )
+
+
+def _validate_rows_within_hour(df: pl.DataFrame, name: str, hour_start: datetime, hour_end: datetime) -> None:
+    """Reject any row whose `ts` falls outside `[hour_start, hour_end)`: a row from the wrong hour
+    must be a loud error, never silently spliced into this hour's output."""
+    if df.height == 0:
+        return
+    outside = df.filter((pl.col("ts") < hour_start) | (pl.col("ts") >= hour_end))
+    if outside.height:
+        bad_ts = outside["ts"][0]
+        raise CaptureError(
+            f"{name} row with ts {bad_ts.isoformat()} falls outside the hour [{hour_start.isoformat()}, {hour_end.isoformat()})"
+        )
 
 
 def find_book_gaps(
@@ -121,6 +160,10 @@ def find_book_gaps(
     Both edge windows obey the same threshold and the same secondary-witness rule as an interior gap;
     their outer boundary is the hour boundary, which is nobody's wire message (see `Gap`).
     """
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
+    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+
     sec_ts = _message_ts(secondary)
     if not sec_ts:
         return []

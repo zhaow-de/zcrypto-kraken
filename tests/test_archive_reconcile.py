@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
-from cli.archive.reconcile import Gap, _message_ts, find_book_gaps, secondary_covers, splice_book, union_trades
+from cli.archive.reconcile import Gap, _inside, _message_ts, find_book_gaps, secondary_covers, splice_book, union_trades
 from cli.capture.errors import CaptureError
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
@@ -238,6 +238,73 @@ def test_an_absent_primary_hour_with_bounds_yields_every_secondary_row():
     assert blocks[0].frame.height == 3  # including the row on the hour boundary itself
 
 
+# --- multi-gap splice: row conservation (adversarial review, spec 00050) ------------------------
+
+
+def _row_conservation_holds(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap], blocks: list) -> bool:
+    """sum(block heights) == (primary rows outside every gap) + (secondary rows inside any gap).
+
+    Generic pin for `splice_book`: however many blocks it emits, no row may be dropped OR duplicated.
+    """
+    if not gaps:
+        return sum(b.frame.height for b in blocks) == primary.height
+    inside_any = pl.any_horizontal([_inside(g) for g in gaps])
+    primary_outside = primary.filter(~inside_any).height
+    secondary_inside = secondary.filter(inside_any).height
+    return sum(b.frame.height for b in blocks) == primary_outside + secondary_inside
+
+
+def test_head_interior_tail_gaps_are_spliced_without_duplicating_any_row():
+    # A regression here is exactly the one the adversarial review found: removing the per-gap
+    # cursor re-filter in `splice_book` still passes every OTHER test in this file, because none of
+    # them exercise 2+ gaps. With that mutation, the primary rows already emitted before an interior
+    # gap get RE-emitted at the next gap's "before" filter (which recomputes from the start of the
+    # hour, not from the cursor): rows (ts=600, 700) here would be duplicated, yielding primary row
+    # order [600, 700, 600, 700, 1200, 1300] instead of [600, 700, 1200, 1300].
+    primary = _book([(600, "update"), (700, "update"), (1200, "update"), (1300, "update")])
+    secondary = _book([(100, "update"), (300, "update"), (900, "update"), (2000, "update"), (3000, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert [(g.start, g.end) for g in gaps] == [
+        (H, H + timedelta(seconds=600)),
+        (H + timedelta(seconds=700), H + timedelta(seconds=1200)),
+        (H + timedelta(seconds=1300), HOUR_END),
+    ]
+
+    blocks = splice_book(primary, secondary, gaps)
+    primary_ts = [t for b in blocks if b.source == "primary" for t in b.frame["ts"].to_list()]
+    secondary_ts = [t for b in blocks if b.source == "secondary" for t in b.frame["ts"].to_list()]
+    assert primary_ts == [H + timedelta(seconds=o) for o in (600, 700, 1200, 1300)]
+    assert secondary_ts == [H + timedelta(seconds=o) for o in (100, 300, 900, 2000, 3000)]
+    assert _row_conservation_holds(primary, secondary, gaps, blocks)
+
+
+def test_two_adjacent_gaps_sharing_one_primary_message_keep_it_exactly_once():
+    # An isolated primary message (silence on BOTH sides) is simultaneously the end of one gap and
+    # the start of the next -- the two gaps share it as their common boundary. It must land in
+    # exactly one block, with both its level-rows together: never split, never duplicated.
+    primary = pl.concat(
+        [
+            _book([(0, "update"), (5, "update")]),  # a busy early block, no gap here
+            _book([(1800, "update"), (1800, "update")]),  # the isolated shared message, 2 level-rows
+            _book([(3500, "update"), (3505, "update")]),  # a busy late block, no gap here
+        ]
+    )
+    secondary = _book([(900, "update"), (2500, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert [(g.start, g.end) for g in gaps] == [
+        (H + timedelta(seconds=5), H + timedelta(seconds=1800)),
+        (H + timedelta(seconds=1800), H + timedelta(seconds=3500)),
+    ]
+
+    blocks = splice_book(primary, secondary, gaps)
+    primary_blocks = [b for b in blocks if b.source == "primary"]
+    shared = [b for b in primary_blocks if b.frame["ts"].to_list() == [H + timedelta(seconds=1800)] * 2]
+    assert len(shared) == 1  # the shared message appears in exactly one block, both rows together
+    primary_ts = [t for b in primary_blocks for t in b.frame["ts"].to_list()]
+    assert primary_ts == [H + timedelta(seconds=o) for o in (0, 5, 1800, 1800, 3500, 3505)]
+    assert _row_conservation_holds(primary, secondary, gaps, blocks)
+
+
 # --- the hour bounds are required, and `ts` monotonicity is asserted ----------------------------
 
 
@@ -248,6 +315,63 @@ def test_the_hour_bounds_are_required_not_optional():
     secondary = _book([(0, "update"), (60, "update"), (120, "update")])
     with pytest.raises(TypeError):
         find_book_gaps(primary, secondary, min_gap_seconds=30)  # type: ignore[call-arg]
+
+
+def test_hour_start_must_be_tz_aware():
+    naive_start = datetime(2026, 7, 16, 9)
+    primary = _book([(0, "update")])
+    secondary = _book([(0, "update")])
+    with pytest.raises(CaptureError, match="tz-aware"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=naive_start, hour_end=naive_start + timedelta(hours=1))
+
+
+def test_hour_start_must_be_aligned_to_an_hour_boundary():
+    misaligned = H + timedelta(minutes=1)
+    primary = _book([(0, "update")])
+    secondary = _book([(0, "update")])
+    with pytest.raises(CaptureError, match="hour boundary"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=misaligned, hour_end=misaligned + timedelta(hours=1))
+
+
+def test_hour_end_must_be_exactly_one_hour_after_hour_start():
+    primary = _book([(0, "update")])
+    secondary = _book([(0, "update")])
+    with pytest.raises(CaptureError, match="hour_end"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END - timedelta(seconds=1))
+    with pytest.raises(CaptureError, match="hour_end"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END + timedelta(seconds=1))
+
+
+def test_a_too_early_hour_end_is_rejected_instead_of_silently_truncating_a_real_gap():
+    # Pre-fix repro (adversarial review): a genuine crash at 09:56:40 UTC (3400s into the hour)
+    # leaves a real 200s tail gap [09:56:40, 10:00:00). An `hour_end` 100s too early used to report
+    # only the first 100s of it -- the remaining 100s of real, secondary-witnessed loss vanished
+    # silently: not in any Gap, not ledgered, not spliced. The fix refuses the call outright.
+    primary = _book([(0, "update"), (3400, "update")])
+    secondary = _book([(0, "update"), (3400, "update"), (3599, "update")])
+    gaps = find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+    assert len(gaps) == 1
+    assert gaps[0].seconds == pytest.approx(200.0)
+
+    wrong_hour_end = HOUR_END - timedelta(seconds=100)
+    with pytest.raises(CaptureError, match="hour_end"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=wrong_hour_end)
+
+
+def test_a_primary_row_outside_the_hour_window_is_rejected():
+    primary = _book([(-5, "update")])  # a stray row from the previous hour
+    secondary = _book([(0, "update")])
+    with pytest.raises(CaptureError, match="primary row"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+
+
+def test_a_secondary_row_outside_the_hour_window_is_rejected():
+    # e.g. a stray row that leaked in from the NEXT hour -- a too-large `hour_end` would otherwise
+    # splice it into this hour's output.
+    primary = _book([(0, "update")])
+    secondary = _book([(3600, "update")])  # exactly at hour_end -- outside the exclusive [start, end)
+    with pytest.raises(CaptureError, match="secondary row"):
+        find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
 
 
 def test_silence_exactly_at_the_threshold_is_not_a_gap():
@@ -279,6 +403,15 @@ def test_out_of_order_timestamps_raise_instead_of_corrupting_silently():
         _message_ts(primary)
     with pytest.raises(CaptureError, match="non-monotonic"):
         find_book_gaps(primary, secondary, min_gap_seconds=30, hour_start=H, hour_end=HOUR_END)
+
+
+def test_a_repeated_ts_reappearing_after_a_newer_one_raises_even_though_dedup_would_hide_it():
+    # Raw order [0, 5, 0]: the exact-duplicate stamp 0 reappears AFTER a strictly newer 5.
+    # Dedup-then-check (unique(maintain_order=True), THEN check the deduped list) can't see this --
+    # it collapses to [0, 5], which looks monotone. The guard must inspect RAW row order.
+    frame = _book([(0, "update"), (5, "update"), (0, "update")])
+    with pytest.raises(CaptureError, match="non-monotonic ts in the BTC/EUR book stream"):
+        _message_ts(frame)
 
 
 # --- trade union: row-level, trade_id-keyed, primary priority (spec 00050 constraint 2) ---------
