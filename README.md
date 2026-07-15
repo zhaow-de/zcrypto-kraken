@@ -17,7 +17,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
-    - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
+    - [VPS journal pull and daily gate ops — retired (moved to the NAS)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas)
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
 - [Configuration](#configuration)
@@ -65,7 +65,7 @@ Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`
 
 ### `zcrypto liquidations`<a name="zcrypto-liquidations"></a>
 
-24/7 daemon that streams Binance USD-M futures **liquidation** (`forceOrder`) events from the keyless combined stream `wss://fstream.binance.com/stream?streams=!forceOrder@arr` (no API keys) and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per symbol, reusing the capture `SegmentWriter`. Shelved in place — Binance geo-fences its futures WS from our egresses; the deployed feed is `liquidations-poll` below (spec 00051 OPS-2); liquidations are not backfillable, so the segments replicate to the NAS.
+**Shelved in place**: a daemon that streams Binance USD-M futures **liquidation** (`forceOrder`) events from the keyless combined stream `wss://fstream.binance.com/stream?streams=!forceOrder@arr` (no API keys) and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per symbol, reusing the capture `SegmentWriter`. It is **not deployed**: Binance geo-fences its futures WS from our network egresses, so the deployed feed is `liquidations-poll` below; the code stays tested and portable in case a served egress ever materializes.
 
 ```bash
 zcrypto liquidations [OPTIONS]
@@ -80,7 +80,7 @@ Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet
 
 ### `zcrypto liquidations-poll`<a name="zcrypto-liquidations-poll"></a>
 
-The T0023 fallback for `zcrypto liquidations` above: Binance geo-fences its futures WS from every egress we own, so this polls Coinalyze's REST `/v1/liquidation-history` endpoint every `$COINALYZE_POLL_SECONDS` (default 300s) for the funding basket's 10 USDT perps (`<COIN>USDT_PERP.A`, one batched call per cycle) and writes closed 1-min liquidation buckets to hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per coin, reusing the capture `SegmentWriter`. Shelved in place — Binance geo-fences its futures WS from our egresses; the deployed feed is `liquidations-poll` below (spec 00051 OPS-2), same data dir as `zcrypto liquidations` (the single-instance lock keeps both from writing at once).
+The deployed fallback for `zcrypto liquidations` above: Binance geo-fences its futures WS from every egress we own, so this polls Coinalyze's REST `/v1/liquidation-history` endpoint every `$COINALYZE_POLL_SECONDS` (default 300s) for the funding basket's 10 USDT perps (`<COIN>USDT_PERP.A`, one batched call per cycle) and writes closed 1-min liquidation buckets to hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per coin, reusing the capture `SegmentWriter`. It shares the data dir with `zcrypto liquidations` (the single-instance lock keeps both from writing at once); liquidations are not backfillable, so the segment tree replicates to the NAS.
 
 ```bash
 zcrypto liquidations-poll [OPTIONS]
@@ -95,7 +95,7 @@ Requires `$COINALYZE_API_KEY` (exits with an error if unset). Segments land at `
 
 ### `zcrypto engine`<a name="zcrypto-engine"></a>
 
-The Phase-6 shadow engine: a live price store seeded from the canonical dataset and kept warm by Kraken REST gap-fills, a Nautilus node that runs one shadow cycle per 4h UTC boundary (00/04/08/12/16/20), a per-day journal of cycle evidence (records, failed-cycle sidecars, input snapshots, `orders.jsonl`), and replay/report verification against the ratified concordance gate. Settings come from the [`[zcrypto.engine]`](#zcryptoengine-shadow-engine-settings) table.
+The shadow trading engine: a live price store seeded from the canonical dataset and kept warm by Kraken REST gap-fills, a Nautilus node that runs one shadow cycle per 4h UTC boundary (00/04/08/12/16/20), a per-day journal of cycle evidence (records, failed-cycle sidecars, input snapshots, `orders.jsonl`), and replay/report verification against the ratified concordance gate. Settings come from the [`[zcrypto.engine]`](#zcryptoengine-shadow-engine-settings) table.
 
 ```bash
 zcrypto engine <subcommand> [OPTIONS]
@@ -124,9 +124,9 @@ systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
 ```
 
-#### VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)<a name="vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094"></a>
+#### VPS journal pull and daily gate ops — retired (moved to the NAS)<a name="vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas"></a>
 
-**Retired.** The daily gate ops (journal pull → verified replay → report) ran on the workstation as a systemd `--user` timer; it lagged whenever the workstation was offline. It is superseded by **Role B** on the always-on NAS — the `archive-pull` container pulls the journal and runs `zcrypto engine gate-export` (fast-path gate scoring, emitted to Grafana + a dead-man ping) on every cycle (spec `docs/specs/00049-role-b-nas-gate-verify-design.md`, `infra/nas/`). The `infra/systemd/zcrypto-engine-gateops.{service,timer}` templates are removed.
+**Retired.** The daily gate ops (journal pull → verified replay → report) ran on the workstation as a systemd `--user` timer; it lagged whenever the workstation was offline. It is superseded by the always-on NAS gate-verify tier — the `archive-pull` container pulls the journal and runs `zcrypto engine gate-export` (fast-path gate scoring, emitted to Grafana + a dead-man ping) on every cycle (spec `docs/specs/00049-role-b-nas-gate-verify-design.md`, `infra/nas/`). The `infra/systemd/zcrypto-engine-gateops.{service,timer}` templates are removed.
 
 On a workstation that still has the old timer installed, disable it:
 
@@ -138,7 +138,7 @@ systemctl --user daemon-reload
 
 ### `zcrypto archive`<a name="zcrypto-archive"></a>
 
-The always-on NAS pull/archive tier (Role A, spec `00048`): pull a source tree via rsync-over-ssh, then hash-verify every segment against its `.sha256` manifest sidecar.
+The always-on NAS pull/archive tier: pull a source tree via rsync-over-ssh, then hash-verify every segment against its `.sha256` manifest sidecar.
 
 ```bash
 zcrypto archive pull <source> <dest>
@@ -151,7 +151,7 @@ zcrypto archive pull <source> <dest>
 
 `pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative — this also covers a missing `ARCHIVE_SSH_KEY`), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required), `ARCHIVE_SSH_PORT` (default `10022`), and `ARCHIVE_SSH_KNOWN_HOSTS` (a `UserKnownHostsFile` path). Host-key checking is strict (`StrictHostKeyChecking=yes`), so `ARCHIVE_SSH_KNOWN_HOSTS` must be pre-seeded with the remote host key — an unknown or changed key fails the pull closed rather than trusting it.
 
-`reconcile` (Role C, spec `00050`) reads the two raw capture mirrors and mints healed hours into a separate overlay root, leaving both mirrors immutable and canonical-by-default.
+`reconcile` reads the two raw capture mirrors and mints healed hours into a separate overlay root, leaving both mirrors immutable and canonical-by-default.
 
 ```bash
 zcrypto archive reconcile <primary_root> <secondary_root> <reconciled_root>
@@ -167,7 +167,7 @@ zcrypto archive reconcile <primary_root> <secondary_root> <reconciled_root>
 | `--textfile` | Prometheus textfile to publish (`reconcile.prom`). Omit to export nothing. |
 | `--mint` / `--detect-only` | **Default `--detect-only`**: ledger what *would* be spliced and mint nothing. |
 
-**`--detect-only` is the default and must stay so until T0039's soak lands.** `--min-gap-seconds` is not yet validated cross-host: the measured single-host *maximum* natural quiescence is 14.78 s and a single secondary update row is enough to witness a gap, so a per-connection coalescing artifact could plausibly trip a **phantom splice** — an unaudited data swap into an archive that cannot be backfilled. Detect-only ledgers every `would_mint` and writes no parquet; `--mint` is unlocked only once the soak has pinned the threshold from real cross-host data.
+**`--detect-only` is the default and must stay so until a cross-host soak pins the threshold.** `--min-gap-seconds` is not yet validated cross-host: the measured single-host *maximum* natural quiescence is 14.78 s and a single secondary update row is enough to witness a gap, so a per-connection coalescing artifact could plausibly trip a **phantom splice** — an unaudited data swap into an archive that cannot be backfilled. Detect-only ledgers every `would_mint` and writes no parquet; `--mint` is unlocked only once the soak has pinned the threshold from real cross-host data.
 
 An hour is considered once `now ≥ H + 2h` (finalization plus one pull cycle have both had time to land), and a hour still missing from the primary past `H + 6h` is minted from the complete secondary alone. Healing is **whole-window** for books (a secondary block is spliced in, never row-interleaved — L2 rows carry absolute quantities) and **row-level** for trades (`trade_id` is globally unique across hosts). Every decision is appended to `<reconciled_root>/reconcile-ledger.jsonl` (states `minted`, `would_mint`, `trade_deficit`, `both_streams_silent`, `total_loss`, `failed`), and each minted final gets a `.sha256` sidecar plus an `<HH>.provenance.json`, so the overlay verifies with the same `verify_tree` as a raw mirror.
 
@@ -175,7 +175,7 @@ Two **correlated-loss** detectors run regardless of the flag and never mint: `bo
 
 `reconcile` exits **2** when a mirror is unreadable (transport), **1** on an integrity failure (an unreadable segment, a non-monotonic stream, a corrupt ledger — no textfile is published, so `last_success_timestamp` goes stale and pages), else **0**. Residual gaps are a *finding*, not a failure: they exit 0 and page through the metric.
 
-`verify-replay` (spec `00051` OPS-3) continuity-replays every canonical book hour — reconciled-first, primary otherwise — through the capture `OrderBook` and reports four per-hour checks: **anchored** (spec `00052` D3 correction: **chain-anchored** — the hour opens with a `type=snapshot` message, OR its exact predecessor hour for the same pair was present in the replayed set and was itself anchored and error-free; Kraken snapshots arrive on subscribe, not once per capture hour, so most real hours open with plain updates and rely on this chain), **ts-ordered** (rows non-decreasing in `ts`), **checksum-present** (every message carries its capture-time `checksum` attestation), and **replay-ok** (the rows regroup into WS-shaped messages and ingest without a structural throw). It never re-derives the CRC: the archive stores `price`/`qty` as Float64, so Kraken's checksum is not byte-exactly reproducible (T0045) — the stored column is trusted as capture-time ground truth.
+`verify-replay` continuity-replays every canonical book hour — reconciled-first, primary otherwise — through the capture `OrderBook` and reports four per-hour checks: **anchored** (**chain-anchored**: the hour opens with a `type=snapshot` message, OR its exact predecessor hour for the same pair was present in the replayed set and was itself anchored and error-free; Kraken snapshots arrive on subscribe, not once per capture hour, so most real hours open with plain updates and rely on this chain), **ts-ordered** (rows non-decreasing in `ts`), **checksum-present** (every message carries its capture-time `checksum` attestation), and **replay-ok** (the rows regroup into WS-shaped messages and ingest without a structural throw). It never re-derives the CRC: the archive stores `price`/`qty` as Float64, so Kraken's checksum is not byte-exactly reproducible — the stored column is trusted as capture-time ground truth.
 
 ```bash
 zcrypto archive verify-replay <primary_root> [reconciled_root]
@@ -193,7 +193,7 @@ One line per hour plus a summary; a bad hour is isolated into its own result (th
 
 ### `zcrypto panel`<a name="zcrypto-panel"></a>
 
-The 1s L2 primitive panel (spec `00052`): materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair.
+The 1s L2 primitive panel: materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair.
 
 ```bash
 zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>
@@ -209,11 +209,11 @@ zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>
 | `--depth` | Book depth the archive was captured at (default `100`, capture's default). |
 | `--allow-holes` | Proceed even if `--since` is newer than a pair's panel watermark, permanently skipping the hole in between. |
 
-`materialize` writes `<panel_root>/panel-meta.json` (schema version, grid, notional ladder, K-levels) on a fresh panel root, and **refuses** if an existing one's generation differs from the running code's — a generation change must be an explicit regeneration of the whole panel tree (spec `00052` D5), never a silent mix.
+`materialize` writes `<panel_root>/panel-meta.json` (schema version, grid, notional ladder, K-levels) on a fresh panel root, and **refuses** if an existing one's generation differs from the running code's — a generation change must be an explicit regeneration of the whole panel tree, never a silent mix.
 
 Each pair is watermarked at its newest existing panel hour; a sweep only materializes hours strictly newer than that. **`--since` that would open a gap above a pair's watermark — or above a fresh pair's earliest canonical hour — refuses by default**: skipping straight to `--since` would permanently strand the hours in `[watermark+1h, since)` once later hours advance the watermark past them. Pass `--allow-holes` to proceed anyway (a warning still names the pair, the watermark, and the stranded range).
 
-`OrderBook` state is threaded across hours per pair (spec `00052` D3 correction): Kraken snapshots arrive on subscribe, not once per capture hour, so an hour opening with a plain update continues from the previous hour's end-of-hour book (persisted as a `<HH>.state.json` sidecar next to its parquet, enabling O(1) resume) rather than being rebuilt from nothing. An hour that cannot anchor — an update-opening hour with no carried book, e.g. after a gap in the archive — is counted in `hours_unanchored`: an honest gap, not a failure, logged once per contiguous run of them. A per-hour failure of any other kind is isolated and logged (`panel hour failed pair=... hour=...: ...`); the sweep continues past it. Exits **1** iff any hour errored (`hours_unanchored` never affects the exit code), else **0**.
+`OrderBook` state is threaded across hours per pair: Kraken snapshots arrive on subscribe, not once per capture hour, so an hour opening with a plain update continues from the previous hour's end-of-hour book (persisted as a `<HH>.state.json` sidecar next to its parquet, enabling O(1) resume) rather than being rebuilt from nothing. An hour that cannot anchor — an update-opening hour with no carried book, e.g. after a gap in the archive — is counted in `hours_unanchored`: an honest gap, not a failure, logged once per contiguous run of them. A per-hour failure of any other kind is isolated and logged (`panel hour failed pair=... hour=...: ...`); the sweep continues past it. Exits **1** iff any hour errored (`hours_unanchored` never affects the exit code), else **0**.
 
 ## Configuration<a name="configuration"></a>
 
