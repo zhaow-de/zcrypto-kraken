@@ -95,8 +95,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…3 are DONE (iter-097: node converged, Coinalyze liquidations poller live + NAS-replicated, replay timers armed); remaining work = OPS-4 Panel / OPS-5 Offload / OPS-6 Loop (ripe when: picked as the next infra component).
 
-- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted and healthchecks.io connected natively (owner, 2026-07-15, both alongside email); remainder = wire the Grafana contact point + routing as-code via grafana-push.sh, then decide email's fate after a soak.
-
 ### Resolved<a name="resolved-1"></a>
 
 - [T0040 — alert on docker-socket-proxy denials and non-routine calls](archive/T0040-docker-socket-proxy-denial-alert.md) — closed unbuilt: the proxy it would have watched was removed the same day, so the denial stream it depended on no longer exists; the security residual that replaces it is [T0042](T0042-alloy-holds-root-equivalent-docker-access.md).
@@ -114,3 +112,5 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0041 — archive-pull failures do not page](archive/T0041-archive-pull-failures-do-not-page.md) — resolved 2026-07-14: every error path now goes through `logging` so it carries the `level` label the alert selects on (`_abort` logged rather than printed — closing a regression the label-based rule itself introduced; uncaught exceptions logged via a new `run()` entry point; `pull-entrypoint.sh` emitting the Python log shape), plus a new dead-man rule that fires when no successful pull is seen for 3h — the only rule that catches silence.
 
 - [T0034 — grafana-push safety](archive/T0034-grafana-push-safety.md) — resolved: `grafana-push.sh` now reads every pushed rule back and fails on a wrong datasourceUid (the health=ok trap), and reports/prunes orphaned rules (dry-run default, exact-membership so a renamed rule is caught); proven live (12 == 12, injected orphan flagged).
+
+- [T0047 — Slack incoming-webhook notifications](archive/T0047-slack-webhook-notifications.md) — resolved 2026-07-15: Slack is the sole notification target for Grafana (as-code guarded upsert, proven by a read-back-verified test fire, email integration deleted after the proving call) and healthchecks.io (all 9 checks pinned to #zcrypto).
