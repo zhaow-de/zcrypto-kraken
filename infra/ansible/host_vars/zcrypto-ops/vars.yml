@@ -21,6 +21,10 @@ base_unattended_upgrades_reboot_time: "02:25"
 # rendered compose reads as LIQUIDATIONS_HEALTHCHECK_URL.
 ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
 
+# Same wiring for the two daily replay timers' dead-men (vault.yml holds the encrypted URLs).
+ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
+ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+
 # The operator's fleet-wide deploy pubkey (same value as group_vars/capture_host/vars.yml). Kept
 # here rather than moved to group_vars/all to avoid touching the live capture hosts' var resolution;
 # it is the public half, so duplicating it is a readability cost, not a secret exposure. The
