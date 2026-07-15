@@ -19,7 +19,16 @@ It bounds what archive self-attestation can prove. OPS-3's continuity-replay ver
 - OPS-3 (spec 00051, `cli/archive/replay.py`) delivers the achievable-now check: structural continuity + desync replay, stored-checksum-as-ground-truth. It explicitly does **not** compare a re-derived CRC.
 - A fix would add raw-string `price_str`/`qty_str` columns (or replace the floats) to the captured book schema — a **capture-daemon change on the unbackfillable live stream**, so it is gated behind a capture image re-pin (canary rule + primary clean-run embargo, [[T0032]] / `.claude/rules/capture-deploys.md`) and only ever attests data captured *after* the change (pre-change history stays float-only forever).
 
+## OPS-3 decision (2026-07-15)
+
+Per the owner's call, OPS-3 (spec 00051) does **not** wait on this. It ships:
+
+- the **verified-path** replay as the primary oracle (`zcrypto engine replay --path verified` scheduled on the ops node — fully valuable, needs no CRC, already exists), and
+- a **minimal** book continuity-replay (`cli/archive/replay.py`, Task 6) that checks only what is derivable *without* the CRC: each canonical hour is snapshot-anchored, rows are ts-ordered, the `checksum` column is present/non-null (capture-time attestation exists), the book replays through `OrderBook` without a structural throw, and — its one genuinely new payoff — the reconciler's **spliced output stays coherent across splice boundaries** (Role C keeps snapshot rows at the boundary for exactly this). It deliberately does **not** attempt the unreliable "structural desync" heuristic (for a depth-bounded book, a legitimate update to an out-of-window level is indistinguishable from corruption without the CRC).
+
+The **richer, byte-exact CRC book-replay is deferred to this topic** — it is precisely what the raw-string schema change below unblocks.
+
 ## Suggested next steps
 
-- Decide whether byte-exact CRC re-attestation is worth a capture-schema change. Weigh: it only strengthens attestation for post-change, top-10-depth data, at the cost of a schema migration on the live stream and larger segments (two string columns). The OPS-3 structural check may be sufficient — revisit if a continuity-replay run ever surfaces a discrepancy it cannot localize.
-- If pursued: add `price_str`/`qty_str` to `BOOK_SCHEMA`, thread the raw WS strings through `_handle_book_message` (they arrive as `Decimal` via `parse_float=Decimal`; keep the original string), and extend `cli/archive/replay.py` to re-derive and compare the CRC when the columns are present (older float-only segments keep the structural-only check). Ship on the next gated capture re-pin, never a standalone live restart.
+- Decide whether byte-exact CRC re-attestation is worth a capture-schema change. Weigh: it only strengthens attestation for post-change, top-10-depth data, at the cost of a schema migration on the live stream and larger segments (two string columns). The OPS-3 minimal check + verified-path may be sufficient — revisit if a continuity-replay run ever surfaces a discrepancy it cannot localize.
+- If pursued: add `price_str`/`qty_str` to `BOOK_SCHEMA`, thread the raw WS strings through `_handle_book_message` (they arrive as `Decimal` via `parse_float=Decimal`; keep the original string), and **extend OPS-3's `cli/archive/replay.py`** to re-derive and compare the CRC when the columns are present (older float-only segments keep the structural-only check). Ship on the next gated capture re-pin, never a standalone live restart.
