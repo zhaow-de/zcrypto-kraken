@@ -13,6 +13,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
 - [Requirements](#requirements)
 - [Usage](#usage)
   - [`zcrypto capture`](#zcrypto-capture)
+  - [`zcrypto liquidations`](#zcrypto-liquidations)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
@@ -59,6 +60,21 @@ zcrypto capture [OPTIONS]
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
 
 Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
+
+### `zcrypto liquidations`<a name="zcrypto-liquidations"></a>
+
+24/7 daemon that streams Binance USD-M futures **liquidation** (`forceOrder`) events from the keyless combined stream `wss://fstream.binance.com/stream?streams=!forceOrder@arr` (no API keys) and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per symbol, reusing the capture `SegmentWriter`. Runs on the ops node (spec 00051 OPS-2); liquidations are not backfillable, so the segments replicate to the NAS.
+
+```bash
+zcrypto liquidations [OPTIONS]
+```
+
+| Option | Description |
+| -- | -- |
+| `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_LIQUIDATIONS_DATA_DIR` if set, else `/var/lib/zcrypto-ops/liquidations`. |
+| `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
+
+Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet` (`<SYMBOL>` is the Binance ticker, e.g. `BTCUSDT`), with columns `ts, symbol, side, price, orig_qty, avg_price, order_status, event_id`. Redelivered events (Binance replays force-orders on reconnect) are de-duped on the synthesized `event_id`. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
 
 ### `zcrypto engine`<a name="zcrypto-engine"></a>
 

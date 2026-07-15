@@ -34,6 +34,20 @@ TRADE_SCHEMA: dict[str, pl.DataType] = {
     "trade_id": pl.Int64,
 }
 
+# One row per Binance USD-M futures forceOrder (liquidation) event (spec 00051 OPS-2). `event_id` is
+# synthesized (`f"{o.s}-{o.T}-{o.p}-{o.q}"`) because this stream carries no order id; it seeds the
+# writer's `dedup_key` since Binance redelivers force-orders on reconnect.
+LIQ_SCHEMA: dict[str, pl.DataType] = {
+    "ts": pl.Datetime("us", "UTC"),
+    "symbol": pl.Utf8,
+    "side": pl.Utf8,
+    "price": pl.Float64,
+    "orig_qty": pl.Float64,
+    "avg_price": pl.Float64,
+    "order_status": pl.Utf8,
+    "event_id": pl.Utf8,
+}
+
 DEFAULT_FLUSH_ROWS = 5_000
 
 # How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
