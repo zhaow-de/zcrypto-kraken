@@ -1,6 +1,6 @@
 ---
-status: partial
-ripe_when: now for the attended test-fire (grafana-push.sh's Slack section landed 2026-07-15); the email-fate decision needs a soak period after Slack delivery is confirmed
+status: resolved
+ripe_when: n/a — resolved 2026-07-15 (Slack sole target; email removed after the proving call)
 ---
 
 # Slack incoming-webhook notifications for Grafana + healthchecks.io
@@ -27,7 +27,11 @@ Email is the only paging path today for both Grafana alerts and the healthchecks
 - **Scope narrows to Grafana alerts only.**
 - **`infra/scripts/grafana-push.sh` extended with a Slack contact-point section** (as code): upserts a Slack integration (stable uid `zcrypto-slack-webhook`) onto the receiver named by `GRAFANA_SLACK_RECEIVER`, sourced via `/api/v1/provisioning/contact-points` (GET the full list → PUT-by-uid if present, else POST — that endpoint has no GET-by-uid, unlike alert-rules). `GRAFANA_SLACK_WEBHOOK_URL` unset/empty skips the section cleanly; `GRAFANA_SLACK_RECEIVER` unset (with the webhook set) lists the live contact points and stops instead of guessing a receiver name (T0034 lesson generalized — no notification-policy/routing-tree changes, so this only ever adds Slack delivery to whatever the existing rules already route to). Read-back-verifies the upsert by uid/type/name (Grafana redacts the secret `settings.url` on read-back, so that field is never asserted on). Env-contract documented in `infra/nas/README.md`'s "Grafana dashboard + alerts" section.
 
-## Suggested next steps
+## Resolution (2026-07-15)
 
-- **(human, later)** Attended test-fire: set `GRAFANA_SLACK_RECEIVER` to the live `email` receiver name, run `infra/scripts/grafana-push.sh` with the vaulted webhook URL, and fire (or wait for) a real alert to confirm Slack delivery lands alongside email.
-- **(human-gated, same branch)** Owner directive 2026-07-15: the branch does NOT merge after the test-fire — once Slack is proven over real alerts, the **email removal lands on this same branch**, and the merge then resolves this topic outright (no residual email decision). healthchecks.io's email channel gets the same treatment at that point.
+Slack is the **sole** notification target for both systems, proven end-to-end before the flip:
+
+- **Grafana**: the `zcrypto-slack-webhook` integration was pushed as-code (`grafana-push.sh`, guarded upsert + read-back), a test message was delivered and read back from `#zcrypto` via the Slack API, and after the owner's proving call the original email integration (`afrxh6bhgodtsc`) was deleted via the provisioning API — the receiver (still named `email`, a cosmetic residue; routing untouched) now holds only Slack.
+- **healthchecks.io**: the owner had already removed the email channel when connecting the native Slack integration; all 9 checks are now explicitly pinned to the `#zcrypto` channel via the Management API.
+
+Cosmetic residue, deliberately accepted: the Grafana receiver keeps its historical name `email` — renaming would require notification-policy edits for zero functional gain. Revisit only if a second receiver ever makes the name genuinely confusing.

@@ -151,7 +151,7 @@ else
   done <<<"${orphans}"
 fi
 
-# --- Slack contact-point integration (T0047, phase one: run-alongside-email) ---------------------
+# --- Slack contact-point integration (T0047, phase one: sole-notification-target (was run-alongside-email until the 2026-07-15 proving period ended)) ---------------------
 # Grafana contact points are named groups of integrations: multiple integrations sharing one `name`
 # merge into a single receiver, and every alert routed to that receiver fires ALL of its
 # integrations. So this adds a Slack integration to the SAME receiver name every rule in alerts.yaml
