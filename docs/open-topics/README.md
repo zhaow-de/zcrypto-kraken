@@ -73,6 +73,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0046 — sparse-symbol liquidation hours never finalize](T0046-sparse-symbol-liquidation-hours-never-finalize.md) — the liquidations recorder reuses SegmentWriter's event-driven hour rotation, but Binance's many-symbol forceOrder feed leaves rarely-liquidated perps' hours as manifest-less .part files indefinitely (no manifest, wider hard-crash RAM window, and Task 5's finals-check surprised); decide accept-and-document vs a wall-clock finalize tick (ripe when: recorder deployed, or before OPS-2 is complete).
 
+- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — replace/complement the email channel for Grafana + healthchecks.io with a Slack app incoming webhook; investigated: manifest-only, no code — the ~10-min app-creation is the human step, the contact-point/channel wiring is autonomous once the URL is vaulted (ripe when: the owner mints the webhook).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A) landed iter-093 (spec/plan 00048), NAS gate-verify (Role B) landed iter-094 (spec/plan 00049, measured bit-identical cross-runtime); remainder = the alerting drill + the ≥7-day clean-run verification + Role C (redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).
