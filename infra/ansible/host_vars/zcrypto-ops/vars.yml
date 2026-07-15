@@ -17,6 +17,10 @@ base_hostname: zcrypto-ops
 # host_vars/zcrypto-red/vars.yml) and asserts all of `capture_host + ops_host` are pairwise distinct.
 base_unattended_upgrades_reboot_time: "02:25"
 
+# Wire the vaulted dead-man ping URL (host_vars/zcrypto-ops/vault.yml) into the role var the
+# rendered compose reads as LIQUIDATIONS_HEALTHCHECK_URL.
+ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
+
 # The operator's fleet-wide deploy pubkey (same value as group_vars/capture_host/vars.yml). Kept
 # here rather than moved to group_vars/all to avoid touching the live capture hosts' var resolution;
 # it is the public half, so duplicating it is a readability cost, not a secret exposure. The
