@@ -13,6 +13,8 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
 - [Requirements](#requirements)
 - [Usage](#usage)
   - [`zcrypto capture`](#zcrypto-capture)
+  - [`zcrypto liquidations`](#zcrypto-liquidations)
+  - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
@@ -59,6 +61,36 @@ zcrypto capture [OPTIONS]
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
 
 Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`. Set `HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
+
+### `zcrypto liquidations`<a name="zcrypto-liquidations"></a>
+
+24/7 daemon that streams Binance USD-M futures **liquidation** (`forceOrder`) events from the keyless combined stream `wss://fstream.binance.com/stream?streams=!forceOrder@arr` (no API keys) and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per symbol, reusing the capture `SegmentWriter`. Shelved in place — Binance geo-fences its futures WS from our egresses; the deployed feed is `liquidations-poll` below (spec 00051 OPS-2); liquidations are not backfillable, so the segments replicate to the NAS.
+
+```bash
+zcrypto liquidations [OPTIONS]
+```
+
+| Option | Description |
+| -- | -- |
+| `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_LIQUIDATIONS_DATA_DIR` if set, else `/var/lib/zcrypto-ops/liquidations`. |
+| `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
+
+Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet` (`<SYMBOL>` is the Binance ticker, e.g. `BTCUSDT`), with columns `ts, symbol, side, price, orig_qty, avg_price, order_status, event_id`. Redelivered events (Binance replays force-orders on reconnect) are de-duped on the synthesized `event_id`. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
+
+### `zcrypto liquidations-poll`<a name="zcrypto-liquidations-poll"></a>
+
+The T0023 fallback for `zcrypto liquidations` above: Binance geo-fences its futures WS from every egress we own, so this polls Coinalyze's REST `/v1/liquidation-history` endpoint every `$COINALYZE_POLL_SECONDS` (default 300s) for the funding basket's 10 USDT perps (`<COIN>USDT_PERP.A`, one batched call per cycle) and writes closed 1-min liquidation buckets to hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per coin, reusing the capture `SegmentWriter`. Shelved in place — Binance geo-fences its futures WS from our egresses; the deployed feed is `liquidations-poll` below (spec 00051 OPS-2), same data dir as `zcrypto liquidations` (the single-instance lock keeps both from writing at once).
+
+```bash
+zcrypto liquidations-poll [OPTIONS]
+```
+
+| Option | Description |
+| -- | -- |
+| `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_LIQUIDATIONS_DATA_DIR` if set, else `/var/lib/zcrypto-ops/liquidations`. |
+| `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing; runs at least one poll cycle even with `0`); omit to run until interrupted. |
+
+Requires `$COINALYZE_API_KEY` (exits with an error if unset). Segments land at `<data-dir>/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, with columns `ts, symbol, long_usd, short_usd, event_id`. Only buckets Coinalyze has proven closed (`bucket_end <= now - 120s`) are ingested; each cycle re-polls the last 24h and relies on the synthesized `event_id` (`<symbol>-<bucket_start>`) for de-dup, since Coinalyze's own history only stretches back ~25-33h. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping (sent only after a fully successful cycle); it's optional and skipped when unset.
 
 ### `zcrypto engine`<a name="zcrypto-engine"></a>
 
@@ -141,6 +173,22 @@ An hour is considered once `now ≥ H + 2h` (finalization plus one pull cycle ha
 Two **correlated-loss** detectors run regardless of the flag and never mint: `both_streams_silent` (every pair silent on *both* hosts in the *same* window — at depth 100 that has no benign explanation) and `total_loss` (an hour absent from both mirrors while real data brackets it on either side). When both streams are dark there is no witness to heal with, so the loss is permanent: it is ledgered, booked into `zcrypto_reconcile_residual_gap_seconds_total`, and paged.
 
 `reconcile` exits **2** when a mirror is unreadable (transport), **1** on an integrity failure (an unreadable segment, a non-monotonic stream, a corrupt ledger — no textfile is published, so `last_success_timestamp` goes stale and pages), else **0**. Residual gaps are a *finding*, not a failure: they exit 0 and page through the metric.
+
+`verify-replay` (spec `00051` OPS-3) continuity-replays every canonical book hour — reconciled-first, primary otherwise — through the capture `OrderBook` and reports four per-hour checks: **snapshot-anchored** (the hour opens with a `type=snapshot` message), **ts-ordered** (rows non-decreasing in `ts`), **checksum-present** (every message carries its capture-time `checksum` attestation), and **replay-ok** (the rows regroup into WS-shaped messages and ingest without a structural throw). It never re-derives the CRC: the archive stores `price`/`qty` as Float64, so Kraken's checksum is not byte-exactly reproducible (T0045) — the stored column is trusted as capture-time ground truth.
+
+```bash
+zcrypto archive verify-replay <primary_root> [reconciled_root]
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary mirror (raw, canonical-by-default). |
+| `reconciled_root` | Optional healed overlay; its hours replay reconciled-first. Omit to replay the primary alone. |
+| `--pair` | Only this pair (e.g. `BTC/EUR`). Defaults to every pair. |
+| `--since` | Only hours at/after this UTC date (`YYYY-MM-DD`). |
+| `--depth` | Book depth the archive was captured at (default `100`, capture's default); the replayed book prunes to it. |
+
+One line per hour plus a summary; a bad hour is isolated into its own result (the sweep never aborts). Exits **1** if any hour errs or fails any of the four checks, else **0**.
 
 ## Configuration<a name="configuration"></a>
 

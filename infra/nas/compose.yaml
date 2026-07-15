@@ -36,6 +36,16 @@ services:
       RECONCILE_WINDOW_HOURS: ${RECONCILE_WINDOW_HOURS:-48}
       JOURNAL_SOURCE: ${JOURNAL_SOURCE}
       JOURNAL_DEST: ${JOURNAL_DEST:-/archive/engine-journal}
+      # OPS-2 (spec 00051): the ops node's liquidations tree, pulled over its OWN least-privilege
+      # rrsync channel (`sync_liquidations`, see infra/ops/README.md). Leave LIQUIDATIONS_SOURCE
+      # unset and the pull is skipped entirely (pull-entrypoint.sh), so this compose file stays
+      # valid on a NAS that has not been given the ops channel yet. The ops node is a home-LAN box
+      # on SSH port 22 (not the VPS's 10022), so the channel carries its own port var, scoped per
+      # call like its key.
+      LIQUIDATIONS_SOURCE: ${LIQUIDATIONS_SOURCE:-}
+      LIQUIDATIONS_DEST: ${LIQUIDATIONS_DEST:-/archive/liquidations}
+      LIQUIDATIONS_SSH_KEY: /keys/sync_liquidations
+      LIQUIDATIONS_SSH_PORT: ${LIQUIDATIONS_SSH_PORT:-22}
       CAPTURE_SSH_KEY: /keys/sync_capture
       JOURNAL_SSH_KEY: /keys/sync_journal
       ARCHIVE_SSH_KNOWN_HOSTS: /keys/known_hosts

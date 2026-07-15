@@ -1,0 +1,95 @@
+# The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
+# directories + rsync, OPS-2 renders the liquidations-poller compose file, OPS-3 installs the
+# continuity-replay/verified-path timers — kept as one role, not split into four.
+
+- name: ensure the ops data directory exists
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+- name: ensure the ops compose project directory exists
+  ansible.builtin.file:
+    path: "{{ ops_compose_dir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+- name: install rsync (ships /usr/bin/rrsync, needed by OPS-2's replication channel) + curl (the replay timers' dead-man ping)
+  ansible.builtin.apt:
+    name:
+      - rsync
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- OPS-2/3 (spec 00051): the liquidations-poller compose file + the daily continuity-replay
+# and verified-path replay timers. Installed only when the pinned image digest is supplied
+# (-e ops_image_digest=sha256:<...>): a converge without it skips this whole block rather than
+# rendering artifacts that point at a broken image reference.
+- name: install the ops stack — recorder compose + replay timers (needs the pinned image digest)
+  when: ops_image_digest is defined
+  block:
+    - name: look up the deploy account (the ops containers run as its uid/gid)
+      ansible.builtin.getent:
+        database: passwd
+        key: deploy
+
+    - name: derive the deploy uid/gid for the container user mapping
+      ansible.builtin.set_fact:
+        ops_uid: "{{ getent_passwd['deploy'][1] }}"
+        ops_gid: "{{ getent_passwd['deploy'][2] }}"
+
+    # OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
+    # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
+    # liquidations stream is not backfillable, so restarting it is never a converge side effect.
+    #
+    # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (Task 10,
+    # spec 00051 OPS-2) — deploy-only readable, matching the vault's own secrecy expectation.
+    - name: render the ops compose file (liquidations poller)
+      ansible.builtin.template:
+        src: compose.yaml.j2
+        dest: "{{ ops_compose_dir }}/compose.yaml"
+        owner: deploy
+        group: deploy
+        mode: "0600"
+
+    - name: ensure the textfile-collector directory exists
+      ansible.builtin.file:
+        path: "{{ ops_textfile_dir }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0755"
+
+    - name: install the replay runner scripts
+      ansible.builtin.template:
+        src: "{{ item }}.sh.j2"
+        dest: "/usr/local/sbin/zcrypto-{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [verify-replay, verified-replay]
+
+    - name: render the replay systemd services + timers
+      ansible.builtin.template:
+        src: "{{ item.0 }}.{{ item.1 }}.j2"
+        dest: "/etc/systemd/system/zcrypto-{{ item.0 }}.{{ item.1 }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ ['verify-replay', 'verified-replay'] | product(['service', 'timer']) | list }}"
+
+    # Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
+    # too would run both replays on every boot (same rationale as the capture prune timer).
+    - name: enable + start the replay timers
+      ansible.builtin.systemd_service:
+        name: "zcrypto-{{ item }}.timer"
+        daemon_reload: true
+        enabled: true
+        state: started
+      loop: [verify-replay, verified-replay]

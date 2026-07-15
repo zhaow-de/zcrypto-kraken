@@ -6,6 +6,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 
 - **Never re-pin the primary to a capture-image digest that has not run on the secondary for ≥ 24 h.** Before the primary re-pin, verify on the secondary: running digest == candidate, `StartedAt` ≥ 24 h with `RestartCount` 0, capture green (all pairs flowing, no `quarantined`/`ambiguous`/`merge failed` lines, dead-man pinging).
 - Skipping the bake requires the user's explicit approval — never silently. (Design: spec `00050`.)
+- At the secondary re-pin, schedule the T+24 h reminder via the Slack MCP (`slack_schedule_message`, survives the session) carrying the verification checklist above — the reminder opens the gate, the human still verifies before the primary re-pin.
 
 ## Deploys
 

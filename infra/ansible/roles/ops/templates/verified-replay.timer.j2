@@ -1,0 +1,16 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-verified-replay.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/verified-replay.timer.j2 instead.
+[Unit]
+Description=Daily verified-path journal replay (spec 00051 OPS-3)
+
+[Timer]
+# Off the hour boundary, clear of the ops reboot window (02:25 UTC), the capture hosts' maintenance
+# windows (21:25/22:25 UTC), and the continuity-replay timer (03:41). The host timezone is UTC
+# (base role), so this is 05:23 UTC.
+OnCalendar=*-*-* 05:23:00
+# A host that was down at 05:23 replays on the next boot instead of skipping the day.
+Persistent=true
+Unit=zcrypto-verified-replay.service
+
+[Install]
+WantedBy=timers.target

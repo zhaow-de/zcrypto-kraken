@@ -1,0 +1,27 @@
+# Rendered by the `ops` Ansible role at {{ ops_compose_dir }}/compose.yaml — do not hand-edit on
+# the host, it is overwritten on the next converge. Edit
+# infra/ansible/roles/ops/templates/compose.yaml.j2 instead.
+services:
+  liquidations:
+    # The capture image (default AVX build) — the exec-form entrypoint override cleanly bypasses
+    # capture's shell ENTRYPOINT and starts the Coinalyze liquidation poller instead (one image,
+    # many services; same pattern as the engine compose). No trade key, no engine (spec 00051 D10).
+    #
+    # T0023: Binance geo-fences its futures WS from every egress we own, so the `zcrypto
+    # liquidations` WS recorder (shelved in place, not deleted) is replaced here by `zcrypto
+    # liquidations-poll` — same output tree, so the NAS replication channel + dead-man are unchanged.
+    image: "{{ ops_image }}@{{ ops_image_digest }}"
+    restart: unless-stopped
+    user: "{{ ops_uid }}:{{ ops_gid }}"
+    entrypoint: ["zcrypto", "liquidations-poll"]
+    environment:
+      ZCRYPTO_LIQUIDATIONS_DATA_DIR: /data/liquidations
+      LIQUIDATIONS_HEALTHCHECK_URL: "{{ ops_liquidations_healthcheck_url }}"
+      COINALYZE_API_KEY: "{{ coinalyze_api_key }}"
+    volumes:
+      - "{{ ops_data_dir }}:/data"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

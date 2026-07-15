@@ -1,0 +1,32 @@
+# host_vars/zcrypto-ops — the home ops node: compute tier (spec 00051). ops_host ONLY — it must
+# never join engine_host, or the live Kraken trade key would be rendered onto a host that has no
+# business holding it (D10).
+#
+# The box currently calls itself zcrypto-red (collision with the secondary capture host); this pins
+# the inventory name + on-host hostname to zcrypto-ops instead.
+# Converge as the deploy user (same as the capture fleet, which sets this in
+# group_vars/capture_host). The bootstrap play overrides this with `-e ansible_user=root` to create
+# the deploy user in the first place; every run.sh converge afterward connects as deploy.
+ansible_user: deploy
+
+base_hostname: zcrypto-ops
+
+# Provisional: >= 1 h from every 4h bar boundary, off the hour boundary, >= 1 h from the capture
+# fleet's 21:25/22:25 slots. The fleet reboot-window assert in the base role reads this out of
+# hostvars alongside the capture hosts' slots (see host_vars/zcrypto/vars.yml,
+# host_vars/zcrypto-red/vars.yml) and asserts all of `capture_host + ops_host` are pairwise distinct.
+base_unattended_upgrades_reboot_time: "02:25"
+
+# Wire the vaulted dead-man ping URL (host_vars/zcrypto-ops/vault.yml) into the role var the
+# rendered compose reads as LIQUIDATIONS_HEALTHCHECK_URL.
+ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
+
+# Same wiring for the two daily replay timers' dead-men (vault.yml holds the encrypted URLs).
+ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
+ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+
+# The operator's fleet-wide deploy pubkey (same value as group_vars/capture_host/vars.yml). Kept
+# here rather than moved to group_vars/all to avoid touching the live capture hosts' var resolution;
+# it is the public half, so duplicating it is a readability cost, not a secret exposure. The
+# bootstrap play installs it for the `deploy` user; `run.sh` then converges over it.
+deploy_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOO82sGb3FN50G4/javc3F9aAaoA5uU+I9XCgh7c4TQ zcrypto-deploy"

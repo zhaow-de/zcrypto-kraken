@@ -29,9 +29,11 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0043 — a genuinely lost trades file is invisible when its book sibling survives](T0043-lost-trades-file-with-surviving-book-is-invisible.md) — the `total_loss` fix judges an absent trades hour against its pair's book hour (a quiet pair really does go an hour without a print), which trades a demonstrated false **positive** for a theoretical false **negative**: a trades segment lost on BOTH mirrors while its book survives is now silent, and no other signal in the stack would catch it — continuity.py is book-only by design, and the manifests only verify files that exist (ripe when: any such absence is ever observed, or before the overlay feeds a production consumer).
 
+- [T0045 — CRC re-derivation needs raw-string price/qty](T0045-crc-rederivation-needs-raw-string-price-qty.md) — the archive stores book price/qty as Float64, but Kraken's CRC needs the raw wire strings (trailing zeros load-bearing), so byte-exact CRC re-attestation isn't derivable from the archive; OPS-3's continuity-replay (spec 00051) covers structural coherence instead (ripe when: a raw-string capture-schema change is on the table, gated on a capture re-pin).
+
 ### Partially done<a name="partially-done"></a>
 
-- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations-source decided (option a, free live-only); the OI backfill + harness are autonomous when B2 is picked.
+- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); the OI backfill + harness are autonomous when B2 is picked.
 
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
@@ -69,6 +71,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0042 — Alloy holds root-equivalent Docker access (accepted)](T0042-alloy-holds-root-equivalent-docker-access.md) — the GET-only `docker-socket-proxy` was removed on 2026-07-14 (it was severing Docker's long-lived log stream every 10 min and duplicating every line into Loki forever), so Alloy now talks to the socket directly; the Docker API is root-equivalent regardless of the `:ro` mount, and the NAS holds the rrsync keys to the capture VPS — deliberately accepted, with the two-line fix that would restore the boundary recorded (ripe when: before go-live, or before this stack ships to a capture host).
 
+- [T0046 — sparse-symbol liquidation hours never finalize](T0046-sparse-symbol-liquidation-hours-never-finalize.md) — the liquidations recorder reuses SegmentWriter's event-driven hour rotation, but Binance's many-symbol forceOrder feed leaves rarely-liquidated perps' hours as manifest-less .part files indefinitely (no manifest, wider hard-crash RAM window, and Task 5's finals-check surprised); decide accept-and-document vs a wall-clock finalize tick (ripe when: recorder deployed, or before OPS-2 is complete).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A) landed iter-093 (spec/plan 00048), NAS gate-verify (Role B) landed iter-094 (spec/plan 00049, measured bit-identical cross-runtime); remainder = the alerting drill + the ≥7-day clean-run verification + Role C (redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).
@@ -89,7 +93,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0038 — NAS mirror accumulates stale part files](T0038-nas-mirror-accumulates-stale-parts.md) — prune-after-verified landed: the pull command now deletes each verified hour's `<HH>.part*.parquet` on the NAS (strict numeric names only, hardened unlink), which drains the ~13.5k-part backlog on the first cycle after the next image rebuild + re-pin; the reader-side half was already closed by Task 7's `canonical_segments` (ripe when: verify the deploy dropped the part count — then close).
 
-- [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; remaining work = execute OPS-1…6, with 00050 Task 13 depending on OPS-3's replayer (ripe when: now — OPS-1 touches nothing live).
+- [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…3 are DONE (iter-097: node converged, Coinalyze liquidations poller live + NAS-replicated, replay timers armed); remaining work = OPS-4 Panel / OPS-5 Offload / OPS-6 Loop (ripe when: picked as the next infra component).
+
+- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted and healthchecks.io connected natively (owner, 2026-07-15, both alongside email); remainder = wire the Grafana contact point + routing as-code via grafana-push.sh, then decide email's fate after a soak.
 
 ### Resolved<a name="resolved-1"></a>
 

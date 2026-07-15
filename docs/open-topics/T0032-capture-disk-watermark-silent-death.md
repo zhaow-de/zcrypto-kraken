@@ -97,6 +97,8 @@ the disk, and the rollout is needed for Role C anyway).
 
 ## Suggested next steps
 
+- **(process, at the re-pin)** When the secondary re-pin happens, schedule the T+24 h canary reminder via the Slack MCP per `.claude/rules/capture-deploys.md` (added 2026-07-15) so the primary-eligibility gate is never carried in memory.
+
 - **(autonomous)** Decide and implement **retention** for the capture segments — prune-after-verified-pull,
   the same shape as [[T0021]]'s journal retention. **There is no ring buffer anywhere**: nothing prunes
   capture segments on any host, so the disk simply fills. With the dead-man fix this now *pages* rather

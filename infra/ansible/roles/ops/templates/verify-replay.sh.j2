@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-verify-replay — do not hand-edit on
+# the host, edit infra/ansible/roles/ops/templates/verify-replay.sh.j2 and re-converge instead.
+#
+# Daily continuity-replay of the pulled canonical archive (spec 00051 OPS-3): runs
+# `zcrypto archive verify-replay` in the digest-pinned default-AVX image, publishes the outcome as a
+# node-exporter textfile (ops_verify_replay_*), and pings the dead-man URL on a clean run only — an
+# empty URL skips the ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
+set -u
+
+PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
+URL="{{ ops_verify_replay_healthcheck_url }}"
+
+docker run --rm --pull never \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    -v "{{ ops_data_dir }}:/data:ro" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    archive verify-replay "/data/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"
+rc=$?
+
+now=$(date -u +%s)
+# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
+# "time since last clean replay" stays directly alertable (same reason the reconcile exporter
+# freezes last_success on a failed cycle).
+prev_success=$(awk '/^ops_verify_replay_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
+if [ "$rc" -eq 0 ]; then
+    success=$now
+else
+    success="${prev_success:-0}"
+fi
+
+# Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
+# half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
+tmp="$PROM.tmp"
+{
+    printf '# HELP ops_verify_replay_exit_code Exit code of the last canonical continuity-replay (0 = every hour coherent).\n'
+    printf '# TYPE ops_verify_replay_exit_code gauge\n'
+    printf 'ops_verify_replay_exit_code %s\n' "$rc"
+    printf '# HELP ops_verify_replay_last_run_timestamp Unix time of the last run, clean or not.\n'
+    printf '# TYPE ops_verify_replay_last_run_timestamp gauge\n'
+    printf 'ops_verify_replay_last_run_timestamp %s\n' "$now"
+    printf '# HELP ops_verify_replay_last_success_timestamp Unix time of the last clean run (0 = never).\n'
+    printf '# TYPE ops_verify_replay_last_success_timestamp gauge\n'
+    printf 'ops_verify_replay_last_success_timestamp %s\n' "$success"
+} > "$tmp"
+mv "$tmp" "$PROM"
+
+if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
+    curl -fsS -m 10 -o /dev/null "$URL" || true
+fi
+exit "$rc"

@@ -1,0 +1,10 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-verify-replay.service — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/verify-replay.service.j2 instead.
+[Unit]
+Description=Continuity-replay of the pulled canonical archive (spec 00051 OPS-3)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-verify-replay

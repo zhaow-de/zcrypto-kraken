@@ -1,0 +1,11 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-verified-replay.service — do
+# not hand-edit on the host, edit infra/ansible/roles/ops/templates/verified-replay.service.j2
+# instead.
+[Unit]
+Description=Verified-path replay of the pulled engine journal (spec 00051 OPS-3)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-verified-replay

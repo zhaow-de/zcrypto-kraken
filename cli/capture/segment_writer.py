@@ -34,6 +34,33 @@ TRADE_SCHEMA: dict[str, pl.DataType] = {
     "trade_id": pl.Int64,
 }
 
+# One row per Binance USD-M futures forceOrder (liquidation) event (spec 00051 OPS-2). `event_id` is
+# synthesized (`f"{o.s}-{o.T}-{o.p}-{o.q}"`) because this stream carries no order id; it seeds the
+# writer's `dedup_key` since Binance redelivers force-orders on reconnect.
+LIQ_SCHEMA: dict[str, pl.DataType] = {
+    "ts": pl.Datetime("us", "UTC"),
+    "symbol": pl.Utf8,
+    "side": pl.Utf8,
+    "price": pl.Float64,
+    "orig_qty": pl.Float64,
+    "avg_price": pl.Float64,
+    "order_status": pl.Utf8,
+    "event_id": pl.Utf8,
+}
+
+# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
+# geo-fences the WS above from every egress we own, so the poller replaces it). `event_id` is
+# synthesized (`f"{symbol}-{t}"`, `t` = the bucket's epoch-second start) since Coinalyze assigns no
+# id to a bucket; it seeds the writer's `dedup_key` so the poller's overlapping 24h re-poll window
+# never double-counts a bucket already ingested.
+LIQ_AGG_SCHEMA: dict[str, pl.DataType] = {
+    "ts": pl.Datetime("us", "UTC"),
+    "symbol": pl.Utf8,
+    "long_usd": pl.Float64,
+    "short_usd": pl.Float64,
+    "event_id": pl.Utf8,
+}
+
 DEFAULT_FLUSH_ROWS = 5_000
 
 # How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage
