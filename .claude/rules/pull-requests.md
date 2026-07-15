@@ -61,6 +61,17 @@ git log <base>..HEAD --pretty='%(trailers:key=Reviewed-by,valueonly)' \
 
 Omit the line entirely when there are no reviewer trailers. The PR body is free text, so this line is plain text (not parsed by git's trailer engine) — it just mirrors the co-author aggregation.
 
+## Editing a PR body
+
+`gh pr edit --body/--title` **silently no-ops** in this repo (a Projects-classic GraphQL deprecation aborts the mutation while exiting 0). Update via REST instead, and always verify the edit persisted — never trust the exit code:
+
+```bash
+gh api "repos/zhaow-de/zcrypto-kraken/pulls/<N>" -X PATCH -f body="$(cat body.md)"
+gh pr view <N> --json body -q .body | head   # confirm the new content is live
+```
+
+A stale body matters: the `/merge-pr` gate parses it for unchecked `- [ ]` items.
+
 ## Target branch
 
 Feature and iteration PRs target **`develop`** (see `branch-workflow.md`). Release PRs are opened by the `/release` skill from a `release/<timestamp>` branch **into `main`**, titled `Release v<major>.<minor>.<patch>` — you don't write those by hand.
