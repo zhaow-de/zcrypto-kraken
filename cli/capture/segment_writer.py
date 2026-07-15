@@ -48,6 +48,19 @@ LIQ_SCHEMA: dict[str, pl.DataType] = {
     "event_id": pl.Utf8,
 }
 
+# One row per Coinalyze closed 1-min liquidation bucket (spec 00051 OPS-2, T0023 fallback: Binance
+# geo-fences the WS above from every egress we own, so the poller replaces it). `event_id` is
+# synthesized (`f"{symbol}-{t}"`, `t` = the bucket's epoch-second start) since Coinalyze assigns no
+# id to a bucket; it seeds the writer's `dedup_key` so the poller's overlapping 24h re-poll window
+# never double-counts a bucket already ingested.
+LIQ_AGG_SCHEMA: dict[str, pl.DataType] = {
+    "ts": pl.Datetime("us", "UTC"),
+    "symbol": pl.Utf8,
+    "long_usd": pl.Float64,
+    "short_usd": pl.Float64,
+    "event_id": pl.Utf8,
+}
+
 DEFAULT_FLUSH_ROWS = 5_000
 
 # How far ahead a `ts` may be of BOTH our own clock AND the stream itself before it is garbage

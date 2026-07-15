@@ -47,13 +47,16 @@
     # OPS-2: render only — the recorder is deliberately NOT auto-started here. First start (and
     # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
-    - name: render the ops compose file (liquidations recorder)
+    #
+    # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (Task 10,
+    # spec 00051 OPS-2) — deploy-only readable, matching the vault's own secrecy expectation.
+    - name: render the ops compose file (liquidations poller)
       ansible.builtin.template:
         src: compose.yaml.j2
         dest: "{{ ops_compose_dir }}/compose.yaml"
         owner: deploy
         group: deploy
-        mode: "0644"
+        mode: "0600"
 
     - name: ensure the textfile-collector directory exists
       ansible.builtin.file:

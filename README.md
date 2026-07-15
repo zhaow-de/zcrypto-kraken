@@ -14,6 +14,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
 - [Usage](#usage)
   - [`zcrypto capture`](#zcrypto-capture)
   - [`zcrypto liquidations`](#zcrypto-liquidations)
+  - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
@@ -75,6 +76,21 @@ zcrypto liquidations [OPTIONS]
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
 
 Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet` (`<SYMBOL>` is the Binance ticker, e.g. `BTCUSDT`), with columns `ts, symbol, side, price, orig_qty, avg_price, order_status, event_id`. Redelivered events (Binance replays force-orders on reconnect) are de-duped on the synthesized `event_id`. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping; it's optional and skipped when unset.
+
+### `zcrypto liquidations-poll`<a name="zcrypto-liquidations-poll"></a>
+
+The T0023 fallback for `zcrypto liquidations` above: Binance geo-fences its futures WS from every egress we own, so this polls Coinalyze's REST `/v1/liquidation-history` endpoint every `$COINALYZE_POLL_SECONDS` (default 300s) for the funding basket's 10 USDT perps (`<COIN>USDT_PERP.A`, one batched call per cycle) and writes closed 1-min liquidation buckets to hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per coin, reusing the capture `SegmentWriter`. Runs on the ops node (spec 00051 OPS-2), same data dir as `zcrypto liquidations` (the single-instance lock keeps both from writing at once).
+
+```bash
+zcrypto liquidations-poll [OPTIONS]
+```
+
+| Option | Description |
+| -- | -- |
+| `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_LIQUIDATIONS_DATA_DIR` if set, else `/var/lib/zcrypto-ops/liquidations`. |
+| `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing; runs at least one poll cycle even with `0`); omit to run until interrupted. |
+
+Requires `$COINALYZE_API_KEY` (exits with an error if unset). Segments land at `<data-dir>/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet`, with columns `ts, symbol, long_usd, short_usd, event_id`. Only buckets Coinalyze has proven closed (`bucket_end <= now - 120s`) are ingested; each cycle re-polls the last 24h and relies on the synthesized `event_id` (`<symbol>-<bucket_start>`) for de-dup, since Coinalyze's own history only stretches back ~25-33h. Set `LIQUIDATIONS_HEALTHCHECK_URL` (a healthchecks.io ping URL) to enable the dead-man's-switch liveness ping (sent only after a fully successful cycle); it's optional and skipped when unset.
 
 ### `zcrypto engine`<a name="zcrypto-engine"></a>
 
