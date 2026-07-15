@@ -11,7 +11,7 @@ set -u
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
 URL="{{ ops_verify_replay_healthcheck_url }}"
 
-docker run --rm \
+docker run --rm --pull never \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
     -v "{{ ops_data_dir }}:/data:ro" \
     --entrypoint zcrypto \

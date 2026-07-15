@@ -188,17 +188,19 @@ def test_structural_ingest_throw_fails_replay(tmp_path: Path) -> None:
 
 
 def test_verify_replay_isolates_a_bad_hour_and_continues(tmp_path: Path) -> None:
+    # The corrupt hour comes FIRST in the (pair, hour)-sorted sweep, so this proves a later good
+    # hour still proceeds past it — not merely that the sweep survives a bad hour at the end.
     primary = tmp_path / "primary"
-    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
-    corrupt = primary / "BTC" / "EUR" / "book" / f"{H:%Y}" / f"{H:%m}" / f"{H:%d}" / f"{H.hour + 1:02d}.parquet"
+    _book(primary, "BTC/EUR", H + timedelta(hours=1), _explode("BTC/EUR", H + timedelta(hours=1), _coherent_messages()))
+    corrupt = primary / "BTC" / "EUR" / "book" / f"{H:%Y}" / f"{H:%m}" / f"{H:%d}" / f"{H.hour:02d}.parquet"
     corrupt.write_bytes(b"junk")
 
     results = verify_replay(primary, None, depth=10)
 
     assert len(results) == 2
     by_hour = {r.hour: r for r in results}
-    assert by_hour[H].error is None and by_hour[H].replay_ok is True
-    assert by_hour[H + timedelta(hours=1)].error is not None
+    assert by_hour[H].error is not None
+    assert by_hour[H + timedelta(hours=1)].error is None and by_hour[H + timedelta(hours=1)].replay_ok is True
 
 
 def test_verify_replay_filters_pair_and_since(tmp_path: Path) -> None:
