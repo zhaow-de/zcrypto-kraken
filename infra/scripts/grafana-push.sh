@@ -18,10 +18,8 @@
 #                              as slack_webhook_url in infra/ansible/group_vars/capture_host/vault.yml.
 #                              Unset/empty SKIPS the section cleanly -- the script stays runnable
 #                              without it (T0047).
-#   GRAFANA_SLACK_RECEIVER     no default -- the exact contact-point/receiver name to attach the
-#                              Slack integration to (e.g. `email`, the name every alerts.yaml rule
-#                              already routes to). Unset lists the live contact points and stops the
-#                              Slack section instead of guessing -- the T0034 lesson generalized.
+#   (receivers `metrics`/`logs` are as-code constants minted by this script -- no receiver env)
+#   GRAFANA_SLACK_RECEIVER     REMOVED 2026-07-16 (receiver names are as-code constants now).
 #
 # The alert-rules call targets Grafana's **Alerting Provisioning HTTP API**
 # (POST/PUT/GET /api/v1/provisioning/alert-rules[/:uid]), which is JSON-only and one rule per
@@ -65,6 +63,62 @@ print(json.dumps({"dashboard": d, "folderUid": os.environ["GRAFANA_ALERT_FOLDER_
   curl -fsS -X POST "${GRAFANA_URL}/api/dashboards/db" \
     "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
 done
+
+# --- Slack contact points: `metrics` + `logs` receivers (T0047; generalized 2026-07-16) -----------
+# Two receivers, both delivering to the SAME Slack webhook: `metrics` (resolve messages ON) is the
+# default + what every metrics rule pins via notification_settings; `logs` (resolve messages OFF --
+# Loki alerts resolve by aging, a resolve ping is noise) is pinned by the Loki-sourced rules. Both
+# are minted here as-code by stable uid, so there is no receiver-name guessing (the T0034 guard
+# moved from "must pre-exist" to "we are the source of truth"). This section runs BEFORE the rules
+# push: Grafana validates a rule's notification_settings.receiver against existing receivers.
+if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
+  echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set -- skipping Slack contact-point section" >&2
+else
+  existing_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
+  upsert_slack_integration() { # uid receiver_name disable_resolve
+    local uid="$1" name="$2" disable="$3"
+    local payload
+    payload=$(jq -n --arg uid "${uid}" --arg name "${name}" --arg url "${GRAFANA_SLACK_WEBHOOK_URL}" --argjson disable "${disable}" \
+      '{uid: $uid, name: $name, type: "slack", settings: {url: $url}, disableResolveMessage: $disable}')
+    if jq -e --arg uid "${uid}" 'any(.[]; .uid == $uid)' <<<"${existing_cps}" >/dev/null; then
+      curl -fsS -X PUT "${GRAFANA_URL}/api/v1/provisioning/contact-points/${uid}" \
+        "${auth[@]}" -H "Content-Type: application/json" -d "${payload}" >/dev/null
+    else
+      curl -fsS -X POST "${GRAFANA_URL}/api/v1/provisioning/contact-points" \
+        "${auth[@]}" -H "Content-Type: application/json" -d "${payload}" >/dev/null
+    fi
+    echo "grafana-push: upserted Slack integration uid=${uid} receiver=${name} disableResolve=${disable}" >&2
+  }
+  upsert_slack_integration "zcrypto-slack-metrics" "metrics" false
+  upsert_slack_integration "zcrypto-slack-logs" "logs" true
+
+  # Default route -> `metrics` (GET the tree, mutate only the receiver, PUT it back verbatim). The
+  # tree may carry UI provenance, hence X-Disable-Provenance.
+  policy=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/policies")
+  if [ "$(jq -r '.receiver' <<<"${policy}")" != "metrics" ]; then
+    jq '.receiver = "metrics"' <<<"${policy}" \
+      | curl -fsS -X PUT "${GRAFANA_URL}/api/v1/provisioning/policies" \
+          "${auth[@]}" -H "Content-Type: application/json" -H "X-Disable-Provenance: true" -d @- >/dev/null
+    echo "grafana-push: notification-policy default route -> metrics" >&2
+  fi
+
+  # One-time legacy cleanup: the pre-2026-07-16 integration (uid zcrypto-slack-webhook, receiver
+  # "email"). Deleted only AFTER the rules push below has repointed every rule, so it can never
+  # strand a referenced receiver -- see the post-rules block.
+
+  # Read-back verify (T0034): both integrations present with the right name/type. Grafana redacts
+  # settings.url on read-back, so uid/name/type only.
+  live_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
+  for pair in "zcrypto-slack-metrics metrics" "zcrypto-slack-logs logs"; do
+    uid="${pair%% *}"; name="${pair##* }"
+    if ! jq -e --arg uid "${uid}" --arg name "${name}" \
+        'any(.[]; .uid == $uid and .type == "slack" and .name == $name)' <<<"${live_cps}" >/dev/null; then
+      echo "grafana-push: Slack integration verification FAILED for uid=${uid} name=${name}" >&2
+      exit 1
+    fi
+  done
+  echo "grafana-push: Slack receivers metrics+logs verified" >&2
+fi
 
 echo "grafana-push: pushing alert rules"
 # One-time YAML -> JSON conversion (the file is YAML only for its inline comments); everything
@@ -151,60 +205,15 @@ else
   done <<<"${orphans}"
 fi
 
-# --- Slack contact-point integration (T0047, phase one: sole-notification-target (was run-alongside-email until the 2026-07-15 proving period ended)) ---------------------
-# Grafana contact points are named groups of integrations: multiple integrations sharing one `name`
-# merge into a single receiver, and every alert routed to that receiver fires ALL of its
-# integrations. So this adds a Slack integration to the SAME receiver name every rule in alerts.yaml
-# already routes to (`notification_settings.receiver`) -- zero notification-policy / routing-tree
-# changes, trivially reversible (delete the integration). Unlike alert-rules, the contact-points API
-# has no GET-by-uid -- GET always returns the full list, so the upsert check filters it client-side.
-if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
-  echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set -- skipping Slack contact-point section" >&2
-elif [ -z "${GRAFANA_SLACK_RECEIVER:-}" ]; then
-  echo "grafana-push: GRAFANA_SLACK_RECEIVER not set -- refusing to guess (T0034). Live contact points:" >&2
-  curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points" \
-    | jq -r '.[] | "  name=\(.name)  uid=\(.uid)  type=\(.type)"' >&2
-  echo "grafana-push: set GRAFANA_SLACK_RECEIVER to the exact name of the receiver above that every alert rule already routes to, then re-run" >&2
-  # Review M3: webhook set but receiver unset is a HALF-configuration -- loud non-zero so automation
-  # can never read it as success (the webhook-unset case remains a clean skip, exit 0).
-  exit 3
-else
-  slack_uid="zcrypto-slack-webhook"
-  echo "grafana-push: upserting Slack integration (uid=${slack_uid}) on receiver '${GRAFANA_SLACK_RECEIVER}'" >&2
-  slack_payload=$(jq -n --arg uid "${slack_uid}" --arg name "${GRAFANA_SLACK_RECEIVER}" --arg url "${GRAFANA_SLACK_WEBHOOK_URL}" '
-    {uid: $uid, name: $name, type: "slack", settings: {url: $url}, disableResolveMessage: false}
-  ')
-  existing_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
-  # Review Important-1 (the T0034 anti-pattern one level up): a typo'd receiver name would make the
-  # POST mint a brand-new orphan receiver that NO alert rule routes to -- and the read-back would
-  # still "verify" it green. Attach only to a receiver that already EXISTS; otherwise stop-and-list
-  # exactly like the unset branch. Exit 3 (review M3): a half-configuration must be loud to any
-  # future automation, not a fall-through success.
-  if ! jq -e --arg name "${GRAFANA_SLACK_RECEIVER}" 'any(.[]; .name == $name)' <<<"${existing_cps}" >/dev/null; then
-    echo "grafana-push: receiver '${GRAFANA_SLACK_RECEIVER}' does not exist among the live contact points -- refusing to mint an orphan receiver nothing routes to (T0034). Live contact points:" >&2
-    jq -r '.[] | "  name=\(.name) uid=\(.uid) type=\(.type)"' <<<"${existing_cps}" >&2
-    exit 3
+# --- Legacy cleanup: the pre-2026-07-16 "email"-named Slack integration ---------------------------
+# Safe only here: the rules push above repointed every rule to metrics/logs, and the policy default
+# is metrics, so nothing references the old receiver any more.
+if [ -n "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
+  if curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points" \
+      | jq -e 'any(.[]; .uid == "zcrypto-slack-webhook")' >/dev/null; then
+    curl -fsS -X DELETE "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points/zcrypto-slack-webhook" >/dev/null
+    echo "grafana-push: legacy integration zcrypto-slack-webhook (receiver email) deleted" >&2
   fi
-  if jq -e --arg uid "${slack_uid}" 'any(.[]; .uid == $uid)' <<<"${existing_cps}" >/dev/null; then
-    curl -fsS -X PUT "${GRAFANA_URL}/api/v1/provisioning/contact-points/${slack_uid}" \
-      "${auth[@]}" -H "Content-Type: application/json" -d "${slack_payload}" >/dev/null
-  else
-    curl -fsS -X POST "${GRAFANA_URL}/api/v1/provisioning/contact-points" \
-      "${auth[@]}" -H "Content-Type: application/json" -d "${slack_payload}" >/dev/null
-  fi
-
-  # Read-back verify (T0034 discipline): re-GET the list and assert our uid exists with type=slack
-  # and name == the receiver we targeted. NOTE: Grafana redacts secure settings on read-back (the
-  # url may come back as "[REDACTED]" or be absent entirely) -- so this asserts on uid/type/name
-  # only, never on settings.url.
-  echo "grafana-push: verifying Slack integration ${slack_uid}" >&2
-  live_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
-  if ! jq -e --arg uid "${slack_uid}" --arg name "${GRAFANA_SLACK_RECEIVER}" \
-      'any(.[]; .uid == $uid and .type == "slack" and .name == $name)' <<<"${live_cps}" >/dev/null; then
-    echo "grafana-push: Slack integration verification FAILED -- no uid=${slack_uid} type=slack name=${GRAFANA_SLACK_RECEIVER} found on read-back" >&2
-    exit 1
-  fi
-  echo "grafana-push: Slack integration verified on receiver '${GRAFANA_SLACK_RECEIVER}'"
 fi
 
 echo "grafana-push: done"
