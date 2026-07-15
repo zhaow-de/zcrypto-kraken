@@ -173,6 +173,29 @@
 
 ---
 
+### Task 10: Coinalyze liquidations poller (`zcrypto liquidations-poll`) — the T0023 fallback
+
+**Why this task exists (2026-07-15):** Binance geo-fences futures market-streams from every egress we own (T0023 finding), so the Task-3 WS recorder is shelved in place and the feed comes from Coinalyze's REST API instead. All facts below were verified against the live API + OpenAPI spec on 2026-07-15 (auth worked, closed buckets proven stable over 150 s, all 10 `.A` symbols confirmed).
+
+**Files:**
+- Create: `cli/liquidations/coinalyze.py`
+- Modify: `cli/capture/segment_writer.py` (add `LIQ_AGG_SCHEMA`), `cli/__main__.py` (register `liquidations-poll`), `README.md` (§Usage), `infra/ansible/roles/ops/templates/compose.yaml.j2` (swap the service to the poller + `COINALYZE_API_KEY`), `infra/ansible/roles/ops/tasks/main.yml` (compose file mode → `0600`, it now carries an API key)
+- Test: `tests/test_liquidations_coinalyze.py`
+
+**Interfaces:**
+- Produces: `LIQ_AGG_SCHEMA = {ts: Datetime("us","UTC"), symbol: Utf8, long_usd: Float64, short_usd: Float64, event_id: Utf8}`; `fetch_liquidation_history(api_key, symbols, frm, to, *, opener=urllib.request.urlopen) -> list[dict]` (sync urllib, opener-injected for tests — mirror `cli/ohlc/fetch.py`); `poll_cycle(api_key, coins, writers, *, now=None, opener=...) -> int` (rows written); a `liquidations-poll` Typer command looping every `COINALYZE_POLL_SECONDS` (default 300).
+- Consumes: `SegmentWriter` (pair=<coin> e.g. `"BTC"`, kind=`"liquidations-1m"`, `dedup_key="event_id"`), `DiskWatermark`, `ping_healthcheck`, `single_instance_lock` (same data dir as the WS recorder → the lock automatically prevents both running at once).
+
+**Verified API contract (cite: api.coinalyze.net/v1/doc + live probe 2026-07-15):** `GET https://api.coinalyze.net/v1/liquidation-history?symbols=<csv>&interval=1min&from=<s>&to=<s>&convert_to_usd=true`, header `api_key: <key>`. Response `[{"symbol": "BTCUSDT_PERP.A", "history": [{"t": <unix-s bucket start>, "l": <longs USD>, "s": <shorts USD>}]}]`. `from`/`to` inclusive, seconds. **Sparse: zero-liquidation minutes have NO bucket.** Symbols = the 10 Binance USDT perps `<COIN>USDT_PERP.A` (COIN ∈ BTC ETH SOL ADA XRP LTC LINK DOT AVAX DOGE — the funding basket). Rate: 40 calls/min **counted per symbol** (one 10-symbol call = 10) → one call per 300 s cycle ≈ 2/min average. History purge: 1500–2000 one-min bars ≈ **25–33 h** — the catch-up window after downtime; start each cycle from `max(now-24h, last poll)` and rely on dedup for overlap. **Closed-bucket discipline (load-bearing):** dedup keeps the FIRST row per key, so only ingest buckets with `t + 60 <= now - 120` (proven stable); never ingest open/near-open buckets.
+
+- [ ] **Step 1 — `fetch_liquidation_history` tests**: happy path (opener returns the documented JSON → parsed list), HTTP error → raises `LiquidationsError`, malformed JSON → raises. Then implement (urllib, 15 s timeout, `api_key` header).
+- [ ] **Step 2 — `poll_cycle` tests**: (a) buckets older than the 120 s margin are written as rows (`ts` from `t`, `event_id=f"{symbol}-{t}"`, pair dir = coin); (b) an open/near-open bucket is EXCLUDED; (c) a re-polled overlapping window doesn't duplicate (dedup); (d) an API failure → cycle returns None/raises without writing partial state, next cycle retries; (e) rows land via a real `SegmentWriter(tmp_path, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")` and `verify_manifest` passes after rotation. Then implement.
+- [ ] **Step 3 — the `liquidations-poll` command**: loop every `COINALYZE_POLL_SECONDS` (default 300); env `COINALYZE_API_KEY` (required), `ZCRYPTO_LIQUIDATIONS_DATA_DIR`, `LIQUIDATIONS_HEALTHCHECK_URL`; dead-man ping only after a fully-successful cycle AND `not watermark.breached and watermark.measurable`; `single_instance_lock`; SIGTERM → clean close (flush writers). Register in `cli/__main__.py`; README §Usage.
+- [ ] **Step 4 — compose swap**: `entrypoint: ["zcrypto", "liquidations-poll"]`, add `COINALYZE_API_KEY: "{{ coinalyze_api_key }}"`; render the compose `mode: "0600"` (API key now in the file). Keep the volume/user/logging identical (same output tree → NAS channel + rrsync pin unchanged).
+- [ ] **Step 5 — full suite + gate + commit** `feat(liquidations): Coinalyze 1min liquidation poller (T0023 fallback, spec 00051 OPS-2)`.
+
+---
+
 ### Task 9: Closeout
 
 **Files:**
