@@ -71,6 +71,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0042 — Alloy holds root-equivalent Docker access (accepted)](T0042-alloy-holds-root-equivalent-docker-access.md) — the GET-only `docker-socket-proxy` was removed on 2026-07-14 (it was severing Docker's long-lived log stream every 10 min and duplicating every line into Loki forever), so Alloy now talks to the socket directly; the Docker API is root-equivalent regardless of the `:ro` mount, and the NAS holds the rrsync keys to the capture VPS — deliberately accepted, with the two-line fix that would restore the boundary recorded (ripe when: before go-live, or before this stack ships to a capture host).
 
+- [T0048 — Alloy's docker tailer dies on container recreation](T0048-alloy-docker-tailer-dies-on-container-recreate.md) — a recreated NAS container's logs silently stop shipping (Alloy retries the dead ID forever); restart Alloy after any NAS compose change; first caught live by the archive-pull dead-man 2026-07-16 (ripe when: the next Alloy version bump, to test upstream).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A) landed iter-093 (spec/plan 00048), NAS gate-verify (Role B) landed iter-094 (spec/plan 00049, measured bit-identical cross-runtime); remainder = the alerting drill + the ≥7-day clean-run verification + Role C (redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).
