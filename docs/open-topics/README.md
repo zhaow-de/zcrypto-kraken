@@ -29,6 +29,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0043 — a genuinely lost trades file is invisible when its book sibling survives](T0043-lost-trades-file-with-surviving-book-is-invisible.md) — the `total_loss` fix judges an absent trades hour against its pair's book hour (a quiet pair really does go an hour without a print), which trades a demonstrated false **positive** for a theoretical false **negative**: a trades segment lost on BOTH mirrors while its book survives is now silent, and no other signal in the stack would catch it — continuity.py is book-only by design, and the manifests only verify files that exist (ripe when: any such absence is ever observed, or before the overlay feeds a production consumer).
 
+- [T0045 — CRC re-derivation needs raw-string price/qty](T0045-crc-rederivation-needs-raw-string-price-qty.md) — the archive stores book price/qty as Float64, but Kraken's CRC needs the raw wire strings (trailing zeros load-bearing), so byte-exact CRC re-attestation isn't derivable from the archive; OPS-3's continuity-replay (spec 00051) covers structural coherence instead (ripe when: a raw-string capture-schema change is on the table, gated on a capture re-pin).
+
 ### Partially done<a name="partially-done"></a>
 
 - [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations-source decided (option a, free live-only); the OI backfill + harness are autonomous when B2 is picked.
