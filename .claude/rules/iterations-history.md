@@ -8,6 +8,10 @@ Each entry is a new section appended at the bottom of its phase file (`## <YYYY-
 
 **Not part of this per-iteration close-out:** persisting a running decisions log (`.tmp/decisions-phase<N>.md`) into its committed close-out sibling is a **phase**-level close-out task — done once when a phase's close-out report is written, never per iteration. See `decisions-log.md` (*Phase persistence*).
 
+## Dataset-catalog sync (every dataset-introducing closeout)
+
+An iteration that introduces, relocates, or retires a dataset updates `docs/reference/data-catalog-full.md` (or `data-catalog.md` for v0-class sets) **in the same closeout** — location(s), producer, schema/grid, consumption convention, caveats. The catalogs are the research loop's dataset inventory; the open-topics index carries consumer-shaped pointers, but a loop brainstorming "what inputs exist?" reads the catalog — an uncataloged dataset is invisible to it (the 2026-07-15 discovery-gap finding: liquidations + the L2 panel ran for a day uncataloged).
+
 ## Closeout-doc discipline
 
 The iterations-history entry is one instance of a broader rule: **completed-work docs are authored at closeout, when the work is real — never pre-written during planning.** This covers status flips (e.g. flipping an open-topic to `partial`/`resolved`, see `open-topics.md`), "Done so far" sections, the changelog entry itself, and rule/doc text that documents behavior a not-yet-landed feature introduces — that lands with the feature, not during its planning. When writing a plan, capture these as explicit closeout tasks (with the PR/spec links to fill in), not edits made during the planning phase — writing "this is done" while it only exists as a plan reads as done when it isn't, and goes stale if the design shifts. (Codifying a standing convention that already reflects how we work is not a completion claim and isn't gated to closeout.)

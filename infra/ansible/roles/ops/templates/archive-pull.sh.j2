@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-archive-pull — do not hand-edit on
+# the host, edit infra/ansible/roles/ops/templates/archive-pull.sh.j2 and re-converge instead.
+#
+# Hourly recurring NAS->ops archive pull (spec 00052 D6): rsyncs the four canonical trees from the
+# NAS seed channel to keep the ops node's mirror current between the one-off initial seed (plan
+# 00051 Task 8) and the panel-materialize timer that consumes it -- closing the replay-staleness
+# gap noted in [[T0033]]. Host-side rsync over SSH, no container (rsync is host-installed by this
+# role). Publishes the outcome as a node-exporter textfile (ops_archive_pull_*) and pings the
+# dead-man URL on a clean run only -- an empty URL skips the ping (the CLI's optional
+# `ping_healthcheck` semantics, shell edition). An EMPTY SOURCE reports not-clean (no ping,
+# last_success frozen) so an unwired/unwired-by-drift channel never shows green (review I1).
+set -u
+
+PROM="{{ ops_textfile_dir }}/ops-archive-pull.prom"
+URL="{{ ops_archive_pull_healthcheck_url }}"
+SOURCE="{{ ops_nas_pull_source }}"
+SSH_CMD="ssh -i /home/deploy/.ssh/sync_nas_archive -o UserKnownHostsFile=/home/deploy/.ssh/nas_known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+
+# Deliberately NOT an error: an unconfigured source (no default, see ops_nas_pull_source) means the
+# channel hasn't been wired yet (plan Task 5) -- the timer stays armed but no-ops, logged, rather
+# than a converge without the var failing every hour.
+if [ -z "$SOURCE" ]; then
+    # Review I1: an unwired channel must never look HEALTHY -- rc=2 skips the dead-man ping and
+    # freezes last_success (like a failed pull), so "time since last clean pull" keeps aging and a
+    # var emptied by config drift cannot mask a dark channel behind a green check. exit stays 0
+    # (systemd unit not marked failed -- unwired is a state, not a fault).
+    echo "zcrypto-archive-pull: ops_nas_pull_source is empty, nothing to pull (reporting NOT-clean)"
+    rc=2
+else
+    # Best-effort per tree, like the NAS pull-entrypoint's own loop: a corrupt/unreachable tree
+    # must not stop the others from syncing. ANY tree failing marks the whole run failed (no ping).
+    rc=0
+    # The BARE `rsync -a` flags are LOAD-BEARING for the pull(:12)-before-materialize(:22) overlap
+    # safety (review M1): default per-file hidden-tmp+rename means a reader never sees a torn
+    # parquet, and in-order-per-directory transfer keeps the mirror a sorted PREFIX per pair, so the
+    # panel watermark can never leapfrog a mid-tree hole. Adding --inplace/--partial-dir/
+    # --delay-updates would silently break that invariant.
+    for tree in {{ ops_capture_subdir }} capture-segments-red {{ ops_reconciled_subdir }} {{ ops_journal_subdir }}; do
+        rsync -a -e "$SSH_CMD" "$SOURCE$tree/" "{{ ops_data_dir }}/$tree/" || rc=1
+    done
+fi
+
+now=$(date -u +%s)
+# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
+# "time since last clean pull" stays directly alertable (same reason the reconcile exporter and the
+# replay scripts freeze last_success on a failed cycle).
+prev_success=$(awk '/^ops_archive_pull_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
+if [ "$rc" -eq 0 ]; then
+    success=$now
+else
+    success="${prev_success:-0}"
+fi
+
+# Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
+# half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
+tmp="$PROM.tmp"
+{
+    printf '# HELP ops_archive_pull_exit_code Exit code of the last recurring NAS archive pull (0 = every tree synced).\n'
+    printf '# TYPE ops_archive_pull_exit_code gauge\n'
+    printf 'ops_archive_pull_exit_code %s\n' "$rc"
+    printf '# HELP ops_archive_pull_last_run_timestamp Unix time of the last run, clean or not.\n'
+    printf '# TYPE ops_archive_pull_last_run_timestamp gauge\n'
+    printf 'ops_archive_pull_last_run_timestamp %s\n' "$now"
+    printf '# HELP ops_archive_pull_last_success_timestamp Unix time of the last clean run (0 = never).\n'
+    printf '# TYPE ops_archive_pull_last_success_timestamp gauge\n'
+    printf 'ops_archive_pull_last_success_timestamp %s\n' "$success"
+} > "$tmp"
+mv "$tmp" "$PROM"
+
+if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
+    curl -fsS -m 10 -o /dev/null "$URL" || true
+fi
+exit "$rc"

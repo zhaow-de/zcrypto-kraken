@@ -30,7 +30,11 @@ jobs:
         include:
           # default: the AVX-optimized polars-runtime-32 (the VPS, AMD EPYC); multi-arch.
           - runtime: default
-            platforms: linux/amd64,linux/arm64
+            # TEMPORARY (2026-07-15, owner): arm64 commented out -- the whole fleet is x86_64
+            # (Linode VPS pair, NAS Atom, ops-node i7); the qemu cross-build only slows CI. Restore
+            # the line below (and the QEMU step) if an arm64 host ever joins.
+            # platforms: linux/amd64,linux/arm64
+            platforms: linux/amd64
             suffix: ""
           # compat: polars-runtime-compat, no AVX needed (the Synology NAS, Atom Goldmont). amd64
           # only — the compat runtime is an x86 baseline build (see T0029).
@@ -41,7 +45,8 @@ jobs:
       - uses: actions/checkout@v7
 
       # QEMU registers binfmt handlers so buildx can cross-build the arm64 image on the amd64 runner.
-      - uses: docker/setup-qemu-action@v4.2.0
+      # TEMPORARY (2026-07-15): disabled with the arm64 platform above -- everything is x86_64 for now.
+      # - uses: docker/setup-qemu-action@v4.2.0
 
       - uses: docker/setup-buildx-action@v4.2.0
 

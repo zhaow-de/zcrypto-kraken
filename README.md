@@ -19,6 +19,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
   - [`zcrypto archive`](#zcrypto-archive)
+  - [`zcrypto panel`](#zcrypto-panel)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -174,7 +175,7 @@ Two **correlated-loss** detectors run regardless of the flag and never mint: `bo
 
 `reconcile` exits **2** when a mirror is unreadable (transport), **1** on an integrity failure (an unreadable segment, a non-monotonic stream, a corrupt ledger — no textfile is published, so `last_success_timestamp` goes stale and pages), else **0**. Residual gaps are a *finding*, not a failure: they exit 0 and page through the metric.
 
-`verify-replay` (spec `00051` OPS-3) continuity-replays every canonical book hour — reconciled-first, primary otherwise — through the capture `OrderBook` and reports four per-hour checks: **snapshot-anchored** (the hour opens with a `type=snapshot` message), **ts-ordered** (rows non-decreasing in `ts`), **checksum-present** (every message carries its capture-time `checksum` attestation), and **replay-ok** (the rows regroup into WS-shaped messages and ingest without a structural throw). It never re-derives the CRC: the archive stores `price`/`qty` as Float64, so Kraken's checksum is not byte-exactly reproducible (T0045) — the stored column is trusted as capture-time ground truth.
+`verify-replay` (spec `00051` OPS-3) continuity-replays every canonical book hour — reconciled-first, primary otherwise — through the capture `OrderBook` and reports four per-hour checks: **anchored** (spec `00052` D3 correction: **chain-anchored** — the hour opens with a `type=snapshot` message, OR its exact predecessor hour for the same pair was present in the replayed set and was itself anchored and error-free; Kraken snapshots arrive on subscribe, not once per capture hour, so most real hours open with plain updates and rely on this chain), **ts-ordered** (rows non-decreasing in `ts`), **checksum-present** (every message carries its capture-time `checksum` attestation), and **replay-ok** (the rows regroup into WS-shaped messages and ingest without a structural throw). It never re-derives the CRC: the archive stores `price`/`qty` as Float64, so Kraken's checksum is not byte-exactly reproducible (T0045) — the stored column is trusted as capture-time ground truth.
 
 ```bash
 zcrypto archive verify-replay <primary_root> [reconciled_root]
@@ -189,6 +190,30 @@ zcrypto archive verify-replay <primary_root> [reconciled_root]
 | `--depth` | Book depth the archive was captured at (default `100`, capture's default); the replayed book prunes to it. |
 
 One line per hour plus a summary; a bad hour is isolated into its own result (the sweep never aborts). Exits **1** if any hour errs or fails any of the four checks, else **0**.
+
+### `zcrypto panel`<a name="zcrypto-panel"></a>
+
+The 1s L2 primitive panel (spec `00052`): materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair.
+
+```bash
+zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical book archive; must exist. |
+| `reconciled_root` | Optional healed overlay; its hours materialize reconciled-first. Omit to use the primary alone. |
+| `--panel-root` | The panel tree root to write into (required). |
+| `--pair` | Only this pair (e.g. `BTC/EUR`). Defaults to every pair. |
+| `--since` | Only hours at/after this UTC boundary: a `YYYY-MM-DD` date or an ISO-8601 hour (e.g. `2026-07-16T09`). |
+| `--depth` | Book depth the archive was captured at (default `100`, capture's default). |
+| `--allow-holes` | Proceed even if `--since` is newer than a pair's panel watermark, permanently skipping the hole in between. |
+
+`materialize` writes `<panel_root>/panel-meta.json` (schema version, grid, notional ladder, K-levels) on a fresh panel root, and **refuses** if an existing one's generation differs from the running code's — a generation change must be an explicit regeneration of the whole panel tree (spec `00052` D5), never a silent mix.
+
+Each pair is watermarked at its newest existing panel hour; a sweep only materializes hours strictly newer than that. **`--since` that would open a gap above a pair's watermark — or above a fresh pair's earliest canonical hour — refuses by default**: skipping straight to `--since` would permanently strand the hours in `[watermark+1h, since)` once later hours advance the watermark past them. Pass `--allow-holes` to proceed anyway (a warning still names the pair, the watermark, and the stranded range).
+
+`OrderBook` state is threaded across hours per pair (spec `00052` D3 correction): Kraken snapshots arrive on subscribe, not once per capture hour, so an hour opening with a plain update continues from the previous hour's end-of-hour book (persisted as a `<HH>.state.json` sidecar next to its parquet, enabling O(1) resume) rather than being rebuilt from nothing. An hour that cannot anchor — an update-opening hour with no carried book, e.g. after a gap in the archive — is counted in `hours_unanchored`: an honest gap, not a failure, logged once per contiguous run of them. A per-hour failure of any other kind is isolated and logged (`panel hour failed pair=... hour=...: ...`); the sweep continues past it. Exits **1** iff any hour errored (`hours_unanchored` never affects the exit code), else **0**.
 
 ## Configuration<a name="configuration"></a>
 

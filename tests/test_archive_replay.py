@@ -115,7 +115,7 @@ def test_replay_segment_happy_path(tmp_path: Path) -> None:
     assert result.hour == H
     assert result.rows == frame.height
     assert result.messages == 4
-    assert result.snapshot_anchored is True
+    assert result.anchored is True
     assert result.ts_ordered is True
     assert result.checksum_present is True
     assert result.replay_ok is True
@@ -130,7 +130,7 @@ def test_missing_leading_snapshot_is_flagged(tmp_path: Path) -> None:
 
     result = replay_segment(path, "BTC/EUR", depth=10)
 
-    assert result.snapshot_anchored is False
+    assert result.anchored is False
     # anchoring is its own verdict: updates onto an empty book are structurally fine
     assert result.replay_ok is True
     assert result.error is None
@@ -157,7 +157,7 @@ def test_out_of_order_ts_is_flagged(tmp_path: Path) -> None:
     result = replay_segment(path, "BTC/EUR", depth=10)
 
     assert result.ts_ordered is False
-    assert result.snapshot_anchored is True  # the first message is still a snapshot
+    assert result.anchored is True  # the first message is still a snapshot
 
 
 def test_null_checksum_is_flagged(tmp_path: Path) -> None:
@@ -181,7 +181,7 @@ def test_structural_ingest_throw_fails_replay(tmp_path: Path) -> None:
 
     assert result.replay_ok is False
     assert result.error is not None
-    assert result.snapshot_anchored is True  # the independent checks still report honestly
+    assert result.anchored is True  # the independent checks still report honestly
 
 
 # --- verify_replay: the sweep -----------------------------------------------------------------------
@@ -225,7 +225,46 @@ def test_verify_replay_reads_reconciled_first(tmp_path: Path) -> None:
     results = verify_replay(primary, reconciled, depth=10)
 
     assert len(results) == 1
-    assert results[0].snapshot_anchored is True  # the overlay hour won, reconciled-first
+    assert results[0].anchored is True  # the overlay hour won, reconciled-first
+
+
+# --- verify_replay: chain-anchored semantics (spec 00052 D3 correction) ------------------------------
+
+
+def test_verify_replay_chain_anchors_an_update_opening_hour_after_a_clean_predecessor(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))  # H: snapshot-anchored, clean
+    h1 = H + timedelta(hours=1)
+    _book(primary, "BTC/EUR", h1, _explode("BTC/EUR", h1, _coherent_messages()[1:]))  # h1: update-opening only
+
+    results = verify_replay(primary, None, depth=10)
+
+    by_hour = {r.hour: r for r in results}
+    assert by_hour[H].anchored is True
+    assert by_hour[h1].anchored is True  # chained via H: contiguous, and H is itself anchored + error-free
+
+
+def test_verify_replay_chain_anchoring_breaks_across_a_canonical_gap(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))  # H: snapshot-anchored
+    h2 = H + timedelta(hours=2)  # H+1 is MISSING from the archive -- a canonical gap
+    _book(primary, "BTC/EUR", h2, _explode("BTC/EUR", h2, _coherent_messages()[1:]))  # h2: update-opening only
+
+    results = verify_replay(primary, None, depth=10)
+
+    by_hour = {r.hour: r for r in results}
+    assert by_hour[H].anchored is True
+    assert by_hour[h2].anchored is False  # h2's exact predecessor (h1) is absent from the enumeration
+
+
+def test_verify_replay_first_hour_of_a_pair_update_opening_is_not_anchored(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()[1:]))  # no snapshot, no predecessor at all
+
+    results = verify_replay(primary, None, depth=10)
+
+    assert len(results) == 1
+    assert results[0].anchored is False
 
 
 # --- the CLI command ---------------------------------------------------------------------------------
