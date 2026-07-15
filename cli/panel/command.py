@@ -172,10 +172,11 @@ def materialize(
         logger.error("panel hour failed pair=%s hour=%s: %s", seg_pair, hour.isoformat(), message)
 
     logger.info(
-        "panel materialize complete pairs=%d hours_written=%d hours_skipped=%d rows=%d errors=%d",
+        "panel materialize complete pairs=%d hours_written=%d hours_skipped=%d hours_unanchored=%d rows=%d errors=%d",
         len(affected_pairs),
         result.hours_written,
         result.hours_skipped,
+        result.hours_unanchored,
         result.rows,
         len(result.errors),
     )

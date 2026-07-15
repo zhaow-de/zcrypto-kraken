@@ -96,7 +96,7 @@ def test_materialize_end_to_end_writes_the_panel_and_the_meta(tmp_path: Path) ->
     result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
 
     assert result.exit_code == 0, result.output
-    assert "pairs=1 hours_written=1 hours_skipped=0 rows=3600 errors=0" in result.output
+    assert "pairs=1 hours_written=1 hours_skipped=0 hours_unanchored=0 rows=3600 errors=0" in result.output
 
     final = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet"
     assert final.exists()
@@ -195,6 +195,25 @@ def test_since_newer_than_watermark_proceeds_with_allow_holes(tmp_path: Path) ->
     assert "watermark" in result.output  # the warning still fires
     later_final = panel_root / "BTC" / "EUR" / "panel-1s" / f"{later:%Y}" / f"{later:%m}" / f"{later:%d}" / f"{later:%H}.parquet"
     assert later_final.exists()
+
+
+# --- hours_unanchored -> an honest gap, exit 0 (spec 00052 D3 correction) -----------------------------
+
+
+def test_hours_unanchored_reported_in_summary_and_exits_zero(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "BTC/EUR", H)  # H: snapshot-open, materializes fine
+
+    gap_hour = H + timedelta(hours=2)  # H+1 is missing from the archive -- a canonical gap
+    gap_messages = [{"offset": 0, "type": "update", "bids": [(99.0, 1.0)], "asks": [(102.0, 1.0)], "checksum": 9}]
+    _book(primary, "BTC/EUR", gap_hour, _explode("BTC/EUR", gap_hour, gap_messages))
+
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+
+    assert result.exit_code == 0, result.output  # an honest gap must not fail the run
+    assert "hours_unanchored=1" in result.output
+    assert "errors=0" in result.output
 
 
 # --- errors -> exit 1 -----------------------------------------------------------------------------------

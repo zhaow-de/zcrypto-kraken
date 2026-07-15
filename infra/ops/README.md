@@ -47,7 +47,7 @@ Two daily systemd timers run the `zcrypto` CLI in the digest-pinned image (`dock
 
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
-| `zcrypto-verify-replay.timer` | daily 03:41 | `zcrypto archive verify-replay /data/capture-segments /data/capture-reconciled` — continuity-replays the pulled canonical archive (reconciled-first) through `OrderBook`; exits non-zero if any hour is not snapshot-anchored / ts-ordered / checksum-attested / structurally replayable. |
+| `zcrypto-verify-replay.timer` | daily 03:41 | `zcrypto archive verify-replay /data/capture-segments /data/capture-reconciled` — continuity-replays the pulled canonical archive (reconciled-first) through `OrderBook`; exits non-zero if any hour is not (chain-)anchored / ts-ordered / checksum-attested / structurally replayable. |
 | `zcrypto-verified-replay.timer` | daily 05:23 | `zcrypto engine replay --path verified --journal-dir /data/engine-journal` — the oracle-builder replay of the pulled journal; exits non-zero on any mismatch or validation failure. |
 
 Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC) and the capture hosts' maintenance windows (21:25/22:25 UTC). `Persistent=true`: a host that was down at the slot runs on the next boot instead of skipping the day.

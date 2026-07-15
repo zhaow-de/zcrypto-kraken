@@ -649,10 +649,12 @@ def verify_replay(
     ),
 ) -> None:
     """Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
-    `OrderBook` and report, per hour: snapshot-anchored, ts-ordered, checksum-present, replay-ok.
-    Exits non-zero if any hour errs or fails any of the four checks (mirroring `engine replay`'s
-    non-zero-on-drift contract). The stored `checksum` is trusted as capture-time ground truth; no
-    CRC is re-derived (T0045 — the Float64 archive cannot reproduce it byte-exactly)."""
+    `OrderBook` and report, per hour: anchored (chain-anchored -- opens with a snapshot, or its exact
+    predecessor hour was present and itself anchored and error-free; spec 00052 D3 correction),
+    ts-ordered, checksum-present, replay-ok. Exits non-zero if any hour errs or fails any of the four
+    checks (mirroring `engine replay`'s non-zero-on-drift contract). The stored `checksum` is trusted
+    as capture-time ground truth; no CRC is re-derived (T0045 — the Float64 archive cannot reproduce
+    it byte-exactly)."""
     since_dt = None
     if since is not None:
         try:
@@ -670,7 +672,7 @@ def verify_replay(
         hour_s = f"{result.hour:%Y-%m-%d %H}:00" if result.hour is not None else "?"
         line = (
             f"{result.pair}  {hour_s}  {'ok' if result.passed else 'FAILED'}  "
-            f"anchored={result.snapshot_anchored} ordered={result.ts_ordered} "
+            f"anchored={result.anchored} ordered={result.ts_ordered} "
             f"checksum={result.checksum_present} replay={result.replay_ok} rows={result.rows} msgs={result.messages}"
         )
         if result.error is not None:
@@ -682,7 +684,7 @@ def verify_replay(
                 "archive verify-replay: hour failed pair=%s hour=%s anchored=%s ordered=%s checksum=%s replay=%s error=%s",
                 result.pair,
                 hour_s,
-                result.snapshot_anchored,
+                result.anchored,
                 result.ts_ordered,
                 result.checksum_present,
                 result.replay_ok,

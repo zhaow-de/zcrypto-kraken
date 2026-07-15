@@ -1,11 +1,19 @@
 """Canonical book continuity-replay (spec 00051 OPS-3).
 
 Proves that the canonical archive — reconciled-first, primary otherwise (`canonical_segments`) —
-**replays as a coherent book**, per hour: it opens with a snapshot, rows are non-decreasing in `ts`,
+**replays as a coherent book**, per hour: it is chain-anchored, rows are non-decreasing in `ts`,
 every message carries its capture-time `checksum` attestation, and the rows regroup into WS-shaped
 messages that feed `OrderBook` without a structural throw. Its one genuinely new payoff over
-manifests + continuity.py: it confirms the reconciler's spliced output stays snapshot-anchored and
-coherent across splice boundaries.
+manifests + continuity.py: it confirms the reconciler's spliced output stays anchored and coherent
+across splice boundaries.
+
+Anchoring (corrected 2026-07-15, spec 00052 D3 — the same real-data finding: Kraken snapshots arrive
+on *subscribe*, not once per capture hour, so ~96% of real hours open with plain updates): an hour is
+**chain-anchored** iff it opens with a snapshot, OR its exact predecessor hour (same pair) was
+present in the enumeration AND was itself chain-anchored and error-free. `replay_segment` alone has
+no chain context, so it reports only the RAW per-hour fact (`ReplayResult.anchored` = "opens with a
+snapshot"); `verify_replay` walks its sorted `(pair, hour)` results afterwards and derives the
+chain-corrected `anchored` verdict, since only it has the cross-hour context to do so.
 
 Scope guard (finalized 2026-07-15, T0045): the archive stores `price`/`qty` as Float64, so Kraken's
 CRC32 is NOT byte-exact re-derivable — a re-derived `OrderBook.checksum()` mismatches the stored
@@ -19,8 +27,9 @@ indistinguishable from corruption without the CRC. The byte-exact CRC replay is 
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -35,13 +44,16 @@ logger = get_logger("archive.replay")
 @dataclass(frozen=True)
 class ReplayResult:
     """One canonical hour's replay verdict. `error` is set (never raised) for an unreadable segment
-    or a structural ingest throw — one bad hour must not abort the sweep."""
+    or a structural ingest throw — one bad hour must not abort the sweep.
+
+    `anchored`: from `replay_segment` alone this is the RAW fact ("opens with a snapshot"); from
+    `verify_replay` it is the chain-corrected verdict (module docstring)."""
 
     pair: str
     hour: datetime | None
     rows: int
     messages: int
-    snapshot_anchored: bool
+    anchored: bool
     ts_ordered: bool
     checksum_present: bool
     replay_ok: bool
@@ -49,7 +61,7 @@ class ReplayResult:
 
     @property
     def passed(self) -> bool:
-        return self.error is None and self.snapshot_anchored and self.ts_ordered and self.checksum_present and self.replay_ok
+        return self.error is None and self.anchored and self.ts_ordered and self.checksum_present and self.replay_ok
 
 
 def regroup_messages(frame: pl.DataFrame) -> list[dict]:
@@ -90,7 +102,11 @@ def _hour_from_path(path: Path) -> datetime | None:
 def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
     """Replay one canonical hour through a fresh `OrderBook(symbol, depth)`. Never raises: an
     unreadable segment or a structural ingest throw is isolated into the result (the same
-    isolation contract as infra/scripts/gap_distribution.py::observe_gaps)."""
+    isolation contract as infra/scripts/gap_distribution.py::observe_gaps).
+
+    Has no chain context (no visibility into neighboring hours), so `ReplayResult.anchored` here is
+    the RAW fact -- "this hour's first message is a snapshot" -- not the chain-corrected verdict;
+    `verify_replay` derives that once it has the full per-pair sequence (module docstring)."""
     hour = _hour_from_path(path)
     try:
         frame = pl.read_parquet(path)
@@ -98,7 +114,7 @@ def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
     except Exception as exc:  # noqa: BLE001 — an unreadable segment is a finding, not a crash
         return ReplayResult(symbol, hour, 0, 0, False, False, False, False, f"{type(exc).__name__}: {exc}")
 
-    snapshot_anchored = bool(messages) and messages[0]["type"] == "snapshot"
+    opens_with_snapshot = bool(messages) and messages[0]["type"] == "snapshot"
     ts_ordered = bool(frame["ts"].is_sorted())  # non-strict: equal stamps are in order
     checksum_present = "checksum" in frame.columns and frame["checksum"].null_count() == 0
 
@@ -116,8 +132,28 @@ def replay_segment(path: Path, symbol: str, depth: int) -> ReplayResult:
         replay_ok, error = False, f"{type(exc).__name__}: {exc}"
 
     return ReplayResult(
-        symbol, hour, frame.height, len(messages), snapshot_anchored, ts_ordered, checksum_present, replay_ok, error
+        symbol, hour, frame.height, len(messages), opens_with_snapshot, ts_ordered, checksum_present, replay_ok, error
     )
+
+
+def _chain_anchor(results: list[ReplayResult]) -> list[ReplayResult]:
+    """Derive the chain-anchored verdict (spec 00052 D3 correction) over `results` in `(pair, hour)`
+    order: an hour is anchored iff `replay_segment`'s raw fact says so, OR its exact predecessor hour
+    for the same pair was present in `results` (i.e. in this enumeration) AND was itself anchored and
+    error-free. `results` is walked in order, tracking each pair's previous hour + verdict -- exactly
+    `canonical_segments`' sort contract, so no re-sort is needed (or safe: L2 hours are not
+    reorderable)."""
+    chained: list[ReplayResult] = []
+    prev_hour: dict[str, datetime | None] = {}
+    prev_ok: dict[str, bool] = {}
+    for result in results:
+        predecessor = prev_hour.get(result.pair)
+        contiguous = result.hour is not None and predecessor is not None and result.hour == predecessor + timedelta(hours=1)
+        chain_anchored = result.anchored or (contiguous and prev_ok.get(result.pair, False))
+        chained.append(result if chain_anchored == result.anchored else dataclasses.replace(result, anchored=chain_anchored))
+        prev_hour[result.pair] = result.hour
+        prev_ok[result.pair] = chain_anchored and result.error is None
+    return chained
 
 
 def verify_replay(
@@ -130,7 +166,9 @@ def verify_replay(
 ) -> list[ReplayResult]:
     """Continuity-replay every canonical book hour (reconciled-first, primary otherwise), one
     `ReplayResult` per hour in `(pair, hour)` order. Per-hour failures are isolated into
-    `ReplayResult.error`; the sweep never aborts on one bad hour."""
+    `ReplayResult.error`; the sweep never aborts on one bad hour. `anchored` is chain-derived
+    (`_chain_anchor`, spec 00052 D3 correction) over this same enumeration -- a hole opened by
+    `--pair`/`--since` counts as "predecessor not present", same as a real archive gap."""
     results: list[ReplayResult] = []
     for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
         if pair is not None and seg_pair != pair:
@@ -142,4 +180,4 @@ def verify_replay(
         except Exception as exc:  # noqa: BLE001 — belt and braces: one bad hour must not abort the sweep
             result = ReplayResult(seg_pair, hour, 0, 0, False, False, False, False, f"{type(exc).__name__}: {exc}")
         results.append(result)
-    return results
+    return _chain_anchor(results)
