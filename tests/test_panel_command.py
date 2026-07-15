@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -80,9 +81,14 @@ def test_panel_help() -> None:
 def test_panel_materialize_help() -> None:
     result = runner.invoke(app, ["panel", "materialize", "--help"])
     assert result.exit_code == 0, result.output
-    assert "--panel-root" in result.output
-    assert "--since" in result.output
-    assert "--allow-holes" in result.output
+    # CI's narrow no-TTY terminal makes rich wrap option names across lines with ANSI styling --
+    # normalize before asserting (strip escapes, squash all whitespace) so the check is
+    # terminal-agnostic.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    squashed = re.sub(r"\s+", "", plain)
+    assert "--panel-root" in squashed
+    assert "--since" in squashed
+    assert "--allow-holes" in squashed
 
 
 # --- end-to-end run + meta on first run --------------------------------------------------------------
