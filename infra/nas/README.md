@@ -60,6 +60,7 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
    is off the login `PATH` on the NAS). Confirm with
    `/usr/local/bin/docker compose -f compose.yaml ps` that `archive-pull` is `Up` and running as
    `1000:1000`.
+   **After ANY `up -d` that recreates a container, also run `docker restart zcrypto-archive-alloy-1`** — Alloy's docker tailer keeps following the dead container ID and the recreated service's logs silently stop shipping until Alloy is restarted (T0048; the `NAS · archive-pull stalled` dead-man is what eventually catches it).
 
 ## Env-var contract
 
