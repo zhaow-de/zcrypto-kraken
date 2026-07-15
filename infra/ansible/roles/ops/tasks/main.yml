@@ -1,6 +1,6 @@
 # The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
-# directories + rsync, OPS-3 installs the continuity-replay/verified-path timers; the OPS-2
-# liquidations-recorder compose unit extends this same file — kept as one role, not split into four.
+# directories + rsync, OPS-2 renders the liquidations-recorder compose file, OPS-3 installs the
+# continuity-replay/verified-path timers — kept as one role, not split into four.
 
 - name: ensure the ops data directory exists
   ansible.builtin.file:
@@ -27,13 +27,14 @@
     update_cache: true
     cache_valid_time: 3600
 
-# --- OPS-3 (spec 00051): the daily continuity-replay + verified-path replay timers. Installed only
-# when the pinned image digest is supplied (-e ops_image_digest=sha256:<...>): a converge without it
-# skips this whole block rather than rendering units that point at a broken image reference.
-- name: install the replay timers (needs the pinned image digest)
+# --- OPS-2/3 (spec 00051): the liquidations-recorder compose file + the daily continuity-replay
+# and verified-path replay timers. Installed only when the pinned image digest is supplied
+# (-e ops_image_digest=sha256:<...>): a converge without it skips this whole block rather than
+# rendering artifacts that point at a broken image reference.
+- name: install the ops stack — recorder compose + replay timers (needs the pinned image digest)
   when: ops_image_digest is defined
   block:
-    - name: look up the deploy account (the replay containers run as its uid/gid)
+    - name: look up the deploy account (the ops containers run as its uid/gid)
       ansible.builtin.getent:
         database: passwd
         key: deploy
@@ -42,6 +43,17 @@
       ansible.builtin.set_fact:
         ops_uid: "{{ getent_passwd['deploy'][1] }}"
         ops_gid: "{{ getent_passwd['deploy'][2] }}"
+
+    # OPS-2: render only — the recorder is deliberately NOT auto-started here. First start (and
+    # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
+    # liquidations stream is not backfillable, so restarting it is never a converge side effect.
+    - name: render the ops compose file (liquidations recorder)
+      ansible.builtin.template:
+        src: compose.yaml.j2
+        dest: "{{ ops_compose_dir }}/compose.yaml"
+        owner: deploy
+        group: deploy
+        mode: "0644"
 
     - name: ensure the textfile-collector directory exists
       ansible.builtin.file:

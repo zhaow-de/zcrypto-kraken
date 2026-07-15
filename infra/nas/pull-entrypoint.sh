@@ -77,6 +77,22 @@ while true; do
 		fi
 	fi
 
+	# OPS-2 (spec 00051): the ops node's liquidations tree -- Binance force-orders are not
+	# backfillable (T0023-class), so the NAS mirrors them under no-sole-custody (D10) with the same
+	# hash-verified pull as the capture channels (the recorder's SegmentWriter writes .sha256
+	# manifests -- never --no-verify here). Own least-privilege key, and its own per-call SSH port:
+	# the ops node is a home-LAN box on port 22, not the VPS's 10022, and `zcrypto archive pull`
+	# reads ARCHIVE_SSH_PORT at call time exactly like ARCHIVE_SSH_KEY. Skipped entirely when
+	# LIQUIDATIONS_SOURCE is unset, so a NAS without the ops channel runs this script unchanged.
+	# Best-effort like every other pull -- and deliberately NOT an input to the reconcile gate
+	# below, which reasons only about the two capture mirrors.
+	if [ -n "${LIQUIDATIONS_SOURCE:-}" ]; then
+		if ! ARCHIVE_SSH_KEY="$LIQUIDATIONS_SSH_KEY" ARCHIVE_SSH_PORT="${LIQUIDATIONS_SSH_PORT:-22}" \
+				zcrypto archive pull "$LIQUIDATIONS_SOURCE" "$LIQUIDATIONS_DEST"; then
+			log ERROR "liquidations pull failed (source=$LIQUIDATIONS_SOURCE dest=$LIQUIDATIONS_DEST), continuing"
+		fi
+	fi
+
 	# Role C: reconcile the two raw mirrors into the healed overlay. DETECT-ONLY by default -- it
 	# ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
 	# --min-gap-seconds from real cross-host data (see RECONCILE_MIN_GAP_SECONDS in compose.yaml).
