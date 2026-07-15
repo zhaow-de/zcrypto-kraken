@@ -73,8 +73,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0046 — sparse-symbol liquidation hours never finalize](T0046-sparse-symbol-liquidation-hours-never-finalize.md) — the liquidations recorder reuses SegmentWriter's event-driven hour rotation, but Binance's many-symbol forceOrder feed leaves rarely-liquidated perps' hours as manifest-less .part files indefinitely (no manifest, wider hard-crash RAM window, and Task 5's finals-check surprised); decide accept-and-document vs a wall-clock finalize tick (ripe when: recorder deployed, or before OPS-2 is complete).
 
-- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — replace/complement the email channel for Grafana + healthchecks.io with a Slack app incoming webhook; investigated: manifest-only, no code — the ~10-min app-creation is the human step, the contact-point/channel wiring is autonomous once the URL is vaulted (ripe when: the owner mints the webhook).
-
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](T0003-d2-capture-pipeline.md) — capture daemon built + deployed LIVE on the hardened Debian 13 VPS (depth-100, CRC32-validated, healthchecks liveness; ≥7-day clock started iter-038); the NAS pull/archive (Role A) landed iter-093 (spec/plan 00048), NAS gate-verify (Role B) landed iter-094 (spec/plan 00049, measured bit-identical cross-runtime); remainder = the alerting drill + the ≥7-day clean-run verification + Role C (redundant capture) (ripe when: the ≥7-day verification ≈2026-07-15 and the alerting drill).
@@ -96,6 +94,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0038 — NAS mirror accumulates stale part files](T0038-nas-mirror-accumulates-stale-parts.md) — prune-after-verified landed: the pull command now deletes each verified hour's `<HH>.part*.parquet` on the NAS (strict numeric names only, hardened unlink), which drains the ~13.5k-part backlog on the first cycle after the next image rebuild + re-pin; the reader-side half was already closed by Task 7's `canonical_segments` (ripe when: verify the deploy dropped the part count — then close).
 
 - [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; remaining work = execute OPS-1…6, with 00050 Task 13 depending on OPS-3's replayer (ripe when: now — OPS-1 touches nothing live).
+
+- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted and healthchecks.io connected natively (owner, 2026-07-15, both alongside email); remainder = wire the Grafana contact point + routing as-code via grafana-push.sh, then decide email's fate after a soak.
 
 ### Resolved<a name="resolved-1"></a>
 

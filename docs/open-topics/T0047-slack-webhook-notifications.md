@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: the owner creates the Slack app + webhook (a ~10-minute workspace-admin action, steps below) — everything downstream is autonomous once the URL is vaulted
+status: partial
+ripe_when: now — the webhook is minted and vaulted (2026-07-15), so the remaining Grafana wiring is autonomous work
 ---
 
 # Slack incoming-webhook notifications for Grafana + healthchecks.io
@@ -20,22 +20,13 @@ Email is the only paging path today for both Grafana alerts and the healthchecks
 - **Grafana Cloud**: contact points are provisionable on the same alerting provisioning API `infra/scripts/grafana-push.sh` already drives (`/api/v1/provisioning/alert-rules` → add `/api/v1/provisioning/contact-points` + `/api/v1/provisioning/policies`). So the Slack contact point + routing policy can be committed-as-code with the URL injected via env (like `GRAFANA_SA_TOKEN`). Unlike legacy webhooks, per-message username/icon overrides are ignored (posts as the app) — cosmetic only.
 - **healthchecks.io**: integrations cannot be created via the Management API (the channels endpoint is list-only) — adding the Slack integration is a one-time UI step; attaching it to the five existing checks afterwards is the same Management-API `channels` PATCH used when the email channel was attached (2026-07-14).
 
+## Done so far
+
+- **The Slack app + webhook exist** (owner, 2026-07-15): app created from the manifest, webhook minted, and the URL delivered pre-encrypted — now vaulted as `slack_webhook_url` in `infra/ansible/group_vars/capture_host/vault.yml` beside the other `grafana_*` secrets (decryption + `hooks.slack.com/services/…` shape verified in-memory).
+- **healthchecks.io is DONE via its native Slack integration** (owner, 2026-07-15, connected in the UI — in addition to email, not replacing it). No webhook or API work needed there; that whole sub-item drops out.
+- **Scope narrows to Grafana alerts only.**
+
 ## Suggested next steps
 
-- **(human, ~10 min)** Create the app: api.slack.com/apps → Create New App → From a manifest → workspace → paste the manifest below → Create → Install to Workspace → pick the alerts channel (e.g. `#zcrypto-alerts`) → copy the `https://hooks.slack.com/services/…` URL. Then either vault it directly (`uv run ansible-vault encrypt_string --stdin-name slack_webhook_url`, value on stdin) or hand it to an interactive session to vault.
-
-  ```yaml
-  display_information:
-    name: zcrypto-alerts
-    description: Grafana + healthchecks.io notifications
-  oauth_config:
-    scopes:
-      bot: [incoming-webhook]
-  settings:
-    org_deploy_enabled: false
-    socket_mode_enabled: false
-    token_rotation_enabled: false
-  ```
-
-- **(human, ~2 min)** healthchecks.io → Integrations → Slack → connect the same channel (their UI flow; API cannot do this step).
-- **(autonomous, once the URL is vaulted)** Extend `grafana-push.sh` with a contact-points + notification-policy section (same upsert-by-uid pattern, URL via env); test-fire; run Slack **alongside** email first and flip the default route only after a proven delivery. Then PATCH the five healthchecks.io checks to the new channel via the Management API. Decide email's fate (keep as fallback vs drop) after a soak.
+- **(autonomous, ripe now)** Extend `infra/scripts/grafana-push.sh` with a contact-points + notification-policy section on the same provisioning API (`/api/v1/provisioning/contact-points`, `/api/v1/provisioning/policies`), upsert-by-uid like the rules; the URL arrives via env (`GRAFANA_SLACK_WEBHOOK_URL`, sourced from the vaulted `slack_webhook_url`) exactly like `GRAFANA_SA_TOKEN`. Run Slack **alongside** email first; test-fire a rule; flip the default route only after a proven delivery.
+- **(human, later)** After a soak with both channels: decide email's fate (keep as fallback vs drop) — for healthchecks.io too, where Slack currently runs in addition to email.
