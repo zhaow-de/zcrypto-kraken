@@ -1,0 +1,11 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-panel-materialize.service —
+# do not hand-edit on the host, edit
+# infra/ansible/roles/ops/templates/panel-materialize.service.j2 instead.
+[Unit]
+Description=Hourly L2 primitive panel materialize (spec 00052 D6)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-panel-materialize

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-panel-materialize — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/panel-materialize.sh.j2 and
+# re-converge instead.
+#
+# Hourly materialize of the canonical book archive into the 1s L2 primitive panel (spec 00052 D6):
+# runs `zcrypto panel materialize` in the digest-pinned default-AVX image, processing canonical
+# hours strictly newer than the panel's per-pair watermark. Scheduled after the archive-pull timer
+# (:12) so it always runs over a freshly-synced mirror. Publishes the outcome as a node-exporter
+# textfile (ops_panel_*) and pings the dead-man URL on a clean run only -- an empty URL skips the
+# ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
+set -u
+
+PROM="{{ ops_textfile_dir }}/ops-panel-materialize.prom"
+URL="{{ ops_panel_healthcheck_url }}"
+
+# Not `:ro` like the replay mounts -- panel materialize WRITES the panel tree under
+# {{ ops_panel_subdir }}/ inside the same data root.
+docker run --rm --pull never \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    -v "{{ ops_data_dir }}:/data" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    panel materialize "/data/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" --panel-root "/data/{{ ops_panel_subdir }}"
+rc=$?
+
+now=$(date -u +%s)
+# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
+# "time since last clean materialize" stays directly alertable (same reason the reconcile exporter
+# and the replay scripts freeze last_success on a failed cycle).
+prev_success=$(awk '/^ops_panel_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
+if [ "$rc" -eq 0 ]; then
+    success=$now
+else
+    success="${prev_success:-0}"
+fi
+
+# Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
+# half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
+tmp="$PROM.tmp"
+{
+    printf '# HELP ops_panel_exit_code Exit code of the last panel materialize run (0 = no hour errored).\n'
+    printf '# TYPE ops_panel_exit_code gauge\n'
+    printf 'ops_panel_exit_code %s\n' "$rc"
+    printf '# HELP ops_panel_last_run_timestamp Unix time of the last run, clean or not.\n'
+    printf '# TYPE ops_panel_last_run_timestamp gauge\n'
+    printf 'ops_panel_last_run_timestamp %s\n' "$now"
+    printf '# HELP ops_panel_last_success_timestamp Unix time of the last clean run (0 = never).\n'
+    printf '# TYPE ops_panel_last_success_timestamp gauge\n'
+    printf 'ops_panel_last_success_timestamp %s\n' "$success"
+} > "$tmp"
+mv "$tmp" "$PROM"
+
+if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
+    curl -fsS -m 10 -o /dev/null "$URL" || true
+fi
+exit "$rc"

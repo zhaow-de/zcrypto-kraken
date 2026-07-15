@@ -93,6 +93,20 @@ while true; do
 		fi
 	fi
 
+	# OPS-4 (spec 00052 D7): the ops node's L2 primitive panel tree -- convenience-durability only
+	# (the panel is recomputable from raw, so this copy is not custody-critical, unlike the
+	# liquidations tree above). Own least-privilege key, and its own per-call SSH port -- the ops
+	# node is a home-LAN box on port 22, not the VPS's 10022, same as the liquidations pull. Skipped
+	# entirely when PANEL_SOURCE is unset, so a NAS without the panel channel runs this script
+	# unchanged. Best-effort like every other pull -- and deliberately NOT an input to the reconcile
+	# gate below, which reasons only about the two capture mirrors.
+	if [ -n "${PANEL_SOURCE:-}" ]; then
+		if ! ARCHIVE_SSH_KEY="$PANEL_SSH_KEY" ARCHIVE_SSH_PORT="${PANEL_SSH_PORT:-22}" \
+				zcrypto archive pull "$PANEL_SOURCE" "$PANEL_DEST"; then
+			log ERROR "panel pull failed (source=$PANEL_SOURCE dest=$PANEL_DEST), continuing"
+		fi
+	fi
+
 	# Role C: reconcile the two raw mirrors into the healed overlay. DETECT-ONLY by default -- it
 	# ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
 	# --min-gap-seconds from real cross-host data (see RECONCILE_MIN_GAP_SECONDS in compose.yaml).

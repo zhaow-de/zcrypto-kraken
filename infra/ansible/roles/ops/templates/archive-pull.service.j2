@@ -1,0 +1,10 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-archive-pull.service — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/archive-pull.service.j2 instead.
+[Unit]
+Wants=network-online.target
+After=network-online.target
+Description=Recurring NAS archive pull -- capture segments + reconciled overlay + engine journal (spec 00052 D6)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-archive-pull

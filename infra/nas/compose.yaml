@@ -46,6 +46,16 @@ services:
       LIQUIDATIONS_DEST: ${LIQUIDATIONS_DEST:-/archive/liquidations}
       LIQUIDATIONS_SSH_KEY: /keys/sync_liquidations
       LIQUIDATIONS_SSH_PORT: ${LIQUIDATIONS_SSH_PORT:-22}
+      # OPS-4 (spec 00052 D7): the ops node's L2 primitive panel tree, pulled over its OWN
+      # least-privilege rrsync channel (`sync_panel`, see infra/ops/README.md) -- the exact
+      # LIQUIDATIONS_* pattern above, convenience-durability only (the panel is recomputable from
+      # raw, so this copy is not custody-critical). Leave PANEL_SOURCE unset and the pull is
+      # skipped entirely, so this compose file stays valid on a NAS that has not been given the
+      # panel channel yet. Same home-LAN port-22 caveat as the liquidations channel.
+      PANEL_SOURCE: ${PANEL_SOURCE:-}
+      PANEL_DEST: ${PANEL_DEST:-/archive/l2-panel}
+      PANEL_SSH_KEY: /keys/sync_panel
+      PANEL_SSH_PORT: ${PANEL_SSH_PORT:-22}
       CAPTURE_SSH_KEY: /keys/sync_capture
       JOURNAL_SSH_KEY: /keys/sync_journal
       ARCHIVE_SSH_KNOWN_HOSTS: /keys/known_hosts

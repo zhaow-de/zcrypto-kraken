@@ -1,0 +1,20 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-panel-materialize.timer — do
+# not hand-edit on the host, edit infra/ansible/roles/ops/templates/panel-materialize.timer.j2
+# instead.
+[Unit]
+Description=Hourly L2 primitive panel materialize (spec 00052 D6)
+
+[Timer]
+# Off the hour boundary, after the archive-pull timer (:12, spec 00052 D6 pull-before-materialize
+# ordering), clear of the ops reboot window (02:25 UTC), the capture hosts' maintenance windows
+# (21:25/22:25 UTC), and the daily replay timers (03:41/05:23). The host timezone is UTC (base
+# role).
+OnCalendar=*-*-* *:22:00
+# A host that was down at :22 materializes on the next boot instead of skipping the hour — the
+# watermark makes this idempotent (only hours newer than the panel's per-pair watermark are
+# processed).
+Persistent=true
+Unit=zcrypto-panel-materialize.service
+
+[Install]
+WantedBy=timers.target

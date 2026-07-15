@@ -1,6 +1,7 @@
 # The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
 # directories + rsync, OPS-2 renders the liquidations-poller compose file, OPS-3 installs the
-# continuity-replay/verified-path timers — kept as one role, not split into four.
+# continuity-replay/verified-path timers, OPS-4 installs the recurring NAS archive-pull + panel
+# materialize timers — kept as one role, not split into four.
 
 - name: ensure the ops data directory exists
   ansible.builtin.file:
@@ -27,11 +28,52 @@
     update_cache: true
     cache_valid_time: 3600
 
-# --- OPS-2/3 (spec 00051): the liquidations-poller compose file + the daily continuity-replay
-# and verified-path replay timers. Installed only when the pinned image digest is supplied
-# (-e ops_image_digest=sha256:<...>): a converge without it skips this whole block rather than
-# rendering artifacts that point at a broken image reference.
-- name: install the ops stack — recorder compose + replay timers (needs the pinned image digest)
+- name: ensure the textfile-collector directory exists
+  ansible.builtin.file:
+    path: "{{ ops_textfile_dir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+# OPS-4 (spec 00052 D6): the recurring NAS archive pull. Unlike the replay/panel units below, this
+# one needs NO pinned image digest — it is host-side rsync (rsync installed above), not a
+# container — so the script/service/timer install unconditionally. Only the enable step is
+# guarded, by its OWN var (ops_nas_pull_source non-empty): an unconfigured converge still arms the
+# unit, but the script itself no-ops (logged, exit 0) until the seed channel is wired (plan Task 5).
+- name: install the archive-pull runner script
+  ansible.builtin.template:
+    src: archive-pull.sh.j2
+    dest: /usr/local/sbin/zcrypto-archive-pull
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the archive-pull systemd service + timer
+  ansible.builtin.template:
+    src: "archive-pull.{{ item }}.j2"
+    dest: "/etc/systemd/system/zcrypto-archive-pull.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+
+# Review I1(b): the timer's state TRACKS the var instead of one-way gating on it -- emptying
+# ops_nas_pull_source on a later converge genuinely stops+disables an armed timer, rather than
+# leaving it firing hourly against an empty source.
+- name: archive-pull timer state tracks whether the NAS pull source is configured
+  ansible.builtin.systemd_service:
+    name: zcrypto-archive-pull.timer
+    daemon_reload: true
+    enabled: "{{ ops_nas_pull_source != '' }}"
+    state: "{{ 'started' if ops_nas_pull_source != '' else 'stopped' }}"
+
+# --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
+# continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
+# only when the pinned image digest is supplied (-e ops_image_digest=sha256:<...>): a converge
+# without it skips this whole block rather than rendering artifacts that point at a broken image
+# reference.
+- name: install the ops stack — recorder compose + replay/panel timers (needs the pinned image digest)
   when: ops_image_digest is defined
   block:
     - name: look up the deploy account (the ops containers run as its uid/gid)
@@ -58,38 +100,30 @@
         group: deploy
         mode: "0600"
 
-    - name: ensure the textfile-collector directory exists
-      ansible.builtin.file:
-        path: "{{ ops_textfile_dir }}"
-        state: directory
-        owner: deploy
-        group: deploy
-        mode: "0755"
-
-    - name: install the replay runner scripts
+    - name: install the replay + panel runner scripts
       ansible.builtin.template:
         src: "{{ item }}.sh.j2"
         dest: "/usr/local/sbin/zcrypto-{{ item }}"
         owner: root
         group: root
         mode: "0755"
-      loop: [verify-replay, verified-replay]
+      loop: [verify-replay, verified-replay, panel-materialize]
 
-    - name: render the replay systemd services + timers
+    - name: render the replay + panel systemd services + timers
       ansible.builtin.template:
         src: "{{ item.0 }}.{{ item.1 }}.j2"
         dest: "/etc/systemd/system/zcrypto-{{ item.0 }}.{{ item.1 }}"
         owner: root
         group: root
         mode: "0644"
-      loop: "{{ ['verify-replay', 'verified-replay'] | product(['service', 'timer']) | list }}"
+      loop: "{{ ['verify-replay', 'verified-replay', 'panel-materialize'] | product(['service', 'timer']) | list }}"
 
     # Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
     # too would run both replays on every boot (same rationale as the capture prune timer).
-    - name: enable + start the replay timers
+    - name: enable + start the replay + panel timers
       ansible.builtin.systemd_service:
         name: "zcrypto-{{ item }}.timer"
         daemon_reload: true
         enabled: true
         state: started
-      loop: [verify-replay, verified-replay]
+      loop: [verify-replay, verified-replay, panel-materialize]

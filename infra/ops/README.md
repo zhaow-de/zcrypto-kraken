@@ -67,3 +67,59 @@ The metric families are new: per the T0034 discipline, arm Grafana alert rules o
 ### Dead-man pings
 
 On a clean run (exit 0) each script GETs its healthchecks.io ping URL — role vars `ops_verify_replay_healthcheck_url` / `ops_verified_replay_healthcheck_url`, both defaulting to empty, which **skips** the ping entirely (the CLI's optional `ping_healthcheck` semantics, shell edition: `[ -n "$URL" ] && curl -fsS -m 10 "$URL"`). A failed run pings nothing and alerts by silence.
+
+## Archive pull + panel (OPS-4, spec 00052)
+
+Two wiring notes: (1) a digest-only converge (image pinned, NAS pull source not yet set) arms `panel-materialize` before any archive exists — its hourly runs then fail loudly (missing `PRIMARY_ROOT`) until the pull channel is wired; that pre-wire-up noise is expected, not a bug (review M2). (2) The `sync_panel` channel setup below assumes the ops host key is already pinned in the NAS `known_hosts` by the `sync_liquidations` setup — if the panel channel is provisioned standalone, do that pinning step first (review M7).
+
+Two more hourly systemd timers, installed by the same `ops` role, extend the replay pair above:
+`zcrypto-archive-pull` keeps the ops node's mirror current between the one-off initial seed (spec
+00051 plan Task 8) and the materialize run that consumes it — closing the replay-staleness gap
+noted in [[T0033]] — and `zcrypto-panel-materialize` turns that canonical archive into the
+1-second L2 primitive panel (spec 00052 D6).
+
+| Unit | Schedule (UTC) | What it runs |
+| -- | -- | -- |
+| `zcrypto-archive-pull.timer` | hourly, :12 | Host-side `rsync` (no container — rsync is host-installed) of the four canonical trees (`capture-segments`, `capture-segments-red`, `capture-reconciled`, `engine-journal`) from the NAS seed channel (`~deploy/.ssh/sync_nas_archive`, pinned `~deploy/.ssh/nas_known_hosts`, strict host-key checking) into `ops_data_dir`. Unlike every other unit here it needs **no** image digest — the script/service/timer install unconditionally; only the enable step is gated, by `ops_nas_pull_source` being non-empty (role default: empty, so an unconfigured converge arms the timer but the script itself no-ops, logged). The seed channel's key + known-hosts pin are provisioned as an attended step (plan 00052 Task 5). |
+| `zcrypto-panel-materialize.timer` | hourly, :22 (after the pull) | `zcrypto panel materialize /data/capture-segments /data/capture-reconciled --panel-root /data/l2-panel` in the digest-pinned image — watermarked, so only canonical hours strictly newer than the panel's per-pair watermark are processed (installed inside the same `ops_image_digest is defined` guard as the replay timers). |
+
+Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC), the capture
+hosts' maintenance windows (21:25/22:25 UTC), and the daily replay timers (03:41/05:23).
+`Persistent=true` on both: a host down at its slot catches up on the next boot instead of skipping
+the hour — the panel timer's watermark makes a caught-up run idempotent regardless.
+
+### Textfile metrics
+
+Same shape as the replay timers' (`ops-archive-pull.prom` / `ops-panel-materialize.prom`, prefixes
+`ops_archive_pull_` / `ops_panel_`): `<prefix>exit_code`, `<prefix>last_run_timestamp`,
+`<prefix>last_success_timestamp` (a failed run carries the previous success forward, same
+rationale as the replay timers above). No extra `hours_written`-style gauge is parsed out of
+`panel materialize`'s summary log line — the replay scripts don't parse container stdout for
+extra metrics either, and this stays consistent with that rather than inventing a new pattern for
+one unit.
+
+### Dead-man pings
+
+Same optional-ping semantics as the replay timers: role vars `ops_archive_pull_healthcheck_url` /
+`ops_panel_healthcheck_url`, both defaulting to empty (skips the ping entirely).
+
+### The `sync_panel` replication channel (the NAS pulls this node)
+
+Pull-only transport, mirroring `sync_liquidations` above — convenience-durability only (spec 00052
+D7): the panel is recomputable from raw (`f(raw)`, spec 00052), so this copy is **not**
+custody-critical.
+
+1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_panel_ed25519 -C zcrypto-sync-panel-pullonly -N ""`.
+2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys`, pinning the panel root:
+
+   ```
+   command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/l2-panel",restrict ssh-ed25519 AAAA... zcrypto-sync-panel-pullonly
+   ```
+
+3. **NAS** — drop the private key at `/volume1/docker/zcrypto-archive/keys/sync_panel`, mode
+   `0600` (matches the fixed `PANEL_SSH_KEY=/keys/sync_panel` in `infra/nas/compose.yaml`).
+4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
+   `sync_liquidations` setup above (step 4 there); no re-pin needed for a second channel to the
+   same host.
+5. **NAS** — set `PANEL_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
+   `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.

@@ -14,7 +14,12 @@ ops_capture_subdir: capture-segments
 ops_reconciled_subdir: capture-reconciled
 ops_journal_subdir: engine-journal
 
-# node-exporter-style textfile-collector dir the replay timers publish their .prom files into.
+# The L2 primitive panel tree (spec 00052 D4/D6), under ops_data_dir; the panel-materialize timer
+# mounts ops_data_dir at /data, so this is the container-visible tree name.
+ops_panel_subdir: l2-panel
+
+# node-exporter-style textfile-collector dir the replay/archive-pull/panel timers publish their
+# .prom files into.
 ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 
 # healthchecks.io dead-man ping URLs, one per timer. Empty means the ping is simply skipped
@@ -25,3 +30,13 @@ ops_verified_replay_healthcheck_url: ""
 # The liquidations poller's dead-man ping URL (LIQUIDATIONS_HEALTHCHECK_URL in the rendered
 # compose). Empty means the recorder simply skips liveness pings, same as the capture daemon.
 ops_liquidations_healthcheck_url: ""
+
+# OPS-4 (spec 00052 D6): the recurring NAS->ops archive pull's rsync source spec, e.g.
+# "zcrypto-deploy@192.168.100.5:" (the seed channel, keyed at ~deploy/.ssh/sync_nas_archive with a
+# pinned ~deploy/.ssh/nas_known_hosts). Deliberately NO non-empty default: empty means the
+# archive-pull script exits 0 doing nothing (logged), so a converge without the channel wired is
+# safe rather than pointing rsync at a broken source.
+ops_nas_pull_source: ""
+
+ops_archive_pull_healthcheck_url: ""
+ops_panel_healthcheck_url: ""
