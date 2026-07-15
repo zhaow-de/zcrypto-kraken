@@ -118,7 +118,7 @@
 - [ ] **Step 2 — seed.** From the NAS, pull the compiled sets + a recent raw window to `${ops_data_dir}` (record window size `N`, spec 00051 open param — start 14–30 days). Verify manifests with `verify_tree` on the ops node.
 - [ ] **Step 3 — channel keys.** Generate the `sync_liquidations` keypair (vaulted), install the forced-command line on the ops node, pin the ops host key on the NAS (verify against the host's own `/etc/ssh/ssh_host_ed25519_key.pub`, not TOFU).
 - [ ] **Step 4 — provision the dead-man.** Create the healthchecks.io check via the Management API (vaulted `healthchecks_api_key`), attach the email channel, put its ping URL in the recorder env.
-- [ ] **Step 5 — deploy + verify by outcome.** `docker compose up -d` the recorder; after the next hour boundary confirm `${ops_data_dir}/liquidations/<SYM>/…/<HH>.parquet` finals appear with valid `.sha256`; the NAS pull mirrors them (`checked=N ok=N failed=0`); the dead-man is green. `dropping/late` lines right after start are healthy (resubscribe).
+- [ ] **Step 5 — deploy + verify by outcome.** `docker compose up -d` the recorder; after the next hour boundary confirm finals appear **for a liquid symbol** (`BTCUSDT`/`ETHUSDT`): `${ops_data_dir}/liquidations/<SYM>/…/<HH>.parquet` with valid `.sha256`. **Do NOT expect prompt finals for sparse symbols** — event-driven rotation leaves rarely-liquidated perps as lingering `.part` files until their next event ([[T0046]]); that is known, not a failure. The NAS pull mirrors whatever finals exist (`checked=N ok=N failed=0`); the dead-man is green. `dropping/late` lines right after start are healthy (resubscribe).
 
 ---
 
