@@ -242,3 +242,25 @@ def test_prune_leaves_a_nonstandard_partlike_name_alone(tmp_path: Path) -> None:
     assert weird.exists(), "a non-daemon part-like name must be left alone"
     assert not (d / "10.part0000.parquet").exists(), "the real stale part was still pruned"
     assert (hours, parts) == (1, 1)
+
+
+def test_prune_survives_an_unlink_failure_without_escaping(tmp_path: Path, monkeypatch) -> None:
+    """An unlink failure (permissions, a concurrent process) must be caught, not escape as an
+    unhandled exception -- which would skip the pull command's failed-verify -> exit-1 path. The part
+    simply stays and prune reports it as not-pruned."""
+    from pathlib import Path as _P
+
+    from cli.archive.pull import prune_stale_parts, verify_tree
+
+    _seg(tmp_path, "BTC/EUR", "book", "10")
+    _part(tmp_path, "BTC/EUR", "book", "10", 0)
+
+    def _boom(self, *a, **k):
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(_P, "unlink", _boom)
+    r = verify_tree(tmp_path, now=datetime(2026, 7, 12, 13, 0, tzinfo=UTC))
+    hours, parts = prune_stale_parts(r.verified)  # must not raise
+
+    assert (hours, parts) == (0, 0), "a failed unlink is not counted as pruned"
+    assert (tmp_path / "BTC/EUR/book/2026/07/12/10.part0000.parquet").exists(), "the part stays on a failed delete"
