@@ -55,7 +55,10 @@ def parse_force_order(raw: str) -> dict | None:
             "price": float(price),
             "orig_qty": float(orig_qty),
             "avg_price": float(order["ap"]) if order.get("ap") is not None else None,
-            "order_status": order.get("X"),
+            # str() coercion is load-bearing: a structured value (dict/list) would pass this parser
+            # untouched and then blow up polars' Utf8 column at SegmentWriter flush -- downstream of
+            # the "never raises" guarantee. str() stringifies anything harmlessly.
+            "order_status": str(order["X"]) if order.get("X") is not None else None,
             "event_id": f"{symbol}-{trade_time_ms}-{price}-{orig_qty}",
         }
     except Exception:

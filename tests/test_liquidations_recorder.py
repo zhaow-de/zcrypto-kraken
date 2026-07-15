@@ -60,7 +60,7 @@ def test_parse_force_order_maps_envelope_to_row():
 
 
 def test_parse_force_order_tolerates_missing_avg_price_and_status():
-    # `ap`/`S` and `X` are secondary fields; a forceOrder missing them still carries the required
+    # `ap` and `X` are secondary fields; a forceOrder missing them still carries the required
     # identity fields (s/S/p/q/T), so it must still yield a row (with the secondary fields None)
     # rather than the whole non-backfillable liquidation being discarded.
     raw = json.dumps(
@@ -178,3 +178,22 @@ def test_run_recorder_skips_rows_while_disk_watermark_is_breached(tmp_path):
 
     # The row was skipped by the write gate: no segment/part file for BTCUSDT anywhere under tmp_path.
     assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_parse_force_order_stringifies_a_structured_order_status():
+    # A malformed frame whose `X` is a JSON object (not a string) must not slip through as a raw
+    # dict: polars' Utf8 column raises ComputeError on a structured value at SegmentWriter flush --
+    # crashing the recorder DOWNSTREAM of the "never raises" parser. str() coercion keeps the row
+    # (identity fields are valid) with the garbage stringified harmlessly.
+    raw = json.dumps(
+        {
+            "stream": "!forceOrder@arr",
+            "data": {
+                "e": "forceOrder",
+                "o": {"s": "BTCUSDT", "S": "SELL", "q": "1", "p": "9910", "ap": "9910", "X": {"weird": 1}, "T": 1568014460893},
+            },
+        }
+    )
+    row = parse_force_order(raw)
+    assert row is not None
+    assert isinstance(row["order_status"], str)  # never a dict/list reaching the writer
