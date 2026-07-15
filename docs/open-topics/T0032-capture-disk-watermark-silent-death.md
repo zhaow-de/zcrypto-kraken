@@ -103,3 +103,4 @@ the disk, and the rollout is needed for Role C anyway).
   than silently losing data, but the underlying growth is unbounded. (Spec `00050`'s D9 adds a retention
   timer to the *secondary* capture host; the **primary** still has none.)
 - **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.
+- **(residual, noted)** Compound fault: if the disk actually FILLS *during* an unmeasurable-probe window, `_write_part`'s `ENOSPC` is caught, logged, and the buffer dropped -- a real, un-booked loss, because `breached` is frozen at its last (green) value so no watermark gap is booked. Narrow (needs a disk that fills exactly while the probe is also down), and it still pages within ~20 min via the withheld ping, but the exit-bar gap accounting under-counts that window. A full fix would treat an unmeasurable window as a provisional gap and reconcile once the probe recovers.

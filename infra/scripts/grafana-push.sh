@@ -127,7 +127,7 @@ done <<<"${rule_uids}"
 echo "grafana-push: checking for orphaned rules in folder ${GRAFANA_ALERT_FOLDER_UID}" >&2
 all_live=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules")
 orphans=$(jq -r --arg folder "${GRAFANA_ALERT_FOLDER_UID}" --argjson keep "$(jq '[.[].uid]' <<<"${rules_json}")" '
-  .[] | select((.folderUID // .folderUid) == $folder) | select([.uid] | inside($keep) | not) | .uid
+  .[] | select((.folderUID // .folderUid) == $folder) | select(.uid as $u | ($keep | index($u)) == null) | .uid
 ' <<<"${all_live}")
 if [ -z "${orphans}" ]; then
   echo "grafana-push: no orphaned rules" >&2
