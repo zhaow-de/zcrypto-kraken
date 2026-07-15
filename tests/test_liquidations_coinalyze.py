@@ -232,8 +232,12 @@ def test_liquidations_poll_end_to_end_with_duration(tmp_path, monkeypatch):
     result = runner.invoke(app, ["liquidations-poll", "--data-dir", str(tmp_path), "--duration", "0"])
     assert result.exit_code == 0, result.output
 
-    parts = list((tmp_path / "BTC" / "liquidations-1m").rglob("*.part*.parquet"))
-    assert parts
+    # 2024-03-01 is now (T0046) more than the 31h finalize lag behind the real wall clock, so this
+    # cycle's own finalize step closes it into a final rather than leaving it an open part.
+    tree = tmp_path / "BTC" / "liquidations-1m"
+    finals = [q for q in tree.rglob("*.parquet") if ".part" not in q.name]
+    assert finals, "expected a FINAL -- the stale hour must have finalized past the 31h lag (review M-3)"
+    assert not list(tree.rglob("*.part*.parquet")), "no open parts should remain"
 
 
 def test_liquidations_poll_sigterm_flushes_writers_cleanly(tmp_path, monkeypatch):
@@ -346,6 +350,68 @@ def test_poll_cycle_handles_a_reversed_history_without_dropping_earlier_hours(tm
     day_dir = tmp_path / "BTC" / "liquidations-1m" / "2024" / "03" / "01"
     rows_12 = sum(pl.read_parquet(p).height for p in day_dir.glob("12.*parquet"))
     assert rows_12 == 1, "the earlier-hour bucket was dropped because the response was not ascending"
+
+
+# --- T0046: wall-clock hour finalization for sparse symbols --------------------------------------
+
+
+def test_liquidations_poll_finalizes_a_stale_open_hour_past_the_finalize_lag(tmp_path, monkeypatch):
+    # The lag (31h) is deliberately wider than the 30h catch-up window, so a hour eligible for
+    # finalize can never still be reachable by poll_cycle's own re-fetch -- it must already be open
+    # from an earlier cycle. Simulated here by appending directly to the writer, like the other
+    # SIGTERM/duration tests above.
+    monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
+    monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
+    stale_ts = datetime.now(UTC) - timedelta(hours=32)
+
+    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+        writers["BTC"].append(
+            {
+                "ts": stale_ts,
+                "symbol": "BTCUSDT_PERP.A",
+                "long_usd": 1.0,
+                "short_usd": 2.0,
+                "event_id": "BTCUSDT_PERP.A-1",
+            }
+        )
+        return 1
+
+    monkeypatch.setattr("cli.liquidations.coinalyze.poll_cycle", _fake_poll_cycle)
+    result = runner.invoke(app, ["liquidations-poll", "--data-dir", str(tmp_path), "--duration", "0"])
+    assert result.exit_code == 0, result.output
+
+    hour_dir = tmp_path / "BTC" / "liquidations-1m" / f"{stale_ts:%Y}" / f"{stale_ts:%m}" / f"{stale_ts:%d}"
+    final = hour_dir / f"{stale_ts:%H}.parquet"
+    assert final.exists()
+    assert verify_manifest(final) is True
+
+
+def test_liquidations_poll_leaves_a_recent_open_hour_untouched(tmp_path, monkeypatch):
+    monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
+    monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
+    recent_ts = datetime.now(UTC) - timedelta(hours=30)  # inside the 31h lag: must stay open
+
+    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+        writers["BTC"].append(
+            {
+                "ts": recent_ts,
+                "symbol": "BTCUSDT_PERP.A",
+                "long_usd": 1.0,
+                "short_usd": 2.0,
+                "event_id": "BTCUSDT_PERP.A-1",
+            }
+        )
+        return 1
+
+    monkeypatch.setattr("cli.liquidations.coinalyze.poll_cycle", _fake_poll_cycle)
+    result = runner.invoke(app, ["liquidations-poll", "--data-dir", str(tmp_path), "--duration", "0"])
+    assert result.exit_code == 0, result.output
+
+    hour_dir = tmp_path / "BTC" / "liquidations-1m" / f"{recent_ts:%Y}" / f"{recent_ts:%m}" / f"{recent_ts:%d}"
+    final = hour_dir / f"{recent_ts:%H}.parquet"
+    assert not final.exists()  # not old enough to cross the lag -- still open
+    # The graceful shutdown's close() still flushes the buffered row to a part (never a final).
+    assert list(hour_dir.glob(f"{recent_ts:%H}.part*.parquet"))
 
 
 def test_run_survives_a_malformed_bucket_and_retries(tmp_path, monkeypatch):

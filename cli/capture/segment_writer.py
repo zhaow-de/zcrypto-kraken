@@ -393,6 +393,82 @@ class SegmentWriter:
         self._held = {}
         self._held_seen = {}
 
+    def finalize_completed_hours(self, cutoff: datetime) -> int:
+        """INTENDED FOR NON-ORACLE WRITERS ONLY (review 2f08379-I1): this method ignores held
+        spills entirely -- on an oracle-bearing writer, finalizing an hour with held rows would
+        floor-lock the hour and strand its quarantine forever (never merged, never redeemed). The
+        only sanctioned caller (the Coinalyze poller) builds writers without an oracle; the guard
+        below makes any future oracle-bearing caller fail fast instead of silently foreclosing rows.
+
+        Finalize every hour STRICTLY OLDER than `cutoff` that currently holds a row — the open
+        hour (if any) plus any crash-leftover part-hours the event stream itself has not yet swept.
+        Returns the count of hours this call actually finalized (0 is the correct, idempotent
+        answer once there is nothing left to do). Hours `>= cutoff` are NEVER touched.
+
+        T0046: rotation is event-driven — an hour closes only when the NEXT event for this same
+        (pair, kind) crosses its boundary (`_enter_hour`) — which fits a continuously-emitting
+        stream but stalls indefinitely for a sparse one (a symbol quiet for hours never produces
+        the "next" event that would close it). This is the wall-clock escape hatch: the CALLER
+        decides `cutoff` (see `cli/liquidations/coinalyze.py` for the margin that makes it safe),
+        and this method finalizes anything provably older than it, via the exact same
+        `_finalize_hour`/`_merge_hour` path an ordinary rotation uses. A pair that keeps emitting
+        normally never has an hour cross `cutoff` while still open, so calling this on the live
+        capture daemon's writers would be a no-op in practice — nothing here changes what an
+        ordinary rotation does; it is purely additive.
+
+        Two independent things can be older than `cutoff`:
+
+        1. The open hour (`self._current_hour`) — flushed and merged, then the writer is left with
+           NO open hour (`None`), so the next event re-derives its own hour from scratch exactly
+           like a fresh writer's first event does (`_enter_hour`'s `is None` branch: sweep, open).
+        2. Any OTHER part-hours already on disk — crash leftovers from a previous process that
+           never got swept, because sweeping is deferred to this writer's first event and one may
+           never come for a symbol this sparse.
+
+        Setting `_current_hour` to `None` is new for this class — the ordinary rotation path only
+        ever advances it forward via `_open_hour`, which re-anchors the late-event floor for free
+        as a side effect. With no such call here, this method re-anchors `self._floor` itself for
+        every hour it actually finalizes (a merge this class declines — e.g. the AMBIGUOUS
+        parts-beside-a-final case — does not count, and does not raise the floor). Skipping this
+        would let a late replay for an hour finalized here — arriving while `_current_hour` is
+        still `None` — silently reopen it, and its eventual re-rotation would then read as "parts
+        beside a readable final": the class's own ambiguous, human-only state.
+        """
+        if self._oracle is not None:
+            raise CaptureError(
+                "finalize_completed_hours is not supported on oracle-bearing writers (held spills would be stranded)"
+            )
+        finalized = 0
+        newest_hour: datetime | None = None
+
+        if self._current_hour is not None and self._current_hour < cutoff:
+            hour = self._current_hour
+            final_path = self._hour_dir(hour) / f"{hour:%H}.parquet"
+            already_final = final_path.exists()
+            self._finalize_hour(hour)
+            self._current_hour = None
+            if not already_final and final_path.exists():
+                finalized += 1
+                newest_hour = hour
+
+        root = self._base_dir / self._pair / self._kind
+        for hour_dir in sorted({path.parent for path in root.rglob("*.part*.parquet")}):
+            for hh in sorted({path.name.split(".part")[0] for path in hour_dir.glob("*.part*.parquet")}):
+                hour = _hour_of(hour_dir, hh)
+                if hour is None or hour >= cutoff:
+                    continue
+                final_path = hour_dir / f"{hh}.parquet"
+                already_final = final_path.exists()
+                self._merge_hour(hour_dir, hh)
+                if not already_final and final_path.exists():
+                    finalized += 1
+                    newest_hour = hour if newest_hour is None else max(newest_hour, hour)
+
+        if newest_hour is not None:
+            floor = newest_hour + timedelta(hours=1)
+            self._floor = floor if self._floor is None else max(self._floor, floor)
+        return finalized
+
     def _enter_hour(self, hour: datetime) -> None:
         """Make `hour` the open hour: sweep (first event) or finalize the previous hour, then open.
         A no-op when `hour` is already open. Callers guarantee `hour` never goes backwards."""
