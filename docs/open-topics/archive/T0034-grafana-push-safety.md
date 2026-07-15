@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ripe_when: live now — both failure modes were hit for real on 2026-07-13, and the script is the only path we have for provisioning alerts
 ---
 
@@ -63,7 +63,9 @@ The git-vs-live divergence is the same class of bug as the deployed-compose drif
   `grafanacloud-prom` / `grafanacloud-logs`; the dropdowns are gone. Verified by reading the live
   dashboard back after the push.
 
-## Suggested next steps
+- **The prune half landed** (`aba46f7` + `8931bf3`): after pushing, `grafana-push.sh` lists every rule live in the folder whose `uid` is absent from `alerts.yaml` and reports it — DRY-RUN by default (deleting an alert rule is not reversible from the repo), `GRAFANA_PRUNE=1` to delete, scoped to the folder so a rule elsewhere is never touched. The membership test is exact (`index($u) == null`), not jq's substring `inside()` — a rule renamed by appending a suffix is now correctly flagged, an exact match is not (proven live: 12 == 12; an injected fake uid is flagged).
+- **Read-back datasource assertion landed**: after pushing, every rule is read back and the run fails (non-zero exit) if any query node points at a datasource that is neither the prom nor the loki UID — closing the "API accepts a wrong UID happily and reports health=ok" hole. Verified live: all 12 rules pass.
+
 
 - **The prune half is still open.** The push never deletes: a rule removed from `alerts.yaml` keeps
   evaluating and emailing forever, and a *renamed* rule (new `uid`) leaves the old one live beside it.
