@@ -4,7 +4,10 @@ distinguished exit codes -- neither is ever silently archived as good.
 
 `reconcile` (spec 00050 Role C) extends the tier with the cross-host overlay: two raw mirrors in,
 one healed hour out, minted only where the secondary demonstrably witnessed what the primary lost.
-Wiring, exporter and exit codes only -- the rules live in `reconcile.py` / `settle.py` / `mint.py`."""
+Wiring, exporter and exit codes only -- the rules live in `reconcile.py` / `settle.py` / `mint.py`.
+
+`verify-replay` (spec 00051 OPS-3) replays the canonical book stream (reconciled-first) through
+`OrderBook` and proves it coherent per hour -- rules and scope guard in `replay.py`."""
 
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from typing import Optional
 import polars as pl
 import typer
 
+from cli.archive import replay as replay_mod
 from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
 from cli.archive.reconcile import Block, find_book_gaps, splice_book, union_trades
@@ -627,3 +631,65 @@ def reconcile(
         except OSError as exc:
             logger.error("archive reconcile: could not publish the textfile path=%s: %s", textfile, exc)
             raise typer.Exit(1) from exc
+
+
+# --- verify-replay (spec 00051 OPS-3) --------------------------------------------------------------
+
+
+@archive_app.command(name="verify-replay")
+def verify_replay(
+    primary_root: Path = typer.Argument(..., help="The primary mirror (raw, canonical-by-default)."),
+    reconciled_root: Optional[Path] = typer.Argument(
+        None, help="The healed overlay; its hours replay reconciled-first. Omit to replay the primary alone."
+    ),
+    pair: Optional[str] = typer.Option(None, "--pair", help="Only this pair (e.g. BTC/EUR). Defaults to every pair."),
+    since: Optional[str] = typer.Option(None, "--since", help="Only hours at/after this UTC date (YYYY-MM-DD)."),
+    depth: int = typer.Option(
+        100, "--depth", help="Book depth the archive was captured at (capture's default 100); the replayed book prunes to it."
+    ),
+) -> None:
+    """Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
+    `OrderBook` and report, per hour: snapshot-anchored, ts-ordered, checksum-present, replay-ok.
+    Exits non-zero if any hour errs or fails any of the four checks (mirroring `engine replay`'s
+    non-zero-on-drift contract). The stored `checksum` is trusted as capture-time ground truth; no
+    CRC is re-derived (T0045 — the Float64 archive cannot reproduce it byte-exactly)."""
+    since_dt = None
+    if since is not None:
+        try:
+            since_dt = datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=UTC)
+        except ValueError as exc:
+            raise typer.BadParameter(f"--since {since!r} is not a YYYY-MM-DD date") from exc
+
+    results = replay_mod.verify_replay(primary_root, reconciled_root, pair=pair, since=since_dt, depth=depth)
+    if not results:
+        typer.echo("no canonical book hours found")
+        return
+
+    failed = 0
+    for result in results:
+        hour_s = f"{result.hour:%Y-%m-%d %H}:00" if result.hour is not None else "?"
+        line = (
+            f"{result.pair}  {hour_s}  {'ok' if result.passed else 'FAILED'}  "
+            f"anchored={result.snapshot_anchored} ordered={result.ts_ordered} "
+            f"checksum={result.checksum_present} replay={result.replay_ok} rows={result.rows} msgs={result.messages}"
+        )
+        if result.error is not None:
+            line += f"  error={result.error}"
+        typer.echo(line)
+        if not result.passed:
+            failed += 1
+            logger.error(
+                "archive verify-replay: hour failed pair=%s hour=%s anchored=%s ordered=%s checksum=%s replay=%s error=%s",
+                result.pair,
+                hour_s,
+                result.snapshot_anchored,
+                result.ts_ordered,
+                result.checksum_present,
+                result.replay_ok,
+                result.error,
+            )
+
+    typer.echo(f"replayed {len(results)} hour(s): {len(results) - failed} ok, {failed} failed")
+    logger.info("verify-replay complete hours=%d ok=%d failed=%d", len(results), len(results) - failed, failed)
+    if failed:
+        raise typer.Exit(1)

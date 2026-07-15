@@ -158,6 +158,22 @@ Two **correlated-loss** detectors run regardless of the flag and never mint: `bo
 
 `reconcile` exits **2** when a mirror is unreadable (transport), **1** on an integrity failure (an unreadable segment, a non-monotonic stream, a corrupt ledger — no textfile is published, so `last_success_timestamp` goes stale and pages), else **0**. Residual gaps are a *finding*, not a failure: they exit 0 and page through the metric.
 
+`verify-replay` (spec `00051` OPS-3) continuity-replays every canonical book hour — reconciled-first, primary otherwise — through the capture `OrderBook` and reports four per-hour checks: **snapshot-anchored** (the hour opens with a `type=snapshot` message), **ts-ordered** (rows non-decreasing in `ts`), **checksum-present** (every message carries its capture-time `checksum` attestation), and **replay-ok** (the rows regroup into WS-shaped messages and ingest without a structural throw). It never re-derives the CRC: the archive stores `price`/`qty` as Float64, so Kraken's checksum is not byte-exactly reproducible (T0045) — the stored column is trusted as capture-time ground truth.
+
+```bash
+zcrypto archive verify-replay <primary_root> [reconciled_root]
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary mirror (raw, canonical-by-default). |
+| `reconciled_root` | Optional healed overlay; its hours replay reconciled-first. Omit to replay the primary alone. |
+| `--pair` | Only this pair (e.g. `BTC/EUR`). Defaults to every pair. |
+| `--since` | Only hours at/after this UTC date (`YYYY-MM-DD`). |
+| `--depth` | Book depth the archive was captured at (default `100`, capture's default); the replayed book prunes to it. |
+
+One line per hour plus a summary; a bad hour is isolated into its own result (the sweep never aborts). Exits **1** if any hour errs or fails any of the four checks, else **0**.
+
 ## Configuration<a name="configuration"></a>
 
 `zcrypto` reads configuration from **`zcrypto.toml`** in the current working directory (the repo root when running from the checkout). The file is committed with working defaults.
