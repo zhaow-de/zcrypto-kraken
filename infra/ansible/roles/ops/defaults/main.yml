@@ -1,0 +1,2 @@
+ops_data_dir: /var/lib/zcrypto-ops
+ops_compose_dir: /etc/zcrypto-ops

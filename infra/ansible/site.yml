@@ -81,3 +81,27 @@
   roles:
     - role: engine
       tags: [engine]
+
+- name: converge the ops node — compute tier (spec 00051)
+  hosts: ops_host
+  become: true
+  pre_tasks:
+    - name: note — the ops node's charter
+      ansible.builtin.debug:
+        msg: >-
+          The ops node is the compute tier (spec 00051): no trade key, never engine_host,
+          pull-only transport (D10). It is a home-LAN box behind NAT, NOT a public-IP host,
+          so it deliberately omits the internet-facing hardening/firewall/fail2ban roles the
+          capture/engine hosts run — it reuses only base/chrony/docker plus the new `ops` role.
+          Unlike the capture/engine plays above, this play has no `converge_primary` guard —
+          that guard keys on engine_host membership, and the ops node never joins that group.
+      tags: [always]
+  roles:
+    - role: base
+      tags: [base]
+    - role: chrony
+      tags: [chrony]
+    - role: docker
+      tags: [docker]
+    - role: ops
+      tags: [ops]

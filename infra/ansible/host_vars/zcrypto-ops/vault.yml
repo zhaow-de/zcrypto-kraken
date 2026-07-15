@@ -1,0 +1,18 @@
+# host_vars/zcrypto-ops — SECRETS for the home ops node (compute tier, spec 00051).
+#
+# Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable so anyone can see
+# what this host needs, while every value stays `!vault`-encrypted at rest. Same shape and same
+# read/write recipes as host_vars/zcrypto-red/vault.yml — see that file's header.
+#
+# `ansible_host` overrides the group's (host_vars beats group_vars): z-home-zcrypto.zhaow.pro.
+#
+# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
+# password, so both silently print every value below in cleartext.
+
+ansible_host: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65653630653862313732333235346166363938366366626434616165313134646531626638316266
+          3361656533366139303330303461653661396366663637640a303531356636383139633037623335
+          30626562396161353662383564383566313438613436333834323538343565623334666531656139
+          6538643361323335620a346333363832653564313165613664613261643064346566653232363834
+          39366462396166306366346662623066353336393665316464346630626562353931

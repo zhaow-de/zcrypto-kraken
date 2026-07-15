@@ -1,0 +1,27 @@
+# The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 (this file) just
+# provisions the directories + rsync; later OPS-2/3 tasks extend this same file with the
+# liquidations-recorder compose unit + the continuity-replay/verified-path timers — kept as one role,
+# not split into four.
+
+- name: ensure the ops data directory exists
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+- name: ensure the ops compose project directory exists
+  ansible.builtin.file:
+    path: "{{ ops_compose_dir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+- name: install rsync (ships /usr/bin/rrsync, needed by OPS-2's replication channel)
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+    update_cache: true
+    cache_valid_time: 3600

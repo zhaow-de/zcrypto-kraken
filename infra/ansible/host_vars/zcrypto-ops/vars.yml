@@ -1,0 +1,13 @@
+# host_vars/zcrypto-ops — the home ops node: compute tier (spec 00051). ops_host ONLY — it must
+# never join engine_host, or the live Kraken trade key would be rendered onto a host that has no
+# business holding it (D10).
+#
+# The box currently calls itself zcrypto-red (collision with the secondary capture host); this pins
+# the inventory name + on-host hostname to zcrypto-ops instead.
+base_hostname: zcrypto-ops
+
+# Provisional: >= 1 h from every 4h bar boundary, off the hour boundary, >= 1 h from the capture
+# fleet's 21:25/22:25 slots. The fleet reboot-window assert in the base role reads this out of
+# hostvars alongside the capture hosts' slots (see host_vars/zcrypto/vars.yml,
+# host_vars/zcrypto-red/vars.yml) and asserts all of `capture_host + ops_host` are pairwise distinct.
+base_unattended_upgrades_reboot_time: "02:25"
