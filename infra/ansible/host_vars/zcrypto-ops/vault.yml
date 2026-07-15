@@ -17,8 +17,8 @@ ansible_host: !vault |
           6538643361323335620a346333363832653564313165613664613261643064346566653232363834
           39366462396166306366346662623066353336393665316464346630626562353931
 
-# The liquidations recorder's dead-man ping URL (healthchecks.io check `zcrypto-liquidations`,
-# provisioned 2026-07-15 via the Management API; timeout/grace 600s against 60s pings).
+# The liquidations poller's dead-man ping URL (healthchecks.io check `zcrypto-liquidations`,
+# provisioned 2026-07-15 via the Management API; timeout/grace 600s against the poller's ~300s cycle pings).
 liquidations_healthcheck_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           32376165333366383561303539623334306265313064366530623161343065326336353066333662

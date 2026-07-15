@@ -1,5 +1,5 @@
 # The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
-# directories + rsync, OPS-2 renders the liquidations-recorder compose file, OPS-3 installs the
+# directories + rsync, OPS-2 renders the liquidations-poller compose file, OPS-3 installs the
 # continuity-replay/verified-path timers — kept as one role, not split into four.
 
 - name: ensure the ops data directory exists
@@ -27,7 +27,7 @@
     update_cache: true
     cache_valid_time: 3600
 
-# --- OPS-2/3 (spec 00051): the liquidations-recorder compose file + the daily continuity-replay
+# --- OPS-2/3 (spec 00051): the liquidations-poller compose file + the daily continuity-replay
 # and verified-path replay timers. Installed only when the pinned image digest is supplied
 # (-e ops_image_digest=sha256:<...>): a converge without it skips this whole block rather than
 # rendering artifacts that point at a broken image reference.
@@ -44,7 +44,7 @@
         ops_uid: "{{ getent_passwd['deploy'][1] }}"
         ops_gid: "{{ getent_passwd['deploy'][2] }}"
 
-    # OPS-2: render only — the recorder is deliberately NOT auto-started here. First start (and
+    # OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
     # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
     #

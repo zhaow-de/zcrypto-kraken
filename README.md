@@ -64,7 +64,7 @@ Segments land at `<data-dir>/<pair>/{book,trades}/<YYYY>/<MM>/<DD>/<HH>.parquet`
 
 ### `zcrypto liquidations`<a name="zcrypto-liquidations"></a>
 
-24/7 daemon that streams Binance USD-M futures **liquidation** (`forceOrder`) events from the keyless combined stream `wss://fstream.binance.com/stream?streams=!forceOrder@arr` (no API keys) and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per symbol, reusing the capture `SegmentWriter`. Runs on the ops node (spec 00051 OPS-2); liquidations are not backfillable, so the segments replicate to the NAS.
+24/7 daemon that streams Binance USD-M futures **liquidation** (`forceOrder`) events from the keyless combined stream `wss://fstream.binance.com/stream?streams=!forceOrder@arr` (no API keys) and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per symbol, reusing the capture `SegmentWriter`. Shelved in place — Binance geo-fences its futures WS from our egresses; the deployed feed is `liquidations-poll` below (spec 00051 OPS-2); liquidations are not backfillable, so the segments replicate to the NAS.
 
 ```bash
 zcrypto liquidations [OPTIONS]
@@ -79,7 +79,7 @@ Segments land at `<data-dir>/<SYMBOL>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet
 
 ### `zcrypto liquidations-poll`<a name="zcrypto-liquidations-poll"></a>
 
-The T0023 fallback for `zcrypto liquidations` above: Binance geo-fences its futures WS from every egress we own, so this polls Coinalyze's REST `/v1/liquidation-history` endpoint every `$COINALYZE_POLL_SECONDS` (default 300s) for the funding basket's 10 USDT perps (`<COIN>USDT_PERP.A`, one batched call per cycle) and writes closed 1-min liquidation buckets to hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per coin, reusing the capture `SegmentWriter`. Runs on the ops node (spec 00051 OPS-2), same data dir as `zcrypto liquidations` (the single-instance lock keeps both from writing at once).
+The T0023 fallback for `zcrypto liquidations` above: Binance geo-fences its futures WS from every egress we own, so this polls Coinalyze's REST `/v1/liquidation-history` endpoint every `$COINALYZE_POLL_SECONDS` (default 300s) for the funding basket's 10 USDT perps (`<COIN>USDT_PERP.A`, one batched call per cycle) and writes closed 1-min liquidation buckets to hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment), one per coin, reusing the capture `SegmentWriter`. Shelved in place — Binance geo-fences its futures WS from our egresses; the deployed feed is `liquidations-poll` below (spec 00051 OPS-2), same data dir as `zcrypto liquidations` (the single-instance lock keeps both from writing at once).
 
 ```bash
 zcrypto liquidations-poll [OPTIONS]

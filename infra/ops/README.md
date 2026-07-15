@@ -4,25 +4,27 @@ The home ops node (`zcrypto-ops`, `ssh hp`) is the fleet's compute tier: a home-
 
 Everything below is installed by the `ops` Ansible role (`infra/ansible/roles/ops/`) **only when the pinned image digest is supplied** (`-e ops_image_digest=sha256:<...>`, always the **default AVX** build of `ghcr.io/zhaow-de/zcrypto-capture`, never `-compat`, never `:latest`); a converge without the digest skips those installs rather than rendering artifacts that point at a broken image reference.
 
-## Liquidations recorder (OPS-2)
+## Liquidations poller (OPS-2)
 
-The `zcrypto liquidations` daemon (Binance USD-M `forceOrder` events → hourly Parquet segments + `.sha256` manifests) runs as the single service in `{{ ops_compose_dir }}/compose.yaml` (default `/etc/zcrypto-ops/compose.yaml`), rendered by the role from `infra/ansible/roles/ops/templates/compose.yaml.j2`. Liquidations are **not backfillable**, so the tree replicates to the NAS (D10 no-sole-custody — the channel below) and the daemon is **never auto-(re)started by a converge**: the role only renders the file; starting is a deliberate attended step.
+The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_compose_dir }}/compose.yaml` (default `/etc/zcrypto-ops/compose.yaml`), rendered by the role from `infra/ansible/roles/ops/templates/compose.yaml.j2`. It polls Coinalyze's `/v1/liquidation-history` REST endpoint (interval `1min`, `convert_to_usd=true`) every `COINALYZE_POLL_SECONDS` (default 300 s) for the funding basket's 10 Binance USDT perps, ingesting only buckets **proven closed** (`t+60 <= now-120`) into hourly Parquet segments + `.sha256` manifests under `<COIN>/liquidations-1m/`. It replaced the Binance `forceOrder` WS recorder (`zcrypto liquidations`, shelved in place — Binance geo-fences its futures streams from every egress we own; see [T0023]). Liquidations are **not backfillable** beyond Coinalyze's ~25–33 h retention, so the tree replicates to the NAS (D10 no-sole-custody — the channel below) and the daemon is **never auto-(re)started by a converge**: the role only renders the file; starting is a deliberate attended step.
 
 ### Deploy
 
-1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations --help` exists in that image before pinning).
-2. Create a healthchecks.io check (e.g. named `zcrypto-liquidations`) and put its ping URL in the role var `ops_liquidations_healthcheck_url` (host var or `-e`) before the converge — it renders into the compose file as `LIQUIDATIONS_HEALTHCHECK_URL`. Empty skips the recorder's liveness pings (the ping gate is `client.connected` + disk-watermark healthy, `cli/liquidations/command.py`); the dead-man alerts by **missed** pings, so an attached email channel on the check is what pages.
+1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_image_digest=sha256:<...>` (from `infra/ansible/`; read the **default AVX** digest from the capture-image workflow's job summary, and confirm `zcrypto liquidations-poll --help` exists in that image before pinning).
+2. Secrets, both vaulted in `host_vars/zcrypto-ops/vault.yml` and wired via `vars.yml`: `coinalyze_api_key` (free key from coinalyze.net → account → API key) and `liquidations_healthcheck_url` (a healthchecks.io check, e.g. `zcrypto-liquidations`; the dead-man alerts by **missed** pings, so an attached notification channel is what pages). The rendered compose is mode `0600` because it carries the API key.
 3. Start it (attended, plan Task 5): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/compose.yaml up -d`.
-4. Verify by outcome after the next hour boundary: finals appear **for a liquid symbol** (`BTCUSDT`/`ETHUSDT`) at `/var/lib/zcrypto-ops/liquidations/<SYM>/liquidations/<YYYY>/<MM>/<DD>/<HH>.parquet` with a valid `.sha256` sidecar. Sparse symbols linger as `.part` files until their next event ([T0046] — event-driven rotation); that is known, not a failure. `dropping late event` lines right after a (re)start are healthy (reconnect redelivery), not a failure signal.
+4. Verify by outcome within a minute: the first cycle back-fills the ~30 h catch-up window, so hour finals appear immediately at `/var/lib/zcrypto-ops/liquidations/<COIN>/liquidations-1m/<YYYY>/<MM>/<DD>/<HH>.parquet` with valid `.sha256` sidecars, for all 10 coins. The dead-man pings after each fully-successful cycle. Sparse hours (no liquidation for a coin) simply have no bucket; the open hour lingers as `.part` files until a later bucket closes it ([T0046]).
 
 ### Env contract (rendered into `compose.yaml`)
 
 | Variable | Meaning | Set where |
 | -- | -- | -- |
-| `ZCRYPTO_LIQUIDATIONS_DATA_DIR` | Segment output base inside the container: `/data/liquidations` (= `{{ ops_data_dir }}/liquidations` on the host, default `/var/lib/zcrypto-ops/liquidations`). | fixed in `compose.yaml.j2` (matches the `{{ ops_data_dir }}:/data` mount) |
-| `LIQUIDATIONS_HEALTHCHECK_URL` | healthchecks.io dead-man ping URL; the daemon pings it every 60 s while connected and disk-healthy. Empty → pings skipped. | role var `ops_liquidations_healthcheck_url` (Deploy step 2) |
+| `COINALYZE_API_KEY` | The Coinalyze API credential (required; header-only, never in URLs or logs). | vaulted `coinalyze_api_key` → rendered into the `0600` compose |
+| `ZCRYPTO_LIQUIDATIONS_DATA_DIR` | Segment output base inside the container: `/data/liquidations` (= `{{ ops_data_dir }}/liquidations` on the host). | fixed in `compose.yaml.j2` (matches the `{{ ops_data_dir }}:/data` mount) |
+| `LIQUIDATIONS_HEALTHCHECK_URL` | healthchecks.io dead-man ping URL; pinged after each fully-successful poll cycle (~300 s cadence) while disk-healthy. Empty → pings skipped. | role var `ops_liquidations_healthcheck_url` ← vaulted `liquidations_healthcheck_url` |
+| `COINALYZE_POLL_SECONDS` | Poll cadence (default 300; one 10-symbol call per cycle ≈ 2 of Coinalyze's 40/min per-symbol budget). | compose default; override for testing only |
 
-The service runs digest-pinned (`{{ ops_image }}@{{ ops_image_digest }}`), as the `deploy` uid:gid, `restart: unless-stopped`, `json-file` logging capped 10m×3.
+The service runs digest-pinned (`{{ ops_image }}@{{ ops_image_digest }}`), as the `deploy` uid:gid, `restart: unless-stopped`, `json-file` logging capped 10m×3. The shelved WS recorder shares the same data dir and `single_instance_lock`, so the two can never run concurrently.
 
 ### The `sync_liquidations` replication channel (the NAS pulls this node)
 

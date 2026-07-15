@@ -33,7 +33,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations-source decided (option a, free live-only); the OI backfill + harness are autonomous when B2 is picked.
+- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); the OI backfill + harness are autonomous when B2 is picked.
 
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
@@ -93,7 +93,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0038 — NAS mirror accumulates stale part files](T0038-nas-mirror-accumulates-stale-parts.md) — prune-after-verified landed: the pull command now deletes each verified hour's `<HH>.part*.parquet` on the NAS (strict numeric names only, hardened unlink), which drains the ~13.5k-part backlog on the first cycle after the next image rebuild + re-pin; the reader-side half was already closed by Task 7's `canonical_segments` (ripe when: verify the deploy dropped the part count — then close).
 
-- [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; remaining work = execute OPS-1…6, with 00050 Task 13 depending on OPS-3's replayer (ripe when: now — OPS-1 touches nothing live).
+- [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…3 are DONE (iter-097: node converged, Coinalyze liquidations poller live + NAS-replicated, replay timers armed); remaining work = OPS-4 Panel / OPS-5 Offload / OPS-6 Loop (ripe when: picked as the next infra component).
 
 - [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted and healthchecks.io connected natively (owner, 2026-07-15, both alongside email); remainder = wire the Grafana contact point + routing as-code via grafana-push.sh, then decide email's fate after a soak.
 
