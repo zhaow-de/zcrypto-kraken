@@ -53,7 +53,7 @@
 
 **Files:** Create `cli/panel/command.py`; Modify `cli/__main__.py` (register a `panel` Typer sub-app), `README.md` §Usage. Test `tests/test_panel_command.py`.
 
-- [ ] CLI: `zcrypto panel materialize PRIMARY_ROOT [RECONCILED_ROOT] --panel-root PATH [--pair] [--since]`; logs `panel materialize complete pairs=N hours=N rows=N errors=N`, exit non-zero iff `errors` (mirroring `verify-replay`'s contract); writes `panel-meta.json` if absent, **refuses** (clear error) if the existing meta's generation params differ from the code's (a generation change must be an explicit regeneration, not a silent mix). Tests: help, end-to-end tmp-tree run, the meta-mismatch refusal. Full suite + gate + commit `feat(panel): panel materialize command (spec 00052 Task 3)`.
+- [ ] CLI: `zcrypto panel materialize PRIMARY_ROOT [RECONCILED_ROOT] --panel-root PATH [--pair] [--since]`; logs `panel materialize complete pairs=N hours_written=N hours_skipped=N rows=N errors=N`, exit non-zero iff `errors` (mirroring `verify-replay`'s contract); writes `panel-meta.json` if absent, **refuses** (clear error) if the existing meta's generation params differ from the code's (a generation change must be an explicit regeneration, not a silent mix). Tests: help, end-to-end tmp-tree run, the meta-mismatch refusal. Full suite + gate + commit `feat(panel): panel materialize command (spec 00052 Task 3)`.
 
 ---
 

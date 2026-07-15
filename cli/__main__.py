@@ -10,6 +10,7 @@ from cli.engine.command import engine_app
 from cli.liquidations.coinalyze import liquidations_poll
 from cli.liquidations.command import liquidations
 from cli.logging import configure, get_logger
+from cli.panel.command import panel_app
 
 app = typer.Typer(
     add_completion=False,
@@ -20,6 +21,7 @@ app.command(name="liquidations")(liquidations)
 app.command(name="liquidations-poll")(liquidations_poll)
 app.add_typer(engine_app, name="engine")
 app.add_typer(archive_app, name="archive")
+app.add_typer(panel_app, name="panel")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 

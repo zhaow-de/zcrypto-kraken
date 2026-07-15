@@ -19,6 +19,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS, iter-094)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas-iter-094)
   - [`zcrypto archive`](#zcrypto-archive)
+  - [`zcrypto panel`](#zcrypto-panel)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -189,6 +190,30 @@ zcrypto archive verify-replay <primary_root> [reconciled_root]
 | `--depth` | Book depth the archive was captured at (default `100`, capture's default); the replayed book prunes to it. |
 
 One line per hour plus a summary; a bad hour is isolated into its own result (the sweep never aborts). Exits **1** if any hour errs or fails any of the four checks, else **0**.
+
+### `zcrypto panel`<a name="zcrypto-panel"></a>
+
+The 1s L2 primitive panel (spec `00052`): materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair.
+
+```bash
+zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical book archive; must exist. |
+| `reconciled_root` | Optional healed overlay; its hours materialize reconciled-first. Omit to use the primary alone. |
+| `--panel-root` | The panel tree root to write into (required). |
+| `--pair` | Only this pair (e.g. `BTC/EUR`). Defaults to every pair. |
+| `--since` | Only hours at/after this UTC boundary: a `YYYY-MM-DD` date or an ISO-8601 hour (e.g. `2026-07-16T09`). |
+| `--depth` | Book depth the archive was captured at (default `100`, capture's default). |
+| `--allow-holes` | Proceed even if `--since` is newer than a pair's panel watermark, permanently skipping the hole in between. |
+
+`materialize` writes `<panel_root>/panel-meta.json` (schema version, grid, notional ladder, K-levels) on a fresh panel root, and **refuses** if an existing one's generation differs from the running code's — a generation change must be an explicit regeneration of the whole panel tree (spec `00052` D5), never a silent mix.
+
+Each pair is watermarked at its newest existing panel hour; a sweep only materializes hours strictly newer than that. **`--since` that would open a gap above a pair's watermark — or above a fresh pair's earliest canonical hour — refuses by default**: skipping straight to `--since` would permanently strand the hours in `[watermark+1h, since)` once later hours advance the watermark past them. Pass `--allow-holes` to proceed anyway (a warning still names the pair, the watermark, and the stranded range).
+
+A per-hour failure is isolated and logged (`panel hour failed pair=... hour=...: ...`); the sweep continues past it. Exits **1** iff any hour errored, else **0**.
 
 ## Configuration<a name="configuration"></a>
 
