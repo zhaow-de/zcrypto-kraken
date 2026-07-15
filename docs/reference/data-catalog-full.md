@@ -50,3 +50,20 @@ Dataset root `data/ohlc-full/` (gitignored); `basket_sha256` `70c2728e0badf7015f
 ## Reconciliation vs v0 REST
 
 - See `docs/research/02.phase1-ohlcvt-backfill-reconciliation.md` — 36 overlapping series, min OHLC match rate 1.0000 over 9120 overlap rows.
+
+## Live-accruing operational datasets (ops node + NAS replica)
+
+Unlike the frozen baskets above, these accrue continuously and are **hash-versioned at consumption**: a research iteration extracts its window and records that frame's `dataset_hash` in the trial registry (never "latest"). Primary copies live on the **ops node** (`/var/lib/zcrypto-ops/`), hash-verified replicas on the NAS (`/volume1/ZhaoCrypto/`); the workstation holds neither by default (pull on demand — and OPS-6 migrates the research loop to the ops node where these are local).
+
+### L2 primitive panel (`l2-panel/`, since 2026-07-08 capture start; accruing hourly)
+
+- **Producer:** `zcrypto panel materialize` (spec `00052`, iter-098) over the canonical (reconciled-first) depth-100 book capture; hourly ops-node timer, per-pair watermarks + `<HH>.state.json` carry (state threads across update-opening hours — ~96% of hours; decision `[iter-098]` + its correction).
+- **Grid/schema:** 1-second state samples, ~20 Float64 columns per row: `spread, spread_bps, mid, microprice, imbalance_l1, fill_bps_{bid,ask}_{100,1k,10k} (effective-spread-at-size, EUR notionals, null when the visible book is too shallow), depth_qty_{bid,ask}_{l1,l5,l10}, updates`. Generation params pinned in `l2-panel/panel-meta.json` (schema_version 1, grid 1s); a generation change regenerates the whole tree (`f(raw)`, recomputable).
+- **Layout:** `l2-panel/<BASE>/<QUOTE>/panel-1s/<YYYY>/<MM>/<DD>/<HH>.parquet` + `.sha256` (+ `.state.json`). First-look sanity (2026-07-15, 1,740 hours): median `spread_bps` BTC 0.18 · ETH 0.83 · SOL 1.48 · XRP 1.36 · LTC 2.60 · DOGE 2.97 · LINK 3.00 · AVAX 3.40 · ADA 3.73 · DOT 5.33.
+- **Consumers:** [[T0014]] spread calibration (ripe ≈2026-07-22), [[T0024]] universe spread-cap, future microstructure features (`cli/features/` derivations, hot→hot). Caveats: honest gaps (an archive gap or pre-first-snapshot hour has no rows); no CRC re-attestation (T0045 owns that).
+
+### Binance liquidations, 1-minute buckets (`liquidations/`, since ≈2026-07-14T12Z; accruing per 5-min poll)
+
+- **Producer:** `zcrypto liquidations-poll` (spec 00051 OPS-2 / plan Task 10, the T0023 Coinalyze fallback — Binance geo-fences its futures WS from every egress we own). Coinalyze `/v1/liquidation-history`, `interval=1min`, `convert_to_usd=true`, the 10 Binance USDT perps (`<COIN>USDT_PERP.A`), closed-bucket discipline (`t+60 ≤ now−120`).
+- **Schema:** `ts, symbol, long_usd, short_usd, event_id` per bucket; **zero-liquidation minutes have no bucket** (sparse by source design). Layout `liquidations/<COIN>/liquidations-1m/<YYYY>/…/<HH>.parquet` + manifests; sparse hours finalize at a 31 h wall-clock lag (T0046).
+- **Hard caveat:** the stream is a **lower-bound proxy, not the tape** (Binance's own feed has been lossy since 2021), and Coinalyze retains only ~25–33 h of 1-min bars — **poller downtime beyond ~30 h is a permanent gap** (dead-man `zcrypto-liquidations` pages on silence). Consumer: the B2 derivatives-positioning family ([[T0023]]/[[T0016]]).

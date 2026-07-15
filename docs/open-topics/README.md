@@ -19,8 +19,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Open<a name="open"></a>
 
-- [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the cost model's missing spread term from T0003's L2 capture (ripe when: ≥2 weeks captured + synced copy, ≈2026-07-22).
-
 - [T0022 — B1 intraday seasonality family](T0022-b1-intraday-seasonality-family.md) — split from T0016 when its prerequisites fired; conditioning-overlay trials on the adopted A2-4h ensemble against the 15m substrate, net-of-cost per T0009 (ripe when: live now — trials ride research iterations).
 
 - [T0024 — universe spread-cap criterion](T0024-universe-spread-cap-criterion.md) — add the pending `spread_cap` filter to universe selection once captured L2 exists; shares T0014/T0003's L2 dependency (ripe when: synced L2 copy, ≈2026-07-22).
@@ -38,6 +36,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
 - [T0044 — correcting the reconcile ledger resets the counters](T0044-reconcile-ledger-correction-resets-counters.md) — the reconcile counters are summed from an append-only ledger, so a correction/rebuild reads as a reset; the two `increase()` rules are guarded with `resets()==0` so it can't false-page, and the correction **runbook is now written** (`infra/nas/README.md`); still open: a correction marker + the O(ledger) rotation design (ripe when: the ledger needs another correction, or the ~17-min Atom cycle slows).
+
+- [T0014 — captured-spread cost calibration](T0014-captured-spread-cost-calibration.md) — the compute home is DONE (iter-098: the 1s L2 panel carries spread + effective-spread-at-size for all pairs); remainder = the calibration analysis + the cli/costs spread term + the A-family robustness re-read (ripe when: ≥2 weeks captured, ≈2026-07-22).
 
 ### Resolved<a name="resolved"></a>
 
@@ -93,7 +93,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0038 — NAS mirror accumulates stale part files](T0038-nas-mirror-accumulates-stale-parts.md) — prune-after-verified landed: the pull command now deletes each verified hour's `<HH>.part*.parquet` on the NAS (strict numeric names only, hardened unlink), which drains the ~13.5k-part backlog on the first cycle after the next image rebuild + re-pin; the reader-side half was already closed by Task 7's `canonical_segments` (ripe when: verify the deploy dropped the part count — then close).
 
-- [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…3 are DONE (iter-097: node converged, Coinalyze liquidations poller live + NAS-replicated, replay timers armed); remaining work = OPS-4 Panel / OPS-5 Offload / OPS-6 Loop (ripe when: picked as the next infra component).
+- [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…4 are DONE (iter-097 bring-up; iter-098 the L2 panel, verified + NAS-replicated + accruing); remaining = OPS-5 Offload / OPS-6 Loop (OPS-6 now also owns the workstation ./data migration to ops + NAS) (ripe when: picked as the next infra component).
 
 - [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted and healthchecks.io connected natively (owner, 2026-07-15, both alongside email); remainder = wire the Grafana contact point + routing as-code via grafana-push.sh, then decide email's fate after a soak.
 

@@ -122,3 +122,16 @@ ______________________________________________________________________
 - **Exit-bar instrumentation:** built and committed the segment-timestamp-continuity gap measurement (`infra/scripts/continuity.py` — per T0003 the daemon's counters can't see restart damage; this script is the exit-bar instrument and the T0036 post-deploy check, run against a pulled copy of the archive). Baseline on the real archive since 2026-07-09: worst stream **0.0890%** of the <0.1% bar — the two truncation events (07-11 reboot 83 s, 07-13 crash 270 s) consumed 86% of the budget; the old code's mid-hour deploy would have failed the bar outright.
 - **New topics:** [[T0038]] (NAS mirror accumulates stale parts — 7,824 measured; a `**/*.parquet` glob double-counts, first consumer at risk is T0014) opened; T0036→partial (deploy remains), T0035→partial, T0037 core closed with documented residuals, T0032 updated.
 - Suite: **1,395 passed** at branch tip; every fix TDD'd (failing test first); subagent-reviewed per commit.
+
+______________________________________________________________________
+
+**Continuation — post-close backlog entries begin here (the phase closed with its report; later data-foundation iterations keep appending below per `iterations-history.md`).**
+
+______________________________________________________________________
+
+## 2026-07-15 — iter-098: the L2 primitive panel (spec 00052, OPS-4)
+
+- **The panel exists, verified, replicating, accruing hourly**: 1-second-grid wide primitives (spread/spread_bps/mid/microprice/imbalance, effective-spread-at-size for €{100,1k,10k}, depth at K∈{1,5,10}, updates/s) materialized from the canonical reconciled-first depth-100 capture — 1,740 hours × 10 pairs, zero errors, zero unanchored, manifests verified, NAS replica hash-verified (`checked=1740 ok=1740 failed=0`). First-look spread table (median bps): BTC 0.18 → DOT 5.33, economically ordered and coherent with iter-079's live observation. [[T0014]]'s calibration is now a one-query start.
+- **A design-premise falsified by first contact with real data** (decision `[iter-098]` correction, phase-1 log): only ~4% of hours open with a snapshot (Kraken snapshots arrive on *subscribe*), invalidating the self-contained-hour design in both the panel AND the merged OPS-3 verifier. Fixed by **state-threading** (OrderBook state carried across contiguous hours; `<HH>.state.json` sidecars for O(1) watermark resume; "unanchored" as an honest-gap category) and **chain-anchored** verify semantics. A second critical caught in review: final-fractional-second messages must drain into the carried book or every successor starts stale (locked by a regression test).
+- **Infra**: hourly ops-node timer pair (recurring NAS→ops pull — closing the replay-staleness gap — then watermarked materialize), `PANEL_*` NAS replication channel, dead-men `zcrypto-archive-pull`/`zcrypto-panel`, guards from review (dark-channel not-clean reporting, timer state tracking the var, `--allow-holes`, generation-mismatch refusal).
+- **Catalog discipline**: `docs/reference/data-catalog-full.md` gains a "Live-accruing operational datasets" section (this panel + the T0023 liquidations buckets) so the research loop's pick-time surfaces and the dataset inventory cannot drift; codified as a closeout rule alongside this entry.
