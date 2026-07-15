@@ -95,7 +95,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…3 are DONE (iter-097: node converged, Coinalyze liquidations poller live + NAS-replicated, replay timers armed); remaining work = OPS-4 Panel / OPS-5 Offload / OPS-6 Loop (ripe when: picked as the next infra component).
 
-- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted and healthchecks.io connected natively (owner, 2026-07-15, both alongside email); remainder = wire the Grafana contact point + routing as-code via grafana-push.sh, then decide email's fate after a soak.
+- [T0047 — Slack incoming-webhook notifications](T0047-slack-webhook-notifications.md) — webhook minted + vaulted, healthchecks.io connected natively, and `grafana-push.sh` now upserts a Slack contact-point integration onto the existing receiver as-code (phase one: alongside email, no routing changes); remainder = the attended test-fire + receiver-name wiring, then decide email's fate after a soak.
 
 ### Resolved<a name="resolved-1"></a>
 

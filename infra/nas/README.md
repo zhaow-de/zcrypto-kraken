@@ -248,13 +248,22 @@ commit to `infra/grafana/`.
    - `GRAFANA_PROM_DS_UID` — the Prometheus datasource UID on the instance (alert-rule queries).
    - `GRAFANA_LOKI_DS_UID` — the Loki datasource UID on the instance (the ERROR-logs rule).
    - `GRAFANA_ALERT_FOLDER_UID` — the folder UID the alert rules provision into.
+   - `GRAFANA_SLACK_WEBHOOK_URL` (optional, T0047) — the Slack incoming-webhook URL, sourced from
+     the vaulted `slack_webhook_url` in `infra/ansible/group_vars/capture_host/vault.yml` — never
+     committed plaintext. Unset/empty skips the Slack section cleanly.
+   - `GRAFANA_SLACK_RECEIVER` (optional, T0047) — the exact contact-point/receiver name to attach
+     the Slack integration to (e.g. `email`, the receiver every rule in `alerts.yaml` already routes
+     to). No default: leaving it unset (while the webhook URL is set) lists the live contact points
+     instead of guessing.
 2. Create the `email` contact point in Grafana (Alerting → Contact points → New contact point,
    name it exactly `email`, integration `Email`, enter the destination address(es)) — every alert
    rule in `alerts.yaml` routes to `notification_settings.receiver: email` by name, so the rules
    fail to notify anywhere until this contact point exists.
 3. Run `infra/scripts/grafana-push.sh` with the env vars from step 1 exported. It pushes the dashboard
    (overwriting by its fixed uid `zcrypto-main`) then upserts each alert rule (by its own stable
-   `uid`).
+   `uid`); if `GRAFANA_SLACK_WEBHOOK_URL` and `GRAFANA_SLACK_RECEIVER` are both set, it also upserts
+   a Slack integration (stable uid `zcrypto-slack-webhook`) onto the named receiver — phase one runs
+   Slack **alongside** email, with no notification-policy changes (T0047).
 4. On first load of the dashboard, confirm (or set as the template-variable defaults) that its
    `${DS_PROMETHEUS}`/`${DS_LOKI}` datasource variables resolve to the correct Prometheus/Loki
    datasources — Grafana auto-binds these on import, but an instance with more than one datasource
