@@ -1674,3 +1674,108 @@ def test_t0037_a_coherently_fast_walk_cannot_poison_the_witness(tmp_path, clock)
     a.close()
     assert genuine <= set(_disk_column(tmp_path, "checksum"))
     assert 999 in set(_disk_column(tmp_path, "checksum"))
+
+
+# --- T0046: wall-clock hour finalization for sparse writers --------------------------------------
+#
+# `finalize_completed_hours(cutoff)` is the escape hatch for a symbol so sparse that no "next event"
+# ever arrives to close its hour the ordinary way (see the topic doc). The caller (the Coinalyze
+# poller) owns `cutoff`'s safety margin; this method only ever touches hours strictly before it.
+
+
+def test_finalize_completed_hours_on_a_fresh_writer_is_a_no_op(tmp_path):
+    w = _new_writer(tmp_path, flush_rows=5000)
+    assert w.finalize_completed_hours(_ts(11, 0)) == 0
+
+
+def test_finalize_completed_hours_flushes_and_finalizes_a_stale_open_hour(tmp_path):
+    w = _new_writer(tmp_path, flush_rows=5000)  # large enough that both rows stay buffered in RAM
+    w.append(_book_event(10, 0))
+    w.append(_book_event(10, 30))
+
+    finalized = w.finalize_completed_hours(_ts(11, 0))
+
+    assert finalized == 1
+    assert w._buffer == []
+    assert w._current_hour is None
+    path = _segment_path(tmp_path, 10)
+    assert path.exists()
+    assert verify_manifest(path) is True
+    assert pl.read_parquet(path).height == 2
+
+
+def test_finalize_completed_hours_leaves_an_hour_at_or_after_the_cutoff_untouched(tmp_path):
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(14, 0))
+
+    finalized = w.finalize_completed_hours(_ts(14, 0))  # the open hour itself -- not STRICTLY older
+
+    assert finalized == 0
+    assert w._current_hour == _ts(14, 0)
+    assert w._buffer  # still buffered -- untouched
+    assert not _segment_path(tmp_path, 14).exists()
+
+
+def test_finalize_completed_hours_merges_crash_leftover_parts_with_no_open_hour(tmp_path):
+    # A previous process opened hour 10, flushed parts, and crashed (no close()) -- this fresh
+    # writer never received an event, so `_current_hour` is None and the ordinary sweep (deferred
+    # to the first event) has not run either.
+    w1 = _new_writer(tmp_path, flush_rows=5)
+    for i in range(15):  # 3 parts, no rotation triggered (no next-hour event)
+        w1.append(_hour10_event(i, i))
+    del w1
+
+    w2 = _new_writer(tmp_path, flush_rows=5)
+    assert w2._current_hour is None
+
+    finalized = w2.finalize_completed_hours(_ts(11, 0))
+
+    assert finalized == 1
+    path = _segment_path(tmp_path, 10)
+    assert path.exists()
+    assert verify_manifest(path) is True
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(15))
+    assert not list(path.parent.glob("10.part*.parquet"))
+
+    # The finalized hour is still floor-protected: a late replay must not reopen it.
+    w2.append(_hour10_event(5, 999))
+    assert pl.read_parquet(path)["checksum"].to_list() == list(range(15))
+    assert w2._current_hour is None
+
+
+def test_finalize_completed_hours_is_idempotent(tmp_path):
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(10, 0))
+
+    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+    assert w.finalize_completed_hours(_ts(11, 0)) == 0
+    assert w.finalize_completed_hours(_ts(12, 0)) == 0  # a later cutoff still finds nothing left
+
+
+def test_finalize_completed_hours_makes_a_later_replay_a_dropped_late_event(tmp_path):
+    # Ordinary rotation never resets `_current_hour` to `None` -- it always advances forward via
+    # `_open_hour`, which re-anchors the late-event floor for free. This method is the first thing
+    # that clears it without opening a new hour, so it must re-anchor `_floor` itself, or a replay
+    # arriving while `_current_hour` is `None` would silently reopen a hour already committed to
+    # disk -- exactly the "parts beside a readable final" ambiguity T0036 exists to prevent.
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(10, 0))
+    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+
+    w.append(_book_event(10, 30, checksum=999))  # a late replay for the now-finalized hour
+
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == [42]  # only the original row; replay dropped
+    assert w._current_hour is None  # the late event must not reopen the hour
+
+
+def test_finalize_completed_hours_then_close_is_safe(tmp_path):
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(10, 0))
+    assert w.finalize_completed_hours(_ts(11, 0)) == 1
+
+    w.close()  # must not raise, and must not touch the already-finalized hour
+
+    path = _segment_path(tmp_path, 10)
+    assert pl.read_parquet(path)["checksum"].to_list() == [42]
+    assert verify_manifest(path) is True

@@ -21,7 +21,7 @@ import signal
 import time
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -56,6 +56,19 @@ _CLOSE_MARGIN_SECONDS = 120
 # still holds is harmless (it returns what exists), so 30 h maximizes post-outage catch-up without
 # ever asking for provably-purged data.
 _CATCHUP_WINDOW_SECONDS = 30 * 3600
+
+# T0046: most of the funding basket's symbols liquidate rarely, so `SegmentWriter`'s event-driven
+# rotation (an hour closes only when the NEXT event for that symbol crosses its boundary) can leave
+# an hour open -- unmanifested, sitting in RAM or as unmerged parts -- indefinitely. Each cycle
+# below calls `SegmentWriter.finalize_completed_hours(now - _FINALIZE_LAG)` per writer to close
+# The lag MUST exceed _CATCHUP_WINDOW_SECONDS: poll_cycle only ever requests [now-30h, now],
+# so a 31h-old hour can never be re-fetched REGARDLESS of Coinalyze's ~25-33h retention --
+# finalizing it forecloses nothing recoverable, and the >=1h margin stays monotone across cycles.
+# ~25-33h retention): finalizing an hour any earlier would drop a post-outage re-fetch of it below
+# the writer's late-event floor -- silently discarding data that was still recoverable. At 31h
+# nothing recoverable remains, so finalization forecloses nothing; sparse-symbol manifests thus
+# appear at most ~31h late instead of never.
+_FINALIZE_LAG_SECONDS = 31 * 3600
 
 DEFAULT_DATA_DIR = Path("/var/lib/zcrypto-ops/liquidations")
 DATA_DIR_ENV_VAR = "ZCRYPTO_LIQUIDATIONS_DATA_DIR"
@@ -178,6 +191,11 @@ def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskW
         logger.exception("Coinalyze poll cycle failed on unexpected data -- retrying next cycle")
         return False
     logger.info("poll cycle submitted %d closed bucket(s) (re-submissions are dropped by dedup/floor)", written)
+    # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
+    # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
+    finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
+    for writer in writers.values():
+        writer.finalize_completed_hours(finalize_cutoff)
     return True
 
 
