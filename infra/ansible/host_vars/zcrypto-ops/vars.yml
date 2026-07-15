@@ -24,6 +24,11 @@ ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
 # Same wiring for the two daily replay timers' dead-men (vault.yml holds the encrypted URLs).
 ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
 ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
+ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
+
+# The recurring NAS->ops pull source (spec 00052 D6) -- the seed channel, now on a timer.
+ops_nas_pull_source: "zcrypto-deploy@192.168.100.5:"
 
 # The operator's fleet-wide deploy pubkey (same value as group_vars/capture_host/vars.yml). Kept
 # here rather than moved to group_vars/all to avoid touching the live capture hosts' var resolution;
