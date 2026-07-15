@@ -1,2 +1,23 @@
 ops_data_dir: /var/lib/zcrypto-ops
 ops_compose_dir: /etc/zcrypto-ops
+
+# The pinned image the ops-node containers run: always the DEFAULT (AVX) build — never `-compat`,
+# never `:latest` (spec 00051). `ops_image_digest` deliberately has NO default: pass it per-run
+# (-e ops_image_digest=sha256:<...>); every task that renders an image reference is guarded with
+# `when: ops_image_digest is defined`, so a converge without it skips those installs rather than
+# rendering units that point at a broken image reference.
+ops_image: ghcr.io/zhaow-de/zcrypto-capture
+
+# Seeded subtrees under ops_data_dir (Task 5 pulls them from the NAS, mirroring its layout); the
+# replay timers mount ops_data_dir at /data, so these are the container-visible tree names.
+ops_capture_subdir: capture-segments
+ops_reconciled_subdir: capture-reconciled
+ops_journal_subdir: engine-journal
+
+# node-exporter-style textfile-collector dir the replay timers publish their .prom files into.
+ops_textfile_dir: "{{ ops_data_dir }}/textfile"
+
+# healthchecks.io dead-man ping URLs, one per timer. Empty means the ping is simply skipped
+# (mirroring the CLI's optional `ping_healthcheck` semantics).
+ops_verify_replay_healthcheck_url: ""
+ops_verified_replay_healthcheck_url: ""

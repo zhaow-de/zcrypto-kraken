@@ -1,7 +1,6 @@
-# The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 (this file) just
-# provisions the directories + rsync; later OPS-2/3 tasks extend this same file with the
-# liquidations-recorder compose unit + the continuity-replay/verified-path timers — kept as one role,
-# not split into four.
+# The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
+# directories + rsync, OPS-3 installs the continuity-replay/verified-path timers; the OPS-2
+# liquidations-recorder compose unit extends this same file — kept as one role, not split into four.
 
 - name: ensure the ops data directory exists
   ansible.builtin.file:
@@ -19,9 +18,63 @@
     group: deploy
     mode: "0755"
 
-- name: install rsync (ships /usr/bin/rrsync, needed by OPS-2's replication channel)
+- name: install rsync (ships /usr/bin/rrsync, needed by OPS-2's replication channel) + curl (the replay timers' dead-man ping)
   ansible.builtin.apt:
-    name: rsync
+    name:
+      - rsync
+      - curl
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# --- OPS-3 (spec 00051): the daily continuity-replay + verified-path replay timers. Installed only
+# when the pinned image digest is supplied (-e ops_image_digest=sha256:<...>): a converge without it
+# skips this whole block rather than rendering units that point at a broken image reference.
+- name: install the replay timers (needs the pinned image digest)
+  when: ops_image_digest is defined
+  block:
+    - name: look up the deploy account (the replay containers run as its uid/gid)
+      ansible.builtin.getent:
+        database: passwd
+        key: deploy
+
+    - name: derive the deploy uid/gid for the container user mapping
+      ansible.builtin.set_fact:
+        ops_uid: "{{ getent_passwd['deploy'][1] }}"
+        ops_gid: "{{ getent_passwd['deploy'][2] }}"
+
+    - name: ensure the textfile-collector directory exists
+      ansible.builtin.file:
+        path: "{{ ops_textfile_dir }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0755"
+
+    - name: install the replay runner scripts
+      ansible.builtin.template:
+        src: "{{ item }}.sh.j2"
+        dest: "/usr/local/sbin/zcrypto-{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [verify-replay, verified-replay]
+
+    - name: render the replay systemd services + timers
+      ansible.builtin.template:
+        src: "{{ item.0 }}.{{ item.1 }}.j2"
+        dest: "/etc/systemd/system/zcrypto-{{ item.0 }}.{{ item.1 }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ ['verify-replay', 'verified-replay'] | product(['service', 'timer']) | list }}"
+
+    # Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
+    # too would run both replays on every boot (same rationale as the capture prune timer).
+    - name: enable + start the replay timers
+      ansible.builtin.systemd_service:
+        name: "zcrypto-{{ item }}.timer"
+        daemon_reload: true
+        enabled: true
+        state: started
+      loop: [verify-replay, verified-replay]
