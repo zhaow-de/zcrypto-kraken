@@ -17,8 +17,8 @@ logger = get_logger("liquidations.recorder")
 
 
 def _epoch_ms_to_utc(ms: int) -> datetime:
-    """Binance `o.T` (event time, epoch milliseconds) -> a tz-aware UTC microsecond `datetime`, the
-    form `SegmentWriter` requires for hour rotation."""
+    """Binance `o.T` (transaction/trade time, epoch milliseconds — `E` is the event time) -> a
+    tz-aware UTC microsecond `datetime`, the form `SegmentWriter` requires for hour rotation."""
     seconds, millis = divmod(ms, 1000)
     return datetime.fromtimestamp(seconds, tz=UTC).replace(microsecond=millis * 1000)
 
@@ -54,11 +54,15 @@ def parse_force_order(raw: str) -> dict | None:
             "side": str(order["S"]),
             "price": float(price),
             "orig_qty": float(orig_qty),
-            "avg_price": float(order["ap"]),
-            "order_status": str(order["X"]),
+            "avg_price": float(order["ap"]) if order.get("ap") is not None else None,
+            "order_status": order.get("X"),
             "event_id": f"{symbol}-{trade_time_ms}-{price}-{orig_qty}",
         }
-    except KeyError, TypeError, ValueError:
+    except Exception:
+        # Untrusted wire data: any conversion failure (missing/garbage core field, an out-of-range
+        # `T` overflowing int()/datetime.fromtimestamp()) means "not a usable row", never a crash --
+        # this is a "never raises" parser. `except Exception` deliberately excludes
+        # KeyboardInterrupt/CancelledError (BaseException), so those still propagate as stop signals.
         return None
 
 

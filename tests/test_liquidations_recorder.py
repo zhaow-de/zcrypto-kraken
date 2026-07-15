@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import polars as pl
@@ -7,6 +8,13 @@ import polars as pl
 from cli.capture.gap_monitor import DiskWatermark
 from cli.capture.segment_writer import verify_manifest
 from cli.liquidations.recorder import LiquidationRecorder, parse_force_order, run_recorder
+
+
+@dataclass
+class _FakeUsage:
+    """Minimal stand-in for `shutil.disk_usage`'s return value — only `.free` is read."""
+
+    free: int
 
 
 def _envelope(*, symbol="BTCUSDT", side="SELL", price="9910", qty="0.014", avg="9910", status="FILLED", t_ms):
@@ -51,6 +59,25 @@ def test_parse_force_order_maps_envelope_to_row():
     assert row["ts"].tzinfo is not None  # tz-aware UTC
 
 
+def test_parse_force_order_tolerates_missing_avg_price_and_status():
+    # `ap`/`S` and `X` are secondary fields; a forceOrder missing them still carries the required
+    # identity fields (s/S/p/q/T), so it must still yield a row (with the secondary fields None)
+    # rather than the whole non-backfillable liquidation being discarded.
+    raw = json.dumps(
+        {
+            "stream": "!forceOrder@arr",
+            "data": {
+                "e": "forceOrder",
+                "o": {"s": "BTCUSDT", "S": "SELL", "q": "0.014", "p": "9910", "T": 1568014460893},
+            },
+        }
+    )
+    row = parse_force_order(raw)
+    assert row is not None
+    assert row["avg_price"] is None
+    assert row["order_status"] is None
+
+
 def test_parse_force_order_returns_none_for_non_force_order():
     # A different event type on the same combined stream envelope.
     assert parse_force_order(json.dumps({"stream": "x", "data": {"e": "aggTrade", "o": {}}})) is None
@@ -64,6 +91,27 @@ def test_parse_force_order_returns_none_and_never_raises_on_garbage():
         "123",
         json.dumps({"data": {"e": "forceOrder"}}),
         json.dumps({"data": {"e": "forceOrder", "o": {"s": "BTCUSDT"}}}),
+        # `T: Infinity` -- json.loads parses the `Infinity` literal to float('inf'); int(float('inf'))
+        # raises OverflowError, which the old `except KeyError, TypeError, ValueError` did not catch.
+        '{"stream":"x","data":{"e":"forceOrder","o":{"s":"BTCUSDT","S":"SELL","p":"1","q":"1","ap":"1","X":"FILLED","T":Infinity}}}',
+        # A huge out-of-range integer `T` survives `int()` (Python bigints) but blows up
+        # `datetime.fromtimestamp` with OverflowError/OSError depending on platform.
+        json.dumps(
+            {
+                "data": {
+                    "e": "forceOrder",
+                    "o": {
+                        "s": "BTCUSDT",
+                        "S": "SELL",
+                        "p": "1",
+                        "q": "1",
+                        "ap": "1",
+                        "X": "FILLED",
+                        "T": 99999999999999999999999,
+                    },
+                }
+            }
+        ),
     ]:
         assert parse_force_order(bad) is None
 
@@ -114,3 +162,19 @@ def test_recorder_writes_hour_finals_dedups_and_flushes_on_close(tmp_path):
     # Shutdown flushed hour 08's buffered event to a part, but close() does NOT finalize the open hour.
     assert not (base / "08.parquet").exists()
     assert list(base.glob("08.part*.parquet"))
+
+
+def test_run_recorder_skips_rows_while_disk_watermark_is_breached(tmp_path):
+    row = parse_force_order(_envelope(price="100", qty="1", t_ms=1568008800000))
+    client = _FakeStreamClient([row])
+    recorder = LiquidationRecorder(tmp_path)
+
+    watermark = DiskWatermark(tmp_path, min_free_bytes=1000, usage_fn=lambda p: _FakeUsage(free=0))
+    watermark.check()  # forces a breach (0 free < 1000 min_free_bytes)
+    assert watermark.breached is True
+
+    asyncio.run(run_recorder(client, recorder, watermark))
+    recorder.close()
+
+    # The row was skipped by the write gate: no segment/part file for BTCUSDT anywhere under tmp_path.
+    assert not list(tmp_path.rglob("*.parquet"))

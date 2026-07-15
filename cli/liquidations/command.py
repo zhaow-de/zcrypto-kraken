@@ -9,6 +9,7 @@ from typing import Optional
 
 import typer
 
+from cli.capture.command import single_instance_lock
 from cli.capture.gap_monitor import DiskWatermark, ping_healthcheck
 from cli.liquidations.recorder import LiquidationRecorder, run_recorder
 from cli.liquidations.ws_client import DEFAULT_URI, BinanceLiquidationClient
@@ -106,4 +107,7 @@ def liquidations(
     healthcheck_url = os.environ.get(HEALTHCHECK_ENV_VAR)
 
     logger.info("starting liquidations recorder data_dir=%s duration=%s", resolved_data_dir, duration)
-    asyncio.run(_run(resolved_data_dir, duration, healthcheck_url, DEFAULT_URI))
+    # Same reason as capture (T0023): two writers racing the same SegmentWriter part sequence
+    # silently clobber each other's parts and shred unbackfillable rows.
+    with single_instance_lock(resolved_data_dir):
+        asyncio.run(_run(resolved_data_dir, duration, healthcheck_url, DEFAULT_URI))
