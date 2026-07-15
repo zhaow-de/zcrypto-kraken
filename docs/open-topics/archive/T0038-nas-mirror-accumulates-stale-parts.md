@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: before any consumer reads the NAS archive — the first is T0014's captured-spread calibration (≈2026-07-22); the fix is autonomous and ripe now
+status: resolved
 ---
 
 # The NAS mirror accumulates stale part files, so a `*.parquet` glob double-counts every hour
@@ -61,9 +60,11 @@ The prune-after-verified fix landed (commit on `fix/engine-host-split`): `verify
 
 The reader-side half is already closed by Task 7's `canonical_segments` (`cli/archive/reader.py`), which globs `*/*/<kind>/*/*/*/*.parquet` + a strict `^\d{2}\.parquet` match, so a consumer using it cannot double-count.
 
-**Still open:** the fix is committed but NOT yet deployed — it drains the existing ~13.5k-part backlog only on the first cycle after the capture image is rebuilt and the NAS re-pinned. Close this topic once that deploy is verified (the mirror's part count falls to ~0 for hours with verified finals).
+**Deploy verified — CLOSED (2026-07-15 23:41 UTC).** The NAS `archive-pull` container was re-pinned to an image carrying the prune (during the 00051/00052 deploys), and the backlog drained: measured live, both mirrors together hold **109** part files — 108 in the in-progress hour and one in the immediately-preceding hour awaiting its next verified pull cycle — down from ~13.5k. Every hour with a verified final is clean.
 
 ## Suggested next steps
+
+_(All adopted and delivered — the record below is the design rationale that shaped the fix.)_
 
 - **Do NOT simply add `--delete`.** It would fix the symptom and destroy the mirror's value: the NAS
   is the only backup of an unbackfillable dataset, and `--delete` makes any loss on the VPS propagate

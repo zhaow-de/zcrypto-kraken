@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: captured L2 spread data is available and synced (shares T0014's trigger — ≥2 weeks captured + a workstation/NAS-synced copy, ≈2026-07-22)
+ripe_when: shares T0014's data-span trigger — ≥2 weeks captured, ≈2026-07-22; the spread data itself is already queryable per-second off the ops-node 1s panel (iter-098)
 ---
 
 # Universe selection — spread-cap criterion
@@ -19,5 +19,5 @@ Selection currently filters on margin + median quote volume only; a thin-book pa
 
 ## Suggested next steps
 
-- Once the synced L2 copy exists (T0003 remainder): compute per-pair median/percentile top-of-book spread (reuse T0014's spread calibration — one derivation, two consumers).
+- Compute per-pair median/percentile top-of-book spread off the ops-node 1s panel (reuse T0014's spread calibration — one derivation, two consumers).
 - Add a `spread_cap` criterion to `cli/universe/rules.py` (a max-spread floor), re-run `build_universe_file`, and record whether the current 12-name selection changes.

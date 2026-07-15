@@ -1,9 +1,9 @@
 ---
 status: partial
-ripe_when: now — the storage-topology decision is ratified (spec 00051); OPS-1 provisioning is executable immediately and touches nothing live
+ripe_when: now — OPS-1…4 landed (iter-097/098); the remainder is OPS-5 Offload (reconciler off the Atom, ops-node scraper, staleness alert) and OPS-6 Loop (24×7 research loop + the workstation ./data migration), both autonomous
 ---
 
-# Home ops node — a real-CPU compute tier (deferred until after Role C)
+# Home ops node — a real-CPU compute tier
 
 ## Context — what
 

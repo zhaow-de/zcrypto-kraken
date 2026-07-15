@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the B2 (derivatives-positioning) family is picked for an iteration — the liquidations-source decision is now made (option a, below), so B2 opens autonomously (OI backfill + harness)
+ripe_when: the B2 (derivatives-positioning) family is picked for an iteration — sourcing is fully unblocked: funding backfilled (iter-090), liquidations accruing live via the Coinalyze poller (2026-07-15; the Binance WS recorder shelved, geo-fenced), so only the OI backfill + harness remain as autonomous pre-work
 ---
 
 # B2 derivatives-positioning data sourcing (funding / OI / liquidations)

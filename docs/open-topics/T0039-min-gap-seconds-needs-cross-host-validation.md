@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the spec-00050 secondary capture host is live and both mirrors land on the NAS — the measurement needs two concurrent streams, which do not exist yet
+ripe_when: FIRED — the secondary went live 2026-07-14 and both mirrors land on the NAS; the detect-only soak is running, its analysis due ≈2026-07-16 19:15 UTC (spec 00050 Task 12, feeds the "(2 of 2)" PR)
 ---
 
 # The reconciler's `--min-gap-seconds` cannot be pinned from single-host data

@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the dashboard + alert rules are provisioned live (done 2026-07-13, iter-094) and the creds vaulted (2026-07-11) — still open is the VPS `obs` role + app `/metrics` exporters (spec 00043's original scope) and the capture exporter flip, which waits for the ≥7-day clean-run clock (≈ 2026-07-15)
+ripe_when: the dashboard + alert rules are provisioned live (done 2026-07-13, iter-094) and the creds vaulted (2026-07-11) — still open is the VPS `obs` role + app `/metrics` exporters (spec 00043's original scope) and the capture exporter flip; the ≥7-day clean-run clock the flip waited on matured 2026-07-15 (the formal verification is T0003's), so both are executable at the next observability session
 ---
 
 # Grafana Cloud observability — execute spec 00043

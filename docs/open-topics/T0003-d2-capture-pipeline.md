@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the >=7-day clean-run is verified (~2026-07-15) and the alerting drill runs — the three-tier pull/archive (Role A) landed iter-093, gate-verify (Role B) landed iter-094; remaining are the monitoring/alerting drill, the clean-run gate, and Role C (redundant capture)
+ripe_when: RIPE NOW — the ≥7-day clean-run clock matured 2026-07-15 (from 2026-07-08), so the formal verification (segment-continuity end-to-end, not the daemon's in-process counters) is executable; Role A landed iter-093, Role B iter-094, Role C landed as spec 00050's second-Linode redundant capture (iter-096) — remaining are only the clean-run verification and the alerting-drill sign-off
 ---
 
 # D2 forward-capture pipeline (VPS daemon → NAS archive)
@@ -75,7 +75,7 @@ Remainder (the wall-clock drill + the sync/alerting half). The incident recovery
 
 - **DONE via Role A (iter-093, above)** — ~~Workstation pull service~~ superseded by the always-on NAS `archive-pull` container: the read-only `rrsync` forced-command key, hourly pull, and per-segment hash-verify all landed (spec/plan `00048`). Delete-after-verified is deliberately NOT done (the NAS archives; the VPS ring buffer self-evicts).
 - **DONE via Role B (iter-094, above)** — always-on gate-verify replay of the VPS journal, deployed + verified live on the NAS (spec/plan `00049`); [[T0029]]'s cross-runtime replay-determinism precondition resolved by measurement.
-- **(autonomous) Role C** — the remaining three-tier increment: redundant NAS L2 capture.
-- **(autonomous)** **Full monitoring role** — beyond the liveness heartbeat, wire disk-watermark + gap-rate alerts, and run the **alerting drill** (stop the daemon → confirm the alert fires) that the exit bar requires.
+- **DONE via spec 00050 (iter-096, 2026-07-14)** — ~~Role C: redundant NAS L2 capture~~ landed as the **second-Linode** redundant capture instead (`zcrypto-red`; the NAS-capture variant was refuted by measurement — see spec 00050): both mirrors pull to the NAS hourly, and the reconciler's detect-only soak is running ([[T0039]]).
+- **(autonomous)** **Full monitoring role** — beyond the liveness heartbeat, wire disk-watermark + gap-rate alerts, and run the **alerting drill** (stop the daemon → confirm the alert fires) that the exit bar requires. *(Note 2026-07-15: the Loki→Grafana→Slack path proved itself on a REAL incident — `zcrypto-nas-archive-pull-stalled` fired, was investigated, and resolved, see [[T0048]] — and healthchecks.io now also notifies via native Slack. Whether that live firing discharges the drill or a deliberate daemon-stop drill is still wanted is the owner's call.)*
 - **(autonomous)** **The ≥7-day clean-run** — let it run ≥7 consecutive days (clock restarts from the 2026-07-08 recovery); verify \<0.1 % gap time + zero segment loss + all hashes match end-to-end → satisfies this slice of the Phase-1 exit bar (then flip to `resolved`). Watch for the first natural desync to self-heal on the deployed fix (see the Incident note + [T0008](T0008-desync-recovery-robustness.md)).
 - **(autonomous, smaller)** Wire the `ansible-lint` pre-commit hook (scoped `^infra/`) + the repo-wide `name[casing]` cleanup; fix the `capture` role's `getent`-fact access (it uses the top-level `getent_passwd` var → an ansible-core deprecation warning; switch to `ansible_facts['getent_passwd']`); add REST trade-backfill to the daemon (deferred — gaps are logged, not backfilled).
