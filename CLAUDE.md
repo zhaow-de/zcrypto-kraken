@@ -2,7 +2,7 @@
 
 ## Project
 
-`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script.
+`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack (spec `00043` / topic T0020), never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
 
 ## Repository layout
 
