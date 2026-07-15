@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: Role C (secondary capture + reconciler) has landed — the ops node is a capability upgrade, not a Role C dependency (decided 2026-07-13)
+status: partial
+ripe_when: now — the storage-topology decision is ratified (spec 00051); OPS-1 provisioning is executable immediately and touches nothing live
 ---
 
 # Home ops node — a real-CPU compute tier (deferred until after Role C)
@@ -57,21 +57,14 @@ we keep paying for it in workarounds rather than capability. What a real CPU buy
   once. Windows must be pinned non-overlapping (primary 02:00 UTC, secondary 06:00 UTC, ops node
   elsewhere) and asserted in config.
 
+## Done so far
+
+- **The storage-topology decision is made** (ratified 2026-07-15, attended discussion; recorded as `docs/specs/00051-ops-node-compute-tier-design.md`): a **hybrid of options (a)+(b)** — the NAS remains the archive home and pull owner and holds the full durable copy of everything; the ops node holds the **hot tier** (compiled datasets, the L2 primitive panel, an N-day raw working window) on local NVMe. The network sits in **no hot path** (research reads are local; NAS access = hourly ~20 MB increments + rare cold batch scans), and there is **no NFS anywhere** — every cross-host read is an rsync pull with manifest verification. Placement rule: *custody by durability, computation by weight, capture by redundancy*.
+- **The old Roles-A/B/Alloy parallel-run cutover is superseded**: under the ratified topology the ops node is **purely additive** — Role A pull/prune and Alloy stay on the NAS forever; only compute migrates (reconciler, gate-export opportunistically) or unblocks for the first time (Role B verified path, CRC replay). No cutover, no split-brain window, far less churn.
+- **The charter-as-non-goals is written** into the spec (D10): no trade key, never `engine_host`, no live execution, no sole custody of anything.
+- The execution program is `OPS-1 Provision → OPS-2 Seed → OPS-3 Replayer → OPS-4 Panel → OPS-5 Offload → OPS-6 Loop` (named to avoid colliding with the master plan's §12 "Phase" / go-live "Stage" vocabulary), with 00050 Task 13 depending on OPS-3's replayer.
+- **Dropped** (explicit, with reason): the "delete the `-compat` image leg once no zcrypto container runs on the Atom" item — the ratified topology keeps `archive pull` on the NAS indefinitely, so the compat variant is **permanent infrastructure**, not a deletable workaround.
+
 ## Suggested next steps
 
-- **(human decision, deferred)** **Storage topology** — the load-bearing unanswered question. Options:
-  (a) archive stays on the NAS RAID-5, ops node mounts it over 1 GbE NFS (single home, but NFS lands in
-  the hot path of every pull/verify/reconcile, and it makes [[T0028]]'s sweep *slower*); (b) ops node
-  pulls to local NVMe (hot/compute copy) and replicates to the NAS RAID for durability (no NFS in the hot
-  path; two copies to keep coherent); (c) NVMe only (fastest, but abandons RAID for **unbackfillable**
-  L2 — only viable with a proven external backup). Decide **before** the migration spec: it changes Role
-  A's design, T0028's fix, and the durability story.
-- **(autonomous)** Write the ops-node spec: an `ops_host` ansible group reusing the existing roles; a
-  parallel-run cutover for Roles A/B/Alloy (both stacks running, diff the two `gate.prom` outputs and the
-  two archive trees for ≥1 clean UTC day, then stop the NAS containers — no downtime, no split-brain,
-  since both duties are read-only/idempotent); fold in [[T0028]]'s fix while touching Role A.
-- **(autonomous)** Write the ops node's **charter as explicit non-goals**: no Kraken trade key, no live
-  execution, no sole custody of any durability path. A capable home box invites production duties to drift
-  off the hardened fixed-IP VPS, which the master plan's §8 posture forbids.
-- **(autonomous)** Once the NAS hosts no zcrypto containers, delete the `-compat` image leg + build arg +
-  CI matrix entry.
+- Execute spec 00051 via the normal plan flow (`docs/plans/00051-ops-node-compute-tier.md`): OPS-1 Provision (bootstrap direct with the master key, `ops_host` converge, **fix the hostname — currently `zcrypto-red`, colliding with the secondary**, pin non-overlapping maintenance windows per [[T0027]], channels/keys, dead-men) → OPS-2 Seed (+ start [[T0023]]'s liquidations recorder) → OPS-3 Replayer (feeds 00050 Task 13) → OPS-4 Panel ([[T0014]]'s compute home) → OPS-5 Offload (reconciler off the Atom; dissolves [[T0044]]'s growth concern) → OPS-6 Loop.
