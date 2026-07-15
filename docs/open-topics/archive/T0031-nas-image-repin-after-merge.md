@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: PR #117 (Role B) is merged to develop and its post-merge CI has published the develop-built `zcrypto-capture` `-compat` image (the NAS currently pins the branch-only digest `dfda2580`)
+status: resolved
 ---
 
 # Re-pin the NAS capture image to the develop-built digest after the Role B merge
@@ -18,8 +17,9 @@ Reproducibility + supply-chain hygiene: the merge deletes `feat/role-b-gate-veri
 - NAS `archive-pull` image = `ghcr.io/zhaow-de/zcrypto-capture@sha256:dfda2580…` (branch build).
 - `alloy` = `grafana/alloy@sha256:4f6ddc…`, `docker-socket-proxy` = `ghcr.io/tecnativa/docker-socket-proxy@sha256:1f3a6f…` (upstream digests — keep).
 
-## Suggested next steps
+## Done so far
 
-- After the merge, wait for `develop`'s CI to publish the new `zcrypto-capture` `-compat` image, then `docker buildx imagetools inspect ghcr.io/zhaow-de/zcrypto-capture:<develop-tag>` to read its digest.
-- On the NAS, edit `/volume1/docker/zcrypto-archive/compose.yaml`'s `archive-pull` `image:` to the new `@sha256:…` digest, then `sudo docker compose up -d archive-pull` to recreate; verify `docker ps` shows it healthy and a pull cycle completes with `mismatch_total 0`.
-- No repo change needed: `infra/nas/compose.yaml` intentionally keeps `:latest` with a deploy-time-pin note; this topic only re-pins the *deployed* copy.
+- **Resolved 2026-07-13.** PR #117 merged; the develop-built `-compat` image was published and the NAS
+  compose was re-pinned to `sha256:ec180cde…`, replacing the branch-only `dfda2580` digest. Verified on
+  the NAS: the `archive-pull` container came up on the new digest and the hourly pull + verify cycle
+  reported `checked=N ok=N failed=0`.

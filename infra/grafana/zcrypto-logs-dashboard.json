@@ -1,0 +1,151 @@
+{
+  "uid": "zcrypto-logs",
+  "title": "zcrypto \u00b7 logs",
+  "description": "Every container log we ship, in one panel. Filter by host, container and level (all default to All). Lines are parsed at INGEST (Alloy), not here: the entry timestamp is the application's own, `level` is a real label, and the line carries only what Grafana does not already show in its own columns.",
+  "tags": [
+    "zcrypto"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "grafanacloud-logs"
+        },
+        "query": "label_values(host)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "hide": 0,
+        "description": "Machine the log came from. Only the NAS ships logs today; capture hosts join when T0020's obs role lands. (All = .+; Loki requires at least one matcher that cannot match empty.)",
+        "sort": 1
+      },
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "grafanacloud-logs"
+        },
+        "query": "label_values({host=~\"$host\"}, container)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "hide": 0,
+        "description": "Container that produced the line. (All = .+; Loki requires at least one matcher that cannot match empty.)",
+        "sort": 1
+      },
+      {
+        "name": "level",
+        "label": "Level",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "grafanacloud-logs"
+        },
+        "query": "label_values({host=~\"$host\", container=~\"$container\"}, level)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "hide": 0,
+        "description": "Log level, set as a real label at ingest. Multi-select; All includes lines from any container whose format we do not yet parse. All stays `.*` on purpose: lines with no level label (pull-entrypoint's shell output) must still appear.",
+        "sort": 1
+      },
+      {
+        "name": "search",
+        "label": "Search",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0,
+        "description": "Case-sensitive substring filter on the log line (leave empty for all)."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "Logs \u2014 $container / $level",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 24,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "queryType": "range",
+          "expr": "{host=~\"$host\", container=~\"$container\", level=~\"$level\"} |= \"$search\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

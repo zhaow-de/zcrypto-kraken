@@ -15,9 +15,16 @@ trades legitimately go quiet, so they cannot measure uptime):
                               from the data itself (not guessed)
 
 Usage:  uv run python infra/scripts/continuity.py <segments-root> [--since YYYY-MM-DD] [--kind book]
+                                                    [--overlay <reconciled-root>]
 
 This is the T0003 exit-bar instrument (and the T0036 post-deploy check): run it against a
 pulled copy of the capture tree, never against the live dir the daemon is writing.
+
+`--overlay <reconciled-root>` adds a SEPARATE, clearly-labeled canonical (reconciled-first) report
+alongside the raw one, for comparison. Exit-bar isolation (spec 00050): the raw report is the ONLY
+T0003 gate instrument and always runs, unaffected; the canonical report never prints the EXIT BAR
+verdict line, because an overlay heals gaps by design and would otherwise let a raw-capture
+regression bank a "clean" run -- exactly the defect class the bar exists to catch.
 """
 
 from __future__ import annotations
@@ -45,16 +52,28 @@ def segments(root: Path, kind: str) -> dict[str, list[tuple[dt.datetime, Path]]]
     return out
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("root", type=Path)
-    ap.add_argument("--since", default=None, help="YYYY-MM-DD")
-    ap.add_argument("--kind", default="book")
-    ap.add_argument("--quiet", action="store_true", help="only the summary")
-    a = ap.parse_args()
+def _canonical_streams(root: Path, overlay_root: Path, kind: str) -> dict[str, list[tuple[dt.datetime, Path]]]:
+    """The reconciled-first view of `root`, healed by `overlay_root` (see `cli.archive.reader`)."""
+    # Imported here, not at module top: the default raw-only invocation is the T0003 exit-bar
+    # instrument and must keep running on a host with only stdlib + polars — the cli package is
+    # needed only when `--overlay` is passed.
+    from cli.archive.reader import canonical_segments
 
-    since = dt.datetime.fromisoformat(a.since).replace(tzinfo=dt.UTC) if a.since else dt.datetime.min.replace(tzinfo=dt.UTC)
-    streams = segments(a.root, a.kind)
+    out: dict[str, list[tuple[dt.datetime, Path]]] = {}
+    for pair, hour, p in canonical_segments(root, overlay_root, kind=kind):
+        out.setdefault(pair, []).append((hour, p))
+    return out
+
+
+def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.datetime, quiet: bool, show_exit_bar: bool) -> int:
+    """Print the per-pair continuity table + summary. Returns 0, or 1 if `streams` is empty.
+
+    `show_exit_bar` gates ONLY the `EXIT BAR (<0.1% gap time): PASS/FAIL` verdict line: the raw
+    report always gets it; the `--overlay` canonical report never does, so an overlay run can never
+    bank a T0003 exit-bar PASS (spec 00050, exit-bar isolation). Required, with no default, so a
+    future caller must SAY which report it is — a defaulted True would let a forgotten flag silently
+    bank an exit bar.
+    """
     if not streams:
         print("no segments found")
         return 1
@@ -105,7 +124,7 @@ def main() -> int:
         pct = 100.0 * gap / covered if covered else 0.0
         worst = max(worst, pct)
         totals.append((pair, span_hours, missing, trunc, gap, covered, pct))
-        if not a.quiet:
+        if not quiet:
             print(f"{pair:<10} {span_hours:>6} {missing:>8} {trunc:>6} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%")
 
     print("-" * 66)
@@ -116,9 +135,49 @@ def main() -> int:
     print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
     print()
     print(f"  worst single stream : {worst:.4f}%")
-    print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
+    if show_exit_bar:
+        print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
     print(f"  truncated hours (T0036 signature): {tt}  -- MUST be 0 after the fix")
     return 0
+
+
+def add_args(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("root", type=Path)
+    ap.add_argument("--since", default=None, help="YYYY-MM-DD")
+    ap.add_argument("--kind", default="book")
+    ap.add_argument("--quiet", action="store_true", help="only the summary")
+    ap.add_argument(
+        "--overlay",
+        type=Path,
+        default=None,
+        help="reconciled-root: also print a SEPARATE canonical (reconciled-first) report -- "
+        "informational only, never the T0003 exit-bar instrument (exit-bar isolation, spec 00050)",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    add_args(ap)
+    return ap
+
+
+def main() -> int:
+    a = build_parser().parse_args()
+
+    since = dt.datetime.fromisoformat(a.since).replace(tzinfo=dt.UTC) if a.since else dt.datetime.min.replace(tzinfo=dt.UTC)
+    rc = report(segments(a.root, a.kind), since=since, quiet=a.quiet, show_exit_bar=True)
+
+    if a.overlay is not None:
+        # Printed even when the raw report came up empty (rc 1): an empty raw mirror is exactly when
+        # the overlay's healed hours matter most. The exit status stays the RAW report's — it is the
+        # T0003 instrument; the canonical view is informational.
+        print()
+        print(
+            f"=== CANONICAL VIEW (reconciled-first, healed from {a.overlay}) "
+            f"-- informational only, NOT the T0003 exit-bar instrument ==="
+        )
+        report(_canonical_streams(a.root, a.overlay, a.kind), since=since, quiet=a.quiet, show_exit_bar=False)
+    return rc
 
 
 if __name__ == "__main__":

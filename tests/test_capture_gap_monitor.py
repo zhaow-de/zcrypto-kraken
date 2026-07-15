@@ -241,3 +241,40 @@ def test_disk_watermark_clears_after_space_frees_up(tmp_path):
     free["value"] = 5000
     assert watermark.check() is True
     assert watermark.breached is False
+
+
+# --- T0032(c): a probe that CANNOT MEASURE must not read as healthy ------------------------------
+#
+# The disk probe reads the filesystem; a flaky mount raises OSError. The loop catches it and keeps
+# polling, but `breached` freezes at its last value -- so a disk that fills DURING a probe outage
+# leaves the dead-man pinging GREEN. "Cannot measure" must be treated as "not healthy": `measurable`
+# goes False on a probe failure and gates the ping alongside `breached`. A transient blip is absorbed
+# by the healthcheck's grace; only a SUSTAINED failure withholds enough pings to page.
+
+
+def _raises(_p):
+    raise OSError("stale NFS handle")
+
+
+def test_disk_watermark_is_measurable_before_any_check(tmp_path):
+    watermark = DiskWatermark(tmp_path, min_free_bytes=100, usage_fn=lambda p: _FakeUsage(free=1000))
+    assert watermark.measurable is True
+
+
+def test_disk_watermark_becomes_unmeasurable_when_the_probe_raises(tmp_path):
+    watermark = DiskWatermark(tmp_path, min_free_bytes=100, usage_fn=_raises)
+    with pytest.raises(OSError):
+        watermark.check()
+    assert watermark.measurable is False, "a failed probe must not read as healthy"
+
+
+def test_disk_watermark_measurable_recovers_when_the_probe_succeeds_again(tmp_path):
+    usage = {"fn": _raises}
+    watermark = DiskWatermark(tmp_path, min_free_bytes=100, usage_fn=lambda p: usage["fn"](p))
+    with pytest.raises(OSError):
+        watermark.check()
+    assert watermark.measurable is False
+
+    usage["fn"] = lambda p: _FakeUsage(free=1000)
+    assert watermark.check() is True
+    assert watermark.measurable is True

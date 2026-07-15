@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: before any consumer reads the NAS archive — the first is T0014's captured-spread calibration (≈2026-07-22); the fix is autonomous and ripe now
 ---
 
@@ -54,6 +54,14 @@ Secondary: unbounded junk growth on the NAS (7,824 files and climbing; parts are
   parts of the same name (NAS hour-07 parts start at `07:04:30.615836`, exactly the truncation point).
   So this accumulation is *not* a usable backup of pre-merge state; it is only junk plus a hazard.
 - Related but distinct from [[T0036]] (which is about the *writer*): this is about the *mirror*.
+
+## Done so far
+
+The prune-after-verified fix landed (commit on `fix/engine-host-split`): `verify_tree` now reports which finals verified (`VerifyResult.verified`), and the pull command drains each verified hour's `<HH>.part####.parquet` via `prune_stale_parts` — deleting a part ONLY where its hour has a final that verified against its manifest, strict `<HH>.part<digits>.parquet` only (a non-daemon name like `…-copy.parquet` is left alone), `unlink` hardened against a failed delete, NAS-only by construction. Regression tests cover: a verified hour pruned to just its final; an hour with no final untouched; a corrupt final's parts untouched; an *erroring* (missing-manifest) final's parts untouched; a `.held` spill never matched; a non-standard part-like name left alone.
+
+The reader-side half is already closed by Task 7's `canonical_segments` (`cli/archive/reader.py`), which globs `*/*/<kind>/*/*/*/*.parquet` + a strict `^\d{2}\.parquet` match, so a consumer using it cannot double-count.
+
+**Still open:** the fix is committed but NOT yet deployed — it drains the existing ~13.5k-part backlog only on the first cycle after the capture image is rebuilt and the NAS re-pinned. Close this topic once that deploy is verified (the mirror's part count falls to ~0 for hours with verified finals).
 
 ## Suggested next steps
 

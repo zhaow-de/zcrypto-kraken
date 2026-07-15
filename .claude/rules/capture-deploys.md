@@ -9,6 +9,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 
 ## Deploys
 
+- `site.yml` and `bootstrap.yml` target **both** capture hosts. The primary refuses unless you pass `-e converge_primary=true` — that flag restarts live capture and/or the engine, so mean it. It gates `--tags engine` too (a failed assert drops the host from later plays, so the engine play would silently skip). Secondary only: `--limit zcrypto-red`. Converges need `-e capture_image_digest=sha256:<...>` (no default).
 - Pre-stage everything (pull digest on the host, verify the change is in the pulled image, stage the compose pin); the stop→start window contains only stop → migration-if-any → start.
 - Verify by outcome after the next hour boundary: every book stream's `<HH>.parquet` begins at `:00:00.0x`, manifests verify, `infra/scripts/continuity.py` (on a pulled copy, never the live dir) shows no new truncated hours.
 - `dropping late event` lines right after a restart are healthy (resubscribe replay), not a failure signal.
@@ -21,3 +22,8 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 
 - Root SSH is key-only break-glass; the operator installs the master pubkey manually at bootstrap.
 - Day-to-day access: `deploy` user (passwordless sudo) — `ssh zcrypto` / `ssh red` / `ssh nas` / `ssh hp`.
+
+## Ansible secrets
+
+- **Never run `ansible-inventory --host` or `--list`.** `infra/ansible/ansible.cfg` sets `vault_password_file`, so both silently decrypt the vault and print every secret (incl. the live Kraken trade key) in cleartext. Use `--graph` / `--list-tags`, or pipe through a key-names-only filter.
+- Run playbooks via `infra/ansible/scripts/run.sh` (loads the vaulted deploy key into a throwaway agent). Preview with `--check --diff` before any converge.

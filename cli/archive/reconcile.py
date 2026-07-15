@@ -1,0 +1,318 @@
+"""Pure reconciliation logic for spec 00050: cross-stream book-gap detection.
+
+No I/O and no Typer here — `mint.py` owns the write path and `command.py` the wiring, so the rules
+below are testable on plain DataFrames.
+
+Load-bearing constraints (spec 00050, constraints 1 + 2):
+  * Kraken coalesces book updates PER CONNECTION, so two healthy hosts record different message
+    sequences for the same pair. A gap is therefore only ever detected — never repaired — by
+    comparing row-level content across hosts; repair is whole-window block substitution.
+  * A secondary *snapshot* row is full state, not market activity. It must never, on its own,
+    testify that the primary lost something: after any reconnect the secondary re-snapshots, and a
+    quiet market would otherwise be "healed" for a window in which nothing happened.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+import polars as pl
+
+from cli.capture.errors import CaptureError
+
+
+@dataclass(frozen=True)
+class Gap:
+    """A window in which the primary stream was silent and the secondary was demonstrably alive.
+
+    `start` and `end` bound the window; the two flags say **who owns each boundary**, which is what
+    every consumer needs in order to filter rows without either splitting a wire message or dropping
+    one. The rules follow mechanically and are the whole point of the flags:
+
+      * flag **True** — the boundary IS a primary wire message. The primary block owns every row at
+        that `ts` (all rows of one Kraken message share it), so the secondary side must be **strict**
+        there (`>` / `<`): admitting it would tear one book update in half.
+      * flag **False** — the boundary is the hour boundary (head/tail gap) or the window's own edge
+        (wholly-absent primary). **Nobody** owns it, so the secondary side must be **inclusive**
+        there (`>=` / `<=`): excluding it silently drops real rows — every level-row of the message
+        that sits exactly on that edge.
+
+    Symmetrically, the primary head block for a gap takes `ts <= start` only when `start` IS a
+    primary message, and the primary tail resumes at `ts >= end`.
+    """
+
+    start: datetime
+    end: datetime
+    seconds: float
+    start_is_primary_message: bool
+    end_is_primary_message: bool
+
+
+def _inside(gap: Gap) -> pl.Expr:
+    """The gap's row filter, honouring boundary ownership. The ONE place the rule is written."""
+    lo = pl.col("ts") > gap.start if gap.start_is_primary_message else pl.col("ts") >= gap.start
+    hi = pl.col("ts") < gap.end if gap.end_is_primary_message else pl.col("ts") <= gap.end
+    return lo & hi
+
+
+def _message_ts(df: pl.DataFrame) -> list[datetime]:
+    """One entry per wire message, in ARRIVAL order: many rows share a `ts` (one row per book level).
+
+    REQUIRES `ts` to be non-decreasing, and says so loudly: out-of-order input would otherwise
+    fabricate one wide window that swallows the interleaved messages, and the splice would drop their
+    rows — silent, permanent corruption of an unbackfillable archive. Sorting is NOT the repair and is
+    forbidden: L2 rows carry absolute quantities, so reordering them reconstructs a different book.
+    Kraken's `ts` is non-decreasing across every production row measured (3.15 M rows, T0037), so this
+    assertion should never fire — which is exactly what makes it worth having.
+
+    The check runs on the RAW row order, before dedup: an exact-duplicate stamp reappearing after a
+    strictly newer one (raw `[0, 5, 0]`) is out of order, but `unique(maintain_order=True)` would
+    collapse it to `[0, 5]` first — which looks monotone. Checking the deduped list can't see that.
+
+    `maintain_order=True` is load-bearing: plain `.unique()` does not preserve order.
+    """
+    if df.height == 0:
+        return []
+    raw: list[datetime] = df["ts"].to_list()
+    for previous, current in zip(raw, raw[1:], strict=False):
+        if current < previous:
+            pair = df["symbol"][0] if "symbol" in df.columns else "?"
+            raise CaptureError(
+                f"non-monotonic ts in the {pair} book stream: {previous.isoformat()} is followed by "
+                f"{current.isoformat()}. Refusing to reconcile — sorting is forbidden (L2 rows carry "
+                f"absolute quantities), so the input itself must be fixed."
+            )
+    return df.select(pl.col("ts").unique(maintain_order=True)).to_series().to_list()
+
+
+def secondary_covers(secondary: pl.DataFrame, gap: Gap) -> bool:
+    """True iff the secondary has at least one **update** row inside `gap`.
+
+    "Inside" honours the gap's boundary ownership (see `Gap`): strict on a boundary that is a primary
+    message, inclusive on one that is not.
+    """
+    if secondary.height == 0:
+        return False
+    return secondary.filter(_inside(gap) & (pl.col("type") == "update")).height > 0
+
+
+def _validate_hour_bounds(hour_start: datetime, hour_end: datetime) -> None:
+    """`hour_start`/`hour_end` must bound exactly one whole, tz-aware hour.
+
+    Both windows this function protects (see `find_book_gaps`'s docstring) exist ONLY by virtue of
+    these bounds, so a wrong one is not cosmetic: a too-EARLY `hour_end` truncates a genuine tail
+    gap — the remaining silence is real, secondary-witnessed loss that lands in no `Gap`, is never
+    ledgered, never spliced. A silent, permanent hole — the exact failure this system exists to
+    prevent. A too-LATE `hour_end` (or a misaligned `hour_start`) risks admitting rows from the wrong
+    hour into this hour's splice. Both are refused loudly here rather than left for a caller to
+    discover downstream.
+    """
+    if hour_start.tzinfo is None:
+        raise CaptureError(f"hour_start {hour_start!r} is not tz-aware")
+    if (hour_start.minute, hour_start.second, hour_start.microsecond) != (0, 0, 0):
+        raise CaptureError(f"hour_start {hour_start.isoformat()} is not aligned to an hour boundary")
+    if hour_end != hour_start + timedelta(hours=1):
+        raise CaptureError(
+            f"hour_end {hour_end!r} is not exactly one hour after hour_start {hour_start.isoformat()} "
+            f"— hour_end must be the EXCLUSIVE next-hour boundary"
+        )
+
+
+def _validate_rows_within_hour(df: pl.DataFrame, name: str, hour_start: datetime, hour_end: datetime) -> None:
+    """Reject any row whose `ts` falls outside `[hour_start, hour_end)`: a row from the wrong hour
+    must be a loud error, never silently spliced into this hour's output."""
+    if df.height == 0:
+        return
+    outside = df.filter((pl.col("ts") < hour_start) | (pl.col("ts") >= hour_end))
+    if outside.height:
+        bad_ts = outside["ts"][0]
+        raise CaptureError(
+            f"{name} row with ts {bad_ts.isoformat()} falls outside the hour [{hour_start.isoformat()}, {hour_end.isoformat()})"
+        )
+
+
+def find_book_gaps(
+    primary: pl.DataFrame,
+    secondary: pl.DataFrame,
+    *,
+    min_gap_seconds: float,
+    hour_start: datetime,
+    hour_end: datetime,
+) -> list[Gap]:
+    """Windows where the primary was silent > `min_gap_seconds` AND the secondary was alive inside.
+
+    Windows are formed by pairing CONSECUTIVE boundaries in arrival order: `hour_start`, every primary
+    wire message, `hour_end` (the hour's start and its **exclusive** end — the next hour boundary).
+
+    The bounds are REQUIRED, not optional, because two of the windows exist only by virtue of them —
+    and they are the ones that matter most:
+
+      * `hour_start` → first primary message — the primary started recording late in the hour;
+      * last primary message → `hour_end` — **the primary crashed mid-hour**. That is the natural
+        shape of an outage and precisely what this detector exists to catch: there is no "next
+        primary message" to pair with, so without the bounds the silence is simply invisible.
+
+    An optional bound on a detector whose false negative is permanent loss is a footgun: a caller that
+    omitted it would silently get crash-blindness back, and no test would fail. Required means the
+    mistake is a `TypeError` at the call site instead.
+
+    Both edge windows obey the same threshold and the same secondary-witness rule as an interior gap;
+    their outer boundary is the hour boundary, which is nobody's wire message (see `Gap`).
+    """
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
+    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+
+    sec_ts = _message_ts(secondary)
+    if not sec_ts:
+        return []
+
+    pri_ts = _message_ts(primary)
+    if not pri_ts:
+        # No primary message exists to pair against, so the whole hour is one gap whose boundaries
+        # belong to neither side. A file with zero messages is total loss, not quiescence, so
+        # `min_gap_seconds` does not apply to it.
+        gap = Gap(
+            start=hour_start,
+            end=hour_end,
+            seconds=(hour_end - hour_start).total_seconds(),
+            start_is_primary_message=False,
+            end_is_primary_message=False,
+        )
+        return [gap] if secondary_covers(secondary, gap) else []
+
+    edges: list[tuple[datetime, bool]] = [(hour_start, False)]
+    edges += [(ts, True) for ts in pri_ts]
+    edges.append((hour_end, False))
+
+    gaps: list[Gap] = []
+    for (a, a_is_pri), (b, b_is_pri) in zip(edges, edges[1:], strict=False):
+        seconds = (b - a).total_seconds()
+        if seconds <= min_gap_seconds:  # silence must be STRICTLY greater than the threshold
+            continue
+        gap = Gap(
+            start=a,
+            end=b,
+            seconds=seconds,
+            start_is_primary_message=a_is_pri,
+            end_is_primary_message=b_is_pri,
+        )
+        if secondary_covers(secondary, gap):
+            gaps.append(gap)
+    return gaps
+
+
+@dataclass(frozen=True)
+class Block:
+    """One contiguous run of rows from one source. Blocks concatenate in list order — never sorted."""
+
+    source: str
+    frame: pl.DataFrame
+    from_ts: datetime | None
+    to_ts: datetime | None
+
+
+def _span(frame: pl.DataFrame) -> tuple[datetime | None, datetime | None]:
+    if frame.height == 0:
+        return None, None
+    return frame["ts"].min(), frame["ts"].max()
+
+
+def _block(source: str, frame: pl.DataFrame) -> Block:
+    lo, hi = _span(frame)
+    return Block(source=source, frame=frame, from_ts=lo, to_ts=hi)
+
+
+def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap]) -> list[Block]:
+    """Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
+
+    Every boundary is filtered by who owns it (see `Gap`). The secondary side is **strict** on a
+    primary-message boundary — the primary block keeps every row of that message, so one wire message
+    is never split across two blocks — and **inclusive** on a boundary that is nobody's message (an
+    hour boundary, or the window edge of a wholly-absent primary), where a strict bound would
+    silently drop real secondary rows. A wholly-absent primary needs no special case: its single gap
+    owns neither boundary, so the head/tail primary filters select nothing and the secondary block is
+    the whole hour. Rows are concatenated in source order and NEVER sorted: L2 updates carry absolute
+    quantities, so reordering within a `ts` changes the book.
+
+    Output is BLOCK-ordered, not necessarily time-ordered (a row that leaked in from an adjacent hour
+    lands in a trailing primary block rather than being dropped) — a consumer must never "fix" that by
+    sorting, for the same absolute-quantity reason.
+
+    The secondary block deliberately keeps its **snapshot** rows. A snapshot is a full book state, so
+    it re-anchors a replaying consumer at the splice boundary — and it is what makes a CRC replay
+    across the boundary meaningful. (A snapshot still never *witnesses* a gap: see `secondary_covers`.)
+    """
+    if not gaps:
+        return [_block("primary", primary)] if primary.height else []
+
+    blocks: list[Block] = []
+    cursor: datetime | None = None
+    for gap in gaps:
+        # The primary owns `gap.start` only when that boundary is its own message.
+        before = pl.col("ts") <= gap.start if gap.start_is_primary_message else pl.col("ts") < gap.start
+        head = primary.filter(before)
+        if cursor is not None:
+            head = head.filter(pl.col("ts") >= cursor)
+        if head.height:
+            blocks.append(_block("primary", head))
+        middle = secondary.filter(_inside(gap))
+        if middle.height:
+            blocks.append(_block("secondary", middle))
+        cursor = gap.end
+
+    tail = primary.filter(pl.col("ts") >= gaps[-1].end)
+    if tail.height:
+        blocks.append(_block("primary", tail))
+    return blocks
+
+
+@dataclass(frozen=True)
+class TradeUnion:
+    """The healed hour's trades, plus what changed and what the secondary was missing.
+
+    `secondary_deficit` counts ids the secondary lacks that the primary has. That is evidence about
+    the SECONDARY's own health — a QA signal — and must never trigger a mint: this reconciler only
+    ever heals a primary deficit, never the reverse.
+    """
+
+    frame: pl.DataFrame
+    added_from_secondary: int
+    deduped_rows: int
+    secondary_deficit: int
+
+
+def union_trades(primary: pl.DataFrame, secondary: pl.DataFrame) -> TradeUnion:
+    """Heal a primary trade deficit from the secondary. Row-level union is safe here — and ONLY
+    here in the reconciler — because `trade_id` is globally unique and identical across hosts (spec
+    00050 constraint 2), unlike book rows, which carry absolute quantities and may never be
+    interleaved across hosts.
+
+    Ordered by `trade_id`. That column is `TRADE_SCHEMA`'s `Int64` (`cli/capture/segment_writer.py`,
+    populated by `int(trade["trade_id"])`) — never a string — so `sort("trade_id")` is a numeric
+    sort, not a lexicographic one. `trade_id` is per-pair monotone, so the numeric sort is also a
+    chronological one and the result is deterministic.
+
+    Deduped with primary priority: the deployed writer dedups intra-hour at capture time (T0037), but
+    pre-fix archive hours genuinely contain reconnect-replay duplicates (T0026), and this must handle
+    that history. Concatenating primary-then-added-secondary and keeping the FIRST occurrence per
+    `trade_id` means a duplicated primary row always wins over a later copy of itself; an added
+    secondary row is never itself a duplicate, since it was, by construction, absent from the primary.
+    """
+    pri_ids = set(primary["trade_id"].to_list()) if primary.height else set()
+    sec_ids = set(secondary["trade_id"].to_list()) if secondary.height else set()
+
+    missing = sec_ids - pri_ids
+    to_add = secondary.filter(pl.col("trade_id").is_in(list(missing))) if missing else secondary.head(0)
+
+    combined = pl.concat([primary, to_add]) if to_add.height else primary
+    before = combined.height
+    deduped = combined.unique(subset=["trade_id"], keep="first", maintain_order=True).sort("trade_id")
+
+    return TradeUnion(
+        frame=deduped,
+        added_from_secondary=len(missing),
+        deduped_rows=before - deduped.height,
+        secondary_deficit=len(pri_ids - sec_ids),
+    )

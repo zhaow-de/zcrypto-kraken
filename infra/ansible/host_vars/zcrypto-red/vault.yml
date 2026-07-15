@@ -1,0 +1,33 @@
+# host_vars/zcrypto-red — SECRETS for the redundant capture host.
+#
+# Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable so anyone can see
+# what this host needs, while every value stays `!vault`-encrypted at rest. Same shape and same
+# read/write recipes as group_vars/capture_host/vault.yml — see that file's header.
+#
+# `ansible_host` overrides the group's (host_vars beats group_vars): zcrypto-red.zhaow.me.
+#
+# capture_healthcheck_url is LIVE (the Task-9 placeholder is gone). It points at the healthchecks.io
+#   check `zcrypto-capture-red`, provisioned 2026-07-14 via the Management API using
+#   `healthchecks_api_key` (group_vars/capture_host/vault.yml). It mirrors the primary's
+#   `zcrypto-capture` exactly — timeout 600s, grace 600s — and has notification channels attached, so
+#   it actually pages. A dead-man with no channel is a detector nobody reads.
+#
+# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
+# password, so both silently print every value below in cleartext.
+
+ansible_host: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          30663135646235373065373035383632663837666566353732383565666261393931396332326566
+          6334336332653131346433633965636530376337313962650a303363313730613166666137313164
+          32303738663639333563346233613033636362393836636135306665326337363365363231613337
+          3566353133393938330a366532383636633735346537623333633235393765323032623935326631
+          65643032303237386231313962376662616632636131353138393933353139383465
+capture_healthcheck_url: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          37623661353061656336323561383065663333386235636236663461393831373466326466306563
+          3935613565646230376561623139396337386464346137320a636139393139383239303139663034
+          31633830316536323339343836636437313166636431373330396332356234376362396136643263
+          3763313864373330650a356565346265623230653461623033393031666533613330656165616465
+          36626330636532313134366633613861613036363837366430373066643938376238353466396630
+          33373536393764663332636565616637633032636535343766346664613136663235656332373831
+          346133343136646539396263613262633162

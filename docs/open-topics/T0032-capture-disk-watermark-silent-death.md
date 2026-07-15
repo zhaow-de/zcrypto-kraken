@@ -92,6 +92,9 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
 **Not yet deployed:** the fix ships with the next capture-image rollout (there is ~135 days of runway on
 the disk, and the rollout is needed for Role C anyway).
 
+- **(b) 00048's eviction rationale corrected** — the body §Non-goals now carries an inline `[Superseded — …]` marker flagging that the "~12× margin makes delete-after-verified unnecessary" claim rests on the 20×-wrong fill figure, and that eviction is in fact *not* implemented (disk fills ≈2026-11-23).
+- **(c) probe-outage blind spot closed** — `DiskWatermark` now tracks `measurable`; a probe that raises sets it False, and the dead-man ping is gated on `not breached AND measurable`, so "cannot measure" no longer pings green on a frozen `breached` (the healthcheck grace absorbs a transient blip; a sustained failure pages).
+
 ## Suggested next steps
 
 - **(autonomous)** Decide and implement **retention** for the capture segments — prune-after-verified-pull,
@@ -99,11 +102,5 @@ the disk, and the rollout is needed for Role C anyway).
   capture segments on any host, so the disk simply fills. With the dead-man fix this now *pages* rather
   than silently losing data, but the underlying growth is unbounded. (Spec `00050`'s D9 adds a retention
   timer to the *secondary* capture host; the **primary** still has none.)
-- **(autonomous)** Correct `00048`'s eviction non-goal rationale — "the 7-day buffer's 12× margin makes
-  delete-after-verified unnecessary" is reasoning from the same 20×-wrong number.
-- **(autonomous)** **Probe-outage blind spot** (reviewer-measured 2026-07-14, minor): while the
-  `disk_usage` probe itself keeps failing, `DiskWatermark.breached` stays frozen at its last value —
-  so a disk that actually fills *during* a probe outage leaves the dead-man pinging GREEN (executed:
-  6 pings while the probe raised). The loop now survives the failure (logs + keeps polling), but a
-  sustained probe failure should itself withhold the ping (treat "cannot measure" as "not healthy").
 - **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.
+- **(residual, noted)** Compound fault: if the disk actually FILLS *during* an unmeasurable-probe window, `_write_part`'s `ENOSPC` is caught, logged, and the buffer dropped -- a real, un-booked loss, because `breached` is frozen at its last (green) value so no watermark gap is booked. Narrow (needs a disk that fills exactly while the probe is also down), and it still pages within ~20 min via the withheld ping, but the exit-bar gap accounting under-counts that window. A full fix would treat an unmeasurable window as a provisional gap and reconcile once the probe recovers.

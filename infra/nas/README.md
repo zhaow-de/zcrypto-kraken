@@ -72,6 +72,13 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 | `CAPTURE_SSH_KEY` | Private key path inside the container for the capture channel's rsync-over-ssh transport. Passed as `ARCHIVE_SSH_KEY` to `zcrypto archive pull` for the capture-segments call only (`cli/archive/command.py` reads a single `ARCHIVE_SSH_KEY` from the environment; the entrypoint scopes it per subprocess call). | fixed to `/keys/sync_capture` in `compose.yaml` (matches the `./keys:/keys:ro` mount) |
 | `JOURNAL_SSH_KEY` | Private key path inside the container for the engine-journal channel's OWN least-privilege rsync-over-ssh transport, distinct from `CAPTURE_SSH_KEY` (Deploy step 3). Passed as `ARCHIVE_SSH_KEY` for the journal-pull call only. | fixed to `/keys/sync_journal` in `compose.yaml` |
 | `ARCHIVE_SSH_KNOWN_HOSTS` | `UserKnownHostsFile` path pinning the VPS host key. Host-key checking is strict (`StrictHostKeyChecking=yes`), so this file must be pre-seeded (Deploy step 4) — an unseeded or stale key fails the pull closed. | fixed to `/keys/known_hosts` in `compose.yaml` |
+| `CAPTURE_RED_SOURCE` | rsync source spec for the **redundant secondary's** capture segments, e.g. `deploy@zcrypto-red.zhaow.me:` (its own `rrsync -ro` forced command pins the remote subtree, same pattern as the primary). **Leave unset and both the secondary pull and the reconcile step are skipped entirely**, so this stack still runs on a NAS that has not been given the red channel. | deploy-time `.env` |
+| `CAPTURE_RED_DEST` | Where the secondary's raw mirror lands. Kept separate from the primary's on purpose: the reconciler needs the two mirrors as **independent witnesses**, and the raw primary is the T0003 exit bar's only input. | fixed to `/archive/capture-segments-red` in `compose.yaml` |
+| `CAPTURE_RED_SSH_KEY` | Private key for the secondary's pull channel — a **separate** least-privilege keypair (`sync_capture_red`), never the primary's. | fixed to `/keys/sync_capture_red` in `compose.yaml` |
+| `RECONCILED_DEST` | The healed overlay `zcrypto archive reconcile` writes to. Only **healed** hours land here, plus the append-only ledger; readers resolve reconciled-first, primary-final otherwise (`cli/archive/reader.py`). | fixed to `/archive/capture-reconciled` in `compose.yaml` |
+| `RECONCILE_TEXTFILE` | Prometheus textfile the reconcile step writes its metrics to (`zcrypto_reconcile_*`). Alloy's keep-regex must list that prefix or **every series is silently dropped and no rule can ever fire** — see `infra/nas/config.alloy`. | fixed to `/textfile/reconcile.prom` in `compose.yaml` |
+| `RECONCILE_MIN_GAP_SECONDS` | Primary book silence longer than this counts as a gap. Defaults to `30` — 2× the measured 14.78 s single-host maximum natural quiescence. **Unvalidated cross-host (T0039)**, which is why reconcile runs **detect-only** until the soak pins it from real data. | deploy-time `.env` (optional) |
+| `RECONCILE_WINDOW_HOURS` | Trailing settled hours the reconciler examines each cycle; defaults to `48`. | deploy-time `.env` (optional) |
 | `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` (optional) |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles; the entrypoint defaults to `3600` (hourly) if unset. | deploy-time `.env`, or leave unset for the hourly default |
 | `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, Deploy step 5) |
@@ -100,20 +107,48 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 /usr/local/bin/docker compose -f compose.yaml logs -f archive-pull
 ```
 
+## Correcting the reconcile ledger (T0044)
+
+The reconcile counters (`zcrypto_reconcile_residual_gap_seconds_total`, `_healable_gap_seconds_total`, the hour/deficit counters) are **summed from the whole append-only** `reconcile-ledger.jsonl` on every cycle, so they are monotone as long as the ledger only ever grows. The one operation that breaks that is a **correction** — removing a record a classifier bug wrote (as on 2026-07-14, a false `total_loss`). A correction *decreases* a counter, Prometheus reads the decrease as a **reset**, and a bare `increase()` would report the whole post-reset value as fresh change. The two `increase()`-based alert rules (`Reconciler · residual gap increased`, `Reconciler · primary gap rate high`) are guarded with `and resets(...) == 0` precisely so a correction cannot false-page — so **expect both to go quiet for one window after a correction; that is the guard working, not a fault.**
+
+The procedure (a deliberate, one-off exception to the ledger's append-only discipline):
+
+```bash
+L=/volume1/ZhaoCrypto/capture-reconciled/reconcile-ledger.jsonl
+sudo cp "$L" "$L.bak-$(date -u +%Y%m%d-%H%M%S)"        # 1. back up VERBATIM (the audit trail of the bug)
+# 2. filter by an EXACT-MATCH predicate, asserting the count you expect to drop:
+sudo python3 - "$L" <<'PY'
+import json, sys
+L = sys.argv[1]
+keep, dropped = [], []
+for line in open(L):
+    if not line.strip():
+        continue
+    r = json.loads(line)                               # raises on a malformed line -> never write a broken ledger
+    is_bad = r.get("state") == "total_loss" and r.get("pair") == "LINK/EUR" and r.get("hour", "").startswith("2026-07-14T02")
+    (dropped if is_bad else keep).append(r)
+assert len(dropped) == 1, f"expected exactly 1 record, found {len(dropped)}"   # 3. STOP if it does not match
+open("/tmp/ledger.new", "w").write("".join(json.dumps(r) + "\n" for r in keep))
+print(f"dropped {len(dropped)}, kept {len(keep)}")
+PY
+sudo cp /tmp/ledger.new "$L" && sudo chown zcrypto:zcrypto "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
+```
+
+Rules: keep **one record per line** (`_load_ledger` raises `CaptureError` on a malformed line, which fails the next cycle loudly); never truncate to shrink the file (that resets every counter — see [[T0044]] for the compaction design that preserves the totals); and confirm the two alert rules return to Normal within a window after the reset ages out.
+
 ## Alloy telemetry stack (spec 00049 Role B, Task 3)
 
-Two more services on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence
-above: **Grafana Alloy** + a GET-only **`docker-socket-proxy`**, shipping NAS host metrics (load,
-memory, free disk space, network IO), the Role B gate metrics (Task 2's `gate.prom` textfile), and
-the `archive-pull` container's logs to the already-provisioned Grafana Cloud instance.
+One more service on the same `compose.yaml`, unrelated to `archive-pull`'s own deploy sequence above:
+**Grafana Alloy**, shipping NAS host metrics (load, memory, free disk space, network IO), the Role B
+gate metrics (Task 2's `gate.prom` textfile), and every container's logs to the already-provisioned
+Grafana Cloud instance.
+
+Alloy reads the Docker socket **directly**. A GET-only `docker-socket-proxy` (tecnativa) used to sit in front of it with `POST=0` as the boundary; it was removed on 2026-07-14 because it corrupted the logs it existed to carry — its HAProxy `timeout client/server 10m` severed Docker's long-lived `/containers/<id>/logs?follow=1` stream whenever a container went quiet, and Alloy's reconnect (inclusive `since=<second>`) re-ingested the last line each time, duplicating it every 10 minutes forever. **Accepted residual:** anything holding the Docker API is root-equivalent — `:ro` on the socket mount is not a boundary, since the API can create a privileged container — so a compromised Alloy could reach the rrsync keys that pull from the capture VPS. Alloy is still kept non-root (uid 1031 + `group_add: "0"`), which preserves T0030's protection of the `0600` keys against the `/host/root:ro` mount. Tracked in `docs/open-topics/T0042-*` — revisit before go-live.
 
 **Container-level metrics (CPU/mem/fs per container) are NOT collected on this NAS.** `cadvisor`
 SIGSEGVs on Synology DSM — a nil-pointer panic because DSM's kernel has no CPU cgroup hierarchy for
 it to walk — and the panic takes down all of Alloy with it, so `prometheus.exporter.cadvisor` is
-not run here at all. Only host metrics + the gate metrics + the `archive-pull` logs flow off this
-NAS; the `docker-socket-proxy` is retained solely so Alloy's `discovery.docker` can find the
-`archive-pull` container for Loki log-tailing (it needs the `NETWORKS` read-only endpoint too, or
-discovery 403s — see `compose.yaml`).
+not run here at all. Only host metrics + the gate metrics + the container logs flow off this NAS.
 
 See `docs/specs/00043-observability-design.md` for the design this is adapted from (the VPS
 counterpart) and `infra/nas/config.alloy` for the Alloy pipeline itself — everything here runs
@@ -163,15 +198,12 @@ under Container Manager as plain compose services, no ansible/systemd.
    `zcrypto-dummy`'s gid 1000 IS the key-owning group, so this protection rests on the keys being
    `0600` — owner-only, group has no read — not on group isolation; keep the keys `0600`. (This closes
    [[T0030]]; verified live as 1031:1000: the key read is denied while metrics + logs still ship.)
-4. Pin both new images to a digest, same pattern as the capture image (Deploy step 6 above):
-   `docker buildx imagetools inspect grafana/alloy:latest` and
-   `docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:latest`, then replace
-   the `:latest` tags on the `alloy` and `docker-socket-proxy` services in `compose.yaml` with
-   `@sha256:<digest>`.
-5. Start (or restart to pick up the two new services):
+4. Pin the Alloy image to a digest, same pattern as the capture image (Deploy step 6 above):
+   `docker buildx imagetools inspect grafana/alloy:latest`, then replace the `:latest` tag on the
+   `alloy` service in `compose.yaml` with `@sha256:<digest>`.
+5. Start (or restart to pick up the new service):
    `/usr/local/bin/docker compose -f compose.yaml up -d`. Confirm with
-   `/usr/local/bin/docker compose -f compose.yaml ps` that `docker-socket-proxy` and `alloy` are
-   both `Up`.
+   `/usr/local/bin/docker compose -f compose.yaml ps` that `alloy` is `Up`.
 
 ### Resource budget
 
@@ -179,8 +211,8 @@ Diverges from the VPS design (`docs/specs/00043-observability-design.md`) here: 
 kernel has no CPU CFS cgroup, so this stack sets **no `cpus:`/`cpu_shares:` limits** at all — a
 `NanoCPUs` limit fails hard (`NanoCPUs can not be set ... cgroup is not mounted`) and blocks the
 whole `compose up`. Only `memory` limits work (a separate, mounted cgroup): Alloy `memory: 512m`,
-`GOMEMLIMIT=460MiB` (Go's GC overshoots a small cap under default behavior otherwise);
-`docker-socket-proxy` `memory: 64m`. cadvisor is not run on the NAS at all (see above), which also
+`GOMEMLIMIT=460MiB` (Go's GC overshoots a small cap under default behavior otherwise).
+cadvisor is not run on the NAS at all (see above), which also
 removes the one component that would have needed its own CPU budget. 32 GB NAS RAM makes the
 memory ceiling arithmetic comfortable — these are caps, not reservations.
 
@@ -190,11 +222,9 @@ The NAS deploy shakedown ran this stack live on the actual Synology DSM host and
 DSM-specific incompatibilities, all now fixed in `compose.yaml`/`config.alloy` and reflected above:
 cadvisor SIGSEGVs on DSM's cgroup-less kernel (removed entirely — see the container-metrics note
 above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy runs as the
-dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see Deploy step 3 above), `discovery.docker`
-403s without the socket-proxy's `NETWORKS`
-endpoint (added), and a `cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel
-(removed — see Resource budget above). This file now reflects a live-verified deploy, not just the
-originally-authored design.
+dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see Deploy step 3 above), and a
+`cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel (removed — see Resource budget
+above). This file now reflects a live-verified deploy, not just the originally-authored design.
 
 ## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
 

@@ -118,6 +118,30 @@ zcrypto archive pull <source> <dest>
 
 `pull` exits **2** on an rsync transport failure (a partial pull is never verified as authoritative — this also covers a missing `ARCHIVE_SSH_KEY`), **1** if any pulled segment fails its manifest hash check, else **0**. The rsync-over-ssh transport reads `ARCHIVE_SSH_KEY` (the private key path, required), `ARCHIVE_SSH_PORT` (default `10022`), and `ARCHIVE_SSH_KNOWN_HOSTS` (a `UserKnownHostsFile` path). Host-key checking is strict (`StrictHostKeyChecking=yes`), so `ARCHIVE_SSH_KNOWN_HOSTS` must be pre-seeded with the remote host key — an unknown or changed key fails the pull closed rather than trusting it.
 
+`reconcile` (Role C, spec `00050`) reads the two raw capture mirrors and mints healed hours into a separate overlay root, leaving both mirrors immutable and canonical-by-default.
+
+```bash
+zcrypto archive reconcile <primary_root> <secondary_root> <reconciled_root>
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary mirror (raw, canonical-by-default). |
+| `secondary_root` | The secondary mirror (raw). |
+| `reconciled_root` | The overlay: only healed hours are minted here. |
+| `--window-hours` | Trailing settled hours to re-scan each cycle (default `48`). |
+| `--min-gap-seconds` | Primary book silence longer than this, with the secondary alive inside it, is a gap (default `30`). |
+| `--textfile` | Prometheus textfile to publish (`reconcile.prom`). Omit to export nothing. |
+| `--mint` / `--detect-only` | **Default `--detect-only`**: ledger what *would* be spliced and mint nothing. |
+
+**`--detect-only` is the default and must stay so until T0039's soak lands.** `--min-gap-seconds` is not yet validated cross-host: the measured single-host *maximum* natural quiescence is 14.78 s and a single secondary update row is enough to witness a gap, so a per-connection coalescing artifact could plausibly trip a **phantom splice** — an unaudited data swap into an archive that cannot be backfilled. Detect-only ledgers every `would_mint` and writes no parquet; `--mint` is unlocked only once the soak has pinned the threshold from real cross-host data.
+
+An hour is considered once `now ≥ H + 2h` (finalization plus one pull cycle have both had time to land), and a hour still missing from the primary past `H + 6h` is minted from the complete secondary alone. Healing is **whole-window** for books (a secondary block is spliced in, never row-interleaved — L2 rows carry absolute quantities) and **row-level** for trades (`trade_id` is globally unique across hosts). Every decision is appended to `<reconciled_root>/reconcile-ledger.jsonl` (states `minted`, `would_mint`, `trade_deficit`, `both_streams_silent`, `total_loss`, `failed`), and each minted final gets a `.sha256` sidecar plus an `<HH>.provenance.json`, so the overlay verifies with the same `verify_tree` as a raw mirror.
+
+Two **correlated-loss** detectors run regardless of the flag and never mint: `both_streams_silent` (every pair silent on *both* hosts in the *same* window — at depth 100 that has no benign explanation) and `total_loss` (an hour absent from both mirrors while real data brackets it on either side). When both streams are dark there is no witness to heal with, so the loss is permanent: it is ledgered, booked into `zcrypto_reconcile_residual_gap_seconds_total`, and paged.
+
+`reconcile` exits **2** when a mirror is unreadable (transport), **1** on an integrity failure (an unreadable segment, a non-monotonic stream, a corrupt ledger — no textfile is published, so `last_success_timestamp` goes stale and pages), else **0**. Residual gaps are a *finding*, not a failure: they exit 0 and page through the metric.
+
 ## Configuration<a name="configuration"></a>
 
 `zcrypto` reads configuration from **`zcrypto.toml`** in the current working directory (the repo root when running from the checkout). The file is committed with working defaults.

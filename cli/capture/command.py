@@ -220,7 +220,12 @@ async def _healthcheck_loop(
         # early and the daemon writes NOTHING, yet the WS stays connected and no gap opens — so
         # without this term the dead-man would keep reporting GREEN while the unbackfillable L2
         # stream is silently lost. Withholding the ping is what turns a silent death into a page.
-        if client.connected and monitor.is_healthy(pairs) and not watermark.breached:
+        #
+        # `watermark.measurable` closes the T0032(c) blind spot: while the disk probe itself is failing,
+        # `breached` freezes at its last (green) value, so a disk that fills DURING the probe outage
+        # would keep the ping green. "Cannot measure" is not "healthy" — withhold the ping so a
+        # sustained probe failure pages (the healthcheck grace absorbs a transient blip).
+        if client.connected and monitor.is_healthy(pairs) and not watermark.breached and watermark.measurable:
             ping_healthcheck(url)
 
 

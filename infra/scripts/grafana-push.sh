@@ -5,12 +5,15 @@
 # its own stable `uid` (GET to check whether it already exists, then POST to create or PUT to
 # update) -- safe to re-run after any commit to infra/grafana/.
 #
-# Env (vault-sourced -- see infra/nas/README.md's "Grafana dashboard + alerts" section):
-#   GRAFANA_URL                Grafana Cloud stack base URL, e.g. https://<stack>.grafana.net
-#   GRAFANA_SA_TOKEN           Service-account token, dashboards + alerting-provisioning write scope
-#   GRAFANA_PROM_DS_UID        Prometheus datasource UID on the instance (alert rule queries)
-#   GRAFANA_LOKI_DS_UID        Loki datasource UID on the instance (the ERROR-logs rule)
-#   GRAFANA_ALERT_FOLDER_UID   Folder UID the alert rules provision into
+# Env. Only GRAFANA_SA_TOKEN has no default (it is the secret); the rest default to THIS project's
+# real, verified values so nobody has to guess them again -- guessing them wrong is not a harmless
+# error, it is T0034: "first datasource of each type" once silently repointed all 7 rules at the
+# wrong data while still reporting health=ok. Override only to target a different stack.
+#   GRAFANA_SA_TOKEN           (REQUIRED) service-account token: dashboards + alerting-provisioning write
+#   GRAFANA_URL                default https://zcrypto2026.grafana.net
+#   GRAFANA_PROM_DS_UID        default grafanacloud-prom   (NOT grafanacloud-usage / -alert-state-history)
+#   GRAFANA_LOKI_DS_UID        default grafanacloud-logs
+#   GRAFANA_ALERT_FOLDER_UID   default bfrxdfoybx98gb      (the `zcrypto` folder)
 #
 # The alert-rules call targets Grafana's **Alerting Provisioning HTTP API**
 # (POST/PUT/GET /api/v1/provisioning/alert-rules[/:uid]), which is JSON-only and one rule per
@@ -18,17 +21,20 @@
 # not accepted here (and file provisioning isn't usable on Grafana Cloud SaaS at all). See
 # https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/http-api-provisioning/
 #
-# NOTE: this repo has no live Grafana Cloud access to verify the exact call from here -- confirm
-# the datasource + folder UIDs and test-fire each rule during the attended deploy shakedown
-# (docs/specs/00049), same caveat as infra/nas/config.alloy's "Verification note" in
-# infra/nas/README.md.
+# The defaults above were read back from the LIVE stack on 2026-07-14 (7 rules, folder bfrxdfoybx98gb,
+# datasources grafanacloud-prom / grafanacloud-logs) and confirmed to match infra/grafana/alerts.yaml.
+# After ANY push, read the rules back and check the datasourceUid of each -- the API accepts a wrong
+# UID happily and reports health=ok (T0034).
 set -euo pipefail
 
-: "${GRAFANA_URL:?GRAFANA_URL is required}"
 : "${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}"
-: "${GRAFANA_PROM_DS_UID:?GRAFANA_PROM_DS_UID is required}"
-: "${GRAFANA_LOKI_DS_UID:?GRAFANA_LOKI_DS_UID is required}"
-: "${GRAFANA_ALERT_FOLDER_UID:?GRAFANA_ALERT_FOLDER_UID is required}"
+# `export` is load-bearing: the python3 heredocs below read these from os.environ, so a plain shell
+# assignment is invisible to them (they used to be exported by whoever supplied them).
+export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto2026.grafana.net}"
+export GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
+export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
+export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
+echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID" >&2
 
 command -v python3 >/dev/null 2>&1 || { echo "grafana-push: python3 is required" >&2; exit 1; }
 python3 -c "import yaml" >/dev/null 2>&1 \
@@ -38,14 +44,19 @@ command -v jq >/dev/null 2>&1 || { echo "grafana-push: jq is required" >&2; exit
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 auth=(-H "Authorization: Bearer ${GRAFANA_SA_TOKEN}")
 
-echo "grafana-push: pushing dashboard"
-dashboard_payload=$(python3 -c '
+# Every dashboard under infra/grafana/*-dashboard.json is pushed, keyed by its own `uid` — add a
+# file, it ships. (Metrics and logs are separate dashboards: mixing them puts log-only filters on a
+# metrics board, where they do nothing.)
+for dash in "${root}"/infra/grafana/*-dashboard.json; do
+  echo "grafana-push: pushing dashboard $(basename "${dash}")"
+  dashboard_payload=$(python3 -c '
 import json, os, sys
 d = json.load(open(sys.argv[1]))
 print(json.dumps({"dashboard": d, "folderUid": os.environ["GRAFANA_ALERT_FOLDER_UID"], "overwrite": True}))
-' "${root}/infra/grafana/zcrypto-dashboard.json")
-curl -fsS -X POST "${GRAFANA_URL}/api/dashboards/db" \
-  "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
+' "${dash}")
+  curl -fsS -X POST "${GRAFANA_URL}/api/dashboards/db" \
+    "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
+done
 
 echo "grafana-push: pushing alert rules"
 # One-time YAML -> JSON conversion (the file is YAML only for its inline comments); everything
@@ -85,5 +96,51 @@ while IFS= read -r uid; do
       "${auth[@]}" -H "Content-Type: application/json" -d "${rule_payload}" >/dev/null
   fi
 done <<<"${rule_uids}"
+
+# --- Read the rules back and assert each datasource (T0034) ---------------------------------------
+# The provisioning API accepts a wrong datasourceUid happily and reports health=ok, so a typo or a
+# drifted default silently repoints a rule at grafanacloud-usage / -alert-state-history and it never
+# fires on the data it should. Read every rule we just pushed back and fail if any query node points
+# at a datasource that is neither the prom nor the loki UID we intended.
+echo "grafana-push: verifying datasources on the pushed rules" >&2
+ds_bad=0
+while IFS= read -r uid; do
+  [ -n "${uid}" ] || continue
+  live=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}")
+  # every query node's datasourceUid, excluding the expression node (__expr__)
+  bad=$(jq -r --arg prom "${GRAFANA_PROM_DS_UID}" --arg loki "${GRAFANA_LOKI_DS_UID}" '
+    [.data[].datasourceUid] | map(select(. != "__expr__" and . != $prom and . != $loki)) | .[]
+  ' <<<"${live}")
+  if [ -n "${bad}" ]; then
+    echo "grafana-push: !! ${uid} points at an UNEXPECTED datasource: ${bad}" >&2
+    ds_bad=1
+  fi
+done <<<"${rule_uids}"
+[ "${ds_bad}" = "0" ] || { echo "grafana-push: datasource check FAILED — a rule is pointing at the wrong data (T0034)" >&2; exit 1; }
+
+# --- Prune orphaned rules (T0034) ----------------------------------------------------------------
+# The push upserts but never deletes: a rule removed from alerts.yaml keeps evaluating and emailing
+# forever, and a rule that changed uid leaves the old one live beside the new. List every rule live in
+# OUR folder whose uid is absent from alerts.yaml. Deleting an alert rule is NOT reversible from the
+# repo, so this is DRY-RUN by default: it only reports the orphans. Re-run with GRAFANA_PRUNE=1 to
+# actually delete them (scoped to GRAFANA_ALERT_FOLDER_UID so a rule in another folder is never touched).
+echo "grafana-push: checking for orphaned rules in folder ${GRAFANA_ALERT_FOLDER_UID}" >&2
+all_live=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules")
+orphans=$(jq -r --arg folder "${GRAFANA_ALERT_FOLDER_UID}" --argjson keep "$(jq '[.[].uid]' <<<"${rules_json}")" '
+  .[] | select((.folderUID // .folderUid) == $folder) | select(.uid as $u | ($keep | index($u)) == null) | .uid
+' <<<"${all_live}")
+if [ -z "${orphans}" ]; then
+  echo "grafana-push: no orphaned rules" >&2
+else
+  while IFS= read -r uid; do
+    [ -n "${uid}" ] || continue
+    if [ "${GRAFANA_PRUNE:-0}" = "1" ]; then
+      curl -fsS -X DELETE "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}" >/dev/null
+      echo "grafana-push: DELETED orphaned rule ${uid}" >&2
+    else
+      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 to delete" >&2
+    fi
+  done <<<"${orphans}"
+fi
 
 echo "grafana-push: done"

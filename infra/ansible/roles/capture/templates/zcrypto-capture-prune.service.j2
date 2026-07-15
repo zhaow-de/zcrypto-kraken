@@ -1,0 +1,17 @@
+# Rendered by the `capture` Ansible role at /etc/systemd/system/zcrypto-capture-prune.service —
+# do not hand-edit on the host, edit
+# infra/ansible/roles/capture/templates/zcrypto-capture-prune.service.j2 and re-converge instead.
+[Unit]
+Description=Prune capture segments older than {{ capture_retention_days }} days (spec 00050 D8)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-capture-prune {{ capture_data_dir }} {{ capture_retention_days }}
+# The script deletes only inside the capture data dir. These make that structural instead of a
+# promise: a bug in it cannot reach any path outside ReadWritePaths, and the archive it prunes is
+# unbackfillable.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ capture_data_dir }}

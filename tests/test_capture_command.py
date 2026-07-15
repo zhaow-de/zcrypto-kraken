@@ -327,6 +327,32 @@ def test_healthcheck_withheld_when_disk_watermark_breached(monkeypatch):
     assert pings == [], "a watermark breach stops all writes -- the dead-man must NOT keep pinging"
 
 
+def test_healthcheck_withheld_when_disk_probe_cannot_measure(monkeypatch):
+    # T0032(c): while the probe is failing, `breached` freezes at its last (green) value -- so the ping
+    # must be gated on `measurable` too, or a disk that fills DURING the outage keeps pinging green.
+    # This pins the `and watermark.measurable` wiring in _healthcheck_loop directly: without it, a probe
+    # outage over a healthy-looking `breached` would keep pinging.
+    from cli.capture import command as cmd
+    from cli.capture.gap_monitor import DiskWatermark, GapMonitor
+
+    pings: list[str | None] = []
+    monkeypatch.setattr(cmd, "ping_healthcheck", lambda url: pings.append(url))
+
+    watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=lambda p: _FakeUsage(free=10_000))
+    watermark.check()  # healthy: breached=False, measurable=True
+    watermark._measurable = False  # a subsequent probe failed -- breached stays frozen green
+
+    async def drive():
+        task = asyncio.create_task(
+            cmd._healthcheck_loop("https://hc-ping.com/x", _StubClient(), GapMonitor(), ["BTC/EUR"], 0.01, watermark)
+        )
+        await asyncio.sleep(0.06)
+        task.cancel()
+
+    asyncio.run(drive())
+    assert pings == [], "an unmeasurable disk must withhold the ping even while `breached` is still green"
+
+
 def test_disk_watermark_loop_books_the_breach_into_gap_accounting():
     # T0032: withholding the dead-man ping PAGES the operator, but the lost time must ALSO reach
     # GapMonitor's gap_seconds -- the exit-bar metric -- or the automated bar reads clean for a window

@@ -1,0 +1,27 @@
+# host_vars/zcrypto-red — the REDUNDANT (secondary) capture host: Linode 2 GB, 1 vCPU, 50 GB,
+# Amsterdam (spec 00050). Capture only — it is deliberately NOT in `engine_host`, so the live
+# Kraken trade key is never rendered onto it. Inert until the host joins the inventory (task 9).
+#
+# Everything else — the pair universe, depth, image, data dir, deploy/sync keys — comes from
+# group_vars/capture_host, so a universe change converges both hosts identically.
+
+# The base role defaults to "zcrypto"; without this the secondary would converge to the primary's
+# hostname (and to a /etc/hosts entry claiming to be it).
+base_hostname: zcrypto-red
+
+# +1 h from the primary's 21:25 UTC, so a same-night kernel reboot can never take both streams down
+# at once, and a failed primary reboot has an hour to page before the secondary follows. The
+# fleet-collision assert in the base role reads this out of hostvars (see host_vars/zcrypto/vars.yml).
+base_unattended_upgrades_reboot_time: "22:25"
+
+# 1 vCPU / 2 GB box. The role defaults (1.5 CPU, 2g) are sized for the primary's 2-vCPU/4-GB host:
+# a 2g cap here is 100 % of RAM, so a container leak would OOM the OS rather than the container.
+# Measured capture usage is ~102 MiB and <= 41 % of a core, so 1g / 0.9 keeps ~10x headroom.
+capture_memory_limit: "1g"
+capture_cpu_limit: "0.9"
+
+# The NAS's pull-only channel to THIS host — its own keypair (infra/ansible/files/sync_capture_red_ed25519,
+# private half vaulted), never the primary's: per-channel least privilege, so a compromised NAS key
+# reaches one host's segments. The capture role already installs this var as an `rrsync -ro`
+# forced-command entry on the deploy user, so overriding it here needs no role change.
+sync_capture_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHy5P6bGUTRbSQOlGFREq/VYllfnfTAQPyRmmMTx1y// zcrypto-sync-capture-red-pullonly"

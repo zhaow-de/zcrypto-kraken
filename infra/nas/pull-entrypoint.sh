@@ -12,10 +12,26 @@
 set -eu
 umask 0002
 
+# Emit the SAME line shape `zcrypto`'s Python logging emits (`<asctime> <LEVEL> <logger> [<file>] -
+# <msg>`, UTC, comma before the milliseconds -- that comma is CPython's
+# `logging.Formatter.default_msec_format`, not a locale artifact). Alloy's ingest stage keys on
+# exactly this shape to attach the `level` label (infra/nas/config.alloy), and the alerting selects on
+# that label -- so a bare `echo` here is invisible to it. These lines are the ONLY record when the CLI
+# is killed before it can log for itself (OOM, signal), which is precisely when someone needs to know.
+#
+# Milliseconds the portable way: GNU date's width modifier (`%3N`) is a GNU extension that uutils'
+# date -- the Rust coreutils some distros now ship -- silently ignores, emitting all 9 nanosecond
+# digits and producing a line Alloy's regex would NOT label. Both implementations agree on a
+# zero-padded 9-digit `%N`, so take that and drop the last 6 with POSIX parameter expansion.
+log() {
+	_ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+	printf '%s %s zcrypto.pull-entrypoint [pull-entrypoint.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
 sleep_pid=""
 
 on_term() {
-	echo "pull-entrypoint: received TERM/INT, exiting loop" >&2
+	log INFO "received TERM/INT, exiting loop"
 	if [ -n "$sleep_pid" ]; then
 		kill "$sleep_pid" 2>/dev/null || true
 	fi
@@ -25,8 +41,22 @@ trap on_term TERM INT
 
 while true; do
 	# capture pull uses the capture channel's own least-privilege key
+	capture_ok=1
 	if ! ARCHIVE_SSH_KEY="$CAPTURE_SSH_KEY" zcrypto archive pull "$CAPTURE_SOURCE" "$CAPTURE_DEST"; then
-		echo "pull-entrypoint: capture pull failed (source=$CAPTURE_SOURCE dest=$CAPTURE_DEST), continuing" >&2
+		log ERROR "capture pull failed (source=$CAPTURE_SOURCE dest=$CAPTURE_DEST), continuing"
+		capture_ok=0
+	fi
+
+	# Role C (spec 00050): the redundant secondary's mirror, over its OWN key into its OWN root.
+	# Best-effort like every other step -- a failed secondary pull must never stop the loop, because
+	# the primary mirror is still canonical and still arriving. Skipped entirely when CAPTURE_RED_SOURCE
+	# is unset, so a NAS without the red channel runs this script unchanged.
+	secondary_ok=1
+	if [ -n "${CAPTURE_RED_SOURCE:-}" ]; then
+		if ! ARCHIVE_SSH_KEY="$CAPTURE_RED_SSH_KEY" zcrypto archive pull "$CAPTURE_RED_SOURCE" "$CAPTURE_RED_DEST"; then
+			log ERROR "secondary capture pull failed (source=$CAPTURE_RED_SOURCE dest=$CAPTURE_RED_DEST), continuing"
+			secondary_ok=0
+		fi
 	fi
 	# The journal pull only runs once JOURNAL_SOURCE is set (Role B). It uses its OWN
 	# least-privilege key (JOURNAL_SSH_KEY) -- the capture and journal channels use distinct
@@ -35,7 +65,7 @@ while true; do
 	# Increment-1 capture-only deploy JOURNAL_SOURCE is unset, so this whole block is skipped.
 	if [ -n "${JOURNAL_SOURCE:-}" ]; then
 		if ! ARCHIVE_SSH_KEY="$JOURNAL_SSH_KEY" zcrypto archive pull --no-verify "$JOURNAL_SOURCE" "$JOURNAL_DEST"; then
-			echo "pull-entrypoint: journal pull failed (source=$JOURNAL_SOURCE dest=$JOURNAL_DEST), continuing" >&2
+			log ERROR "journal pull failed (source=$JOURNAL_SOURCE dest=$JOURNAL_DEST), continuing"
 		fi
 		# Role B: score the gate on the freshly-pulled journal and emit it as a Prometheus
 		# textfile-collector metric (spec 00042/Task 1's `zcrypto engine gate-export`);
@@ -43,7 +73,39 @@ while true; do
 		# loop.
 		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
 				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
-			echo "pull-entrypoint: gate-export failed (dest=$JOURNAL_DEST), continuing" >&2
+			log ERROR "gate-export failed (dest=$JOURNAL_DEST), continuing"
+		fi
+	fi
+
+	# Role C: reconcile the two raw mirrors into the healed overlay. DETECT-ONLY by default -- it
+	# ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
+	# --min-gap-seconds from real cross-host data (see RECONCILE_MIN_GAP_SECONDS in compose.yaml).
+	#
+	# SKIPPED on any cycle whose PRIMARY **or SECONDARY** pull failed. The reconciler reasons from the
+	# two LOCAL mirrors, and it cannot tell "this hour does not exist" from "this hour did not arrive".
+	# A failed pull -- on either channel -- makes local absence uninformative:
+	#
+	#   * primary pull broken: hours look primary-dark but are not. Reconciling would mint "healed"
+	#     full-secondary hours for data that was never lost, quietly substituting one host's stream for
+	#     the other's in an archive that cannot be backfilled, and inflating healed_gap_seconds so the
+	#     very metric meant to flag a degrading primary reports success instead.
+	#   * secondary pull broken: the witness looks dark too. A real primary outage -- the exact event
+	#     Role C exists to heal -- would then be classified `both_streams_silent` / `total_loss`:
+	#     PERMANENT loss, paged, and booked into a monotone counter that can never be walked back, for
+	#     an hour the secondary actually captured and could have healed. The correlated-loss detectors
+	#     run unconditionally (they are not gated by --mint), so this bites even in detect-only mode,
+	#     and the ledger's dedupe means the false verdict is never revisited.
+	#
+	# Skipping keeps the ledger honest for free: the hours simply reconcile on the next healthy cycle,
+	# against complete mirrors. An unhealed hour costs nothing; a wrong verdict is forever.
+	if [ -n "${CAPTURE_RED_SOURCE:-}" ]; then
+		if [ "$capture_ok" -eq 0 ] || [ "$secondary_ok" -eq 0 ]; then
+			log WARNING "reconcile skipped: a capture pull failed this cycle (primary_ok=$capture_ok secondary_ok=$secondary_ok), so a mirror's absence cannot be told apart from a pull that has not landed yet"
+		elif ! zcrypto archive reconcile "$CAPTURE_DEST" "$CAPTURE_RED_DEST" "$RECONCILED_DEST" \
+				--window-hours "${RECONCILE_WINDOW_HOURS:-48}" \
+				--min-gap-seconds "${RECONCILE_MIN_GAP_SECONDS:-30}" \
+				--textfile "$RECONCILE_TEXTFILE"; then
+			log ERROR "reconcile failed (primary=$CAPTURE_DEST secondary=$CAPTURE_RED_DEST overlay=$RECONCILED_DEST), continuing"
 		fi
 	fi
 

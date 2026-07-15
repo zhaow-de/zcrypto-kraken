@@ -1,3 +1,30 @@
+# Fleet policy, pinned in config (spec 00050; .claude/rules/capture-deploys.md): two capture hosts
+# must never share an unattended-upgrades reboot slot — a same-night kernel reboot would take both
+# streams down at once, and a book gap with no surviving witness is permanent.
+#
+# It reads the slots from `hostvars`, so every capture host must declare its own in host_vars:
+# `hostvars` resolves inventory/group/host vars and facts but NOT role defaults, so a host relying
+# on this role's default is `UNDECLARED` here — checked explicitly rather than silently skipped.
+# Declared in inventory (not set_fact'd), the check also survives `--limit`, which is exactly when
+# a single-host converge could otherwise collide the fleet unseen.
+- name: assert the capture fleet's maintenance windows do not collide
+  ansible.builtin.assert:
+    that:
+      - "'UNDECLARED' not in base_fleet_reboot_times"
+      - base_fleet_reboot_times | unique | list | length == base_fleet_reboot_times | length
+    fail_msg: >-
+      capture hosts {{ groups['capture_host'] }} have colliding or undeclared reboot windows
+      ({{ base_fleet_reboot_times }}). Give each host its own slot in host_vars via
+      base_unattended_upgrades_reboot_time (>= 1 h apart, off the hour boundary, >= 1 h from a 4h
+      bar boundary — measure from the archive, see .claude/rules/capture-deploys.md).
+    success_msg: "capture fleet maintenance windows are distinct: {{ base_fleet_reboot_times }}"
+  vars:
+    base_fleet_reboot_times: >-
+      {{ groups['capture_host'] | map('extract', hostvars)
+         | map(attribute='base_unattended_upgrades_reboot_time', default='UNDECLARED') | list }}
+  run_once: true
+  when: inventory_hostname in groups['capture_host'] | default([])
+
 - name: set timezone to UTC
   community.general.timezone:
     name: "{{ base_timezone }}"

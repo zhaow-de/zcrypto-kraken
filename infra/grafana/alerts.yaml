@@ -36,24 +36,31 @@
 # to 0 rather than NoData, and is marked noDataState: OK to match -- a blanket no-data->alert
 # would otherwise leave it permanently firing when healthy.
 rules:
-  - uid: zcrypto-gate-not-met
-    title: "Gate · not MET"
+  - uid: zcrypto-gate-streak-reset
+    title: "Gate · streak reset"
     ruleGroup: zcrypto-gate
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
-    # NOTE (per task-4 brief): the gate hasn't been MET yet during the shadow-scoring phase,
-    # so a simple `status == 0` fires continuously until the first MET day -- accepted for
-    # now. Once the gate has been MET at least once, the sharper condition is an edge (MET
-    # -> not-MET), e.g. `zcrypto_gate_status == 0 and changes(zcrypto_gate_status[1d]) > 0`;
-    # revisit at that point.
+    # SUPERSEDES the old "Gate · not MET" rule (uid zcrypto-gate-not-met), which alerted on
+    # `zcrypto_gate_status == 0`. That rule's own NOTE conceded the flaw and it duly bit: the gate
+    # is MET only after >=14 consecutive clean days, so `status == 0` is the CORRECT, EXPECTED state
+    # for the entire accumulation window -- it would have emailed daily for ~12 days to report that
+    # we were, correctly, still waiting. That is alarm fatigue, and it trains the reader to ignore
+    # gate alerts exactly when one of them matters. It was also redundant: the real failure modes
+    # already have their own rules (mismatch / exporter stale / journal pull lag).
+    #
+    # The signal that actually means something BROKE is the streak going BACKWARDS. `streak_days`
+    # only ever increments (a clean complete UTC day) or resets to 0 (a day failed), so a negative
+    # delta IS the failure, and nothing else produces one. It fires once on the break and
+    # auto-resolves as the 6h window rolls past -- one alert per broken run, not a drumbeat.
     condition: C
     data:
       - refId: A
         queryType: ""
-        relativeTimeRange: {from: 600, to: 0}
+        relativeTimeRange: {from: 21600, to: 0}  # 6h, matching the delta window below
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: zcrypto_gate_status
+          expr: delta(zcrypto_gate_streak_days[6h])
           instant: true
           refId: A
       - refId: C
@@ -66,12 +73,16 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: lt, params: [1]}  # status < 1 == status == 0 (0/1 gauge)
-    noDataState: Alerting
+            - evaluator: {type: lt, params: [0]}  # the streak went BACKWARDS == a clean run broke
+    # OK, not Alerting: a missing metric means the exporter is dead, which `Gate · exporter stale`
+    # already pages for. Alerting here too would just double-page the same fault.
+    noDataState: OK
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The >=14-clean-day gate is not MET."
+      summary: >-
+        The Stage-6a clean-day streak went BACKWARDS — a clean run broke and the >=14-day gate clock
+        has restarted. (The gate merely being not-MET while it accumulates is normal and no longer alerts.)
     labels:
       severity: warning
     notification_settings:
@@ -268,13 +279,203 @@ rules:
     orgId: 1
     condition: C
     data:
+      # Selects on the `level` LABEL, not a `|= "ERROR"` grep of the line. Alloy now parses our
+      # Python log format at ingest (infra/nas/config.alloy) and strips the level out of the message,
+      # so a text grep for "ERROR" would match NOTHING — silently blind, exactly the failure this rule
+      # already had once. The label also catches `critical`, which the grep never did.
+      # `queryType: instant` is load-bearing and Loki-specific: the `instant: true` MODEL field that
+      # the Prometheus rules above use is a Prometheus-datasource setting, and Loki ignores it. Without
+      # this the query ran as a RANGE query and returned a time series, so the threshold node rejected
+      # it with "invalid format of evaluation results ... looks like time series data, only reduced
+      # data can be alerted on" -- the rule was erroring instead of evaluating.
       - refId: A
-        queryType: ""
+        queryType: instant
         relativeTimeRange: {from: 900, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({container="archive-pull"} |= "ERROR" [15m])) or on() vector(0)
+            sum(count_over_time({container="archive-pull", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      # Reduce A to a single value before the threshold. Belt-and-braces alongside the instant query:
+      # this is the canonical A -> B(reduce) -> C(threshold) chain Grafana's own UI emits, and it keeps
+      # the rule valid even if the datasource ever hands back a series again.
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR-level log lines from the archive-pull container in the last 15 minutes."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-nas-archive-pull-stalled
+    title: "NAS · archive-pull stalled (dead-man)"
+    ruleGroup: zcrypto-nas
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The DEAD-MAN, and the only rule that fires on SILENCE. Every other rule needs the archive-pull
+      # container to still be alive and talking: `NAS · archive-pull ERROR logs` fires on an ERROR
+      # line, so it is green when the container is gone, the pull loop has exited, or the NAS is down
+      # -- i.e. exactly when nothing is protecting the unbackfillable archive any more. This one
+      # inverts that: it fires when the loop STOPS saying it succeeded.
+      #
+      # `failed=0` is load-bearing, not decoration. Matching `pull complete` alone would ALSO be
+      # satisfied by (a) the JOURNAL pull -- "archive pull complete (no verify) ..."
+      # (cli/archive/command.py:104) -- and (b) a CAPTURE pull whose hash verification FAILED, because
+      # :109 logs "pull complete ... failed=N" *before* the :118 check raises. Either would hold this
+      # rule quiet while the capture mirror -- the unbackfillable thing it exists to protect -- was not
+      # advancing at all. `failed=0` appears only on a fully-clean capture pull: the journal line
+      # carries no `failed=` field, and a verify failure carries a non-zero one. So this rule tracks
+      # the capture mirror specifically. A pull that fails LOUDLY is the ERROR rule's job; this one
+      # owns silence.
+      #
+      # 3h window against a pull that runs hourly (`${ARCHIVE_PULL_INTERVAL:-3600}` in
+      # infra/nas/pull-entrypoint.sh): the loop gets three chances to report before this pages, so a
+      # single slow or restarted cycle is not enough to wake anyone.
+      #
+      # `or on() vector(0)` is what makes the dead-man work at all: when the container is gone Loki
+      # returns NO series, and a bare `sum(count_over_time(...))` would then evaluate to NoData
+      # rather than to zero -- the rule would sit in NoData instead of firing, which is the precise
+      # failure it exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 10800, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({container="archive-pull"} |= "pull complete" |= "failed=0" [3h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting  # NoData here means the log pipeline itself died -- that IS the alarm
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "archive-pull has not reported a successful pull for 3h -- the loop, the container, the NAS, or the log pipeline is down. The L2 archive is unbackfillable; the NAS mirror is going stale."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
+
+  # --- Reconciler: the redundant capture secondary + gap healing (spec 00050 Role C, task 11) -------
+  # Pushed only after the `zcrypto_reconcile_*` series were confirmed VISIBLE in Grafana Cloud. A rule
+  # armed before its metric exists evaluates against nothing and sits silent forever, looking healthy
+  # -- the same class of failure as T0034. Alloy's keep-regex must carry `zcrypto_reconcile_.*` or the
+  # series never leave the NAS (infra/nas/config.alloy).
+
+  - uid: zcrypto-reconcile-exporter-stale
+    title: "Reconciler · exporter stale"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The dead-man for the reconciler itself. Every other rule below reads a metric the reconciler
+      # publishes, so all of them go quiet -- not red -- if it simply stops running. This one inverts
+      # that: it fires on the silence. The textfile is scraped in place, so a dead reconciler leaves the
+      # last value being scraped forever; only the TIMESTAMP reveals it, which is why the gauge exists.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_reconcile_last_success_timestamp_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10800]}  # 3h. The cycle is ~1.2h (the sleep follows the pull+reconcile work), so this is ~2 missed cycles of headroom
+    noDataState: Alerting  # no series at all = the NAS, Alloy, or the reconciler is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "No successful `zcrypto archive reconcile` cycle in over 3h. The reconciler is the only thing that heals primary gaps from the secondary -- while it is down, gaps accumulate unhealed and unmeasured."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-reconcile-residual-gap
+    title: "Reconciler · residual gap increased (permanent loss)"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # PERMANENT LOSS. Residual seconds are silence that NEITHER mirror covered -- both_streams_silent
+      # (the fleet went dark together) or total_loss (the hour is on neither host). No later cycle can
+      # heal it: there is no witness, and L2 is unbackfillable. Any increase at all is worth waking up
+      # for, hence `> 0` rather than a tolerance.
+      #
+      # The counter is derived by SUMMING an append-only ledger, so it normally only grows. The one
+      # thing that DECREASES it is a deliberate ledger correction (e.g. the classifier-bug record purged
+      # with the owner's approval on 2026-07-14, 6261.8 -> 2661.8 s). Prometheus reads that decrease as a
+      # counter reset, and a bare `increase()` would then report the whole post-reset value as fresh
+      # permanent loss -- paging the highest-severity alert in the system on an artifact of a correction.
+      # The `and resets(...) == 0` guard suppresses exactly that: the rule fires only on an increase with
+      # NO reset in the window. A genuine new loss is monotone (no reset) and still fires; a correction
+      # (reset) is silenced for one window. Cost: a real loss in the SAME 1h window as a correction is
+      # delayed until the reset ages out -- rare, bounded, and the dashboard panel shows the trend
+      # regardless. `or on() vector(0)` keeps the healthy state an explicit 0 rather than NoData. See T0044.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: "(increase(zcrypto_reconcile_residual_gap_seconds_total[1h]) > 0 and resets(zcrypto_reconcile_residual_gap_seconds_total[1h]) == 0) or on() vector(0)"
           instant: true
           refId: A
       - refId: C
@@ -288,11 +489,108 @@ rules:
           refId: C
           conditions:
             - evaluator: {type: gt, params: [0]}
-    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    noDataState: OK  # the exporter-stale rule above owns "the reconciler is gone"; this one owns loss.
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "ERROR-level log lines from the archive-pull container in the last 15 minutes."
+      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the both_streams_silent / total_loss records behind it."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-reconcile-source-lag
+    title: "Reconciler · capture mirror lagging"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Per-mirror, so the alert instance names WHICH host went quiet -- `source="primary"` and
+      # `source="secondary"` fire independently. This is dataflow-based and therefore independent of
+      # both hosts' healthchecks.io dead-men: a host can keep pinging while its capture writes nothing.
+      #
+      # Threshold 3h against a measured normal of ~1h: a final only commits after its hour closes and
+      # the NAS pulls hourly, so ~1-2h of lag is the healthy steady state. 3h means a mirror has missed
+      # a whole cycle beyond that.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: max by (source) (zcrypto_reconcile_source_lag_seconds)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10800]}  # 3h
+    noDataState: OK  # owned by the exporter-stale rule above
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "A capture mirror's newest committed final is over 3h old -- that host has stopped producing data, or its pull channel is broken. If it is the SECONDARY, the fleet has no witness and the next primary gap is permanent."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: email
+
+  - uid: zcrypto-reconcile-healable-gap-rate
+    title: "Reconciler · primary gap rate high (degrading host)"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The degrading-primary detector, and T0003's outstanding gap-rate-alert item.
+      #
+      # A primary that is quietly falling apart -- reconnecting constantly, dropping seconds at a time --
+      # trips NOTHING else: every gap is healed by the secondary, so residual stays flat; it keeps
+      # pinging, so its dead-man stays green; it keeps producing finals, so source-lag stays low. The
+      # RATE at which it needs healing is the only thing that reveals it.
+      #
+      # Reads `healable`, not `healed`: minting is OFF for the whole T0039 soak, so `healed_gap_seconds`
+      # (minted only) is pinned at 0 exactly when this signal is most needed. `healable` counts the
+      # seconds the secondary WITNESSED and could cover, in both modes.
+      #
+      # 600s/24h is a starting threshold, not a measured one: ~10 minutes of primary silence a day that
+      # the secondary had to cover. T0039's soak recalibrates it from the real cross-host distribution --
+      # until then treat a firing as "look at the ledger", not as a verdict.
+      #
+      # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule, and MORE so
+      # here: this window is 24h, so without the guard a ledger correction would false-page for a full
+      # day. A rebuild of the ledger resets this counter too. See T0044.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: "(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]) > 0 and resets(zcrypto_reconcile_healable_gap_seconds_total[24h]) == 0) or on() vector(0)"
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [600]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The primary needed more than 10 minutes of healing in the last 24h. Every gap was covered, so nothing else fires -- but a host that needs this much healing is degrading. Check the reconcile ledger's would_mint/minted records for the pattern."
     labels:
       severity: warning
     notification_settings:
