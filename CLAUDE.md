@@ -59,7 +59,7 @@ The test: every changed line traces directly to the user's request.
 ## Tooling
 
 - Package/dependency manager: **uv** (`pyproject.toml` + `uv.lock`). Do not edit `uv.lock` by hand.
-- Python is pinned to **3.14**.
+- Python is pinned to **3.14**. PEP 758 applies: `except ValueError, IndexError:` — unparenthesized multiple exception types (only without `as`) — is **valid syntax**; do not flag it as an error or "fix" it in review.
 - Run all Python through uv so the locked environment is used.
 
 ## Commands
