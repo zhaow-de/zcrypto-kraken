@@ -9,3 +9,6 @@
 # >= 1 h from any 4h bar boundary, off the hour boundary. The secondary sits +1 h at 22:25.
 # (Derivation: spec 00050; policy: .claude/rules/capture-deploys.md.)
 base_unattended_upgrades_reboot_time: "21:25"
+
+# This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
+deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto_ed25519.pub') }}"

@@ -24,4 +24,7 @@ capture_cpu_limit: "0.9"
 # private half vaulted), never the primary's: per-channel least privilege, so a compromised NAS key
 # reaches one host's segments. The capture role already installs this var as an `rrsync -ro`
 # forced-command entry on the deploy user, so overriding it here needs no role change.
-sync_capture_authorized_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHy5P6bGUTRbSQOlGFREq/VYllfnfTAQPyRmmMTx1y// zcrypto-sync-capture-red-pullonly"
+sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capture_red_ed25519.pub') }}"
+
+# This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
+deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-red_ed25519.pub') }}"
