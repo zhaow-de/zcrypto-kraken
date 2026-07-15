@@ -33,7 +33,7 @@ exclude_also = [
 
 [dependency-groups]
 dev = [
-    "ansible>=14.1.0",
+    "ansible>=14.2.0",
     "ansible-lint>=26.6.0",
     "coverage>=7.15.1",
     "pre-commit>=4.6.0",
