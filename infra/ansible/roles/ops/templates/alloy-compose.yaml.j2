@@ -43,10 +43,11 @@ services:
       GOMEMLIMIT: 460MiB
     env_file:
       # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
-      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, distributed out-of-band, never committed, never
-      # rendered by this role. Placed by hand at deploy time (plan Task 3), and must be chowned to
-      # the `zcrypto-alloy` user (Alloy's container `user:` above) so it can read a 0600 file it does
-      # not own by default -- see infra/ops/README.md.
+      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, never committed, rendered by this role
+      # (tasks/main.yml, from group_vars/observed/vault.yml) with no_log: true + diff: false so a
+      # converge never prints the values, owned by the `zcrypto-alloy` user (Alloy's container
+      # `user:` above) so it can read a 0600 file it does not own by default -- see
+      # infra/ops/README.md.
       - ./alloy-secrets.env
     command:
       - run

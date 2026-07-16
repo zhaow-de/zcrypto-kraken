@@ -266,6 +266,24 @@
         group: deploy
         mode: "0644"
 
+    # Renders straight from the vault (group_vars/observed/vault.yml) -- unlike the NAS, which is
+    # not Ansible-managed (Synology Container Manager) and so needs a hand-placed, out-of-band file,
+    # this host IS Ansible-managed and there is no reason to keep a human step in the loop. no_log +
+    # diff: false: without both, a converge prints the six Grafana Cloud credentials to the terminal
+    # and to any log capturing the run's output (the established pattern -- see docs/plans/00043 --
+    # applied wherever this role renders a secret, e.g. the liquidations compose file above). Owned
+    # by zcrypto-alloy (not deploy): the container runs as that uid (`user:` in
+    # alloy-compose.yaml.j2) and must be able to read a 0600 file it does not own by default.
+    - name: render the alloy secrets env file
+      ansible.builtin.template:
+        src: alloy-secrets.env.j2
+        dest: "{{ ops_alloy_dir }}/alloy-secrets.env"
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0600"
+      no_log: true
+      diff: false
+
     - name: render the alloy compose file
       ansible.builtin.template:
         src: alloy-compose.yaml.j2

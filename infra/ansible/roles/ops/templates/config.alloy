@@ -5,9 +5,10 @@
 // infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
 // remote_write / docker-logs pipeline -- with three deliberate divergences, each called out in
 // the comments below. Grafana Cloud credentials are NOT in this file: they arrive as environment
-// variables from an out-of-band, 0600, never-committed secrets file (alloy-secrets.env, see
-// infra/ops/README.md), read here via the `sys.env(...)` stdlib function -- the same contract as
-// the NAS's alloy-secrets.env.
+// variables from a rendered, 0600, never-committed secrets file (alloy-secrets.env.j2, see
+// infra/ops/README.md), read here via the `sys.env(...)` stdlib function -- the NAS's Alloy reads
+// the same six names from its own alloy-secrets.env, but that file is hand-placed out-of-band (the
+// NAS is not Ansible-managed); this host is, so the `ops` role renders it from the vault instead.
 //
 // Plain `copy:`, not `template:` (review finding 2) -- this file is 100% static: every value below
 // (the keep-regex, the textfile path, the host label) is a literal, identical on every converge,

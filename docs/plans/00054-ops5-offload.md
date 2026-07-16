@@ -365,9 +365,9 @@ EOF
 
 **This task is D1's gate. Task 7 must not begin until this one has passed.** It touches a real host, so it is orchestrator-only.
 
-- [ ] **Step 1: Place the secrets file by hand**
+- [ ] **Step 1: The secrets file is rendered from the vault, not placed by hand**
 
-The credentials are the same Grafana Cloud pair the NAS uses. Copy `infra/nas/alloy-secrets.env`'s contract to `/etc/zcrypto-ops/alloy/alloy-secrets.env` on the ops node, `0600`, owned by `deploy`. **Never echo the values, never write them to a repo path, never commit them, never add them to the vault in this task.**
+Superseded during implementation: the credentials already existed in the vault (mis-scoped to `capture_host` since spec 00043) and were rescoped to a new `group_vars/observed/vault.yml` group (`capture_host` + `ops_host`). Since the ops node **is** Ansible-managed (unlike the NAS), the `ops` role now renders `infra/ansible/roles/ops/templates/alloy-secrets.env.j2` straight from that vault group, `0600`, owned by `zcrypto-alloy`, with `no_log: true` + `diff: false` — no hand-placed step remains.
 
 - [ ] **Step 2: Resolve the Alloy image digest**
 

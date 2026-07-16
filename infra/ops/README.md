@@ -176,29 +176,9 @@ T0042.
 
 ### Deploy
 
-1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`).
-2. Place the secrets file at `{{ ops_alloy_dir }}/alloy-secrets.env` (default
-   `/etc/zcrypto-ops/alloy/alloy-secrets.env`), mode `0600`, **owned by `zcrypto-alloy`**
-   (`chown zcrypto-alloy:zcrypto-alloy` — the container runs as that user and must be able to read
-   a 0600 file it does not own by default) — **never committed**, distributed out-of-band the same
-   way the NAS's `alloy-secrets.env` is (`infra/nas/README.md`). Contents (one `KEY=value` per
-   line, no quoting):
-
-   ```
-   GRAFANA_PROM_URL=https://<prometheus-remote-write-endpoint>/api/prom/push
-   GRAFANA_PROM_USERNAME=<prometheus-instance-id>
-   GRAFANA_PROM_PASSWORD=<prometheus-access-token>
-   GRAFANA_LOKI_URL=https://<loki-push-endpoint>/loki/api/v1/push
-   GRAFANA_LOKI_USERNAME=<loki-instance-id>
-   GRAFANA_LOKI_PASSWORD=<loki-access-token>
-   ```
-
-   `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
-   stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name). There is no
-   `ops_alloy_secrets_path` role var — the compose file hardcodes the relative path, so this section
-   is the path's only source of truth.
-3. Start it (attended, plan Task 3): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
-4. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
+1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`). Unlike the NAS (not Ansible-managed — Synology Container Manager, hand-deployed compose), this host IS Ansible-managed, so there is no hand-placed secrets file: the `ops` role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, mode `0600`, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. The six vars (`GRAFANA_PROM_URL/USERNAME/PASSWORD`, `GRAFANA_LOKI_URL/USERNAME/PASSWORD`) live in `group_vars/observed/vault.yml` — rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
+2. Start it (attended, plan Task 3): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
+3. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
    `ops_verify_replay_*`, `ops_verified_replay_*`) and host metrics appear in Grafana Cloud within a
    scrape interval; `tests/test_infra_alloy_series.py` pins the keep-regex against every series this
    stack (present + Task 6's future writer move) actually publishes.
