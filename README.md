@@ -191,6 +191,21 @@ zcrypto archive verify-replay <primary_root> [reconciled_root]
 
 One line per hour plus a summary; a bad hour is isolated into its own result (the sweep never aborts). Exits **1** if any hour errs or fails any of the four checks, else **0**.
 
+`backfill-trades` heals the canonical trade stream to a contiguous, duplicate-free sequence of trade ids. It re-reads a pair's settled trade hours from the archive, detects any missing or duplicated ids, fetches the missing ones from Kraken's public REST, and mints the healed hours into the reconciled overlay — never fabricating a trade: an id the REST endpoint will not serve stays absent from the output.
+
+```bash
+zcrypto archive backfill-trades <primary_root> <reconciled_root>
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `primary_root` | The primary (raw) canonical trade archive. |
+| `reconciled_root` | The overlay healed hours are minted into. |
+| `--pair` | Only this pair (e.g. `BTC/EUR`). Defaults to every pair. |
+| `--detect-only` | Report the loss; mint nothing. |
+
+The summary line reports every outcome bucket a fetched or existing row can land in: `pairs` swept, `gaps` found, trades `recovered` from the REST, trades `unrecoverable` (missing ids the REST would not serve), trades `deferred` (recovered but their hour hasn't settled yet, so nothing was minted), `duplicates_collapsed` (repeated ids removed within one hour), `duplicates_cross_hour` (repeated ids split across two hour files, which a per-hour mint cannot collapse), `hours_minted`, and `errors`. `backfill-trades` exits **2** when `primary_root` does not exist, **1** if the sweep recorded any error (a fetch failure, a mint failure, or a post-mint invariant violation), else **0**.
+
 ### `zcrypto panel`<a name="zcrypto-panel"></a>
 
 The 1s L2 primitive panel: materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair.
