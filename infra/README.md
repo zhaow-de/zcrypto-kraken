@@ -88,8 +88,9 @@ listens. If you lose `deploy@10022` access:
      `nft -f /etc/nftables.conf` to reload the managed rules; check `nft list ruleset`.
    - **Recover the deploy key** to reach the box from the workstation:
      `cd infra/ansible && sops -d --extract '["vault_password"]' vault-password.sops.yaml` gives the
-     vault password (needs the GPG key); `ansible-vault view files/deploy_ed25519` prints the
-     private key.
+     vault password (needs the GPG key); `ansible-vault view files/deploy_<host>_ed25519` prints
+     that host's private key — the deploy keys are per-machine (`deploy_zcrypto_ed25519`,
+     `deploy_zcrypto-red_ed25519`, `deploy_zcrypto-ops_ed25519`; see `files/README.md`).
 3. Once back in, re-assert the intended (hardened) state. For the primary that means `./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e capture_image_digest=sha256:<...>` — the flag is required, and it restarts live capture, so pick the moment.
 
 ## Rebuild from scratch (portability)<a name="rebuild-from-scratch-portability"></a>

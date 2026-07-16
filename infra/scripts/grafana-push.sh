@@ -16,8 +16,10 @@
 #   GRAFANA_ALERT_FOLDER_UID   default bfrxdfoybx98gb      (the `zcrypto` folder)
 #   GRAFANA_SLACK_WEBHOOK_URL  (REQUIRED for the Slack section) Slack incoming-webhook URL, vaulted
 #                              as slack_webhook_url in infra/ansible/group_vars/capture_host/vault.yml.
-#                              Unset/empty SKIPS the section cleanly -- the script stays runnable
-#                              without it (T0047).
+#                              Unset/empty SKIPS the upserts only when the metrics/logs receivers
+#                              already exist on the stack (steady state -- they persist once minted);
+#                              on a from-scratch stack the script ABORTS before the rules push rather
+#                              than let the rules reference nonexistent receivers (T0047).
 #   (receivers `metrics`/`logs` are as-code constants minted by this script -- no receiver env)
 #   GRAFANA_SLACK_RECEIVER     REMOVED 2026-07-16 (receiver names are as-code constants now).
 #
@@ -72,7 +74,17 @@ done
 # moved from "must pre-exist" to "we are the source of truth"). This section runs BEFORE the rules
 # push: Grafana validates a rule's notification_settings.receiver against existing receivers.
 if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
-  echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set -- skipping Slack contact-point section" >&2
+  # Steady-state escape hatch: the receivers persist once minted, so a webhook-less run is fine
+  # THEN. On a from-scratch stack they do not exist yet, and the rules push below would reference
+  # nonexistent receivers -- verify both are live before proceeding, abort otherwise.
+  preexisting_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
+  for name in metrics logs; do
+    if ! jq -e --arg name "${name}" 'any(.[]; .name == $name)' <<<"${preexisting_cps}" >/dev/null; then
+      echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set and receiver '${name}' does not exist on the stack -- set the webhook so the metrics/logs receivers can be minted before the rules push" >&2
+      exit 1
+    fi
+  done
+  echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set -- receivers metrics+logs already live, skipping Slack upserts" >&2
 else
   existing_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
   upsert_slack_integration() { # uid receiver_name disable_resolve

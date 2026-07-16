@@ -27,7 +27,7 @@
 #     the folder's UID, not its display name).
 #   - `notification_settings.receiver: metrics` (or `logs` for Loki-sourced rules; the `logs`
 #     receiver disables resolve messages -- log alerts resolve by aging, a resolve ping is noise)
-#     (its underlying address is provisioned separately, not committed here).
+#     (both receivers' underlying Slack webhook is provisioned separately, not committed here).
 #
 # Per-rule noDataState/execErrState reasoning: the four gate rules and the two host-resource
 # rules default to Alerting on both no-data and exec-error -- for these, a vanished series
