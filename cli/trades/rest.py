@@ -85,7 +85,11 @@ def fetch_trades(
     opener=urllib.request.urlopen,
     sleep=time.sleep,
 ) -> pl.DataFrame:
-    """Fetch Kraken public trades for `pair` from `since` (inclusive), paginating to `until`.
+    """Fetch Kraken public trades for `pair` from `since` (inclusive).
+
+    `until`, when given, bounds PAGING ONLY: it stops issuing further page requests once a page's
+    newest row reaches it. It does NOT trim the returned rows to `until` — the returned frame can
+    contain rows past `until`. The caller filters to whatever range it actually wants.
 
     Returns rows in `TRADE_SCHEMA`, ascending `trade_id`, `symbol` set to the CANONICAL pair — a
     REST-sourced row is byte-comparable with a WS-captured one for the same trade, which is what
@@ -95,10 +99,11 @@ def fetch_trades(
     if altname is None:
         raise TradeBackfillError(f"no Kraken altname for pair {pair!r}")
 
-    cursor_s = int(since.timestamp())
+    cursor = int(since.timestamp())
     frames: list[pl.DataFrame] = []
+    max_trade_id_seen: int | None = None
     while True:
-        url = f"{_BASE_URL}?pair={altname}&since={cursor_s}"
+        url = f"{_BASE_URL}?pair={altname}&since={cursor}"
         try:
             with opener(url, timeout=_TIMEOUT_SECONDS) as response:
                 payload = json.load(response)
@@ -119,7 +124,28 @@ def fetch_trades(
             break
 
         frame = _rows_to_frame(rows, pair)
+        page_max_id = int(frame["trade_id"].max())
+        if max_trade_id_seen is not None and page_max_id <= max_trade_id_seen:
+            # Defence in depth (D5a): the raw cursor is nanoseconds and always advances, so this
+            # should be unreachable — but the blast radius of a stall (hammering a public
+            # endpoint forever) is out of proportion to the cost of this check.
+            logger.warning(
+                "trades.rest: %s page made no trade_id progress (max=%d, already seen up to %d); stopping pagination",
+                pair,
+                page_max_id,
+                max_trade_id_seen,
+            )
+            break
+        max_trade_id_seen = page_max_id
         frames.append(frame)
+        logger.debug(
+            "trades.rest: %s page %d rows=%d max_trade_id=%d cursor=%s",
+            pair,
+            len(frames),
+            len(rows),
+            page_max_id,
+            cursor,
+        )
 
         newest = frame["ts"].max()
         if until is not None and newest >= until:
@@ -127,9 +153,13 @@ def fetch_trades(
         if len(rows) < _PAGE_ROWS:
             break  # short page: the series is exhausted
 
-        # `last` is NANOSECONDS; `since` is SECONDS. Passing it through raw lands ~31 years ahead
-        # and returns an empty page forever.
-        cursor_s = int(int(result["last"]) // 1_000_000_000)
+        # D5a (measured against the live endpoint): `since` accepts BOTH a seconds epoch AND the
+        # raw ns `last` cursor — feed `last` back UNMODIFIED. It is Kraken's documented usage and
+        # is inclusive of the last row (a page break re-returns exactly 1 row, absorbed by
+        # dedupe). Converting it to seconds (`last // 1e9`) was the defect: it rewinds to the
+        # start of that second and, when 1000 rows share one second, yields the SAME `since` as
+        # before — an infinite loop against the live venue.
+        cursor = result["last"]
         sleep(_MIN_INTERVAL_SECONDS)
 
     if not frames:
