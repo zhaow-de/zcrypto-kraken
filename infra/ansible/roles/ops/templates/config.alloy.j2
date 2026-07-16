@@ -1,0 +1,211 @@
+{# Grafana Alloy config for the ops node's telemetry stack (spec 00054 D1/D7). Rendered by the
+   `ops` Ansible role at ops_alloy_dir/config.alloy -- do not hand-edit on the host, it is
+   overwritten on the next converge. Edit infra/ansible/roles/ops/templates/config.alloy.j2
+   instead. Structurally this mirrors infra/nas/config.alloy (spec 00049 Role B) -- same unix
+   exporter / textfile / scrape / remote_write / docker-logs pipeline -- with three deliberate
+   divergences, each called out in the comments below. Grafana Cloud credentials are NOT in this
+   file: they arrive as environment variables from an out-of-band, 0600, never-committed secrets
+   file (ops_alloy_secrets_path, see infra/ansible/roles/ops/defaults/main.yml), read here via the
+   `sys.env(...)` stdlib function -- the same contract as the NAS's alloy-secrets.env.
+
+   Wrapped in {% raw %} because Alloy's own pipeline stages below use Go-template `{{ }}` syntax
+   (loki.process's stage.template blocks) that must reach the rendered file untouched -- without
+   this, Ansible's Jinja2 templating would try to evaluate those as Jinja expressions and fail
+   (`ToUpper .Value` is not valid Jinja). Nothing in this file is actually host-specific: every
+   value (the keep-regex, the textfile path, the host label) is a literal, identical on every
+   converge, so raw-wrapping the whole body costs nothing. #}
+{% raw %}
+// ---- Host metrics -------------------------------------------------------------------------
+// The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
+// /->/host/root) let this exporter see the ops host's own /proc, /sys and rootfs without colliding
+// with Alloy's own container /proc//sys.
+//
+// DIVERGENCE 2 (user/group + rootfs): the NAS mounts /:/host/root:ro and keeps `filesystem` in
+// set_collectors for its rootfs-based free-disk-space reading, while running Alloy as a dedicated
+// non-secret-owning uid to keep that mount from exposing its 0600 rrsync pull keys (T0030). Ops
+// replicates the SAME shape -- mount /:/host/root:ro, keep `filesystem` -- because free disk space
+// is wanted here too (this host holds 5 GB+ of mirrors and will hold the overlay writer). This is
+// the T0042/T0030 residual replicated to a second host, but with a SMALLER blast radius than the
+// NAS's: ops holds no trade key and no capture-VPS rrsync key, only the RECONCILED_SOURCE key
+// (Task 5) -- exactly as spec D7 states rather than leaves to be discovered. Alloy here runs as
+// the `deploy` uid/gid (alloy-compose.yaml.j2's `user:`, derived by the role via `getent`), plus
+// `group_add: ["docker"]` for socket access -- not root, and not a dedicated third identity, since
+// ops has no DSM-style ACL forcing one.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  textfile {
+    // The four timers' textfiles (archive-pull, panel-materialize, verify-replay,
+    // verified-replay), written since OPS-3/OPS-4 into ops_textfile_dir but scraped by nothing
+    // until this task. alloy-compose.yaml.j2 mounts that host directory read-only at this exact
+    // container path -- literal "/textfile", exactly like the NAS's, not a templated
+    // ops_textfile_dir -- because this string names the CONTAINER's view of the mount, not the
+    // host path.
+    directory = "/textfile"
+  }
+}
+
+// ---- Container metrics: intentionally NOT collected on ops, either -------------------------
+// DIVERGENCE 1 (cadvisor): the NAS omits cadvisor because it SIGSEGVs on Synology DSM's
+// cgroup-less kernel, taking down all of Alloy -- that rationale does NOT apply here: the ops node
+// is Debian with a normal cgroup hierarchy, so cadvisor would simply work. It is still left out,
+// omitted BY CHOICE here, not by DSM constraint: this task's job is the four textfile series +
+// host metrics reaching Grafana (spec D1), container CPU/mem is not part of that gate, and adding
+// cadvisor's series would eat into the active-series budget the spec flags as an open risk. A
+// future task can add it deliberately if a container-level gate ever needs it.
+
+// ---- Scrape -> remote_write ------------------------------------------------------------------
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.remote_write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USERNAME")
+      password = sys.env("GRAFANA_PROM_PASSWORD")
+    }
+
+    // Series minimization (00043): drop Alloy's own self-metrics first (defense in depth --
+    // nothing scraped above is Alloy's own /metrics endpoint, so this is normally a no-op), then
+    // keep-only the host + textfile series this stack actually wants. T0051 (spec 00054): a `keep`
+    // action drops everything it does not list, so a series missing here does not merely go
+    // undashboarded -- it does not exist. The last two families
+    // (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*) do not exist on this host yet -- they arrive
+    // with Task 6's writer move -- but are listed NOW so that move does not also require reopening
+    // this file. tests/test_infra_alloy_series.py pins this list against every series the stack
+    // (present + Task 6's future) actually publishes.
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "go_.*|process_.*|alloy_.*"
+      action        = "drop"
+    }
+
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*"
+      action        = "keep"
+    }
+  }
+}
+
+// ---- Logs: every container on this host -----------------------------------------------------
+// Discover and ship every container on this host, host-wide rather than per-compose-project, same
+// rationale as the NAS: no keep/drop here, so a container this role adds later is not silently
+// invisible to the logs dashboard.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "container_logs" {
+  targets = discovery.docker.containers.targets
+
+  // DIVERGENCE 3 (host label + container-name regex): the NAS strips a literal
+  // `zcrypto-archive-` compose-project prefix because that is its one project's name. Ops runs
+  // several independent compose projects (liquidations, archive-pull's timers, this Alloy stack
+  // itself, ...) with different project names, so this regex does NOT assume any one prefix -- it
+  // only strips the leading `/` Docker always prepends and a trailing `-<replica index>`, leaving
+  // the container name (with its own project prefix, if any) as the `container` label.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*?)(?:-[0-9]+)?"
+    target_label  = "container"
+    replacement   = "$1"
+    action        = "replace"
+  }
+
+  // `host="ops"`, not "nas" -- this is the ops node. Static for the same reason the NAS's is
+  // static: one Alloy instance per host today.
+  rule {
+    target_label = "host"
+    replacement  = "ops"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_logs.output
+  forward_to = [loki.process.parse.receiver]
+}
+
+// Parse ONCE, here at ingest -- never at query time. Same two stages as the NAS's pipeline: our
+// Python services' own timestamped log line, and Alloy's own logfmt output.
+loki.process "parse" {
+  forward_to = [loki.write.grafana.receiver]
+
+  // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.archive.command [command.py:75] - msg`
+  // Scoped by container, so a container with a different format can never be mangled by this regex.
+  stage.match {
+    selector = "{container=\"archive-pull\"}"
+
+    stage.regex {
+      expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
+    }
+
+    stage.timestamp {
+      source   = "ts"
+      format   = "2006-01-02 15:04:05,000"
+      location = "UTC"
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ ToUpper .Value }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    stage.output {
+      source = "rest"
+    }
+  }
+
+  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`.
+  stage.match {
+    selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
+
+    stage.regex {
+      expression = "^ts=\\S+ level=(?P<level>\\w+) msg=(?:\"(?P<msg>(?:[^\"\\\\]|\\\\.)*)\"|(?P<msg_bare>\\S+))\\s*(?P<rest>.*)$"
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    stage.template {
+      source   = "line"
+      template = "{{ if .msg }}{{ .msg }}{{ if .rest }} {{ .rest }}{{ end }}{{ else if .msg_bare }}{{ .msg_bare }}{{ if .rest }} {{ .rest }}{{ end }}{{ else }}{{ .Entry }}{{ end }}"
+    }
+
+    stage.output {
+      source = "line"
+    }
+  }
+}
+
+loki.write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_LOKI_USERNAME")
+      password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}
+{% endraw %}

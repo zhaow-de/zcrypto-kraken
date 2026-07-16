@@ -68,6 +68,21 @@
     enabled: "{{ ops_nas_pull_source != '' }}"
     state: "{{ 'started' if ops_nas_pull_source != '' else 'stopped' }}"
 
+# Hoisted above BOTH digest-gated blocks below (spec 00054 Task 1 fix): these two tasks used to
+# live inside the ops_image_digest block, but the Alloy block also needs ops_uid/ops_gid for its
+# container `user:` mapping. Without the hoist, an Alloy-only converge (ops_alloy_digest passed,
+# ops_image_digest not) would render `user: ":"` -- a real coupling bug this hoist removes rather
+# than works around, so either digest-gated block can converge independently.
+- name: look up the deploy account (the ops containers run as its uid/gid)
+  ansible.builtin.getent:
+    database: passwd
+    key: deploy
+
+- name: derive the deploy uid/gid for the container user mapping
+  ansible.builtin.set_fact:
+    ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
+    ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
+
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
 # only when the pinned image digest is supplied (-e ops_image_digest=sha256:<...>): a converge
@@ -76,16 +91,6 @@
 - name: install the ops stack — recorder compose + replay/panel timers (needs the pinned image digest)
   when: ops_image_digest is defined
   block:
-    - name: look up the deploy account (the ops containers run as its uid/gid)
-      ansible.builtin.getent:
-        database: passwd
-        key: deploy
-
-    - name: derive the deploy uid/gid for the container user mapping
-      ansible.builtin.set_fact:
-        ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
-        ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
-
     # OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
     # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
@@ -127,3 +132,33 @@
         enabled: true
         state: started
       loop: [verify-replay, verified-replay, panel-materialize]
+
+- name: install the ops telemetry stack — Grafana Alloy (spec 00054 D1; needs the pinned Alloy digest)
+  when: ops_alloy_digest is defined
+  block:
+    - name: ensure the alloy project + data directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0755"
+      loop:
+        - "{{ ops_alloy_dir }}"
+        - "{{ ops_alloy_dir }}/alloy-data"
+
+    - name: render the alloy pipeline config
+      ansible.builtin.template:
+        src: config.alloy.j2
+        dest: "{{ ops_alloy_dir }}/config.alloy"
+        owner: deploy
+        group: deploy
+        mode: "0644"
+
+    - name: render the alloy compose file
+      ansible.builtin.template:
+        src: alloy-compose.yaml.j2
+        dest: "{{ ops_alloy_dir }}/compose.yaml"
+        owner: deploy
+        group: deploy
+        mode: "0644"

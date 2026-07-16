@@ -1,0 +1,78 @@
+# Grafana Alloy compose file for the ops node's telemetry stack (spec 00054 D1/D7). Rendered by
+# the `ops` Ansible role at {{ ops_alloy_dir }}/compose.yaml -- do not hand-edit on the host, it is
+# overwritten on the next converge. Edit
+# infra/ansible/roles/ops/templates/alloy-compose.yaml.j2 instead.
+#
+# Its OWN compose project (this file, not infra/ansible/roles/ops/templates/compose.yaml.j2's
+# liquidations project): an Alloy redeploy (image bump, config change) must never restart the
+# liquidations poller, which is not backfillable (same isolation rationale as the NAS's separate
+# archive-pull/alloy services, here taken one step further into separate compose projects since
+# ops runs several independent services, not two in one file).
+#
+# Modeled on infra/nas/compose.yaml's `alloy` service; see config.alloy.j2 for the three
+# deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs, host label). Deliberately
+# NOT started here -- first start is an attended step (plan Task 3), same rationale as the
+# liquidations poller in compose.yaml.j2: this task's job is to make the render correct, not to
+# restart anything as a converge side effect.
+services:
+  alloy:
+    # Pin this to a digest at deploy time (plan Task 3) -- ops_alloy_digest has NO default
+    # (defaults/main.yml), so a converge without it skips this whole role block rather than
+    # rendering a compose file pointing at a broken image reference.
+    image: "{{ ops_alloy_image }}@{{ ops_alloy_digest }}"
+    restart: unless-stopped
+    # DIVERGENCE 2: run as the `deploy` uid/gid (derived by the role via `getent`, hoisted above
+    # both digest-gated blocks in tasks/main.yml so either can converge independently) rather than
+    # the NAS's dedicated non-secret-owning identity -- ops has no DSM ACL forcing a third uid.
+    # `group_add: ["docker"]` (a named group, not the NAS's numeric gid 0 -- ops has a real
+    # `docker` group from the role's docker-install step) grants socket access without running as
+    # root.
+    user: "{{ ops_uid }}:{{ ops_gid }}"
+    group_add:
+      - "docker"
+    network_mode: host
+    environment:
+      # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
+      GOMEMLIMIT: 460MiB
+    env_file:
+      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
+      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, distributed out-of-band, never committed, never
+      # rendered by this role. Placed by hand at deploy time (plan Task 3).
+      - ./alloy-secrets.env
+    command:
+      - run
+      - --storage.path=/var/lib/alloy
+      - --server.http.listen-addr=127.0.0.1:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      # Alternate-path RO mounts (mounting over Alloy's own container /proc//sys is impossible) --
+      # config.alloy points procfs_path/sysfs_path/rootfs_path at these. DIVERGENCE 2: unlike the
+      # NAS's rationale (DSM ACLs forcing a dedicated uid before this mount is safe), ops holds no
+      # 0600 rrsync key readable by the `deploy` uid's group other than the ones `deploy` already
+      # owns -- so this mount is a smaller blast radius here (spec D7), not a bigger one.
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      # Docker API, for discovery.docker + loki.source.docker. `:ro` is cosmetic -- it makes the
+      # socket FILE read-only, not the API -- same residual as the NAS's (T0042).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
+      # redeploy re-ships the retained log backlog into the ingest quota (00043).
+      - ./alloy-data:/var/lib/alloy
+      # The four timers' textfiles (OPS-3/OPS-4), read-only -- Alloy only ever reads them.
+      - "{{ ops_textfile_dir }}:/textfile:ro"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          # Unlike the NAS (no CPU cgroup on DSM), Debian has a real CPU cgroup, so a `cpus:` limit
+          # actually holds here -- and it must: this box exists to run the overlay writer fast
+          # (plan Task 6/7), and Alloy must never contend with it for CPU. 2.0 of the box's 24
+          # threads is ample for a metrics/logs shipper.
+          cpus: "2.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -40,3 +40,14 @@ ops_nas_pull_source: ""
 
 ops_archive_pull_healthcheck_url: ""
 ops_panel_healthcheck_url: ""
+
+# --- Alloy (spec 00054 D1/D7): the ops node's telemetry stack. D1 is an ORDERING constraint --
+# this lands, and its series are confirmed in Grafana, BEFORE the overlay writer moves here
+# (plan 00054 Task 3 gates Task 7). Without it the node's four textfiles reach nobody, and moving
+# the writer onto an unobservable host would be T0052's defect one level up.
+ops_alloy_dir: /etc/zcrypto-ops/alloy
+ops_alloy_image: grafana/alloy
+# 0600, out-of-band, NEVER committed: GRAFANA_PROM_URL/USERNAME/PASSWORD +
+# GRAFANA_LOKI_URL/USERNAME/PASSWORD, same contract as infra/nas/alloy-secrets.env. The role only
+# references this path -- it never renders the credentials (they are not in the vault).
+ops_alloy_secrets_path: "{{ ops_alloy_dir }}/alloy-secrets.env"
