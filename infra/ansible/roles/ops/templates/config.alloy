@@ -1,20 +1,25 @@
-{# Grafana Alloy config for the ops node's telemetry stack (spec 00054 D1/D7). Rendered by the
-   `ops` Ansible role at ops_alloy_dir/config.alloy -- do not hand-edit on the host, it is
-   overwritten on the next converge. Edit infra/ansible/roles/ops/templates/config.alloy.j2
-   instead. Structurally this mirrors infra/nas/config.alloy (spec 00049 Role B) -- same unix
-   exporter / textfile / scrape / remote_write / docker-logs pipeline -- with three deliberate
-   divergences, each called out in the comments below. Grafana Cloud credentials are NOT in this
-   file: they arrive as environment variables from an out-of-band, 0600, never-committed secrets
-   file (ops_alloy_secrets_path, see infra/ansible/roles/ops/defaults/main.yml), read here via the
-   `sys.env(...)` stdlib function -- the same contract as the NAS's alloy-secrets.env.
+// Grafana Alloy config for the ops node's telemetry stack (spec 00054 D1/D7). Installed by the
+// `ops` Ansible role via `ansible.builtin.copy` at ops_alloy_dir/config.alloy -- do not hand-edit
+// on the host, it is overwritten on the next converge. Edit
+// infra/ansible/roles/ops/templates/config.alloy instead. Structurally this mirrors
+// infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
+// remote_write / docker-logs pipeline -- with three deliberate divergences, each called out in
+// the comments below. Grafana Cloud credentials are NOT in this file: they arrive as environment
+// variables from an out-of-band, 0600, never-committed secrets file (alloy-secrets.env, see
+// infra/ops/README.md), read here via the `sys.env(...)` stdlib function -- the same contract as
+// the NAS's alloy-secrets.env.
+//
+// Plain `copy:`, not `template:` (review finding 2) -- this file is 100% static: every value below
+// (the keep-regex, the textfile path, the host label) is a literal, identical on every converge,
+// so there is nothing for Jinja2 to substitute. A `template:` here would also have forced the
+// whole body into a `{% raw %}` wrapper, since Alloy's own pipeline stages further down use Go
+// template `{{ }}` syntax (loki.process's stage.template blocks, e.g. `{{ ToUpper .Value }}`) that
+// Jinja2 would otherwise try to evaluate and fail on (`ToUpper .Value` is not valid Jinja) -- and a
+// full-body raw wrap would silently emit a future `{{ ops_something }}` as a literal string instead
+// of failing loudly. If per-host parameterisation is ever genuinely needed, switch this task back
+// to `template:` then, and scope `{% raw %}` narrowly to only the `stage.template` blocks that
+// actually contain Go syntax -- not the whole file.
 
-   Wrapped in {% raw %} because Alloy's own pipeline stages below use Go-template `{{ }}` syntax
-   (loki.process's stage.template blocks) that must reach the rendered file untouched -- without
-   this, Ansible's Jinja2 templating would try to evaluate those as Jinja expressions and fail
-   (`ToUpper .Value` is not valid Jinja). Nothing in this file is actually host-specific: every
-   value (the keep-regex, the textfile path, the host label) is a literal, identical on every
-   converge, so raw-wrapping the whole body costs nothing. #}
-{% raw %}
 // ---- Host metrics -------------------------------------------------------------------------
 // The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
 // /->/host/root) let this exporter see the ops host's own /proc, /sys and rootfs without colliding
@@ -22,15 +27,24 @@
 //
 // DIVERGENCE 2 (user/group + rootfs): the NAS mounts /:/host/root:ro and keeps `filesystem` in
 // set_collectors for its rootfs-based free-disk-space reading, while running Alloy as a dedicated
-// non-secret-owning uid to keep that mount from exposing its 0600 rrsync pull keys (T0030). Ops
-// replicates the SAME shape -- mount /:/host/root:ro, keep `filesystem` -- because free disk space
-// is wanted here too (this host holds 5 GB+ of mirrors and will hold the overlay writer). This is
-// the T0042/T0030 residual replicated to a second host, but with a SMALLER blast radius than the
-// NAS's: ops holds no trade key and no capture-VPS rrsync key, only the RECONCILED_SOURCE key
-// (Task 5) -- exactly as spec D7 states rather than leaves to be discovered. Alloy here runs as
-// the `deploy` uid/gid (alloy-compose.yaml.j2's `user:`, derived by the role via `getent`), plus
-// `group_add: ["docker"]` for socket access -- not root, and not a dedicated third identity, since
-// ops has no DSM-style ACL forcing one.
+// non-secret-owning uid (1031, not the key-owning 1000) to keep that mount from exposing its 0600
+// rrsync pull keys (T0030). Ops replicates the SAME shape -- mount /:/host/root:ro, keep
+// `filesystem` -- because free disk space is wanted here too (this host holds 5 GB+ of mirrors and
+// will hold the overlay writer). Ops DOES hold a live private key today: `sync_nas_archive`
+// (deploy:deploy, 0600, under /home/deploy/.ssh), the NAS-pull channel's key, pre-dating this task
+// -- so running Alloy as `deploy` would let the /host/root mount read it directly, no escalation
+// needed at all, defeating the protection this comment claims to replicate. (The
+// RECONCILED_SOURCE channel is not an ops-side private key at all: its private half lives on the
+// NAS; ops holds only a forced-command `authorized_keys` PUBLIC entry, which is not secret
+// material.) Alloy here instead runs as the dedicated `zcrypto-alloy` system user (nologin,
+// created by the role, uid/gid looked up via `getent` -- alloy-compose.yaml.j2's `user:`), which
+// owns nothing under /home/deploy/.ssh -- this MIRRORS the NAS's uid-1031 choice, not merely
+// resembles it. `group_add: ["docker"]` for socket access is still required and is DEFENCE IN
+// DEPTH ONLY: membership in the `docker` group is root-equivalent by definition (holding the
+// Docker API lets you create a privileged container regardless of a `:ro` socket mount), so the
+// escalation path remains -- exactly the residual the NAS's comments record for T0042. The point of
+// the dedicated uid is narrower and real: it closes the DIRECT, no-escalation read of
+// `sync_nas_archive` through the /host/root mount.
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
 
@@ -208,4 +222,3 @@ loki.write "grafana" {
     }
   }
 }
-{% endraw %}

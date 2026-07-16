@@ -47,7 +47,8 @@ ops_panel_healthcheck_url: ""
 # the writer onto an unobservable host would be T0052's defect one level up.
 ops_alloy_dir: /etc/zcrypto-ops/alloy
 ops_alloy_image: grafana/alloy
-# 0600, out-of-band, NEVER committed: GRAFANA_PROM_URL/USERNAME/PASSWORD +
-# GRAFANA_LOKI_URL/USERNAME/PASSWORD, same contract as infra/nas/alloy-secrets.env. The role only
-# references this path -- it never renders the credentials (they are not in the vault).
-ops_alloy_secrets_path: "{{ ops_alloy_dir }}/alloy-secrets.env"
+# The secrets file (GRAFANA_PROM_URL/USERNAME/PASSWORD + GRAFANA_LOKI_URL/USERNAME/PASSWORD) has no
+# role var: alloy-compose.yaml.j2 hardcodes its relative `env_file: ./alloy-secrets.env` (nothing
+# else references the path, so a var would be dead config -- review finding 3). It is placed by
+# hand at {{ ops_alloy_dir }}/alloy-secrets.env, 0600, out-of-band, NEVER committed, and never
+# rendered by this role (not in the vault) -- see infra/ops/README.md for the required owner.

@@ -10,7 +10,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 NAS_ALLOY = REPO / "infra/nas/config.alloy"
-OPS_ALLOY = REPO / "infra/ansible/roles/ops/templates/config.alloy.j2"
+OPS_ALLOY = REPO / "infra/ansible/roles/ops/templates/config.alloy"
 
 # The series each host must ship. NAS: Role A/B (gate) + its host metrics. OPS: the four timer
 # textfiles (written since OPS-3/OPS-4 but scraped by nothing until spec 00054 Task 1) plus the

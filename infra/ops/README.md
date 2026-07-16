@@ -123,3 +123,54 @@ custody-critical.
    same host.
 5. **NAS** — set `PANEL_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
+
+## Alloy telemetry stack (Task 1, spec 00054 D1/D7)
+
+Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
+`/etc/zcrypto-ops/alloy`), rendered by the `ops` role only when the pinned Alloy digest is supplied
+(`-e ops_alloy_digest=sha256:<...>`; no default, matching `ops_image_digest`'s pattern). It ships
+host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
+series, and every container's logs to Grafana Cloud — mirroring `infra/nas/config.alloy`'s pipeline
+(see `infra/ansible/roles/ops/templates/config.alloy` for the three deliberate divergences: no
+cadvisor, dedicated non-`deploy` uid + rootfs mount, no compose-project host-label prefix).
+
+**Runs as the dedicated `zcrypto-alloy` system user, never `deploy`.** The role creates it
+(`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for `ops_uid`. This
+is load-bearing, not cosmetic: `/home/deploy/.ssh` (0700 `deploy:deploy`) holds the **live**
+`sync_nas_archive` private key (0600) that the NAS-pull channel (above) depends on, and Alloy mounts
+`/:/host/root:ro` for its free-disk-space collector. Running Alloy as `deploy` would let it read
+that key directly through the mount, no escalation needed — defeating the protection this stack
+claims to replicate from the NAS (T0030). `zcrypto-alloy` owns nothing under `/home/deploy/.ssh`, so
+the direct read is closed. `group_add: ["docker"]` (Docker-socket access) is still required and is
+**defence in depth only**: holding the Docker API is root-equivalent by definition (it can launch a
+privileged container regardless of a `:ro` socket mount), so that escalation path remains — the same
+accepted residual the NAS's comments record for T0042.
+
+### Deploy
+
+1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`).
+2. Place the secrets file at `{{ ops_alloy_dir }}/alloy-secrets.env` (default
+   `/etc/zcrypto-ops/alloy/alloy-secrets.env`), mode `0600`, **owned by `zcrypto-alloy`**
+   (`chown zcrypto-alloy:zcrypto-alloy` — the container runs as that user and must be able to read
+   a 0600 file it does not own by default) — **never committed**, distributed out-of-band the same
+   way the NAS's `alloy-secrets.env` is (`infra/nas/README.md`). Contents (one `KEY=value` per
+   line, no quoting):
+
+   ```
+   GRAFANA_PROM_URL=https://<prometheus-remote-write-endpoint>/api/prom/push
+   GRAFANA_PROM_USERNAME=<prometheus-instance-id>
+   GRAFANA_PROM_PASSWORD=<prometheus-access-token>
+   GRAFANA_LOKI_URL=https://<loki-push-endpoint>/loki/api/v1/push
+   GRAFANA_LOKI_USERNAME=<loki-instance-id>
+   GRAFANA_LOKI_PASSWORD=<loki-access-token>
+   ```
+
+   `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
+   stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name). There is no
+   `ops_alloy_secrets_path` role var — the compose file hardcodes the relative path, so this section
+   is the path's only source of truth.
+3. Start it (attended, plan Task 3): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
+4. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
+   `ops_verify_replay_*`, `ops_verified_replay_*`) and host metrics appear in Grafana Cloud within a
+   scrape interval; `tests/test_infra_alloy_series.py` pins the keep-regex against every series this
+   stack (present + Task 6's future writer move) actually publishes.
