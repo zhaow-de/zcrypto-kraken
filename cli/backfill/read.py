@@ -14,6 +14,11 @@ def dump_pair_name(symbol: str) -> str:
 
     Applies the Kraken aliases BTC->XBT, DOGE->XDG to both legs, then concatenates (e.g.
     `"BTC/EUR"` -> `"XBTEUR"`, `"DOGE/EUR"` -> `"XDGEUR"`, `"ETH/BTC"` -> `"ETHXBT"`).
+
+    **Also the REST `/Trades` altname** — `cli/trades/rest.py` depends on this (verified live: the
+    derived name is accepted for the irregular pairs too, Kraken answering under its own key, e.g.
+    `XBTEUR` -> `XXBTZEUR`). The name says "dump" for historical reasons; do NOT specialise this for
+    a dump-specific quirk without checking that consumer, which has no local signal if you do.
     """
     try:
         base, quote = symbol.split("/")

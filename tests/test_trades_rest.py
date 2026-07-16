@@ -174,7 +174,10 @@ def test_kraken_error_array_raises():
         fetch_trades("BTC/EUR", dt.datetime(2026, 7, 11, 2, tzinfo=dt.UTC), opener=lambda u, timeout=None: body)
 
 
-def test_unknown_pair_raises_before_any_request():
+def test_malformed_pair_raises_before_any_request():
+    """A symbol that isn't `BASE/QUOTE` (no slash) can't be turned into an altname at all --
+    `dump_pair_name` raises `BackfillError`, which must surface here as `TradeBackfillError`
+    (cli/trades's error contract) before any request is issued."""
     calls = []
 
     def opener(u, timeout=None):
@@ -182,8 +185,24 @@ def test_unknown_pair_raises_before_any_request():
         return _page([], 0)
 
     with pytest.raises(TradeBackfillError, match="no Kraken altname"):
-        fetch_trades("NOPE/EUR", dt.datetime(2026, 7, 11, 2, tzinfo=dt.UTC), opener=opener)
+        fetch_trades("NOPE", dt.datetime(2026, 7, 11, 2, tzinfo=dt.UTC), opener=opener)
     assert calls == []  # "before any request" — the opener must never have been called
+
+
+def test_new_pair_not_in_any_hardcoded_map_derives_and_fetches():
+    """T0055: the 11th-pair case. `XYZ/EUR` is not, and never was, in any hardcoded map -- it must
+    still derive an altname (`XYZEUR`, no alias applies) and issue a real request, proving the
+    altname is DERIVED rather than looked up in a fixed table."""
+    urls = []
+
+    def opener(url, timeout=None):
+        urls.append(url)
+        return _page([], 0)
+
+    df = fetch_trades("XYZ/EUR", dt.datetime(2026, 7, 11, 2, tzinfo=dt.UTC), opener=opener)
+    assert len(urls) == 1
+    assert "pair=XYZEUR" in urls[0]
+    assert df.height == 0
 
 
 def test_ts_truncation_pinned_to_measured_venue_values():
