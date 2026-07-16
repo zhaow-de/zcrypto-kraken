@@ -8,6 +8,8 @@ import urllib.request
 
 import polars as pl
 
+from cli.backfill.errors import BackfillError
+from cli.backfill.read import dump_pair_name
 from cli.capture.segment_writer import TRADE_SCHEMA
 from cli.logging import get_logger
 from cli.trades.errors import TradeBackfillError
@@ -20,20 +22,6 @@ _PAGE_ROWS = 1000  # Kraken's page size; a SHORT page means the series is exhaus
 _MIN_INTERVAL_SECONDS = 3.0  # 1.5s was DEMONSTRABLY refused (EGeneral:Too many requests) on the
 # live bulk run 2026-07-16 (T0053) -- do not "optimise" this back down without new measurement
 
-# Canonical -> Kraken REST altname. Kraken answers under its OWN key (XBTEUR -> XXBTZEUR), so the
-# response key is read positionally, never assumed.
-KRAKEN_ALTNAME: dict[str, str] = {
-    "BTC/EUR": "XBTEUR",
-    "ETH/EUR": "ETHEUR",
-    "SOL/EUR": "SOLEUR",
-    "XRP/EUR": "XRPEUR",
-    "ADA/EUR": "ADAEUR",
-    "DOT/EUR": "DOTEUR",
-    "LINK/EUR": "LINKEUR",
-    "LTC/EUR": "LTCEUR",
-    "DOGE/EUR": "XDGEUR",
-    "AVAX/EUR": "AVAXEUR",
-}
 _SIDE = {"b": "buy", "s": "sell"}
 _ORD_TYPE = {"m": "market", "l": "limit"}
 
@@ -99,9 +87,15 @@ def fetch_trades(
     keys on `trade_id` ALONE and the primary row wins: a trade present in both keeps its WS `ts`,
     and only a recovered trade carries this one.
     """
-    altname = KRAKEN_ALTNAME.get(pair)
-    if altname is None:
-        raise TradeBackfillError(f"no Kraken altname for pair {pair!r}")
+    # Reuse `cli.backfill.read.dump_pair_name` instead of a hardcoded per-pair map (T0055): the old
+    # `KRAKEN_ALTNAME` dict listed exactly the 10 pairs in the capture universe with nothing tying
+    # the two together, so an 11th pair would silently never heal. Deriving the altname makes that
+    # structurally impossible -- a new pair works automatically. Kraken still answers under its OWN
+    # key (XBTEUR -> XXBTZEUR), so the response key below is read positionally, never assumed.
+    try:
+        altname = dump_pair_name(pair)
+    except BackfillError as exc:
+        raise TradeBackfillError(f"no Kraken altname for pair {pair!r}: {exc}") from exc
 
     cursor = int(since.timestamp())
     frames: list[pl.DataFrame] = []
