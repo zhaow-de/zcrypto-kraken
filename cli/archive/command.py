@@ -717,6 +717,10 @@ def backfill_trades(
     the reconciled overlay. Never fabricates a trade -- an id REST will not serve is `trades_unrecoverable`,
     a row fetched for an unsettled hour is `trades_deferred`, never minted and never silently dropped.
 
+    THE loss report (spec 00053 D11): `--detect-only` prints the magnitude of the damage, not just the
+    gap count -- `trades_missing` and `duplicate_rows_found` are what the detector FOUND, populated in
+    both modes; `recovered`/`duplicates_collapsed` are what actually landed and are 0 in `--detect-only`.
+
     Exits 2 when `primary_root` does not exist, 1 if the sweep recorded any error (a fetch failure, a
     mint failure, or a post-mint invariant violation), else 0."""
     if not primary_root.exists():
@@ -725,7 +729,9 @@ def backfill_trades(
 
     res = backfill(primary_root, reconciled_root, pair=pair, now=_utc_now(), detect_only=detect_only)
     typer.echo(
-        f"trade backfill complete pairs={res.pairs} gaps={res.gaps_found} recovered={res.trades_recovered} "
+        f"trade backfill complete pairs={res.pairs} gaps={res.gaps_found} "
+        f"trades_missing={res.trades_missing} duplicate_rows_found={res.duplicate_rows_found} "
+        f"recovered={res.trades_recovered} "
         f"unrecoverable={res.trades_unrecoverable} deferred={res.trades_deferred} "
         f"duplicates_collapsed={res.duplicates_collapsed} duplicates_cross_hour={res.duplicates_cross_hour} "
         f"hours_minted={res.hours_minted} errors={len(res.errors)}"

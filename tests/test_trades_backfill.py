@@ -231,6 +231,35 @@ def test_a_partially_recoverable_gap_is_re_minted_fuller_on_retry(tmp_path):
     assert res3.gaps_found == 0 and res3.hours_minted == 0  # idempotent once fully healed
 
 
+def test_detect_only_reports_missing_and_duplicate_magnitude(tmp_path):
+    """detect-only is spec 00053 D11's loss report: it must surface the DETECTOR's findings --
+    `trades_missing` and `duplicate_rows_found` -- even though nothing is healed in this mode.
+    `trades_recovered` and `duplicates_collapsed` must stay 0: detect-only heals nothing."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 11, 15])  # duplicate 11 (1 dup row); 12,13,14 missing (3 ids)
+    res = backfill(primary, overlay, now=NOW, detect_only=True, fetch=lambda *a, **k: _rows([12, 13, 14]))
+    assert res.trades_missing == 3
+    assert res.duplicate_rows_found == 1
+    assert res.trades_recovered == 0
+    assert res.duplicates_collapsed == 0
+    assert res.hours_minted == 0
+
+
+def test_real_sweep_reports_found_and_landed_counters_together(tmp_path):
+    """A real (--mint) sweep must report BOTH what the detector FOUND (`trades_missing`,
+    `duplicate_rows_found`) and what actually LANDED (`trades_recovered`, `duplicates_collapsed`).
+    Only partial recovery here, so found (4 missing) != landed (2 recovered) -- a mutation that
+    conflates the found-counter with the landed-counter is caught."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 11, 16])  # duplicate 11 (1 dup row); 12,13,14,15 missing (4 ids)
+    res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 14]))  # only 2 of 4 recovered
+    assert res.trades_missing == 4
+    assert res.trades_recovered == 2
+    assert res.trades_unrecoverable == 2
+    assert res.duplicate_rows_found == 1
+    assert res.duplicates_collapsed == 1
+
+
 def test_cross_hour_duplicate_is_reported_not_silently_collapsed(tmp_path):
     """A trade_id duplicated ACROSS an hour boundary (the T0026 reconnect-overwrite signature)
     cannot be fixed by `union_trades`, which mints per-hour -- neither hour alone contains a

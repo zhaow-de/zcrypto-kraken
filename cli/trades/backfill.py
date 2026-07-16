@@ -5,9 +5,12 @@ duplicates (pure, no I/O), fetch the missing ids from Kraken's public REST, unio
 existing hour (minting a fresh hour from REST alone when none existed), and mint the healed hour
 into the reconciled overlay. Never fabricates a trade: an id REST will not serve stays absent from
 the minted hour and is counted as `trades_unrecoverable`; a row REST serves but whose hour hasn't
-settled yet is counted as `trades_deferred`, never minted and never silently dropped. Every counter
-is derived from what actually landed (D9): after minting, the pair's canonical view is re-read from
-disk and re-checked against the invariant.
+settled yet is counted as `trades_deferred`, never minted and never silently dropped. The healing
+counters (`trades_recovered`, `duplicates_collapsed`, ...) are derived from what actually landed
+(D9): after minting, the pair's canonical view is re-read from disk and re-checked against the
+invariant. `trades_missing` / `duplicate_rows_found` are a separate pair of counters answering a
+different question -- what the detector FOUND, independent of what was healed -- and are populated
+in both `--mint` and `--detect-only` modes, since they describe the archive as found, not as healed.
 """
 
 from __future__ import annotations
@@ -40,6 +43,8 @@ _TOOL_VERSION = "00053"
 class BackfillResult:
     pairs: int
     gaps_found: int
+    trades_missing: int
+    duplicate_rows_found: int
     trades_recovered: int
     trades_unrecoverable: int
     trades_deferred: int
@@ -107,6 +112,7 @@ def backfill(
 
     gaps_found = recovered = unrecoverable = deferred = 0
     duplicates_collapsed = duplicates_cross_hour = minted = 0
+    trades_missing = duplicate_rows_found = 0
     errors: list[tuple[str, str]] = []
 
     for p, segs in sorted(hours.items()):
@@ -120,12 +126,16 @@ def backfill(
             continue
         det = detect(pl.concat(list(frames.values())))
         gaps_found += len(det.gaps)
+        # Found, independent of healed: what the detector found in THIS pair, populated in both
+        # --mint and --detect-only, since it describes the archive as found, never as fixed.
+        trades_missing += det.missing
 
         # Duplicates: split the pair-span total between what a per-hour mint CAN collapse (a
         # duplicate id repeated inside one hour's own frame) and what it structurally cannot (the
         # same id split across two hour files, the T0026 reconnect-overwrite signature) — the
         # latter is a residual finding, never a completed collapse.
         total_dup_rows = det.rows - det.unique
+        duplicate_rows_found += total_dup_rows
         intra_dup_rows = sum(f.height - f.unique(subset=["trade_id"]).height for f in frames.values())
         cross_hour_dup_rows = total_dup_rows - intra_dup_rows
         duplicates_cross_hour += cross_hour_dup_rows
@@ -227,10 +237,13 @@ def backfill(
             errors.append((p, msg))
 
     logger.info(
-        "trade backfill complete pairs=%d gaps=%d recovered=%d unrecoverable=%d deferred=%d "
+        "trade backfill complete pairs=%d gaps=%d trades_missing=%d duplicate_rows_found=%d "
+        "recovered=%d unrecoverable=%d deferred=%d "
         "duplicates_collapsed=%d duplicates_cross_hour=%d hours_minted=%d errors=%d",
         len(hours),
         gaps_found,
+        trades_missing,
+        duplicate_rows_found,
         recovered,
         unrecoverable,
         deferred,
@@ -242,6 +255,8 @@ def backfill(
     return BackfillResult(
         len(hours),
         gaps_found,
+        trades_missing,
+        duplicate_rows_found,
         recovered,
         unrecoverable,
         deferred,

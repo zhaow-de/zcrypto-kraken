@@ -58,9 +58,9 @@ def test_missing_primary_root_exits_2(tmp_path):
 
 def test_clean_sweep_echoes_every_counter_and_exits_zero(tmp_path):
     """No gap, no duplicate: the sweep still must echo EVERY bucket -- pairs, gaps_found,
-    trades_recovered, trades_unrecoverable, trades_deferred, duplicates_collapsed,
-    duplicates_cross_hour, hours_minted, errors -- so a hidden bucket can never silently
-    misreport what was healed."""
+    trades_missing, duplicate_rows_found, trades_recovered, trades_unrecoverable, trades_deferred,
+    duplicates_collapsed, duplicates_cross_hour, hours_minted, errors -- so a hidden bucket can
+    never silently misreport what was found or what was healed."""
     primary_root = tmp_path / "primary"
     reconciled_root = tmp_path / "reconciled"
     _write_settled_hour(primary_root, "BTC/EUR", H, [10, 11, 12])
@@ -74,6 +74,8 @@ def test_clean_sweep_echoes_every_counter_and_exits_zero(tmp_path):
     out = _plain(r.stdout)
     assert "pairs=1" in out
     assert "gaps=0" in out
+    assert "trades_missing=0" in out
+    assert "duplicate_rows_found=0" in out
     assert "recovered=0" in out
     assert "unrecoverable=0" in out
     assert "deferred=0" in out
