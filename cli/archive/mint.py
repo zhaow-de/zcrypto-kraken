@@ -9,9 +9,11 @@ So the sidecar is minted from the temp file's bytes — which ARE the final's by
 file IS the final, renamed — and written BEFORE the atomic rename that publishes it. A kill anywhere
 in here leaves no final at all, and the next run simply re-mints. The rename is last, always.
 
-An existing final is never overwritten: a re-run is a no-op (`FileExistsError`), and a provisionally
-residual hour is healed by a NEW mint plus a superseding ledger record, never by mutating a published
-file. Nothing here decodes or re-blesses a file it did not itself write.
+By default (`replace=False`, the reconciler's own path) an existing final is never overwritten: a
+re-run is a no-op (`FileExistsError`), and a provisionally residual hour is healed by a NEW mint plus
+a superseding ledger record, never by mutating a published file. A caller that passes `replace=True`
+(e.g. `cli/trades/backfill.py`) opts out of that guarantee for its own hour — see `mint_hour`'s
+`replace` parameter. Nothing here decodes or re-blesses a file it did not itself write.
 """
 
 from __future__ import annotations
@@ -100,11 +102,19 @@ def mint_hour(
     residual_gaps: list[Gap],
     schema: dict,
     tool_version: str,
+    tool: str = "zcrypto archive reconcile",
+    extra_provenance: dict | None = None,
+    replace: bool = False,
 ) -> Path:
     """Publish `blocks` as this hour's reconciled final, atomically, with its sidecar and provenance.
 
-    Returns the final's path. Raises `FileExistsError` if the hour is already minted, and
-    `CaptureError` if the inputs violate the hour's contract (see `_check_hour` / `_check_gaps`).
+    Returns the final's path. Raises `FileExistsError` if the hour is already minted (unless
+    `replace=True`), and `CaptureError` if the inputs violate the hour's contract (see `_check_hour` /
+    `_check_gaps`).
+
+    `replace=True` disables the foreign-final guard above: the caller then owns the guarantee that
+    `blocks` is a superset of whatever it overwrites (`cli/trades/backfill.py` satisfies this by
+    reading the existing hour first and unioning it with the recovered rows before minting).
     """
     hour_end = _check_hour(hour)
     _check_gaps(gaps_healed, hour=hour, hour_end=hour_end, label="a healed gap")
@@ -112,7 +122,7 @@ def mint_hour(
 
     d = _hour_dir(root, pair, kind, hour)
     final = d / f"{hour:%H}.parquet"
-    if final.exists():
+    if final.exists() and not replace:
         raise FileExistsError(f"reconciled final already minted: {final}")
 
     if not blocks:
@@ -145,14 +155,20 @@ def mint_hour(
         "gaps_healed": [{"start": g.start, "end": g.end, "seconds": g.seconds} for g in gaps_healed],
         "residual_gaps": [{"start": g.start, "end": g.end, "seconds": g.seconds} for g in residual_gaps],
         "sha256": digest,
-        "tool": "zcrypto archive reconcile",
+        "tool": tool,
         "version": tool_version,
     }
+    # Extras are merged, never allowed to shadow the base record: a caller must not be able to
+    # rewrite `sha256` or `hour` and make the provenance lie about the file it certifies.
+    for k, v in (extra_provenance or {}).items():
+        if k in provenance:
+            raise CaptureError(f"extra_provenance may not override the base field {k!r}")
+        provenance[k] = v
     provenance_tmp = d / f"{hour:%H}.provenance.json.tmp"
     provenance_tmp.write_text(json.dumps(provenance, indent=1, default=str) + "\n")
     _replace_durably(provenance_tmp, d / f"{hour:%H}.provenance.json")
 
-    if final.exists():
+    if final.exists() and not replace:
         # Re-checked against the entry test: `os.replace` clobbers, and everything above took real
         # time. The window is not closed (a no-clobber publish would need `os.link`, forking the
         # durability semantics this module exists to share) — but the reconciler is single-process,

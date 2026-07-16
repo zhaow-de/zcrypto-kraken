@@ -67,6 +67,10 @@ services:
       ARCHIVE_PULL_INTERVAL: ${ARCHIVE_PULL_INTERVAL:-3600}
       GATE_TEXTFILE: /textfile/gate.prom
       GATE_HEALTHCHECK_URL: ${GATE_HEALTHCHECK_URL:-}
+      # Trade backfill (spec 00053; T0052). The entrypoint's own inline default already covers this,
+      # so declaring it here changes no behaviour -- it keeps the contract visible beside
+      # RECONCILE_TEXTFILE/GATE_TEXTFILE rather than hidden in a shell default.
+      TRADE_BACKFILL_TEXTFILE: /textfile/trade-backfill.prom
     volumes:
       - /volume1/ZhaoCrypto:/archive
       - ./pull-entrypoint.sh:/opt/pull-entrypoint.sh:ro

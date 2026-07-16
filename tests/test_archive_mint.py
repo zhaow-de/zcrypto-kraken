@@ -12,7 +12,7 @@ from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import verify_tree
 from cli.archive.reconcile import Block, Gap
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import BOOK_SCHEMA, verify_manifest
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, verify_manifest
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
 HOUR_END = H + timedelta(hours=1)  # the EXCLUSIVE next-hour boundary
@@ -47,6 +47,25 @@ def _blocks() -> list[Block]:
     price column doubles as a row fingerprint so the on-disk order is checkable.
     """
     return [_block("primary", [10.0, 20.0]), _block("secondary", [1.0, 2.0])]
+
+
+def _trade_block(ids: list[int] | None = None) -> Block:
+    """A trades-kind block, mirroring `_block` above but for a non-reconciler (backfill) caller."""
+    ids = ids if ids is not None else [1]
+    n = len(ids)
+    frame = pl.DataFrame(
+        {
+            "ts": [H + timedelta(seconds=i) for i in range(n)],
+            "symbol": ["BTC/EUR"] * n,
+            "side": ["buy"] * n,
+            "price": [float(i) for i in ids],
+            "qty": [1.0] * n,
+            "ord_type": ["market"] * n,
+            "trade_id": ids,
+        },
+        schema=TRADE_SCHEMA,
+    )
+    return Block("rest", frame, frame["ts"].min(), frame["ts"].max())
 
 
 def _hour_dir(root: Path) -> Path:
@@ -277,3 +296,137 @@ def test_a_corrupted_final_never_verifies(tmp_path):
     p.write_bytes(p.read_bytes() + b"\x00")  # bit-rot after the mint
     assert verify_manifest(p) is False
     assert verify_tree(tmp_path, now=HOUR_END).failed == (str(p),)
+
+
+# --- a second, non-reconciler caller (spec 00053 Task 3) ----------------------------------------
+
+
+def test_tool_defaults_to_reconcile_and_is_overridable(tmp_path):
+    hour = datetime(2026, 7, 11, 2, tzinfo=UTC)
+    p = mint_hour(
+        tmp_path,
+        "BTC/EUR",
+        "trades",
+        hour,
+        [_trade_block()],
+        gaps_healed=[],
+        residual_gaps=[],
+        schema=TRADE_SCHEMA,
+        tool_version="t",
+    )
+    prov = json.loads(p.with_name("02.provenance.json").read_text())
+    assert prov["tool"] == "zcrypto archive reconcile"
+
+    p2 = mint_hour(
+        tmp_path,
+        "ETH/EUR",
+        "trades",
+        hour,
+        [_trade_block()],
+        gaps_healed=[],
+        residual_gaps=[],
+        schema=TRADE_SCHEMA,
+        tool_version="t",
+        tool="zcrypto archive backfill-trades",
+    )
+    prov2 = json.loads(p2.with_name("02.provenance.json").read_text())
+    assert prov2["tool"] == "zcrypto archive backfill-trades"
+
+
+def test_extra_provenance_is_merged(tmp_path):
+    hour = datetime(2026, 7, 11, 2, tzinfo=UTC)
+    p = mint_hour(
+        tmp_path,
+        "BTC/EUR",
+        "trades",
+        hour,
+        [_trade_block()],
+        gaps_healed=[],
+        residual_gaps=[],
+        schema=TRADE_SCHEMA,
+        tool_version="t",
+        extra_provenance={"recovered_id_ranges": [[11, 14]], "deduped_rows": 2},
+    )
+    prov = json.loads(p.with_name("02.provenance.json").read_text())
+    assert prov["recovered_id_ranges"] == [[11, 14]] and prov["deduped_rows"] == 2
+    assert prov["sha256"] and prov["hour"]  # base fields survive the merge
+
+
+def test_replace_false_still_refuses_an_existing_final(tmp_path):
+    hour = datetime(2026, 7, 11, 2, tzinfo=UTC)
+    mint_hour(
+        tmp_path,
+        "BTC/EUR",
+        "trades",
+        hour,
+        [_trade_block()],
+        gaps_healed=[],
+        residual_gaps=[],
+        schema=TRADE_SCHEMA,
+        tool_version="t",
+    )
+    with pytest.raises(FileExistsError):
+        mint_hour(
+            tmp_path,
+            "BTC/EUR",
+            "trades",
+            hour,
+            [_trade_block()],
+            gaps_healed=[],
+            residual_gaps=[],
+            schema=TRADE_SCHEMA,
+            tool_version="t",
+        )
+
+
+def test_replace_true_re_mints_and_the_manifest_tracks_the_new_bytes(tmp_path):
+    """The retry case: a gap recorded unrecoverable on an earlier run is recovered later, so the
+    hour must be re-minted from the fuller union."""
+    hour = datetime(2026, 7, 11, 2, tzinfo=UTC)
+    mint_hour(
+        tmp_path,
+        "BTC/EUR",
+        "trades",
+        hour,
+        [_trade_block(ids=[10, 11])],
+        gaps_healed=[],
+        residual_gaps=[],
+        schema=TRADE_SCHEMA,
+        tool_version="t",
+    )
+    p = mint_hour(
+        tmp_path,
+        "BTC/EUR",
+        "trades",
+        hour,
+        [_trade_block(ids=[10, 11, 12])],
+        gaps_healed=[],
+        residual_gaps=[],
+        schema=TRADE_SCHEMA,
+        tool_version="t",
+        replace=True,
+    )
+    assert pl.read_parquet(p).height == 3
+    assert verify_manifest(p) is True  # sidecar regenerated for the NEW bytes
+
+
+def test_extra_provenance_may_not_shadow_a_base_field(tmp_path):
+    """The guard exists so a caller cannot make the provenance lie about the file it certifies:
+    overriding `sha256` or `hour` would let the record disagree with the bytes it attests. Untested
+    guards are one refactor away from silently not guarding, so the raising branch is pinned here.
+    """
+    hour = datetime(2026, 7, 11, 2, tzinfo=UTC)
+    for field in ("sha256", "hour", "tool"):
+        with pytest.raises(CaptureError, match="may not override the base field"):
+            mint_hour(
+                tmp_path / field,
+                "BTC/EUR",
+                "trades",
+                hour,
+                [_trade_block()],
+                gaps_healed=[],
+                residual_gaps=[],
+                schema=TRADE_SCHEMA,
+                tool_version="t",
+                extra_provenance={field: "forged"},
+            )

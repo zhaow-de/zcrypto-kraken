@@ -7,7 +7,11 @@ one healed hour out, minted only where the secondary demonstrably witnessed what
 Wiring, exporter and exit codes only -- the rules live in `reconcile.py` / `settle.py` / `mint.py`.
 
 `verify-replay` (spec 00051 OPS-3) replays the canonical book stream (reconciled-first) through
-`OrderBook` and proves it coherent per hour -- rules and scope guard in `replay.py`."""
+`OrderBook` and proves it coherent per hour -- rules and scope guard in `replay.py`.
+
+`backfill-trades` (spec 00053 Task 5) heals the canonical TRADE stream: detects trade_id gaps against
+the archive, fetches the missing ids from Kraken's public REST, and mints healed hours into the
+reconciled overlay -- rules live in `cli/trades/backfill.py`."""
 
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ from cli.archive.settle import (
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
 from cli.logging import get_logger
+from cli.trades.backfill import backfill
 
 logger = get_logger("archive.command")
 
@@ -695,3 +700,40 @@ def verify_replay(
     logger.info("verify-replay complete hours=%d ok=%d failed=%d", len(results), len(results) - failed, failed)
     if failed:
         raise typer.Exit(1)
+
+
+# --- backfill-trades (spec 00053 Task 5) ------------------------------------------------------------
+
+
+@archive_app.command(name="backfill-trades")
+def backfill_trades(
+    primary_root: Path = typer.Argument(..., help="The primary (raw) canonical trade archive."),
+    reconciled_root: Path = typer.Argument(..., help="The overlay healed hours are minted into."),
+    pair: Optional[str] = typer.Option(None, "--pair", help="Only this pair (e.g. BTC/EUR). Defaults to every pair."),
+    detect_only: bool = typer.Option(False, "--detect-only", help="Report the loss; mint nothing."),
+) -> None:
+    """Heal the canonical trade stream to a contiguous, duplicate-free trade_id sequence: detect gaps
+    against the archive, fetch the missing ids from Kraken's public REST, and mint healed hours into
+    the reconciled overlay. Never fabricates a trade -- an id REST will not serve is `trades_unrecoverable`,
+    a row fetched for an unsettled hour is `trades_deferred`, never minted and never silently dropped.
+
+    THE loss report (spec 00053 D11): `--detect-only` prints the magnitude of the damage, not just the
+    gap count -- `trades_missing` and `duplicate_rows_found` are what the detector FOUND, populated in
+    both modes; `recovered`/`duplicates_collapsed` are what actually landed and are 0 in `--detect-only`.
+
+    Exits 2 when `primary_root` does not exist, 1 if the sweep recorded any error (a fetch failure, a
+    mint failure, or a post-mint invariant violation), else 0."""
+    if not primary_root.exists():
+        logger.error("archive backfill-trades: primary root does not exist path=%s", primary_root)
+        raise typer.Exit(2)
+
+    res = backfill(primary_root, reconciled_root, pair=pair, now=_utc_now(), detect_only=detect_only)
+    typer.echo(
+        f"trade backfill complete pairs={res.pairs} gaps={res.gaps_found} "
+        f"trades_missing={res.trades_missing} duplicate_rows_found={res.duplicate_rows_found} "
+        f"recovered={res.trades_recovered} "
+        f"unrecoverable={res.trades_unrecoverable} deferred={res.trades_deferred} "
+        f"duplicates_collapsed={res.duplicates_collapsed} duplicates_cross_hour={res.duplicates_cross_hour} "
+        f"hours_minted={res.hours_minted} errors={len(res.errors)}"
+    )
+    raise typer.Exit(1 if res.errors else 0)
