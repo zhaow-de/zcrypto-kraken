@@ -31,14 +31,108 @@ else
     # Best-effort per tree, like the NAS pull-entrypoint's own loop: a corrupt/unreachable tree
     # must not stop the others from syncing. ANY tree failing marks the whole run failed (no ping).
     rc=0
+    primary_ok=1
+    secondary_ok=1
     # The BARE `rsync -a` flags are LOAD-BEARING for the pull(:12)-before-materialize(:22) overlap
     # safety (review M1): default per-file hidden-tmp+rename means a reader never sees a torn
     # parquet, and in-order-per-directory transfer keeps the mirror a sorted PREFIX per pair, so the
     # panel watermark can never leapfrog a mid-tree hole. Adding --inplace/--partial-dir/
     # --delay-updates would silently break that invariant.
-    for tree in {{ ops_capture_subdir }} capture-segments-red {{ ops_reconciled_subdir }} {{ ops_journal_subdir }}; do
-        rsync -a -e "$SSH_CMD" "$SOURCE$tree/" "{{ ops_data_dir }}/$tree/" || rc=1
-    done
+    #
+    # OPS-5 (spec 00054 D2/D4): {{ ops_reconciled_subdir }} is NOT in this list any more -- this host
+    # PRODUCES the overlay now (the reconcile + backfill blocks below). Pulling it would overwrite
+    # this node's own mints with the NAS's copy on the next cycle, which is exactly the
+    # two-writers-one-tree hazard D2 exists to prevent. The NAS acquires it the other way now, via
+    # its own RECONCILED_SOURCE pull (infra/nas/pull-entrypoint.sh).
+    #
+    # Per-tree outcome tracking, not one aggregate rc: the reconcile gate below must key on the two
+    # CAPTURE mirrors specifically. A failed journal pull must not skip reconcile (the reconciler
+    # never reads the journal), and a failed capture pull must skip it even if everything else
+    # succeeded.
+    if ! rsync -a -e "$SSH_CMD" "$SOURCE{{ ops_capture_subdir }}/" "{{ ops_data_dir }}/{{ ops_capture_subdir }}/"; then
+        rc=1
+        primary_ok=0
+    fi
+    if ! rsync -a -e "$SSH_CMD" "${SOURCE}capture-segments-red/" "{{ ops_data_dir }}/capture-segments-red/"; then
+        rc=1
+        secondary_ok=0
+    fi
+    if ! rsync -a -e "$SSH_CMD" "$SOURCE{{ ops_journal_subdir }}/" "{{ ops_data_dir }}/{{ ops_journal_subdir }}/"; then
+        rc=1
+    fi
+
+    # Role C (spec 00050), moved here by OPS-5 (spec 00054 D2). DETECT-ONLY by default -- it ledgers
+    # every `would_mint` and writes no parquet until T0039's soak has pinned --min-gap-seconds from
+    # real cross-host data. That flip is T0039's call, NOT this iteration's.
+    #
+    # SKIPPED on any cycle whose PRIMARY **or SECONDARY** pull failed. The reconciler reasons from the
+    # two LOCAL mirrors, and it cannot tell "this hour does not exist" from "this hour did not arrive".
+    # A failed pull -- on either channel -- makes local absence uninformative:
+    #
+    #   * primary pull broken: hours look primary-dark but are not. Reconciling would mint "healed"
+    #     full-secondary hours for data that was never lost, quietly substituting one host's stream for
+    #     the other's in an archive that cannot be backfilled, and inflating healed_gap_seconds so the
+    #     very metric meant to flag a degrading primary reports success instead.
+    #   * secondary pull broken: the witness looks dark too. A real primary outage -- the exact event
+    #     Role C exists to heal -- would then be classified `both_streams_silent` / `total_loss`:
+    #     PERMANENT loss, paged, and booked into a monotone counter that can never be walked back, for
+    #     an hour the secondary actually captured and could have healed. The correlated-loss detectors
+    #     run unconditionally (they are not gated by --mint), so this bites even in detect-only mode,
+    #     and the ledger's dedupe means the false verdict is never revisited.
+    #
+    # Skipping keeps the ledger honest for free: the hours simply reconcile on the next healthy cycle,
+    # against complete mirrors. An unhealed hour costs nothing; a wrong verdict is forever.
+    if [ "$primary_ok" -eq 0 ] || [ "$secondary_ok" -eq 0 ]; then
+        echo "zcrypto-archive-pull: reconcile skipped: a capture pull failed this cycle (primary_ok=$primary_ok secondary_ok=$secondary_ok), so a mirror's absence cannot be told apart from a pull that has not landed yet"
+    elif ! docker run --rm --pull never \
+            --user "{{ ops_uid }}:{{ ops_gid }}" \
+            -v "{{ ops_data_dir }}:/data" \
+            -v "{{ ops_textfile_dir }}:/textfile" \
+            --entrypoint zcrypto \
+            "{{ ops_image }}@{{ ops_image_digest }}" \
+            archive reconcile "/data/{{ ops_capture_subdir }}" "/data/capture-segments-red" "/data/{{ ops_reconciled_subdir }}" \
+            --window-hours "{{ ops_reconcile_window_hours }}" \
+            --min-gap-seconds "{{ ops_reconcile_min_gap_seconds }}" \
+            --textfile /textfile/reconcile.prom; then
+        echo "zcrypto-archive-pull: reconcile failed, continuing"
+        rc=1
+    fi
+
+    # Trade backfill (spec 00053; T0053), moved here by OPS-5 as ONE unit with the reconciler (D2) --
+    # they share this entrypoint, the overlay, and union_trades, so splitting them would put two
+    # writers on one tree with an rsync between them.
+    #
+    # DAILY, not per-cycle -- the detector's scan is O(archive), and there is no urgency cliff
+    # (Kraken serves ~18 months of /Trades). Gated on a stamp file holding the last UTC day it ran;
+    # the stamp is written UNCONDITIONALLY -- success or failure. A PERMANENT error (an unmapped
+    # pair, a structural residual) exits non-zero on every attempt, and writing the stamp only on
+    # success once meant that ran the full O(archive) scan plus hundreds of REST calls every hour,
+    # forever -- exactly the per-cycle cost this step exists to avoid. Stamping unconditionally makes
+    # the daily cost bound absolute; the failure is carried by the metric and its alert
+    # (infra/grafana/alerts.yaml), not by a retry. The metric is the signal, not the retry.
+    backfill_stamp="{{ ops_data_dir }}/.trade-backfill-last-utc-day"
+    backfill_today="$(date -u +%Y-%m-%d)"
+    if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
+        echo "$backfill_today" > "$backfill_stamp"
+        if docker run --rm --pull never \
+                --user "{{ ops_uid }}:{{ ops_gid }}" \
+                -v "{{ ops_data_dir }}:/data" \
+                --entrypoint zcrypto \
+                "{{ ops_image }}@{{ ops_image_digest }}" \
+                archive backfill-trades "/data/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"; then
+            backfill_rc=0
+        else
+            backfill_rc=$?
+            echo "zcrypto-archive-pull: trade backfill failed (exit=$backfill_rc), continuing"
+        fi
+        backfill_textfile="{{ ops_textfile_dir }}/trade-backfill.prom"
+        printf 'zcrypto_trade_backfill_exit_code %d\n' "$backfill_rc" > "$backfill_textfile.tmp"
+        printf 'zcrypto_trade_backfill_last_run_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
+        if [ "$backfill_rc" -eq 0 ]; then
+            printf 'zcrypto_trade_backfill_last_success_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
+        fi
+        mv "$backfill_textfile.tmp" "$backfill_textfile"
+    fi
 fi
 
 now=$(date -u +%s)

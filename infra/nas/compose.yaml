@@ -30,13 +30,6 @@ services:
       # heals gaps by design, so mixing them would launder the very gaps the exit bar exists to
       # measure.
       RECONCILED_DEST: ${RECONCILED_DEST:-/archive/capture-reconciled}
-      RECONCILE_TEXTFILE: /textfile/reconcile.prom
-      # DETECT-ONLY until T0039's soak pins this from real cross-host data. The default is deliberately
-      # 2x the measured 14.78 s single-host maximum natural quiescence; one secondary update row is
-      # enough to witness a gap, so a per-connection coalescing artifact could otherwise trip a phantom
-      # splice -- an unaudited data swap into an archive that cannot be backfilled.
-      RECONCILE_MIN_GAP_SECONDS: ${RECONCILE_MIN_GAP_SECONDS:-30}
-      RECONCILE_WINDOW_HOURS: ${RECONCILE_WINDOW_HOURS:-48}
       JOURNAL_SOURCE: ${JOURNAL_SOURCE}
       JOURNAL_DEST: ${JOURNAL_DEST:-/archive/engine-journal}
       # OPS-2 (spec 00051): the ops node's liquidations tree, pulled over its OWN least-privilege
@@ -85,10 +78,6 @@ services:
       ARCHIVE_PULL_INTERVAL: ${ARCHIVE_PULL_INTERVAL:-3600}
       GATE_TEXTFILE: /textfile/gate.prom
       GATE_HEALTHCHECK_URL: ${GATE_HEALTHCHECK_URL:-}
-      # Trade backfill (spec 00053; T0052). The entrypoint's own inline default already covers this,
-      # so declaring it here changes no behaviour -- it keeps the contract visible beside
-      # RECONCILE_TEXTFILE/GATE_TEXTFILE rather than hidden in a shell default.
-      TRADE_BACKFILL_TEXTFILE: /textfile/trade-backfill.prom
     volumes:
       - /volume1/ZhaoCrypto:/archive
       - ./pull-entrypoint.sh:/opt/pull-entrypoint.sh:ro

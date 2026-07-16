@@ -121,72 +121,10 @@ while true; do
 		fi
 	fi
 
-	# Role C: reconcile the two raw mirrors into the healed overlay. DETECT-ONLY by default -- it
-	# ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
-	# --min-gap-seconds from real cross-host data (see RECONCILE_MIN_GAP_SECONDS in compose.yaml).
-	#
-	# SKIPPED on any cycle whose PRIMARY **or SECONDARY** pull failed. The reconciler reasons from the
-	# two LOCAL mirrors, and it cannot tell "this hour does not exist" from "this hour did not arrive".
-	# A failed pull -- on either channel -- makes local absence uninformative:
-	#
-	#   * primary pull broken: hours look primary-dark but are not. Reconciling would mint "healed"
-	#     full-secondary hours for data that was never lost, quietly substituting one host's stream for
-	#     the other's in an archive that cannot be backfilled, and inflating healed_gap_seconds so the
-	#     very metric meant to flag a degrading primary reports success instead.
-	#   * secondary pull broken: the witness looks dark too. A real primary outage -- the exact event
-	#     Role C exists to heal -- would then be classified `both_streams_silent` / `total_loss`:
-	#     PERMANENT loss, paged, and booked into a monotone counter that can never be walked back, for
-	#     an hour the secondary actually captured and could have healed. The correlated-loss detectors
-	#     run unconditionally (they are not gated by --mint), so this bites even in detect-only mode,
-	#     and the ledger's dedupe means the false verdict is never revisited.
-	#
-	# Skipping keeps the ledger honest for free: the hours simply reconcile on the next healthy cycle,
-	# against complete mirrors. An unhealed hour costs nothing; a wrong verdict is forever.
-	if [ -n "${CAPTURE_RED_SOURCE:-}" ]; then
-		if [ "$capture_ok" -eq 0 ] || [ "$secondary_ok" -eq 0 ]; then
-			log WARNING "reconcile skipped: a capture pull failed this cycle (primary_ok=$capture_ok secondary_ok=$secondary_ok), so a mirror's absence cannot be told apart from a pull that has not landed yet"
-		elif ! zcrypto archive reconcile "$CAPTURE_DEST" "$CAPTURE_RED_DEST" "$RECONCILED_DEST" \
-				--window-hours "${RECONCILE_WINDOW_HOURS:-48}" \
-				--min-gap-seconds "${RECONCILE_MIN_GAP_SECONDS:-30}" \
-				--textfile "$RECONCILE_TEXTFILE"; then
-			log ERROR "reconcile failed (primary=$CAPTURE_DEST secondary=$CAPTURE_RED_DEST overlay=$RECONCILED_DEST), continuing"
-		fi
-	fi
-
-	# Trade backfill (spec 00053; T0053): heal the canonical trade stream to a contiguous,
-	# duplicate-free trade_id sequence by fetching gaps from Kraken's public REST /Trades and
-	# minting healed hours into the reconciled overlay ($RECONCILED_DEST, same destination the
-	# reconciler above writes to). DAILY, not per-cycle -- the detector's scan is O(archive), a
-	# per-cycle cost T0028 already flags on this host and which this must not compound; there is
-	# also no urgency cliff (Kraken serves ~18 months of /Trades). Gated on a stamp file holding
-	# the last UTC day it ran; the stamp is written UNCONDITIONALLY -- success or failure. A
-	# PERMANENT error (an unmapped pair, a structural residual) exits non-zero on every attempt, and
-	# writing the stamp only on success once meant that ran the full O(archive) scan plus hundreds
-	# of REST calls every hour, forever -- exactly the per-cycle cost this step exists to avoid.
-	# Stamping unconditionally makes the daily cost bound absolute; the failure is then carried by
-	# the metric below and its alert (infra/grafana/alerts.yaml), not by a retry. The metric is the
-	# signal, not the retry -- a transient now waits up to 24h, which is fine given the no-urgency-
-	# cliff reasoning above.
-	# Best-effort like every other step above: a non-zero exit (1 = recorded errors, 2 = primary
-	# root missing) is recorded in the metric below, never fatal to the loop.
-	backfill_stamp=/archive/.trade-backfill-last-utc-day
-	backfill_today="$(date -u +%Y-%m-%d)"
-	if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
-		echo "$backfill_today" > "$backfill_stamp"
-		if zcrypto archive backfill-trades "$CAPTURE_DEST" "$RECONCILED_DEST"; then
-			backfill_rc=0
-		else
-			backfill_rc=$?
-			log ERROR "trade backfill failed (primary=$CAPTURE_DEST reconciled=$RECONCILED_DEST, exit=$backfill_rc), continuing"
-		fi
-		backfill_textfile="${TRADE_BACKFILL_TEXTFILE:-/textfile/trade-backfill.prom}"
-		printf 'zcrypto_trade_backfill_exit_code %d\n' "$backfill_rc" > "$backfill_textfile.tmp"
-		printf 'zcrypto_trade_backfill_last_run_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
-		if [ "$backfill_rc" -eq 0 ]; then
-			printf 'zcrypto_trade_backfill_last_success_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
-		fi
-		mv "$backfill_textfile.tmp" "$backfill_textfile"
-	fi
+	# The reconcile + trade-backfill steps MOVED to the ops node (spec 00054 D2/OPS-5): this host
+	# kept custody, Role A's pull/prune, and its Alloy (D3), and shed the computation -- the Atom tax
+	# on every step sharing this clock had stretched the "hourly" loop to ~103 minutes. The healed
+	# overlay now arrives via the RECONCILED_SOURCE pull above instead of being written here.
 
 	# Backgrounded + waited-on so the TERM/INT trap interrupts the sleep promptly (docker stop
 	# stays graceful) instead of blocking until the interval elapses.
