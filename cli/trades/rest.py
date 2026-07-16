@@ -17,7 +17,8 @@ logger = get_logger("trades.rest")
 _BASE_URL = "https://api.kraken.com/0/public/Trades"
 _TIMEOUT_SECONDS = 30
 _PAGE_ROWS = 1000  # Kraken's page size; a SHORT page means the series is exhausted
-_MIN_INTERVAL_SECONDS = 1.5  # public-endpoint courtesy; ~200-400 calls for the historical sweep
+_MIN_INTERVAL_SECONDS = 3.0  # 1.5s was DEMONSTRABLY refused (EGeneral:Too many requests) on the
+# live bulk run 2026-07-16 (T0053) -- do not "optimise" this back down without new measurement
 
 # Canonical -> Kraken REST altname. Kraken answers under its OWN key (XBTEUR -> XXBTZEUR), so the
 # response key is read positionally, never assumed.

@@ -139,20 +139,27 @@ while true; do
 		fi
 	fi
 
-	# Trade backfill (spec 00053): heal the canonical trade stream to a contiguous, duplicate-free
-	# trade_id sequence by fetching gaps from Kraken's public REST /Trades and minting healed hours
-	# into the reconciled overlay ($RECONCILED_DEST, same destination the reconciler above writes
-	# to). DAILY, not per-cycle -- the detector's scan is O(archive), a per-cycle cost T0028 already
-	# flags on this host and which this must not compound; there is also no urgency cliff (Kraken
-	# serves ~18 months of /Trades). Gated on a stamp file holding the last UTC day it ran; the
-	# stamp is written ONLY on success, so a failure retries next cycle rather than waiting a day.
+	# Trade backfill (spec 00053; T0053): heal the canonical trade stream to a contiguous,
+	# duplicate-free trade_id sequence by fetching gaps from Kraken's public REST /Trades and
+	# minting healed hours into the reconciled overlay ($RECONCILED_DEST, same destination the
+	# reconciler above writes to). DAILY, not per-cycle -- the detector's scan is O(archive), a
+	# per-cycle cost T0028 already flags on this host and which this must not compound; there is
+	# also no urgency cliff (Kraken serves ~18 months of /Trades). Gated on a stamp file holding
+	# the last UTC day it ran; the stamp is written UNCONDITIONALLY -- success or failure. A
+	# PERMANENT error (an unmapped pair, a structural residual) exits non-zero on every attempt, and
+	# writing the stamp only on success once meant that ran the full O(archive) scan plus hundreds
+	# of REST calls every hour, forever -- exactly the per-cycle cost this step exists to avoid.
+	# Stamping unconditionally makes the daily cost bound absolute; the failure is then carried by
+	# the metric below and its alert (infra/grafana/alerts.yaml), not by a retry. The metric is the
+	# signal, not the retry -- a transient now waits up to 24h, which is fine given the no-urgency-
+	# cliff reasoning above.
 	# Best-effort like every other step above: a non-zero exit (1 = recorded errors, 2 = primary
 	# root missing) is recorded in the metric below, never fatal to the loop.
 	backfill_stamp=/archive/.trade-backfill-last-utc-day
 	backfill_today="$(date -u +%Y-%m-%d)"
 	if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
+		echo "$backfill_today" > "$backfill_stamp"
 		if zcrypto archive backfill-trades "$CAPTURE_DEST" "$RECONCILED_DEST"; then
-			echo "$backfill_today" > "$backfill_stamp"
 			backfill_rc=0
 		else
 			backfill_rc=$?
