@@ -174,6 +174,63 @@ def test_recovered_row_in_an_unsettled_hour_is_deferred_not_dropped(tmp_path):
     assert not (overlay / "BTC" / "EUR" / "trades" / "2026/07/11" / "23.parquet").exists()
 
 
+def test_d9_catches_a_mint_that_silently_did_nothing(tmp_path, monkeypatch):
+    """The invariant re-check (D9) must FIRE on a real violation, not just stay quiet on a clean
+    sweep. Stub `mint_hour` to silently no-op -- simulating "reported recovery it never performed",
+    the exact bug class this branch shipped once -- so the union succeeds in memory but nothing is
+    ever published to disk. D9 re-reads the settled canonical view from disk, so it must catch the
+    unhealed gap and log/record it, rather than let the in-memory counters report a false success."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 15, 16])  # 12,13,14 missing
+
+    monkeypatch.setattr("cli.trades.backfill.mint_hour", lambda *a, **k: None)
+
+    res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 13, 14]))
+    assert len(res.errors) == 1
+    assert "D9" in res.errors[0][1]
+    assert "unaccounted=3" in res.errors[0][1]
+    assert not (overlay / "BTC" / "EUR" / "trades" / "2026/07/11" / "02.parquet").exists()
+
+
+def test_an_unreadable_segment_is_isolated_and_the_sweep_continues(tmp_path):
+    """A corrupt/bit-rotten segment (exactly what an rsync'd NAS mirror can produce) for one pair
+    must not abort the whole pass: it becomes a per-pair `errors` entry, and the sweep continues to
+    heal a real gap in another pair."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 15], pair="BTC/EUR")
+    corrupt = primary / "BTC" / "EUR" / "trades" / "2026/07/11" / "02.parquet"
+    corrupt.write_bytes(b"not a parquet file")  # truncated/bit-rotten segment
+    _write(primary, [20, 21, 25, 26], pair="ETH/EUR")  # 22, 23, 24 missing -- a REAL gap
+
+    res = backfill(primary, overlay, now=NOW, fetch=lambda pair, since, *, until=None, **kw: _rows([22, 23, 24]))
+    assert len(res.errors) == 1 and res.errors[0][0] == "BTC/EUR"
+    assert res.pairs == 2  # ETH still swept
+    healed = pl.read_parquet(overlay / "ETH" / "EUR" / "trades" / "2026/07/11" / "02.parquet")
+    assert healed["trade_id"].to_list() == [20, 21, 22, 23, 24, 25, 26]
+
+
+def test_a_partially_recoverable_gap_is_re_minted_fuller_on_retry(tmp_path):
+    """The `replace=True` retry path: run 1 recovers what REST offers, leaving a residual gap
+    (`trades_unrecoverable`); run 2, with REST now serving the rest, must re-mint the FULLER union,
+    not skip the hour because it was already minted once."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 16])  # 11..15 missing
+
+    res1 = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 14]))  # 11,13,15 still missing
+    assert res1.trades_recovered == 2 and res1.trades_unrecoverable == 3
+    healed1 = pl.read_parquet(overlay / "BTC" / "EUR" / "trades" / "2026/07/11" / "02.parquet")
+    assert healed1["trade_id"].to_list() == [10, 12, 14, 16]
+
+    res2 = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([11, 13, 15]))  # REST now has them all
+    assert res2.trades_recovered == 3 and res2.trades_unrecoverable == 0
+    healed2 = pl.read_parquet(overlay / "BTC" / "EUR" / "trades" / "2026/07/11" / "02.parquet")
+    assert healed2["trade_id"].to_list() == [10, 11, 12, 13, 14, 15, 16]
+    assert detect(healed2).gaps == []
+
+    res3 = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([]))
+    assert res3.gaps_found == 0 and res3.hours_minted == 0  # idempotent once fully healed
+
+
 def test_cross_hour_duplicate_is_reported_not_silently_collapsed(tmp_path):
     """A trade_id duplicated ACROSS an hour boundary (the T0026 reconnect-overwrite signature)
     cannot be fixed by `union_trades`, which mints per-hour -- neither hour alone contains a

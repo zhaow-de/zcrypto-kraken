@@ -110,7 +110,12 @@ def backfill(
     errors: list[tuple[str, str]] = []
 
     for p, segs in sorted(hours.items()):
-        frames = {h: pl.read_parquet(path) for h, path in sorted(segs)}
+        try:
+            frames = {h: pl.read_parquet(path) for h, path in sorted(segs)}
+        except Exception as exc:  # noqa: BLE001 -- any unreadable segment is an integrity fact
+            logger.warning("trade backfill read failed pair=%s: %s", p, exc)
+            errors.append((p, str(exc)))
+            continue
         if not frames:
             continue
         det = detect(pl.concat(list(frames.values())))
@@ -190,7 +195,7 @@ def backfill(
                     extra_provenance={"recovered_id_ranges": ranges, "deduped_rows": union.deduped_rows},
                     replace=True,
                 )
-            except CaptureError as exc:  # isolate: one bad mint must not end the sweep
+            except (CaptureError, OSError) as exc:  # isolate: one bad mint must not end the sweep
                 logger.warning("trade backfill mint failed pair=%s hour=%s: %s", p, h.isoformat(), exc)
                 errors.append((p, str(exc)))
                 continue
