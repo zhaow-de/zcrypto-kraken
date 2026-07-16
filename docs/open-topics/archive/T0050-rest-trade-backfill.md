@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: T0026's snapshot-overwrite fix is designed (it needs the same Kraken REST `/Trades` machinery, so the two should be built together), or any attended capture-maintenance window — the loss-quantification and the client are autonomous now; only the daemon deploy is gated
+status: resolved
 ---
 
 # REST trade-backfill for the capture daemon
@@ -30,7 +29,33 @@ Carried forward from [[T0003]] and the iter-099 exit-bar verification:
 - **Cross-mirror trade differences are already detected**: the reconciler (spec `00050`) ledgers a `trade_deficit` state, and `trade_id` is globally unique across hosts — which is why its trade healing is row-level (merge/dedupe by `trade_id`) while book healing is whole-window. The same dedupe key applies to REST-sourced rows.
 - **Not an exit-bar blocker.** The ≥7-day clean run passed on 2026-07-16 (worst stream 0.0624 % of the \<0.1 % bar, zero missing hours, 3738/3738 hashes) with no backfill in place.
 
-## Suggested next steps
+## Resolution (2026-07-16, iter-100 — spec `00053`, plan `00053`)
+
+**Delivered, and verified on the live archive.** The last unshipped §8 capture-daemon clause is shipped — as an offline pass that never touches the daemon at all.
+
+| | before | after |
+| -- | --: | --: |
+| gaps | 194 | **0** |
+| trades missing | 17,362 (3.60 %) | **0** |
+| duplicate rows | 10,986 | **0** |
+
+Worst-hit were the thin alts (AVAX 13.2 %, DOT 13.0 %, DOGE 9.8 %) — precisely the names where each print carries the most information, and the pairs [[T0014]]/[[T0024]] will calibrate against.
+
+**What made it possible** — a property verified, not assumed: Kraken's `trade_id` is **dense** per pair (probed across a liquid pair, a thin pair, a crash window, and 18-month-old data). So the archive proves its own loss with no REST call, and REST repairs it. This gives trades what [[T0045]] denies books: provable completeness *and* a repair path.
+
+**It closed the reconciler's stated blind spot.** *"When both streams are dark there is no witness to heal with, so the loss is permanent."* For trades that is now false — and it was not academic: the largest gap (974 BTC trades, 2026-07-08 18:59:57 → 19:50:42) **predates the secondary host entirely**, so no mirror could ever have healed it. It also corrected [[T0003]]'s archived claim that that window left "trades unaffected" — it did not.
+
+**Verified by outcome, not by exit code:** the canonical (reconciled-first) view re-detects `gaps=0 missing=0 duplicates=0`; 391/391 minted hours verify against their manifests; the raw mirrors are **byte-identical** to their pre-mint baseline (1908 finals, aggregate sha `6093eede…`; books untouched at 1910); the 07-08 BTC window is contiguous `107998884..107999859`. A rate-limited gap of 34 trades failed on the first pass and was recovered exactly by the idempotent re-run — proving the retry path on real data.
+
+Runs daily on the NAS beside the reconciler, minting into the existing overlay, so consumers changed nothing. [[T0033]]'s OPS-5 now relocates the reconciler **and** this backfill as one unit.
+
+**Registered residuals** (none of them block this topic): [[T0052]] the metrics have no dashboard/alert/dead-man; [[T0053]] a permanent error degrades the daily gate to hourly-forever, and the live run showed Kraken rate-limits at 1.5 s spacing; [[T0054]] reconcile's `already_minted` skip vs backfill-minted hours, to check before the [[T0039]]-gated `--mint` flip.
+
+## Superseded next steps
+
+_(kept for the record; discharged above)_
+
+
 
 - **(autonomous, read-only — do this first, it needs no design)** Quantify the real loss: pull Kraken REST `/Trades` for BTC/ETH/DOGE over 2026-07-11 02:00–04:00 UTC and diff against the current (snapshot-overwritten) segments. This both sizes [[T0026]] and proves the REST client against real data before any daemon change.
 - **(autonomous, design)** Decide where backfill runs. It does **not** have to live in the daemon: an offline reconciliation pass over the archive (the ops node's compute tier, beside the panel/verify-replay timers) can fetch and merge without touching the live unbackfillable capture process at all — likely the lower-risk half of the design space.

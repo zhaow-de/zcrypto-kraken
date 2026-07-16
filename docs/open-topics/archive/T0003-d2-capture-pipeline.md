@@ -41,7 +41,9 @@ Iteration **iter-038** (interactive design → unattended build; spec `docs/spec
 
 **Live self-heal still pending.** A 14-min watcher on the fixed code saw **no natural desync** (clean window) — so the definitive "watch a desync self-heal" (which also settles the un-provable Kraken unsubscribe→subscribe ordering, see [T0008](../T0008-desync-recovery-robustness.md)) will confirm on the next natural desync; the healthcheck dead-man's switch guards it in the meantime.
 
-**Data caveat.** During the ~5 h stuck window (14:47 → 19:54 UTC) the DOGE/BTC/ETH **book** segments are checksum-invalid (trades unaffected), and the ≥7-day clean-run clock effectively restarts from the recovery.
+**Data caveat.** During the ~5 h stuck window (14:47 → 19:54 UTC) the DOGE/BTC/ETH **book** segments are checksum-invalid, and the ≥7-day clean-run clock effectively restarts from the recovery.
+
+> **CORRECTION (2026-07-16, iter-100): "trades unaffected" was wrong.** The trade stream *was* damaged in this window, and nothing in the stack could see it — `GapMonitor` is in-process, the manifests verify (the rows are *absent*, not corrupt), and no secondary host existed on 07-08 for the reconciler to compare against. Measured from `trade_id` density (Kraken's ids are dense per pair, so a hole IS missing data): the two largest gaps in the whole archive fall here — **974 BTC trades** (`107998884 → 107999859`, 18:59:57 → 19:50:42) and **605 more** — part of 17,362 trades (3.60 %) missing archive-wide. All of it has since been recovered from Kraken's public REST `/Trades` and minted into the reconciled overlay (spec `00053`; the canonical trade stream now re-detects `gaps=0 missing=0 duplicates=0`). Books were genuinely unaffected and remain unrecoverable by any mechanism ([[T0045]]).
 
 **Beware quiet logs.** Because iter-038 made the desync warning fire only on the *transition* into desync, a pair that is **stuck** desynced logs nothing further — the `checksum desync` spam stops even though the pair is still broken. **The true health signal is the withheld healthcheck ping (→ healthchecks.io check goes DOWN), not the absence of log warnings.**
 

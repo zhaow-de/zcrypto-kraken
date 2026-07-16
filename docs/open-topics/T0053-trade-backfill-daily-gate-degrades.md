@@ -26,6 +26,9 @@ Concrete permanent triggers that exist right now:
 
 ## Findings so far
 
+- **MEASURED 2026-07-16 (iter-100 bulk run): Kraken rate-limits at the client's 1.5 s spacing.** The first live pass hit `EGeneral:Too many requests` on LINK/EUR gap `5419492..5419527` — one gap of 34 trades, isolated exactly as designed (the other 193 gaps healed; `errors=1`), and recovered in full by the idempotent re-run. So the `_MIN_INTERVAL_SECONDS = 1.5` constant is **too aggressive for a sustained burst** and the steady-state daily pass should not depend on a human noticing and re-running. This is now a concrete, observed trigger for the degradation below — not a hypothetical one.
+- **The summary cannot fully account for a fetch-failed gap.** That run printed `missing=17362 recovered=17328 unrecoverable=0 deferred=0` — the 34 are implied only by `errors=1`. The internal `pair_fetch_error_missing` bucket exists (D9's re-check forced it, so the invariant check does not false-positive) but is not printed, so the operator's arithmetic does not close. Same defect class as the found-vs-healed split: a bucket that exists internally but never reaches the human.
+
 - Verified by harness at iter-100: rc=1 → stamp not written → retries next cycle (the documented intent, and correct for a transient).
 - The step is best-effort: it can never abort the loop or poison the reconcile gate. So this degrades cost and politeness, never integrity.
 - `trades_unrecoverable` and `duplicates_cross_hour` are *expected, honest* residuals by design (spec D10: a residual gap is a finding, not a failure) — but today they do not set a non-zero exit; only `errors` does. Worth re-checking that boundary when designing the fix, since "a permanent, expected residual" must not read as "an error to retry".

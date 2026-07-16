@@ -55,6 +55,14 @@ Dataset root `data/ohlc-full/` (gitignored); `basket_sha256` `70c2728e0badf7015f
 
 Unlike the frozen baskets above, these accrue continuously and are **hash-versioned at consumption**: a research iteration extracts its window and records that frame's `dataset_hash` in the trial registry (never "latest"). Primary copies live on the **ops node** (`/var/lib/zcrypto-ops/`), hash-verified replicas on the NAS (`/volume1/ZhaoCrypto/`); the workstation holds neither by default (pull on demand — and OPS-6 migrates the research loop to the ops node where these are local).
 
+### Canonical trades — healed (`capture-reconciled/…/trades/`, since 2026-07-08; daily)
+
+- **Read it reconciled-first, never the raw mirror alone.** `canonical_segments(primary_root, reconciled_root, kind="trades")` yields the healed view; a bare glob over `capture-segments/` returns the **un-healed** stream and, for pre-2026-07-16 hours, silently double-counts (10,986 duplicate `trade_id`s existed archive-wide before this pass).
+- **Producer:** `zcrypto archive backfill-trades` (spec `00053`, iter-100) — daily on the NAS beside the reconciler, minting into the same overlay. Detects `trade_id` gaps + duplicates from the archive itself, fetches only the missing ids from Kraken's public REST `/Trades`, unions via `union_trades` (dedupe on `trade_id`, keep-first, **primary priority**), mints whole hours atomically with `<HH>.provenance.json` (`tool: zcrypto archive backfill-trades`, `recovered_id_ranges`).
+- **The invariant, and why it is the check:** per pair, canonical `trade_id` is **contiguous and unique** across the captured span. Kraken's `trade_id` is dense per pair, so a hole IS missing data. **Do not trust the `.sha256`**: a minted hour's manifest is *regenerated*, so it verifies while being wrong (this is exactly how the T0026 trade overwrite stayed invisible). Re-run `--detect-only` to check the invariant; it is the only honest test.
+- **State (2026-07-16):** `gaps=0 missing=0 duplicates=0` across all 10 pairs; 17,362 trades recovered, 10,986 duplicates collapsed, 391 hours minted, raw mirrors byte-identical.
+- **Caveat for consumers:** a **recovered** row's `ts` comes from REST and sits ~+1 µs from what the WS would have recorded (venue offset; float64 ULP at this epoch is 0.238 µs, so no rounding closes it — spec `00053` D6a). Rows present in both keep their WS `ts` (dedupe is `trade_id`-keyed with primary priority). Irrelevant at any research horizon here, but do not treat trade `ts` as sub-microsecond truth. Provenance names which ids came from REST.
+
 ### L2 primitive panel (`l2-panel/`, since 2026-07-08 capture start; accruing hourly)
 
 - **Producer:** `zcrypto panel materialize` (spec `00052`, iter-098) over the canonical (reconciled-first) depth-100 book capture; hourly ops-node timer, per-pair watermarks + `<HH>.state.json` carry (state threads across update-opening hours — ~96% of hours; decision `[iter-098]` + its correction).
