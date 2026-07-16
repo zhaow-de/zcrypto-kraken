@@ -85,6 +85,32 @@ prometheus.scrape "host" {
 }
 
 prometheus.remote_write "grafana" {
+  // `host="ops"` on every metric this component ships -- without it, no metric on this host
+  // carries a `host` label at all (the `host` label the logs pipeline attaches below, in
+  // discovery.relabel "container_logs", is Loki-only and never reaches Prometheus), so
+  // `infra/grafana/alerts.yaml`'s "Ops · node load high" rule
+  // (`node_load1{host="ops"}`) selects nothing and can never fire. `external_labels` is applied
+  // component-wide, before the write_relabel_config blocks below run -- so it does not touch the
+  // drop/keep pair (both match on `__name__` only) and does not change the number of relabel
+  // blocks.
+  //
+  // The NAS's config.alloy deliberately does NOT get the mirror-image `host="nas"` label, even
+  // though that would look more symmetric: adding a label to an EXISTING, already-live series
+  // changes that series' identity in Prometheus (the old series ends, a new one begins), and the
+  // NAS ships `zcrypto_reconcile_residual_gap_seconds_total`, which
+  // `infra/grafana/alerts.yaml`'s "Reconciler · residual gap increased (permanent loss)" rule
+  // watches through `increase(...[1h]) > 0 and resets(...[1h]) == 0`. A series-identity change
+  // underneath `increase()` can read as a value jump with no corresponding `resets()`, i.e. a
+  // FALSE permanent-data-loss page -- not worth it for a symmetry nobody needs today.
+  //
+  // This is also useful, not merely tolerable: once the overlay writer moves to ops, ops's copy of
+  // zcrypto_reconcile_* carries `host="ops"` while the NAS's carries no host label at all, making
+  // the two hosts' series distinguishable -- exactly what a later task needs to prove the NAS's
+  // stale copy is gone. Deliberate asymmetry, not an oversight.
+  external_labels = {
+    host = "ops",
+  }
+
   endpoint {
     url = sys.env("GRAFANA_PROM_URL")
 
