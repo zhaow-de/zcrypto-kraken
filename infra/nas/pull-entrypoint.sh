@@ -107,6 +107,20 @@ while true; do
 		fi
 	fi
 
+	# OPS-5 (spec 00054 D4): the healed overlay, now PRODUCED on the ops node and pulled here.
+	# Custody stays on the NAS (D3) -- only the computation moved. Own least-privilege key and its
+	# own per-call SSH port, exactly like the panel/liquidations channels above. Hash-verified: the
+	# overlay's minted hours carry .sha256 sidecars (verify_tree walks *.parquet only, so the
+	# unsidecar'd ledger rides along unchecked). Best-effort like every other pull -- a failure is
+	# logged and the loop continues; the overlay is recomputable on ops, so a missed cycle costs a
+	# delay, not data. Skipped entirely when RECONCILED_SOURCE is unset.
+	if [ -n "${RECONCILED_SOURCE:-}" ]; then
+		if ! ARCHIVE_SSH_KEY="$RECONCILED_SSH_KEY" ARCHIVE_SSH_PORT="${RECONCILED_SSH_PORT:-22}" \
+				zcrypto archive pull "$RECONCILED_SOURCE" "$RECONCILED_DEST"; then
+			log ERROR "reconciled pull failed (source=$RECONCILED_SOURCE dest=$RECONCILED_DEST), continuing"
+		fi
+	fi
+
 	# Role C: reconcile the two raw mirrors into the healed overlay. DETECT-ONLY by default -- it
 	# ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
 	# --min-gap-seconds from real cross-host data (see RECONCILE_MIN_GAP_SECONDS in compose.yaml).

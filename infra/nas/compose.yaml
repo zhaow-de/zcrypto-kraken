@@ -21,11 +21,14 @@ services:
       CAPTURE_RED_SOURCE: ${CAPTURE_RED_SOURCE:-}
       CAPTURE_RED_DEST: ${CAPTURE_RED_DEST:-/archive/capture-segments-red}
       CAPTURE_RED_SSH_KEY: /keys/sync_capture_red
-      # The healed overlay. Primary stays canonical-by-default; only HEALED hours are written here,
-      # plus the append-only ledger. Readers resolve reconciled-first, primary-final otherwise
-      # (cli/archive/reader.py). Kept off both raw mirrors on purpose: the raw primary is the T0003
-      # exit bar's only input, and the overlay heals gaps by design, so mixing them would launder the
-      # very gaps the exit bar exists to measure.
+      # The healed overlay. OPS-5 (spec 00054 D4) inverted who writes it: the ops node is now the
+      # producer (the reconciler + trade-backfill moved there), so this is a PULL DESTINATION, not
+      # the reconciler's output path -- the RECONCILED_SOURCE channel below fills it. Primary stays
+      # canonical-by-default; only HEALED hours land here, plus the append-only ledger. Readers
+      # resolve reconciled-first, primary-final otherwise (cli/archive/reader.py). Kept off both raw
+      # mirrors on purpose: the raw primary is the T0003 exit bar's only input, and the overlay
+      # heals gaps by design, so mixing them would launder the very gaps the exit bar exists to
+      # measure.
       RECONCILED_DEST: ${RECONCILED_DEST:-/archive/capture-reconciled}
       RECONCILE_TEXTFILE: /textfile/reconcile.prom
       # DETECT-ONLY until T0039's soak pins this from real cross-host data. The default is deliberately
@@ -56,6 +59,21 @@ services:
       PANEL_DEST: ${PANEL_DEST:-/archive/l2-panel}
       PANEL_SSH_KEY: /keys/sync_panel
       PANEL_SSH_PORT: ${PANEL_SSH_PORT:-22}
+      # OPS-5 (spec 00054 D4): the overlay's flow INVERTS here. The ops node is now the
+      # capture-reconciled tree's producer (the reconciler + trade-backfill moved there), so the NAS
+      # stops writing it and acquires it instead. The NAS PULLS -- it never receives a push: that is
+      # the established shape (PANEL_* above) and it preserves spec 00051 D10's pull-only transport,
+      # so a compromised ops node still cannot write into custody.
+      #
+      # Hash-verified (NOT --no-verify, unlike the journal): every minted hour carries a .sha256
+      # sidecar, and verify_tree only walks *.parquet -- so the unsidecar'd reconcile-ledger.jsonl
+      # rides along unchecked rather than failing the pull. Same home-LAN port-22 caveat as the
+      # panel/liquidations channels. Unset RECONCILED_SOURCE and the pull is skipped entirely, so
+      # this compose file stays valid on a NAS that has not been given the channel yet -- which is
+      # also the rollback: unset it and the NAS is simply a NAS without the overlay.
+      RECONCILED_SOURCE: ${RECONCILED_SOURCE:-}
+      RECONCILED_SSH_KEY: /keys/sync_reconciled
+      RECONCILED_SSH_PORT: ${RECONCILED_SSH_PORT:-22}
       CAPTURE_SSH_KEY: /keys/sync_capture
       JOURNAL_SSH_KEY: /keys/sync_journal
       ARCHIVE_SSH_KNOWN_HOSTS: /keys/known_hosts

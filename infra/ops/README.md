@@ -124,6 +124,28 @@ custody-critical.
 5. **NAS** — set `PANEL_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
+### The `sync_reconciled` replication channel (the NAS pulls this node)
+
+Pull-only transport, mirroring `sync_panel`/`sync_liquidations` above -- spec 00054 D4: the overlay
+writer (reconciler + trade-backfill) moved to this node, so the NAS acquires the healed overlay
+instead of writing it. Custody stays on the NAS (D3); only the computation moved. Hash-verified,
+like the panel/liquidations channels (every minted hour carries a `.sha256` sidecar).
+
+1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_reconciled_ed25519 -C zcrypto-sync-reconciled-pullonly -N ""`.
+2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys`, pinning the overlay root:
+
+   ```
+   command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/capture-reconciled",restrict ssh-ed25519 AAAA... zcrypto-sync-reconciled-pullonly
+   ```
+
+3. **NAS** — drop the private key at `/volume1/docker/zcrypto-archive/keys/sync_reconciled`, mode
+   `0600` (matches the fixed `RECONCILED_SSH_KEY=/keys/sync_reconciled` in `infra/nas/compose.yaml`).
+4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
+   `sync_liquidations` setup above (step 4 there); no re-pin needed for a third channel to the
+   same host.
+5. **NAS** — set `RECONCILED_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
+   `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
+
 ## Alloy telemetry stack (Task 1, spec 00054 D1/D7)
 
 Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
