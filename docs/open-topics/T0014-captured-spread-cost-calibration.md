@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: T0003's capture has ≥2 weeks of L2 data AND a synced (workstation/NAS) copy exists — clock started 2026-07-08, so ≈2026-07-22 at the earliest
+ripe_when: T0003's capture has ≥2 weeks of L2 data — clock started 2026-07-08, so ≈2026-07-22; the compute home already exists (the ops-node 1s panel, iter-098), so the analysis is a one-query start when the window fills
 ---
 
 # Captured-spread cost-model calibration

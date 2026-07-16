@@ -66,7 +66,7 @@ df -h
 
 Append the following lines to `~/.ssh/config` for some shortcuts to ease the remote connection. Assumptions:
 
-- Same SSH key (`infra/ansible/files/deploy_ed25519`) is used for the deployment user (`deploy` as the Linode VPS and the local ops node, `zcrypto-deploy` at the Synology NAS)
+- Each node has its own deploy SSH key: locally `~/.ssh/zcrypto-deploy-{zcrypto,red,ops,nas}_ed25519`, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`deploy` at the Linode VPSes and the local ops node, `zcrypto-deploy` at the Synology NAS)
 - Except for NAS, the `deploy` user is provisioned by the Ansible script
 - Both `deploy` and `zcrypto-deploy` on all the 4x nodes are passwordless sudo enabled
 
@@ -75,21 +75,21 @@ Host zcrypto
   HostName zcrypto.zhaow.me
   Port 10022
   User deploy
-  IdentityFile ~/.ssh/zcrypto-deploy_ed25519
+  IdentityFile ~/.ssh/zcrypto-deploy-zcrypto_ed25519
   IdentitiesOnly yes
 
 Host red
   HostName zcrypto-red.zhaow.me
   Port 10022
   User deploy
-  IdentityFile ~/.ssh/zcrypto-deploy_ed25519
+  IdentityFile ~/.ssh/zcrypto-deploy-red_ed25519
   IdentitiesOnly yes
 
 Host hp
   HostName <ops-node-ip>
   Port 22
   User deploy
-  IdentityFile ~/.ssh/zcrypto-deploy_ed25519
+  IdentityFile ~/.ssh/zcrypto-deploy-ops_ed25519
   PreferredAuthentications publickey
   UpdateHostKeys no
 
@@ -97,7 +97,7 @@ Host nas
   HostName <nas-ip>
   Port 22
   User zcrypto-deploy
-  IdentityFile ~/.ssh/zcrypto-deploy_ed25519
+  IdentityFile ~/.ssh/zcrypto-deploy-nas_ed25519
   PreferredAuthentications publickey
   UpdateHostKeys no
 ```
@@ -148,7 +148,7 @@ IP: home network `<nas-ip>`
     - double check the home dir of user `zcrypto-deploy` is `/var/services/homes/zcrypto-deploy`, and its shell is `/bin/sh`
   - `synouser --rebuild all` (NOTE: after this step, the user `zcrypto` will disappear from DSM web Control Panel -> User & Group)
   - `synogroup --rebuild all` (NOTE: after this step, the group `zcrypto` will disappear from DSM web Control Panel -> User & Group)
-  - `mkdir -p /volume1/homes/zcrypto-deploy/.ssh/`, append the content of SSH public key for the deploy user (`infra/ansible/files/deploy_ed25519.pub`) to `/volume1/homes/zcrypto-deploy/.ssh/authorized_keys`
+  - `mkdir -p /volume1/homes/zcrypto-deploy/.ssh/`, append the content of the NAS deploy public key (`infra/ansible/files/deploy_nas_ed25519.pub`) to `/volume1/homes/zcrypto-deploy/.ssh/authorized_keys`
   - `chown -R zcrypto-deploy: /volume1/homes/zcrypto-deploy/.ssh/`
   - `chmod 0600 /volume1/homes/zcrypto-deploy/.ssh/authorized_keys`
   - `chown -R zcrypto: /volume1/ZhaoCrypto`

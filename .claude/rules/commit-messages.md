@@ -19,13 +19,13 @@ When Claude writes a commit, end the message with a `Co-Authored-By:` trailer cr
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
 
-Always reflect the **actual** model and version that did the work (e.g. `Claude Opus 4.6`, `Claude Sonnet 4.6`) — never a hardcoded or stale example. Put it as the last line, separated from the body by a blank line.
+Always reflect the **actual** model and version that did the work (e.g. `Claude Opus 4.6`, `Claude Sonnet 4.6`) — never a hardcoded or stale example. Put it as the last line, separated from the body by a blank line. **Dispatch prompts never hardcode a model version** — instruct the subagent to name its own actual model in the trailer (a version string copied from a session summary once misattributed ~11 commits).
 
 **Subagent-authored commits:** when a commit is produced by a subagent (e.g. during subagent-driven development), credit the **subagent's own model**, not the orchestrating session's — the trailer names whoever actually wrote the commit. A single branch will then mix trailers (e.g. Sonnet-authored implementation commits alongside Opus-authored spec/plan commits); the PR description aggregates the distinct models into one trailer (see `pull-requests.md`).
 
 ## Reviewer trailer
 
-**Review is mandatory.** Every Claude-authored commit on a feature/fix branch must be reviewed by a subagent before it is pushed or merged. Reviewing is fast (a focused review subagent typically takes 30s–2min); skipping it forces a force-push later to add the trailer, and risks shipping unreviewed code in the meantime. There is no "trivial enough to skip review" exception — chore / docs / one-line fix commits all go through review, same as feature commits. The discipline is uniform so the rule never becomes a judgment call.
+**Review is mandatory.** Every Claude-authored commit on a feature/fix branch must be reviewed by a subagent before it is pushed or merged. Reviewing is fast (a focused review subagent typically takes 30s–2min); skipping it forces a force-push later to add the trailer, and risks shipping unreviewed code in the meantime. Chore / docs / one-line fix commits on their own branches all go through review, same as feature commits. The **one** trivial exception: an already-verified one-liner **folded into an open related PR** (see `branch-workflow.md`) may skip review — everything else keeps the uniform discipline so the rule never becomes a judgment call.
 
 - **Implementer-authored commits**: dispatch a review subagent (a different one from the implementer) before push. Amend the `Reviewed-by:` trailer while the commit is still local.
 - **Orchestrator-authored inline commits** (the orchestrating session edits files directly instead of delegating to an implementer subagent): still dispatch a review subagent. The orchestrator is not its own reviewer.
