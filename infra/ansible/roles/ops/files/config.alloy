@@ -154,18 +154,33 @@ discovery.docker "containers" {
 discovery.relabel "container_logs" {
   targets = discovery.docker.containers.targets
 
-  // DIVERGENCE 3 (host label + container-name regex): the NAS strips a literal
-  // `zcrypto-archive-` compose-project prefix because that is its one project's name. Ops runs
-  // several independent compose projects (liquidations, archive-pull's timers, this Alloy stack
-  // itself, ...) with different project names, so this regex does NOT assume any one prefix -- it
-  // only strips the leading `/` Docker always prepends and a trailing `-<replica index>`, leaving
-  // the container name (with its own project prefix, if any) as the `container` label.
+  // DIVERGENCE 3 (host label + container labelling scheme): the first cut of this file derived
+  // `container` from the docker NAME, NAS-style -- on ops that yielded `zcrypto-ops-liquidations`
+  // and `alloy-alloy` (compose project prefixes the NAS's single-project strip never anticipated),
+  // so NEITHER parse selector below matched and every ops stream shipped level=- (T0060).
+
+  // Compose-managed containers: the compose SERVICE name is authoritative — it is stable across
+  // restarts and does not carry the project prefix or replica index the docker NAME does
+  // (zcrypto-ops-liquidations-1 -> liquidations, alloy-alloy-1 -> alloy). The NAS still derives
+  // labels from the docker name; unifying the fleet's scheme is T0020's dashboards package.
   rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/?(.*?)(?:-[0-9]+)?"
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    target_label  = "container"
+  }
+
+  // Non-compose containers (the systemd units' `docker run --name zcrypto-*` jobs): fall back to
+  // the docker name. The join with the (possibly empty) container label makes this rule match ONLY
+  // when the compose rule above did not set it: relabel regexes are fully anchored, so a joined
+  // value that does not START with ";" (i.e. container already set) cannot match "^;...".
+  // T0060: these jobs used to run UNNAMED, so every run minted a brand-new randomly-named Loki
+  // stream, forever. They are named now (archive-pull.sh.j2 etc.); this fallback carries the name.
+  rule {
+    source_labels = ["container", "__meta_docker_container_name"]
+    separator     = ";"
+    regex         = ";/?(.*?)(?:-[0-9]+)?"
     target_label  = "container"
     replacement   = "$1"
-    action        = "replace"
   }
 
   // `host="ops"`, not "nas" -- this is the ops node. Static for the same reason the NAS's is
@@ -189,8 +204,13 @@ loki.process "parse" {
 
   // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.archive.command [command.py:75] - msg`
   // Scoped by container, so a container with a different format can never be mangled by this regex.
+  // NOT `{container="archive-pull"}` -- that is the NAS's container; ops's archive-pull is a
+  // systemd unit, not a container, so that selector matched NOTHING here and this whole stage was
+  // dead: no `level` label on any ops stream, no ERROR-logs alert possible (T0060). The
+  // liquidations poller and every named `zcrypto-*` job all emit the same zcrypto Python-logging
+  // line shape this stage's regex parses.
   stage.match {
-    selector = "{container=\"archive-pull\"}"
+    selector = "{container=~\"liquidations|zcrypto-.*\"}"
 
     stage.regex {
       expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
@@ -217,6 +237,9 @@ loki.process "parse" {
   }
 
   // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`.
+  // `{container="alloy"}` genuinely matches here now: the compose-service rule above labels this
+  // stack's own container "alloy" (compose project `alloy`, service `alloy`) -- the old name-derived
+  // label was "alloy-alloy", so this stage too was dead until T0060's fix.
   stage.match {
     selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
 

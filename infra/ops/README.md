@@ -154,7 +154,14 @@ Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
 host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
 series, and every container's logs to Grafana Cloud — mirroring `infra/nas/config.alloy`'s pipeline
 (see `infra/ansible/roles/ops/files/config.alloy` for the three deliberate divergences: no
-cadvisor, dedicated non-`deploy` uid + rootfs mount, no compose-project host-label prefix).
+cadvisor, dedicated non-`deploy` uid + rootfs mount, compose-service-first log labelling).
+
+Ops log streams are labelled from the **compose service label**, falling back to the docker
+`--name` for the five systemd-unit `docker run --rm` jobs — so the full `container` label set is
+`liquidations`, `alloy`, `zcrypto-reconcile`, `zcrypto-trade-backfill`, `zcrypto-verify-replay`,
+`zcrypto-verified-replay`, `zcrypto-panel-materialize`. This deliberately differs from the NAS's
+docker-name-derived scheme (whose selectors, copied verbatim, were dead on ops — T0060); unifying
+the fleet's labelling is T0020's fleet-wide dashboards pass.
 
 **Runs as the dedicated `zcrypto-alloy` system user, never `deploy`.** The role creates it
 (`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for `ops_uid`. This

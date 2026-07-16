@@ -911,3 +911,64 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  - uid: zcrypto-ops-error-logs
+    title: "Ops · ERROR logs"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the
+      # parse stages strip the level out of the message line, so a grep would be silently blind;
+      # `queryType: instant` for the same Loki-specific reason). Host-wide rather than per-container:
+      # `{host="ops", ...}` covers every parsed ops container at once -- the five named zcrypto-*
+      # jobs AND the liquidations poller, a long-lived daemon whose errors flip NO exit-code metric,
+      # so this rule is its ONLY error channel.
+      #
+      # The `level` label exists only after config.alloy's parse stages attach it. T0060: before
+      # this branch's fix both stages' selectors were the NAS's container names, so the label was
+      # absent on every ops stream and this rule could never have fired -- which is why it lands
+      # together with that fix. NoData is normal here (quiet logs = healthy; liveness is owned by
+      # the dead-men), and `or on() vector(0)` keeps a clean window an explicit 0 anyway.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      # Reduce A to a single value before the threshold -- same belt-and-braces A -> B(reduce) ->
+      # C(threshold) chain as the NAS rule.
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR-level log lines from the ops node's containers in the last 15 minutes. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs

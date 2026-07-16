@@ -16,7 +16,15 @@ URL="{{ ops_panel_healthcheck_url }}"
 
 # Not `:ro` like the replay mounts -- panel materialize WRITES the panel tree under
 # {{ ops_panel_subdir }}/ inside the same data root.
+#
+# T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each run,
+# and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. The
+# name also makes this job selectable by Alloy's parse stage (config.alloy's `zcrypto-.*` selector).
+# A leftover container after a dockerd crash makes the NEXT run fail loudly on a name conflict
+# (unit rc!=0 -> the exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every
+# normal path.
 docker run --rm --pull never \
+    --name zcrypto-panel-materialize \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
     -v "{{ ops_data_dir }}:/data" \
     --entrypoint zcrypto \

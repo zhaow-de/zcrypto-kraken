@@ -82,9 +82,16 @@ else
     #
     # Skipping keeps the ledger honest for free: the hours simply reconcile on the next healthy cycle,
     # against complete mirrors. An unhealed hour costs nothing; a wrong verdict is forever.
+    # T0060: every ephemeral `docker run --rm` here carries a stable `--name` -- unnamed runs got a
+    # fresh engine-random name each time, and each name minted a brand-new Loki stream, forever, on
+    # a backend that bills per stream. The stable name is also what makes these jobs selectable by
+    # Alloy's parse stage (config.alloy's `zcrypto-.*` selector). A leftover container after a
+    # dockerd crash makes the NEXT run fail loudly on a name conflict (unit rc!=0 -> the exit-code
+    # alert) -- acceptable and self-describing; `--rm` cleans up in every normal path.
     if [ "$primary_ok" -eq 0 ] || [ "$secondary_ok" -eq 0 ]; then
         echo "zcrypto-archive-pull: reconcile skipped: a capture pull failed this cycle (primary_ok=$primary_ok secondary_ok=$secondary_ok), so a mirror's absence cannot be told apart from a pull that has not landed yet"
     elif ! docker run --rm --pull never \
+            --name zcrypto-reconcile \
             --user "{{ ops_uid }}:{{ ops_gid }}" \
             -v "{{ ops_data_dir }}:/data" \
             -v "{{ ops_textfile_dir }}:/textfile" \
@@ -115,6 +122,7 @@ else
     if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
         echo "$backfill_today" > "$backfill_stamp"
         if docker run --rm --pull never \
+                --name zcrypto-trade-backfill \
                 --user "{{ ops_uid }}:{{ ops_gid }}" \
                 -v "{{ ops_data_dir }}:/data" \
                 --entrypoint zcrypto \
