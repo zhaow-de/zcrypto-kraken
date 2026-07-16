@@ -689,3 +689,225 @@ rules:
       severity: critical
     notification_settings:
       receiver: metrics
+
+  # --- Ops node: the four textfile series Task 1 (spec 00054 D1) finally made scrapable -------------
+  # Pushed only after Task 3 (the attended Alloy deploy) confirms these series VISIBLE in Grafana Cloud
+  # -- same push-order caveat as the Reconciler/Trade-backfill blocks above: a rule armed before its
+  # metric exists sits silent forever, looking healthy. noDataState is per-rule, not boilerplate: the
+  # two dead-man rules (archive-pull staleness, verified-replay staleness) use Alerting -- no series at
+  # all means the host, Alloy, or the timer is gone, which IS the alarm -- while the two exit-code rules
+  # use OK, so a brand-new host does not page for a job it has simply never run yet. Exactly the
+  # `zcrypto-trade-backfill-stale`/`zcrypto-trade-backfill-exit-nonzero` split above, applied here.
+
+  - uid: zcrypto-ops-archive-pull-stalled
+    title: "Ops · archive-pull stalled (dead-man)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The dead-man for the ops node's hourly mirror pull. archive-pull.timer fires at :12 every
+      # hour (infra/ansible/roles/ops/templates/archive-pull.timer.j2) -- 3h is ~2 missed cycles of
+      # headroom, same reasoning as the Gate/Reconciler exporter-stale rules above.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - ops_archive_pull_last_success_timestamp
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10800]}  # 3h; hourly timer at :12, so ~2 missed cycles
+    noDataState: Alerting  # no series at all = the host, Alloy, or the timer is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: >-
+        The ops node's mirror is the input to the overlay writer, the panel, and both replays. While
+        the pull is stalled every one of them is reasoning from a mirror that is silently ageing.
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-archive-pull-exit-nonzero
+    title: "Ops · archive-pull non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_archive_pull_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: the dead-man rule above already owns "the pull stopped running/succeeding at
+    # all" -- this one owns "it ran and at least one tree failed to sync", same split as the
+    # trade-backfill pair.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last ops archive-pull cycle recorded a non-zero exit code -- at least one of the mirrored trees failed to sync this cycle."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verified-replay-stale
+    title: "Ops · verified-replay stale"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # D9's rule. verified-replay.timer fires daily at 05:23 UTC
+      # (infra/ansible/roles/ops/templates/verified-replay.timer.j2) -- 48h is 2 missed days, matching
+      # the trade-backfill staleness rule's reasoning for a daily-cadence job.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - ops_verified_replay_last_success_timestamp
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [172800]}  # 48h -- 2 missed daily cycles
+    noDataState: Alerting  # no series at all = the host, Alloy, or the timer is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "No successful verified-path journal replay in over 48h (D9) -- the daily replay has stopped running or has not succeeded in two cycles."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verified-replay-exit-nonzero
+    title: "Ops · verified-replay non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_verified_replay_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: the stale rule above already owns "the replay stopped running/succeeding at
+    # all" -- this one owns "it ran and found a mismatch or a validation failure" -- critical, not
+    # warning, because a verified-path mismatch means the canonical replay itself disagrees with the
+    # journal, the same class of failure the Gate's mismatch rule pages critical for.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last verified-path journal replay recorded a non-zero exit code -- a replay mismatch or validation failure against yesterday's journaled cycles."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-load-high
+    title: "Ops · node load high"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Scoped to host="ops" (the label infra/ansible/roles/ops/templates/config.alloy's
+      # discovery.relabel attaches) so this rule cannot read the NAS's own node_load1 -- unlike
+      # `NAS · load high` above, which is unscoped (see that rule's own history/finding, reported
+      # separately). NOTE, load-bearing: as of this writing that discovery.relabel block only labels
+      # LOKI log series (container_logs) -- neither infra/nas/config.alloy nor this ops config attaches
+      # a `host` label to the PROMETHEUS metrics pipeline, and both hosts' Alloy run with the identical
+      # `--server.http.listen-addr=127.0.0.1:12345` (infra/nas/compose.yaml, alloy-compose.yaml.j2), so
+      # even the auto `instance` label collides. Until a companion fix adds a metrics-side host label,
+      # this selector returns NO DATA, and noDataState: OK means it will sit quietly at OK rather than
+      # page -- reported to the orchestrator as a blocking finding rather than fixed here (this task
+      # touches alerts.yaml only).
+      #
+      # Threshold: the ops box has 24 threads (infra/ansible/roles/ops/defaults/main.yml), so the NAS
+      # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
+      # threads rather than 100%: ops runs several concurrent services (Alloy, the four timers, and
+      # soon the overlay writer) whose transient overlaps are normal, so full-saturation would be
+      # noisier than the NAS's single-purpose box; 20 keeps the same "sustained saturation, not a
+      # transient burst" intent with headroom for that cross-service scheduling noise.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: node_load1{host="ops"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [20]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "1-minute load average on the ops node exceeds 20 of its 24 threads -- sustained saturation, not a transient burst."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
