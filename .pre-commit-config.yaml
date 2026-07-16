@@ -31,6 +31,22 @@ repos:
       - id: yamllint
         args: ["-c", ".yamllint.yaml"]
 
+  # Local (not the upstream hook repo) so there is ONE ansible-lint version: the one pinned in
+  # pyproject/uv.lock, which dependabot's `uv` ecosystem already tracks. The upstream repo would add
+  # a second, separately-pinned copy in an isolated venv (ansible-core is heavy) and the two would
+  # drift. Config -- incl. the skipped rule -- lives in `.ansible-lint`.
+  - repo: local
+    hooks:
+      - id: ansible-lint
+        name: ansible-lint
+        entry: uv run ansible-lint
+        args: ["infra/ansible/"]
+        language: system
+        # `.ansible-lint` is in the pattern so a skip_list/config edit re-lints; without it a
+        # config-only commit would never re-run the hook.
+        files: '^(infra/|\.ansible-lint$)'
+        pass_filenames: false
+
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
     hooks:
