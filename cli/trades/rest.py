@@ -91,9 +91,12 @@ def fetch_trades(
     newest row reaches it. It does NOT trim the returned rows to `until` — the returned frame can
     contain rows past `until`. The caller filters to whatever range it actually wants.
 
-    Returns rows in `TRADE_SCHEMA`, ascending `trade_id`, `symbol` set to the CANONICAL pair — a
-    REST-sourced row is byte-comparable with a WS-captured one for the same trade, which is what
-    makes dedupe-on-`trade_id` safe (spec 00053 D6).
+    Returns rows in `TRADE_SCHEMA`, ascending `trade_id`, `symbol` set to the CANONICAL pair. A
+    REST-sourced row matches a WS-captured one for the same trade EXACTLY on `trade_id`, `symbol`,
+    `side`, `price`, `qty`, and `ord_type` (D6) — but NOT on `ts`, which REST cannot reproduce
+    (D6a: its float epoch runs ~+1 us above the WS microsecond; see `_row_ts`). That is why dedupe
+    keys on `trade_id` ALONE and the primary row wins: a trade present in both keeps its WS `ts`,
+    and only a recovered trade carries this one.
     """
     altname = KRAKEN_ALTNAME.get(pair)
     if altname is None:
