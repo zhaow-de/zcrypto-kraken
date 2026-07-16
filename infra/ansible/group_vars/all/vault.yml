@@ -1,0 +1,46 @@
+# group_vars/all — PROJECT-LEVEL SECRETS that belong to no host group.
+#
+# Unlike group_vars/observed/ (Alloy's credentials, which managed hosts render) and
+# group_vars/capture_host/ (the live trade key + per-host URLs), nothing here is consumed by a
+# managed host at all: both values below are read by `infra/scripts/grafana-push.sh` from the
+# WORKSTATION, by file path, never through inventory. `all` is therefore the honest scope — it is
+# the only group that includes `workstation`, where the script actually runs.
+#
+# Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16, owner's call): neither is
+# capture-specific, and parking a project-level tooling secret in a host group misstates who owns
+# it. The ciphertext is UNCHANGED — same vault password, so the blocks moved verbatim and were
+# never decrypted.
+#
+# Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable, every value stays
+# `!vault`-encrypted at rest. Read/write mechanics: see group_vars/capture_host/vault.yml's header.
+#
+# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
+# password, so both silently print every value below in cleartext.
+
+grafana_sa_token: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          62616661616432366262346462653239633965353265333635663632366236303838643631643739
+          6633383431323066666362613438353839353538386435350a656631343235663931346232336165
+          65393835383331653966616136363630383264646165316530366466643062346239366130623436
+          3939666566383866390a316239666461373238303532393130363537663966343737393261363233
+          66323566333036666663333830616262343166336235306639363131323836326264303230633232
+          6265356530323136323864643137636634323133646439373934
+
+# Slack incoming-webhook URL (app `zcrypto-alerts`, minted + vaulted by the owner 2026-07-15,
+# T0047). Consumed by grafana-push.sh's contact-point provisioning; treat as a credential.
+slack_webhook_url: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          35643265653863353361616365646238666564306135326135353930653939653136316237636130
+          3234623663373634623166343833623362353138653334350a653231373162376433653538633966
+          61343630613130373031643530313638386638303739346633333337663239336636386635366537
+          3266653261383566390a623032393931633461343866333233333738386265353536613731643566
+          37356536313662643630343035363361663731373164646664626631363539653763663466666131
+          35376562636335346366333766343938396666353665313965343131616562363036666261646165
+          38653936376330363030386466663662633561613061656439353563393562643231373062336537
+          30383437363939323464313261386563633933663761356163363231663266383030626532333835
+          6333
+
+# The Grafana Cloud Alloy credentials (grafana_prom_* / grafana_loki_*) MOVED to
+# group_vars/observed/vault.yml (spec 00054): the ops node ships telemetry too and could not see
+# them here. grafana_sa_token and slack_webhook_url stay — they are consumed by
+# infra/scripts/grafana-push.sh from the workstation, not by any managed host.

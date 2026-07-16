@@ -258,7 +258,7 @@ commit to `infra/grafana/`.
    - `GRAFANA_LOKI_DS_UID` — the Loki datasource UID on the instance (the ERROR-logs rule).
    - `GRAFANA_ALERT_FOLDER_UID` — the folder UID the alert rules provision into.
    - `GRAFANA_SLACK_WEBHOOK_URL` (optional, T0047) — the Slack incoming-webhook URL, sourced from
-     the vaulted `slack_webhook_url` in `infra/ansible/group_vars/capture_host/vault.yml` — never
+     the vaulted `slack_webhook_url` in `infra/ansible/group_vars/all/vault.yml` — never
      committed plaintext. Unset/empty skips the Slack section cleanly.
    - `GRAFANA_SLACK_RECEIVER` (optional, T0047) — the exact contact-point/receiver name to attach
      the Slack integration to (e.g. `email`, the receiver every rule in `alerts.yaml` already routes
