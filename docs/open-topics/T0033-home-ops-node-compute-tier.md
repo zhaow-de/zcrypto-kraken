@@ -65,6 +65,19 @@ we keep paying for it in workarounds rather than capability. What a real CPU buy
 - The execution program is `OPS-1 Provision → OPS-2 Seed → OPS-3 Replayer → OPS-4 Panel → OPS-5 Offload → OPS-6 Loop` (named to avoid colliding with the master plan's §12 "Phase" / go-live "Stage" vocabulary), with 00050 Task 13 depending on OPS-3's replayer.
 - **Dropped** (explicit, with reason): the "delete the `-compat` image leg once no zcrypto container runs on the Atom" item — the ratified topology keeps `archive pull` on the NAS indefinitely, so the compat variant is **permanent infrastructure**, not a deletable workaround.
 
+## Done so far — OPS-5 Offload (spec `00054`, iter-101, 2026-07-16)
+
+**The overlay writer now runs on the ops node.** The reconciler and the trade-backfill moved as one unit; the NAS kept custody, Role A's pull/prune, and `gate-export` (D3/D6). Verified by outcome, not exit code (D10):
+
+- The overlay is **byte-identical across both hosts after a full cycle in the NEW direction** — 1175 files, list sha `0b684ce3bf0b3774` on ops and the NAS. The flow inverted cleanly: ops produces it, the NAS *pulls* it into custody over an rrsync `-ro` forced-command channel (proven confined: it cannot escape the pinned root and cannot write, so spec `00051` D10's pull-only transport holds).
+- **Exactly one publisher each** for `zcrypto_reconcile_*` and `zcrypto_trade_backfill_*` — the NAS's stale textfiles were deleted at cutover, so the moved writer's series do not have a frozen twin paging forever from a host that no longer does the work.
+- The raw mirrors are unharmed (3998 / 1002 finals, `checked=… ok=… failed=0`), the reconciler is **still detect-only** ([[T0039]]'s call, untouched), and the ops-side invariant holds: `gaps=0 trades_missing=0 duplicate_rows_found=0 recovered=0 unrecoverable=0`.
+- The ops node is now observable at all: Alloy landed **first** (D1's ordering is a safety property), and the four textfile families it had been writing hourly *for weeks with nothing scraping them* now reach Grafana, with alerts. Active series: 405 of a <1k budget.
+
+**Two things the move revealed that the spec had wrong**, both now registered: the ops image was too old to run the code being moved onto it (re-pinned), and `source_lag` **rose** rather than fell — ops is one hourly hop further from source by construction ([[T0058]]). Also found: the trade-backfill had never actually been deployed to the NAS, so its daily gate had never run once ([[T0056]]).
+
+Still open under this topic: **OPS-6** (the workstation's `data/`, its two leftover systemd payloads, and the bi-directional NAS sync).
+
 ## Suggested next steps
 
 - **OPS-1…3 are DONE** (2026-07-15, iter-097 / spec 00051 plan Tasks 1–10): node provisioned + converged (`zcrypto-ops`, Debian 13), the Coinalyze liquidations poller live with NAS replication (the Binance WS recorder shelved in place — geo-fenced, see [[T0023]]), the continuity-replay verifier + verified-path daily timers armed with dead-men, and the archive seeded from the NAS over a new pull-only channel.

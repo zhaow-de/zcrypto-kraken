@@ -73,6 +73,14 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0049 — go-live drill matrix + day-2 operations runbook](T0049-go-live-drill-matrix-day2-runbook.md) — the exit-bar alerting drill is passed (owner sign-off 2026-07-16, live incident); before live orders, deliberately drill the full failure-scenario matrix (dead-men, watermark, engine `/fail`, Loki path, Alloy death, Grafana outage → healthchecks independence) and distill `docs/reference/day2-operations-runbook.md` (ripe when: the final go-live preparation, before the Stage-6b executor session).
 
+- [T0056 — the NAS runs whatever was last hand-copied to it](T0056-nas-hand-deploy-drift.md) — the only non-Ansible host, so `infra/nas/` changes are inert until a human copies them and nothing detects the drift: the trade-backfill sat undeployed for days (its daily gate never ran once) and `compose.yaml`'s `:latest` placeholder destroyed the `-compat` digest pin when copied verbatim, killing the NAS on an AVX-less Atom (ripe when: anything changes under `infra/nas/`).
+
+- [T0057 — the ledger-correction backup lives inside custody](T0057-ledger-correction-backup-in-custody.md) — \[[T0044]\]'s runbook writes its `.bak` into the replicated overlay: it broke the ops→NAS channel on a permission mismatch, and it is the only surviving record that an append-only ledger was edited (ripe when: the ledger is corrected again, or the overlay pull fails on permissions).
+
+- [T0058 — the ops mirror is two hops from source](T0058-ops-mirror-is-two-hops-from-source.md) — moving the reconciler downstream raised `source_lag` 4072s→6465s and shrank the 3h alert margin from ~1.9h to ~1.2h; spec `00054`'s D10 predicted it would fall, which conflated loop-period with mirror lag (ripe when: `capture mirror lagging` fires, or a third consumer appears downstream).
+
+- [T0059 — `Persistent=true` + `--date yesterday` skips a multi-day outage](T0059-persistent-timer-replay-coverage-gap.md) — systemd runs a missed timer once, not once per missed day, so a 3-day outage verifies ONE day and every metric still reports healthy; the old whole-journal replay covered this by accident (ripe when: the ops node is offline for more than a day).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
