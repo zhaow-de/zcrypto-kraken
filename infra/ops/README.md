@@ -153,7 +153,7 @@ Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
 (`-e ops_alloy_digest=sha256:<...>`; no default, matching `ops_image_digest`'s pattern). It ships
 host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
 series, and every container's logs to Grafana Cloud — mirroring `infra/nas/config.alloy`'s pipeline
-(see `infra/ansible/roles/ops/templates/config.alloy` for the three deliberate divergences: no
+(see `infra/ansible/roles/ops/files/config.alloy` for the three deliberate divergences: no
 cadvisor, dedicated non-`deploy` uid + rootfs mount, no compose-project host-label prefix).
 
 **Runs as the dedicated `zcrypto-alloy` system user, never `deploy`.** The role creates it
