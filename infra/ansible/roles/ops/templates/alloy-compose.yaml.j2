@@ -37,6 +37,15 @@ services:
     user: "{{ ops_alloy_uid }}:{{ ops_alloy_gid }}"
     group_add:
       - "{{ ops_docker_gid }}"
+      # Journal files are root:systemd-journal 0640 and the container runs as the non-root
+      # zcrypto-alloy user above, so reading the /host/journal mount below needs the host's
+      # systemd-journal gid -- NUMERIC, derived at converge time via `getent` (tasks/main.yml),
+      # never hardcoded, for exactly the reason the docker gid above is numeric (a NAMED group_add
+      # entry resolves against the CONTAINER's /etc/group, where no such group exists). The
+      # residual, honestly: this grants read of the WHOLE system journal, read-only -- broader than
+      # the four zcrypto units the pipeline keeps, but strictly telemetry-class data, and far
+      # narrower than the docker-socket residual (T0042) already accepted on this host.
+      - "{{ ops_journal_gid }}"
     network_mode: host
     environment:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
@@ -73,6 +82,15 @@ services:
       - ./alloy-data:/var/lib/alloy
       # The four timers' textfiles (OPS-3/OPS-4), read-only -- Alloy only ever reads them.
       - "{{ ops_textfile_dir }}:/textfile:ro"
+      # The host's persistent journal, for loki.source.journal (config.alloy): the four
+      # zcrypto-*.service units' logs -- including the orchestration scripts' host-side lines,
+      # which exist in NO container log and so can never arrive via the docker socket above
+      # (T0060; the config's journal section carries the full why). The `group_add` gid above is
+      # what makes the 0640 root:systemd-journal files readable.
+      - /var/log/journal:/host/journal:ro
+      # Journal readers resolve the CURRENT boot's files via the host's machine id
+      # (/var/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
+      - /etc/machine-id:/etc/machine-id:ro
     deploy:
       resources:
         limits:

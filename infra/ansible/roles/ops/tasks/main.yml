@@ -236,6 +236,24 @@
       ansible.builtin.set_fact:
         ops_docker_gid: "{{ ansible_facts['getent_group']['docker'][1] }}"
 
+    # Same numeric-gid derivation as the docker gid above, same reason (a NAMED group_add entry
+    # resolves against the CONTAINER's /etc/group, not the host's): the host's persistent journal
+    # files are root:systemd-journal 0640, and Alloy -- running as the non-root zcrypto-alloy user
+    # -- reads them through the /var/log/journal:/host/journal:ro mount (alloy-compose.yaml.j2) for
+    # the four zcrypto-*.service units' logs (T0060: the orchestration scripts' host-side lines
+    # exist in no container log, so the docker socket can never ship them). Safe to look up here:
+    # the `systemd-journal` group is created by the systemd package itself, so it exists on any
+    # Debian host this role can converge. Same `getent group` field-layout caveat as above:
+    # `name:passwd:gid:members`, so index 1 = gid -- NOT passwd's index-1 uid / index-2 gid.
+    - name: look up the systemd-journal group (Alloy's journal-read group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: systemd-journal
+
+    - name: derive the systemd-journal group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        ops_journal_gid: "{{ ansible_facts['getent_group']['systemd-journal'][1] }}"
+
     - name: ensure the alloy project directory exists
       ansible.builtin.file:
         path: "{{ ops_alloy_dir }}"

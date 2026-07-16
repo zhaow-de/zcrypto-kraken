@@ -143,16 +143,33 @@ prometheus.remote_write "grafana" {
   }
 }
 
-// ---- Logs: every container on this host -----------------------------------------------------
-// Discover and ship every container on this host, host-wide rather than per-compose-project, same
-// rationale as the NAS: no keep/drop here, so a container this role adds later is not silently
-// invisible to the logs dashboard.
+// ---- Logs: long-lived containers, via the docker API ----------------------------------------
+// Discover and ship the containers on this host, host-wide rather than per-compose-project, same
+// rationale as the NAS -- with ONE deliberate drop (first rule below): the systemd-launched
+// ephemeral `zcrypto-*` jobs, whose logs the journal pipeline further down owns. Any OTHER
+// container this role adds later is still not silently invisible to the logs dashboard.
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"
 }
 
 discovery.relabel "container_logs" {
   targets = discovery.docker.containers.targets
+
+  // T0060 (journal cutover): DROP the ephemeral `docker run --rm --name zcrypto-*` jobs from the
+  // docker path -- their stdout arrives via the unit journal (loki.source.journal below) instead.
+  // The docker tail is structurally lossy for them: discovery is POLLING, and `--rm` deletes the
+  // container (and its json log file) at exit, so a job living less than a discovery interval
+  // ships NOTHING, and one discovered mid-life ships a truncated head and loses its tail at
+  // removal -- and whatever slice DID land would double-ingest what the journal already carries in
+  // full. The stable `--name` flags (archive-pull.sh.j2 etc., T0060) are what make this drop
+  // precise -- the old engine-random names offered no regex to target. The long-lived containers
+  // (liquidations, alloy) STAY on this path: they are compose-managed, not systemd-launched, so
+  // the journal carries nothing for them.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?zcrypto-(reconcile|trade-backfill|verify-replay|verified-replay|panel-materialize).*"
+    action        = "drop"
+  }
 
   // DIVERGENCE 3 (host label + container labelling scheme): the first cut of this file derived
   // `container` from the docker NAME, NAS-style -- on ops that yielded `zcrypto-ops-liquidations`
@@ -195,6 +212,66 @@ loki.source.docker "containers" {
   host       = "unix:///var/run/docker.sock"
   targets    = discovery.relabel.container_logs.output
   forward_to = [loki.process.parse.receiver]
+}
+
+// ---- Logs: the systemd-launched zcrypto jobs, via the host journal --------------------------
+// The docker path above is structurally the WRONG transport for the four zcrypto-*.service units
+// (archive-pull + panel-materialize hourly, verify-replay + verified-replay daily), for two
+// reasons (T0060):
+//   1. The orchestration scripts' OWN lines -- including the load-bearing gate warning "reconcile
+//      skipped: a capture pull failed this cycle..." (archive-pull.sh.j2) -- are host-side echoes
+//      into journald. They exist in NO container log, so the docker path can never ship them. (On
+//      the NAS the equivalent loop runs INSIDE a container, which is why its lines ship; spec
+//      00054 moved ops orchestration into host scripts and silently lost that channel.)
+//   2. Alloy discovers containers by POLLING, and `--rm` deletes the container at exit -- see the
+//      drop rule above; the ephemerals are dropped there precisely because this pipeline is their
+//      lossless replacement.
+// The journal is the native, lossless transport for systemd-launched work: `docker run` without
+// -d runs ATTACHED, so all container stdout/stderr flows through the script into the unit's
+// journal, alongside the script's own lines -- one complete, ordered record per run. The host
+// keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
+// /host/journal by alloy-compose.yaml.j2.
+loki.relabel "journal_units" {
+  // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
+  // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
+  forward_to = []
+
+  // KEEP only our four units: the journal carries every unit on the host, and this pipeline's
+  // contract is the zcrypto jobs only -- sshd, cron, dockerd and the rest stay local.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\\.service"
+    action        = "keep"
+  }
+
+  // Unit name minus ".service" -> the `container` label. These are journal streams WEARING the
+  // container label for selector uniformity: loki.process "parse" below scopes its zcrypto stage
+  // by {container=~"liquidations|zcrypto-.*"}, and mapping the unit name in means these streams
+  // get parsed (level label, app timestamp) with NO selector change. The label is honest in
+  // substance: the unit IS the meaningful log source here -- its docker children run attached, so
+  // their output is inside it.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)\\.service"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  // `host="ops"`, exactly like the docker path's discovery.relabel above -- one label scheme
+  // across both transports.
+  rule {
+    target_label = "host"
+    replacement  = "ops"
+  }
+}
+
+loki.source.journal "zcrypto_units" {
+  // The compose file mounts the host's persistent journal here read-only; journal readers also
+  // need the host's /etc/machine-id (mounted alongside) to resolve the current boot's files
+  // (/var/log/journal/<machine-id>/...).
+  path          = "/host/journal"
+  relabel_rules = loki.relabel.journal_units.rules
+  forward_to    = [loki.process.parse.receiver]
 }
 
 // Parse ONCE, here at ingest -- never at query time. Same two stages as the NAS's pipeline: our

@@ -863,6 +863,89 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-verify-replay-exit-nonzero
+    title: "Ops · verify-replay non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # T0060 review finding: archive-pull.sh.j2's T0060 comment promised "unit rc!=0 -> the
+      # exit-code alert" for the named jobs, but only archive-pull and verified-replay HAD one --
+      # this rule (and the panel rule below) makes that claim true for the remaining two timers.
+      # Same shape as the verified-replay exit rule above. Critical: a non-zero here is the daily
+      # CONTINUITY replay failing -- the earliest signal that the journal itself is corrupt, ahead
+      # of anything the verified path derives from it.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_verify_replay_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: same reasoning as the block header's exit-code split -- a brand-new host
+    # must not page for a job that has simply never run yet.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last daily continuity replay recorded a non-zero exit code -- the journal failed to replay cleanly, the earliest corruption signal there is."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-panel-exit-nonzero
+    title: "Ops · panel non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The second half of the verify-replay rule's finding above. Warning, not critical: the
+      # panel is DERIVED data, recomputable from the mirror on the next healthy run -- a failed
+      # materialize costs freshness, not truth.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_panel_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last hourly panel materialize recorded a non-zero exit code -- the L2 panel is going stale (derived data; recomputable once the cause is fixed)."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-load-high
     title: "Ops · node load high"
     ruleGroup: zcrypto-ops
@@ -970,5 +1053,62 @@ rules:
       summary: "ERROR-level log lines from the ops node's containers in the last 15 minutes. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric."
     labels:
       severity: warning
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-ops-log-pipeline-dead
+    title: "Ops · log pipeline dead (no parsed lines)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The canary that closes the ERROR-logs rule's green-when-blind gap. That rule selects on the
+      # `level` label, which exists only because config.alloy's parse stages attach it -- so if the
+      # parse chain regresses (the exact T0060 failure mode: the label scheme, the --name flags, a
+      # selector, or the zcrypto line format drifting), every stream ships level=- again,
+      # `level=~"ERROR|CRITICAL"` selects nothing, and the ERROR rule reads 0 = healthy, forever.
+      # THIS rule fires on the absence of ANY parsed line -- level matching anything at all: the
+      # liquidations poller emits INFO every ~5 minutes and archive-pull logs hourly, so six silent
+      # hours means the pipeline is dead (Alloy, the parse chain, or the label scheme), not the
+      # host quiet. `or on() vector(0)` means the query itself always has data (noDataState OK to
+      # match); execErrState Alerting still covers "Loki unreachable".
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", level=~".+"} [6h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: OK  # the vector(0) fallback means this query always has data
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one PARSED log line (any level label) from the ops node in 6h -- the liquidations poller alone emits INFO every ~5 minutes, so the log pipeline is dead or the parse chain has regressed to level=- (T0060). Every log-based ops alert is blind until this is fixed."
+    labels:
+      severity: critical
     notification_settings:
       receiver: logs
