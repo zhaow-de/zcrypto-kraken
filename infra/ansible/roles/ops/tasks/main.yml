@@ -36,43 +36,13 @@
     group: deploy
     mode: "0755"
 
-# OPS-4 (spec 00052 D6): the recurring NAS archive pull. Unlike the replay/panel units below, this
-# one needs NO pinned image digest — it is host-side rsync (rsync installed above), not a
-# container — so the script/service/timer install unconditionally. Only the enable step is
-# guarded, by its OWN var (ops_nas_pull_source non-empty): an unconfigured converge still arms the
-# unit, but the script itself no-ops (logged, exit 0) until the seed channel is wired (plan Task 5).
-- name: install the archive-pull runner script
-  ansible.builtin.template:
-    src: archive-pull.sh.j2
-    dest: /usr/local/sbin/zcrypto-archive-pull
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: render the archive-pull systemd service + timer
-  ansible.builtin.template:
-    src: "archive-pull.{{ item }}.j2"
-    dest: "/etc/systemd/system/zcrypto-archive-pull.{{ item }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop: [service, timer]
-
-# Review I1(b): the timer's state TRACKS the var instead of one-way gating on it -- emptying
-# ops_nas_pull_source on a later converge genuinely stops+disables an armed timer, rather than
-# leaving it firing hourly against an empty source.
-- name: archive-pull timer state tracks whether the NAS pull source is configured
-  ansible.builtin.systemd_service:
-    name: zcrypto-archive-pull.timer
-    daemon_reload: true
-    enabled: "{{ ops_nas_pull_source != '' }}"
-    state: "{{ 'started' if ops_nas_pull_source != '' else 'stopped' }}"
-
-# Hoisted above BOTH digest-gated blocks below (spec 00054 Task 1 fix): these two tasks used to
-# live inside the ops_image_digest block, but the Alloy block also needs ops_uid/ops_gid for its
-# container `user:` mapping. Without the hoist, an Alloy-only converge (ops_alloy_digest passed,
-# ops_image_digest not) would render `user: ":"` -- a real coupling bug this hoist removes rather
-# than works around, so either digest-gated block can converge independently.
+# Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1 fix; extended by OPS-5 D2 to
+# cover the archive-pull block too): these two tasks used to live inside the ops_image_digest
+# block, but the Alloy block also needs ops_uid/ops_gid for its container `user:` mapping, and now
+# the archive-pull block does too (its runner `docker run`s the pinned image as this uid/gid, see
+# below). Without the hoist, an Alloy-only converge (ops_alloy_digest passed, ops_image_digest not)
+# would render `user: ":"` -- a real coupling bug this hoist removes rather than works around, so
+# any of the three digest-gated blocks can converge independently.
 - name: look up the deploy account (the ops containers run as its uid/gid)
   ansible.builtin.getent:
     database: passwd
@@ -82,6 +52,46 @@
   ansible.builtin.set_fact:
     ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
     ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
+
+# OPS-4 (spec 00052 D6) runner, now carrying OPS-5's reconciler + trade-backfill (spec 00054 D2):
+# this used to be pure host-side rsync (rsync installed above), needing no pinned image digest, so
+# the script/service/timer install was unconditional and only the enable step was gated (by
+# ops_nas_pull_source alone). OPS-5 moved the reconciler + trade-backfill onto this same entrypoint
+# -- archive-pull.sh.j2 now `docker run`s "{{ ops_image }}@{{ ops_image_digest }}" for both -- so
+# the runner is no longer rsync-only and needs the pinned digest exactly like the replay/panel
+# units below, and is guarded the same way (`when: ops_image_digest is defined`). The WHOLE block
+# is gated, not just the script: arming a timer whose runner script was never installed would fire
+# hourly against a missing /usr/local/sbin/zcrypto-archive-pull, which is worse than not arming it.
+- name: install the archive-pull runner + timer (needs the pinned image digest — reconciler + trade backfill now run in it)
+  when: ops_image_digest is defined
+  block:
+    - name: install the archive-pull runner script
+      ansible.builtin.template:
+        src: archive-pull.sh.j2
+        dest: /usr/local/sbin/zcrypto-archive-pull
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: render the archive-pull systemd service + timer
+      ansible.builtin.template:
+        src: "archive-pull.{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-archive-pull.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+
+    # Review I1(b): the timer's state TRACKS the var instead of one-way gating on it -- emptying
+    # ops_nas_pull_source on a later converge genuinely stops+disables an armed timer, rather than
+    # leaving it firing hourly against an empty source. This still holds whenever the digest is
+    # supplied (the case this block runs in) -- unchanged from before the digest guard was added.
+    - name: archive-pull timer state tracks whether the NAS pull source is configured
+      ansible.builtin.systemd_service:
+        name: zcrypto-archive-pull.timer
+        daemon_reload: true
+        enabled: "{{ ops_nas_pull_source != '' }}"
+        state: "{{ 'started' if ops_nas_pull_source != '' else 'stopped' }}"
 
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
