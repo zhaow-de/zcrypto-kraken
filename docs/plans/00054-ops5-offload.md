@@ -323,7 +323,7 @@ Append a `zcrypto-ops` ruleGroup with these five rules. Use the existing file's 
 | `Ops · verified-replay non-zero exit` | `ops_verified_replay_exit_code` | `gt 0` | `OK` | critical |
 | `Ops · node load high` | `node_load1` (see below) | `gt 20` | `OK` | warning |
 
-For `Ops · node load high`, the ops box has 24 threads, so the NAS's threshold is meaningless here — read the existing `NAS · load high` rule and set the ops threshold from the core count, not by copying the number. **The series must be scoped to the ops host** or this rule will also read the NAS's `node_load1`: use the `host` label Task 1's relabel sets — `node_load1{host="ops"}`. Check the existing NAS rule: if it does not scope by host, note that in your report as a pre-existing gap (do **not** fix it here — that is scope creep; it becomes a finding for the orchestrator).
+For `Ops · node load high`, the ops box has 24 threads, so the NAS's threshold is meaningless here — read the existing `NAS · load high` rule and set the ops threshold from the core count, not by copying the number. **The series must be scoped to the ops host** or this rule will also read the NAS's `node_load1`: use `node_load1{host="ops"}`. **Corrected 2026-07-16 during implementation — the original text was wrong:** it attributed this `host` label to Task 1's `discovery.relabel` block, but that block only labels the Loki logs pipeline; metrics carried no `host` label at all, so this selector would have matched nothing. `external_labels = { host = "ops" }` on the ops Alloy's `prometheus.remote_write` is what actually provides it. Check the existing NAS rule: if it does not scope by host, note that in your report as a pre-existing gap (do **not** fix it here — that is scope creep; it becomes a finding for the orchestrator).
 
 Write each `annotations.summary` to say what is broken and **why it matters**, in the voice of the existing rules — e.g. for the archive-pull dead-man: "The ops node's mirror is the input to the overlay writer, the panel, and both replays. While the pull is stalled every one of them is reasoning from a mirror that is silently ageing."
 
@@ -409,6 +409,8 @@ Do not accept "the container is up" as evidence; that is the exit-code fallacy D
 - `ops_verified_replay_exit_code`
 - `node_load1{host="ops"}`
 - ops container logs present in Loki with `host="ops"`
+
+**Corrected 2026-07-16 during implementation:** the `host="ops"` on the metrics series above (`node_load1`, the textfile series) comes from `external_labels = { host = "ops" }` on Task 1's `prometheus.remote_write`, not from the `discovery.relabel` block — that block only labels the Loki logs series, and metrics carried no `host` label until the `external_labels` fix landed.
 
 **If any of the four textfile series is absent, the keep-regex is wrong — fix Task 1 and re-converge. Do not proceed to Task 7 with a partial gate.** A series that does not arrive here is a series that will not arrive for the writer either.
 

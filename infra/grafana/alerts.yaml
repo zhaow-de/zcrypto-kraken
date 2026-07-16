@@ -247,7 +247,12 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: node_load1
+          # `{host=""}` looks odd but is deliberate: ops's Alloy now ships node_load1 too (it sets
+          # `external_labels = { host = "ops" }` on prometheus.remote_write), and ops is a 24-thread
+          # box whose normal working load would trip this Atom-sized `gt 4` threshold constantly.
+          # The NAS's own node_load1 carries no `host` label at all, so an empty-value matcher --
+          # documented PromQL for "label absent" -- selects the NAS's copy of the series only.
+          expr: node_load1{host=""}
           instant: true
           refId: A
       - refId: C
@@ -865,17 +870,12 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Scoped to host="ops" (the label infra/ansible/roles/ops/templates/config.alloy's
-      # discovery.relabel attaches) so this rule cannot read the NAS's own node_load1 -- unlike
-      # `NAS · load high` above, which is unscoped (see that rule's own history/finding, reported
-      # separately). NOTE, load-bearing: as of this writing that discovery.relabel block only labels
-      # LOKI log series (container_logs) -- neither infra/nas/config.alloy nor this ops config attaches
-      # a `host` label to the PROMETHEUS metrics pipeline, and both hosts' Alloy run with the identical
-      # `--server.http.listen-addr=127.0.0.1:12345` (infra/nas/compose.yaml, alloy-compose.yaml.j2), so
-      # even the auto `instance` label collides. Until a companion fix adds a metrics-side host label,
-      # this selector returns NO DATA, and noDataState: OK means it will sit quietly at OK rather than
-      # page -- reported to the orchestrator as a blocking finding rather than fixed here (this task
-      # touches alerts.yaml only).
+      # Scoped to host="ops": infra/ansible/roles/ops/templates/config.alloy sets
+      # `external_labels = { host = "ops" }` on prometheus.remote_write, so every metrics series
+      # this Alloy ships carries host="ops" -- that's what makes this selector resolve. The NAS's
+      # own node_load1 carries no `host` label at all (infra/nas/config.alloy deliberately doesn't
+      # set one), so `NAS · load high` above scopes itself with `{host=""}` instead (see that
+      # rule's own comment) -- the two rules partition the metric between the two hosts.
       #
       # Threshold: the ops box has 24 threads (infra/ansible/roles/ops/defaults/main.yml), so the NAS
       # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
