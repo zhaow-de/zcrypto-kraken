@@ -13,12 +13,19 @@ set -u
 PROM="{{ ops_textfile_dir }}/ops-verified-replay.prom"
 URL="{{ ops_verified_replay_healthcheck_url }}"
 
+# D9 (spec 00054): scope the replay to ONE day instead of the whole journal. Unscoped, this cost
+# grows with the archive forever -- the ops node's speed would merely hide that, which is exactly
+# why it is bounded now rather than when it next hurts. YESTERDAY, not today: at 05:23 UTC today's
+# journal holds at most the 00:00/04:00 cycles, so scoping to today would replay an incomplete day
+# and call it verified. Yesterday is complete and immutable, so the verdict is final.
+REPLAY_DATE=$(date -u -d yesterday +%F)
+
 docker run --rm --pull never \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
     -v "{{ ops_data_dir }}:/data:ro" \
     --entrypoint zcrypto \
     "{{ ops_image }}@{{ ops_image_digest }}" \
-    engine replay --path verified --journal-dir "/data/{{ ops_journal_subdir }}"
+    engine replay --path verified --date "$REPLAY_DATE" --journal-dir "/data/{{ ops_journal_subdir }}"
 rc=$?
 
 now=$(date -u +%s)
