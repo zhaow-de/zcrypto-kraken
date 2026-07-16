@@ -144,12 +144,17 @@
     # there is deliberately NOT the key-owning uid 1000). `zcrypto-alloy` is the ops-node analogue: a
     # dedicated, non-login system user that owns nothing under /home/deploy/.ssh, so the
     # /host/root mount cannot reach `sync_nas_archive` -- this MIRRORS the NAS's uid-1031 choice,
-    # not merely resembles it. `group_add: ["docker"]` (alloy-compose.yaml.j2) still grants Docker
-    # socket access and is DEFENCE IN DEPTH ONLY: membership in the `docker` group is root-equivalent
-    # by definition (anything holding the Docker API can create a privileged container regardless of
-    # a `:ro` socket mount) -- the escalation path remains and is a known, accepted residual, exactly
-    # as the NAS's comments record for T0042. The point of the dedicated uid is narrower and real: it
-    # closes the DIRECT, no-escalation read.
+    # not merely resembles it. `group_add` (alloy-compose.yaml.j2) grants Docker socket access via
+    # the host's real numeric docker gid, derived below via `getent` -- NOT a named "docker" entry:
+    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
+    # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
+    # never resolve and the container would fail to start -- the same reason the NAS passes the
+    # numeric `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN DEPTH ONLY:
+    # membership in the `docker` group is root-equivalent by definition (anything holding the Docker
+    # API can create a privileged container regardless of a `:ro` socket mount) -- the escalation
+    # path remains and is a known, accepted residual, exactly as the NAS's comments record for
+    # T0042. The point of the dedicated uid is narrower and real: it closes the DIRECT, no-escalation
+    # read.
     - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
       ansible.builtin.user:
         name: zcrypto-alloy
@@ -167,6 +172,31 @@
       ansible.builtin.set_fact:
         ops_alloy_uid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][1] }}"
         ops_alloy_gid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][2] }}"
+
+    # Docker's `group_add` resolves a NAMED entry against the CONTAINER's own /etc/group, not the
+    # host's -- the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker"
+    # would never resolve and the container would fail to start. The fix is the host's real numeric
+    # docker gid, derived here (never hardcoded -- it is a per-host accident) and passed as a string
+    # in alloy-compose.yaml.j2, the same way the NAS passes its numeric `group_add: ["0"]`. Safe to
+    # look up here: the `docker` role (installed unconditionally, before this role, in site.yml's
+    # ops_host play) creates the `docker` group as a side effect of the docker-ce package install,
+    # so it exists regardless of which digest(s) this converge passes. Placed inside this
+    # `ops_alloy_digest`-gated block, not hoisted above it like ops_uid/ops_gid: unlike those (needed
+    # by the OTHER digest-gated block too), this gid is consumed only by the alloy compose template
+    # rendered a few tasks below, inside this same guard -- so gating it here does not reintroduce
+    # the ops_uid coupling bug (a fact's guard must match its consumer's, not a different block's).
+    #
+    # `getent` with `database: group` does NOT share `passwd`'s field layout above: passwd's row is
+    # `name:passwd:uid:gid:gecos:home:shell` (so index 1 = uid, index 2 = gid), but group's row is
+    # `name:passwd:gid:members` (so index 1 = gid -- there is no index-2 gid to mistake it for).
+    - name: look up the docker group (created by the docker role; Alloy's group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: docker
+
+    - name: derive the docker group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        ops_docker_gid: "{{ ansible_facts['getent_group']['docker'][1] }}"
 
     - name: ensure the alloy project directory exists
       ansible.builtin.file:

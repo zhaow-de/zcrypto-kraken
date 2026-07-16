@@ -141,10 +141,16 @@ is load-bearing, not cosmetic: `/home/deploy/.ssh` (0700 `deploy:deploy`) holds 
 `/:/host/root:ro` for its free-disk-space collector. Running Alloy as `deploy` would let it read
 that key directly through the mount, no escalation needed — defeating the protection this stack
 claims to replicate from the NAS (T0030). `zcrypto-alloy` owns nothing under `/home/deploy/.ssh`, so
-the direct read is closed. `group_add: ["docker"]` (Docker-socket access) is still required and is
-**defence in depth only**: holding the Docker API is root-equivalent by definition (it can launch a
-privileged container regardless of a `:ro` socket mount), so that escalation path remains — the same
-accepted residual the NAS's comments record for T0042.
+the direct read is closed. Docker-socket access is granted via `group_add` set to the host's real
+numeric docker gid, derived at converge time with `getent` (`infra/ansible/roles/ops/tasks/main.yml`)
+— **not** a named `"docker"` entry: Docker resolves a named `group_add` entry against the
+**container's own** `/etc/group`, not the host's, and the upstream `grafana/alloy` image ships only
+`alloy:x:473:`, so a literal `"docker"` would never resolve and the container would fail to start.
+This is exactly why `infra/nas/compose.yaml`'s `alloy` service passes the numeric `group_add: ["0"]`
+rather than a name. Either way this is **defence in depth only**: holding the Docker API is
+root-equivalent by definition (it can launch a privileged container regardless of a `:ro` socket
+mount), so that escalation path remains — the same accepted residual the NAS's comments record for
+T0042.
 
 ### Deploy
 

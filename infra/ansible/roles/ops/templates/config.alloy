@@ -39,7 +39,12 @@
 // material.) Alloy here instead runs as the dedicated `zcrypto-alloy` system user (nologin,
 // created by the role, uid/gid looked up via `getent` -- alloy-compose.yaml.j2's `user:`), which
 // owns nothing under /home/deploy/.ssh -- this MIRRORS the NAS's uid-1031 choice, not merely
-// resembles it. `group_add: ["docker"]` for socket access is still required and is DEFENCE IN
+// resembles it. `group_add` grants Docker-socket access via the host's real numeric docker gid
+// (derived at converge time via `getent`, alloy-compose.yaml.j2/tasks/main.yml), NOT a named
+// "docker" entry -- Docker resolves a NAMED group_add entry against the CONTAINER's own
+// /etc/group, not the host's, and the upstream grafana/alloy image ships only `alloy:x:473:`, so a
+// literal "docker" would never resolve and the container would fail to start; the numeric gid is
+// exactly why the NAS passes `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN
 // DEPTH ONLY: membership in the `docker` group is root-equivalent by definition (holding the
 // Docker API lets you create a privileged container regardless of a `:ro` socket mount), so the
 // escalation path remains -- exactly the residual the NAS's comments record for T0042. The point of

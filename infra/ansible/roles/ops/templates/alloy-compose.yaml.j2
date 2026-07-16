@@ -27,12 +27,16 @@ services:
     # directly through the /host/root:ro mount below, with no escalation needed at all -- defeating
     # the protection this stack claims to replicate from the NAS (T0030, uid 1031 there). This
     # mirrors the NAS's dedicated-uid choice rather than merely resembling it (review finding 1).
-    # `group_add: ["docker"]` (a named group, not the NAS's numeric gid 0 -- ops has a real
-    # `docker` group from the role's docker-install step) grants socket access without running as
-    # root; this is defence in depth only (see config.alloy's header comment for the residual).
+    # `group_add` is the host's real numeric docker gid (derived at converge time via `getent` --
+    # tasks/main.yml -- never hardcoded, since it is a per-host accident), NOT a named "docker"
+    # entry: Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the
+    # host's, and the upstream grafana/alloy image ships only `alloy:x:473:` -- no `docker` entry --
+    # so a literal "docker" here would fail to resolve and the container would refuse to start. This
+    # is exactly why the NAS passes its numeric `group_add: ["0"]` rather than a name. Socket access
+    # this way is defence in depth only (see config.alloy's header comment for the residual).
     user: "{{ ops_alloy_uid }}:{{ ops_alloy_gid }}"
     group_add:
-      - "docker"
+      - "{{ ops_docker_gid }}"
     network_mode: host
     environment:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
