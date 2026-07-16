@@ -49,15 +49,9 @@ same way a dropped series always is: silently, with no scrape error to flag it.
 
 ## Suggested next steps
 
-- **(autonomous)** Add a `zcrypto_trade_backfill_.*` alternative to the keep-regex in
-  `infra/nas/config.alloy` (one-line change, same file/line as the existing `zcrypto_reconcile_.*`
-  entry).
-- **(autonomous)** Add a `TRADE_BACKFILL_TEXTFILE: /textfile/trade-backfill.prom` line to
-  `infra/nas/compose.yaml`'s `archive-pull` service `environment:` block, matching
-  `RECONCILE_TEXTFILE`/`GATE_TEXTFILE`'s fixed-path pattern (currently the script's inline default
-  covers this, but an explicit compose entry keeps the contract visible the way the neighboring
-  vars are).
-- **(autonomous)** Once wired, add trade-backfill panels/alerts to
-  `infra/grafana/zcrypto-dashboard.json` / `infra/grafana/alerts.yaml` (e.g. a dead-man on
-  `zcrypto_trade_backfill_last_success_timestamp` staleness, mirroring the gate/reconcile alerts) —
-  this is genuinely new scope, not just re-plumbing existing metrics.
+_(All that remained of THIS topic's titled scope — the keep-regex — is done; see Resolution above.
+The two other sub-items originally listed here were **not** done at close, and an archived file is
+never re-read, so they were split into their own topics rather than stranded here:_
+
+- _the compose `TRADE_BACKFILL_TEXTFILE` line + the missing dashboard/alert/dead-man → [[T0052]];_
+- _the daily-gate degradation those metrics would have revealed → [[T0053]].)_

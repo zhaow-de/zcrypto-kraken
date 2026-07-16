@@ -77,6 +77,12 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0050 — REST trade-backfill for the capture daemon](T0050-rest-trade-backfill.md) — the last unshipped §8 daemon clause (split from T0003 at its close): trades are the one recoverable capture stream (Kraken REST `/Trades`, keyless), yet gaps are only logged; T0026's snapshot-overwrite remedy needs the same machinery, and an ops-node offline pass could avoid touching the live daemon entirely (ripe when: T0026's fix is designed, or any attended capture-maintenance window — the loss-quantification is autonomous now).
 
+- [T0052 — trade-backfill has metrics but no dashboard or dead-man](T0052-trade-backfill-observability.md) — the three `zcrypto_trade_backfill_*` series reach Grafana but nothing watches them: no panel, no alert, no dead-man, so a failing or stalled backfill pages nobody while the trade stream quietly stops converging on its invariant (ripe when: now — the metrics exist, the alert is buildable immediately).
+
+- [T0053 — a persistent backfill error degrades the daily gate to hourly-forever](T0053-trade-backfill-daily-gate-degrades.md) — the stamp is written only on success, so a PERMANENT error (an unmapped pair, a structural residual) means the O(archive) scan + hundreds of REST calls run every hour indefinitely, defeating the reason the gate is daily and compounding T0028's cost — invisible until T0052 lands (ripe when: consecutive non-zero exits, or before an 11th capture pair).
+
+- [T0054 — reconcile will permanently skip any hour the backfill minted first](T0054-reconcile-skips-backfill-minted-hours.md) — two writers share the reconciled overlay and reconcile's `already_minted` skip is unconditional; harmless today (reconcile is detect-only) and probably correct for trades, but it must be checked per-`kind` before the T0039-gated flip to `--mint`, since a shadowed BOOK heal is the one outcome that would cost unbackfillable data (ripe when: before reconcile is switched to --mint).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
