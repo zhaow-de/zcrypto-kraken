@@ -116,12 +116,14 @@ def test_full_page_sharing_one_second_still_terminates():
     `responses` below maps `since` -> a FACTORY producing a FRESH page each call (not a single-use
     stream), so a mock keyed by `since=1783735200` genuinely re-serves `page1` on every request for
     that key -- reproducing what the old `last // 1_000_000_000` code actually did: collapse
-    request 2's `since` back onto request 1's `since=1783735200` and loop. Verified directly
-    against that old conversion logic: it hits this test's 5-call cap and raises `AssertionError:
-    pagination did not terminate (cursor appears stalled)` on the 6th call, never reaching page 2
-    -- confirming the cap is load-bearing rather than dead code (a single-use mock would instead
-    die on the 2nd call with `TradeBackfillError: invalid JSON`, since the same `_Resp` cannot be
-    read twice).
+    request 2's `since` back onto request 1's `since=1783735200`. Verified directly against that
+    old conversion logic (with the `max_trade_id_seen` guard otherwise unchanged): the guard is
+    what actually fires -- page 2 re-serves `page1`'s identical rows, so its max `trade_id` makes
+    no progress over what call 1 already saw, and the guard logs "made no trade_id progress" and
+    stops pagination after exactly 2 calls, never reaching the 5-call cap. Against the old code
+    this test fails on `df.height == 1001` (only 1000 rows collected, page 2 never fetched), not
+    on the call-count cap -- the cap is not what makes this test fail against the old code, though
+    it remains a legitimate independent safety net.
     """
     urls = []
     # All 1000 rows land inside the SAME integer second (1783735200); only the nanosecond

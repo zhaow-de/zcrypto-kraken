@@ -9,9 +9,11 @@ So the sidecar is minted from the temp file's bytes — which ARE the final's by
 file IS the final, renamed — and written BEFORE the atomic rename that publishes it. A kill anywhere
 in here leaves no final at all, and the next run simply re-mints. The rename is last, always.
 
-An existing final is never overwritten: a re-run is a no-op (`FileExistsError`), and a provisionally
-residual hour is healed by a NEW mint plus a superseding ledger record, never by mutating a published
-file. Nothing here decodes or re-blesses a file it did not itself write.
+By default (`replace=False`, the reconciler's own path) an existing final is never overwritten: a
+re-run is a no-op (`FileExistsError`), and a provisionally residual hour is healed by a NEW mint plus
+a superseding ledger record, never by mutating a published file. A caller that passes `replace=True`
+(e.g. `cli/trades/backfill.py`) opts out of that guarantee for its own hour — see `mint_hour`'s
+`replace` parameter. Nothing here decodes or re-blesses a file it did not itself write.
 """
 
 from __future__ import annotations
@@ -109,6 +111,10 @@ def mint_hour(
     Returns the final's path. Raises `FileExistsError` if the hour is already minted (unless
     `replace=True`), and `CaptureError` if the inputs violate the hour's contract (see `_check_hour` /
     `_check_gaps`).
+
+    `replace=True` disables the foreign-final guard above: the caller then owns the guarantee that
+    `blocks` is a superset of whatever it overwrites (`cli/trades/backfill.py` satisfies this by
+    reading the existing hour first and unioning it with the recovered rows before minting).
     """
     hour_end = _check_hour(hour)
     _check_gaps(gaps_healed, hour=hour, hour_end=hour_end, label="a healed gap")
