@@ -77,6 +77,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0050 — REST trade-backfill for the capture daemon](T0050-rest-trade-backfill.md) — the last unshipped §8 daemon clause (split from T0003 at its close): trades are the one recoverable capture stream (Kraken REST `/Trades`, keyless), yet gaps are only logged; T0026's snapshot-overwrite remedy needs the same machinery, and an ops-node offline pass could avoid touching the live daemon entirely (ripe when: T0026's fix is designed, or any attended capture-maintenance window — the loss-quantification is autonomous now).
 
+- [T0051 — Alloy keep-regex missing the trade-backfill metric prefix](T0051-alloy-keep-regex-missing-trade-backfill.md) — spec `00053` Task 6's new `zcrypto_trade_backfill_*` textfile metrics are silently dropped by `infra/nas/config.alloy`'s keep-regex (not updated, same caveat as `RECONCILE_TEXTFILE`), and `compose.yaml` has no `TRADE_BACKFILL_TEXTFILE` entry either (ripe when: the next NAS Alloy config change, or before the trade-backfill dashboard/alerting is built).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).

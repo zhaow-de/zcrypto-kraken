@@ -139,6 +139,34 @@ while true; do
 		fi
 	fi
 
+	# Trade backfill (spec 00053): heal the canonical trade stream to a contiguous, duplicate-free
+	# trade_id sequence by fetching gaps from Kraken's public REST /Trades and minting healed hours
+	# into the reconciled overlay ($RECONCILED_DEST, same destination the reconciler above writes
+	# to). DAILY, not per-cycle -- the detector's scan is O(archive), a per-cycle cost T0028 already
+	# flags on this host and which this must not compound; there is also no urgency cliff (Kraken
+	# serves ~18 months of /Trades). Gated on a stamp file holding the last UTC day it ran; the
+	# stamp is written ONLY on success, so a failure retries next cycle rather than waiting a day.
+	# Best-effort like every other step above: a non-zero exit (1 = recorded errors, 2 = primary
+	# root missing) is recorded in the metric below, never fatal to the loop.
+	backfill_stamp=/archive/.trade-backfill-last-utc-day
+	backfill_today="$(date -u +%Y-%m-%d)"
+	if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
+		if zcrypto archive backfill-trades "$CAPTURE_DEST" "$RECONCILED_DEST"; then
+			echo "$backfill_today" > "$backfill_stamp"
+			backfill_rc=0
+		else
+			backfill_rc=$?
+			log ERROR "trade backfill failed (primary=$CAPTURE_DEST reconciled=$RECONCILED_DEST, exit=$backfill_rc), continuing"
+		fi
+		backfill_textfile="${TRADE_BACKFILL_TEXTFILE:-/textfile/trade-backfill.prom}"
+		printf 'zcrypto_trade_backfill_exit_code %d\n' "$backfill_rc" > "$backfill_textfile.tmp"
+		printf 'zcrypto_trade_backfill_last_run_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
+		if [ "$backfill_rc" -eq 0 ]; then
+			printf 'zcrypto_trade_backfill_last_success_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
+		fi
+		mv "$backfill_textfile.tmp" "$backfill_textfile"
+	fi
+
 	# Backgrounded + waited-on so the TERM/INT trap interrupts the sleep promptly (docker stop
 	# stays graceful) instead of blocking until the interval elapses.
 	sleep "${ARCHIVE_PULL_INTERVAL:-3600}" &
