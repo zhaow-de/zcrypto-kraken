@@ -113,11 +113,15 @@ def test_full_page_sharing_one_second_still_terminates():
     an infinite loop against the live venue. Passing `last` through raw uses the nanosecond
     fraction, which still advances even though the whole page sits inside one second.
 
-    This test would fail (in fact hang/loop) against the old `last // 1_000_000_000` code: that
-    conversion collapses request 2's `since` onto request 1's `since=1783735200` (both floor to
-    the same integer second), so the `since`-keyed opener below would keep re-serving `page1`
-    forever. The `since`-keyed mock (rather than a call-order mock) is what makes that collapse
-    observable; the call-count cap turns "hang forever" into a fast, visible failure instead.
+    `responses` below maps `since` -> a FACTORY producing a FRESH page each call (not a single-use
+    stream), so a mock keyed by `since=1783735200` genuinely re-serves `page1` on every request for
+    that key -- reproducing what the old `last // 1_000_000_000` code actually did: collapse
+    request 2's `since` back onto request 1's `since=1783735200` and loop. Verified directly
+    against that old conversion logic: it hits this test's 5-call cap and raises `AssertionError:
+    pagination did not terminate (cursor appears stalled)` on the 6th call, never reaching page 2
+    -- confirming the cap is load-bearing rather than dead code (a single-use mock would instead
+    die on the 2nd call with `TradeBackfillError: invalid JSON`, since the same `_Resp` cannot be
+    read twice).
     """
     urls = []
     # All 1000 rows land inside the SAME integer second (1783735200); only the nanosecond
@@ -125,9 +129,10 @@ def test_full_page_sharing_one_second_still_terminates():
     page1_rows = [[str(i), "1", 1783735200.0 + i / 1000, "b", "m", "", 100 + i] for i in range(1000)]
     page1_last = _last_for(page1_rows)
     page2_rows = [["1", "1", 1783735300.0, "b", "m", "", 2000]]
+    page2_last = _last_for(page2_rows)
     responses = {
-        "1783735200": _page(page1_rows, page1_last),  # the initial seconds-epoch `since`
-        page1_last: _page(page2_rows, _last_for(page2_rows)),  # the raw ns cursor from page 1
+        "1783735200": lambda: _page(page1_rows, page1_last),  # the initial seconds-epoch `since`
+        page1_last: lambda: _page(page2_rows, page2_last),  # the raw ns cursor from page 1
     }
 
     def opener(url, timeout=None):
@@ -137,7 +142,7 @@ def test_full_page_sharing_one_second_still_terminates():
         since_value = url.rsplit("since=", 1)[1]  # exact match: avoids "1783735200" prefix-matching
         if since_value not in responses:  # the raw cursor, e.g. "1783735200999000064"
             raise AssertionError(f"unexpected since={since_value}")
-        return responses[since_value]
+        return responses[since_value]()  # fresh _Resp per call: the mock can genuinely re-serve
 
     df = fetch_trades("BTC/EUR", dt.datetime(2026, 7, 11, 2, tzinfo=dt.UTC), opener=opener, sleep=lambda _: None)
     assert len(urls) == 2
