@@ -1,9 +1,19 @@
 ---
-status: open
-ripe_when: the next NAS Alloy config change, or before the trade-backfill dashboard/alerting is built
+status: resolved
 ---
 
 # Alloy keep-regex missing the trade-backfill metric prefix
+
+## Resolution
+
+**Fixed in the same PR that introduced the metrics (spec `00053`, iter-100)** — the keep-regex in
+`infra/nas/config.alloy` now carries `zcrypto_trade_backfill_.*`, so all three series reach Grafana.
+Opened by the Task-6 implementer (correctly: a report-only note would have been invisible), but
+parking it was the wrong disposition: a `keep`-action regex silently drops anything unlisted, so the
+metrics would not merely have been undashboarded — they would not have existed, and the dead-man
+built on them would have been decorative. CLAUDE.md Rule 4 makes observability part of done, not a
+follow-up. Verified mechanically: every `zcrypto_*` name the entrypoint emits is matched by the
+regex (checked by parsing both files, not by eye).
 
 ## Context — what
 
