@@ -1,0 +1,51 @@
+# 00054 — OPS-5 Offload: move the overlay writer to the ops node (T0033)
+
+Ratified 2026-07-16 in an attended design discussion (decisions logged `[iter-101]`, phase-1 running log). Executes [[T0033]]'s **OPS-5 Offload** increment under spec `00051`'s ratified placement rule — *custody by durability, computation by weight, capture by redundancy*. The implementation plan is `docs/plans/00054-ops5-offload.md`.
+
+## Goal
+
+Move the **overlay writer** — the reconciler and the trade-backfill, as one unit — off the Atom and onto the ops node, and make the ops node observable enough to host it. The NAS keeps what it is good at: custody, Role A's pull/prune, and its own Alloy.
+
+## The measurement that motivates it
+
+The NAS's "hourly" `archive-pull` loop **is not hourly**. Measured 2026-07-16 from the live container:
+
+```
+reconcile complete  11:18:31
+reconcile complete  13:01:07     -> 103 min period
+reconcile complete  14:44:25     -> 103 min period
+```
+
+The loop is `work; sleep 3600`. A 103-minute period therefore means **~43 minutes of compute per cycle**, and the pull has silently drifted to ~1.7-hourly. Corroborating: `zcrypto_reconcile_source_lag_seconds{primary,secondary} = 4072` — **68 minutes of lag** against a stream that lands hourly.
+
+This is not one slow step; it is the Atom tax on every step sharing that clock: Role A's `verify_tree` re-hashes the entire archive each cycle ([[T0028]]), the reconciler scans a 48 h window plus an O(ledger) pass ([[T0044]]), `gate-export` replays the journal, and the trade-backfill now scans `trade_id` daily. The archive grows monotonically, so **the period grows monotonically too** — this ends by itself only in the wrong direction.
+
+So OPS-5's value is concrete rather than aesthetic: an i7-13700 with AVX2 and 24 threads replaces a 4-core no-AVX Atom for the compute-bearing half, and the loop's drift is the thing that goes away.
+
+## Decisions
+
+- **D1 — Observability comes FIRST; the move comes second** (decision `[iter-101]`). The ops node currently writes four textfiles (`ops_archive_pull`, `ops_panel`, `ops_verify_replay`, `ops_verified_replay`) and **has no Alloy** — nothing scrapes them, so those metrics reach nobody. Moving the overlay writer onto a host whose failures are invisible would be [[T0052]]'s defect one level up, and worse: [[T0052]] taught that a metric nobody watches is not a weaker signal, it is *no signal*. Alloy lands on ops, the four existing series plus the moved writer's series reach Grafana with alerts, **and only then** does the writer move. Ordering is a safety property here, not a preference.
+- **D2 — What moves: the overlay writer, as ONE unit** (owner directive 2026-07-16, spec `00053` D4). The reconciler and the trade-backfill share the `archive-pull` entrypoint, the `capture-reconciled` overlay, and `union_trades`. Moving one without the other would put two writers on one overlay with an rsync between them — the ops-side mints would never reach the NAS and could be clobbered by the next pull. They move together or not at all.
+- **D3 — What STAYS on the NAS, permanently** (spec `00051`, unchanged here): custody of every tree; Role A's pull from the capture hosts + its prune-after-verified; the NAS's own Alloy. The NAS is not being emptied — it is being relieved of *computation*, which is exactly what the placement rule says.
+- **D4 — The overlay's flow inverts: ops produces, the NAS PULLS it** (decision `[iter-101]`). Today ops pulls `capture-reconciled` from the NAS (four trees, hourly). After the move ops is that tree's producer, so ops must stop pulling it and the NAS must acquire it. **The NAS pulls — it never receives a push**: that is the established shape (`PANEL_SOURCE` already has the NAS pulling the panel *from* ops) and it preserves spec `00051` D10's pull-only transport. The overlay becomes a `RECONCILED_SOURCE` channel of exactly the `PANEL_*` form: its own rrsync `-ro` forced-command key on ops pinning the overlay root, host keys pinned, hash-verified, optional (unset ⇒ skipped).
+- **D5 — The cutover is safe NOW, and this is the moment to do it** (measured 2026-07-16). Three facts coincide: the two copies of the overlay are **byte-identical** (1175 files each; per-file sha lists diffed C-locale-sorted: **0 differing entries**, list sha `0b684ce3…` both sides); the reconciler is `--detect-only` so it mints nothing ([[T0039]]'s soak gates that flip); and the trade-backfill has driven the invariant to `gaps=0 missing=0 duplicates=0`, so it has nothing to mint until a new gap appears. The overlay is at a **fixed point**: flipping ownership moves a tree that neither host is currently writing, between two copies that already agree bit for bit. Do it before [[T0039]] unblocks `--mint` and the fixed point ends.
+- **D6 — `gate-export` does NOT move** (decision `[iter-101]`; [[T0033]] listed it as "opportunistic"). It works, it is Role B's proven deliverable, and moving it buys latency on a metric nobody is waiting on. It is separable from the overlay writer by construction — it reads the journal and writes a textfile, sharing no state with the overlay. Deferred to OPS-6 or later, on its own merits. *(Deliberate scope discipline: this iteration moves one thing well.)*
+- **D7 — Alloy on ops mirrors the NAS's, and inherits its accepted residual.** Same stack shape (host metrics + textfile collector + container logs → the same Grafana Cloud instance). [[T0042]]'s accepted risk — Alloy holds root-equivalent Docker access regardless of a `:ro` socket mount — is thereby **replicated to a second host**, and that is stated here rather than discovered later. It is a materially smaller exposure on ops than on the NAS: ops holds no trade key, never joins `engine_host` (spec `00051` D10), and holds no rrsync key to the capture VPSes — it is a derived-data host. The judgement is the same one T0042 already recorded, not a new one.
+- **D8 — [[T0044]]'s growth concern dissolves, but the topic does not close here.** Its `ripe_when` fires on "the ledger grows large enough that a reconcile cycle's O(ledger) scan slows" — moving the scan to a real CPU is exactly that pressure released. But its *other* live sub-item (a correction marker) is independent of where the code runs, so OPS-5 updates T0044's findings with the measured before/after and leaves it open on that sub-item alone. **Relieving pressure is not the same as fixing the defect**, and closing it here would be the [[T0051]] mistake again.
+- **D9 — Scope the verified-replay timer with `--date`** ([[T0033]]'s remaining OPS-5 item). It currently replays the WHOLE journal daily; on the ops node that is fast enough to hide the cost, which is precisely why it should be bounded now rather than when it next matters.
+- **D10 — Verify by outcome, not by exit code.** The move is complete when: the loop period on the NAS drops toward its 60-minute floor (the measurement above is the before-picture); `zcrypto_reconcile_source_lag_seconds` falls; the overlay's per-file sha list is identical across ops and the NAS after a full cycle in the NEW direction; the raw mirrors are byte-unchanged; and `backfill-trades --detect-only` still reports `gaps=0` from the ops-side canonical view.
+
+## Reuse
+
+The `PANEL_*` optional-channel pattern (`infra/nas/{compose.yaml,pull-entrypoint.sh}`) for `RECONCILED_*`; the ops role's timer/runner/textfile/dead-man templates (`infra/ansible/roles/ops/`, OPS-3/OPS-4 precedent); the NAS's Alloy stack (`infra/nas/config.alloy`) as the shape for the ops one, including its keep-regex discipline ([[T0051]]: a `keep` action drops anything unlisted, so the metric does not merely go undashboarded — it does not exist); `infra/grafana/alerts.yaml`'s staleness-rule template and the `metrics`/`logs` receiver split.
+
+## Non-goals
+
+No change to `cli/` — the reconciler and backfill move hosts, not code, which is what makes this a mechanical relocation (spec `00053` D4 built the backfill where the reconciler already lived precisely so this iteration would have no new code in flight). No `gate-export` move (D6). No Role A move (D3). No OPS-6 content (the 24×7 research loop, the workstation `./data` migration). No `--mint` flip for the reconciler — that is [[T0039]]'s call and independent of the host it runs on.
+
+## Risks / open parameters
+
+- **The cutover window is the whole risk.** Between "ops stops pulling the overlay" and "the NAS starts pulling it from ops", the two copies must not diverge. D5's fixed point is what makes this safe *today*; if the work slips past [[T0039]]'s `--mint` flip, re-measure the byte-identity first and do not assume it still holds. A stale assumption here writes the wrong overlay into custody.
+- **The NAS's Alloy and the ops Alloy will both ship to one Grafana Cloud instance.** Series budget was already a stated design constraint (< 1 k active series, spec `00043`); a second host's host-metrics could double a chunk of it. Confirm the active-series count at the deploy shakedown rather than assuming headroom.
+- **[[T0048]] applies at every NAS compose recreate in this iteration**: a recreated container's logs stop shipping until Alloy is restarted. The channel work touches the NAS compose, so this will fire unless the runbook step is followed.
+- **The 43-minute measurement is a single observation of three cycles.** It is consistent and corroborated by the lag metric, but the *attribution* across steps (pull/verify vs reconcile vs gate-export vs backfill) is not measured — only the total. If OPS-5's after-picture disappoints, that attribution is the first thing to measure, and the honest answer may be that [[T0028]]'s O(archive) verify — which **stays on the NAS** by D3 — is the dominant term rather than the compute that moved.
