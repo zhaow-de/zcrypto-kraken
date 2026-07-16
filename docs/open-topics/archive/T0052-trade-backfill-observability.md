@@ -1,9 +1,21 @@
 ---
-status: open
-ripe_when: now — the metrics exist and reach Grafana, so the panels/alert are buildable immediately; the compose line is a one-liner any time infra/nas/compose.yaml is next touched
+status: resolved
 ---
 
 # Trade-backfill has metrics but no dashboard and no dead-man
+
+## Resolution (2026-07-16, iter-100)
+
+**Two rules, because two different things break.** `infra/grafana/alerts.yaml` gains:
+
+- `zcrypto-trade-backfill-stale` — `time() - zcrypto_trade_backfill_last_success_timestamp > 172800` (2 days, tolerating the daily cadence). This is the dead-man: the step stopped succeeding, or stopped running at all. `noDataState: Alerting` — a vanished series IS the failure here.
+- `zcrypto-trade-backfill-exit-nonzero` — `zcrypto_trade_backfill_exit_code > 0`: the step ran and recorded errors. `noDataState: OK` deliberately — the dead-man above already owns "stopped running", and alerting on both would double-page one fault.
+
+Both pin `notification_settings.receiver: metrics`. A dashboard row (last-success age + exit code) matches the Reconciler row's style, and `TRADE_BACKFILL_TEXTFILE` is now explicit in `infra/nas/compose.yaml` beside `RECONCILE_TEXTFILE`/`GATE_TEXTFILE` rather than living only in a shell default.
+
+**The exit-code rule became load-bearing the moment [[T0053]] landed**: stamping the day unconditionally removes the retry, so the metric is the *only* signal a failed pass ever produces. That is why this topic was resolved first, in the same PR — an alert added "later" would have left a window where a failing backfill was silent by design.
+
+**Not yet pushed to Grafana.** The rules are committed as-code; `infra/scripts/grafana-push.sh` sends them at the next deploy, and the series only exist after the NAS runs the step. Verify then — and remember [[T0048]]: restart Alloy after any NAS compose recreate, or the container's logs stop shipping.
 
 ## Context — what
 

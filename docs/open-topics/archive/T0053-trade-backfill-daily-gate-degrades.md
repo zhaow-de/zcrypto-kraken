@@ -1,9 +1,18 @@
 ---
-status: open
-ripe_when: the first time `zcrypto_trade_backfill_exit_code` is non-zero on consecutive days (needs T0052's alerting to be visible at all), or before an 11th capture pair is added
+status: resolved
 ---
 
 # A persistent trade-backfill error degrades the daily gate to hourly-forever
+
+## Resolution (2026-07-16, iter-100)
+
+**Owner's decision: stamp the day unconditionally, and let the metric carry the failure.** Implemented in `infra/nas/pull-entrypoint.sh` — and slightly stronger than specified: the stamp is written *before* the command runs, so even a hard crash consumes the day. The O(archive) scan + REST burst can now never exceed one pass per UTC day, whatever happens. The cost bound D11 exists for is absolute rather than conditional on the pass succeeding.
+
+The consequence is accepted, not overlooked: a transient now waits up to 24 h. That is fine — Kraken serves ~18 months of trade history, so nothing decays while waiting, and [[T0052]]'s two rules (staleness + non-zero exit) are what surface the failure. Rejected as more machinery than the problem warrants: transient-vs-permanent classification (a misclassification would silently re-create the hourly-forever bug) and bounded N-retries (an arbitrary knob that still burns N scans on a permanent error).
+
+**The rate limit is fixed at source too:** `_MIN_INTERVAL_SECONDS` 1.5 → 3.0, with the measurement recorded in the constant's comment so it is not "optimised" back down. 1.5 s was *demonstrably* refused (`EGeneral:Too many requests`) on the live bulk run — one gap of 34 trades, isolated as designed and recovered by the idempotent re-run.
+
+**Still open, deliberately, and now the only live sub-item — split to [[T0055]]:** `KRAKEN_ALTNAME` matches `capture_pairs` today but nothing ties them, so an 11th capture pair still fails every attempt for that pair. With this fix that no longer degrades the gate (the day is stamped regardless) — it degrades to "one pair silently never heals, and the exit-code alert fires daily", which is loud, not silent. That makes it a real but non-urgent defect rather than a cost bomb, so it does not hold this topic open.
 
 ## Context — what
 

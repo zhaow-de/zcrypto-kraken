@@ -71,11 +71,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0048 — Alloy's docker tailer dies on container recreation](T0048-alloy-docker-tailer-dies-on-container-recreate.md) — a recreated NAS container's logs silently stop shipping (Alloy retries the dead ID forever); restart Alloy after any NAS compose change; first caught live by the archive-pull dead-man 2026-07-16 (ripe when: the next Alloy version bump, to test upstream).
 
+- [T0055 — KRAKEN_ALTNAME can drift from the capture universe](T0055-kraken-altname-map-can-drift.md) — the REST altname map lists exactly today's 10 pairs but nothing ties it to `capture_pairs`, so an 11th pair silently never heals; loud rather than silent since T0052/T0053 (the exit-code alert fires daily), but the trigger — a universe change — will not look related to a file in `cli/trades/` (ripe when: before an 11th pair joins capture_pairs).
+
 - [T0049 — go-live drill matrix + day-2 operations runbook](T0049-go-live-drill-matrix-day2-runbook.md) — the exit-bar alerting drill is passed (owner sign-off 2026-07-16, live incident); before live orders, deliberately drill the full failure-scenario matrix (dead-men, watermark, engine `/fail`, Loki path, Alloy death, Grafana outage → healthchecks independence) and distill `docs/reference/day2-operations-runbook.md` (ripe when: the final go-live preparation, before the Stage-6b executor session).
-
-- [T0052 — trade-backfill has metrics but no dashboard or dead-man](T0052-trade-backfill-observability.md) — the three `zcrypto_trade_backfill_*` series reach Grafana but nothing watches them: no panel, no alert, no dead-man, so a failing or stalled backfill pages nobody while the trade stream quietly stops converging on its invariant (ripe when: now — the metrics exist, the alert is buildable immediately).
-
-- [T0053 — a persistent backfill error degrades the daily gate to hourly-forever](T0053-trade-backfill-daily-gate-degrades.md) — the stamp is written only on success, so a PERMANENT error (an unmapped pair, a structural residual) means the O(archive) scan + hundreds of REST calls run every hour indefinitely, defeating the reason the gate is daily and compounding T0028's cost — invisible until T0052 lands (ripe when: consecutive non-zero exits, or before an 11th capture pair).
 
 ### Partially done<a name="partially-done-1"></a>
 
@@ -128,3 +126,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0050 — REST trade-backfill for the capture daemon](archive/T0050-rest-trade-backfill.md) — **resolved 2026-07-16 (iter-100)**: the last unshipped §8 daemon clause, shipped as an offline pass that never touches the daemon. 194 gaps / 17,362 missing (3.60%) / 10,986 duplicates → **all zero**, verified on the live archive with the raw mirrors byte-identical; closed the reconciler's correlated-loss blind spot for trades (the largest gap predates the secondary, so no mirror could ever have healed it).
 
 - [T0054 — reconcile skips backfill-minted hours](archive/T0054-reconcile-skips-backfill-minted-hours.md) — resolved 2026-07-16 the day it was raised: the `already_minted` skip is per-`kind` (proven — minting a trades hour leaves `already_minted(..., 'book', h)` False), so a trades backfill can never shadow a book heal; skipping backfill-minted *trades* hours is correct, since REST is a strictly better witness than the secondary mirror.
+
+- [T0052 — trade-backfill observability](archive/T0052-trade-backfill-observability.md) — resolved 2026-07-16: two rules, because two things break — a staleness dead-man on `last_success` (noData=Alerting: a vanished series IS the failure) and a non-zero `exit_code` rule (noData=OK: the dead-man already owns "stopped running"), plus a dashboard row and an explicit compose textfile var. The exit-code rule became load-bearing the moment T0053 removed the retry.
+
+- [T0053 — the daily gate degraded to hourly-forever](archive/T0053-trade-backfill-daily-gate-degrades.md) — resolved 2026-07-16 (owner's decision): stamp the UTC day unconditionally — in fact *before* the run, so even a crash consumes it, making the O(archive) cost bound absolute — and let T0052's alerts carry the failure. Also fixed the cause at source: `_MIN_INTERVAL_SECONDS` 1.5 → 3.0, since 1.5s was demonstrably refused on the live run. Residual split to T0055.
