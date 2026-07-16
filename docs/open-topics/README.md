@@ -81,6 +81,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0059 — `Persistent=true` + `--date yesterday` skips a multi-day outage](T0059-persistent-timer-replay-coverage-gap.md) — systemd runs a missed timer once, not once per missed day, so a 3-day outage verifies ONE day and every metric still reports healthy; the old whole-journal replay covered this by accident (ripe when: the ops node is offline for more than a day).
 
+- [T0060 — the ops node's logs are unusable and 99.9% noise](T0060-ops-log-pipeline-unusable-and-noisy.md) — Alloy's parse stages were copied from the NAS with its container names, so neither matches on ops: every stream is `level=-`, an ERROR-logs alert could never fire, `docker run --rm` jobs mint unbounded random Loki streams, and the liquidations poller warns ~15,800×/h about its own by-design re-submissions (16,309 lines/h from ops vs 8 from the NAS) (ripe now).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
