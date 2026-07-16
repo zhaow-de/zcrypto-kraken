@@ -105,8 +105,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0029 — NAS CPU has no AVX; polars crashes](archive/T0029-nas-cpu-no-avx-polars.md) — resolved — determinism measured, Role B bit-identical on the NAS (iter-094).
 
-- [T0038 — NAS mirror accumulates stale part files](archive/T0038-nas-mirror-accumulates-stale-parts.md) — resolved: prune-after-verified deletes each verified hour's `<HH>.part*.parquet` on the NAS (strict numeric names, hardened unlink), the reader side closed by `canonical_segments`; deploy verified 2026-07-15 — the ~13.5k-part backlog drained to just the in-progress hour's parts.
-
 - [T0030 — NAS Alloy uid-key exposure](archive/T0030-nas-alloy-uid-key-exposure.md) — resolved (iter-094, same PR): Alloy runs as the dedicated non-key-owning user `zcrypto-dummy` (uid 1031, gid 1000), verified live — ships metrics + logs, `gate.prom` readable, and the `0600` pull keys denied through `/host/root`.
 
 - [T0036 — a restart silently truncates the hour it lands in](archive/T0036-segment-writer-restart-clobber.md) — resolved 2026-07-14: committed-final invariant + atomic parts + validated recovery + cross-stream rotation quorum (T0037), deployed with a validated 1 s-downtime migration; post-deploy verified (hour-04 finals begin at :00:00, 0 desyncs, CRC-clean splice, no new truncation).
@@ -118,3 +116,5 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0034 — grafana-push safety](archive/T0034-grafana-push-safety.md) — resolved: `grafana-push.sh` now reads every pushed rule back and fails on a wrong datasourceUid (the health=ok trap), and reports/prunes orphaned rules (dry-run default, exact-membership so a renamed rule is caught); proven live (12 == 12, injected orphan flagged).
 
 - [T0047 — Slack incoming-webhook notifications](archive/T0047-slack-webhook-notifications.md) — resolved 2026-07-15: Slack is the sole notification target for Grafana (as-code guarded upsert, proven by a read-back-verified test fire, email integration deleted after the proving call) and healthchecks.io (all 9 checks pinned to #zcrypto).
+
+- [T0038 — NAS mirror accumulates stale part files](archive/T0038-nas-mirror-accumulates-stale-parts.md) — resolved: prune-after-verified deletes each verified hour's `<HH>.part*.parquet` on the NAS (strict numeric names, hardened unlink), the reader side closed by `canonical_segments`; deploy verified 2026-07-15 — the ~13.5k-part backlog drained to just the in-progress hour's parts.
