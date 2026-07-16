@@ -49,7 +49,7 @@ else
     # CAPTURE mirrors specifically. A failed journal pull must not skip reconcile (the reconciler
     # never reads the journal), and a failed capture pull must skip it even if everything else
     # succeeded.
-    if ! rsync -a -e "$SSH_CMD" "$SOURCE{{ ops_capture_subdir }}/" "{{ ops_data_dir }}/{{ ops_capture_subdir }}/"; then
+    if ! rsync -a -e "$SSH_CMD" "${SOURCE}{{ ops_capture_subdir }}/" "{{ ops_data_dir }}/{{ ops_capture_subdir }}/"; then
         rc=1
         primary_ok=0
     fi
@@ -57,7 +57,7 @@ else
         rc=1
         secondary_ok=0
     fi
-    if ! rsync -a -e "$SSH_CMD" "$SOURCE{{ ops_journal_subdir }}/" "{{ ops_data_dir }}/{{ ops_journal_subdir }}/"; then
+    if ! rsync -a -e "$SSH_CMD" "${SOURCE}{{ ops_journal_subdir }}/" "{{ ops_data_dir }}/{{ ops_journal_subdir }}/"; then
         rc=1
     fi
 

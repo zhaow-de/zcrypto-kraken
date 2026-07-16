@@ -53,6 +53,34 @@
     ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
     ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
 
+# Corrects a one-time ownership mismatch left behind by the NOW-REMOVED NAS pull of this tree
+# (spec 00054 D2): capture-reconciled arrived here via `rsync -a` run by a root systemd unit, and
+# `-a` preserves NUMERIC ownership, so every file/dir under it still carries the NAS's uid/gid 1000
+# -- not ops's `deploy` (1001). The reconcile container runs `--user {{ ops_uid }}:{{ ops_gid }}`
+# (deploy), and `ledger_append` (cli/archive/mint.py) opens reconcile-ledger.jsonl in APPEND mode on
+# EVERY cycle -- including detect-only, where the ledger is the entire point -- so without this,
+# every reconcile run fails EACCES: the directory being 0777 is a red herring, the ledger FILE is
+# 0664 owned by 1000, and appending needs write on the file, not just search on the directory.
+# `recurse: true` (not just the ledger file) because a future flip out of detect-only will have the
+# same container WRITE new/updated parquet into subdirectories that carry the same stale uid --
+# narrowing this to the one known-failing file today would just relocate the next EACCES. Safe to
+# leave unconditional and recursive on every converge: the tree is ops-produced from here on (this
+# same commit dropped it from the ops pull list, so nothing re-imports uid 1000), so post-correction
+# runs are a no-op scan, and at today's size (~6.7 MB / ~1175 files) that scan is cheap regardless.
+# Deliberately NOT inside the `ops_image_digest`-gated block below: ops_reconciled_subdir has a
+# default (unlike the runner script, which needs the pinned image and would render an invalid
+# `docker run` without it), and the mismatch is a filesystem fact independent of any digest -- gating
+# it on the digest would leave a digest-less converge (or a host that never gets one) permanently
+# stuck with the NAS's ownership. It must merely run before the archive-pull runner below, which
+# Ansible's linear task order already guarantees.
+- name: ensure the overlay tree is owned by deploy (spec 00054 D2)
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    recurse: true
+
 # OPS-4 (spec 00052 D6) runner, now carrying OPS-5's reconciler + trade-backfill (spec 00054 D2):
 # this used to be pure host-side rsync (rsync installed above), needing no pinned image digest, so
 # the script/service/timer install was unconditional and only the enable step was gated (by
