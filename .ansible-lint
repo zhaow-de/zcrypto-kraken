@@ -1,0 +1,10 @@
+---
+# Scope: infra/ansible (the pre-commit hook passes the directory explicitly).
+
+skip_list:
+  # Task/handler names here are lowercase by convention (matching the lowercase commit-subject
+  # rule). Beyond churn, satisfying this rule means renaming handlers AND every `notify:` that
+  # references them in lockstep -- one missed pair silently stops a handler firing (e.g. the live
+  # capture service not restarting on a config change). A cosmetic rule is not worth that failure
+  # mode; every other rule stays enabled.
+  - name[casing]

@@ -9,7 +9,12 @@
 # --- 1. The §8-hardening gate — asserts before anything else. The probes are read-only and run
 # with check_mode: false so a --check dry-run still evaluates the gate; any failure aborts the
 # role before a single secret is rendered.
-- name: "§8 gate — probe nftables enablement (a RemainAfterExit oneshot: is-active alone can be stale)"
+#
+# `noqa: command-instead-of-module` on the systemctl probes below: that rule assumes systemctl is
+# being used to MANAGE a unit, where ansible.builtin.systemd is the idempotent choice. These read
+# state to feed an assert — the module would act on the very thing being observed. The exemption is
+# per-task, not a global skip, so a genuine state-managing systemctl elsewhere still fails the lint.
+- name: "§8 gate — probe nftables enablement (a RemainAfterExit oneshot: is-active alone can be stale)"  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl is-enabled nftables
   register: engine_gate_nft_enabled
   changed_when: false
@@ -17,7 +22,16 @@
   check_mode: false
 
 - name: "§8 gate — probe the live nftables ruleset for content"
-  ansible.builtin.shell: /usr/sbin/nft list ruleset | grep -q .
+  # No pipe, deliberately. This was `nft list ruleset | grep -q .`, whose rc is GREP's alone: an
+  # `nft` that failed while emitting any output still matched and reported rc 0 — passing the
+  # firewall gate that guards the live trade key on a host whose ruleset could not be read.
+  # `set -o pipefail` is NOT the fix. `grep -q` exits on first match, so nft can die of SIGPIPE: the
+  # pipeline returned 141 on a HEALTHY host (measured), which would fail the gate closed and block
+  # every engine deploy. Worse, that outcome is a race on the pipe buffer — a small ruleset may let
+  # nft finish first and return 0 — so pipefail here buys a FLAKY gate, not a fixed one.
+  # Dropping the pipe makes rc unambiguously nft's own and moves the non-empty test to an explicit
+  # assert below — strictly more precise than grep's exit code.
+  ansible.builtin.command: /usr/sbin/nft list ruleset
   register: engine_gate_nft_ruleset
   changed_when: false
   failed_when: false
@@ -29,11 +43,12 @@
       - engine_gate_nft_enabled.rc == 0
       - engine_gate_nft_enabled.stdout | trim == 'enabled'
       - engine_gate_nft_ruleset.rc == 0
+      - engine_gate_nft_ruleset.stdout | trim | length > 0
     fail_msg: >-
       §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): nftables must be
       enabled with a non-empty live ruleset before the engine (and its trade key) may land.
 
-- name: "§8 gate — probe fail2ban activity"
+- name: "§8 gate — probe fail2ban activity"  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl is-active fail2ban
   register: engine_gate_fail2ban
   changed_when: false
@@ -56,7 +71,7 @@
   failed_when: false
   check_mode: false
 
-- name: "§8 gate — probe unattended-upgrades enablement"
+- name: "§8 gate — probe unattended-upgrades enablement"  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl is-enabled unattended-upgrades
   register: engine_gate_uu_enabled
   changed_when: false

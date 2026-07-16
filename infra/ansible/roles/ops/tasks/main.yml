@@ -83,8 +83,8 @@
 
     - name: derive the deploy uid/gid for the container user mapping
       ansible.builtin.set_fact:
-        ops_uid: "{{ getent_passwd['deploy'][1] }}"
-        ops_gid: "{{ getent_passwd['deploy'][2] }}"
+        ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
+        ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
 
     # OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
     # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the

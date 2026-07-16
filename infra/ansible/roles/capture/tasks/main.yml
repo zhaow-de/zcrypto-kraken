@@ -9,8 +9,8 @@
 
 - name: derive the kraken-capture uid/gid for the container's user mapping
   ansible.builtin.set_fact:
-    capture_uid: "{{ getent_passwd['kraken-capture'][1] }}"
-    capture_gid: "{{ getent_passwd['kraken-capture'][2] }}"
+    capture_uid: "{{ ansible_facts['getent_passwd']['kraken-capture'][1] }}"
+    capture_gid: "{{ ansible_facts['getent_passwd']['kraken-capture'][2] }}"
 
 - name: fail fast if the pinned image digest was not supplied
   ansible.builtin.assert:
