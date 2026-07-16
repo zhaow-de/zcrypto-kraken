@@ -1,9 +1,16 @@
 ---
-status: open
-ripe_when: before the reconciler is switched from --detect-only to --mint (that flip is gated on T0039's cross-host soak) — the interaction only becomes real at that moment
+status: resolved
 ---
 
 # The reconciler will permanently skip any hour the trade-backfill minted first
+
+## Resolution (2026-07-16, iter-100) — closed by reading the code, as its own first step predicted
+
+**The skip IS per-`kind`, so the dangerous outcome cannot occur.** `already_minted(root, pair, kind, hour)` resolves through `_hour_dir(root, pair, kind, hour)`, and reconcile passes `kind` explicitly at both call sites — `"book"` (`cli/archive/command.py:474`) and `"trades"` (`:538`). Demonstrated, not just read: after minting a trades hour, `already_minted(..., "book", h)` is still `False`. A trades-only backfill mint therefore **cannot shadow a book hour** reconcile would otherwise heal — which was the single outcome here that would have cost unbackfillable data.
+
+**The remaining behaviour is correct, not a defect.** Once [[T0039]] unblocks `--mint`, reconcile will skip *trades* hours the backfill minted first. That is desirable: REST is the venue's own record and a strictly better witness than the secondary mirror, and it heals correlated loss (both mirrors dark) that the reconciler explicitly cannot. The skip therefore *protects* the backfill's richer union from being rebuilt as raw-primary ∪ raw-secondary — a strictly poorer frame. The raw mirrors are untouched either way.
+
+No action, no residual, nothing to re-check at the [[T0039]] flip. Registered and closed the same day it was raised — the check was cheaper than the speculation.
 
 ## Context — what
 
