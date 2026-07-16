@@ -596,3 +596,96 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  # --- Trade backfill: daily trade_id-contiguous healing over Kraken's public REST /Trades ---------
+  # (spec 00053, iter-100; T0052). Provisioned in this file BEFORE the NAS deploy that will first
+  # emit `zcrypto_trade_backfill_*` -- unlike the reconciler block above (pushed only once its
+  # series were already confirmed visible), these two rules must not be pushed yet either, for the
+  # opposite-looking but equally bad reason: `zcrypto-trade-backfill-stale` below sets
+  # `noDataState: Alerting`, and with no series at all yet that would page immediately and forever
+  # until the NAS deploy happens. Push only after that deploy confirms the series are visible.
+
+  - uid: zcrypto-trade-backfill-stale
+    title: "Trade backfill · last success stale"
+    ruleGroup: zcrypto-trade-backfill
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The dead-man for this step, same shape as Gate/Reconciler `exporter stale` above: the step is
+      # DAILY, so a healthy pass can be up to ~24h old between successes -- the threshold must clear
+      # that cadence with room for one missed day, hence ~2 days rather than ~2x the gate/reconciler
+      # hourly-cadence thresholds.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_trade_backfill_last_success_timestamp
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [172800]}  # ~2 days -- tolerates the daily cadence plus one miss
+    # Alerting: a vanished series here means the step stopped succeeding (or stopped running
+    # altogether), which is itself the failure worth paging on -- same reasoning as the gate/reconciler
+    # exporter-stale rules. See the block comment above for the pre-deploy push-order caveat this implies.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "No clean `zcrypto archive backfill-trades` run in over ~2 days -- the daily step has been failing every cycle or has stopped running (spec 00053)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-trade-backfill-exit-nonzero
+    title: "Trade backfill · non-zero exit code"
+    ruleGroup: zcrypto-trade-backfill
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # This is the ONLY signal for a run that recorded errors (exit 1) or found the primary root
+      # missing (exit 2) -- T0053's fix stamps the UTC day unconditionally (success or failure), so a
+      # failed run no longer retries hourly; this metric, not a retry, is what carries the failure.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_trade_backfill_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: the exporter-stale rule above already owns "the step stopped running/succeeding
+    # at all" -- this one owns "it ran and recorded a failure", same split as the reconciler's
+    # source-lag/healable-gap-rate rules deferring the dead-man case to their own exporter-stale rule.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The daily trade-backfill run recorded a non-zero exit code (1 = errors recorded, 2 = primary root missing). It no longer retries hourly (T0053) -- this alert is the only signal."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
