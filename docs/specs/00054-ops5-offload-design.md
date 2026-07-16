@@ -41,7 +41,15 @@ The `PANEL_*` optional-channel pattern (`infra/nas/{compose.yaml,pull-entrypoint
 
 ## Non-goals
 
-No change to `cli/` — the reconciler and backfill move hosts, not code, which is what makes this a mechanical relocation (spec `00053` D4 built the backfill where the reconciler already lived precisely so this iteration would have no new code in flight). No `gate-export` move (D6). No Role A move (D3). No OPS-6 content (the 24×7 research loop, the workstation `./data` migration). No `--mint` flip for the reconciler — that is [[T0039]]'s call and independent of the host it runs on.
+No change to `cli/` — the reconciler and backfill move hosts, not code, which is what makes this a mechanical relocation (spec `00053` D4 built the backfill where the reconciler already lived precisely so this iteration would have no new code in flight). No `gate-export` move (D6). No Role A move (D3). No `--mint` flip for the reconciler — that is [[T0039]]'s call and independent of the host it runs on.
+
+**No workstation `./data` migration** — it stays [[T0033]]'s OPS-6 (owner directive 2026-07-15), and the question was asked and answered here rather than assumed. It would **not help OPS-5**: `cli/archive/` and `cli/trades/` contain *zero* references to `data/`, so the overlay writer reads none of it — it works on the archive, which the ops node already holds.
+
+The check did, however, measure OPS-6's exposure, and the numbers are recorded here so that iteration inherits evidence rather than re-deriving it (2026-07-16):
+
+- The workstation's `data/` is **281 MB** and **single-copy**: `ohlc-full` 37M, `ohlc-15m` 98M, `ohlc-holdout-2026-07-10` 1.4M, `derivatives-funding` 736K, `engine-store` 7.7M, `snapshots` 3.4M, plus the universe JSON. **None of them are on the NAS**, `data/*` is gitignored, and the configured `backup_dir` (`../zcrypto-kraken-data/zcrypto`) is not present on the machine.
+- **The exposure is bounded, and the owner's directive already framed it correctly** ("moved, **or rebuilt there from the NAS-held sources**"): every one of those is `f(sources that survive)` — the NAS holds `kraken-ohlcvt-updates` **13 G** and `kraken-trades` **15 G**, and `derivatives-funding` re-fetches from Binance Vision. A workstation loss therefore costs a **rebuild**, not the data. [[T0001]] established the reconstruction is bit-identical, so the trial registry's dataset hashes survive a rebuild — which is what makes this a chore rather than an incident.
+- The one artifact worth naming explicitly: `ohlc-holdout-2026-07-10` is the **pre-registered holdout** ([[T0017]], look budget 1, already spent). It is a deterministic slice of `ohlc-full` at the ratified window, so it rebuilds too — but OPS-6 must not treat it as ordinary data, and rebuilding it is not a fresh look.
 
 ## Risks / open parameters
 
