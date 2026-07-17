@@ -18,6 +18,7 @@ The capture/engine VPS runs `unattended-upgrades` configured to **auto-reboot at
 
 - 2026-07-11 event: clean recovery of both containers (details in [[T0003]] investigation). Config: `Unattended-Upgrade::Automatic-Reboot "true"`, `Automatic-Reboot-Time "04:00"` (04:00 UTC, host tz = UTC).
 - The engine's day-1 (2026-07-11) gate cycle was verified **clean through the reboot** — see Done so far.
+- **Fleet-window note (spec `00050`, 2026-07-17).** The capture fleet is now **two** hosts: primary `zcrypto` at **21:25 UTC** and secondary `zcrypto-red` at **22:25 UTC**, deliberately **+1 h apart** so a same-night kernel reboot never overlaps both and a failed primary reboot has time to page before the secondary follows. A converge-time assert that the two hosts' reboot times differ pins this fleet-window policy in config (spec `00050`; also [[T0033]]). The single-VPS policy question below still stands for the **engine** host — only the primary runs the engine.
 
 ## Done so far
 
