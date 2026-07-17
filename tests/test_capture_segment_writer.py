@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytest
 
 from cli.capture import segment_writer
 from cli.capture.errors import CaptureError
-from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
+from cli.capture.segment_writer import BOOK_SCHEMA, LIQ_AGG_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
 
 
 def _ts(hour: int, minute: int = 0, sec: int = 0) -> datetime:
@@ -1779,3 +1780,28 @@ def test_finalize_completed_hours_then_close_is_safe(tmp_path):
     path = _segment_path(tmp_path, 10)
     assert pl.read_parquet(path)["checksum"].to_list() == [42]
     assert verify_manifest(path) is True
+
+
+def test_restart_reseeds_dedup_keys_from_open_hour_parts(tmp_path, caplog):
+    # Spec 00055 D5 (measured 2026-07-17): a dedup-keyed writer restarted over an open hour with
+    # flushed parts reseeds _seen from disk, so a re-submitted event is dropped, never duplicated.
+    # This is the anomaly-detector backstop the liquidations watermark relies on.
+    event = {
+        "ts": _ts(10, 0, 0),
+        "symbol": "BTCUSDT_PERP.A",
+        "long_usd": 1.0,
+        "short_usd": 2.0,
+        "event_id": "BTCUSDT_PERP.A-1",
+    }
+    w1 = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    w1.append(dict(event))
+    w1.close()
+
+    w2 = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    with caplog.at_level(logging.WARNING):
+        w2.append(dict(event))
+    w2.close()
+    assert "dropping replayed event" in caplog.text
+
+    parts = sorted(tmp_path.rglob("*.part*.parquet"))
+    assert sum(pl.read_parquet(p).height for p in parts) == 1  # one row, not two
