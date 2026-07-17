@@ -15,23 +15,33 @@ scheduler — a loop that runs `zcrypto archive pull` for each source every
 `ARCHIVE_PULL_INTERVAL` seconds and survives a single failed pull without exiting; Container
 Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 
-## Deploy
+## Deploy (Ansible — the `nas` role, T0056)
 
-1. On the NAS, place `compose.yaml`, `pull-entrypoint.sh`, and `zcrypto.toml` (the app config the
-   `gate-export` step reads for its journal/store paths) under `/volume1/docker/zcrypto-archive/`.
-2. Drop the `sync_capture` private key at `/volume1/docker/zcrypto-archive/keys/sync_capture`,
-   mode `0600` (the vaulted keypair from plan Task 6; the public half is installed on the VPS as
-   a read-only `rrsync` forced-command channel for the capture segments).
-3. Drop the `sync_journal` private key at `/volume1/docker/zcrypto-archive/keys/sync_journal`,
-   mode `0600` — the engine journal's OWN least-privilege keypair (Role B), distinct from
-   `sync_capture` so a leaked key exposes only one channel; the public half is installed on the
-   VPS as a read-only `rrsync` forced-command channel for the engine journal.
-4. Pre-seed the pinned VPS host key at `/volume1/docker/zcrypto-archive/keys/known_hosts`.
-   DSM ships no `ssh-keyscan`, so run it from a machine that has one (e.g. the workstation):
-   `ssh-keyscan -p 10022 <vps-host>` and copy its output to that path. Host-key checking is strict
-   (`StrictHostKeyChecking=yes`), so an unseeded or stale file fails the pull closed.
-5. Create the shared textfile-collector directory `/volume1/docker/zcrypto-archive/textfile`,
-   owned `1000:1000` and `chmod 0775`:
+The NAS is Ansible-managed: the `nas` role (`infra/ansible/roles/nas`, play in `site.yml`) deploys `compose.yaml`, `pull-entrypoint.sh`, and `config.alloy` **verbatim from this directory** (the single source of truth — no copies live in the role) and renders the two env files next to them under `/volume1/docker/zcrypto-archive/`: `.env` (the image digest pins + pull sources, from `infra/ansible/host_vars/nas/vars.yml`; the vaulted `GATE_HEALTHCHECK_URL` from `host_vars/nas/vault.yml`) and `alloy-secrets.env` (the Grafana Cloud credentials, from `group_vars/observed/vault.yml`). Hand-copying files to the NAS is dead — deployed files drifted for days, and deploying the then-committed `:latest` placeholder verbatim killed the pull loop for ~90 s on 2026-07-16 (T0056).
+
+```bash
+cd infra/ansible
+./scripts/run.sh site.yml --limit nas --tags nas                        # render-only: files land, restarts deferred
+./scripts/run.sh site.yml --limit nas --tags nas -e nas_apply_compose=true   # render + apply (compose up -d + alloy restart)
+```
+
+Without `-e nas_apply_compose=true` the converge renders files but **defers the restart handler** — deliberate, the same explicit-apply discipline as the ops role's attended first start. The apply handler always chases `up -d` with an Alloy restart — T0048 codified: after any `up -d` that recreates a container, Alloy's docker tailer keeps following the dead container ID and the recreated service's logs silently stop shipping until Alloy restarts.
+
+**The play's first act is a UTC clock guard and it fails closed**: `date +%z` must print `+0000`. `docker logs --since` parses its argument in the host's **local** time, and the NAS's CEST clock produced false review verdicts on 2026-07-16. Fix: DSM Control Panel → Regional Options → Time Zone → **(GMT) Greenwich Mean Time**, then re-run the play.
+
+Host quirks — encoded as `host_vars/nas/vars.yml` (all measured live 2026-07-16), repeated here for humans:
+
+- DSM's `/usr/bin/python3` is 3.8.15, below ansible-core 2.21's 3.9 floor — the play runs the `python314` package's `/usr/local/bin/python3.14` (`ansible_python_interpreter`).
+- DSM chroots sftp to the shared folders, so sftp/scp cannot write arbitrary paths — `ansible_ssh_transfer_method: piped` (plain ssh stdin).
+- Docker is `/usr/local/bin/docker` and **not** on sudo's PATH — a bare `sudo docker` fails command-not-found, and a script that ignored that failure once read the empty output as a false all-clear (`nas_docker`).
+
+### One-time bootstrap (hand-placed once; not Ansible-managed)
+
+1. Place `zcrypto.toml` (the app config the `gate-export` step reads for its journal/store paths) under `/volume1/docker/zcrypto-archive/`.
+2. Drop the `sync_capture` private key at `/volume1/docker/zcrypto-archive/keys/sync_capture`, mode `0600` (the vaulted keypair from plan Task 6; the public half is installed on the VPS as a read-only `rrsync` forced-command channel for the capture segments).
+3. Drop the `sync_journal` private key at `/volume1/docker/zcrypto-archive/keys/sync_journal`, mode `0600` — the engine journal's OWN least-privilege keypair (Role B), distinct from `sync_capture` so a leaked key exposes only one channel. The other pull channels' keys (`sync_capture_red`, `sync_liquidations`, `sync_panel`, `sync_reconciled`) follow the same pattern, one least-privilege keypair each.
+4. Pre-seed the pinned VPS host key at `/volume1/docker/zcrypto-archive/keys/known_hosts`. DSM ships no `ssh-keyscan`, so run it from a machine that has one (e.g. the workstation): `ssh-keyscan -p 10022 <vps-host>` and copy its output to that path. Host-key checking is strict (`StrictHostKeyChecking=yes`), so an unseeded or stale file fails the pull closed.
+5. Create the shared textfile-collector directory `/volume1/docker/zcrypto-archive/textfile`, owned `1000:1000` and `chmod 0775`:
 
    ```bash
    mkdir -p /volume1/docker/zcrypto-archive/textfile
@@ -39,30 +49,21 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
    chmod 0775 /volume1/docker/zcrypto-archive/textfile
    ```
 
-   The explicit `chmod` matters: a Synology DSM ACL granting the host uid write access is **not**
-   honored inside the container, which only sees the underlying POSIX mode — so real
-   owner-writable bits (`0775`) are required, not just an ACL grant. `archive-pull` writes
-   `gate.prom` there after each journal pull; Alloy also mounts it (read-only) for scraping (Task
-   3 below).
-6. Pin the image to the **`-compat`** variant digest: `ghcr.io/zhaow-de/zcrypto-capture@sha256:<digest>`
-   (the NAS Atom has no AVX, so it runs the `-compat` build, not the VPS's default AVX image — see
-   `docs/open-topics/T0029-nas-cpu-no-avx-polars.md`). Read the digest with
-   `docker buildx imagetools inspect ghcr.io/zhaow-de/zcrypto-capture:latest-compat`. The image
-   already contains the `zcrypto` CLI, so there is no NAS-side build.
-7. Create a new healthchecks.io check (e.g. named `zcrypto-gate-verify`) and copy its ping URL into
-   `GATE_HEALTHCHECK_URL` (Deploy step 8) — a **new, dedicated** check, distinct from the engine's
-   own `HEALTHCHECK_URL`. This is the **sole Alloy-independent paging path** for the gate (spec
-   00049): if Alloy or the whole Grafana pipeline is down, this dead-man still pages, so it is
-   required, not optional.
-8. Set the deploy-time env vars (see below) in an adjacent `.env` file next to `compose.yaml`, or
-   export them in the shell that runs `docker compose`.
-9. Start the stack: `/usr/local/bin/docker compose -f compose.yaml up -d` (the full path — Docker
-   is off the login `PATH` on the NAS). Confirm with
-   `/usr/local/bin/docker compose -f compose.yaml ps` that `archive-pull` is `Up` and running as
-   `1000:1000`.
-   **After ANY `up -d` that recreates a container, also run `docker restart zcrypto-archive-alloy-1`** — Alloy's docker tailer keeps following the dead container ID and the recreated service's logs silently stop shipping until Alloy is restarted (T0048; the `NAS · archive-pull stalled` dead-man is what eventually catches it).
+   The explicit `chmod` matters: a Synology DSM ACL granting the host uid write access is **not** honored inside the container, which only sees the underlying POSIX mode — so real owner-writable bits (`0775`) are required, not just an ACL grant. `archive-pull` writes `gate.prom` there after each journal pull; Alloy also mounts it (read-only) for scraping.
+
+6. Create the dedicated Alloy user **`zcrypto-dummy` (uid 1031, gid 1000 — the `zcrypto` group)** (DSM → Control Panel → User & Group, or `synouser --add`), then create Alloy's `--storage.path` dir owned by it and `chmod 0775` (see the Alloy section below for why this uid):
+
+   ```bash
+   mkdir -p /volume1/docker/zcrypto-archive/alloy-data
+   chown 1031:1000 /volume1/docker/zcrypto-archive/alloy-data
+   chmod 0775 /volume1/docker/zcrypto-archive/alloy-data
+   ```
+
+7. Create a new healthchecks.io check (e.g. named `zcrypto-gate-verify`) — a **new, dedicated** check, distinct from the engine's own `HEALTHCHECK_URL` — and vault its ping URL as `nas_gate_healthcheck_url` in `infra/ansible/host_vars/nas/vault.yml`; the role renders it into `.env` as `GATE_HEALTHCHECK_URL`. This is the **sole Alloy-independent paging path** for the gate (spec 00049): if Alloy or the whole Grafana pipeline is down, this dead-man still pages, so it is required, not optional.
 
 ## Env-var contract
+
+The `.env` next to `compose.yaml` is **rendered by the `nas` role** (`roles/nas/templates/env.j2`): every "deploy-time `.env`" row below is set in `infra/ansible/host_vars/nas/vars.yml` (except `GATE_HEALTHCHECK_URL`, vaulted in `host_vars/nas/vault.yml`) — never hand-edited on the NAS. `CAPTURE_IMAGE` and `ALLOY_IMAGE` (the digest pins, `nas_capture_image` / `nas_alloy_image`) fill `compose.yaml`'s `${...:?}` placeholders, so compose refuses to start without them.
 
 | Variable | Meaning | Set where |
 | -- | -- | -- |
@@ -71,8 +72,8 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 | `JOURNAL_SOURCE` | rsync source spec for the engine journal, e.g. `deploy@<vps-host>:` (same `rrsync` forced-command pattern, the existing journal channel). | deploy-time `.env` |
 | `JOURNAL_DEST` | Local archive path the journal lands in. | defaults to `/archive/engine-journal` in `compose.yaml` |
 | `CAPTURE_SSH_KEY` | Private key path inside the container for the capture channel's rsync-over-ssh transport. Passed as `ARCHIVE_SSH_KEY` to `zcrypto archive pull` for the capture-segments call only (`cli/archive/command.py` reads a single `ARCHIVE_SSH_KEY` from the environment; the entrypoint scopes it per subprocess call). | fixed to `/keys/sync_capture` in `compose.yaml` (matches the `./keys:/keys:ro` mount) |
-| `JOURNAL_SSH_KEY` | Private key path inside the container for the engine-journal channel's OWN least-privilege rsync-over-ssh transport, distinct from `CAPTURE_SSH_KEY` (Deploy step 3). Passed as `ARCHIVE_SSH_KEY` for the journal-pull call only. | fixed to `/keys/sync_journal` in `compose.yaml` |
-| `ARCHIVE_SSH_KNOWN_HOSTS` | `UserKnownHostsFile` path pinning the VPS host key. Host-key checking is strict (`StrictHostKeyChecking=yes`), so this file must be pre-seeded (Deploy step 4) — an unseeded or stale key fails the pull closed. | fixed to `/keys/known_hosts` in `compose.yaml` |
+| `JOURNAL_SSH_KEY` | Private key path inside the container for the engine-journal channel's OWN least-privilege rsync-over-ssh transport, distinct from `CAPTURE_SSH_KEY` (bootstrap step 3). Passed as `ARCHIVE_SSH_KEY` for the journal-pull call only. | fixed to `/keys/sync_journal` in `compose.yaml` |
+| `ARCHIVE_SSH_KNOWN_HOSTS` | `UserKnownHostsFile` path pinning the VPS host key. Host-key checking is strict (`StrictHostKeyChecking=yes`), so this file must be pre-seeded (bootstrap step 4) — an unseeded or stale key fails the pull closed. | fixed to `/keys/known_hosts` in `compose.yaml` |
 | `CAPTURE_RED_SOURCE` | rsync source spec for the **redundant secondary's** capture segments, e.g. `deploy@zcrypto-red.zhaow.me:` (its own `rrsync -ro` forced command pins the remote subtree, same pattern as the primary). **Leave unset and both the secondary pull and the reconcile step are skipped entirely**, so this stack still runs on a NAS that has not been given the red channel. | deploy-time `.env` |
 | `CAPTURE_RED_DEST` | Where the secondary's raw mirror lands. Kept separate from the primary's on purpose: the reconciler needs the two mirrors as **independent witnesses**, and the raw primary is the T0003 exit bar's only input. | fixed to `/archive/capture-segments-red` in `compose.yaml` |
 | `CAPTURE_RED_SSH_KEY` | Private key for the secondary's pull channel — a **separate** least-privilege keypair (`sync_capture_red`), never the primary's. | fixed to `/keys/sync_capture_red` in `compose.yaml` |
@@ -94,8 +95,8 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 | `TRADE_BACKFILL_TEXTFILE` | Prometheus textfile the daily trade-backfill step (spec `00053`) writes its metrics to (`zcrypto_trade_backfill_*`), atomically (tmp + `mv`). Alloy's keep-regex lists that prefix, same as `RECONCILE_TEXTFILE` above. | defaults to `/textfile/trade-backfill.prom` in `pull-entrypoint.sh` (no compose.yaml entry yet) |
 | `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` (optional) |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles; the entrypoint defaults to `3600` (hourly) if unset. | deploy-time `.env`, or leave unset for the hourly default |
-| `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, Deploy step 5) |
-| `GATE_HEALTHCHECK_URL` | Dead-man's-switch base URL for `gate-export`: GET on a clean gate, GET `<url>/fail` otherwise. **Required** — the sole Alloy-independent paging path (Deploy step 7); a new, dedicated healthchecks.io check, distinct from the engine's own `HEALTHCHECK_URL`. | deploy-time `.env` |
+| `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, bootstrap step 5) |
+| `GATE_HEALTHCHECK_URL` | Dead-man's-switch base URL for `gate-export`: GET on a clean gate, GET `<url>/fail` otherwise. **Required** — the sole Alloy-independent paging path (bootstrap step 7); a new, dedicated healthchecks.io check, distinct from the engine's own `HEALTHCHECK_URL`. | deploy-time `.env` (vaulted: `nas_gate_healthcheck_url`) |
 
 ## Reading pull-lag + verify failures
 
@@ -174,58 +175,13 @@ not run here at all. Only host metrics + the gate metrics + the container logs f
 
 See `docs/specs/00043-observability-design.md` for the design this is adapted from (the VPS
 counterpart) and `infra/nas/config.alloy` for the Alloy pipeline itself — everything here runs
-under Container Manager as plain compose services, no ansible/systemd.
+under Container Manager as plain compose services (deployed by the `nas` Ansible role, no systemd).
 
 ### Deploy
 
-1. Place `config.alloy` (this directory) alongside the already-deployed `compose.yaml` under
-   `/volume1/docker/zcrypto-archive/`.
-2. Create the secrets file `/volume1/docker/zcrypto-archive/alloy-secrets.env`, mode `0600`,
-   **never committed** — distributed out-of-band the same way the `sync_capture`/`sync_journal`
-   keys are (Deploy steps 2–3 above). Contents (one `KEY=value` per line, no quoting):
+Part of the same `nas`-role converge as everything else (see **Deploy** above): the role copies `config.alloy` verbatim from this directory and renders `/volume1/docker/zcrypto-archive/alloy-secrets.env` (mode `0600`, never committed, `no_log`) straight from the vaulted `group_vars/observed/vault.yml` — the same six `GRAFANA_PROM_URL/USERNAME/PASSWORD` + `GRAFANA_LOKI_URL/USERNAME/PASSWORD` names the ops role renders, read by `config.alloy` via the River `sys.env(...)` stdlib function (`compose.yaml` itself stays secret-free and diffable — only `env_file: ./alloy-secrets.env` references the file by name). The Alloy image digest pin is `nas_alloy_image` in `host_vars/nas/vars.yml`, rendered into `.env` as `ALLOY_IMAGE`.
 
-   ```
-   GRAFANA_PROM_URL=https://<prometheus-remote-write-endpoint>/api/prom/push
-   GRAFANA_PROM_USERNAME=<prometheus-instance-id>
-   GRAFANA_PROM_PASSWORD=<prometheus-access-token>
-   GRAFANA_LOKI_URL=https://<loki-push-endpoint>/loki/api/v1/push
-   GRAFANA_LOKI_USERNAME=<loki-instance-id>
-   GRAFANA_LOKI_PASSWORD=<loki-access-token>
-   ```
-
-   `config.alloy` reads these via the River `sys.env(...)` stdlib function; `compose.yaml` itself
-   stays secret-free and diffable (only `env_file: ./alloy-secrets.env` references the file by
-   name).
-3. Create the dedicated Alloy user **`zcrypto-dummy` (uid 1031, gid 1000 — the `zcrypto` group)** on
-   the NAS if it doesn't exist (DSM → Control Panel → User & Group, or `synouser --add`), then create
-   Alloy's `--storage.path` dir owned by it and `chmod 0775`:
-
-   ```bash
-   mkdir -p /volume1/docker/zcrypto-archive/alloy-data
-   chown 1031:1000 /volume1/docker/zcrypto-archive/alloy-data
-   chmod 0775 /volume1/docker/zcrypto-archive/alloy-data
-   ```
-
-   This dir holds the remote_write WAL and Loki log read-positions, which persist across a container
-   replacement so a redeploy doesn't re-ship each source's retained backlog into the ingest quota.
-   The compose file pins `user: "1031:1000"` (`zcrypto-dummy`) — **not** the image's built-in uid-473
-   `alloy` user, nor uid 1000. Rationale: (1) the upstream `grafana/alloy` image runs as `root` by
-   default (its Dockerfile keeps `USER root`), and the `/:/host/root:ro` mount would then expose
-   every 0600 host secret, so a non-root override is load-bearing; (2) uid 473 is not a
-   Synology-recognized user, so the DSM ACL denies it write (`mkdir /var/lib/alloy/...: permission
-   denied`) — a real DSM user is required, and the `chmod 0775` above sets the actual POSIX mode the
-   container honors (the DSM ACL granting host-uid write is **not** seen inside the container); and
-   (3) uid 1031 is a **dedicated, non-secret-owning** user — it is **not** the owner of the `0600`
-   rrsync pull keys (uid 1000 is), so a compromised Alloy cannot read them through `/host/root`. Note
-   `zcrypto-dummy`'s gid 1000 IS the key-owning group, so this protection rests on the keys being
-   `0600` — owner-only, group has no read — not on group isolation; keep the keys `0600`. (This closes
-   [[T0030]]; verified live as 1031:1000: the key read is denied while metrics + logs still ship.)
-4. Pin the Alloy image to a digest, same pattern as the capture image (Deploy step 6 above):
-   `docker buildx imagetools inspect grafana/alloy:latest`, then replace the `:latest` tag on the
-   `alloy` service in `compose.yaml` with `@sha256:<digest>`.
-5. Start (or restart to pick up the new service):
-   `/usr/local/bin/docker compose -f compose.yaml up -d`. Confirm with
-   `/usr/local/bin/docker compose -f compose.yaml ps` that `alloy` is `Up`.
+The one hand-made prerequisite is the `zcrypto-dummy` user + `alloy-data` dir (One-time bootstrap step 6 above). That dir holds the remote_write WAL and Loki log read-positions, which persist across a container replacement so a redeploy doesn't re-ship each source's retained backlog into the ingest quota. The compose file pins `user: "1031:1000"` (`zcrypto-dummy`) — **not** the image's built-in uid-473 `alloy` user, nor uid 1000. Rationale: (1) the upstream `grafana/alloy` image runs as `root` by default (its Dockerfile keeps `USER root`), and the `/:/host/root:ro` mount would then expose every 0600 host secret, so a non-root override is load-bearing; (2) uid 473 is not a Synology-recognized user, so the DSM ACL denies it write (`mkdir /var/lib/alloy/...: permission denied`) — a real DSM user is required, and the bootstrap's `chmod 0775` sets the actual POSIX mode the container honors (the DSM ACL granting host-uid write is **not** seen inside the container); and (3) uid 1031 is a **dedicated, non-secret-owning** user — it is **not** the owner of the `0600` rrsync pull keys (uid 1000 is), so a compromised Alloy cannot read them through `/host/root`. Note `zcrypto-dummy`'s gid 1000 IS the key-owning group, so this protection rests on the keys being `0600` — owner-only, group has no read — not on group isolation; keep the keys `0600`. (This closes [[T0030]]; verified live as 1031:1000: the key read is denied while metrics + logs still ship.)
 
 ### Resource budget
 
@@ -244,7 +200,7 @@ The NAS deploy shakedown ran this stack live on the actual Synology DSM host and
 DSM-specific incompatibilities, all now fixed in `compose.yaml`/`config.alloy` and reflected above:
 cadvisor SIGSEGVs on DSM's cgroup-less kernel (removed entirely — see the container-metrics note
 above), the alloy-data volume's DSM ACL rejects the image's built-in uid 473 (Alloy runs as the
-dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see Deploy step 3 above), and a
+dedicated non-secret-owning uid 1031 `zcrypto-dummy` — see the Alloy Deploy section above), and a
 `cpus:`/`cpu_shares:` limit fails hard on DSM's CPU-cgroup-less kernel (removed — see Resource budget
 above). This file now reflects a live-verified deploy, not just the originally-authored design.
 

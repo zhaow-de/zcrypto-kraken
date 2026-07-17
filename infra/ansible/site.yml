@@ -105,3 +105,21 @@
       tags: [docker]
     - role: ops
       tags: [ops]
+
+- name: converge the NAS — the zcrypto payload only (T0056)
+  hosts: nas_host
+  become: true
+  pre_tasks:
+    - name: note — the NAS play's charter
+      ansible.builtin.debug:
+        msg: >-
+          DSM owns the OS: no base/hardening/firewall/fail2ban/chrony/docker roles here —
+          Synology manages the platform, and this play manages ONLY the zcrypto payload under
+          the stack dir (the archive-pull + alloy compose stack, its .env, and the alloy
+          secrets). The nas role's first act is the UTC clock guard — it FAILS on a non-UTC NAS
+          (docker logs --since parses LOCAL time; T0056) — and render-only is the default:
+          restarts happen only with -e nas_apply_compose=true.
+      tags: [always]
+  roles:
+    - role: nas
+      tags: [nas]

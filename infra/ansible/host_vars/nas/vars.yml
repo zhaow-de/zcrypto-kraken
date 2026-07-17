@@ -1,0 +1,51 @@
+# host_vars/nas — the Synology NAS: the archive/custody tier (spec 00048 Role A), Ansible-managed
+# since T0056 (hand-deploys drifted for days; a committed `:latest` placeholder killed the pull
+# loop for ~90 s on 2026-07-16). DSM owns the OS — the nas role manages ONLY the zcrypto payload
+# under nas_stack_dir. Every quirk below was MEASURED live on 2026-07-16; the secrets sibling
+# (vault.yml) holds nas_gate_healthcheck_url.
+
+ansible_host: 192.168.100.5
+ansible_user: zcrypto-deploy
+
+# DSM's /usr/bin/python3 is 3.8.15 — BELOW ansible-core 2.21's target floor (3.9). The installed
+# `python314` package provides this interpreter; ad-hoc `ping` + `setup --become` both measured
+# working with it.
+ansible_python_interpreter: /usr/local/bin/python3.14
+
+# DSM CHROOTS sftp to the shared folders, so sftp/scp cannot write arbitrary paths (a module
+# upload to /tmp fails "failed to upload"). Piped transfer (plain ssh stdin) measured working.
+ansible_ssh_transfer_method: piped
+ansible_pipelining: true
+
+# Docker's full path: /usr/local/bin is NOT on sudo's PATH, so a bare `sudo docker` fails
+# command-not-found — a script that ignored that failure once read the empty output as a false
+# all-clear. Everything that touches Docker on this host goes through this var.
+nas_docker: /usr/local/bin/docker
+
+nas_stack_dir: /volume1/docker/zcrypto-archive
+
+# The image pins the rendered .env feeds into compose.yaml's ${...:?} placeholders — compose
+# refuses to start without them: the committed `:latest` placeholder these replace was deployed
+# verbatim once and killed the NAS pull loop for ~90 s on 2026-07-16 (T0056).
+#
+# ALWAYS the `-compat` (no-AVX) build: the NAS Atom has no AVX, and the default AVX build dies
+# instantly with `Illegal instruction` (measured 2026-07-16; T0029).
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:854ca39e7bb690b3af92dffa915ac2a20711cbcc593b68def386e5e6ff116e66
+# Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
+# trap class the committed pin kills.
+nas_alloy_image: grafana/alloy@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b
+
+# Pull sources + per-channel SSH ports — the values the hand-maintained .env used to carry; the
+# nas role renders them back into {{ nas_stack_dir }}/.env (roles/nas/templates/env.j2; the
+# env-var contract lives in infra/nas/README.md). GATE_HEALTHCHECK_URL is deliberately NOT here:
+# it is a secret, vaulted as nas_gate_healthcheck_url in host_vars/nas/vault.yml.
+nas_capture_source: "deploy@zcrypto.zhaow.me:"
+nas_archive_ssh_port: 10022
+nas_journal_source: "deploy@zcrypto.zhaow.me:"
+nas_capture_red_source: "deploy@zcrypto-red.zhaow.me:"
+nas_liquidations_source: "deploy@192.168.100.6:"
+nas_liquidations_ssh_port: 22
+nas_panel_source: "deploy@192.168.100.6:"
+nas_panel_ssh_port: 22
+nas_reconciled_source: "deploy@192.168.100.6:"
+nas_reconciled_ssh_port: 22

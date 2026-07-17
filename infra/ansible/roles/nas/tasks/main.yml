@@ -1,0 +1,90 @@
+# The nas role (T0056): the Synology NAS's zcrypto payload — deploy the archive-pull + alloy
+# stack files verbatim from infra/nas/ and render the two env files, applying via one guarded
+# handler. DSM owns the OS: nothing here touches packages, sshd, the firewall, or Docker itself.
+
+# --- THE TZ GUARD — the play's first act, tags: [always] so it fires even on a tag-scoped run.
+# `docker logs --since` parses its argument in the host's LOCAL time: on the CEST NAS a UTC
+# timestamp silently selected a 2-hour-wider window and returned stale lines, producing two false
+# review verdicts on 2026-07-16 (T0056). Until the clock is UTC, log-based evidence from this
+# host cannot be trusted, so the play refuses to manage a non-UTC NAS. The owner deliberately
+# keeps the NAS on CEST until this guard exists — it is EXPECTED to fail on first contact; that
+# failure is the owner's cue to flip DSM to UTC.
+- name: read the NAS clock's UTC offset (the TZ guard's evidence)
+  ansible.builtin.command: date +%z
+  register: nas_tz_offset
+  changed_when: false
+  tags: [always]
+
+- name: refuse to manage a non-UTC NAS (docker logs --since parses LOCAL time)
+  ansible.builtin.assert:
+    that: nas_tz_offset.stdout == '+0000'
+    fail_msg: >-
+      REFUSING to converge the NAS: its clock offset is {{ nas_tz_offset.stdout }}, not +0000.
+      `docker logs --since` parses LOCAL time, so every log-window query against a non-UTC NAS is
+      silently wrong — the CEST/UTC mismatch produced two false review verdicts on 2026-07-16
+      (T0056). Fix: DSM Control Panel -> Regional Options -> Time Zone -> (GMT) Greenwich Mean
+      Time, then re-run this play.
+    success_msg: NAS clock is UTC (+0000) — proceeding.
+  tags: [always]
+
+# --- The stack files, verbatim from infra/nas/ (playbook_dir is infra/ansible, so ../nas is the
+# canonical tree — the engine role's ../ src pattern). Deployed by copy, NEVER duplicated into
+# this role: a second copy of these files is exactly the drift T0056 documents.
+- name: deploy the pull-entrypoint (the in-container scheduler)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../nas/pull-entrypoint.sh"
+    dest: "{{ nas_stack_dir }}/pull-entrypoint.sh"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: apply the nas stack
+
+- name: deploy the compose file
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../nas/compose.yaml"
+    dest: "{{ nas_stack_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: apply the nas stack
+
+- name: deploy the alloy pipeline config
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../nas/config.alloy"
+    dest: "{{ nas_stack_dir }}/config.alloy"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: apply the nas stack
+
+# The deploy-time env: the image pins compose.yaml refuses to start without (the ${...:?} trap
+# that kills T0056's `:latest` placeholder class), the pull sources/ports, and the vaulted gate
+# dead-man URL. no_log + diff: false — GATE_HEALTHCHECK_URL is a credential (a healthchecks.io
+# ping URL is a bearer capability), so neither the rendered content nor a diff may reach the
+# terminal or any log capturing the run (the established pattern wherever a role renders a
+# secret — see the ops role).
+- name: render the stack .env (image pins, pull sources, the vaulted gate dead-man URL)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ nas_stack_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: apply the nas stack
+
+# Grafana Cloud creds for the NAS's Alloy, rendered straight from group_vars/observed/vault.yml —
+# the NAS joined the `observed` group when it came under Ansible (T0056), so the hand-placed
+# out-of-band credentials file is dead. Same six GRAFANA_* names as the ops role's template; same
+# no_log/diff discipline.
+- name: render the alloy secrets env file
+  ansible.builtin.template:
+    src: alloy-secrets.env.j2
+    dest: "{{ nas_stack_dir }}/alloy-secrets.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: apply the nas stack
