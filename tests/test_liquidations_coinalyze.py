@@ -513,3 +513,116 @@ def test_prime_bucket_watermarks_coins_are_independent(tmp_path):
         )
         w.close()
     assert prime_bucket_watermarks(tmp_path, COINS) == {"BTC": t, "DOGE": t}
+
+
+# --- poll_cycle watermark filtering (spec 00055) ----------------------------------------------
+
+
+def _btc_writer(tmp_path):
+    return {"BTC": SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")}
+
+
+def test_poll_cycle_skips_buckets_at_or_below_watermark(tmp_path):
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t_covered = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    t_fresh = t_covered + 60
+    body = [
+        {
+            "symbol": "BTCUSDT_PERP.A",
+            "history": [
+                {"t": t_covered, "l": 1.0, "s": 2.0},
+                {"t": t_fresh, "l": 3.0, "s": 4.0},
+            ],
+        }
+    ]
+    writers = _btc_writer(tmp_path)
+    marks = {"BTC": t_covered}
+    written = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert written == 1  # only the fresh bucket reached the writer
+    parts = list(tmp_path.rglob("*.part*.parquet"))
+    df = pl.concat([pl.read_parquet(p) for p in parts])
+    assert df["event_id"].to_list() == [f"BTCUSDT_PERP.A-{t_fresh}"]
+    assert marks == {"BTC": t_fresh}  # advanced on submit
+
+
+def test_poll_cycle_second_cycle_is_silent_no_dedup_warnings(tmp_path, caplog):
+    # The production symptom, reproduced and killed: an identical follow-up cycle must submit
+    # nothing and trigger ZERO writer-level "dropping replayed event" warnings.
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
+    writers = _btc_writer(tmp_path)
+    marks: dict[str, int] = {}
+    assert poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body)) == 1
+    with caplog.at_level(logging.WARNING):
+        again = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert again == 0
+    assert "dropping replayed event" not in caplog.text
+
+
+def test_poll_cycle_none_watermarks_preserves_resubmit_behavior(tmp_path, caplog):
+    # watermarks=None is today's contract: re-submission reaches the writer and dedup drops it.
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
+    writers = _btc_writer(tmp_path)
+    poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
+    with caplog.at_level(logging.WARNING):
+        poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert "dropping replayed event" in caplog.text
+
+
+def test_poll_cycle_open_bucket_does_not_advance_watermark(tmp_path):
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t_open = int(now.timestamp()) - 60  # closes at now-0s: NOT proven closed (margin 120s)
+    body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t_open, "l": 1.0, "s": 2.0}]}]
+    writers = _btc_writer(tmp_path)
+    marks: dict[str, int] = {}
+    written = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert written == 0
+    assert marks == {}  # an unsubmitted bucket must never advance the mark
+
+
+def test_poll_cycle_failure_mid_cycle_leaves_unsubmitted_coins_unadvanced(tmp_path):
+    # Spec Verify names "a failed cycle": a malformed entry aborts the cycle (poll_cycle raises,
+    # _poll_once catches). Marks advanced before the abort stand (those rows sit in their writer's
+    # buffer); coins never reached must stay unadvanced so the next cycle re-covers them.
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [
+        {"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]},
+        {"symbol": "ETHUSDT_PERP.A", "history": [{"t": t, "l": None, "s": 2.0}]},  # float(None) raises
+    ]
+    writers = {
+        coin: SegmentWriter(tmp_path, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id") for coin in ("BTC", "ETH")
+    }
+    marks: dict[str, int] = {}
+    with pytest.raises(TypeError):
+        poll_cycle("key", ["BTC", "ETH"], writers, watermarks=marks, now=now, opener=_opener(body))
+    assert marks == {"BTC": t}  # BTC advanced (its row is buffered in its writer); ETH never did
+    for w in writers.values():
+        w.close()
+
+
+def test_poll_cycle_logs_submitted_and_skipped_counts(tmp_path, caplog):
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [
+        {
+            "symbol": "BTCUSDT_PERP.A",
+            "history": [
+                {"t": t, "l": 1.0, "s": 2.0},
+                {"t": t + 60, "l": 3.0, "s": 4.0},
+            ],
+        }
+    ]
+    writers = _btc_writer(tmp_path)
+    with caplog.at_level(logging.INFO):
+        poll_cycle("key", ["BTC"], writers, watermarks={"BTC": t}, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert "submitted=1" in caplog.text
+    assert "skipped_at_watermark=1" in caplog.text

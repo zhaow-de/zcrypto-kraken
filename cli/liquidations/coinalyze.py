@@ -6,11 +6,15 @@ Coinalyze has PROVEN closed (see `poll_cycle`), and writes them through the same
 recorder uses -- one writer per coin, `kind="liquidations-1m"` -- so the existing NAS replication
 channel and dead-man wiring (same data dir) carry over unchanged.
 
-Overlap-safety invariant (do not "optimize" away): each cycle re-fetches the whole catch-up window
-and re-submits every closed bucket. TWO mechanisms make that safe, not one: SegmentWriter's dedup
-(`_seen`) covers only the currently-OPEN hour, while re-submissions into already-FINALIZED hours are
-dropped earlier by the writer's late-event floor (`_current_hour`/`_floor` in
-`cli/capture/segment_writer.py`). Narrowing the window or touching the floor logic must preserve both.
+Overlap-safety invariant (do not "optimize" away): each cycle still re-fetches the whole 30 h
+catch-up window, and THREE mechanisms keep the overlap safe. First, a per-coin bucket watermark
+(primed from the on-disk segment tree at startup, advanced in memory on each submit) filters
+re-submissions at source, before they ever reach a writer. Second and third, the writer's own
+defenses remain intact behind it: SegmentWriter's dedup (`_seen`) covers the currently-OPEN hour,
+and re-submissions into already-FINALIZED hours are dropped by the writer's late-event floor
+(`_current_hour`/`_floor` in `cli/capture/segment_writer.py`). Narrowing the window or touching
+the floor logic must preserve all of this -- and a `dropping replayed event` warning that still
+fires is now a genuine anomaly, not steady-state noise.
 """
 
 from __future__ import annotations
@@ -51,9 +55,11 @@ _BUCKET_SECONDS = 60  # Coinalyze's fixed bucket width (interval=1min)
 # never revisit it once dedup has seen the key. A bucket is proven closed once
 # `t + _BUCKET_SECONDS <= now - _CLOSE_MARGIN_SECONDS`.
 _CLOSE_MARGIN_SECONDS = 120
-# Each cycle re-requests the last 24h regardless of when it last succeeded: Coinalyze's own history
-# purges to ~25-33h, so anything older is unreachable anyway, and SegmentWriter's dedup absorbs the
-# overlap for free -- no "since last cycle" state to track (spec 00051 OPS-2 decision).
+# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
+# purges to ~25-33h, so anything older is unreachable anyway. The per-coin bucket watermark IS
+# deliberate cross-cycle in-memory state (spec 00055): it filters re-submissions at source, but it
+# is advisory (fail-open) and never durable -- losing it only costs one window of re-submissions,
+# absorbed by SegmentWriter's dedup/floor.
 # Coinalyze retains 1500-2000 one-minute bars (~25-33 h); requesting a window wider than what it
 # still holds is harmless (it returns what exists), so 30 h maximizes post-outage catch-up without
 # ever asking for provably-purged data.
@@ -148,17 +154,23 @@ def poll_cycle(
     coins: list[str],
     writers: dict[str, SegmentWriter],
     *,
+    watermarks: dict[str, int] | None = None,
     now: datetime | None = None,
     opener=urllib.request.urlopen,
 ) -> int:
-    """One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 24h and append every
+    """One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 30h and append every
     PROVEN-closed 1-min bucket to its coin's writer. Returns the number of rows submitted to a
     writer (SegmentWriter's own `dedup_key` -- not this count -- is what absorbs a re-polled
     overlapping window; see the module docstring).
 
+    `watermarks` (coin -> newest submitted bucket start, epoch s) filters re-submissions at source:
+    a proven-closed bucket at or below its coin's mark is skipped before the writer, and the dict is
+    mutated in place -- a coin's mark advances only on a successful `writer.append`. `None` (the
+    default) disables filtering entirely, reproducing the pre-watermark behavior.
+
     Raises `LiquidationsError` (propagated from `fetch_liquidation_history`) on any fetch failure,
     BEFORE a single row is appended -- a failed cycle writes nothing, and the caller's next cycle
-    simply retries (the 24h re-fetch window covers the gap). A response entry naming a symbol with
+    simply retries (the 30h re-fetch window covers the gap). A response entry naming a symbol with
     no corresponding writer is skipped defensively, never fatal.
     """
     now = now or datetime.now(UTC)
@@ -170,6 +182,7 @@ def poll_cycle(
 
     cutoff = now_s - _CLOSE_MARGIN_SECONDS
     written = 0
+    skipped = 0
     for entry in payload:
         coin = symbol_to_coin.get(entry.get("symbol"))
         writer = writers.get(coin) if coin is not None else None
@@ -183,6 +196,9 @@ def poll_cycle(
             t = bucket["t"]
             if t + _BUCKET_SECONDS > cutoff:
                 continue  # not yet proven closed -- a later cycle will pick it up
+            if watermarks is not None and t <= watermarks.get(coin, -1):
+                skipped += 1
+                continue  # already persisted (or submitted this run) -- never reaches the writer
             writer.append(
                 {
                     "ts": datetime.fromtimestamp(t, tz=UTC),
@@ -193,6 +209,9 @@ def poll_cycle(
                 }
             )
             written += 1
+            if watermarks is not None:
+                watermarks[coin] = max(t, watermarks.get(coin, -1))
+    logger.info("poll cycle: submitted=%d skipped_at_watermark=%d closed bucket(s)", written, skipped)
     return written
 
 
@@ -210,7 +229,7 @@ def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskW
         logger.warning("disk watermark breached -- skipping poll cycle")
         return False
     try:
-        written = poll_cycle(api_key, COINS, writers)
+        poll_cycle(api_key, COINS, writers)
     except LiquidationsError as exc:
         logger.warning("Coinalyze poll cycle failed: %s", exc)
         return False
@@ -222,7 +241,6 @@ def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskW
         # finally regardless; the fetch is all-or-nothing so no partial state was written).
         logger.exception("Coinalyze poll cycle failed on unexpected data -- retrying next cycle")
         return False
-    logger.info("poll cycle submitted %d closed bucket(s) (re-submissions are dropped by dedup/floor)", written)
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
     finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
