@@ -297,6 +297,16 @@ loki.process "parse" {
       source   = "ts"
       format   = "2006-01-02 15:04:05,000"
       location = "UTC"
+      // "skip", NOT the default "fudge" (review finding): lines that fail the stage.regex above --
+      // the scripts' own echoes (including the load-bearing "reconcile skipped: ..." gate warning),
+      // rsync stderr, docker-client errors, Python tracebacks -- have no `ts` in the extracted map,
+      // and "fudge" rewrites their timestamp to the stream's LAST PARSED app timestamp +1ns. For an
+      // hourly unit whose failure path emits ONLY unparsed echoes, that time-warps the headline
+      // warning up to an hour into the past (up to ~24h for the daily units), interleaving it into
+      // the PREVIOUS run's output and hiding it from any short-window Explore view or alert. "skip"
+      // keeps the journal/docker capture time -- the correct emission time -- for non-matching
+      // lines; matching lines still get the app timestamp.
+      action_on_failure = "skip"
     }
 
     stage.template {
