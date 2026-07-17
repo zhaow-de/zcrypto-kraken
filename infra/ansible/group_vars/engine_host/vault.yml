@@ -12,6 +12,14 @@
 # Adding a host to engine_host therefore GRANTS IT THE LIVE TRADE KEY. That is the whole point of
 # the group, and the reason it has exactly one member.
 #
+# The boundary rests on ABSENCE OF COLLISION, not on precedence — know this before "helpfully"
+# re-adding a trade-key var anywhere else. `capture_host` is a CHILD of `observed` (depth 2) while
+# `engine_host` is a direct child of `all` (depth 1), and Ansible merges group vars parent-first:
+# a same-named var re-introduced into capture_host would OVERRIDE this file *and* be resolvable by
+# zcrypto-red again — silently undoing T0061 while every file here still looks correct. The same
+# caveat applies to adding a GROUP under engine_host, not just a host: the inventory's warning names
+# only hosts.
+#
 # Moved here from group_vars/capture_host/ (T0061, 2026-07-17, owner-gated because it is the live
 # trading credential). The ciphertext is UNCHANGED — same vault password, so the blocks moved
 # verbatim and were never decrypted. Verified by boolean probe: `zcrypto` resolves these,

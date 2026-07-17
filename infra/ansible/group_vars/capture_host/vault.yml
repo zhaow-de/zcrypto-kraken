@@ -6,8 +6,14 @@
 # Read ONE value (the block must be de-indented — ansible-vault needs the ciphertext at column 0,
 # so piping the lines as they appear here fails with "Input is not vault encrypted data"):
 #   VPF=infra/ansible/scripts/vault-pass.sh; V=capture_healthcheck_url
-#   awk -v v="$V:" '$1==v{f=1;next} /^[a-z_]+:/{f=0} f' infra/ansible/group_vars/capture_host/vault.yml \
+#   awk -v v="$V:" '$1==v{f=1;next} /^[^ ]/{f=0} f && NF' infra/ansible/group_vars/capture_host/vault.yml \
 #     | sed 's/^ *//' | uv run ansible-vault decrypt --vault-password-file "$VPF" --output -
+#
+# (`/^[^ ]/` — ANY unindented line ends the block, not just the next `var:`. The old `/^[a-z_]+:/`
+# form worked only for a var with another var beneath it: for the LAST var in a file the trailing
+# comments got slurped into the ciphertext and ansible-vault died unhexlifying `#`. That failure
+# invites the operator to reach for `ansible-inventory --host` — the one command this header forbids.
+# `f && NF` drops the blank separator line for the same reason. Verified on every var in this file.)
 #
 # Write ONE value (stdin, so it never lands in shell history or `ps`), then paste the block below:
 #   uv run ansible-vault encrypt_string --vault-password-file infra/ansible/scripts/vault-pass.sh \
