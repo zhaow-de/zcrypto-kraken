@@ -63,6 +63,10 @@ if [ -r "$STATUS" ]; then
 fi
 # Never arithmetic on an unvalidated field: a garbage ts_epoch inside $(( )) is an unbound-variable
 # abort under set -u (this script's lineage shipped exactly one of those, review 2026-07-17).
+# The digits-only check still admits LEADING ZEROS, and bare $(( )) reads a 0-prefixed number as
+# OCTAL — ts_epoch=0999999999 is digits-valid but octal-invalid, and the resulting expansion error
+# aborts the whole if/elif chain, failing the gate OPEN — so every arithmetic site below forces
+# base-10 with 10#$ts_epoch (review 2026-07-17).
 case "$ts_epoch" in
     '' | *[!0-9]*) ts_numeric=0 ;;
     *) ts_numeric=1 ;;
@@ -73,10 +77,10 @@ elif [ "$capture_ok" != "1" ] || [ "$secondary_ok" != "1" ]; then
     skip_reason="NAS reports a not-clean capture pull (capture_ok='$capture_ok' secondary_ok='$secondary_ok'; both must be 1)"
 elif [ "$ts_numeric" -ne 1 ]; then
     skip_reason="status ts_epoch='$ts_epoch' is not a unix timestamp"
-elif [ $((now - ts_epoch)) -gt "$MAX_STATUS_AGE" ]; then
-    skip_reason="status is stale: $((now - ts_epoch))s old (limit ${MAX_STATUS_AGE}s, ts_epoch=$ts_epoch)"
-elif [ $((ts_epoch - now)) -gt "$MAX_STATUS_SKEW" ]; then
-    skip_reason="status ts_epoch=$ts_epoch is $((ts_epoch - now))s in the FUTURE (tolerance ${MAX_STATUS_SKEW}s) — NAS/ops clock skew; a future-stamped status can never attest freshness"
+elif [ $((now - 10#$ts_epoch)) -gt "$MAX_STATUS_AGE" ]; then
+    skip_reason="status is stale: $((now - 10#$ts_epoch))s old (limit ${MAX_STATUS_AGE}s, ts_epoch=$ts_epoch)"
+elif [ $((10#$ts_epoch - now)) -gt "$MAX_STATUS_SKEW" ]; then
+    skip_reason="status ts_epoch=$ts_epoch is $((10#$ts_epoch - now))s in the FUTURE (tolerance ${MAX_STATUS_SKEW}s) — NAS/ops clock skew; a future-stamped status can never attest freshness"
 fi
 
 if [ -n "$skip_reason" ]; then
