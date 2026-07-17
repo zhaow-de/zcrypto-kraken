@@ -1,10 +1,13 @@
 # group_vars/observed — SECRETS shared by every host that ships telemetry.
 #
-# The `observed` group (inventory/hosts.yml) is capture_host + ops_host. These six values are the
-# Grafana Cloud endpoints + credentials Alloy needs; they are NOT host-specific, so scoping them to
-# a group states exactly who may read them — the same reasoning that keeps the live trade key in
-# engine_host rather than capture_host. The ops node is deliberately in THIS group and NOT in
-# engine_host: it ships telemetry, and it must never hold the trade key (spec 00051 D10).
+# The `observed` group (inventory/hosts.yml) is capture_host + ops_host + nas_host. These six
+# values are the Grafana Cloud endpoints + credentials Alloy needs; they are NOT host-specific, so
+# scoping them to a group states exactly who may read them. (The live trade key does NOT enjoy that
+# boundary today: kraken_trade_api_key/secret are group-scoped to capture_host — resolvable by the
+# capture-only zcrypto-red — and only the engine play's engine_host targeting confines their
+# rendering to zcrypto; moving them to a dedicated engine_host scope is T0061, human-gated.) The
+# ops node is deliberately in THIS group and NOT in engine_host: it ships telemetry, and it must
+# never hold the trade key (spec 00051 D10).
 #
 # Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16). They had been mis-scoped since
 # spec 00043: no capture host runs Alloy yet (T0020 is still open — the NAS is the only Alloy

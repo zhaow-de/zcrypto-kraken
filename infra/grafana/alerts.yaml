@@ -355,10 +355,16 @@ rules:
       # (cli/archive/command.py:104) -- and (b) a CAPTURE pull whose hash verification FAILED, because
       # :109 logs "pull complete ... failed=N" *before* the :118 check raises. Either would hold this
       # rule quiet while the capture mirror -- the unbackfillable thing it exists to protect -- was not
-      # advancing at all. `failed=0` appears only on a fully-clean capture pull: the journal line
-      # carries no `failed=` field, and a verify failure carries a non-zero one. So this rule tracks
-      # the capture mirror specifically. A pull that fails LOUDLY is the ERROR rule's job; this one
-      # owns silence.
+      # advancing at all. The journal line carries no `failed=` field, and a verify failure carries a
+      # non-zero one -- but `failed=0` is NOT capture-specific any more: the LIQUIDATIONS, PANEL, and
+      # (since T0058) RECONCILED pulls all run `zcrypto archive pull` WITH verification in this same
+      # container and emit the identical clean line, so any one of them keeps this dead-man green
+      # even if BOTH capture channels are broken. Known, accepted gap: a broken capture pull fails
+      # LOUDLY every cycle, so capture-specific failure is deliberately delegated to the
+      # warning-severity ERROR-logs rule above; this rule owns total silence (loop dead, container
+      # gone, NAS down, log pipeline dark). Tightening the LogQL to a capture-tree match (the line
+      # carries source=/dest= naming the tree) would make it capture-specific again if that gap is
+      # ever deemed worth closing.
       #
       # 3h window against a pull that runs hourly (`${ARCHIVE_PULL_INTERVAL:-3600}` in
       # infra/nas/pull-entrypoint.sh): the loop gets three chances to report before this pages, so a
@@ -713,9 +719,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The dead-man for the ops node's hourly mirror pull. archive-pull.timer fires at :12 every
-      # hour (infra/ansible/roles/ops/templates/archive-pull.timer.j2) -- 3h is ~2 missed cycles of
-      # headroom, same reasoning as the Gate/Reconciler exporter-stale rules above.
+      # The dead-man for the ops node's overlay-WRITER cycle (T0058: the rsync mirror pull this
+      # rule was written for is retired; the unit/metric names are historical, kept because these
+      # rules are provisioned against them). archive-pull.timer fires at :12 and :42
+      # (infra/ansible/roles/ops/templates/archive-pull.timer.j2) -- 3h is ~6 missed half-hourly
+      # cycles of headroom (kept as provisioned at the cadence doubling, deliberately), same
+      # reasoning as the Gate/Reconciler exporter-stale rules above. A clean cycle AND a
+      # fail-closed gate-skip both bump last_success (a skip is a state, not a fault); a
+      # PERSISTENT skip pages via the reconcile exporter-stale rule instead, which a skipped cycle
+      # never refreshes.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -734,14 +746,15 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [10800]}  # 3h; hourly timer at :12, so ~2 missed cycles
+            - evaluator: {type: gt, params: [10800]}  # 3h; half-hourly timer at :12/:42, so ~6 missed cycles
     noDataState: Alerting  # no series at all = the host, Alloy, or the timer is gone. That IS the alarm.
     execErrState: Alerting
     for: 5m
     annotations:
       summary: >-
-        The ops node's mirror is the input to the overlay writer, the panel, and both replays. While
-        the pull is stalled every one of them is reasoning from a mirror that is silently ageing.
+        The ops overlay-writer cycle (historical name: archive-pull) has not completed for 3h --
+        the host, the timer, or Alloy is gone. Reconcile + trade-backfill are not running, and
+        nothing else owns that silence (a gate-skip still bumps this metric, so this is not a skip).
     labels:
       severity: critical
     notification_settings:
@@ -773,14 +786,18 @@ rules:
           refId: C
           conditions:
             - evaluator: {type: gt, params: [0]}
-    # OK, not Alerting: the dead-man rule above already owns "the pull stopped running/succeeding at
-    # all" -- this one owns "it ran and at least one tree failed to sync", same split as the
-    # trade-backfill pair.
+    # OK, not Alerting: the dead-man rule above already owns "the cycle stopped running/succeeding
+    # at all" -- this one owns "it ran and the reconcile step failed", same split as the
+    # trade-backfill pair. T0058: rsync is gone, so the reconcile `docker run` (including a
+    # leftover-container name conflict after a dockerd crash -- archive-pull.sh.j2's T0060 comment
+    # names this alert as that failure's loud path) is the only thing that sets rc non-zero; a
+    # gate-skip and a trade-backfill failure both leave rc at 0 (the backfill's loud path is its
+    # own exit-code alert above).
     noDataState: OK
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The last ops archive-pull cycle recorded a non-zero exit code -- at least one of the mirrored trees failed to sync this cycle."
+      summary: "The last ops overlay-writer cycle (historical name: archive-pull) recorded a non-zero exit code -- the reconcile step failed (image/digest problem, dockerd down, a leftover zcrypto-reconcile container, or the reconciler itself erroring). Gate-skips and trade-backfill failures do NOT trip this rule."
     labels:
       severity: warning
     notification_settings:
@@ -955,7 +972,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Scoped to host="ops": infra/ansible/roles/ops/templates/config.alloy sets
+      # Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
       # `external_labels = { host = "ops" }` on prometheus.remote_write, so every metrics series
       # this Alloy ships carries host="ops" -- that's what makes this selector resolve. The NAS's
       # own node_load1 carries no `host` label at all (infra/nas/config.alloy deliberately doesn't

@@ -17,12 +17,23 @@ OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 
 # The series each host must ship. NAS: Role A/B (gate) + its host metrics. OPS: the four timer
 # textfiles (written since OPS-3/OPS-4 but scraped by nothing until spec 00054 Task 1) plus the
-# overlay writer's series, which move to this host in Task 6.
+# overlay writer's series (moved to this host by spec 00054 Task 6/OPS-5).
 NAS_REQUIRED = [
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
     "zcrypto_gate_streak_days",
+]
+# ADMITTED by the NAS keep-regex but NOT published there any more: the overlay writer moved to the
+# ops node (spec 00054 D2) and the NAS's stale reconcile/trade-backfill textfiles were deleted at
+# the 2026-07-16 cutover, so these families publish from ops ONLY (the one-publisher invariant --
+# a resurrected NAS twin would freeze and page the host-unscoped exporter-stale rule forever).
+# They are listed separately so this guard never again claims the NAS "must ship" them: keeping
+# them in the NAS regex is today's standing admission (asserted here so a trim is a conscious act,
+# not silent drift), while trimming them -- so a hand-deploy regression (T0056) could never
+# resurrect the frozen twin -- is a deliberate hardening decision that would move these entries
+# out of this list, not a regression this test should block.
+NAS_LEGACY_ADMITTED = [
     "zcrypto_reconcile_last_success_timestamp_seconds",
     "zcrypto_trade_backfill_exit_code",
 ]
@@ -57,7 +68,7 @@ def _keep_regex(path: Path) -> re.Pattern:
 
 @pytest.mark.parametrize(
     ("path", "required"),
-    [(NAS_ALLOY, NAS_REQUIRED), (OPS_ALLOY, OPS_REQUIRED)],
+    [(NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED), (OPS_ALLOY, OPS_REQUIRED)],
     ids=["nas", "ops"],
 )
 def test_keep_regex_admits_every_published_series(path, required):

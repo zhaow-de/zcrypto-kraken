@@ -50,6 +50,8 @@ Both were found while writing this plan, by reading the live system rather than 
 | `tests/test_infra_alloy_series.py` | **create** | The T0051 guard: every series the stack publishes must match its host's keep-regex. |
 | `infra/ops/README.md`, `infra/nas/README.md` | modify | Channel + deploy docs. |
 
+> **Correction (2026-07-16, post-merge):** every `infra/ansible/roles/ops/templates/config.alloy.j2` reference in this plan is the file's *planned* path, not its final one. The file shipped as a 100% static config installed with `ansible.builtin.copy`, which only ever searches a role's `files/` dir — it now lives at `infra/ansible/roles/ops/files/config.alloy` (moved in commit `92b6db6` after a converge proved the `templates/` copy could never be found). Edit the `files/` path; `tests/test_infra_alloy_series.py` points there too.
+
 ---
 
 ### Task 1: The ops node's Alloy stack
@@ -75,6 +77,8 @@ Both were found while writing this plan, by reading the live system rather than 
 
 1. **cadvisor:** the NAS omits it because it SIGSEGVs on Synology DSM's cgroup-less kernel, taking down all of Alloy. **The ops node is Debian with a normal cgroup hierarchy, so that rationale does not apply.** Still do **not** add cadvisor: this task's job is the four textfile series + host metrics reaching Grafana (D1), and container CPU/mem is not part of D1's gate. Adding it would also enlarge the active-series budget the spec flags as an open risk. Record the *reason* in a comment — "omitted by choice here, not by DSM constraint" — so the next reader does not re-derive it.
 2. **`user:`/`group_add`:** the NAS's `1031:1000` + `group_add: ["0"]` exists to satisfy DSM ACLs while keeping Alloy off the 0600 rrsync keys (T0030). On ops, run Alloy as the `deploy` uid/gid (the role already derives `ops_uid`/`ops_gid` via `getent`), and add `group_add: ["docker"]`. **Do not mount `/:/host/root:ro`** — the NAS needs it for its rootfs collector, but ops holds rrsync keys under `/home/deploy/.ssh` and this task has no reason to expose them. Set `rootfs_path` to `/host/root` only if you mount it; otherwise omit both the mount and the `rootfs_path` line and drop `filesystem` from `set_collectors`… **except** free-disk-space on ops IS wanted (it holds 5 GB+ of mirrors and will hold the overlay). So: mount `/:/host/root:ro` and keep `filesystem`, and note in a comment that this is the T0042/T0030 residual replicated to ops **with a smaller blast radius** (no trade key, no capture-VPS rrsync key) — exactly as spec D7 states.
+
+   > **Correction (2026-07-16, spec D7 corrected in place — do NOT follow the instruction above):** the deploy-uid choice was a real security bug. Ops holds a live private key (`/home/deploy/.ssh/sync_nas_archive`, 0600 `deploy:deploy`), so running Alloy as `deploy` while mounting `/:/host/root:ro` gives it a **direct, no-escalation read** of that key — the exact exposure the NAS's non-key-owning uid-1031 choice exists to prevent. "Smaller blast radius" was false. What shipped instead (commits `c8c0c73`, `95f9d89`): a dedicated non-key-owning **`zcrypto-alloy`** system user (created by the role, uid/gid via `getent`), and `group_add` set to the host's real **numeric** docker gid — a named `"docker"` entry resolves against the *container's* `/etc/group` (the upstream image ships only `alloy:x:473:`), so the container would never start. See the corrected spec D7.
 3. **The `host` label:** the NAS's `discovery.relabel` block hardcodes `replacement = "nas"`. Use `"ops"` here. The NAS's container-name regex strips a `zcrypto-archive-` compose prefix; ops's compose projects are different — derive the label from `__meta_docker_container_name` with a regex that strips the leading `/` and any trailing `-N` replica index, without assuming the NAS's project prefix.
 
 **The keep-regex (T0051 — this is the part that must be exactly right):**
@@ -184,6 +188,8 @@ Follow `infra/nas/config.alloy`'s structure and the three divergences above. Use
 
 Its own compose project, in `{{ ops_alloy_dir }}`. Model it on the NAS compose's `alloy` service: `image: "{{ ops_alloy_image }}@{{ ops_alloy_digest }}"`, `restart: unless-stopped`, `network_mode: host`, `GOMEMLIMIT: 460MiB`, `env_file: [./alloy-secrets.env]`, the same `command:` list, the `/proc`,`/sys`,`/`,`docker.sock`,`config.alloy`,`alloy-data` volume set, `{{ ops_textfile_dir }}:/textfile:ro`, and a `memory: 512m` limit. Unlike the NAS, DO set `cpus:` — Debian has a CPU cgroup (say `cpus: "2.0"`; the box has 24 threads and Alloy must never contend with the writer this iteration exists to make fast). `user: "{{ ops_uid }}:{{ ops_gid }}"`, `group_add: ["docker"]`.
 
+> **Correction (2026-07-16, spec D7):** the `user:`/`group_add` spec in this step is wrong — see the dated correction under Task 1's divergence 2 above. Shipped: `user:` is the dedicated `zcrypto-alloy` uid/gid (never `deploy`, which owns a live private key readable through the `/:/host/root:ro` mount), and `group_add` is the host's numeric docker gid derived via `getent` (a named `"docker"` never resolves inside the container and the service fails to start).
+
 - [ ] **Step 5: Add the defaults**
 
 In `infra/ansible/roles/ops/defaults/main.yml`, following the file's existing commenting style:
@@ -286,6 +292,8 @@ Co-Authored-By: <your actual model> <noreply@anthropic.com>
 EOF
 )"
 ```
+
+> **Correction (2026-07-16, spec D7):** the commit body drafted above repeats the two errors corrected under Task 1's divergence 2 — "Alloy runs as deploy" and "smaller blast radius (no trade key, no capture-VPS rrsync key)". Both were wrong: `deploy` owns the live `sync_nas_archive` private key, directly readable through the `/host/root:ro` mount. The commit that actually shipped (`c4b375c` + fixes `c8c0c73`/`95f9d89`) runs Alloy as the dedicated non-key-owning `zcrypto-alloy` uid with the numeric docker gid. Never reuse this block's wording as precedent for another host's Alloy (e.g. T0020's VPS `obs` role).
 
 ---
 
@@ -853,6 +861,8 @@ EOF
 ### Task 7 (ATTENDED — orchestrator only, no subagent): the cutover
 
 **Do not start until Task 3's gate passed.** This is the iteration's only irreversible window, and D5's safety rests on a *measured* fixed point — **re-measure it, do not trust the spec's 2026-07-16 numbers.**
+
+> **Historical record (annotated 2026-07-17, T0058 pivot):** this task was executed as written on 2026-07-16, but its command expectations no longer describe the deployed system — the T0058 pivot (spec 00054 addendum) retired the ops-side rsync pull entirely. Step 6's `archive-pull.sh` and Step 9's "the three trees rsync" expectations are superseded: `zcrypto-archive-pull` is now the overlay-writer cycle (NFS reads through `ops_nas_mount`, the `.pull-status` fail-closed gate, no rsync lines at all). **Do not re-run these steps as a runbook**; the current shape is `infra/ops/README.md`.
 
 - [ ] **Step 1: RE-VERIFY the byte-identity fixed point (D5)**
 

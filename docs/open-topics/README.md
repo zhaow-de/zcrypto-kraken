@@ -77,9 +77,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0057 — the ledger-correction backup lives inside custody](T0057-ledger-correction-backup-in-custody.md) — \[[T0044]\]'s runbook writes its `.bak` into the replicated overlay: it broke the ops→NAS channel on a permission mismatch, and it is the only surviving record that an append-only ledger was edited (ripe when: the ledger is corrected again, or the overlay pull fails on permissions).
 
-- [T0058 — the ops mirror is two hops from source](T0058-ops-mirror-is-two-hops-from-source.md) — moving the reconciler downstream raised `source_lag` 4072s→6465s and shrank the 3h alert margin from ~1.9h to ~1.2h; spec `00054`'s D10 predicted it would fall, which conflated loop-period with mirror lag (ripe when: `capture mirror lagging` fires, or a third consumer appears downstream).
-
 - [T0059 — `Persistent=true` + `--date yesterday` skips a multi-day outage](T0059-persistent-timer-replay-coverage-gap.md) — systemd runs a missed timer once, not once per missed day, so a 3-day outage verifies ONE day and every metric still reports healthy; the old whole-journal replay covered this by accident (ripe when: the ops node is offline for more than a day).
+
+- [T0061 — the live trade key is group-scoped to capture_host](T0061-trade-key-group-scope.md) — the capture-only secondary resolves the live Kraken trade key + secret (only the engine play's targeting keeps them off `zcrypto-red`); moving them to a dedicated `engine_host` vault scope is a small ciphertext move but touches the live trading credential — human-gated (ripe when: go-live hardening (T0049), or the next trade-key rotation).
 
 ### Partially done<a name="partially-done-1"></a>
 
@@ -100,6 +100,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0033 — home ops node (real-CPU compute tier)](T0033-home-ops-node-compute-tier.md) — the storage-topology decision is **ratified** (spec `00051`): NAS keeps custody + pulls, ops node holds the hot tier on NVMe and takes every Atom-bound compute (reconciler, verified path, CRC replay, panel, 24×7 loop) — purely additive, no Role A/B cutover; OPS-1…4 are DONE (iter-097 bring-up; iter-098 the L2 panel, verified + NAS-replicated + accruing); remaining = OPS-5 Offload / OPS-6 Loop (OPS-6 now also owns the workstation ./data migration to ops + NAS) (ripe when: picked as the next infra component).
 
 - [T0060 — the ops node's logs are unusable and 99.9% noise](T0060-ops-log-pipeline-unusable-and-noisy.md) — **the pipeline half is fixed and deploy-verified**: parse stages match via a compose-service-label-first scheme (real `level` labels live), the `docker run --rm` jobs are named, dropped from Docker discovery, and shipped via the unit journal (which also carries the host scripts' own gate-decision lines no container log ever had), and 10 alert rules are provisioned live (ERROR logs, two green-when-blind canaries, four exit-code rules); remainder = the poller stops re-submitting at source (a per-pair watermark, owner-ratified 2026-07-17 — the next iteration's spec) + a Loki ingest-volume re-check once it lands (ripe when: the watermark fix is picked as an iteration — the ~15,800 WARNING/h noise persists until then).
+
+- [T0058 — the ops mirror is two hops from source](T0058-ops-mirror-is-two-hops-from-source.md) — moving the reconciler downstream raised `source_lag` 4072s→6465s→7928s AND the review falsified the "no wrong verdicts" claim (the cutover gate keyed on a transport that succeeds against a frozen mirror); the owner-ratified T0058 pivot (NFS ro read path, NAS `.pull-status` fail-closed gate, writer cadence ×2) is implemented on the branch — remainder = converge + verify, then resolve with the measured after-state (ripe when: the NFS migration is converged and verified).
 
 ### Resolved<a name="resolved-1"></a>
 

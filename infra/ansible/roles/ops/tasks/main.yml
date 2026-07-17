@@ -329,9 +329,9 @@
         group: deploy
         mode: "0644"
 
-    # Renders straight from the vault (group_vars/observed/vault.yml) -- unlike the NAS, which is
-    # not Ansible-managed (Synology Container Manager) and so needs a hand-placed, out-of-band file,
-    # this host IS Ansible-managed and there is no reason to keep a human step in the loop. no_log +
+    # Renders straight from the vault (group_vars/observed/vault.yml) -- the NAS's copy is rendered
+    # the same way by the `nas` role since T0056, so no hand-placed, out-of-band secrets file
+    # exists anywhere in the fleet any more. no_log +
     # diff: false: without both, a converge prints the six Grafana Cloud credentials to the terminal
     # and to any log capturing the run's output (the established pattern -- see docs/plans/00043 --
     # applied wherever this role renders a secret, e.g. the liquidations compose file above). Owned

@@ -63,7 +63,7 @@ Host quirks — encoded as `host_vars/nas/vars.yml` (all measured live 2026-07-1
 
 ## Env-var contract
 
-The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`roles/nas/templates/env.j2`): every "deploy-time `.env`" row below is set in `infra/ansible/host_vars/nas/vars.yml` (except `GATE_HEALTHCHECK_URL`, vaulted in `host_vars/nas/vault.yml`) — never hand-edited on the NAS. There is no hand-maintained "optional" row: overriding a variable the template does not render (e.g. `ARCHIVE_PULL_INTERVAL`) takes **both** a `vars.yml` entry **and** an `env.j2` line; a variable in neither simply takes its `compose.yaml`/entrypoint default. `CAPTURE_IMAGE` and `ALLOY_IMAGE` (the digest pins, `nas_capture_image` / `nas_alloy_image`) fill `compose.yaml`'s `${...:?}` placeholders, so compose refuses to start without them. The reconcile/backfill knobs that used to live here (`RECONCILE_TEXTFILE`, `RECONCILE_MIN_GAP_SECONDS`, `RECONCILE_WINDOW_HOURS`, `TRADE_BACKFILL_TEXTFILE`) left with the writer: OPS-5 (spec `00054`) moved the reconciler + trade-backfill steps to the ops node.
+The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`roles/nas/templates/env.j2`): every "deploy-time `.env`" row below is set in `infra/ansible/host_vars/nas/vars.yml` (except `GATE_HEALTHCHECK_URL`, vaulted in `host_vars/nas/vault.yml`) — never hand-edited on the NAS. There is no hand-maintained "optional" row: overriding a variable the template does not render (e.g. `ARCHIVE_PULL_INTERVAL`) takes **both** a `vars.yml` entry **and** an `env.j2` line; a variable in neither simply takes its `compose.yaml`/entrypoint default. `CAPTURE_IMAGE` and `ALLOY_IMAGE` (the digest pins, `nas_capture_image` / `nas_alloy_image`) fill `compose.yaml`'s `${...:?}` placeholders, so compose refuses to start without them. The reconcile/backfill knobs that used to live here (`RECONCILE_TEXTFILE`, `RECONCILE_MIN_GAP_SECONDS`, `RECONCILE_WINDOW_HOURS`, `TRADE_BACKFILL_TEXTFILE`) left with the writer: OPS-5 (spec `00054`) moved the reconciler + trade-backfill steps to the ops node — the **live** knobs are `ops_reconcile_min_gap_seconds` / `ops_reconcile_window_hours` in `infra/ansible/roles/ops/defaults/main.yml`, which is where T0039's soak-derived `--min-gap-seconds` pin lands (setting a `RECONCILE_*` var in this `.env` is consumed by nothing).
 
 | Variable | Meaning | Set where |
 | -- | -- | -- |
@@ -74,7 +74,7 @@ The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`ro
 | `CAPTURE_SSH_KEY` | Private key path inside the container for the capture channel's rsync-over-ssh transport. Passed as `ARCHIVE_SSH_KEY` to `zcrypto archive pull` for the capture-segments call only (`cli/archive/command.py` reads a single `ARCHIVE_SSH_KEY` from the environment; the entrypoint scopes it per subprocess call). | fixed to `/keys/sync_capture` in `compose.yaml` (matches the `./keys:/keys:ro` mount) |
 | `JOURNAL_SSH_KEY` | Private key path inside the container for the engine-journal channel's OWN least-privilege rsync-over-ssh transport, distinct from `CAPTURE_SSH_KEY` (bootstrap step 3). Passed as `ARCHIVE_SSH_KEY` for the journal-pull call only. | fixed to `/keys/sync_journal` in `compose.yaml` |
 | `ARCHIVE_SSH_KNOWN_HOSTS` | `UserKnownHostsFile` path pinning the VPS host key. Host-key checking is strict (`StrictHostKeyChecking=yes`), so this file must be pre-seeded (bootstrap step 4) — an unseeded or stale key fails the pull closed. | fixed to `/keys/known_hosts` in `compose.yaml` |
-| `CAPTURE_RED_SOURCE` | rsync source spec for the **redundant secondary's** capture segments, e.g. `deploy@zcrypto-red.zhaow.me:` (its own `rrsync -ro` forced command pins the remote subtree, same pattern as the primary). **Leave unset and both the secondary pull and the reconcile step are skipped entirely**, so this stack still runs on a NAS that has not been given the red channel. | deploy-time `.env` |
+| `CAPTURE_RED_SOURCE` | rsync source spec for the **redundant secondary's** capture segments, e.g. `deploy@zcrypto-red.zhaow.me:` (its own `rrsync -ro` forced command pins the remote subtree, same pattern as the primary). **Leave unset and the secondary pull is skipped entirely**, so this stack still runs on a NAS that has not been given the red channel — `.pull-status` then reports `secondary_ok=1` vacuously (the ops writer's gate consumes only the pulls this host actually runs; the reconcile step itself moved to the ops node, spec `00054`). | deploy-time `.env` |
 | `CAPTURE_RED_DEST` | Where the secondary's raw mirror lands. Kept separate from the primary's on purpose: the reconciler needs the two mirrors as **independent witnesses**, and the raw primary is the T0003 exit bar's only input. | fixed to `/archive/capture-segments-red` in `compose.yaml` |
 | `CAPTURE_RED_SSH_KEY` | Private key for the secondary's pull channel — a **separate** least-privilege keypair (`sync_capture_red`), never the primary's. | fixed to `/keys/sync_capture_red` in `compose.yaml` |
 | `LIQUIDATIONS_SOURCE` | rsync source spec for the **ops node's** liquidations tree (spec 00051 OPS-2), e.g. `deploy@<ops-host>:` (its own `rrsync -ro` forced command pins the remote subtree — see `infra/ops/README.md` for the channel setup). Liquidations are not backfillable, so this pull is the no-sole-custody replica. **Leave unset and the pull is skipped entirely**, so this stack still runs on a NAS that has not been given the ops channel. Hash-verified like the capture pulls (the recorder writes `.sha256` manifests). | deploy-time `.env` |
@@ -88,7 +88,7 @@ The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`ro
 | `RECONCILED_SOURCE` | rsync source spec for the **ops node's** healed overlay tree (spec 00054 D4), e.g. `deploy@<ops-host>:` (its own `rrsync -ro` forced command pins the remote subtree — see `infra/ops/README.md` for the channel setup). The overlay writer (reconciler + trade-backfill) moved to the ops node, so this pull is how the NAS re-acquires custody of it. **Leave unset and the pull is skipped entirely**, so this stack still runs on a NAS that has not been given the channel — which is also the rollback path. Hash-verified like the capture/liquidations/panel pulls (every minted hour carries a `.sha256` sidecar). | deploy-time `.env` |
 | `RECONCILED_SSH_KEY` | Private key for the reconciled-overlay pull — a **separate** least-privilege keypair (`sync_reconciled`), never the capture/journal/liquidations/panel keys. | fixed to `/keys/sync_reconciled` in `compose.yaml` |
 | `RECONCILED_SSH_PORT` | The ops node's SSH port, scoped to this pull only (passed as `ARCHIVE_SSH_PORT` per call, like the per-call keys). The ops node is a home-LAN box on port **22**, unlike the VPS channels' 10022. | defaults to `22` in `compose.yaml` |
-| `RECONCILED_DEST` | The healed overlay `zcrypto archive reconcile` writes to. Only **healed** hours land here, plus the append-only ledger; readers resolve reconciled-first, primary-final otherwise (`cli/archive/reader.py`). | fixed to `/archive/capture-reconciled` in `compose.yaml` |
+| `RECONCILED_DEST` | Where the healed-overlay mirror lands (the `RECONCILED_SOURCE` pull's destination — the overlay is *written* on the ops node since OPS-5, spec `00054` D2/D4; this host only re-acquires it into custody). Only **healed** hours arrive, plus the append-only ledger; readers resolve reconciled-first, primary-final otherwise (`cli/archive/reader.py`). | fixed to `/archive/capture-reconciled` in `compose.yaml` |
 | `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` |
 | `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles. | defaults to `3600` (hourly) in `compose.yaml`; not rendered by `env.j2` — changing the cadence takes a `vars.yml` entry **plus** an `env.j2` line (see the intro above) |
 | `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, bootstrap step 5) |
@@ -218,23 +218,23 @@ commit to `infra/grafana/`.
    - `GRAFANA_PROM_DS_UID` — the Prometheus datasource UID on the instance (alert-rule queries).
    - `GRAFANA_LOKI_DS_UID` — the Loki datasource UID on the instance (the ERROR-logs rule).
    - `GRAFANA_ALERT_FOLDER_UID` — the folder UID the alert rules provision into.
-   - `GRAFANA_SLACK_WEBHOOK_URL` (optional, T0047) — the Slack incoming-webhook URL, sourced from
-     the vaulted `slack_webhook_url` in `infra/ansible/group_vars/all/vault.yml` — never
-     committed plaintext. Unset/empty skips the Slack section cleanly.
-   - `GRAFANA_SLACK_RECEIVER` (optional, T0047) — the exact contact-point/receiver name to attach
-     the Slack integration to (e.g. `email`, the receiver every rule in `alerts.yaml` already routes
-     to). No default: leaving it unset (while the webhook URL is set) lists the live contact points
-     instead of guessing.
-2. Create the `email` contact point in Grafana (Alerting → Contact points → New contact point,
-   name it exactly `email`, integration `Email`, enter the destination address(es)) — every alert
-   rule in `alerts.yaml` routes to `notification_settings.receiver: email` by name, so the rules
-   fail to notify anywhere until this contact point exists.
-3. Run `infra/scripts/grafana-push.sh` with the env vars from step 1 exported. It pushes the dashboard
-   (overwriting by its fixed uid `zcrypto-main`) then upserts each alert rule (by its own stable
-   `uid`); if `GRAFANA_SLACK_WEBHOOK_URL` and `GRAFANA_SLACK_RECEIVER` are both set, it also upserts
-   a Slack integration (stable uid `zcrypto-slack-webhook`) onto the named receiver — phase one runs
-   Slack **alongside** email, with no notification-policy changes (T0047).
-4. On first load of the dashboard, confirm (or set as the template-variable defaults) that its
+   - `GRAFANA_SLACK_WEBHOOK_URL` (T0047) — the Slack incoming-webhook URL, sourced from the
+     vaulted `slack_webhook_url` in `infra/ansible/group_vars/all/vault.yml` — never committed
+     plaintext. **Required on a from-scratch stack**: the script mints the as-code `metrics`/`logs`
+     Slack receivers from it and ABORTS before the rules push if the webhook is unset while those
+     receivers don't exist yet (a rule referencing a nonexistent receiver would notify nobody).
+     Steady state (receivers already live): unset/empty just skips the Slack upserts.
+   - `GRAFANA_SLACK_RECEIVER` — **removed 2026-07-16**: the receiver names are as-code constants
+     now (`metrics`, resolve messages on; `logs`, resolve messages off), pinned per rule via
+     `notification_settings.receiver` in `alerts.yaml`. No contact point is ever created by hand.
+2. Run `infra/scripts/grafana-push.sh` with the env vars from step 1 exported. It pushes every
+   `infra/grafana/*-dashboard.json` (overwriting by each file's own `uid`), upserts the
+   `metrics`/`logs` Slack receivers (stable uids `zcrypto-slack-metrics`/`zcrypto-slack-logs`) and
+   points the notification-policy default route at `metrics`, then upserts each alert rule (by its
+   own stable `uid`) and read-back-verifies datasource UIDs (T0034). As one-time legacy cleanup it
+   **deletes** the pre-2026-07-16 `zcrypto-slack-webhook` integration (the old `email`-named
+   receiver) once no rule references it.
+3. On first load of the dashboard, confirm (or set as the template-variable defaults) that its
    `${DS_PROMETHEUS}`/`${DS_LOKI}` datasource variables resolve to the correct Prometheus/Loki
    datasources — Grafana auto-binds these on import, but an instance with more than one datasource
    of either type needs the operator to confirm/select the right one.

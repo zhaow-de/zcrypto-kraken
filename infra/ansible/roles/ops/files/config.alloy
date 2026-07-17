@@ -1,14 +1,17 @@
 // Grafana Alloy config for the ops node's telemetry stack (spec 00054 D1/D7). Installed by the
 // `ops` Ansible role via `ansible.builtin.copy` at ops_alloy_dir/config.alloy -- do not hand-edit
 // on the host, it is overwritten on the next converge. Edit
-// infra/ansible/roles/ops/templates/config.alloy instead. Structurally this mirrors
+// infra/ansible/roles/ops/files/config.alloy instead -- files/, NOT templates/: `copy:` only ever
+// searches a role's files/ dir, so an edit made to a templates/ copy silently never deploys
+// (tests/test_infra_alloy_series.py records the lesson; a converge proved it, no syntax check
+// could). Structurally this mirrors
 // infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
 // remote_write / docker-logs pipeline -- with three deliberate divergences, each called out in
 // the comments below. Grafana Cloud credentials are NOT in this file: they arrive as environment
 // variables from a rendered, 0600, never-committed secrets file (alloy-secrets.env.j2, see
 // infra/ops/README.md), read here via the `sys.env(...)` stdlib function -- the NAS's Alloy reads
-// the same six names from its own alloy-secrets.env, but that file is hand-placed out-of-band (the
-// NAS is not Ansible-managed); this host is, so the `ops` role renders it from the vault instead.
+// the same six names from its own alloy-secrets.env, rendered the same way by the `nas` role from
+// the same vault group (group_vars/observed) since T0056; no hand-placed copy exists anywhere.
 //
 // Plain `copy:`, not `template:` (review finding 2) -- this file is 100% static: every value below
 // (the keep-regex, the textfile path, the host label) is a literal, identical on every converge,
@@ -30,8 +33,10 @@
 // set_collectors for its rootfs-based free-disk-space reading, while running Alloy as a dedicated
 // non-secret-owning uid (1031, not the key-owning 1000) to keep that mount from exposing its 0600
 // rrsync pull keys (T0030). Ops replicates the SAME shape -- mount /:/host/root:ro, keep
-// `filesystem` -- because free disk space is wanted here too (this host holds 5 GB+ of mirrors and
-// will hold the overlay writer). Ops DOES hold a live private key today: `sync_nas_archive`
+// `filesystem` -- because free disk space is wanted here too (this host holds the overlay
+// writer's tree, the panel, and the liquidations archive; the local rsync mirrors it also held
+// are retired since T0058 -- canonical trees are read over NFS now). Ops DOES hold a live private
+// key today: `sync_nas_archive`
 // (deploy:deploy, 0600, under /home/deploy/.ssh), the NAS-pull channel's key, pre-dating this task
 // -- so running Alloy as `deploy` would let the /host/root mount read it directly, no escalation
 // needed at all, defeating the protection this comment claims to replicate. (The
@@ -186,12 +191,16 @@ discovery.relabel "container_logs" {
     target_label  = "container"
   }
 
-  // Non-compose containers (the systemd units' `docker run --name zcrypto-*` jobs): fall back to
-  // the docker name. The join with the (possibly empty) container label makes this rule match ONLY
-  // when the compose rule above did not set it: relabel regexes are fully anchored, so a joined
-  // value that does not START with ";" (i.e. container already set) cannot match "^;...".
-  // T0060: these jobs used to run UNNAMED, so every run minted a brand-new randomly-named Loki
-  // stream, forever. They are named now (archive-pull.sh.j2 etc.); this fallback carries the name.
+  // Name fallback for FUTURE non-compose containers -- today it matches nothing: the only
+  // non-compose containers on this host are the five systemd-launched `docker run --name
+  // zcrypto-*` jobs, and the T0060 drop rule above removes exactly those from the docker path
+  // before this rule ever sees them (their SOLE transport is the journal pipeline below -- there
+  // is no redundant docker-path route for them). This rule exists for the section header's "not
+  // silently invisible" promise: any later non-compose container this role adds ships with its
+  // docker name as the label instead of vanishing unlabelled. The join with the (possibly empty)
+  // container label makes it match ONLY when the compose rule above did not set it: relabel
+  // regexes are fully anchored, so a joined value that does not START with ";" (i.e. container
+  // already set) cannot match "^;...".
   rule {
     source_labels = ["container", "__meta_docker_container_name"]
     separator     = ";"
@@ -216,8 +225,8 @@ loki.source.docker "containers" {
 
 // ---- Logs: the systemd-launched zcrypto jobs, via the host journal --------------------------
 // The docker path above is structurally the WRONG transport for the four zcrypto-*.service units
-// (archive-pull + panel-materialize hourly, verify-replay + verified-replay daily), for two
-// reasons (T0060):
+// (archive-pull half-hourly since T0058, panel-materialize hourly, verify-replay +
+// verified-replay daily), for two reasons (T0060):
 //   1. The orchestration scripts' OWN lines -- including the load-bearing gate warning "reconcile
 //      skipped: a capture pull failed this cycle..." (archive-pull.sh.j2) -- are host-side echoes
 //      into journald. They exist in NO container log, so the docker path can never ship them. (On
@@ -284,8 +293,8 @@ loki.source.journal "zcrypto_units" {
   // Bound on "lossless": after an Alloy outage this component resumes from its saved cursor, but
   // never reads further back than max_age -- UNSET it defaults to 7h, so an outage longer than
   // that would permanently skip the window between the cursor and now-7h. 48h is cheap for these
-  // four low-volume hourly/daily units, so the honest claim is: lossless up to a 48h Alloy
-  // outage; beyond that the skipped window survives only in the host journal, never in Loki.
+  // four low-volume half-hourly/hourly/daily units, so the honest claim is: lossless up to a 48h
+  // Alloy outage; beyond that the skipped window survives only in the host journal, never in Loki.
   max_age       = "48h"
 }
 
