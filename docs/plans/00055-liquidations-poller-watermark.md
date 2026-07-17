@@ -475,7 +475,7 @@ Co-Authored-By: <your actual model> <noreply@anthropic.com>"
 
 ```bash
 git add docs/
-git commit -m "docs(liquidations): iter-102 closeout -- T0060 progress, spec 00055 D5 outcome, changelog
+git commit -m "docs(liquidations): closeout -- T0060 progress, spec 00055 D5 outcome, changelog
 
 Co-Authored-By: <your actual model> <noreply@anthropic.com>"
 ```

@@ -51,7 +51,7 @@ _TIMEOUT_SECONDS = 15
 _BUCKET_SECONDS = 60  # Coinalyze's fixed bucket width (interval=1min)
 # Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
 # row per event_id, so ingesting a bucket before Coinalyze has finished aggregating it would
-# permanently lock in a possibly-incomplete l/s pair -- this poller's overlapping 24h re-poll would
+# permanently lock in a possibly-incomplete l/s pair -- this poller's overlapping 30h re-poll would
 # never revisit it once dedup has seen the key. A bucket is proven closed once
 # `t + _BUCKET_SECONDS <= now - _CLOSE_MARGIN_SECONDS`.
 _CLOSE_MARGIN_SECONDS = 120
