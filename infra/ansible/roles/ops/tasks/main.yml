@@ -1,7 +1,8 @@
 # The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
 # directories + rsync, OPS-2 renders the liquidations-poller compose file, OPS-3 installs the
-# continuity-replay/verified-path timers, OPS-4 installs the recurring NAS archive-pull + panel
-# materialize timers — kept as one role, not split into four.
+# continuity-replay/verified-path timers, OPS-4 installs the overlay-writer (historically the NAS
+# archive-pull, re-plumbed onto NFS reads by T0058) + panel materialize timers — kept as one role,
+# not split into four.
 
 - name: ensure the ops data directory exists
   ansible.builtin.file:
@@ -19,14 +20,59 @@
     group: deploy
     mode: "0755"
 
-- name: install rsync (ships /usr/bin/rrsync, needed by OPS-2's replication channel) + curl (the replay timers' dead-man ping)
+# rsync STAYS after T0058 retired the ops-side pull loop: it ships /usr/bin/rrsync, which the
+# NAS-initiated pull channels (liquidations, panel, reconciled overlay) force-command into — the
+# write-back direction is unchanged, the NAS still pulls FROM this host. nfs-common is the client
+# for the read-only NAS mount below.
+- name: install rsync (rrsync for the NAS-initiated pull channels) + curl (dead-man pings) + nfs-common (T0058 NFS client)
   ansible.builtin.apt:
     name:
       - rsync
       - curl
+      - nfs-common
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# --- T0058: the NAS custody export, mounted READ-ONLY over NFS. Replaces the retired hourly
+# 3-tree rsync mirror (capture-segments, capture-segments-red, engine-journal are now READ through
+# this mount); the overlay + panel still return to the NAS via its own rrsync pulls. Unguarded (no
+# digest involved). Option reasoning (T0058 consensus, 2026-07-17):
+#   * ro + soft: soft surfaces EIO on a hung server instead of a D-state hang, which is
+#     categorically safe HERE because the mount is read-only and every consumer treats an
+#     unreadable segment as a loud integrity fact, never as absence.
+#   * timeo=100 is DECISECONDS (= 10 s), NOT seconds: rides out the Atom NAS's IO bursts (the
+#     workstation's 1 s setting is too tight); retrans=3 bounds the worst case before EIO.
+#   * nfsvers=3 + nolock: nothing here takes file locks, and nolock drops the statd dependency.
+#   * noatime: no atime churn on a read-only workload. nosuid,nodev: free hardening.
+#   * noauto + x-systemd.automount (+ 15 s mount-timeout): mounted on first access, so a NAS that
+#     is down at boot cannot hang the boot path.
+# state: present, NOT mounted — `mounted` would force an immediate mount at converge time, which
+# is exactly what noauto+automount exist to avoid; `present` only writes the fstab entry and the
+# daemon-reload below lets the systemd automount unit own the actual mounting.
+#
+# NOTE (attended step, deliberately NOT automated): once the NFS read path is verified live, the
+# operator retires the old pull channel's credentials — the `sync_nas_archive` private key (+ the
+# nas_known_hosts pin) under ~deploy/.ssh on this host, the matching authorized_keys entry on the
+# NAS, and the now-unpinged `archive-pull` healthchecks.io check. Deleting live-looking keys is an
+# irreversible, verify-first action, so no converge task does it.
+- name: fstab entry for the NAS custody export (read-only NFS; the automount owns mounting) (T0058)
+  ansible.posix.mount:
+    src: 192.168.100.5:/volume1/ZhaoCrypto
+    path: "{{ ops_nas_mount }}"
+    fstype: nfs
+    opts: ro,nfsvers=3,nolock,soft,timeo=100,retrans=3,noatime,nosuid,nodev,noauto,x-systemd.automount,x-systemd.mount-timeout=15
+    state: present
+  register: ops_nas_mount_fstab
+
+# `noqa: no-handler`: deliberately an inline task, not a notify/handler — this repo already ate a
+# dropped-notify bug (nas role, 1ac9ccd: a notify consumed by a when:-skipped handler is dropped,
+# not deferred), and the reload must precede the RequiresMountsFor-ordered units below in the same
+# converge, not run at end of play.
+- name: systemd daemon-reload so the fstab change (re)generates the automount unit  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: ops_nas_mount_fstab is changed
 
 - name: ensure the textfile-collector directory exists
   ansible.builtin.file:
@@ -81,16 +127,15 @@
     group: deploy
     recurse: true
 
-# OPS-4 (spec 00052 D6) runner, now carrying OPS-5's reconciler + trade-backfill (spec 00054 D2):
-# this used to be pure host-side rsync (rsync installed above), needing no pinned image digest, so
-# the script/service/timer install was unconditional and only the enable step was gated (by
-# ops_nas_pull_source alone). OPS-5 moved the reconciler + trade-backfill onto this same entrypoint
-# -- archive-pull.sh.j2 now `docker run`s "{{ ops_image }}@{{ ops_image_digest }}" for both -- so
-# the runner is no longer rsync-only and needs the pinned digest exactly like the replay/panel
-# units below, and is guarded the same way (`when: ops_image_digest is defined`). The WHOLE block
-# is gated, not just the script: arming a timer whose runner script was never installed would fire
-# hourly against a missing /usr/local/sbin/zcrypto-archive-pull, which is worse than not arming it.
-- name: install the archive-pull runner + timer (needs the pinned image digest — reconciler + trade backfill now run in it)
+# The overlay-writer runner (OPS-5, spec 00054 D2; re-plumbed by T0058): archive-pull.sh.j2
+# `docker run`s "{{ ops_image }}@{{ ops_image_digest }}" for reconcile + trade-backfill, reading
+# the canonical trees through the NFS mount above — the hourly NAS->ops rsync the unit was named
+# for is RETIRED (T0058 consensus #2). The zcrypto-archive-pull unit name and ops_archive_pull_*
+# metric names stay because the Grafana alerts are provisioned against them; renaming is
+# registered follow-up cleanup. The WHOLE block is gated on the pinned digest, not just the
+# script: arming a timer whose runner script was never installed would fire every slot against a
+# missing /usr/local/sbin/zcrypto-archive-pull, which is worse than not arming it.
+- name: install the overlay-writer runner + timer (needs the pinned image digest — historical archive-pull name)
   when: ops_image_digest is defined
   block:
     - name: install the archive-pull runner script
@@ -110,16 +155,16 @@
         mode: "0644"
       loop: [service, timer]
 
-    # Review I1(b): the timer's state TRACKS the var instead of one-way gating on it -- emptying
-    # ops_nas_pull_source on a later converge genuinely stops+disables an armed timer, rather than
-    # leaving it firing hourly against an empty source. This still holds whenever the digest is
-    # supplied (the case this block runs in) -- unchanged from before the digest guard was added.
-    - name: archive-pull timer state tracks whether the NAS pull source is configured
+    # Unconditional now (T0058): the enable used to TRACK ops_nas_pull_source (review I1(b) — an
+    # emptied source genuinely disarmed the pull timer), but the source concept died with the
+    # pull, and the writer cycle carries its own fail-closed gate (the NAS-written .pull-status),
+    # so the timer is simply armed whenever the runner is installed.
+    - name: enable + start the overlay-writer (archive-pull) timer
       ansible.builtin.systemd_service:
         name: zcrypto-archive-pull.timer
         daemon_reload: true
-        enabled: "{{ ops_nas_pull_source != '' }}"
-        state: "{{ 'started' if ops_nas_pull_source != '' else 'stopped' }}"
+        enabled: true
+        state: started
 
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed

@@ -1,6 +1,6 @@
 # Ops-node stack (spec 00051, compute tier)
 
-The home ops node (`zcrypto-ops`, `ssh hp`) is the fleet's compute tier: a home-LAN box converged by the third `site.yml` play (roles `base`/`chrony`/`docker`/`ops` — no `hardening`/`firewall`/`fail2ban`, it is not internet-facing). Charter (spec 00051 D10): **no trade key, never `engine_host`, pull-only transport** — it pulls everything it consumes from the NAS and is pulled *from* for everything it produces.
+The home ops node (`zcrypto-ops`, `ssh hp`) is the fleet's compute tier: a home-LAN box converged by the third `site.yml` play (roles `base`/`chrony`/`docker`/`ops` — no `hardening`/`firewall`/`fail2ban`, it is not internet-facing). Charter (spec 00051 D10): **no trade key, never `engine_host`, no write path toward custody** — it reads everything it consumes from the NAS (read-only NFS mount since T0058; the rsync pull loop before that) and is pulled *from* for everything it produces.
 
 Everything below is installed by the `ops` Ansible role (`infra/ansible/roles/ops/`) **only when the pinned image digest is supplied** (`-e ops_image_digest=sha256:<...>`, always the **default AVX** build of `ghcr.io/zhaow-de/zcrypto-capture`, never `-compat`, never `:latest`); a converge without the digest skips those installs rather than rendering artifacts that point at a broken image reference.
 
@@ -68,20 +68,18 @@ The metric families are new: per the T0034 discipline, arm Grafana alert rules o
 
 On a clean run (exit 0) each script GETs its healthchecks.io ping URL — role vars `ops_verify_replay_healthcheck_url` / `ops_verified_replay_healthcheck_url`, both defaulting to empty, which **skips** the ping entirely (the CLI's optional `ping_healthcheck` semantics, shell edition: `[ -n "$URL" ] && curl -fsS -m 10 "$URL"`). A failed run pings nothing and alerts by silence.
 
-## Archive pull + panel (OPS-4, spec 00052)
+## Overlay writer + panel (OPS-4/OPS-5, specs 00052/00054; re-plumbed by T0058)
 
-Two wiring notes: (1) a digest-only converge (image pinned, NAS pull source not yet set) arms `panel-materialize` before any archive exists — its hourly runs then fail loudly (missing `PRIMARY_ROOT`) until the pull channel is wired; that pre-wire-up noise is expected, not a bug (review M2). (2) The `sync_panel` channel setup below assumes the ops host key is already pinned in the NAS `known_hosts` by the `sync_liquidations` setup — if the panel channel is provisioned standalone, do that pinning step first (review M7).
+Two wiring notes: (1) a digest-only converge arms `panel-materialize` before any archive is readable — its hourly runs then fail loudly (missing `PRIMARY_ROOT`) until the archive is present; that pre-wire-up noise is expected, not a bug (review M2). (2) The `sync_panel` channel setup below assumes the ops host key is already pinned in the NAS `known_hosts` by the `sync_liquidations` setup — if the panel channel is provisioned standalone, do that pinning step first (review M7).
 
-Two more hourly systemd timers, installed by the same `ops` role, extend the replay pair above:
-`zcrypto-archive-pull` keeps the ops node's mirror current between the one-off initial seed (spec
-00051 plan Task 8) and the materialize run that consumes it — closing the replay-staleness gap
-noted in [[T0033]] — and `zcrypto-panel-materialize` turns that canonical archive into the
-1-second L2 primitive panel (spec 00052 D6).
+**The NAS→ops rsync mirror is retired (T0058).** The NAS exports `/volume1/ZhaoCrypto` read-only over NFS; the role writes the fstab entry (`ops_nas_mount`, default `/mnt/zhao-crypto`; `ro,nfsvers=3,nolock,soft,timeo=100,retrans=3,noatime,nosuid,nodev,noauto,x-systemd.automount,x-systemd.mount-timeout=15` — `timeo` is **deciseconds**, so 10 s) and the systemd automount owns mounting. The canonical trees (`capture-segments`, `capture-segments-red`, `engine-journal`) are read through the mount; the write-back direction is unchanged (overlay + panel return via the NAS-initiated rrsync pulls below). `zcrypto-archive-pull` keeps its unit + metric names for the provisioned alerts' sake, but it is now the **overlay-writer cycle**: it pulls nothing.
+
+**Attended retirement step (after the NFS path is verified live):** remove the old pull channel's credentials — the `sync_nas_archive` private key + `nas_known_hosts` pin under `~deploy/.ssh` on this host, the matching forced-command entry in the NAS-side `authorized_keys`, and the now-unpinged `archive-pull` healthchecks.io check (it alerts on missed pings, so leaving it armed pages). Deliberately not automated: deleting live-looking keys is an irreversible, verify-first action.
 
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
-| `zcrypto-archive-pull.timer` | hourly, :12 | Host-side `rsync` (no container — rsync is host-installed) of the four canonical trees (`capture-segments`, `capture-segments-red`, `capture-reconciled`, `engine-journal`) from the NAS seed channel (`~deploy/.ssh/sync_nas_archive`, pinned `~deploy/.ssh/nas_known_hosts`, strict host-key checking) into `ops_data_dir`. Unlike every other unit here it needs **no** image digest — the script/service/timer install unconditionally; only the enable step is gated, by `ops_nas_pull_source` being non-empty (role default: empty, so an unconfigured converge arms the timer but the script itself no-ops, logged). The seed channel's key + known-hosts pin are provisioned as an attended step (plan 00052 Task 5). |
-| `zcrypto-panel-materialize.timer` | hourly, :22 (after the pull) | `zcrypto panel materialize /data/capture-segments /data/capture-reconciled --panel-root /data/l2-panel` in the digest-pinned image — watermarked, so only canonical hours strictly newer than the panel's per-pair watermark are processed (installed inside the same `ops_image_digest is defined` guard as the replay timers). |
+| `zcrypto-archive-pull.timer` | half-hourly, :12 and :42 (T0058 — NFS reads cost no transfer) | The overlay-writer cycle: first the **fail-closed gate** — read `{{ ops_nas_mount }}/.pull-status` (written by the NAS right after its own VPS capture pulls, `infra/nas/pull-entrypoint.sh`) and skip the whole cycle (reconcile **and** backfill, exit 0, loud WARNING) unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 4 h. Then `zcrypto archive reconcile /nas/capture-segments /nas/capture-segments-red /data/capture-reconciled` (detect-only until T0039) and the daily `zcrypto archive backfill-trades /nas/capture-segments /data/capture-reconciled`, both in the digest-pinned image with the NFS mount at `/nas:ro`. A persistent skip surfaces via the reconcile-staleness alert (the skipped cycle never rewrites `reconcile.prom`). |
+| `zcrypto-panel-materialize.timer` | hourly, :22 | `zcrypto panel materialize /data/capture-segments /data/capture-reconciled --panel-root /data/l2-panel` in the digest-pinned image — watermarked, so only canonical hours strictly newer than the panel's per-pair watermark are processed (installed inside the same `ops_image_digest is defined` guard as the replay timers). |
 
 Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC), the capture
 hosts' maintenance windows (21:25/22:25 UTC), and the daily replay timers (03:41/05:23).
@@ -100,8 +98,11 @@ one unit.
 
 ### Dead-man pings
 
-Same optional-ping semantics as the replay timers: role vars `ops_archive_pull_healthcheck_url` /
-`ops_panel_healthcheck_url`, both defaulting to empty (skips the ping entirely).
+Same optional-ping semantics as the replay timers for the panel: role var
+`ops_panel_healthcheck_url`, defaulting to empty (skips the ping entirely). The overlay-writer
+cycle pings **nothing** — the archive-pull dead-man died with the pull (T0058; see the attended
+retirement step above for the healthchecks.io check), and the cycle's own failure paths are the
+`ops_archive_pull_exit_code` alert plus the reconcile/trade-backfill staleness alerts.
 
 ### The `sync_panel` replication channel (the NAS pulls this node)
 
@@ -165,8 +166,9 @@ the fleet's labelling is T0020's fleet-wide dashboards pass.
 
 **Runs as the dedicated `zcrypto-alloy` system user, never `deploy`.** The role creates it
 (`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for `ops_uid`. This
-is load-bearing, not cosmetic: `/home/deploy/.ssh` (0700 `deploy:deploy`) holds the **live**
-`sync_nas_archive` private key (0600) that the NAS-pull channel (above) depends on, and Alloy mounts
+is load-bearing, not cosmetic: `/home/deploy/.ssh` (0700 `deploy:deploy`) still holds the
+`sync_nas_archive` private key (0600) of the T0058-retired pull channel (on the host until the
+attended retirement step above runs), and Alloy mounts
 `/:/host/root:ro` for its free-disk-space collector. Running Alloy as `deploy` would let it read
 that key directly through the mount, no escalation needed — defeating the protection this stack
 claims to replicate from the NAS (T0030). `zcrypto-alloy` owns nothing under `/home/deploy/.ssh`, so

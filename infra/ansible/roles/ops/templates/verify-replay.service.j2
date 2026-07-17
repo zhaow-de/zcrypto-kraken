@@ -4,6 +4,9 @@
 Description=Continuity-replay of the pulled canonical archive (spec 00051 OPS-3)
 Requires=docker.service
 After=docker.service
+# T0058: the runner reads the canonical trees through the NAS NFS automount (cutover lands later
+# on the same branch); ordered below this unit now so the switch stays a script-only change.
+RequiresMountsFor={{ ops_nas_mount }}
 
 [Service]
 Type=oneshot
