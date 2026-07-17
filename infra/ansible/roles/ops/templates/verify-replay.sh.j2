@@ -2,21 +2,34 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-verify-replay — do not hand-edit on
 # the host, edit infra/ansible/roles/ops/templates/verify-replay.sh.j2 and re-converge instead.
 #
-# Daily continuity-replay of the pulled canonical archive (spec 00051 OPS-3): runs
-# `zcrypto archive verify-replay` in the digest-pinned default-AVX image, publishes the outcome as a
+# Daily continuity-replay of the canonical archive (spec 00051 OPS-3): runs
+# `zcrypto archive verify-replay` in the digest-pinned default-AVX image, reading the primary tree
+# straight from the NAS's read-only NFS export at /nas (T0058 — the local capture mirror is
+# retired) with the ops-written reconciled overlay still local at /data, publishes the outcome as a
 # node-exporter textfile (ops_verify_replay_*), and pings the dead-man URL on a clean run only — an
 # empty URL skips the ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
+# The mount is ro,soft: a hung NAS surfaces EIO, which the CLI treats as a loud integrity fact
+# (rc!=0 -> the exit-code alert), never as absence.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
 URL="{{ ops_verify_replay_healthcheck_url }}"
 
+# T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each run,
+# and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. Since
+# the journal cutover the name's log role is the PRECISE DROP: config.alloy's docker path drops the
+# `zcrypto-*` ephemerals by name (their stdout ships via this unit's journal instead -- this run is
+# attached, not -d), which no regex could target while the names were random. A leftover container
+# after a dockerd crash makes the NEXT run fail loudly on a name conflict (unit rc!=0 -> the
+# exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every normal path.
 docker run --rm --pull never \
+    --name zcrypto-verify-replay \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
+    -v "{{ ops_nas_mount }}:/nas:ro" \
     -v "{{ ops_data_dir }}:/data:ro" \
     --entrypoint zcrypto \
     "{{ ops_image }}@{{ ops_image_digest }}" \
-    archive verify-replay "/data/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"
+    archive verify-replay "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"
 rc=$?
 
 now=$(date -u +%s)

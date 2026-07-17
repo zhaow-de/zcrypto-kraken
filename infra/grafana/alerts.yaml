@@ -247,7 +247,12 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: node_load1
+          # `{host=""}` looks odd but is deliberate: ops's Alloy now ships node_load1 too (it sets
+          # `external_labels = { host = "ops" }` on prometheus.remote_write), and ops is a 24-thread
+          # box whose normal working load would trip this Atom-sized `gt 4` threshold constantly.
+          # The NAS's own node_load1 carries no `host` label at all, so an empty-value matcher --
+          # documented PromQL for "label absent" -- selects the NAS's copy of the series only.
+          expr: node_load1{host=""}
           instant: true
           refId: A
       - refId: C
@@ -350,10 +355,18 @@ rules:
       # (cli/archive/command.py:104) -- and (b) a CAPTURE pull whose hash verification FAILED, because
       # :109 logs "pull complete ... failed=N" *before* the :118 check raises. Either would hold this
       # rule quiet while the capture mirror -- the unbackfillable thing it exists to protect -- was not
-      # advancing at all. `failed=0` appears only on a fully-clean capture pull: the journal line
-      # carries no `failed=` field, and a verify failure carries a non-zero one. So this rule tracks
-      # the capture mirror specifically. A pull that fails LOUDLY is the ERROR rule's job; this one
-      # owns silence.
+      # advancing at all. The journal line carries no `failed=` field, and a verify failure carries a
+      # non-zero one -- but `failed=0` is NOT capture-specific any more: the LIQUIDATIONS, PANEL, and
+      # (since the OPS-5 cutover, spec 00054 D4) RECONCILED pulls all run `zcrypto archive pull` WITH
+      # verification in this same
+      # container and emit the identical clean line, so any one of them keeps this dead-man green
+      # even if BOTH capture channels are broken. Known, accepted gap: a broken capture pull fails
+      # LOUDLY every cycle, so capture-specific failure is deliberately delegated to the
+      # warning-severity ERROR-logs rule above; this rule owns total silence (loop dead, container
+      # gone, NAS down, log pipeline dark). Tightening the LogQL to a capture-tree match (the line
+      # carries source= naming the tree -- source only; dest= appears on the --no-verify journal
+      # line, never on this one) would make it capture-specific again if that gap is
+      # ever deemed worth closing.
       #
       # 3h window against a pull that runs hourly (`${ARCHIVE_PULL_INTERVAL:-3600}` in
       # infra/nas/pull-entrypoint.sh): the loop gets three chances to report before this pages, so a
@@ -438,8 +451,8 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [10800]}  # 3h. The cycle is ~1.2h (the sleep follows the pull+reconcile work), so this is ~2 missed cycles of headroom
-    noDataState: Alerting  # no series at all = the NAS, Alloy, or the reconciler is gone. That IS the alarm.
+            - evaluator: {type: gt, params: [10800]}  # 3h. Since the OPS-5 cutover the series comes from the ops half-hourly overlay-writer (:12/:42), so this is ~6 missed cycles -- kept as provisioned deliberately (T0058 consensus: thresholds stay), and it doubles as the persistent-gate-skip pager (a skipped cycle never rewrites reconcile.prom)
+    noDataState: Alerting  # no series at all = the ops node, its Alloy, or the writer cycle is gone. That IS the alarm.
     execErrState: Alerting
     for: 5m
     annotations:
@@ -689,3 +702,510 @@ rules:
       severity: critical
     notification_settings:
       receiver: metrics
+
+  # --- Ops node (spec 00054): the timer jobs, the logs pipeline, and the host itself ---------------
+  # Pushed only after Task 3 (the attended Alloy deploy) confirms the underlying series VISIBLE in
+  # Grafana Cloud -- same push-order caveat as the Reconciler/Trade-backfill blocks above: a rule armed
+  # before its metric exists sits silent forever, looking healthy. noDataState is per-rule, not
+  # boilerplate, and the split is a RULE, not a count (counts go stale as rules are added): a rule
+  # whose job is to detect silence -- the dead-men and staleness rules, where no data at all means the
+  # host, Alloy, a transport, or a timer is gone -- uses Alerting, because for it silence IS the
+  # alarm; a rule that grades an outcome (exit codes, ERROR log lines, load) uses OK, because it must
+  # not page a brand-new host for a job that has simply never run yet. Exactly the
+  # `zcrypto-trade-backfill-stale`/`zcrypto-trade-backfill-exit-nonzero` split above, applied here.
+
+  - uid: zcrypto-ops-archive-pull-stalled
+    title: "Ops · archive-pull stalled (dead-man)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The dead-man for the ops node's overlay-WRITER cycle (T0058: the rsync mirror pull this
+      # rule was written for is retired; the unit/metric names are historical, kept because these
+      # rules are provisioned against them). archive-pull.timer fires at :12 and :42
+      # (infra/ansible/roles/ops/templates/archive-pull.timer.j2) -- 3h is ~6 missed half-hourly
+      # cycles of headroom (kept as provisioned at the cadence doubling, deliberately), same
+      # reasoning as the Gate/Reconciler exporter-stale rules above. A clean cycle AND a
+      # fail-closed gate-skip both bump last_success (a skip is a state, not a fault); a
+      # PERSISTENT skip pages via the reconcile exporter-stale rule instead, which a skipped cycle
+      # never refreshes.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - ops_archive_pull_last_success_timestamp
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [10800]}  # 3h; half-hourly timer at :12/:42, so ~6 missed cycles
+    noDataState: Alerting  # no series at all = the host, Alloy, or the timer is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: >-
+        The ops overlay-writer cycle (historical name: archive-pull) has not completed for 3h --
+        the host, the timer, or Alloy is gone. Reconcile + trade-backfill are not running, and
+        nothing else owns that silence (a gate-skip still bumps this metric, so this is not a skip).
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-archive-pull-exit-nonzero
+    title: "Ops · archive-pull non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_archive_pull_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: the dead-man rule above already owns "the cycle stopped running/succeeding
+    # at all" -- this one owns "it ran and the reconcile step failed", same split as the
+    # trade-backfill pair. T0058: rsync is gone, so the reconcile `docker run` (including a
+    # leftover-container name conflict after a dockerd crash -- archive-pull.sh.j2's T0060 comment
+    # names this alert as that failure's loud path) is the only thing that sets rc non-zero; a
+    # gate-skip and a trade-backfill failure both leave rc at 0 (the backfill's loud path is its
+    # own exit-code alert above).
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last ops overlay-writer cycle (historical name: archive-pull) recorded a non-zero exit code -- the reconcile step failed (image/digest problem, dockerd down, a leftover zcrypto-reconcile container, or the reconciler itself erroring). Gate-skips and trade-backfill failures do NOT trip this rule."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verified-replay-stale
+    title: "Ops · verified-replay stale"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # D9's rule. verified-replay.timer fires daily at 05:23 UTC
+      # (infra/ansible/roles/ops/templates/verified-replay.timer.j2) -- 48h is 2 missed days, matching
+      # the trade-backfill staleness rule's reasoning for a daily-cadence job.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - ops_verified_replay_last_success_timestamp
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [172800]}  # 48h -- 2 missed daily cycles
+    noDataState: Alerting  # no series at all = the host, Alloy, or the timer is gone. That IS the alarm.
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "No successful verified-path journal replay in over 48h (D9) -- the daily replay has stopped running or has not succeeded in two cycles."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verified-replay-exit-nonzero
+    title: "Ops · verified-replay non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_verified_replay_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: the stale rule above already owns "the replay stopped running/succeeding at
+    # all" -- this one owns "it ran and found a mismatch or a validation failure" -- critical, not
+    # warning, because a verified-path mismatch means the canonical replay itself disagrees with the
+    # journal, the same class of failure the Gate's mismatch rule pages critical for.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last verified-path journal replay recorded a non-zero exit code -- a replay mismatch or validation failure against yesterday's journaled cycles."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verify-replay-exit-nonzero
+    title: "Ops · verify-replay non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # T0060 review finding: archive-pull.sh.j2's T0060 comment promised "unit rc!=0 -> the
+      # exit-code alert" for the named jobs, but only archive-pull and verified-replay HAD one --
+      # this rule (and the panel rule below) makes that claim true for the remaining two timers.
+      # Same shape as the verified-replay exit rule above. Critical: a non-zero here is the daily
+      # CONTINUITY replay failing -- the earliest signal that the journal itself is corrupt, ahead
+      # of anything the verified path derives from it.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_verify_replay_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: same reasoning as the block header's exit-code split -- a brand-new host
+    # must not page for a job that has simply never run yet.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last daily continuity replay recorded a non-zero exit code -- the journal failed to replay cleanly, the earliest corruption signal there is."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-panel-exit-nonzero
+    title: "Ops · panel non-zero exit"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The second half of the verify-replay rule's finding above. Warning, not critical: the
+      # panel is DERIVED data, recomputable from the mirror on the next healthy run -- a failed
+      # materialize costs freshness, not truth.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_panel_exit_code
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The last hourly panel materialize recorded a non-zero exit code -- the L2 panel is going stale (derived data; recomputable once the cause is fixed)."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-load-high
+    title: "Ops · node load high"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
+      # `external_labels = { host = "ops" }` on prometheus.remote_write, so every metrics series
+      # this Alloy ships carries host="ops" -- that's what makes this selector resolve. The NAS's
+      # own node_load1 carries no `host` label at all (infra/nas/config.alloy deliberately doesn't
+      # set one), so `NAS · load high` above scopes itself with `{host=""}` instead (see that
+      # rule's own comment) -- the two rules partition the metric between the two hosts.
+      #
+      # Threshold: the ops box has 24 threads (infra/ansible/roles/ops/defaults/main.yml), so the NAS
+      # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
+      # threads rather than 100%: ops runs several concurrent services (Alloy, the four timers, and
+      # soon the overlay writer) whose transient overlaps are normal, so full-saturation would be
+      # noisier than the NAS's single-purpose box; 20 keeps the same "sustained saturation, not a
+      # transient burst" intent with headroom for that cross-service scheduling noise.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: node_load1{host="ops"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [20]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "1-minute load average on the ops node exceeds 20 of its 24 threads -- sustained saturation, not a transient burst."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-error-logs
+    title: "Ops · ERROR logs"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the
+      # parse stages strip the level out of the message line, so a grep would be silently blind;
+      # `queryType: instant` for the same Loki-specific reason). Host-wide rather than per-container:
+      # `{host="ops", ...}` covers every parsed ops container at once -- the five named zcrypto-*
+      # jobs AND the liquidations poller, a long-lived daemon whose errors flip NO exit-code metric,
+      # so this rule is its ONLY error channel.
+      #
+      # The `level` label exists only after config.alloy's parse stages attach it. T0060: before
+      # this branch's fix both stages' selectors were the NAS's container names, so the label was
+      # absent on every ops stream and this rule could never have fired -- which is why it lands
+      # together with that fix. NoData is normal here (quiet logs = healthy; liveness is owned by
+      # the dead-men), and `or on() vector(0)` keeps a clean window an explicit 0 anyway.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      # Reduce A to a single value before the threshold -- same belt-and-braces A -> B(reduce) ->
+      # C(threshold) chain as the NAS rule.
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR-level log lines from the ops node's containers in the last 15 minutes. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-ops-log-pipeline-dead
+    title: "Ops · log pipeline dead (no parsed lines)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The canary that closes the ERROR-logs rule's green-when-blind gap. That rule selects on the
+      # `level` label, which exists only because config.alloy's parse stages attach it -- so if the
+      # parse chain regresses (the exact T0060 failure mode: the label scheme, the --name flags, a
+      # selector, or the zcrypto line format drifting), every stream ships level=- again,
+      # `level=~"ERROR|CRITICAL"` selects nothing, and the ERROR rule reads 0 = healthy, forever.
+      # THIS rule fires on the absence of ANY parsed line -- level matching anything at all: the
+      # liquidations poller emits INFO every ~5 minutes, so six silent hours means the pipeline is
+      # dead (Alloy, the parse chain, or the label scheme), not the host quiet. Scope caveat: the
+      # poller ships via the DOCKER path, so its lines alone keep this canary green -- it proves
+      # Alloy + the parse chain + the docker path, and is structurally blind to a
+      # journal-transport-only death; the journal companion rule below owns that failure mode.
+      # `or on() vector(0)` keeps the query returning data while it is intact; execErrState
+      # Alerting still covers "Loki unreachable".
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", level=~".+"} [6h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting, not OK (review finding): this is a fires-on-silence dead-man of critical severity,
+    # the same class as zcrypto-nas-archive-pull-stalled above ("NoData here means the log pipeline
+    # itself died -- that IS the alarm"). While the `or on() vector(0)` fallback is intact the query
+    # always returns data, so Alerting never fires falsely; it is the belt-and-braces layer for the
+    # day a future edit drops the fallback, or a Grafana/Loki edge maps an empty response to NoData
+    # -- with OK the canary would park green in exactly the blind state it exists to page on.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one PARSED log line (any level label) from the ops node in 6h -- the liquidations poller alone emits INFO every ~5 minutes, so the log pipeline is dead or the parse chain has regressed to level=- (T0060). Every log-based ops alert is blind until this is fixed."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-ops-journal-transport-dead
+    title: "Ops · journal transport dead (no unit lines)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The journal-scoped companion to the canary above (review finding). That rule is kept green
+      # by the liquidations poller's docker-path lines alone, so it cannot see a
+      # journal-transport-only death -- and loki.source.journal is the SOLE carrier of the four
+      # zcrypto-*.service units' logs, including the reconcile skip-gate warning this pipeline
+      # exists to ship. The unit failure modes it covers are all silent everywhere else: a rebuilt
+      # host where /var/log/journal does not exist (docker CREATES an empty dir for the bind mount,
+      # so Alloy starts fine and tails an empty journal forever), journald flipping to volatile
+      # storage (/run/log/journal, outside the mount), systemd-journal gid drift after an OS
+      # reinstall, or the keep regex going stale after a unit rename. The units' exit-code and
+      # staleness metrics don't cover log SHIPPING, so no other rule fires for any of these.
+      #
+      # Scoping: `container="zcrypto-archive-pull"` can ONLY come from the journal path -- the
+      # docker path drops every zcrypto-* container by name (config.alloy's drop rule) -- so 26h of
+      # silence from this stream isolates the journal transport specifically. Count ANY line, NOT
+      # level-parsed: the hourly archive-pull unit writes at least one line in every code path
+      # (reconcile CLI INFO on the happy path, the skip-gate/failure echoes otherwise), but its own
+      # echoes carry no level label, so a level-filtered query would false-fire during a
+      # pull-failure streak. 26h = a full day of hourly runs plus headroom.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 93600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", container="zcrypto-archive-pull"} [26h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting for the same dead-man reason as the canary above: the vector(0) fallback means this
+    # never evaluates NoData while intact, and if that ever breaks, silence stays the alarm.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one journal-path log line from zcrypto-archive-pull in 26h -- the hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs

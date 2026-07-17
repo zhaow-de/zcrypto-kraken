@@ -15,7 +15,7 @@
 #   GRAFANA_LOKI_DS_UID        default grafanacloud-logs
 #   GRAFANA_ALERT_FOLDER_UID   default bfrxdfoybx98gb      (the `zcrypto` folder)
 #   GRAFANA_SLACK_WEBHOOK_URL  (REQUIRED for the Slack section) Slack incoming-webhook URL, vaulted
-#                              as slack_webhook_url in infra/ansible/group_vars/capture_host/vault.yml.
+#                              as slack_webhook_url in infra/ansible/group_vars/all/vault.yml.
 #                              Unset/empty SKIPS the upserts only when the metrics/logs receivers
 #                              already exist on the stack (steady state -- they persist once minted);
 #                              on a from-scratch stack the script ABORTS before the rules push rather

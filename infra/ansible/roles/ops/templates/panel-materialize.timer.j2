@@ -5,10 +5,11 @@
 Description=Hourly L2 primitive panel materialize (spec 00052 D6)
 
 [Timer]
-# Off the hour boundary, after the archive-pull timer (:12, spec 00052 D6 pull-before-materialize
-# ordering), clear of the ops reboot window (02:25 UTC), the capture hosts' maintenance windows
-# (21:25/22:25 UTC), and the daily replay timers (03:41/05:23). The host timezone is UTC (base
-# role).
+# Off the hour boundary, after the overlay-writer timer's :12 slot so the overlay hours the panel
+# prefers are fresh (spec 00052 D6 ordering, re-plumbed by T0058 — the pull that ordering was
+# named for is retired), clear of the ops reboot window (02:25 UTC), the capture hosts'
+# maintenance windows (21:25/22:25 UTC), and the daily replay timers (03:41/05:23). The host
+# timezone is UTC (base role).
 OnCalendar=*-*-* *:22:00
 # A host that was down at :22 materializes on the next boot instead of skipping the hour — the
 # watermark makes this idempotent (only hours newer than the panel's per-pair watermark are

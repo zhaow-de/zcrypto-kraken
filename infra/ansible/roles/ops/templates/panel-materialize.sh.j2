@@ -5,23 +5,37 @@
 #
 # Hourly materialize of the canonical book archive into the 1s L2 primitive panel (spec 00052 D6):
 # runs `zcrypto panel materialize` in the digest-pinned default-AVX image, processing canonical
-# hours strictly newer than the panel's per-pair watermark. Scheduled after the archive-pull timer
-# (:12) so it always runs over a freshly-synced mirror. Publishes the outcome as a node-exporter
-# textfile (ops_panel_*) and pings the dead-man URL on a clean run only -- an empty URL skips the
-# ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
+# hours strictly newer than the panel's per-pair watermark. The primary tree is read straight from
+# the NAS's read-only NFS export at /nas (T0058 -- the local capture mirror is retired; ro,soft, so
+# a hung NAS surfaces EIO, which the CLI treats as a loud per-hour error, never as absence); the
+# reconciled overlay stays local at /data. Scheduled after the overlay-writer timer (:12) so the
+# overlay hours it prefers are fresh from that cycle. The panel OUTPUT stays local under /data --
+# the NAS pulls it back via its own rrsync channel (write-back custody unchanged). Publishes the
+# outcome as a node-exporter textfile (ops_panel_*) and pings the dead-man URL on a clean run only
+# -- an empty URL skips the ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-panel-materialize.prom"
 URL="{{ ops_panel_healthcheck_url }}"
 
-# Not `:ro` like the replay mounts -- panel materialize WRITES the panel tree under
-# {{ ops_panel_subdir }}/ inside the same data root.
+# The /data mount is not `:ro` like the replay mounts -- panel materialize WRITES the panel tree
+# under {{ ops_panel_subdir }}/ inside the data root.
+#
+# T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each run,
+# and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. Since
+# the journal cutover the name's log role is the PRECISE DROP: config.alloy's docker path drops the
+# `zcrypto-*` ephemerals by name (their stdout ships via this unit's journal instead -- this run is
+# attached, not -d), which no regex could target while the names were random. A leftover container
+# after a dockerd crash makes the NEXT run fail loudly on a name conflict (unit rc!=0 -> the
+# exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every normal path.
 docker run --rm --pull never \
+    --name zcrypto-panel-materialize \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
+    -v "{{ ops_nas_mount }}:/nas:ro" \
     -v "{{ ops_data_dir }}:/data" \
     --entrypoint zcrypto \
     "{{ ops_image }}@{{ ops_image_digest }}" \
-    panel materialize "/data/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" --panel-root "/data/{{ ops_panel_subdir }}"
+    panel materialize "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" --panel-root "/data/{{ ops_panel_subdir }}"
 rc=$?
 
 now=$(date -u +%s)

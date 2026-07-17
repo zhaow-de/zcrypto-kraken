@@ -5,6 +5,9 @@
 Description=Hourly L2 primitive panel materialize (spec 00052 D6)
 Requires=docker.service
 After=docker.service
+# T0058: the runner reads the canonical tree through the NAS NFS automount, so it is ordered
+# below it.
+RequiresMountsFor={{ ops_nas_mount }}
 
 [Service]
 Type=oneshot

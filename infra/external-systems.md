@@ -119,6 +119,7 @@ IP: home network `<nas-ip>`
 ### Initial setup<a name="initial-setup"></a>
 
 - From DSM web, install `Container Manager` from Package Center
+- DSM web -> Control Panel -> Regional Options -> Time Zone: **(GMT) Greenwich Mean Time** — the NAS clock must stay UTC: `docker logs --since` parses its argument in the host's **local** time, and the CEST default produced false review verdicts on 2026-07-16. The `nas` Ansible role's first act is a fail-closed TZ guard (`date +%z` must print `+0000`), so a rebuilt NAS left on local time fails every converge until this is set (see `infra/nas/README.md`).
 - DSM web -> Control Panel -> Terminal & SNMP, "Enable Telnet service" + "Enable SSH service"
 - From the local workstation, `telnet <nas-ip>`, login with the Synology DSM admin (the one to login http://<nas-ip>:5000 for administration). `sudo -i`, then:
   - `cat /etc/passwd` to ensure no user has UID 1000
@@ -135,6 +136,14 @@ IP: home network `<nas-ip>`
     - Hostname or IP: `<home-lan>/24`
     - Privilege: `Read/Write`
     - Squash: `No mapping` (\<-- this is the root cause why we align the UID and GID between `zhaow`@local-workstation and `zcrypto`@nas)
+    - Security: `sys`
+    - Enable asynchronous: **checked**
+    - Allow connections from non-priviledged ports (ports higher than 1024): **unchecked**
+    - Allow users to access mounted subfolders: **checked**
+  - NFS Permissions: create a second rule for the ops node (T0058 / spec `00054` addendum, 2026-07-17 — the ops node reads the canonical trees through this export, automounted read-only at `/mnt/zhao-crypto`; the export-side **Read-Only** privilege is the server half of spec `00051` D10's "no write path toward custody" boundary — without this rule the boundary rests solely on the ops-side `ro` mount flag):
+    - Hostname or IP: `<ops-node-ip>`
+    - Privilege: `Read-Only`
+    - Squash: `No mapping`
     - Security: `sys`
     - Enable asynchronous: **checked**
     - Allow connections from non-priviledged ports (ports higher than 1024): **unchecked**

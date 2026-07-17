@@ -1,0 +1,391 @@
+// Grafana Alloy config for the ops node's telemetry stack (spec 00054 D1/D7). Installed by the
+// `ops` Ansible role via `ansible.builtin.copy` at ops_alloy_dir/config.alloy -- do not hand-edit
+// on the host, it is overwritten on the next converge. Edit
+// infra/ansible/roles/ops/files/config.alloy instead -- files/, NOT templates/: `copy:` only ever
+// searches a role's files/ dir, so an edit made to a templates/ copy silently never deploys
+// (tests/test_infra_alloy_series.py records the lesson; a converge proved it, no syntax check
+// could). Structurally this mirrors
+// infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
+// remote_write / docker-logs pipeline -- with three deliberate divergences, each called out in
+// the comments below. Grafana Cloud credentials are NOT in this file: they arrive as environment
+// variables from a rendered, 0600, never-committed secrets file (alloy-secrets.env.j2, see
+// infra/ops/README.md), read here via the `sys.env(...)` stdlib function -- the NAS's Alloy reads
+// the same six names from its own alloy-secrets.env, rendered the same way by the `nas` role from
+// the same vault group (group_vars/observed) since T0056; no hand-placed copy exists anywhere.
+//
+// Plain `copy:`, not `template:` (review finding 2) -- this file is 100% static: every value below
+// (the keep-regex, the textfile path, the host label) is a literal, identical on every converge,
+// so there is nothing for Jinja2 to substitute. A `template:` here would also have forced the
+// whole body into a `{% raw %}` wrapper, since Alloy's own pipeline stages further down use Go
+// template `{{ }}` syntax (loki.process's stage.template blocks, e.g. `{{ ToUpper .Value }}`) that
+// Jinja2 would otherwise try to evaluate and fail on (`ToUpper .Value` is not valid Jinja) -- and a
+// full-body raw wrap would silently emit a future `{{ ops_something }}` as a literal string instead
+// of failing loudly. If per-host parameterisation is ever genuinely needed, switch this task back
+// to `template:` then, and scope `{% raw %}` narrowly to only the `stage.template` blocks that
+// actually contain Go syntax -- not the whole file.
+
+// ---- Host metrics -------------------------------------------------------------------------
+// The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
+// /->/host/root) let this exporter see the ops host's own /proc, /sys and rootfs without colliding
+// with Alloy's own container /proc//sys.
+//
+// DIVERGENCE 2 (user/group + rootfs): the NAS mounts /:/host/root:ro and keeps `filesystem` in
+// set_collectors for its rootfs-based free-disk-space reading, while running Alloy as a dedicated
+// non-secret-owning uid (1031, not the key-owning 1000) to keep that mount from exposing its 0600
+// rrsync pull keys (T0030). Ops replicates the SAME shape -- mount /:/host/root:ro, keep
+// `filesystem` -- because free disk space is wanted here too (this host holds the overlay
+// writer's tree, the panel, and the liquidations archive; the local rsync mirrors it also held
+// are retired since T0058 -- canonical trees are read over NFS now). Ops DOES hold a live private
+// key today: `sync_nas_archive`
+// (deploy:deploy, 0600, under /home/deploy/.ssh), the NAS-pull channel's key, pre-dating this task
+// -- so running Alloy as `deploy` would let the /host/root mount read it directly, no escalation
+// needed at all, defeating the protection this comment claims to replicate. (The
+// RECONCILED_SOURCE channel is not an ops-side private key at all: its private half lives on the
+// NAS; ops holds only a forced-command `authorized_keys` PUBLIC entry, which is not secret
+// material.) Alloy here instead runs as the dedicated `zcrypto-alloy` system user (nologin,
+// created by the role, uid/gid looked up via `getent` -- alloy-compose.yaml.j2's `user:`), which
+// owns nothing under /home/deploy/.ssh -- this MIRRORS the NAS's uid-1031 choice, not merely
+// resembles it. `group_add` grants Docker-socket access via the host's real numeric docker gid
+// (derived at converge time via `getent`, alloy-compose.yaml.j2/tasks/main.yml), NOT a named
+// "docker" entry -- Docker resolves a NAMED group_add entry against the CONTAINER's own
+// /etc/group, not the host's, and the upstream grafana/alloy image ships only `alloy:x:473:`, so a
+// literal "docker" would never resolve and the container would fail to start; the numeric gid is
+// exactly why the NAS passes `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN
+// DEPTH ONLY: membership in the `docker` group is root-equivalent by definition (holding the
+// Docker API lets you create a privileged container regardless of a `:ro` socket mount), so the
+// escalation path remains -- exactly the residual the NAS's comments record for T0042. The point of
+// the dedicated uid is narrower and real: it closes the DIRECT, no-escalation read of
+// `sync_nas_archive` through the /host/root mount.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  textfile {
+    // The four timers' textfiles (archive-pull, panel-materialize, verify-replay,
+    // verified-replay), written since OPS-3/OPS-4 into ops_textfile_dir but scraped by nothing
+    // until this task. alloy-compose.yaml.j2 mounts that host directory read-only at this exact
+    // container path -- literal "/textfile", exactly like the NAS's, not a templated
+    // ops_textfile_dir -- because this string names the CONTAINER's view of the mount, not the
+    // host path.
+    directory = "/textfile"
+  }
+}
+
+// ---- Container metrics: intentionally NOT collected on ops, either -------------------------
+// DIVERGENCE 1 (cadvisor): the NAS omits cadvisor because it SIGSEGVs on Synology DSM's
+// cgroup-less kernel, taking down all of Alloy -- that rationale does NOT apply here: the ops node
+// is Debian with a normal cgroup hierarchy, so cadvisor would simply work. It is still left out,
+// omitted BY CHOICE here, not by DSM constraint: this task's job is the four textfile series +
+// host metrics reaching Grafana (spec D1), container CPU/mem is not part of that gate, and adding
+// cadvisor's series would eat into the active-series budget the spec flags as an open risk. A
+// future task can add it deliberately if a container-level gate ever needs it.
+
+// ---- Scrape -> remote_write ------------------------------------------------------------------
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.remote_write "grafana" {
+  // `host="ops"` on every metric this component ships -- without it, no metric on this host
+  // carries a `host` label at all (the `host` label the logs pipeline attaches below, in
+  // discovery.relabel "container_logs", is Loki-only and never reaches Prometheus), so
+  // `infra/grafana/alerts.yaml`'s "Ops · node load high" rule
+  // (`node_load1{host="ops"}`) selects nothing and can never fire. `external_labels` is applied
+  // component-wide, before the write_relabel_config blocks below run -- so it does not touch the
+  // drop/keep pair (both match on `__name__` only) and does not change the number of relabel
+  // blocks.
+  //
+  // The NAS's config.alloy deliberately does NOT get the mirror-image `host="nas"` label, even
+  // though that would look more symmetric: adding a label to an EXISTING, already-live series
+  // changes that series' identity in Prometheus (the old series ends, a new one begins), and the
+  // NAS ships `zcrypto_reconcile_residual_gap_seconds_total`, which
+  // `infra/grafana/alerts.yaml`'s "Reconciler · residual gap increased (permanent loss)" rule
+  // watches through `increase(...[1h]) > 0 and resets(...[1h]) == 0`. A series-identity change
+  // underneath `increase()` can read as a value jump with no corresponding `resets()`, i.e. a
+  // FALSE permanent-data-loss page -- not worth it for a symmetry nobody needs today.
+  //
+  // This is also useful, not merely tolerable: once the overlay writer moves to ops, ops's copy of
+  // zcrypto_reconcile_* carries `host="ops"` while the NAS's carries no host label at all, making
+  // the two hosts' series distinguishable -- exactly what a later task needs to prove the NAS's
+  // stale copy is gone. Deliberate asymmetry, not an oversight.
+  external_labels = {
+    host = "ops",
+  }
+
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USERNAME")
+      password = sys.env("GRAFANA_PROM_PASSWORD")
+    }
+
+    // Series minimization (00043): drop Alloy's own self-metrics first (defense in depth --
+    // nothing scraped above is Alloy's own /metrics endpoint, so this is normally a no-op), then
+    // keep-only the host + textfile series this stack actually wants. T0051 (spec 00054): a `keep`
+    // action drops everything it does not list, so a series missing here does not merely go
+    // undashboarded -- it does not exist. The last two families
+    // (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*) do not exist on this host yet -- they arrive
+    // with Task 6's writer move -- but are listed NOW so that move does not also require reopening
+    // this file. tests/test_infra_alloy_series.py pins this list against every series the stack
+    // (present + Task 6's future) actually publishes.
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "go_.*|process_.*|alloy_.*"
+      action        = "drop"
+    }
+
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*"
+      action        = "keep"
+    }
+  }
+}
+
+// ---- Logs: long-lived containers, via the docker API ----------------------------------------
+// Discover and ship the containers on this host, host-wide rather than per-compose-project, same
+// rationale as the NAS -- with ONE deliberate drop (first rule below): the systemd-launched
+// ephemeral `zcrypto-*` jobs, whose logs the journal pipeline further down owns. Any OTHER
+// container this role adds later is still not silently invisible to the logs dashboard.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "container_logs" {
+  targets = discovery.docker.containers.targets
+
+  // T0060 (journal cutover): DROP the ephemeral `docker run --rm --name zcrypto-*` jobs from the
+  // docker path -- their stdout arrives via the unit journal (loki.source.journal below) instead.
+  // The docker tail is structurally lossy for them: discovery is POLLING, and `--rm` deletes the
+  // container (and its json log file) at exit, so a job living less than a discovery interval
+  // ships NOTHING, and one discovered mid-life ships a truncated head and loses its tail at
+  // removal -- and whatever slice DID land would double-ingest what the journal already carries in
+  // full. The stable `--name` flags (archive-pull.sh.j2 etc., T0060) are what make this drop
+  // precise -- the old engine-random names offered no regex to target. The long-lived containers
+  // (liquidations, alloy) STAY on this path: they are compose-managed, not systemd-launched, so
+  // the journal carries nothing for them.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?zcrypto-(reconcile|trade-backfill|verify-replay|verified-replay|panel-materialize).*"
+    action        = "drop"
+  }
+
+  // DIVERGENCE 3 (host label + container labelling scheme): the first cut of this file derived
+  // `container` from the docker NAME, NAS-style -- on ops that yielded `zcrypto-ops-liquidations`
+  // and `alloy-alloy` (compose project prefixes the NAS's single-project strip never anticipated),
+  // so NEITHER parse selector below matched and every ops stream shipped level=- (T0060).
+
+  // Compose-managed containers: the compose SERVICE name is authoritative — it is stable across
+  // restarts and does not carry the project prefix or replica index the docker NAME does
+  // (zcrypto-ops-liquidations-1 -> liquidations, alloy-alloy-1 -> alloy). The NAS still derives
+  // labels from the docker name; unifying the fleet's scheme is T0020's dashboards package.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    target_label  = "container"
+  }
+
+  // Name fallback for FUTURE non-compose containers -- today it matches nothing: the only
+  // non-compose containers on this host are the five systemd-launched `docker run --name
+  // zcrypto-*` jobs, and the T0060 drop rule above removes exactly those from the docker path
+  // before this rule ever sees them (their SOLE transport is the journal pipeline below -- there
+  // is no redundant docker-path route for them). This rule exists for the section header's "not
+  // silently invisible" promise: any later non-compose container this role adds ships with its
+  // docker name as the label instead of vanishing unlabelled. The join with the (possibly empty)
+  // container label makes it match ONLY when the compose rule above did not set it: relabel
+  // regexes are fully anchored, so a joined value that does not START with ";" (i.e. container
+  // already set) cannot match "^;...".
+  rule {
+    source_labels = ["container", "__meta_docker_container_name"]
+    separator     = ";"
+    regex         = ";/?(.*?)(?:-[0-9]+)?"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  // `host="ops"`, not "nas" -- this is the ops node. Static for the same reason the NAS's is
+  // static: one Alloy instance per host today.
+  rule {
+    target_label = "host"
+    replacement  = "ops"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_logs.output
+  forward_to = [loki.process.parse.receiver]
+}
+
+// ---- Logs: the systemd-launched zcrypto jobs, via the host journal --------------------------
+// The docker path above is structurally the WRONG transport for the four zcrypto-*.service units
+// (archive-pull half-hourly since T0058, panel-materialize hourly, verify-replay +
+// verified-replay daily), for two reasons (T0060):
+//   1. The orchestration scripts' OWN lines -- including the load-bearing gate warning "writer
+//      cycle SKIPPED (fail-closed gate): ..." (archive-pull.sh.j2) -- are host-side echoes
+//      into journald. They exist in NO container log, so the docker path can never ship them. (On
+//      the NAS the equivalent loop runs INSIDE a container, which is why its lines ship; spec
+//      00054 moved ops orchestration into host scripts and silently lost that channel.)
+//   2. Alloy discovers containers by POLLING, and `--rm` deletes the container at exit -- see the
+//      drop rule above; the ephemerals are dropped there precisely because this pipeline is their
+//      lossless replacement.
+// The journal is the native, lossless transport for systemd-launched work: `docker run` without
+// -d runs ATTACHED, so all container stdout/stderr flows through the script into the unit's
+// journal, alongside the script's own lines -- one complete, ordered record per run. "Lossless"
+// is bounded upstream by journald's own per-service rate limit (Debian default
+// RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
+// them -- our four units emit orders of magnitude less than that, but the claim ends there. The
+// host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
+// /host/journal by alloy-compose.yaml.j2.
+loki.relabel "journal_units" {
+  // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
+  // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
+  forward_to = []
+
+  // KEEP only our four units: the journal carries every unit on the host, and this pipeline's
+  // contract is the zcrypto jobs only -- sshd, cron, dockerd and the rest stay local.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\\.service"
+    action        = "keep"
+  }
+
+  // Unit name minus ".service" -> the `container` label. These are journal streams WEARING the
+  // container label for selector uniformity: loki.process "parse" below scopes its zcrypto stage
+  // by {container=~"liquidations|zcrypto-.*"}, and mapping the unit name in means these streams
+  // get parsed (level label, app timestamp) with NO selector change. The label is honest in
+  // substance: the unit IS the meaningful log source here -- its docker children run attached, so
+  // their output is inside it.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)\\.service"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  // `host="ops"`, exactly like the docker path's discovery.relabel above -- one label scheme
+  // across both transports. KNOWN, BENIGN divergence from that scheme: loki.source.journal below
+  // unconditionally injects job="loki.source.journal.zcrypto_units" into its streams, while the
+  // docker-path streams carry no `job` label at all. Deliberately NOT worked around here --
+  // whether relabel rules can strip a component-injected label is unverified, and every selector
+  // and alert today keys only on host/container/level, so nothing reads `job`. Unifying the
+  // fleet's label scheme is T0020's dashboards/labelling pass.
+  rule {
+    target_label = "host"
+    replacement  = "ops"
+  }
+}
+
+loki.source.journal "zcrypto_units" {
+  // The compose file mounts the host's persistent journal here read-only; journal readers also
+  // need the host's /etc/machine-id (mounted alongside) to resolve the current boot's files
+  // (/var/log/journal/<machine-id>/...).
+  path          = "/host/journal"
+  relabel_rules = loki.relabel.journal_units.rules
+  forward_to    = [loki.process.parse.receiver]
+
+  // Bound on "lossless": after an Alloy outage this component resumes from its saved cursor, but
+  // never reads further back than max_age -- UNSET it defaults to 7h, so an outage longer than
+  // that would permanently skip the window between the cursor and now-7h. 48h is cheap for these
+  // four low-volume half-hourly/hourly/daily units, so the honest claim is: lossless up to a 48h
+  // Alloy outage; beyond that the skipped window survives only in the host journal, never in Loki.
+  max_age       = "48h"
+}
+
+// Parse ONCE, here at ingest -- never at query time. Same two stages as the NAS's pipeline: our
+// Python services' own timestamped log line, and Alloy's own logfmt output.
+loki.process "parse" {
+  forward_to = [loki.write.grafana.receiver]
+
+  // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.archive.command [command.py:75] - msg`
+  // Scoped by container, so a container with a different format can never be mangled by this regex.
+  // NOT `{container="archive-pull"}` -- that is the NAS's container; ops's archive-pull is a
+  // systemd unit, not a container, so that selector matched NOTHING here and this whole stage was
+  // dead: no `level` label on any ops stream, no ERROR-logs alert possible (T0060). The
+  // liquidations poller and every named `zcrypto-*` job all emit the same zcrypto Python-logging
+  // line shape this stage's regex parses.
+  stage.match {
+    selector = "{container=~\"liquidations|zcrypto-.*\"}"
+
+    stage.regex {
+      expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
+    }
+
+    stage.timestamp {
+      source   = "ts"
+      format   = "2006-01-02 15:04:05,000"
+      location = "UTC"
+      // "skip", NOT the default "fudge" (review finding): lines that fail the stage.regex above --
+      // the scripts' own echoes (including the load-bearing "writer cycle SKIPPED (fail-closed
+      // gate)" warning),
+      // rsync stderr, docker-client errors, Python tracebacks -- have no `ts` in the extracted map,
+      // and "fudge" rewrites their timestamp to the stream's LAST PARSED app timestamp +1ns. For an
+      // hourly unit whose failure path emits ONLY unparsed echoes, that time-warps the headline
+      // warning up to an hour into the past (up to ~24h for the daily units), interleaving it into
+      // the PREVIOUS run's output and hiding it from any short-window Explore view or alert. "skip"
+      // keeps the journal/docker capture time -- the correct emission time -- for non-matching
+      // lines; matching lines still get the app timestamp.
+      action_on_failure = "skip"
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ ToUpper .Value }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    stage.output {
+      source = "rest"
+    }
+  }
+
+  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`.
+  // `{container="alloy"}` genuinely matches here now: the compose-service rule above labels this
+  // stack's own container "alloy" (compose project `alloy`, service `alloy`) -- the old name-derived
+  // label was "alloy-alloy", so this stage too was dead until T0060's fix.
+  stage.match {
+    selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
+
+    stage.regex {
+      expression = "^ts=\\S+ level=(?P<level>\\w+) msg=(?:\"(?P<msg>(?:[^\"\\\\]|\\\\.)*)\"|(?P<msg_bare>\\S+))\\s*(?P<rest>.*)$"
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    stage.template {
+      source   = "line"
+      template = "{{ if .msg }}{{ .msg }}{{ if .rest }} {{ .rest }}{{ end }}{{ else if .msg_bare }}{{ .msg_bare }}{{ if .rest }} {{ .rest }}{{ end }}{{ else }}{{ .Entry }}{{ end }}"
+    }
+
+    stage.output {
+      source = "line"
+    }
+  }
+}
+
+loki.write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_LOKI_USERNAME")
+      password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}

@@ -2,49 +2,175 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-archive-pull — do not hand-edit on
 # the host, edit infra/ansible/roles/ops/templates/archive-pull.sh.j2 and re-converge instead.
 #
-# Hourly recurring NAS->ops archive pull (spec 00052 D6): rsyncs the four canonical trees from the
-# NAS seed channel to keep the ops node's mirror current between the one-off initial seed (plan
-# 00051 Task 8) and the panel-materialize timer that consumes it -- closing the replay-staleness
-# gap noted in [[T0033]]. Host-side rsync over SSH, no container (rsync is host-installed by this
-# role). Publishes the outcome as a node-exporter textfile (ops_archive_pull_*) and pings the
-# dead-man URL on a clean run only -- an empty URL skips the ping (the CLI's optional
-# `ping_healthcheck` semantics, shell edition). An EMPTY SOURCE reports not-clean (no ping,
-# last_success frozen) so an unwired/unwired-by-drift channel never shows green (review I1).
+# The overlay-WRITER cycle (spec 00054 D2, re-plumbed by T0058): reconcile + daily trade-backfill,
+# reading the canonical trees straight from the NAS's read-only NFS export ({{ ops_nas_mount }}).
+# This script PULLS NOTHING any more — the hourly 3-tree rsync mirror it was named for is retired
+# (T0058 consensus #2). The unit/script/metric names keep the historical `archive-pull` /
+# ops_archive_pull_* identity because the Grafana alert rules are provisioned against them;
+# renaming is registered follow-up cleanup, not this change. The write-back direction is
+# unchanged: the overlay stays LOCAL under {{ ops_data_dir }} and the NAS re-acquires it via its
+# own hash-verified, no-delete rrsync pull (custody stays NAS-initiated).
+#
+# Soft-mount safety: the NFS mount is ro,soft, so a hung NAS surfaces EIO instead of a D-state
+# hang. Categorically safe here: the CLI treats any unreadable segment as a loud integrity fact,
+# never as absence — an EIO cycle fails loudly (rc!=0 -> the exit-code alert), it cannot ledger a
+# false verdict.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-archive-pull.prom"
-URL="{{ ops_archive_pull_healthcheck_url }}"
-SOURCE="{{ ops_nas_pull_source }}"
-SSH_CMD="ssh -i /home/deploy/.ssh/sync_nas_archive -o UserKnownHostsFile=/home/deploy/.ssh/nas_known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+STATUS="{{ ops_nas_mount }}/.pull-status"
+# 4h: below the 6h LATE_MINT line (a stale gate must force a skip BEFORE a frozen view could
+# ledger a permanent late-mint verdict), well above the NAS's ~1.2h normal pull cadence (a healthy
+# NAS never trips it).
+MAX_STATUS_AGE=14400
+# A FUTURE ts_epoch beyond this skew tolerance is treated as malformed, not fresh (review
+# 2026-07-17): the staleness check alone goes negative on a future stamp and never trips, so a
+# status file frozen with good flags and a future timestamp (NAS clock jump — DSM NTP misconfig is
+# a sibling of the CEST TZ incident — then the pull container dies) would hold the gate open
+# against a frozen NFS view for skew+4h, exactly the false-verdict window the gate exists to
+# close. Same clock-skew reasoning as verified-replay's future-watermark guard. 600s tolerates
+# benign inter-host skew (both hosts run NTP; healthy skew is sub-second).
+MAX_STATUS_SKEW=600
 
-# Deliberately NOT an error: an unconfigured source (no default, see ops_nas_pull_source) means the
-# channel hasn't been wired yet (plan Task 5) -- the timer stays armed but no-ops, logged, rather
-# than a converge without the var failing every hour.
-if [ -z "$SOURCE" ]; then
-    # Review I1: an unwired channel must never look HEALTHY -- rc=2 skips the dead-man ping and
-    # freezes last_success (like a failed pull), so "time since last clean pull" keeps aging and a
-    # var emptied by config drift cannot mask a dark channel behind a green check. exit stays 0
-    # (systemd unit not marked failed -- unwired is a state, not a fault).
-    echo "zcrypto-archive-pull: ops_nas_pull_source is empty, nothing to pull (reporting NOT-clean)"
-    rc=2
-else
-    # Best-effort per tree, like the NAS pull-entrypoint's own loop: a corrupt/unreachable tree
-    # must not stop the others from syncing. ANY tree failing marks the whole run failed (no ping).
-    rc=0
-    # The BARE `rsync -a` flags are LOAD-BEARING for the pull(:12)-before-materialize(:22) overlap
-    # safety (review M1): default per-file hidden-tmp+rename means a reader never sees a torn
-    # parquet, and in-order-per-directory transfer keeps the mirror a sorted PREFIX per pair, so the
-    # panel watermark can never leapfrog a mid-tree hole. Adding --inplace/--partial-dir/
-    # --delay-updates would silently break that invariant.
-    for tree in {{ ops_capture_subdir }} capture-segments-red {{ ops_reconciled_subdir }} {{ ops_journal_subdir }}; do
-        rsync -a -e "$SSH_CMD" "$SOURCE$tree/" "{{ ops_data_dir }}/$tree/" || rc=1
-    done
+rc=0
+now=$(date -u +%s)
+
+# --- The gate (T0058 consensus #3). The NAS writes {{ ops_nas_mount }}/.pull-status (capture_ok /
+# secondary_ok / ts_epoch, tmp+mv atomic) right after its own VPS capture pulls
+# (infra/nas/pull-entrypoint.sh, 1ac9ccd); reading it THROUGH the mount consumes the ACTUAL pull
+# outcomes — one NAS cycle delayed — instead of keying on a transport that succeeds even when
+# those pulls are broken (the two-hop blindness the OPS-5 cutover introduced: a frozen view would
+# ledger permanent false would_mint verdicts after 6h, polluting the T0039 soak ledger).
+#
+# FAIL CLOSED: a missing, unreadable, malformed, not-both-ok, stale (> MAX_STATUS_AGE), or
+# future-stamped (> MAX_STATUS_SKEW ahead) status skips the WHOLE writer cycle — reconcile AND
+# backfill. The reconciler reasons from the NAS's
+# mirrors and cannot tell "this hour does not exist" from "this hour did not arrive"; a broken or
+# stale NAS pull makes absence uninformative on both channels:
+#   * primary pull broken: hours look primary-dark but are not — reconciling would mint "healed"
+#     full-secondary hours for data that was never lost.
+#   * secondary pull broken: the witness looks dark — a real primary outage would be classified
+#     both_streams_silent / total_loss: PERMANENT, paged, never revisited (the ledger dedupes).
+# Skipping keeps the ledger honest for free: the hours reconcile on the next healthy cycle.
+skip_reason=""
+capture_ok=""
+secondary_ok=""
+ts_epoch=""
+if [ -r "$STATUS" ]; then
+    capture_ok="$(awk -F= '$1 == "capture_ok" {print $2; exit}' "$STATUS" 2>/dev/null)"
+    secondary_ok="$(awk -F= '$1 == "secondary_ok" {print $2; exit}' "$STATUS" 2>/dev/null)"
+    ts_epoch="$(awk -F= '$1 == "ts_epoch" {print $2; exit}' "$STATUS" 2>/dev/null)"
+fi
+# Never arithmetic on an unvalidated field: a garbage ts_epoch inside $(( )) is an unbound-variable
+# abort under set -u (this script's lineage shipped exactly one of those, review 2026-07-17).
+# The digits-only check still admits LEADING ZEROS, and bare $(( )) reads a 0-prefixed number as
+# OCTAL — ts_epoch=0999999999 is digits-valid but octal-invalid, and the resulting expansion error
+# aborts the whole if/elif chain, failing the gate OPEN — so every arithmetic site below forces
+# base-10 with 10#$ts_epoch (review 2026-07-17).
+case "$ts_epoch" in
+    '' | *[!0-9]*) ts_numeric=0 ;;
+    *) ts_numeric=1 ;;
+esac
+if ! [ -r "$STATUS" ]; then
+    skip_reason="status file $STATUS is missing or unreadable"
+elif [ "$capture_ok" != "1" ] || [ "$secondary_ok" != "1" ]; then
+    skip_reason="NAS reports a not-clean capture pull (capture_ok='$capture_ok' secondary_ok='$secondary_ok'; both must be 1)"
+elif [ "$ts_numeric" -ne 1 ]; then
+    skip_reason="status ts_epoch='$ts_epoch' is not a unix timestamp"
+elif [ $((now - 10#$ts_epoch)) -gt "$MAX_STATUS_AGE" ]; then
+    skip_reason="status is stale: $((now - 10#$ts_epoch))s old (limit ${MAX_STATUS_AGE}s, ts_epoch=$ts_epoch)"
+elif [ $((10#$ts_epoch - now)) -gt "$MAX_STATUS_SKEW" ]; then
+    skip_reason="status ts_epoch=$ts_epoch is $((10#$ts_epoch - now))s in the FUTURE (tolerance ${MAX_STATUS_SKEW}s) — NAS/ops clock skew; a future-stamped status can never attest freshness"
 fi
 
-now=$(date -u +%s)
-# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
-# "time since last clean pull" stays directly alertable (same reason the reconcile exporter and the
-# replay scripts freeze last_success on a failed cycle).
+if [ -n "$skip_reason" ]; then
+    # A skipped cycle is a STATE, not a fault: rc stays 0 (no unit failure, no exit-code alert).
+    # A PERSISTENT skip surfaces via the reconcile-staleness alert
+    # (zcrypto-reconcile-exporter-stale, 3h): a skipped cycle never rewrites reconcile.prom, so
+    # zcrypto_reconcile_last_success_timestamp_seconds ages until it pages. The WARNING below ships
+    # to Loki via this unit's journal (T0060).
+    echo "zcrypto-archive-pull: WARNING: writer cycle SKIPPED (fail-closed gate): $skip_reason"
+else
+    # Role C (spec 00050), on this host since OPS-5 (spec 00054 D2). DETECT-ONLY by default -- it
+    # ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
+    # --min-gap-seconds from real cross-host data. That flip is T0039's call, NOT this script's.
+    #
+    # T0060: every ephemeral `docker run --rm` here carries a stable `--name` -- unnamed runs got a
+    # fresh engine-random name each time, and each name minted a brand-new Loki stream, forever, on
+    # a backend that bills per stream. Since the journal cutover the name's log role is the PRECISE
+    # DROP: config.alloy's docker path drops the `zcrypto-*` ephemerals by name (their stdout ships
+    # via this unit's journal instead -- these runs are attached, not -d). A leftover container
+    # after a dockerd crash makes the NEXT run fail loudly on a name conflict; how loudly differs:
+    #   * reconcile: the conflict sets rc=1 below (unit rc!=0 -> the ops archive-pull exit alert).
+    #   * trade-backfill: the conflict does NOT flip the unit rc -- its loud path is the
+    #     zcrypto_trade_backfill_exit_code metric and its existing critical alert; the UTC-day
+    #     stamp is written BEFORE the run, so a stale leftover extends the outage by up to 24h.
+    # Acceptable and self-describing either way; `--rm` cleans up in every normal path.
+    if ! docker run --rm --pull never \
+            --name zcrypto-reconcile \
+            --user "{{ ops_uid }}:{{ ops_gid }}" \
+            -v "{{ ops_nas_mount }}:/nas:ro" \
+            -v "{{ ops_data_dir }}:/data" \
+            -v "{{ ops_textfile_dir }}:/textfile" \
+            --entrypoint zcrypto \
+            "{{ ops_image }}@{{ ops_image_digest }}" \
+            archive reconcile "/nas/{{ ops_capture_subdir }}" "/nas/capture-segments-red" "/data/{{ ops_reconciled_subdir }}" \
+            --window-hours "{{ ops_reconcile_window_hours }}" \
+            --min-gap-seconds "{{ ops_reconcile_min_gap_seconds }}" \
+            --textfile /textfile/reconcile.prom; then
+        echo "zcrypto-archive-pull: reconcile failed, continuing"
+        rc=1
+    fi
+
+    # Trade backfill (spec 00053; T0053), ONE unit with the reconciler (spec 00054 D2) -- they
+    # share this entrypoint, the overlay, and union_trades. Runs regardless of the reconcile rc
+    # (the two steps are independent), but INSIDE the gate: it reads the same NAS mirrors, so a
+    # not-clean/stale NAS view is equally uninformative to it.
+    #
+    # DAILY, not per-cycle -- the detector's scan is O(archive), and there is no urgency cliff
+    # (Kraken serves ~18 months of /Trades). Gated on a stamp file holding the last UTC day it
+    # ran; the stamp is written UNCONDITIONALLY -- success or failure -- so a permanent error
+    # costs one attempt per day, not one per cycle. The failure is carried by the metric and its
+    # alert (infra/grafana/alerts.yaml), not by a retry. The metric is the signal, not the retry.
+    backfill_stamp="{{ ops_data_dir }}/.trade-backfill-last-utc-day"
+    backfill_today="$(date -u +%Y-%m-%d)"
+    if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
+        echo "$backfill_today" > "$backfill_stamp"
+        if docker run --rm --pull never \
+                --name zcrypto-trade-backfill \
+                --user "{{ ops_uid }}:{{ ops_gid }}" \
+                -v "{{ ops_nas_mount }}:/nas:ro" \
+                -v "{{ ops_data_dir }}:/data" \
+                --entrypoint zcrypto \
+                "{{ ops_image }}@{{ ops_image_digest }}" \
+                archive backfill-trades "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"; then
+            backfill_rc=0
+        else
+            backfill_rc=$?
+            echo "zcrypto-archive-pull: trade backfill failed (exit=$backfill_rc), continuing"
+        fi
+        backfill_textfile="{{ ops_textfile_dir }}/trade-backfill.prom"
+        # Review fix (2026-07-17): carry last_success FORWARD on failure, and write the series on
+        # EVERY run. The old shape omitted the line on a failed run, which DELETED the series --
+        # and zcrypto-trade-backfill-stale is noDataState: Alerting, so one bad day paged critical
+        # immediately instead of after the designed ~48h tolerance.
+        prev_backfill_success=$(awk '/^zcrypto_trade_backfill_last_success_timestamp/ {print $2}' "$backfill_textfile" 2>/dev/null)
+        if [ "$backfill_rc" -eq 0 ]; then
+            backfill_success="$(date -u +%s)"
+        else
+            backfill_success="${prev_backfill_success:-0}"
+        fi
+        printf 'zcrypto_trade_backfill_exit_code %d\n' "$backfill_rc" > "$backfill_textfile.tmp"
+        printf 'zcrypto_trade_backfill_last_run_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
+        printf 'zcrypto_trade_backfill_last_success_timestamp %d\n' "$backfill_success" >> "$backfill_textfile.tmp"
+        mv "$backfill_textfile.tmp" "$backfill_textfile"
+    fi
+fi
+
+# A failed cycle must not erase "when did this last succeed" — carry the previous value forward,
+# so "time since last clean cycle" stays directly alertable. A gate-skip counts as clean here (the
+# cycle did its job: it refused to write from an untrustworthy view); the skip's own staleness
+# signal is the reconcile exporter's, per the gate comment above.
 prev_success=$(awk '/^ops_archive_pull_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
 if [ "$rc" -eq 0 ]; then
     success=$now
@@ -53,22 +179,20 @@ else
 fi
 
 # Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
-# half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
+# half-written one is scraped as garbage — same pattern as the reconcile exporter's
+# _write_textfile. Metric names are HISTORICAL (see header): this unit pulls nothing any more.
 tmp="$PROM.tmp"
 {
-    printf '# HELP ops_archive_pull_exit_code Exit code of the last recurring NAS archive pull (0 = every tree synced).\n'
+    printf '# HELP ops_archive_pull_exit_code Exit code of the last overlay-writer cycle (0 = clean cycle or gate-skip; non-zero = the reconcile step failed). Historical name: the rsync pull this cycle replaced (spec 00054/T0058).\n'
     printf '# TYPE ops_archive_pull_exit_code gauge\n'
     printf 'ops_archive_pull_exit_code %s\n' "$rc"
-    printf '# HELP ops_archive_pull_last_run_timestamp Unix time of the last run, clean or not.\n'
+    printf '# HELP ops_archive_pull_last_run_timestamp Unix time of the last overlay-writer cycle, clean or not. Historical name (spec 00054/T0058).\n'
     printf '# TYPE ops_archive_pull_last_run_timestamp gauge\n'
     printf 'ops_archive_pull_last_run_timestamp %s\n' "$now"
-    printf '# HELP ops_archive_pull_last_success_timestamp Unix time of the last clean run (0 = never).\n'
+    printf '# HELP ops_archive_pull_last_success_timestamp Unix time of the last clean (or gate-skipped) overlay-writer cycle (0 = never). Historical name (spec 00054/T0058).\n'
     printf '# TYPE ops_archive_pull_last_success_timestamp gauge\n'
     printf 'ops_archive_pull_last_success_timestamp %s\n' "$success"
 } > "$tmp"
 mv "$tmp" "$PROM"
 
-if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
-    curl -fsS -m 10 -o /dev/null "$URL" || true
-fi
 exit "$rc"

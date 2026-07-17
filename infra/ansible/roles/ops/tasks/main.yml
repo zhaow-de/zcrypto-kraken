@@ -1,7 +1,8 @@
 # The ops role covers the whole ops-node stack (spec 00051, compute tier): OPS-1 provisions the
 # directories + rsync, OPS-2 renders the liquidations-poller compose file, OPS-3 installs the
-# continuity-replay/verified-path timers, OPS-4 installs the recurring NAS archive-pull + panel
-# materialize timers — kept as one role, not split into four.
+# continuity-replay/verified-path timers, OPS-4 installs the overlay-writer (historically the NAS
+# archive-pull, re-plumbed onto NFS reads by T0058) + panel materialize timers — kept as one role,
+# not split into four.
 
 - name: ensure the ops data directory exists
   ansible.builtin.file:
@@ -19,14 +20,75 @@
     group: deploy
     mode: "0755"
 
-- name: install rsync (ships /usr/bin/rrsync, needed by OPS-2's replication channel) + curl (the replay timers' dead-man ping)
+# rsync STAYS after T0058 retired the ops-side pull loop: it ships /usr/bin/rrsync, which the
+# NAS-initiated pull channels (liquidations, panel, reconciled overlay) force-command into — the
+# write-back direction is unchanged, the NAS still pulls FROM this host. nfs-common is the client
+# for the read-only NAS mount below.
+- name: install rsync (rrsync for the NAS-initiated pull channels) + curl (dead-man pings) + nfs-common (T0058 NFS client)
   ansible.builtin.apt:
     name:
       - rsync
       - curl
+      - nfs-common
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# --- T0058: the NAS custody export, mounted READ-ONLY over NFS. Replaces the retired hourly
+# 3-tree rsync mirror (capture-segments, capture-segments-red, engine-journal are now READ through
+# this mount); the overlay + panel still return to the NAS via its own rrsync pulls. Unguarded (no
+# digest involved). Option reasoning (T0058 consensus, 2026-07-17):
+#   * ro + soft: soft surfaces EIO on a hung server instead of a D-state hang, which is
+#     categorically safe HERE because the mount is read-only and every consumer treats an
+#     unreadable segment as a loud integrity fact, never as absence.
+#   * timeo=100 is DECISECONDS (= 10 s), NOT seconds: rides out the Atom NAS's IO bursts (the
+#     workstation's 1 s setting is too tight); retrans=3 bounds the worst case before EIO.
+#   * nfsvers=3 + nolock: nothing here takes file locks, and nolock drops the statd dependency.
+#   * noatime: no atime churn on a read-only workload. nosuid,nodev: free hardening.
+#   * noauto + x-systemd.automount (+ 15 s mount-timeout): mounted on first access, so a NAS that
+#     is down at boot cannot hang the boot path.
+# state: present, NOT mounted — `mounted` would force an immediate mount at converge time, which
+# is exactly what noauto+automount exist to avoid; `present` only writes the fstab entry and the
+# daemon-reload below lets the systemd automount unit own the actual mounting.
+#
+# NOTE (attended step, deliberately NOT automated): once the NFS read path is verified live, the
+# operator retires the old pull channel's credentials — the `sync_nas_archive` private key (+ the
+# nas_known_hosts pin) under ~deploy/.ssh on this host, the matching authorized_keys entry on the
+# NAS, and the now-unpinged `archive-pull` healthchecks.io check. Deleting live-looking keys is an
+# irreversible, verify-first action, so no converge task does it.
+- name: fstab entry for the NAS custody export (read-only NFS; the automount owns mounting) (T0058)
+  ansible.posix.mount:
+    src: 192.168.100.5:/volume1/ZhaoCrypto
+    path: "{{ ops_nas_mount }}"
+    fstype: nfs
+    opts: ro,nfsvers=3,nolock,soft,timeo=100,retrans=3,noatime,nosuid,nodev,noauto,x-systemd.automount,x-systemd.mount-timeout=15
+    state: present
+  register: ops_nas_mount_fstab
+
+# `noqa: no-handler`: deliberately an inline task, not a notify/handler — this repo already ate a
+# dropped-notify bug (nas role, 1ac9ccd: a notify consumed by a when:-skipped handler is dropped,
+# not deferred), and the reload must precede the RequiresMountsFor-ordered units below in the same
+# converge, not run at end of play.
+- name: systemd daemon-reload so the fstab change (re)generates the automount unit  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: ops_nas_mount_fstab is changed
+
+# A generator-produced automount unit is pulled in by local-fs.target AT BOOT; on a live host a
+# daemon-reload only LOADS it (inactive/dead), so the mount point never appears until the next
+# reboot — found on the maiden converge, where /mnt/zhao-crypto did not exist despite a clean run.
+# `systemctl start` is the missing half, and it is idempotent. systemd-escape derives the unit name
+# from the path so the two cannot drift ("-" in the path escapes to \x2d).
+- name: derive the automount unit name from the mount path
+  ansible.builtin.command: systemd-escape -p --suffix=automount {{ ops_nas_mount }}
+  register: ops_nas_automount_unit
+  changed_when: false
+  check_mode: false
+
+- name: start the NAS custody automount (systemd creates the mount point on first start)
+  ansible.builtin.systemd_service:
+    name: "{{ ops_nas_automount_unit.stdout }}"
+    state: started
 
 - name: ensure the textfile-collector directory exists
   ansible.builtin.file:
@@ -36,37 +98,89 @@
     group: deploy
     mode: "0755"
 
-# OPS-4 (spec 00052 D6): the recurring NAS archive pull. Unlike the replay/panel units below, this
-# one needs NO pinned image digest — it is host-side rsync (rsync installed above), not a
-# container — so the script/service/timer install unconditionally. Only the enable step is
-# guarded, by its OWN var (ops_nas_pull_source non-empty): an unconfigured converge still arms the
-# unit, but the script itself no-ops (logged, exit 0) until the seed channel is wired (plan Task 5).
-- name: install the archive-pull runner script
-  ansible.builtin.template:
-    src: archive-pull.sh.j2
-    dest: /usr/local/sbin/zcrypto-archive-pull
-    owner: root
-    group: root
-    mode: "0755"
+# Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1 fix; extended by OPS-5 D2 to
+# cover the archive-pull block too): these two tasks used to live inside the ops_image_digest
+# block, but the Alloy block also needs ops_uid/ops_gid for its container `user:` mapping, and now
+# the archive-pull block does too (its runner `docker run`s the pinned image as this uid/gid, see
+# below). Without the hoist, an Alloy-only converge (ops_alloy_digest passed, ops_image_digest not)
+# would render `user: ":"` -- a real coupling bug this hoist removes rather than works around, so
+# any of the three digest-gated blocks can converge independently.
+- name: look up the deploy account (the ops containers run as its uid/gid)
+  ansible.builtin.getent:
+    database: passwd
+    key: deploy
 
-- name: render the archive-pull systemd service + timer
-  ansible.builtin.template:
-    src: "archive-pull.{{ item }}.j2"
-    dest: "/etc/systemd/system/zcrypto-archive-pull.{{ item }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop: [service, timer]
+- name: derive the deploy uid/gid for the container user mapping
+  ansible.builtin.set_fact:
+    ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
+    ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
 
-# Review I1(b): the timer's state TRACKS the var instead of one-way gating on it -- emptying
-# ops_nas_pull_source on a later converge genuinely stops+disables an armed timer, rather than
-# leaving it firing hourly against an empty source.
-- name: archive-pull timer state tracks whether the NAS pull source is configured
-  ansible.builtin.systemd_service:
-    name: zcrypto-archive-pull.timer
-    daemon_reload: true
-    enabled: "{{ ops_nas_pull_source != '' }}"
-    state: "{{ 'started' if ops_nas_pull_source != '' else 'stopped' }}"
+# Corrects a one-time ownership mismatch left behind by the NOW-REMOVED NAS pull of this tree
+# (spec 00054 D2): capture-reconciled arrived here via `rsync -a` run by a root systemd unit, and
+# `-a` preserves NUMERIC ownership, so every file/dir under it still carries the NAS's uid/gid 1000
+# -- not ops's `deploy` (1001). The reconcile container runs `--user {{ ops_uid }}:{{ ops_gid }}`
+# (deploy), and `ledger_append` (cli/archive/mint.py) opens reconcile-ledger.jsonl in APPEND mode on
+# EVERY cycle -- including detect-only, where the ledger is the entire point -- so without this,
+# every reconcile run fails EACCES: the directory being 0777 is a red herring, the ledger FILE is
+# 0664 owned by 1000, and appending needs write on the file, not just search on the directory.
+# `recurse: true` (not just the ledger file) because a future flip out of detect-only will have the
+# same container WRITE new/updated parquet into subdirectories that carry the same stale uid --
+# narrowing this to the one known-failing file today would just relocate the next EACCES. Safe to
+# leave unconditional and recursive on every converge: the tree is ops-produced from here on (this
+# same commit dropped it from the ops pull list, so nothing re-imports uid 1000), so post-correction
+# runs are a no-op scan, and at today's size (~6.7 MB / ~1175 files) that scan is cheap regardless.
+# Deliberately NOT inside the `ops_image_digest`-gated block below: ops_reconciled_subdir has a
+# default (unlike the runner script, which needs the pinned image and would render an invalid
+# `docker run` without it), and the mismatch is a filesystem fact independent of any digest -- gating
+# it on the digest would leave a digest-less converge (or a host that never gets one) permanently
+# stuck with the NAS's ownership. It must merely run before the archive-pull runner below, which
+# Ansible's linear task order already guarantees.
+- name: ensure the overlay tree is owned by deploy (spec 00054 D2)
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    recurse: true
+
+# The overlay-writer runner (OPS-5, spec 00054 D2; re-plumbed by T0058): archive-pull.sh.j2
+# `docker run`s "{{ ops_image }}@{{ ops_image_digest }}" for reconcile + trade-backfill, reading
+# the canonical trees through the NFS mount above — the hourly NAS->ops rsync the unit was named
+# for is RETIRED (T0058 consensus #2). The zcrypto-archive-pull unit name and ops_archive_pull_*
+# metric names stay because the Grafana alerts are provisioned against them; renaming is
+# registered follow-up cleanup. The WHOLE block is gated on the pinned digest, not just the
+# script: arming a timer whose runner script was never installed would fire every slot against a
+# missing /usr/local/sbin/zcrypto-archive-pull, which is worse than not arming it.
+- name: install the overlay-writer runner + timer (needs the pinned image digest — historical archive-pull name)
+  when: ops_image_digest is defined
+  block:
+    - name: install the archive-pull runner script
+      ansible.builtin.template:
+        src: archive-pull.sh.j2
+        dest: /usr/local/sbin/zcrypto-archive-pull
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: render the archive-pull systemd service + timer
+      ansible.builtin.template:
+        src: "archive-pull.{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-archive-pull.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+
+    # Unconditional now (T0058): the enable used to TRACK ops_nas_pull_source (review I1(b) — an
+    # emptied source genuinely disarmed the pull timer), but the source concept died with the
+    # pull, and the writer cycle carries its own fail-closed gate (the NAS-written .pull-status),
+    # so the timer is simply armed whenever the runner is installed.
+    - name: enable + start the overlay-writer (archive-pull) timer
+      ansible.builtin.systemd_service:
+        name: zcrypto-archive-pull.timer
+        daemon_reload: true
+        enabled: true
+        state: started
 
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
@@ -76,16 +190,6 @@
 - name: install the ops stack — recorder compose + replay/panel timers (needs the pinned image digest)
   when: ops_image_digest is defined
   block:
-    - name: look up the deploy account (the ops containers run as its uid/gid)
-      ansible.builtin.getent:
-        database: passwd
-        key: deploy
-
-    - name: derive the deploy uid/gid for the container user mapping
-      ansible.builtin.set_fact:
-        ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
-        ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
-
     # OPS-2: render only — the poller is deliberately NOT auto-started here. First start (and
     # every deliberate restart) is an attended step (`docker compose up -d`, plan Task 5): the
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
@@ -127,3 +231,142 @@
         enabled: true
         state: started
       loop: [verify-replay, verified-replay, panel-materialize]
+
+- name: install the ops telemetry stack — Grafana Alloy (spec 00054 D1; needs the pinned Alloy digest)
+  when: ops_alloy_digest is defined
+  block:
+    # Review finding 1 (CRITICAL): Alloy mounts /:/host/root:ro for free-disk-space metrics, and
+    # /home/deploy/.ssh (0700 deploy:deploy) holds the LIVE `sync_nas_archive` private key (0600)
+    # that the NAS-pull channel depends on. Running Alloy as `deploy` -- as an earlier revision of
+    # this role did -- would let it read that key directly through the mount, no escalation needed,
+    # defeating the exact protection this stack claims to replicate from the NAS (T0030: uid 1031
+    # there is deliberately NOT the key-owning uid 1000). `zcrypto-alloy` is the ops-node analogue: a
+    # dedicated, non-login system user that owns nothing under /home/deploy/.ssh, so the
+    # /host/root mount cannot reach `sync_nas_archive` -- this MIRRORS the NAS's uid-1031 choice,
+    # not merely resembles it. `group_add` (alloy-compose.yaml.j2) grants Docker socket access via
+    # the host's real numeric docker gid, derived below via `getent` -- NOT a named "docker" entry:
+    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
+    # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
+    # never resolve and the container would fail to start -- the same reason the NAS passes the
+    # numeric `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN DEPTH ONLY:
+    # membership in the `docker` group is root-equivalent by definition (anything holding the Docker
+    # API can create a privileged container regardless of a `:ro` socket mount) -- the escalation
+    # path remains and is a known, accepted residual, exactly as the NAS's comments record for
+    # T0042. The point of the dedicated uid is narrower and real: it closes the DIRECT, no-escalation
+    # read.
+    - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
+      ansible.builtin.user:
+        name: zcrypto-alloy
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: look up the zcrypto-alloy account
+      ansible.builtin.getent:
+        database: passwd
+        key: zcrypto-alloy
+
+    - name: derive the zcrypto-alloy uid/gid for the container user mapping
+      ansible.builtin.set_fact:
+        ops_alloy_uid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][1] }}"
+        ops_alloy_gid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][2] }}"
+
+    # Docker's `group_add` resolves a NAMED entry against the CONTAINER's own /etc/group, not the
+    # host's -- the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker"
+    # would never resolve and the container would fail to start. The fix is the host's real numeric
+    # docker gid, derived here (never hardcoded -- it is a per-host accident) and passed as a string
+    # in alloy-compose.yaml.j2, the same way the NAS passes its numeric `group_add: ["0"]`. Safe to
+    # look up here: the `docker` role (installed unconditionally, before this role, in site.yml's
+    # ops_host play) creates the `docker` group as a side effect of the docker-ce package install,
+    # so it exists regardless of which digest(s) this converge passes. Placed inside this
+    # `ops_alloy_digest`-gated block, not hoisted above it like ops_uid/ops_gid: unlike those (needed
+    # by the OTHER digest-gated block too), this gid is consumed only by the alloy compose template
+    # rendered a few tasks below, inside this same guard -- so gating it here does not reintroduce
+    # the ops_uid coupling bug (a fact's guard must match its consumer's, not a different block's).
+    #
+    # `getent` with `database: group` does NOT share `passwd`'s field layout above: passwd's row is
+    # `name:passwd:uid:gid:gecos:home:shell` (so index 1 = uid, index 2 = gid), but group's row is
+    # `name:passwd:gid:members` (so index 1 = gid -- there is no index-2 gid to mistake it for).
+    - name: look up the docker group (created by the docker role; Alloy's group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: docker
+
+    - name: derive the docker group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        ops_docker_gid: "{{ ansible_facts['getent_group']['docker'][1] }}"
+
+    # Same numeric-gid derivation as the docker gid above, same reason (a NAMED group_add entry
+    # resolves against the CONTAINER's /etc/group, not the host's): the host's persistent journal
+    # files are root:systemd-journal 0640, and Alloy -- running as the non-root zcrypto-alloy user
+    # -- reads them through the /var/log/journal:/host/journal:ro mount (alloy-compose.yaml.j2) for
+    # the four zcrypto-*.service units' logs (T0060: the orchestration scripts' host-side lines
+    # exist in no container log, so the docker socket can never ship them). Safe to look up here:
+    # the `systemd-journal` group is created by the systemd package itself, so it exists on any
+    # Debian host this role can converge. Same `getent group` field-layout caveat as above:
+    # `name:passwd:gid:members`, so index 1 = gid -- NOT passwd's index-1 uid / index-2 gid.
+    - name: look up the systemd-journal group (Alloy's journal-read group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: systemd-journal
+
+    - name: derive the systemd-journal group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        ops_journal_gid: "{{ ansible_facts['getent_group']['systemd-journal'][1] }}"
+
+    - name: ensure the alloy project directory exists
+      ansible.builtin.file:
+        path: "{{ ops_alloy_dir }}"
+        state: directory
+        owner: deploy
+        group: deploy
+        mode: "0755"
+
+    # Owned by the dedicated Alloy user, not `deploy`: this holds the remote_write WAL + Loki log
+    # read-positions, which must survive container replacement, or a redeploy re-ships the retained
+    # log backlog into the ingest quota (00043) -- and Alloy (running as zcrypto-alloy) needs WRITE
+    # here, unlike everything else under ops_alloy_dir.
+    - name: ensure the alloy data directory exists, owned by the dedicated Alloy user
+      ansible.builtin.file:
+        path: "{{ ops_alloy_dir }}/alloy-data"
+        state: directory
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0755"
+
+    # Review finding 2: plain `copy`, not `template` -- this file is 100% static (see the file's own
+    # header comment for why `template:` would be the wrong tool here).
+    - name: install the alloy pipeline config
+      ansible.builtin.copy:
+        src: config.alloy
+        dest: "{{ ops_alloy_dir }}/config.alloy"
+        owner: deploy
+        group: deploy
+        mode: "0644"
+
+    # Renders straight from the vault (group_vars/observed/vault.yml) -- the NAS's copy is rendered
+    # the same way by the `nas` role since T0056, so no hand-placed, out-of-band secrets file
+    # exists anywhere in the fleet any more. no_log +
+    # diff: false: without both, a converge prints the six Grafana Cloud credentials to the terminal
+    # and to any log capturing the run's output (the established pattern -- see docs/plans/00043 --
+    # applied wherever this role renders a secret, e.g. the liquidations compose file above). Owned
+    # by zcrypto-alloy (not deploy): the container runs as that uid (`user:` in
+    # alloy-compose.yaml.j2) and must be able to read a 0600 file it does not own by default.
+    - name: render the alloy secrets env file
+      ansible.builtin.template:
+        src: alloy-secrets.env.j2
+        dest: "{{ ops_alloy_dir }}/alloy-secrets.env"
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0600"
+      no_log: true
+      diff: false
+
+    - name: render the alloy compose file
+      ansible.builtin.template:
+        src: alloy-compose.yaml.j2
+        dest: "{{ ops_alloy_dir }}/compose.yaml"
+        owner: deploy
+        group: deploy
+        mode: "0644"

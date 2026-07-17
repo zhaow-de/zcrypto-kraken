@@ -1,9 +1,15 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-archive-pull.service — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/archive-pull.service.j2 instead.
 [Unit]
+Description=Overlay writer -- reconcile + daily trade backfill over NFS reads (spec 00054/T0058; unit name is historical)
+# Requires/After docker.service (review fix 2026-07-17): both steps are `docker run`s, and the
+# timer's Persistent=true boot catch-up can fire before dockerd is up -- without the ordering the
+# caught-up run fails on a dead socket. RequiresMountsFor orders the NAS NFS automount
+# ({{ ops_nas_mount }}) below this unit, so the gate/reads have a mount to hit.
+Requires=docker.service
 Wants=network-online.target
-After=network-online.target
-Description=Recurring NAS archive pull -- capture segments (both mirrors) + reconciled overlay + engine journal (spec 00052 D6)
+After=docker.service network-online.target
+RequiresMountsFor={{ ops_nas_mount }}
 
 [Service]
 Type=oneshot

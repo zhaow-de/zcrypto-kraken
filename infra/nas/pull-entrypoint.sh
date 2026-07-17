@@ -58,6 +58,32 @@ while true; do
 			secondary_ok=0
 		fi
 	fi
+
+	# T0058: the reconcile gate's ground truth. The ops-node writer reads this file THROUGH the
+	# read-only NFS mount and skips its whole writer cycle (reconcile AND backfill) unless both
+	# flags are 1 AND ts_epoch is younger than 4h (and not future-stamped beyond a small skew
+	# tolerance) — fail closed: missing/unreadable/stale/skewed = skip.
+	# Writing it here restores the original gate semantics (the actual pull exit codes) that the
+	# OPS-5 cutover had silently reduced to "the NAS-to-ops rsync succeeded" (final-review
+	# finding, 2026-07-17) — that rsync succeeds even when this host's own VPS pulls are broken,
+	# so a frozen mirror would have ledgered permanent false verdicts. This also finally gives
+	# capture_ok/secondary_ok a READER again — an earlier review noted they had become
+	# write-only. tmp+mv so the ops reader never sees a partial file (the same atomic pattern the
+	# trade-backfill textfile used before OPS-5 moved that step to the ops node). If-guarded like
+	# every other step in this loop (review 2026-07-17): unguarded, a failed redirection or mv
+	# under `set -eu` (ENOSPC/EIO/read-only volume) killed the whole container mid-cycle — every
+	# channel after this block skipped, and `restart: unless-stopped` re-ran the capture pulls
+	# back-to-back with no interval pacing. A failed write just lets the existing status age,
+	# which is exactly the ops gate's designed fail-closed degraded mode.
+	if ! {
+		printf 'capture_ok=%s\n' "$capture_ok"
+		printf 'secondary_ok=%s\n' "$secondary_ok"
+		printf 'ts_epoch=%s\n' "$(date -u +%s)"
+	} > /archive/.pull-status.tmp 2>/dev/null \
+			|| ! mv /archive/.pull-status.tmp /archive/.pull-status 2>/dev/null; then
+		log ERROR "pull-status write failed (dest=/archive/.pull-status), continuing"
+	fi
+
 	# The journal pull only runs once JOURNAL_SOURCE is set (Role B). It uses its OWN
 	# least-privilege key (JOURNAL_SSH_KEY) -- the capture and journal channels use distinct
 	# keys, so a single ARCHIVE_SSH_KEY cannot serve both; `zcrypto archive pull` reads whichever
@@ -107,72 +133,28 @@ while true; do
 		fi
 	fi
 
-	# Role C: reconcile the two raw mirrors into the healed overlay. DETECT-ONLY by default -- it
-	# ledgers every `would_mint` and writes no parquet until T0039's soak has pinned
-	# --min-gap-seconds from real cross-host data (see RECONCILE_MIN_GAP_SECONDS in compose.yaml).
-	#
-	# SKIPPED on any cycle whose PRIMARY **or SECONDARY** pull failed. The reconciler reasons from the
-	# two LOCAL mirrors, and it cannot tell "this hour does not exist" from "this hour did not arrive".
-	# A failed pull -- on either channel -- makes local absence uninformative:
-	#
-	#   * primary pull broken: hours look primary-dark but are not. Reconciling would mint "healed"
-	#     full-secondary hours for data that was never lost, quietly substituting one host's stream for
-	#     the other's in an archive that cannot be backfilled, and inflating healed_gap_seconds so the
-	#     very metric meant to flag a degrading primary reports success instead.
-	#   * secondary pull broken: the witness looks dark too. A real primary outage -- the exact event
-	#     Role C exists to heal -- would then be classified `both_streams_silent` / `total_loss`:
-	#     PERMANENT loss, paged, and booked into a monotone counter that can never be walked back, for
-	#     an hour the secondary actually captured and could have healed. The correlated-loss detectors
-	#     run unconditionally (they are not gated by --mint), so this bites even in detect-only mode,
-	#     and the ledger's dedupe means the false verdict is never revisited.
-	#
-	# Skipping keeps the ledger honest for free: the hours simply reconcile on the next healthy cycle,
-	# against complete mirrors. An unhealed hour costs nothing; a wrong verdict is forever.
-	if [ -n "${CAPTURE_RED_SOURCE:-}" ]; then
-		if [ "$capture_ok" -eq 0 ] || [ "$secondary_ok" -eq 0 ]; then
-			log WARNING "reconcile skipped: a capture pull failed this cycle (primary_ok=$capture_ok secondary_ok=$secondary_ok), so a mirror's absence cannot be told apart from a pull that has not landed yet"
-		elif ! zcrypto archive reconcile "$CAPTURE_DEST" "$CAPTURE_RED_DEST" "$RECONCILED_DEST" \
-				--window-hours "${RECONCILE_WINDOW_HOURS:-48}" \
-				--min-gap-seconds "${RECONCILE_MIN_GAP_SECONDS:-30}" \
-				--textfile "$RECONCILE_TEXTFILE"; then
-			log ERROR "reconcile failed (primary=$CAPTURE_DEST secondary=$CAPTURE_RED_DEST overlay=$RECONCILED_DEST), continuing"
+	# OPS-5 (spec 00054 D4): the healed overlay, now PRODUCED on the ops node and pulled here.
+	# Custody stays on the NAS (D3) -- only the computation moved. Own least-privilege key and its
+	# own per-call SSH port, exactly like the panel/liquidations channels above. Hash-verified: the
+	# overlay's minted hours carry .sha256 sidecars (verify_tree walks *.parquet only, so the
+	# unsidecar'd ledger rides along unchecked). Best-effort like every other pull -- a failure is
+	# logged and the loop continues; the overlay is recomputable on ops, so a missed cycle costs a
+	# delay, not data. Skipped entirely when RECONCILED_SOURCE is unset.
+	if [ -n "${RECONCILED_SOURCE:-}" ]; then
+		if ! ARCHIVE_SSH_KEY="$RECONCILED_SSH_KEY" ARCHIVE_SSH_PORT="${RECONCILED_SSH_PORT:-22}" \
+				zcrypto archive pull "$RECONCILED_SOURCE" "$RECONCILED_DEST"; then
+			log ERROR "reconciled pull failed (source=$RECONCILED_SOURCE dest=$RECONCILED_DEST), continuing"
 		fi
+	else
+		# Optional-by-design, but never silently: an unset channel on a NAS that SHOULD carry the
+		# overlay means custody quietly stops re-acquiring it (review finding, 2026-07-17).
+		log WARNING "reconciled channel unwired (RECONCILED_SOURCE unset) — custody is not re-acquiring the overlay"
 	fi
 
-	# Trade backfill (spec 00053; T0053): heal the canonical trade stream to a contiguous,
-	# duplicate-free trade_id sequence by fetching gaps from Kraken's public REST /Trades and
-	# minting healed hours into the reconciled overlay ($RECONCILED_DEST, same destination the
-	# reconciler above writes to). DAILY, not per-cycle -- the detector's scan is O(archive), a
-	# per-cycle cost T0028 already flags on this host and which this must not compound; there is
-	# also no urgency cliff (Kraken serves ~18 months of /Trades). Gated on a stamp file holding
-	# the last UTC day it ran; the stamp is written UNCONDITIONALLY -- success or failure. A
-	# PERMANENT error (an unmapped pair, a structural residual) exits non-zero on every attempt, and
-	# writing the stamp only on success once meant that ran the full O(archive) scan plus hundreds
-	# of REST calls every hour, forever -- exactly the per-cycle cost this step exists to avoid.
-	# Stamping unconditionally makes the daily cost bound absolute; the failure is then carried by
-	# the metric below and its alert (infra/grafana/alerts.yaml), not by a retry. The metric is the
-	# signal, not the retry -- a transient now waits up to 24h, which is fine given the no-urgency-
-	# cliff reasoning above.
-	# Best-effort like every other step above: a non-zero exit (1 = recorded errors, 2 = primary
-	# root missing) is recorded in the metric below, never fatal to the loop.
-	backfill_stamp=/archive/.trade-backfill-last-utc-day
-	backfill_today="$(date -u +%Y-%m-%d)"
-	if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
-		echo "$backfill_today" > "$backfill_stamp"
-		if zcrypto archive backfill-trades "$CAPTURE_DEST" "$RECONCILED_DEST"; then
-			backfill_rc=0
-		else
-			backfill_rc=$?
-			log ERROR "trade backfill failed (primary=$CAPTURE_DEST reconciled=$RECONCILED_DEST, exit=$backfill_rc), continuing"
-		fi
-		backfill_textfile="${TRADE_BACKFILL_TEXTFILE:-/textfile/trade-backfill.prom}"
-		printf 'zcrypto_trade_backfill_exit_code %d\n' "$backfill_rc" > "$backfill_textfile.tmp"
-		printf 'zcrypto_trade_backfill_last_run_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
-		if [ "$backfill_rc" -eq 0 ]; then
-			printf 'zcrypto_trade_backfill_last_success_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
-		fi
-		mv "$backfill_textfile.tmp" "$backfill_textfile"
-	fi
+	# The reconcile + trade-backfill steps MOVED to the ops node (spec 00054 D2/OPS-5): this host
+	# kept custody, Role A's pull/prune, and its Alloy (D3), and shed the computation -- the Atom tax
+	# on every step sharing this clock had stretched the "hourly" loop to ~103 minutes. The healed
+	# overlay now arrives via the RECONCILED_SOURCE pull above instead of being written here.
 
 	# Backgrounded + waited-on so the TERM/INT trap interrupts the sleep promptly (docker stop
 	# stays graceful) instead of blocking until the interval elapses.
