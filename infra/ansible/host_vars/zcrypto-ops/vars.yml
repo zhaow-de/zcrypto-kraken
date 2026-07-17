@@ -24,10 +24,11 @@ ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
 # Same wiring for the replay/panel timers' dead-men (vault.yml holds the encrypted URLs). The
 # archive-pull dead-man wiring is GONE (T0058): the pull it watched is retired and the overlay
 # writer that inherited the unit name pings nothing -- pausing/removing the healthchecks.io check
-# itself (and the vaulted archive_pull_healthcheck_url, now dead) is an attended step, or the
+# itself is an attended step, or the
 # check pages on the missing pings.
 ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
 ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
 ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
 
 # The operator's fleet-wide deploy pubkey, loaded from the same file group_vars/capture_host reads

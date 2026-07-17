@@ -81,3 +81,10 @@ ops_reconcile_window_hours: 48
 # and writes no parquet. The two correlated-loss detectors (both_streams_silent / total_loss) run
 # regardless and are never minted from.
 ops_reconcile_mint: false
+
+# The writer cycle's dead-man ping (healthchecks.io — deliberately a SEPARATE failure domain from
+# the Grafana observability stack, per CLAUDE.md). Restored 2026-07-17: the T0058 rewrite dropped it
+# along with the retired pull concept, silently halving the writer's failure domains — the check
+# starved from the last old-script cycle (11:21Z) and went DOWN at ~14:21Z while Grafana read
+# healthy metrics the whole time. Empty = ping skipped (the CLI's optional semantics).
+ops_archive_pull_healthcheck_url: ""
