@@ -14,6 +14,9 @@
   ansible.builtin.command: date +%z
   register: nas_tz_offset
   changed_when: false
+  # check_mode false: a read-only clock probe must run even under --check, or the assert below
+  # evaluates a SKIPPED result and the guard fails for the wrong reason (found on the maiden dry-run).
+  check_mode: false
   tags: [always]
 
 - name: refuse to manage a non-UTC NAS (docker logs --since parses LOCAL time)
