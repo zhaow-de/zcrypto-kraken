@@ -30,7 +30,49 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 #
 # ALWAYS the `-compat` (no-AVX) build: the NAS Atom has no AVX, and the default AVX build dies
 # instantly with `Illegal instruction` (measured 2026-07-16; T0029).
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:854ca39e7bb690b3af92dffa915ac2a20711cbcc593b68def386e5e6ff116e66
+#
+# Pinned 2026-07-17 to the `-compat` build of develop's tip 11d2cb1b (tag
+# 11d2cb1b3959199c0a8386f86bb5b9417a0f0ed8-compat). Pre-flighted ON THE NAS before landing here:
+# pulled, `RepoDigests` read for the authoritative digest (never a manifest guess), `zcrypto
+# --version` run on the Atom to prove it really is the no-AVX build, and `archive pull` +
+# `engine gate-export` — everything this host's entrypoint calls — confirmed present.
+#
+# It replaces sha256:854ca39e… (tag 0e796b15…-compat, 2026-07-15), which was never CHOSEN: it was
+# whatever happened to be running when the 2026-07-16 cutover deployed compose.yaml's `:latest`
+# placeholder verbatim, killed the Atom, and was recovered by copying the digest back out of the
+# backup compose. T0056's role then committed that accident as this declaration. It was 23 commits of
+# BUILD INPUTS behind develop (`cli/` + pyproject + uv.lock + infra/docker — the workflow's own paths
+# filter, i.e. exactly what makes a new image; 20 of them touched cli/). That is the whole reason to
+# move, and reason enough. (An earlier draft said "44 commits", a figure lifted from a different
+# comparison entirely — the ops-vs-NAS pin gap. Recorded, like the rest of this block, because the
+# error was mistaking one measurement for another.)
+#
+# NOT a reason: "it looked untagged". `docker image ls` shows <none> for ANY image pulled BY DIGEST,
+# which is what a pinned deploy always does — the new pin reads <none> too once the pre-flight's
+# tag-pull is pruned. 854ca39e was tagged in the registry all along, and its sha is on develop. That
+# misreading is recorded here because the diagnostic is the trap: a digest-pinned image looking
+# untagged locally is the NORMAL state, never evidence of anything.
+#
+# ONE IMAGE, THREE IDENTIFIERS — they all name the same object, and each is the honest answer to a
+# different question. Two separate 2026-07-17 confusions came from mixing them up, so:
+#
+#   tag            ghcr.io/…/zcrypto-capture:11d2cb1b3959…-compat   the GIT SHA of the commit built
+#                                                                   (workflow: `<github.sha><suffix>`);
+#                                                                   40 hex chars, so it LOOKS like a
+#                                                                   digest and is what a UI displays
+#   manifest digest  @sha256:91f2c80f…   what you PIN — this line, and the rendered .env
+#   image ID         sha256:5c759cc4…    the local config-blob digest; the `docker images` ID column
+#
+# `docker inspect <container>` reconciles them: .Config.Image is what compose asked for (the digest),
+# .Image is the local ID, and inspecting that ID lists RepoTags + RepoDigests.
+#
+# For THIS pin, the tag is the only thing that names the code: 91f2c80f carries just
+# org.opencontainers.image.source, because it was built from 11d2cb1b — BEFORE the same branch that
+# wrote this comment taught the build to stamp org.opencontainers.image.revision + polars-runtime
+# (.github/workflows/capture-image.yml). So the first self-describing pin will be the first image
+# built after that lands on develop; until then, decode the tag. Said plainly because the draft of
+# this very block claimed the label was already there — in the file whose whole job is to stop that.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:91f2c80f61be88328577f6b85ddcc5141b5342d4a89b9af45dbc5cbe984549f1
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
 # trap class the committed pin kills.
 nas_alloy_image: grafana/alloy@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b

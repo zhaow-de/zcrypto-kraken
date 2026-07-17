@@ -78,6 +78,22 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}${{ matrix.suffix }}
             ${{ env.IMAGE }}:latest${{ matrix.suffix }}
+          # An image must answer "what code is this, and which polars runtime?" ON ITS OWN, from a
+          # DIGEST — because a digest is what a pin IS. Only image.source was set (the Dockerfile's
+          # LABEL), so answering it meant scanning the registry's tags for one that resolves to your
+          # digest. That is exactly what happened on 2026-07-17 when the NAS's pin was audited, and
+          # it is worse offline or after a tag is deleted. `revision` makes the lookup local and
+          # permanent (`docker inspect`), and polars-runtime makes the compat/AVX split INSPECTABLE
+          # rather than discovered as `Illegal instruction (core dumped)` on the AVX-less Atom
+          # (T0029; the 90-second NAS outage of 2026-07-16).
+          #
+          # Deliberately NO image.version: this workflow also builds on `v*` tags, where a sha-derived
+          # version would stamp the sha instead of the release — misleading exactly where a version
+          # label matters most. `revision` carries the sha and polars-runtime carries the variant, so
+          # version would add nothing but a way to be wrong.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            de.zhaow.zcrypto.polars-runtime=${{ matrix.runtime }}
 
       - name: Write image digest to the job summary
         run: |
