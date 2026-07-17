@@ -29,6 +29,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0045 — CRC re-derivation needs raw-string price/qty](T0045-crc-rederivation-needs-raw-string-price-qty.md) — the archive stores book price/qty as Float64, but Kraken's CRC needs the raw wire strings (trailing zeros load-bearing), so byte-exact CRC re-attestation isn't derivable from the archive; OPS-3's continuity-replay (spec 00051) covers structural coherence instead (ripe when: a raw-string capture-schema change is on the table, gated on a capture re-pin).
 
+- [T0063 — deployable docs name the superseded record 33, not trial 44](T0063-deployable-docs-name-superseded-record-33.md) — the Phase-5 closeout, the runbook body, and spec 00039's decision-5 prose still name record 33 (daily-only, `build_combined_system`, dataset `ba47e37e`) as the deployable, but the engine actually runs trial 44 (crossfreq daily+4h, `build_crossfreq_system`, `dataset_hash 45275ebe`); the true identity/hash live only in the registry — reconcile the docs so "what deploys?" is one honest lookup (ripe when: autonomous now — a doc-consistency fix, no code change).
+
 ### Partially done<a name="partially-done"></a>
 
 - [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); the OI backfill + harness are autonomous when B2 is picked.
@@ -70,6 +72,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0048 — Alloy's docker tailer dies on container recreation](T0048-alloy-docker-tailer-dies-on-container-recreate.md) — a recreated NAS container's logs silently stop shipping (Alloy retries the dead ID forever); restart Alloy after any NAS compose change; first caught live by the archive-pull dead-man 2026-07-16 (ripe when: the next Alloy version bump, to test upstream).
 
 - [T0049 — go-live drill matrix + day-2 operations runbook](T0049-go-live-drill-matrix-day2-runbook.md) — the exit-bar alerting drill is passed (owner sign-off 2026-07-16, live incident); before live orders, deliberately drill the full failure-scenario matrix (dead-men, watermark, engine `/fail`, Loki path, Alloy death, Grafana outage → healthchecks independence) and distill `docs/reference/day2-operations-runbook.md` (ripe when: the final go-live preparation, before the Stage-6b executor session).
+
+- [T0064 — the deployed strategy (trial 44) has no out-of-time holdout evidence](T0064-deployed-strategy-has-no-holdout-evidence.md) — the single budgeted holdout look (budget spent 1→0) tested the *superseded* record 33 on a degenerate [0,0] window, so the deployable (trial 44, a different construction) carries no out-of-sample validation at all — paper trading becomes its only genuine OOS test; a go-live-confidence fact the human should hold explicitly (ripe when: paper evidence accumulates, or before any live-capital go/no-go).
 
 ### Partially done<a name="partially-done-1"></a>
 
