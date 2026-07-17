@@ -117,6 +117,11 @@ else
             archive reconcile "/nas/{{ ops_capture_subdir }}" "/nas/capture-segments-red" "/data/{{ ops_reconciled_subdir }}" \
             --window-hours "{{ ops_reconcile_window_hours }}" \
             --min-gap-seconds "{{ ops_reconcile_min_gap_seconds }}" \
+            {# `| bool` is LOAD-BEARING, not style: a CLI override (-e ops_reconcile_mint=false)
+               arrives as the STRING "false", which is truthy — without the cast that override
+               would render --mint, i.e. the flag meant to disable minting would enable it.
+               (`bool` is an Ansible filter; plain-Jinja2 render checks must register a shim.) #}
+            {{ '--mint' if ops_reconcile_mint | default(false) | bool else '--detect-only' }} \
             --textfile /textfile/reconcile.prom; then
         echo "zcrypto-archive-pull: reconcile failed, continuing"
         rc=1

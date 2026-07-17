@@ -34,3 +34,11 @@ ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
 # (single source: infra/ansible/files/ -- a key rotation edits the .pub file once). The bootstrap
 # play installs it for the `deploy` user; `run.sh` then converges over it.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
+
+# THE --mint FLIP (spec 00050 Task 12's final step; flipped 2026-07-17, owner present). Unlocked by
+# the 66 h cross-host soak: 217 witnessed silence windows, max 12.08 s (a hand-classified coalescing
+# artifact — 9 sibling pairs flowing on a healthy primary), threshold pinned at 30 s = 2.48x that
+# max. The ledger held ZERO would_mint entries at flip time, so this applied no backlog — the first
+# mint ever will be spec 00050 Task 13's Leg-A drill gap, deliberately created and fully observed.
+# Derivation: T0039. To disable: set false (or override -e ops_reconcile_mint=false) + converge.
+ops_reconcile_mint: true

@@ -60,5 +60,24 @@ ops_alloy_image: grafana/alloy
 # natural quiescence: one secondary update row is enough to witness a gap, so a per-connection
 # coalescing artifact could otherwise trip a phantom splice -- an unaudited data swap into an
 # archive that cannot be backfilled. Flipping to --mint is T0039's call, not this role's.
+# PINNED from data 2026-07-17, not asserted (spec 00050 Task 12 / T0039): 66 h of two-host soak,
+# 217 primary-silence windows the secondary witnessed, max 12.08 s — every one of them natural
+# (the primary never rebooted during the soak, so there were no real outages to exclude). 30 s is
+# 2.03x the 14.78 s single-host max quiescence and 2.48x the measured cross-host max, and stays 2.8x
+# below the smallest real outage on record (83 s), so it costs no detection power. The harness
+# suggested 25 s (2x the cross-host max); 30 s is kept because the cost asymmetry errs high — a
+# missed 20 s gap is a recorded residual, a phantom splice is an unaudited data swap into an archive
+# that cannot be backfilled. The risk is not hypothetical: the soak's own max was a CLASSIFIED
+# coalescing artifact (AVAX/EUR 06:36:45–57, 12.08 s of primary silence with 59 secondary rows
+# inside, while 9 sibling pairs kept flowing on the same healthy host) — at a 10 s threshold the
+# reconciler would have spliced it. Derivation: T0039.
 ops_reconcile_min_gap_seconds: 30
 ops_reconcile_window_hours: 48
+
+# The --mint flip (spec 00050 Task 12's last step). DEFAULT FALSE: minting writes healed hours into
+# custody and the ledger's dedupe means a wrong verdict is never revisited, so enabling it is a
+# deliberate act with a name, never a silent default. Unlocked only once --min-gap-seconds is pinned
+# from real cross-host data (above). false => --detect-only: the reconciler ledgers every would_mint
+# and writes no parquet. The two correlated-loss detectors (both_streams_silent / total_loss) run
+# regardless and are never minted from.
+ops_reconcile_mint: false
