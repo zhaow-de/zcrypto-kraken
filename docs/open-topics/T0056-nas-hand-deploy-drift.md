@@ -1,13 +1,13 @@
 ---
-status: open
-ripe_when: any change lands in `infra/nas/` — the repo is not the NAS's source of truth, so every such change is silently inert until someone hand-deploys it
+status: partial
+ripe_when: the first attended NAS converge (`./scripts/run.sh site.yml --limit nas`) — the TZ guard is EXPECTED to fail until DSM is flipped to UTC; resolve once that converge + apply verifies by outcome
 ---
 
 # The NAS runs whatever was last hand-copied to it, and nothing detects the drift
 
 ## Context — what
 
-The NAS is the only fleet host that is **not** Ansible-managed: it runs Synology Container Manager, and `infra/nas/{compose.yaml,pull-entrypoint.sh,config.alloy}` reach it only when a human copies them. There is no converge, no drift check, and no alert. The repo therefore describes the NAS's *intent*, not its *state* — and the two silently diverged for days.
+The NAS **was** the only fleet host not Ansible-managed (fixed on `feat/ops5-offload` — see Done so far): it runs Synology Container Manager, and `infra/nas/{compose.yaml,pull-entrypoint.sh,config.alloy}` reached it only when a human copied them. There was no converge, no drift check, and no alert. The repo therefore described the NAS's *intent*, not its *state* — and the two silently diverged for days.
 
 ## Why this matters
 
@@ -24,8 +24,14 @@ Two live defects were found on 2026-07-16, both caused by this gap:
 - The NAS's Docker is at `/usr/local/bin/docker` — not on `sudo`'s PATH, so a bare `sudo docker …` fails with `command not found`. A script that ignores that failure reads its `grep -c` of the empty output as **0 problems found**: this produced a false "0 minted" all-clear during the cutover before it was caught.
 - The NAS's timezone is **CEST**, and `docker logs --since` interprets its argument in *local* time. `--since <UTC timestamp>` therefore silently selects a 2-hour-wider window and returns stale lines. This produced two false "still failing" verdicts during the cutover.
 
+## Done so far
+
+All three originally-suggested steps are delivered on `feat/ops5-offload` (commits `acb830f` — the `nas` role, `host_vars/nas`, the TZ guard — and `1ac9ccd` — the flag-gated apply fixes):
+
+- **The model was decided as option (a), bring the NAS under Ansible** — the `nas` role deploys `pull-entrypoint.sh`/`compose.yaml`/`config.alloy` verbatim from `infra/nas/`, renders the `.env` + `alloy-secrets.env` from the vault, and applies via the flag-gated `-e nas_apply_compose=true` tasks; `run.sh` loads `deploy_nas_ed25519` into its throwaway agent. The DSM blocker turned out not to exist (plain ssh + `ansible_ssh_transfer_method: piped`).
+- **The placeholder trap is dead**: `compose.yaml` pins via `${CAPTURE_IMAGE:?...}` (and `${ALLOY_IMAGE:?...}`) from the ansible-rendered `.env`, so a copy without the rendered pin refuses to start instead of silently running `:latest` on the AVX-less Atom.
+- **The quirks are recorded** in `infra/nas/README.md` (docker at `/usr/local/bin/docker` off sudo's PATH, CEST-vs-UTC `docker logs --since`, no scp/sftp) and encoded in `host_vars/nas/vars.yml`; the TZ guard turns the CEST quirk into a hard converge refusal.
+
 ## Suggested next steps
 
-- Decide the model: (a) bring the NAS under Ansible (it is a Synology — the blocker is DSM, and this may be genuinely infeasible); (b) keep it hand-managed but add a **drift check** — a small job comparing the deployed files' checksums against the repo's and publishing a metric, so divergence is visible rather than discovered; or (c) accept drift and make deploys explicit + logged. Recommend (b): it is cheap, needs no DSM cooperation, and directly closes both defects above.
-- **Fix the placeholder trap regardless of the model.** Either move the image pin to the `.env` (where every other per-deploy value already lives, and where `compose.yaml` can reference it as `${CAPTURE_IMAGE}`), or make the committed file carry no image line at all. As long as the committed file contains a runnable-but-wrong `:latest`, deploying it correctly requires remembering an unwritten rule — and the one time it was forgotten, the NAS died instantly.
-- Record the NAS's operating quirks somewhere a future session reads *before* touching it (docker path, CEST-vs-UTC logs, no scp) — `infra/nas/README.md` is the natural home. Each one produced a wrong conclusion during the cutover.
+- **Run the first attended NAS converge** (`./scripts/run.sh site.yml --limit nas`, preview with `--check --diff` first): flip DSM to UTC when the TZ guard refuses (DSM Control Panel → Regional Options → Time Zone → (GMT) Greenwich Mean Time), converge, then apply with `-e nas_apply_compose=true` and verify by outcome (pulls green, gate.prom fresh, Alloy shipping). Resolve this topic once that verifies — the drift class is only dead once a real converge has driven the host.

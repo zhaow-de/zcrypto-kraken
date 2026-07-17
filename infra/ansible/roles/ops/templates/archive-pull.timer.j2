@@ -7,9 +7,12 @@ Description=Half-hourly overlay-writer cycle (spec 00054/T0058; unit name is his
 # :12 AND :42 -- T0058 doubled the cadence (consensus #4): reads go through the NFS mount now and
 # cost no transfer, so an extra cycle is cheap and halves the writer's reaction lag to a fresh NAS
 # pull. Alert thresholds stay as provisioned for the hourly cadence -- deliberately. Both slots are
-# off the hour boundary, clear of the ops reboot window (02:25 UTC), the capture hosts' maintenance
-# windows (21:25/22:25 UTC), and the daily replay timers (03:41/05:23). Host timezone is UTC (base
-# role).
+# off the hour boundary, clear of the ops reboot window (02:25 UTC) and the capture hosts'
+# maintenance windows (21:25/22:25 UTC). The :12 slot is also clear of the daily replay timers
+# (03:41/05:23); the T0058-added :42 slot KNOWINGLY overlaps the daily 03:41 verify-replay run once
+# a day (03:42) -- accepted, not an oversight (review 2026-07-17): both are read-only NFS readers,
+# contention only slows them, and a soft-mount EIO fails loudly (rc != 0), never silently. Host
+# timezone is UTC (base role).
 OnCalendar=*-*-* *:12,42:00
 # A host that was down at a slot runs on the next boot instead of skipping the cycle.
 Persistent=true

@@ -23,6 +23,14 @@ STATUS="{{ ops_nas_mount }}/.pull-status"
 # ledger a permanent late-mint verdict), well above the NAS's ~1.2h normal pull cadence (a healthy
 # NAS never trips it).
 MAX_STATUS_AGE=14400
+# A FUTURE ts_epoch beyond this skew tolerance is treated as malformed, not fresh (review
+# 2026-07-17): the staleness check alone goes negative on a future stamp and never trips, so a
+# status file frozen with good flags and a future timestamp (NAS clock jump — DSM NTP misconfig is
+# a sibling of the CEST TZ incident — then the pull container dies) would hold the gate open
+# against a frozen NFS view for skew+4h, exactly the false-verdict window the gate exists to
+# close. Same clock-skew reasoning as verified-replay's future-watermark guard. 600s tolerates
+# benign inter-host skew (both hosts run NTP; healthy skew is sub-second).
+MAX_STATUS_SKEW=600
 
 rc=0
 now=$(date -u +%s)
@@ -34,8 +42,9 @@ now=$(date -u +%s)
 # those pulls are broken (the two-hop blindness the OPS-5 cutover introduced: a frozen view would
 # ledger permanent false would_mint verdicts after 6h, polluting the T0039 soak ledger).
 #
-# FAIL CLOSED: a missing, unreadable, malformed, not-both-ok, or stale (> MAX_STATUS_AGE) status
-# skips the WHOLE writer cycle — reconcile AND backfill. The reconciler reasons from the NAS's
+# FAIL CLOSED: a missing, unreadable, malformed, not-both-ok, stale (> MAX_STATUS_AGE), or
+# future-stamped (> MAX_STATUS_SKEW ahead) status skips the WHOLE writer cycle — reconcile AND
+# backfill. The reconciler reasons from the NAS's
 # mirrors and cannot tell "this hour does not exist" from "this hour did not arrive"; a broken or
 # stale NAS pull makes absence uninformative on both channels:
 #   * primary pull broken: hours look primary-dark but are not — reconciling would mint "healed"
@@ -66,6 +75,8 @@ elif [ "$ts_numeric" -ne 1 ]; then
     skip_reason="status ts_epoch='$ts_epoch' is not a unix timestamp"
 elif [ $((now - ts_epoch)) -gt "$MAX_STATUS_AGE" ]; then
     skip_reason="status is stale: $((now - ts_epoch))s old (limit ${MAX_STATUS_AGE}s, ts_epoch=$ts_epoch)"
+elif [ $((ts_epoch - now)) -gt "$MAX_STATUS_SKEW" ]; then
+    skip_reason="status ts_epoch=$ts_epoch is $((ts_epoch - now))s in the FUTURE (tolerance ${MAX_STATUS_SKEW}s) — NAS/ops clock skew; a future-stamped status can never attest freshness"
 fi
 
 if [ -n "$skip_reason" ]; then

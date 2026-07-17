@@ -49,9 +49,9 @@ ops_alloy_dir: /etc/zcrypto-ops/alloy
 ops_alloy_image: grafana/alloy
 # The secrets file (GRAFANA_PROM_URL/USERNAME/PASSWORD + GRAFANA_LOKI_URL/USERNAME/PASSWORD) has no
 # role var: alloy-compose.yaml.j2 hardcodes its relative `env_file: ./alloy-secrets.env` (nothing
-# else references the path, so a var would be dead config -- review finding 3). This host IS
-# Ansible-managed, so unlike the NAS's hand-placed file, it is rendered by this role from
-# group_vars/observed/vault.yml (tasks/main.yml), owned by zcrypto-alloy -- see infra/ops/README.md.
+# else references the path, so a var would be dead config -- review finding 3). It is rendered by
+# this role from group_vars/observed/vault.yml (tasks/main.yml), owned by zcrypto-alloy -- the same
+# pattern the nas role uses for the NAS's copy since T0056 -- see infra/ops/README.md.
 
 # --- OPS-5 (spec 00054 D2): the overlay writer's knobs, moved here with the writer from the NAS's
 # compose (RECONCILE_MIN_GAP_SECONDS / RECONCILE_WINDOW_HOURS). DETECT-ONLY still applies -- the

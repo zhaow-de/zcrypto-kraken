@@ -48,7 +48,7 @@ Two daily systemd timers run the `zcrypto` CLI in the digest-pinned image (`dock
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
 | `zcrypto-verify-replay.timer` | daily 03:41 | `zcrypto archive verify-replay /nas/capture-segments /data/capture-reconciled` — continuity-replays the canonical archive (reconciled-first) through `OrderBook`; exits non-zero if any hour is not (chain-)anchored / ts-ordered / checksum-attested / structurally replayable. |
-| `zcrypto-verified-replay.timer` | daily 05:23 | `zcrypto engine replay --path verified --journal-dir /nas/engine-journal` — the oracle-builder replay of the journal (watermark catch-up loop over every still-unverified day, T0059); exits non-zero on any mismatch or validation failure, and refuses loudly on an invalid/future watermark. A day whose journal day-dir is absent or empty stops the loop without advancing the watermark (rc 0 alone is not proof of verification — the day retries once the journal has caught up). |
+| `zcrypto-verified-replay.timer` | daily 05:23 | `zcrypto engine replay --path verified --journal-dir /nas/engine-journal` — the oracle-builder replay of the journal (watermark catch-up loop over every still-unverified day, T0059); exits non-zero on any mismatch or validation failure, and refuses loudly on an invalid/future watermark. A day whose journal day-dir holds no cycle artifacts — or whose **successor** day has none yet (a mid-day pull stall leaves only the early cycles; the successor day starting to arrive is the proof the pull finished this one) — stops the loop without advancing the watermark (rc 0 alone is not proof of verification — the day retries once the journal has caught up). |
 
 Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC) and the capture hosts' maintenance windows (21:25/22:25 UTC). `Persistent=true`: a host that was down at the slot runs on the next boot instead of skipping the day.
 
@@ -61,6 +61,7 @@ Each run atomically rewrites its node-exporter textfile in `ops_textfile_dir` (d
 | `<prefix>exit_code` | Exit code of the last run (`0` = clean; non-zero is the CLI's own failure verdict). |
 | `<prefix>last_run_timestamp` | Unix time of the last run, clean or not. |
 | `<prefix>last_success_timestamp` | Unix time of the last **clean** run (`0` = never). A failed run carries the previous value forward, so "time since last clean replay" stays directly alertable. |
+| `ops_verified_replay_days_behind` | Days between the replay watermark and yesterday (`0` = fully caught up). Verified-replay family only — the watermark catch-up loop (T0059) is what makes "behind" a meaningful state. |
 
 The metric families are new: per the T0034 discipline, arm Grafana alert rules only once the series are visible in the scrape (OPS-4/5 wires the ops node's scraper; do not push rules blind).
 
@@ -78,11 +79,14 @@ Two wiring notes: (1) a digest-only converge arms `panel-materialize` before any
 
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
-| `zcrypto-archive-pull.timer` | half-hourly, :12 and :42 (T0058 — NFS reads cost no transfer) | The overlay-writer cycle: first the **fail-closed gate** — read `{{ ops_nas_mount }}/.pull-status` (written by the NAS right after its own VPS capture pulls, `infra/nas/pull-entrypoint.sh`) and skip the whole cycle (reconcile **and** backfill, exit 0, loud WARNING) unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 4 h. Then `zcrypto archive reconcile /nas/capture-segments /nas/capture-segments-red /data/capture-reconciled` (detect-only until T0039) and the daily `zcrypto archive backfill-trades /nas/capture-segments /data/capture-reconciled`, both in the digest-pinned image with the NFS mount at `/nas:ro`. A persistent skip surfaces via the reconcile-staleness alert (the skipped cycle never rewrites `reconcile.prom`). |
+| `zcrypto-archive-pull.timer` | half-hourly, :12 and :42 (T0058 — NFS reads cost no transfer) | The overlay-writer cycle: first the **fail-closed gate** — read `{{ ops_nas_mount }}/.pull-status` (written by the NAS right after its own VPS capture pulls, `infra/nas/pull-entrypoint.sh`) and skip the whole cycle (reconcile **and** backfill, exit 0, loud WARNING) unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 4 h and not more than 10 min in the future (a future stamp is clock skew, never freshness). Then `zcrypto archive reconcile /nas/capture-segments /nas/capture-segments-red /data/capture-reconciled` (detect-only until T0039) and the daily `zcrypto archive backfill-trades /nas/capture-segments /data/capture-reconciled`, both in the digest-pinned image with the NFS mount at `/nas:ro`. A persistent skip surfaces via the reconcile-staleness alert (the skipped cycle never rewrites `reconcile.prom`). |
 | `zcrypto-panel-materialize.timer` | hourly, :22 | `zcrypto panel materialize /nas/capture-segments /data/capture-reconciled --panel-root /data/l2-panel` in the digest-pinned image, with the NFS mount at `/nas:ro` (T0058) — watermarked, so only canonical hours strictly newer than the panel's per-pair watermark are processed (installed inside the same `ops_image_digest is defined` guard as the replay timers). |
 
-Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC), the capture
-hosts' maintenance windows (21:25/22:25 UTC), and the daily replay timers (03:41/05:23).
+All slots are off the hour boundary and clear of the ops reboot window (02:25 UTC) and the capture
+hosts' maintenance windows (21:25/22:25 UTC). The `:12`/`:22` slots are also clear of the daily
+replay timers (03:41/05:23); the writer's T0058-added `:42` slot **knowingly overlaps** the daily
+03:41 `zcrypto-verify-replay` run once a day (03:42) — accepted: both are read-only NFS readers,
+contention only slows them, and a soft-mount EIO fails loudly (rc != 0), never silently.
 `Persistent=true` on both: a host down at its slot catches up on the next boot instead of skipping
 the hour — the panel timer's watermark makes a caught-up run idempotent regardless.
 
@@ -157,12 +161,18 @@ series, and every container's logs to Grafana Cloud — mirroring `infra/nas/con
 (see `infra/ansible/roles/ops/files/config.alloy` for the three deliberate divergences: no
 cadvisor, dedicated non-`deploy` uid + rootfs mount, compose-service-first log labelling).
 
-Ops log streams are labelled from the **compose service label**, falling back to the docker
-`--name` for the five systemd-unit `docker run --rm` jobs — so the full `container` label set is
-`liquidations`, `alloy`, `zcrypto-reconcile`, `zcrypto-trade-backfill`, `zcrypto-verify-replay`,
-`zcrypto-verified-replay`, `zcrypto-panel-materialize`. This deliberately differs from the NAS's
-docker-name-derived scheme (whose selectors, copied verbatim, were dead on ops — T0060); unifying
-the fleet's labelling is T0020's fleet-wide dashboards pass.
+Ops log streams are labelled two ways (T0060): the long-lived compose-managed containers
+(`liquidations`, `alloy`) ship via the docker path, labelled from the **compose service label**;
+the ephemeral systemd-unit `docker run --rm` jobs are **dropped** from the docker path (their
+`--rm` lifetime makes polling discovery structurally lossy) and ship via the **unit journal**,
+labelled by unit name. The full `container` label set is therefore `liquidations`, `alloy`,
+`zcrypto-archive-pull`, `zcrypto-verify-replay`, `zcrypto-verified-replay`,
+`zcrypto-panel-materialize` — there is **no** `zcrypto-reconcile` or `zcrypto-trade-backfill`
+stream: those runs are attached children of the archive-pull unit, so their stdout lands under
+`container="zcrypto-archive-pull"`. (The docker-name fallback rule in `config.alloy` is
+future-proofing for a later non-compose container; today it matches nothing.) This deliberately
+differs from the NAS's docker-name-derived scheme (whose selectors, copied verbatim, were dead on
+ops — T0060); unifying the fleet's labelling is T0020's fleet-wide dashboards pass.
 
 **Runs as the dedicated `zcrypto-alloy` system user, never `deploy`.** The role creates it
 (`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for `ops_uid`. This

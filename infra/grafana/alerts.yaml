@@ -357,13 +357,15 @@ rules:
       # rule quiet while the capture mirror -- the unbackfillable thing it exists to protect -- was not
       # advancing at all. The journal line carries no `failed=` field, and a verify failure carries a
       # non-zero one -- but `failed=0` is NOT capture-specific any more: the LIQUIDATIONS, PANEL, and
-      # (since T0058) RECONCILED pulls all run `zcrypto archive pull` WITH verification in this same
+      # (since the OPS-5 cutover, spec 00054 D4) RECONCILED pulls all run `zcrypto archive pull` WITH
+      # verification in this same
       # container and emit the identical clean line, so any one of them keeps this dead-man green
       # even if BOTH capture channels are broken. Known, accepted gap: a broken capture pull fails
       # LOUDLY every cycle, so capture-specific failure is deliberately delegated to the
       # warning-severity ERROR-logs rule above; this rule owns total silence (loop dead, container
       # gone, NAS down, log pipeline dark). Tightening the LogQL to a capture-tree match (the line
-      # carries source=/dest= naming the tree) would make it capture-specific again if that gap is
+      # carries source= naming the tree -- source only; dest= appears on the --no-verify journal
+      # line, never on this one) would make it capture-specific again if that gap is
       # ever deemed worth closing.
       #
       # 3h window against a pull that runs hourly (`${ARCHIVE_PULL_INTERVAL:-3600}` in
@@ -449,8 +451,8 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [10800]}  # 3h. The cycle is ~1.2h (the sleep follows the pull+reconcile work), so this is ~2 missed cycles of headroom
-    noDataState: Alerting  # no series at all = the NAS, Alloy, or the reconciler is gone. That IS the alarm.
+            - evaluator: {type: gt, params: [10800]}  # 3h. Since the OPS-5 cutover the series comes from the ops half-hourly overlay-writer (:12/:42), so this is ~6 missed cycles -- kept as provisioned deliberately (T0058 consensus: thresholds stay), and it doubles as the persistent-gate-skip pager (a skipped cycle never rewrites reconcile.prom)
+    noDataState: Alerting  # no series at all = the ops node, its Alloy, or the writer cycle is gone. That IS the alarm.
     execErrState: Alerting
     for: 5m
     annotations:

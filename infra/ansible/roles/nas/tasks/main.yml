@@ -91,8 +91,11 @@
   register: nas_deploy_alloy_secrets
 
 # --- Render-only report: an unflagged converge lands files and says which ones changed, nothing
-# restarts. Safe to print for the no_log tasks too — a no_log register keeps only the censored
-# marker plus changed/failed, so no rendered secret can reach this message.
+# restarts. Safe to print for the no_log tasks too — but NOT because the framework censors them:
+# in this ansible-core a no_log task's REGISTERED variable keeps the full result dict (dest,
+# checksums, temp src path — verified empirically on 2.21.2; no_log only suppresses the task's own
+# output). This message is safe only because it projects the key names and .changed booleans —
+# never print these registers wholesale.
 - name: report which stack files this converge changed
   ansible.builtin.debug:
     msg: >-

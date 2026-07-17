@@ -50,7 +50,7 @@ Both were found while writing this plan, by reading the live system rather than 
 | `tests/test_infra_alloy_series.py` | **create** | The T0051 guard: every series the stack publishes must match its host's keep-regex. |
 | `infra/ops/README.md`, `infra/nas/README.md` | modify | Channel + deploy docs. |
 
-> **Correction (2026-07-16, post-merge):** every `infra/ansible/roles/ops/templates/config.alloy.j2` reference in this plan is the file's *planned* path, not its final one. The file shipped as a 100% static config installed with `ansible.builtin.copy`, which only ever searches a role's `files/` dir — it now lives at `infra/ansible/roles/ops/files/config.alloy` (moved in commit `92b6db6` after a converge proved the `templates/` copy could never be found). Edit the `files/` path; `tests/test_infra_alloy_series.py` points there too.
+> **Correction (2026-07-16, post-merge):** every `infra/ansible/roles/ops/templates/config.alloy.j2` reference in this plan is the file's *planned* path, not its final one. The file shipped as a 100% static config installed with `ansible.builtin.copy`, which only ever searches a role's `files/` dir — it now lives at `infra/ansible/roles/ops/files/config.alloy` (moved in commit `92b6de0` after a converge proved the `templates/` copy could never be found). Edit the `files/` path; `tests/test_infra_alloy_series.py` points there too.
 
 ---
 

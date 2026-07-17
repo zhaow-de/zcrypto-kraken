@@ -51,9 +51,12 @@ if [ -f "$WATERMARK" ]; then
     # 0, days_behind read -1 (caught up), last_success bumped and the dead man was fed, and since
     # the loop is the only writer the file stayed empty: a permanent silent-skip that read fully
     # healthy. Invalid content is a LOUD error instead (see the refused-run contract in the
-    # header), and the file is left untouched for inspection.
-    if ! [[ "$WM" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-        echo "verified-replay: ERROR: watermark file $WATERMARK does not hold a YYYY-MM-DD day (got '$WM'); refusing to run — restore it to the last verified day, or delete it to re-seed from yesterday-1" >&2
+    # header), and the file is left untouched for inspection. The `date` round-trip catches what
+    # the regex cannot: a shape-valid but nonexistent calendar day (e.g. 2026-02-31) used to slip
+    # past both guards and die deep in the loop on a bewildering arithmetic error — with docker
+    # already invoked on an empty --date (review 2026-07-17, minor) — instead of refusing here.
+    if ! [[ "$WM" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -u -d "$WM" +%F 2>/dev/null)" != "$WM" ]; then
+        echo "verified-replay: ERROR: watermark file $WATERMARK does not hold a valid YYYY-MM-DD day (got '$WM'); refusing to run — restore it to the last verified day, or delete it to re-seed from yesterday-1" >&2
         exit 1
     fi
 else
@@ -102,13 +105,33 @@ while [[ ! "$day" > "$YESTERDAY" ]]; do
     # the day-dir is absent (or holds only the early cycles); advancing the watermark past it
     # would mark the day verified FOREVER — when the pull recovers, the day is already behind the
     # watermark and is never replayed (the T0059 silent-skip class, reintroduced for pull
-    # outages). So an absent/EMPTY day-dir stops the loop WITHOUT advancing the watermark: the
-    # day retries next run, once the journal has caught up. days_behind stays >= 1, so
-    # last_success does not bump and the dead man is not fed — a persistent stall pages by
-    # silence, then by staleness. An EIO on the soft NFS mount lands in this same branch:
-    # unreadable is not proven present, fail closed.
-    if ! compgen -G "$JOURNAL/$day/*" > /dev/null; then
-        echo "verified-replay: journal has not caught up: $JOURNAL/$day is absent or empty; stopping without advancing the watermark (day $day retries next run)"
+    # outages). So a day-dir with no journal ARTIFACTS — cycle-*.json / failed-cycle-*.json, the
+    # two shapes the CLI replays; a bare "$day/*" glob was satisfied by a stray non-artifact file
+    # (review 2026-07-17) — stops the loop WITHOUT advancing the watermark: the day retries next
+    # run, once the journal has caught up. days_behind stays >= 1, so last_success does not bump
+    # and the dead man is not fed — a persistent stall pages by silence, then by staleness. An
+    # EIO on the soft NFS mount lands in this same branch: unreadable is not proven present, fail
+    # closed.
+    if ! compgen -G "$JOURNAL/$day/cycle-*.json" > /dev/null \
+            && ! compgen -G "$JOURNAL/$day/failed-cycle-*.json" > /dev/null; then
+        echo "verified-replay: journal has not caught up: $JOURNAL/$day holds no cycle artifacts; stopping without advancing the watermark (day $day retries next run)"
+        break
+    fi
+
+    # Artifacts PRESENT is still not artifacts COMPLETE: a pull that stalled mid-day leaves the
+    # day-dir holding only the early cycles, the CLI replays that subset and exits 0, and the
+    # late cycles would land behind the watermark, permanently unverified while every signal
+    # reads green (review 2026-07-17 — the .pull-status gate cannot see this: it carries only
+    # capture_ok/secondary_ok, never journal_ok). Proxy for "the journal pull ran after $day
+    # ended": the day AFTER $day has started arriving — the engine journals a cycle every 4h and
+    # the NAS pull's single rsync walks day-dirs in lexicographic order, so a successor-day
+    # artifact proves the walk finished $day. Fail-closed tradeoff: an engine outage spanning a
+    # whole successor day also stops the loop here, paging by staleness/silence — correct, since
+    # "no journal at all" is indistinguishable from "journal not pulled yet" from this side.
+    next_day=$(date -u -d "$day + 1 day" +%F)
+    if ! compgen -G "$JOURNAL/$next_day/cycle-*.json" > /dev/null \
+            && ! compgen -G "$JOURNAL/$next_day/failed-cycle-*.json" > /dev/null; then
+        echo "verified-replay: journal freshness unproven: no $next_day artifacts yet, so $day may be partially pulled; stopping without advancing the watermark (day $day retries next run)"
         break
     fi
 

@@ -61,20 +61,28 @@ while true; do
 
 	# T0058: the reconcile gate's ground truth. The ops-node writer reads this file THROUGH the
 	# read-only NFS mount and skips its whole writer cycle (reconcile AND backfill) unless both
-	# flags are 1 AND ts_epoch is younger than 4h — fail closed: missing/unreadable/stale = skip.
+	# flags are 1 AND ts_epoch is younger than 4h (and not future-stamped beyond a small skew
+	# tolerance) — fail closed: missing/unreadable/stale/skewed = skip.
 	# Writing it here restores the original gate semantics (the actual pull exit codes) that the
 	# OPS-5 cutover had silently reduced to "the NAS-to-ops rsync succeeded" (final-review
 	# finding, 2026-07-17) — that rsync succeeds even when this host's own VPS pulls are broken,
 	# so a frozen mirror would have ledgered permanent false verdicts. This also finally gives
 	# capture_ok/secondary_ok a READER again — an earlier review noted they had become
 	# write-only. tmp+mv so the ops reader never sees a partial file (the same atomic pattern the
-	# trade-backfill textfile used before OPS-5 moved that step to the ops node).
-	{
+	# trade-backfill textfile used before OPS-5 moved that step to the ops node). If-guarded like
+	# every other step in this loop (review 2026-07-17): unguarded, a failed redirection or mv
+	# under `set -eu` (ENOSPC/EIO/read-only volume) killed the whole container mid-cycle — every
+	# channel after this block skipped, and `restart: unless-stopped` re-ran the capture pulls
+	# back-to-back with no interval pacing. A failed write just lets the existing status age,
+	# which is exactly the ops gate's designed fail-closed degraded mode.
+	if ! {
 		printf 'capture_ok=%s\n' "$capture_ok"
 		printf 'secondary_ok=%s\n' "$secondary_ok"
 		printf 'ts_epoch=%s\n' "$(date -u +%s)"
-	} > /archive/.pull-status.tmp
-	mv /archive/.pull-status.tmp /archive/.pull-status
+	} > /archive/.pull-status.tmp 2>/dev/null \
+			|| ! mv /archive/.pull-status.tmp /archive/.pull-status 2>/dev/null; then
+		log ERROR "pull-status write failed (dest=/archive/.pull-status), continuing"
+	fi
 
 	# The journal pull only runs once JOURNAL_SOURCE is set (Role B). It uses its OWN
 	# least-privilege key (JOURNAL_SSH_KEY) -- the capture and journal channels use distinct

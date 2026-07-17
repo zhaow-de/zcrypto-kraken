@@ -227,8 +227,8 @@ loki.source.docker "containers" {
 // The docker path above is structurally the WRONG transport for the four zcrypto-*.service units
 // (archive-pull half-hourly since T0058, panel-materialize hourly, verify-replay +
 // verified-replay daily), for two reasons (T0060):
-//   1. The orchestration scripts' OWN lines -- including the load-bearing gate warning "reconcile
-//      skipped: a capture pull failed this cycle..." (archive-pull.sh.j2) -- are host-side echoes
+//   1. The orchestration scripts' OWN lines -- including the load-bearing gate warning "writer
+//      cycle SKIPPED (fail-closed gate): ..." (archive-pull.sh.j2) -- are host-side echoes
 //      into journald. They exist in NO container log, so the docker path can never ship them. (On
 //      the NAS the equivalent loop runs INSIDE a container, which is why its lines ship; spec
 //      00054 moved ops orchestration into host scripts and silently lost that channel.)
@@ -322,7 +322,8 @@ loki.process "parse" {
       format   = "2006-01-02 15:04:05,000"
       location = "UTC"
       // "skip", NOT the default "fudge" (review finding): lines that fail the stage.regex above --
-      // the scripts' own echoes (including the load-bearing "reconcile skipped: ..." gate warning),
+      // the scripts' own echoes (including the load-bearing "writer cycle SKIPPED (fail-closed
+      // gate)" warning),
       // rsync stderr, docker-client errors, Python tracebacks -- have no `ts` in the extracted map,
       // and "fudge" rewrites their timestamp to the stream's LAST PARSED app timestamp +1ns. For an
       // hourly unit whose failure path emits ONLY unparsed echoes, that time-warps the headline
