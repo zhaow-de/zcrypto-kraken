@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 import re
 import signal
@@ -12,7 +13,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter, verify_manifest
-from cli.liquidations.coinalyze import fetch_liquidation_history, poll_cycle, symbol_for
+from cli.liquidations.coinalyze import COINS, fetch_liquidation_history, poll_cycle, prime_bucket_watermarks, symbol_for
 from cli.liquidations.errors import LiquidationsError
 
 runner = CliRunner()
@@ -215,7 +216,7 @@ def test_liquidations_poll_end_to_end_with_duration(tmp_path, monkeypatch):
     monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         assert api_key == "test-key"
         writers["BTC"].append(
             {
@@ -245,7 +246,7 @@ def test_liquidations_poll_sigterm_flushes_writers_cleanly(tmp_path, monkeypatch
     # loop (mid-cycle, not just during the sleep) and the writer still gets flushed on the way out.
     monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
             {
                 "ts": datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC),
@@ -274,7 +275,7 @@ def test_liquidations_poll_skips_ping_and_keeps_looping_on_a_failed_cycle(tmp_pa
 
     calls = {"n": 0}
 
-    def _flaky_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _flaky_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise LiquidationsError("boom")
@@ -364,7 +365,7 @@ def test_liquidations_poll_finalizes_a_stale_open_hour_past_the_finalize_lag(tmp
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
     stale_ts = datetime.now(UTC) - timedelta(hours=32)
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
             {
                 "ts": stale_ts,
@@ -391,7 +392,7 @@ def test_liquidations_poll_leaves_a_recent_open_hour_untouched(tmp_path, monkeyp
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
     recent_ts = datetime.now(UTC) - timedelta(hours=30)  # inside the 31h lag: must stay open
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
             {
                 "ts": recent_ts,
@@ -442,3 +443,216 @@ def test_run_survives_a_malformed_bucket_and_retries(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls["n"] >= 1
     assert pings == []  # a failed cycle must never ping the dead-man
+
+
+# --- prime_bucket_watermarks (spec 00055) -----------------------------------------------------
+
+
+def test_prime_bucket_watermarks_empty_dir_returns_empty(tmp_path):
+    assert prime_bucket_watermarks(tmp_path, ["BTC", "ETH"]) == {}
+
+
+def test_prime_bucket_watermarks_reads_newest_part(tmp_path):
+    # Persist two buckets an hour apart through the real writer (parts, no final).
+    w = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    t_old = 1784300400  # 2026-07-17 15:00:00 UTC
+    t_new = 1784304000  # 2026-07-17 16:00:00 UTC
+    for t in (t_old, t_new):
+        w.append(
+            {
+                "ts": datetime.fromtimestamp(t, tz=UTC),
+                "symbol": "BTCUSDT_PERP.A",
+                "long_usd": 1.0,
+                "short_usd": 2.0,
+                "event_id": f"BTCUSDT_PERP.A-{t}",
+            }
+        )
+    w.close()
+    assert prime_bucket_watermarks(tmp_path, COINS) == {"BTC": t_new}
+
+
+def test_prime_bucket_watermarks_reads_finalized_hour(tmp_path):
+    w = SegmentWriter(tmp_path, "ETH", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    t = 1784304000
+    w.append(
+        {
+            "ts": datetime.fromtimestamp(t, tz=UTC),
+            "symbol": "ETHUSDT_PERP.A",
+            "long_usd": 1.0,
+            "short_usd": 2.0,
+            "event_id": f"ETHUSDT_PERP.A-{t}",
+        }
+    )
+    w.finalize_completed_hours(datetime.fromtimestamp(t + 7200, tz=UTC))  # forces the final
+    w.close()
+    assert prime_bucket_watermarks(tmp_path, COINS) == {"ETH": t}
+
+
+def test_prime_bucket_watermarks_unreadable_newest_hour_omits_coin(tmp_path, caplog):
+    hour_dir = tmp_path / "BTC" / "liquidations-1m" / "2026" / "07" / "17" / ""
+    hour_dir.mkdir(parents=True)
+    (hour_dir / "16.part0000.parquet").write_bytes(b"not parquet")
+    with caplog.at_level(logging.WARNING, logger="zcrypto.liquidations.coinalyze"):
+        marks = prime_bucket_watermarks(tmp_path, COINS)
+    assert marks == {}
+    assert "priming failed" in caplog.text
+
+
+def test_prime_bucket_watermarks_coins_are_independent(tmp_path):
+    t = 1784304000
+    for coin, symbol in (("BTC", "BTCUSDT_PERP.A"), ("DOGE", "DOGEUSDT_PERP.A")):
+        w = SegmentWriter(tmp_path, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+        w.append(
+            {
+                "ts": datetime.fromtimestamp(t, tz=UTC),
+                "symbol": symbol,
+                "long_usd": 1.0,
+                "short_usd": 2.0,
+                "event_id": f"{symbol}-{t}",
+            }
+        )
+        w.close()
+    assert prime_bucket_watermarks(tmp_path, COINS) == {"BTC": t, "DOGE": t}
+
+
+# --- poll_cycle watermark filtering (spec 00055) ----------------------------------------------
+
+
+def _btc_writer(tmp_path):
+    return {"BTC": SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")}
+
+
+def test_poll_cycle_skips_buckets_at_or_below_watermark(tmp_path):
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t_covered = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    t_fresh = t_covered + 60
+    body = [
+        {
+            "symbol": "BTCUSDT_PERP.A",
+            "history": [
+                {"t": t_covered, "l": 1.0, "s": 2.0},
+                {"t": t_fresh, "l": 3.0, "s": 4.0},
+            ],
+        }
+    ]
+    writers = _btc_writer(tmp_path)
+    marks = {"BTC": t_covered}
+    written = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert written == 1  # only the fresh bucket reached the writer
+    parts = list(tmp_path.rglob("*.part*.parquet"))
+    df = pl.concat([pl.read_parquet(p) for p in parts])
+    assert df["event_id"].to_list() == [f"BTCUSDT_PERP.A-{t_fresh}"]
+    assert marks == {"BTC": t_fresh}  # advanced on submit
+
+
+def test_poll_cycle_second_cycle_is_silent_no_dedup_warnings(tmp_path, caplog):
+    # The production symptom, reproduced and killed: an identical follow-up cycle must submit
+    # nothing and trigger ZERO writer-level "dropping replayed event" warnings.
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
+    writers = _btc_writer(tmp_path)
+    marks: dict[str, int] = {}
+    assert poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body)) == 1
+    with caplog.at_level(logging.WARNING):
+        again = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert again == 0
+    assert "dropping replayed event" not in caplog.text
+
+
+def test_poll_cycle_none_watermarks_preserves_resubmit_behavior(tmp_path, caplog):
+    # watermarks=None is today's contract: re-submission reaches the writer and dedup drops it.
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
+    writers = _btc_writer(tmp_path)
+    poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
+    with caplog.at_level(logging.WARNING):
+        poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert "dropping replayed event" in caplog.text
+
+
+def test_poll_cycle_open_bucket_does_not_advance_watermark(tmp_path):
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t_open = int(now.timestamp()) - 60  # closes at now-0s: NOT proven closed (margin 120s)
+    body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t_open, "l": 1.0, "s": 2.0}]}]
+    writers = _btc_writer(tmp_path)
+    marks: dict[str, int] = {}
+    written = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert written == 0
+    assert marks == {}  # an unsubmitted bucket must never advance the mark
+
+
+def test_poll_cycle_failure_mid_cycle_leaves_unsubmitted_coins_unadvanced(tmp_path):
+    # Spec Verify names "a failed cycle": a malformed entry aborts the cycle (poll_cycle raises,
+    # _poll_once catches). Marks advanced before the abort stand (those rows sit in their writer's
+    # buffer); coins never reached must stay unadvanced so the next cycle re-covers them.
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [
+        {"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]},
+        {"symbol": "ETHUSDT_PERP.A", "history": [{"t": t, "l": None, "s": 2.0}]},  # float(None) raises
+    ]
+    writers = {
+        coin: SegmentWriter(tmp_path, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id") for coin in ("BTC", "ETH")
+    }
+    marks: dict[str, int] = {}
+    with pytest.raises(TypeError):
+        poll_cycle("key", ["BTC", "ETH"], writers, watermarks=marks, now=now, opener=_opener(body))
+    assert marks == {"BTC": t}  # BTC advanced (its row is buffered in its writer); ETH never did
+    for w in writers.values():
+        w.close()
+
+
+def test_poll_cycle_logs_submitted_and_skipped_counts(tmp_path, caplog):
+    now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
+    t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
+    body = [
+        {
+            "symbol": "BTCUSDT_PERP.A",
+            "history": [
+                {"t": t, "l": 1.0, "s": 2.0},
+                {"t": t + 60, "l": 3.0, "s": 4.0},
+            ],
+        }
+    ]
+    writers = _btc_writer(tmp_path)
+    with caplog.at_level(logging.INFO):
+        poll_cycle("key", ["BTC"], writers, watermarks={"BTC": t}, now=now, opener=_opener(body))
+    writers["BTC"].close()
+    assert "submitted=1" in caplog.text
+    assert "skipped_at_watermark=1" in caplog.text
+
+
+def test_run_primes_watermarks_and_threads_them_to_poll_cycle(tmp_path, monkeypatch):
+    # Persist one bucket, then boot _run: the primed dict must reach poll_cycle so the very
+    # first cycle after a restart already skips what is on disk.
+    from cli.liquidations import coinalyze as mod
+
+    t = 1784304000
+    w = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    w.append(
+        {
+            "ts": datetime.fromtimestamp(t, tz=UTC),
+            "symbol": "BTCUSDT_PERP.A",
+            "long_usd": 1.0,
+            "short_usd": 2.0,
+            "event_id": f"BTCUSDT_PERP.A-{t}",
+        }
+    )
+    w.close()
+
+    seen = {}
+
+    def fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
+        seen["watermarks"] = watermarks
+        return 0
+
+    monkeypatch.setattr(mod, "poll_cycle", fake_poll_cycle)
+    monkeypatch.setattr(mod, "_sleep", lambda seconds: None)
+    mod._run(tmp_path, "key", 300, None, duration=0)
+    assert seen["watermarks"] == {"BTC": t}

@@ -6,17 +6,22 @@ Coinalyze has PROVEN closed (see `poll_cycle`), and writes them through the same
 recorder uses -- one writer per coin, `kind="liquidations-1m"` -- so the existing NAS replication
 channel and dead-man wiring (same data dir) carry over unchanged.
 
-Overlap-safety invariant (do not "optimize" away): each cycle re-fetches the whole catch-up window
-and re-submits every closed bucket. TWO mechanisms make that safe, not one: SegmentWriter's dedup
-(`_seen`) covers only the currently-OPEN hour, while re-submissions into already-FINALIZED hours are
-dropped earlier by the writer's late-event floor (`_current_hour`/`_floor` in
-`cli/capture/segment_writer.py`). Narrowing the window or touching the floor logic must preserve both.
+Overlap-safety invariant (do not "optimize" away): each cycle still re-fetches the whole 30 h
+catch-up window, and THREE mechanisms keep the overlap safe. First, a per-coin bucket watermark
+(primed from the on-disk segment tree at startup, advanced in memory on each submit) filters
+re-submissions at source, before they ever reach a writer. Second and third, the writer's own
+defenses remain intact behind it: SegmentWriter's dedup (`_seen`) covers the currently-OPEN hour,
+and re-submissions into already-FINALIZED hours are dropped by the writer's late-event floor
+(`_current_hour`/`_floor` in `cli/capture/segment_writer.py`). Narrowing the window or touching
+the floor logic must preserve all of this -- and a `dropping replayed event` warning that still
+fires is now a genuine anomaly, not steady-state noise.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import time
 import urllib.error
@@ -25,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import polars as pl
 import typer
 
 from cli.capture.command import single_instance_lock
@@ -45,13 +51,15 @@ _TIMEOUT_SECONDS = 15
 _BUCKET_SECONDS = 60  # Coinalyze's fixed bucket width (interval=1min)
 # Load-bearing (verified live 2026-07-15, stable over 150s): SegmentWriter's dedup keeps the FIRST
 # row per event_id, so ingesting a bucket before Coinalyze has finished aggregating it would
-# permanently lock in a possibly-incomplete l/s pair -- this poller's overlapping 24h re-poll would
+# permanently lock in a possibly-incomplete l/s pair -- this poller's overlapping 30h re-poll would
 # never revisit it once dedup has seen the key. A bucket is proven closed once
 # `t + _BUCKET_SECONDS <= now - _CLOSE_MARGIN_SECONDS`.
 _CLOSE_MARGIN_SECONDS = 120
-# Each cycle re-requests the last 24h regardless of when it last succeeded: Coinalyze's own history
-# purges to ~25-33h, so anything older is unreachable anyway, and SegmentWriter's dedup absorbs the
-# overlap for free -- no "since last cycle" state to track (spec 00051 OPS-2 decision).
+# Each cycle re-requests the last 30h regardless of when it last succeeded: Coinalyze's own history
+# purges to ~25-33h, so anything older is unreachable anyway. The per-coin bucket watermark IS
+# deliberate cross-cycle in-memory state (spec 00055): it filters re-submissions at source, but it
+# is advisory (fail-open) and never durable -- losing it only costs one window of re-submissions,
+# absorbed by SegmentWriter's dedup/floor.
 # Coinalyze retains 1500-2000 one-minute bars (~25-33 h); requesting a window wider than what it
 # still holds is harmless (it returns what exists), so 30 h maximizes post-outage catch-up without
 # ever asking for provably-purged data.
@@ -78,6 +86,36 @@ POLL_SECONDS_ENV_VAR = "COINALYZE_POLL_SECONDS"
 DEFAULT_POLL_SECONDS = 300
 
 _sleep = time.sleep  # module-level so tests can stub the poll wait
+
+# Matches exactly the files SegmentWriter persists rows in: hour finals and parts. Sidecars
+# (.sha256), .merging, .tmp and .corrupt names do not end in ".parquet" so rglob skips them.
+_SEGMENT_FILE_RE = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/(\d{2})\.(?:parquet|part\d{4}\.parquet)$")
+
+
+def prime_bucket_watermarks(data_dir: Path, coins: list[str]) -> dict[str, int]:
+    """Newest persisted bucket start (epoch s) per coin, read from the segment tree at startup.
+
+    Fail-open per coin: a coin with no (readable) data is simply absent, so its whole catch-up
+    window re-submits once and the writer's dedup/floor absorb it -- exactly the pre-watermark
+    behavior, once.
+    """
+    marks: dict[str, int] = {}
+    for coin in coins:
+        by_hour: dict[tuple[str, ...], list[Path]] = {}
+        for path in (data_dir / coin / "liquidations-1m").rglob("*.parquet"):
+            m = _SEGMENT_FILE_RE.search(path.as_posix())
+            if m is not None:
+                by_hour.setdefault(m.groups(), []).append(path)
+        if not by_hour:
+            continue
+        try:
+            ts = pl.scan_parquet(by_hour[max(by_hour)]).select(pl.col("ts").max()).collect().item()
+        except Exception:
+            logger.warning("bucket-watermark priming failed for %s -- its full window will re-submit once", coin)
+            continue
+        if ts is not None:
+            marks[coin] = int(ts.timestamp())
+    return marks
 
 
 def symbol_for(coin: str) -> str:
@@ -116,17 +154,23 @@ def poll_cycle(
     coins: list[str],
     writers: dict[str, SegmentWriter],
     *,
+    watermarks: dict[str, int] | None = None,
     now: datetime | None = None,
     opener=urllib.request.urlopen,
 ) -> int:
-    """One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 24h and append every
+    """One poll cycle: fetch `coins`' batched Coinalyze symbols over the last 30h and append every
     PROVEN-closed 1-min bucket to its coin's writer. Returns the number of rows submitted to a
     writer (SegmentWriter's own `dedup_key` -- not this count -- is what absorbs a re-polled
     overlapping window; see the module docstring).
 
+    `watermarks` (coin -> newest submitted bucket start, epoch s) filters re-submissions at source:
+    a proven-closed bucket at or below its coin's mark is skipped before the writer, and the dict is
+    mutated in place -- a coin's mark advances only on a successful `writer.append`. `None` (the
+    default) disables filtering entirely, reproducing the pre-watermark behavior.
+
     Raises `LiquidationsError` (propagated from `fetch_liquidation_history`) on any fetch failure,
     BEFORE a single row is appended -- a failed cycle writes nothing, and the caller's next cycle
-    simply retries (the 24h re-fetch window covers the gap). A response entry naming a symbol with
+    simply retries (the 30h re-fetch window covers the gap). A response entry naming a symbol with
     no corresponding writer is skipped defensively, never fatal.
     """
     now = now or datetime.now(UTC)
@@ -138,6 +182,7 @@ def poll_cycle(
 
     cutoff = now_s - _CLOSE_MARGIN_SECONDS
     written = 0
+    skipped = 0
     for entry in payload:
         coin = symbol_to_coin.get(entry.get("symbol"))
         writer = writers.get(coin) if coin is not None else None
@@ -151,6 +196,9 @@ def poll_cycle(
             t = bucket["t"]
             if t + _BUCKET_SECONDS > cutoff:
                 continue  # not yet proven closed -- a later cycle will pick it up
+            if watermarks is not None and t <= watermarks.get(coin, -1):
+                skipped += 1
+                continue  # already persisted (or submitted this run) -- never reaches the writer
             writer.append(
                 {
                     "ts": datetime.fromtimestamp(t, tz=UTC),
@@ -161,10 +209,15 @@ def poll_cycle(
                 }
             )
             written += 1
+            if watermarks is not None:
+                watermarks[coin] = max(t, watermarks.get(coin, -1))
+    logger.info("poll cycle: submitted=%d skipped_at_watermark=%d closed bucket(s)", written, skipped)
     return written
 
 
-def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskWatermark) -> bool:
+def _poll_once(
+    api_key: str, writers: dict[str, SegmentWriter], watermark: DiskWatermark, bucket_watermarks: dict[str, int]
+) -> bool:
     """Run one cycle's watermark check + fetch/write; returns whether it fully succeeded (the
     dead-man ping's gate). A watermark probe that raises, a breach, or a `LiquidationsError` from
     `poll_cycle` are all treated the same way: log a warning, write nothing more, return False so
@@ -178,7 +231,7 @@ def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskW
         logger.warning("disk watermark breached -- skipping poll cycle")
         return False
     try:
-        written = poll_cycle(api_key, COINS, writers)
+        poll_cycle(api_key, COINS, writers, watermarks=bucket_watermarks)
     except LiquidationsError as exc:
         logger.warning("Coinalyze poll cycle failed: %s", exc)
         return False
@@ -190,7 +243,6 @@ def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskW
         # finally regardless; the fetch is all-or-nothing so no partial state was written).
         logger.exception("Coinalyze poll cycle failed on unexpected data -- retrying next cycle")
         return False
-    logger.info("poll cycle submitted %d closed bucket(s) (re-submissions are dropped by dedup/floor)", written)
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
     finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
@@ -203,6 +255,8 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     writers = {coin: SegmentWriter(data_dir, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id") for coin in COINS}
     watermark = DiskWatermark(data_dir)
+    bucket_watermarks = prime_bucket_watermarks(data_dir, COINS)
+    logger.info("primed bucket watermarks for %d/%d coin(s)", len(bucket_watermarks), len(COINS))
 
     # SIGTERM is pointed at the same handler Python installs for SIGINT by default
     # (`signal.default_int_handler`, which raises KeyboardInterrupt). There is no asyncio event
@@ -215,7 +269,7 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
     started = time.monotonic()
     try:
         while True:
-            ok = _poll_once(api_key, writers, watermark)
+            ok = _poll_once(api_key, writers, watermark, bucket_watermarks)
             if ok and not watermark.breached and watermark.measurable:
                 ping_healthcheck(healthcheck_url)
             if duration is not None and time.monotonic() - started >= duration:
