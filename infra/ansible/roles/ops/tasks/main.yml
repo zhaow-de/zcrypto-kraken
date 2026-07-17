@@ -74,6 +74,22 @@
     daemon_reload: true
   when: ops_nas_mount_fstab is changed
 
+# A generator-produced automount unit is pulled in by local-fs.target AT BOOT; on a live host a
+# daemon-reload only LOADS it (inactive/dead), so the mount point never appears until the next
+# reboot — found on the maiden converge, where /mnt/zhao-crypto did not exist despite a clean run.
+# `systemctl start` is the missing half, and it is idempotent. systemd-escape derives the unit name
+# from the path so the two cannot drift ("-" in the path escapes to \x2d).
+- name: derive the automount unit name from the mount path
+  ansible.builtin.command: systemd-escape -p --suffix=automount {{ ops_nas_mount }}
+  register: ops_nas_automount_unit
+  changed_when: false
+  check_mode: false
+
+- name: start the NAS custody automount (systemd creates the mount point on first start)
+  ansible.builtin.systemd_service:
+    name: "{{ ops_nas_automount_unit.stdout }}"
+    state: started
+
 - name: ensure the textfile-collector directory exists
   ansible.builtin.file:
     path: "{{ ops_textfile_dir }}"
