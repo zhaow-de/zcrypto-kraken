@@ -695,13 +695,15 @@ rules:
     notification_settings:
       receiver: metrics
 
-  # --- Ops node: the four textfile series Task 1 (spec 00054 D1) finally made scrapable -------------
-  # Pushed only after Task 3 (the attended Alloy deploy) confirms these series VISIBLE in Grafana Cloud
-  # -- same push-order caveat as the Reconciler/Trade-backfill blocks above: a rule armed before its
-  # metric exists sits silent forever, looking healthy. noDataState is per-rule, not boilerplate: the
-  # two dead-man rules (archive-pull staleness, verified-replay staleness) use Alerting -- no series at
-  # all means the host, Alloy, or the timer is gone, which IS the alarm -- while the two exit-code rules
-  # use OK, so a brand-new host does not page for a job it has simply never run yet. Exactly the
+  # --- Ops node (spec 00054): the timer jobs, the logs pipeline, and the host itself ---------------
+  # Pushed only after Task 3 (the attended Alloy deploy) confirms the underlying series VISIBLE in
+  # Grafana Cloud -- same push-order caveat as the Reconciler/Trade-backfill blocks above: a rule armed
+  # before its metric exists sits silent forever, looking healthy. noDataState is per-rule, not
+  # boilerplate, and the split is a RULE, not a count (counts go stale as rules are added): a rule
+  # whose job is to detect silence -- the dead-men and staleness rules, where no data at all means the
+  # host, Alloy, a transport, or a timer is gone -- uses Alerting, because for it silence IS the
+  # alarm; a rule that grades an outcome (exit codes, ERROR log lines, load) uses OK, because it must
+  # not page a brand-new host for a job that has simply never run yet. Exactly the
   # `zcrypto-trade-backfill-stale`/`zcrypto-trade-backfill-exit-nonzero` split above, applied here.
 
   - uid: zcrypto-ops-archive-pull-stalled

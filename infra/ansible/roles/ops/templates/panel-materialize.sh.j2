@@ -18,11 +18,12 @@ URL="{{ ops_panel_healthcheck_url }}"
 # {{ ops_panel_subdir }}/ inside the same data root.
 #
 # T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each run,
-# and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. The
-# name also makes this job selectable by Alloy's parse stage (config.alloy's `zcrypto-.*` selector).
-# A leftover container after a dockerd crash makes the NEXT run fail loudly on a name conflict
-# (unit rc!=0 -> the exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every
-# normal path.
+# and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. Since
+# the journal cutover the name's log role is the PRECISE DROP: config.alloy's docker path drops the
+# `zcrypto-*` ephemerals by name (their stdout ships via this unit's journal instead -- this run is
+# attached, not -d), which no regex could target while the names were random. A leftover container
+# after a dockerd crash makes the NEXT run fail loudly on a name conflict (unit rc!=0 -> the
+# exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every normal path.
 docker run --rm --pull never \
     --name zcrypto-panel-materialize \
     --user "{{ ops_uid }}:{{ ops_gid }}" \

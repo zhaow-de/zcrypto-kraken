@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: immediately — the ops node is shipping ~390k unparsed lines/day to Loki right now, and an ERROR-logs alert for it could never fire
+status: partial
+ripe_when: the poller-side watermark fix is picked as an iteration (owner ratified the direction 2026-07-17) — the pipeline itself is now sound, but the ~15,800 WARNING/h re-submission noise remains until that fix lands
 ---
 
 # The ops node's logs reach Loki but are unusable, and 99.9% of them are by-design noise
@@ -40,9 +40,16 @@ Four distinct defects, three of them introduced by spec `00054` Task 1:
 - Nothing was dropping these lines before because **nothing was scraping ops at all** — that is what Task 1 changed. The noise was always there; it only started costing money and hiding signal tonight.
 - The NAS is unaffected and correct: its selectors match its actual container names.
 
+## Done so far
+
+The infra half — defects 1–3 above, plus the alert gap they implied — is done and **deploy-verified** (commits `8fc7b73`, `357ddb2`, `29370e6`, branch `feat/ops5-offload`):
+
+- **Parse stages fixed** via a compose-service-label-first scheme (`8fc7b73`): `container` derives from the compose *service* label (stable, no project prefix or replica index), falling back to the docker name for non-compose containers. Verified live: the `liquidations` and `alloy` streams now carry real `level` labels (INFO/WARNING/ERROR) where every ops stream was `level=-` before.
+- **All five `docker run --rm` jobs named** (`8fc7b73`), which enabled the second half: the ephemeral containers are **dropped** from Docker discovery and their logs ship via `loki.source.journal` instead (`357ddb2`, hardened `29370e6`) — the journal also carries the host scripts' own gate-decision lines (e.g. `zcrypto-archive-pull: trade backfill failed (exit=2), continuing`), which existed in no container log by construction. Verified live in Loki: `container=zcrypto-archive-pull` streams with parsed levels, including `reconcile complete` CLI lines and script echo lines.
+- **Alert coverage closed and provisioned on the live instance** (verified by API read-back: 10 rules in the `zcrypto-ops` group): ERROR logs, two green-when-blind canaries (`log pipeline dead`, `journal transport dead`, both noData=Alerting), and exit-code rules for all four timer jobs.
+- **Empirical record of the Docker transport's unfitness for the ephemerals**: a quiet reconcile run shipped 1 line of 1 by timing luck; the structural gaps (host-script lines invisible to Docker; polling discovery vs second-lived containers; `--rm` deleting the log at exit) are architecture, not measurement.
+
 ## Suggested next steps
 
-- **Fix the selectors** (small, obvious): scope the Python stage to the containers ops actually runs. Prefer matching on something stable rather than a literal name — the `docker run --rm` containers have random names by construction, so a name-based selector cannot work for them. Consider deriving the label from the image, or dropping ephemeral containers entirely (next item).
-- **Decide what to do about `docker run --rm` streams.** Either give them a stable `--name`, or drop them in `discovery.relabel` (they are one-shot jobs whose output already lands in the systemd journal, which is the natural place to read them), or set a Docker log-driver on those runs. Do **not** leave unbounded random stream names shipping to a billed backend.
-- **Stop warning about by-design re-submissions.** The cleanest fix is at the source: give the poll path a floor/watermark so it does not re-submit what it has already written, rather than submitting and dropping. Failing that, log the dedup drop at DEBUG on the poller's kinds while keeping WARNING for the capture daemon's kinds — the two have opposite meanings. **Do not simply filter it in Alloy**: that hides the volume without fixing it, and the writer would still be doing 15,800 pointless dedup lookups an hour.
-- **Re-check the Loki ingest budget** once the above lands — the free tier has a monthly ingest allowance and ~390k lines/day from one container is worth knowing about before it bites. Then decide whether the gate for "observability is live" should include *parsed and useful*, not just *arriving* — the whole point of [[T0052]].
+- **Stop the poller re-submitting at source** (owner ratified 2026-07-17): give the poll path a per-pair watermark so it does not re-submit what it has already written — then the writer's dedup becomes a genuine anomaly detector and any surviving drop-warning is meaningful. This is the next iteration's spec.
+- **Re-check the Loki ingest volume once the poller fix lands** — the free tier has a monthly ingest allowance, and the pre-fix ~390k lines/day was dominated by the re-submission warnings.

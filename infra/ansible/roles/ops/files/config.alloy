@@ -228,8 +228,11 @@ loki.source.docker "containers" {
 //      lossless replacement.
 // The journal is the native, lossless transport for systemd-launched work: `docker run` without
 // -d runs ATTACHED, so all container stdout/stderr flows through the script into the unit's
-// journal, alongside the script's own lines -- one complete, ordered record per run. The host
-// keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
+// journal, alongside the script's own lines -- one complete, ordered record per run. "Lossless"
+// is bounded upstream by journald's own per-service rate limit (Debian default
+// RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
+// them -- our four units emit orders of magnitude less than that, but the claim ends there. The
+// host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
 // /host/journal by alloy-compose.yaml.j2.
 loki.relabel "journal_units" {
   // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
@@ -258,7 +261,12 @@ loki.relabel "journal_units" {
   }
 
   // `host="ops"`, exactly like the docker path's discovery.relabel above -- one label scheme
-  // across both transports.
+  // across both transports. KNOWN, BENIGN divergence from that scheme: loki.source.journal below
+  // unconditionally injects job="loki.source.journal.zcrypto_units" into its streams, while the
+  // docker-path streams carry no `job` label at all. Deliberately NOT worked around here --
+  // whether relabel rules can strip a component-injected label is unverified, and every selector
+  // and alert today keys only on host/container/level, so nothing reads `job`. Unifying the
+  // fleet's label scheme is T0020's dashboards/labelling pass.
   rule {
     target_label = "host"
     replacement  = "ops"
@@ -272,6 +280,13 @@ loki.source.journal "zcrypto_units" {
   path          = "/host/journal"
   relabel_rules = loki.relabel.journal_units.rules
   forward_to    = [loki.process.parse.receiver]
+
+  // Bound on "lossless": after an Alloy outage this component resumes from its saved cursor, but
+  // never reads further back than max_age -- UNSET it defaults to 7h, so an outage longer than
+  // that would permanently skip the window between the cursor and now-7h. 48h is cheap for these
+  // four low-volume hourly/daily units, so the honest claim is: lossless up to a 48h Alloy
+  // outage; beyond that the skipped window survives only in the host journal, never in Loki.
+  max_age       = "48h"
 }
 
 // Parse ONCE, here at ingest -- never at query time. Same two stages as the NAS's pipeline: our
