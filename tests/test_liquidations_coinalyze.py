@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import os
 import re
 import signal
@@ -12,7 +13,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter, verify_manifest
-from cli.liquidations.coinalyze import fetch_liquidation_history, poll_cycle, symbol_for
+from cli.liquidations.coinalyze import COINS, fetch_liquidation_history, poll_cycle, prime_bucket_watermarks, symbol_for
 from cli.liquidations.errors import LiquidationsError
 
 runner = CliRunner()
@@ -442,3 +443,73 @@ def test_run_survives_a_malformed_bucket_and_retries(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls["n"] >= 1
     assert pings == []  # a failed cycle must never ping the dead-man
+
+
+# --- prime_bucket_watermarks (spec 00055) -----------------------------------------------------
+
+
+def test_prime_bucket_watermarks_empty_dir_returns_empty(tmp_path):
+    assert prime_bucket_watermarks(tmp_path, ["BTC", "ETH"]) == {}
+
+
+def test_prime_bucket_watermarks_reads_newest_part(tmp_path):
+    # Persist two buckets an hour apart through the real writer (parts, no final).
+    w = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    t_old = 1784300400  # 2026-07-17 15:00:00 UTC
+    t_new = 1784304000  # 2026-07-17 16:00:00 UTC
+    for t in (t_old, t_new):
+        w.append(
+            {
+                "ts": datetime.fromtimestamp(t, tz=UTC),
+                "symbol": "BTCUSDT_PERP.A",
+                "long_usd": 1.0,
+                "short_usd": 2.0,
+                "event_id": f"BTCUSDT_PERP.A-{t}",
+            }
+        )
+    w.close()
+    assert prime_bucket_watermarks(tmp_path, COINS) == {"BTC": t_new}
+
+
+def test_prime_bucket_watermarks_reads_finalized_hour(tmp_path):
+    w = SegmentWriter(tmp_path, "ETH", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    t = 1784304000
+    w.append(
+        {
+            "ts": datetime.fromtimestamp(t, tz=UTC),
+            "symbol": "ETHUSDT_PERP.A",
+            "long_usd": 1.0,
+            "short_usd": 2.0,
+            "event_id": f"ETHUSDT_PERP.A-{t}",
+        }
+    )
+    w.finalize_completed_hours(datetime.fromtimestamp(t + 7200, tz=UTC))  # forces the final
+    w.close()
+    assert prime_bucket_watermarks(tmp_path, COINS) == {"ETH": t}
+
+
+def test_prime_bucket_watermarks_unreadable_newest_hour_omits_coin(tmp_path, caplog):
+    hour_dir = tmp_path / "BTC" / "liquidations-1m" / "2026" / "07" / "17" / ""
+    hour_dir.mkdir(parents=True)
+    (hour_dir / "16.part0000.parquet").write_bytes(b"not parquet")
+    with caplog.at_level(logging.WARNING, logger="zcrypto.liquidations.coinalyze"):
+        marks = prime_bucket_watermarks(tmp_path, COINS)
+    assert marks == {}
+    assert "priming failed" in caplog.text
+
+
+def test_prime_bucket_watermarks_coins_are_independent(tmp_path):
+    t = 1784304000
+    for coin, symbol in (("BTC", "BTCUSDT_PERP.A"), ("DOGE", "DOGEUSDT_PERP.A")):
+        w = SegmentWriter(tmp_path, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+        w.append(
+            {
+                "ts": datetime.fromtimestamp(t, tz=UTC),
+                "symbol": symbol,
+                "long_usd": 1.0,
+                "short_usd": 2.0,
+                "event_id": f"{symbol}-{t}",
+            }
+        )
+        w.close()
+    assert prime_bucket_watermarks(tmp_path, COINS) == {"BTC": t, "DOGE": t}

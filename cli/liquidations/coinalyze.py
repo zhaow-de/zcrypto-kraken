@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import time
 import urllib.error
@@ -25,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import polars as pl
 import typer
 
 from cli.capture.command import single_instance_lock
@@ -78,6 +80,36 @@ POLL_SECONDS_ENV_VAR = "COINALYZE_POLL_SECONDS"
 DEFAULT_POLL_SECONDS = 300
 
 _sleep = time.sleep  # module-level so tests can stub the poll wait
+
+# Matches exactly the files SegmentWriter persists rows in: hour finals and parts. Sidecars
+# (.sha256), .merging, .tmp and .corrupt names do not end in ".parquet" so rglob skips them.
+_SEGMENT_FILE_RE = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/(\d{2})\.(?:parquet|part\d{4}\.parquet)$")
+
+
+def prime_bucket_watermarks(data_dir: Path, coins: list[str]) -> dict[str, int]:
+    """Newest persisted bucket start (epoch s) per coin, read from the segment tree at startup.
+
+    Fail-open per coin: a coin with no (readable) data is simply absent, so its whole catch-up
+    window re-submits once and the writer's dedup/floor absorb it -- exactly the pre-watermark
+    behavior, once.
+    """
+    marks: dict[str, int] = {}
+    for coin in coins:
+        by_hour: dict[tuple[str, ...], list[Path]] = {}
+        for path in (data_dir / coin / "liquidations-1m").rglob("*.parquet"):
+            m = _SEGMENT_FILE_RE.search(path.as_posix())
+            if m is not None:
+                by_hour.setdefault(m.groups(), []).append(path)
+        if not by_hour:
+            continue
+        try:
+            ts = pl.scan_parquet(by_hour[max(by_hour)]).select(pl.col("ts").max()).collect().item()
+        except Exception:
+            logger.warning("bucket-watermark priming failed for %s -- its full window will re-submit once", coin)
+            continue
+        if ts is not None:
+            marks[coin] = int(ts.timestamp())
+    return marks
 
 
 def symbol_for(coin: str) -> str:
