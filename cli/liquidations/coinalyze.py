@@ -215,7 +215,9 @@ def poll_cycle(
     return written
 
 
-def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskWatermark) -> bool:
+def _poll_once(
+    api_key: str, writers: dict[str, SegmentWriter], watermark: DiskWatermark, bucket_watermarks: dict[str, int]
+) -> bool:
     """Run one cycle's watermark check + fetch/write; returns whether it fully succeeded (the
     dead-man ping's gate). A watermark probe that raises, a breach, or a `LiquidationsError` from
     `poll_cycle` are all treated the same way: log a warning, write nothing more, return False so
@@ -229,7 +231,7 @@ def _poll_once(api_key: str, writers: dict[str, SegmentWriter], watermark: DiskW
         logger.warning("disk watermark breached -- skipping poll cycle")
         return False
     try:
-        poll_cycle(api_key, COINS, writers)
+        poll_cycle(api_key, COINS, writers, watermarks=bucket_watermarks)
     except LiquidationsError as exc:
         logger.warning("Coinalyze poll cycle failed: %s", exc)
         return False
@@ -253,6 +255,8 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     writers = {coin: SegmentWriter(data_dir, coin, "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id") for coin in COINS}
     watermark = DiskWatermark(data_dir)
+    bucket_watermarks = prime_bucket_watermarks(data_dir, COINS)
+    logger.info("primed bucket watermarks for %d/%d coin(s)", len(bucket_watermarks), len(COINS))
 
     # SIGTERM is pointed at the same handler Python installs for SIGINT by default
     # (`signal.default_int_handler`, which raises KeyboardInterrupt). There is no asyncio event
@@ -265,7 +269,7 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
     started = time.monotonic()
     try:
         while True:
-            ok = _poll_once(api_key, writers, watermark)
+            ok = _poll_once(api_key, writers, watermark, bucket_watermarks)
             if ok and not watermark.breached and watermark.measurable:
                 ping_healthcheck(healthcheck_url)
             if duration is not None and time.monotonic() - started >= duration:

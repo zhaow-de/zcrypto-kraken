@@ -216,7 +216,7 @@ def test_liquidations_poll_end_to_end_with_duration(tmp_path, monkeypatch):
     monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         assert api_key == "test-key"
         writers["BTC"].append(
             {
@@ -246,7 +246,7 @@ def test_liquidations_poll_sigterm_flushes_writers_cleanly(tmp_path, monkeypatch
     # loop (mid-cycle, not just during the sleep) and the writer still gets flushed on the way out.
     monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
             {
                 "ts": datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC),
@@ -275,7 +275,7 @@ def test_liquidations_poll_skips_ping_and_keeps_looping_on_a_failed_cycle(tmp_pa
 
     calls = {"n": 0}
 
-    def _flaky_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _flaky_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise LiquidationsError("boom")
@@ -365,7 +365,7 @@ def test_liquidations_poll_finalizes_a_stale_open_hour_past_the_finalize_lag(tmp
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
     stale_ts = datetime.now(UTC) - timedelta(hours=32)
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
             {
                 "ts": stale_ts,
@@ -392,7 +392,7 @@ def test_liquidations_poll_leaves_a_recent_open_hour_untouched(tmp_path, monkeyp
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
     recent_ts = datetime.now(UTC) - timedelta(hours=30)  # inside the 31h lag: must stay open
 
-    def _fake_poll_cycle(api_key, coins, writers, *, now=None, opener=None):
+    def _fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
         writers["BTC"].append(
             {
                 "ts": recent_ts,
@@ -626,3 +626,33 @@ def test_poll_cycle_logs_submitted_and_skipped_counts(tmp_path, caplog):
     writers["BTC"].close()
     assert "submitted=1" in caplog.text
     assert "skipped_at_watermark=1" in caplog.text
+
+
+def test_run_primes_watermarks_and_threads_them_to_poll_cycle(tmp_path, monkeypatch):
+    # Persist one bucket, then boot _run: the primed dict must reach poll_cycle so the very
+    # first cycle after a restart already skips what is on disk.
+    from cli.liquidations import coinalyze as mod
+
+    t = 1784304000
+    w = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
+    w.append(
+        {
+            "ts": datetime.fromtimestamp(t, tz=UTC),
+            "symbol": "BTCUSDT_PERP.A",
+            "long_usd": 1.0,
+            "short_usd": 2.0,
+            "event_id": f"BTCUSDT_PERP.A-{t}",
+        }
+    )
+    w.close()
+
+    seen = {}
+
+    def fake_poll_cycle(api_key, coins, writers, *, watermarks=None, now=None, opener=None):
+        seen["watermarks"] = watermarks
+        return 0
+
+    monkeypatch.setattr(mod, "poll_cycle", fake_poll_cycle)
+    monkeypatch.setattr(mod, "_sleep", lambda seconds: None)
+    mod._run(tmp_path, "key", 300, None, duration=0)
+    assert seen["watermarks"] == {"BTC": t}
