@@ -21,11 +21,11 @@ The NAS is Ansible-managed: the `nas` role (`infra/ansible/roles/nas`, play in `
 
 ```bash
 cd infra/ansible
-./scripts/run.sh site.yml --limit nas --tags nas                        # render-only: files land, restarts deferred
-./scripts/run.sh site.yml --limit nas --tags nas -e nas_apply_compose=true   # render + apply (compose up -d + alloy restart)
+./scripts/run.sh site.yml --limit nas --tags nas                        # render-only: files land + a changed-files report, nothing restarts
+./scripts/run.sh site.yml --limit nas --tags nas -e nas_apply_compose=true   # render + apply EVERYTHING currently rendered
 ```
 
-Without `-e nas_apply_compose=true` the converge renders files but **defers the restart handler** — deliberate, the same explicit-apply discipline as the ops role's attended first start. The apply handler always chases `up -d` with an Alloy restart — T0048 codified: after any `up -d` that recreates a container, Alloy's docker tailer keeps following the dead container ID and the recreated service's logs silently stop shipping until Alloy restarts.
+Without `-e nas_apply_compose=true` the converge is **render-only**: files land on the NAS and the play reports which ones changed, but nothing restarts — deliberate, the same explicit-apply discipline as the ops role's attended first start. With the flag, end-of-role apply tasks **always run and apply everything currently rendered — not just what changed this run** (they are gated on the flag itself, not on notifications: a notify consumed by a `when:`-skipped handler is dropped, not deferred, so the old handler-based "render now, apply later" sequence could never apply; finding, 2026-07-17). The apply is three steps: `compose up -d`, then an unconditional `archive-pull` restart (`pull-entrypoint.sh` is bind-mounted, so a content change never alters the compose service hash and `up -d` alone would leave the old loop running), then an Alloy restart — T0048 codified: after any `up -d` that recreates a container, Alloy's docker tailer keeps following the dead container ID and the recreated service's logs silently stop shipping until Alloy restarts. Idempotent-safe: restarting an already-current container is a harmless few seconds of downtime on best-effort loops.
 
 **The play's first act is a UTC clock guard and it fails closed**: `date +%z` must print `+0000`. `docker logs --since` parses its argument in the host's **local** time, and the NAS's CEST clock produced false review verdicts on 2026-07-16. Fix: DSM Control Panel → Regional Options → Time Zone → **(GMT) Greenwich Mean Time**, then re-run the play.
 
@@ -63,7 +63,7 @@ Host quirks — encoded as `host_vars/nas/vars.yml` (all measured live 2026-07-1
 
 ## Env-var contract
 
-The `.env` next to `compose.yaml` is **rendered by the `nas` role** (`roles/nas/templates/env.j2`): every "deploy-time `.env`" row below is set in `infra/ansible/host_vars/nas/vars.yml` (except `GATE_HEALTHCHECK_URL`, vaulted in `host_vars/nas/vault.yml`) — never hand-edited on the NAS. `CAPTURE_IMAGE` and `ALLOY_IMAGE` (the digest pins, `nas_capture_image` / `nas_alloy_image`) fill `compose.yaml`'s `${...:?}` placeholders, so compose refuses to start without them.
+The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`roles/nas/templates/env.j2`): every "deploy-time `.env`" row below is set in `infra/ansible/host_vars/nas/vars.yml` (except `GATE_HEALTHCHECK_URL`, vaulted in `host_vars/nas/vault.yml`) — never hand-edited on the NAS. There is no hand-maintained "optional" row: overriding a variable the template does not render (e.g. `ARCHIVE_PULL_INTERVAL`) takes **both** a `vars.yml` entry **and** an `env.j2` line; a variable in neither simply takes its `compose.yaml`/entrypoint default. `CAPTURE_IMAGE` and `ALLOY_IMAGE` (the digest pins, `nas_capture_image` / `nas_alloy_image`) fill `compose.yaml`'s `${...:?}` placeholders, so compose refuses to start without them. The reconcile/backfill knobs that used to live here (`RECONCILE_TEXTFILE`, `RECONCILE_MIN_GAP_SECONDS`, `RECONCILE_WINDOW_HOURS`, `TRADE_BACKFILL_TEXTFILE`) left with the writer: OPS-5 (spec `00054`) moved the reconciler + trade-backfill steps to the ops node.
 
 | Variable | Meaning | Set where |
 | -- | -- | -- |
@@ -89,12 +89,8 @@ The `.env` next to `compose.yaml` is **rendered by the `nas` role** (`roles/nas/
 | `RECONCILED_SSH_KEY` | Private key for the reconciled-overlay pull — a **separate** least-privilege keypair (`sync_reconciled`), never the capture/journal/liquidations/panel keys. | fixed to `/keys/sync_reconciled` in `compose.yaml` |
 | `RECONCILED_SSH_PORT` | The ops node's SSH port, scoped to this pull only (passed as `ARCHIVE_SSH_PORT` per call, like the per-call keys). The ops node is a home-LAN box on port **22**, unlike the VPS channels' 10022. | defaults to `22` in `compose.yaml` |
 | `RECONCILED_DEST` | The healed overlay `zcrypto archive reconcile` writes to. Only **healed** hours land here, plus the append-only ledger; readers resolve reconciled-first, primary-final otherwise (`cli/archive/reader.py`). | fixed to `/archive/capture-reconciled` in `compose.yaml` |
-| `RECONCILE_TEXTFILE` | Prometheus textfile the reconcile step writes its metrics to (`zcrypto_reconcile_*`). Alloy's keep-regex must list that prefix or **every series is silently dropped and no rule can ever fire** — see `infra/nas/config.alloy`. | fixed to `/textfile/reconcile.prom` in `compose.yaml` |
-| `RECONCILE_MIN_GAP_SECONDS` | Primary book silence longer than this counts as a gap. Defaults to `30` — 2× the measured 14.78 s single-host maximum natural quiescence. **Unvalidated cross-host (T0039)**, which is why reconcile runs **detect-only** until the soak pins it from real data. | deploy-time `.env` (optional) |
-| `RECONCILE_WINDOW_HOURS` | Trailing settled hours the reconciler examines each cycle; defaults to `48`. | deploy-time `.env` (optional) |
-| `TRADE_BACKFILL_TEXTFILE` | Prometheus textfile the daily trade-backfill step (spec `00053`) writes its metrics to (`zcrypto_trade_backfill_*`), atomically (tmp + `mv`). Alloy's keep-regex lists that prefix, same as `RECONCILE_TEXTFILE` above. | defaults to `/textfile/trade-backfill.prom` in `pull-entrypoint.sh` (no compose.yaml entry yet) |
-| `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` (optional) |
-| `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles; the entrypoint defaults to `3600` (hourly) if unset. | deploy-time `.env`, or leave unset for the hourly default |
+| `ARCHIVE_SSH_PORT` | VPS SSH port; defaults to 10022 (matching the capture/engine channels) if omitted or blank. | deploy-time `.env` |
+| `ARCHIVE_PULL_INTERVAL` | Seconds between pull cycles. | defaults to `3600` (hourly) in `compose.yaml`; not rendered by `env.j2` — changing the cadence takes a `vars.yml` entry **plus** an `env.j2` line (see the intro above) |
 | `GATE_TEXTFILE` | Prometheus node-exporter textfile-collector path the `zcrypto engine gate-export` step (run after each journal pull) atomically writes the gate metrics to. | fixed to `/textfile/gate.prom` in `compose.yaml` (matches the textfile-dir mount, bootstrap step 5) |
 | `GATE_HEALTHCHECK_URL` | Dead-man's-switch base URL for `gate-export`: GET on a clean gate, GET `<url>/fail` otherwise. **Required** — the sole Alloy-independent paging path (bootstrap step 7); a new, dedicated healthchecks.io check, distinct from the engine's own `HEALTHCHECK_URL`. | deploy-time `.env` (vaulted: `nas_gate_healthcheck_url`) |
 

@@ -1,6 +1,7 @@
 # The nas role (T0056): the Synology NAS's zcrypto payload — deploy the archive-pull + alloy
-# stack files verbatim from infra/nas/ and render the two env files, applying via one guarded
-# handler. DSM owns the OS: nothing here touches packages, sshd, the firewall, or Docker itself.
+# stack files verbatim from infra/nas/ and render the two env files, applying via the flag-gated
+# end-of-role tasks below (NOT a handler — see the apply section for why). DSM owns the OS:
+# nothing here touches packages, sshd, the firewall, or Docker itself.
 
 # --- THE TZ GUARD — the play's first act, tags: [always] so it fires even on a tag-scoped run.
 # `docker logs --since` parses its argument in the host's LOCAL time: on the CEST NAS a UTC
@@ -37,7 +38,7 @@
     owner: root
     group: root
     mode: "0755"
-  notify: apply the nas stack
+  register: nas_deploy_entrypoint
 
 - name: deploy the compose file
   ansible.builtin.copy:
@@ -46,7 +47,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: apply the nas stack
+  register: nas_deploy_compose
 
 - name: deploy the alloy pipeline config
   ansible.builtin.copy:
@@ -55,7 +56,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: apply the nas stack
+  register: nas_deploy_alloy_config
 
 # The deploy-time env: the image pins compose.yaml refuses to start without (the ${...:?} trap
 # that kills T0056's `:latest` placeholder class), the pull sources/ports, and the vaulted gate
@@ -72,7 +73,7 @@
     mode: "0600"
   no_log: true
   diff: false
-  notify: apply the nas stack
+  register: nas_deploy_env
 
 # Grafana Cloud creds for the NAS's Alloy, rendered straight from group_vars/observed/vault.yml —
 # the NAS joined the `observed` group when it came under Ansible (T0056), so the hand-placed
@@ -87,4 +88,53 @@
     mode: "0600"
   no_log: true
   diff: false
-  notify: apply the nas stack
+  register: nas_deploy_alloy_secrets
+
+# --- Render-only report: an unflagged converge lands files and says which ones changed, nothing
+# restarts. Safe to print for the no_log tasks too — a no_log register keeps only the censored
+# marker plus changed/failed, so no rendered secret can reach this message.
+- name: report which stack files this converge changed
+  ansible.builtin.debug:
+    msg: >-
+      Stack files changed this run:
+      {{ nas_changed_files if nas_changed_files else '(none)' }}{{ '' if nas_apply_compose | default(false) | bool
+      else ' — render-only (no restarts); apply with -e nas_apply_compose=true' }}
+  vars:
+    nas_changed_files: >-
+      {{ {'pull-entrypoint.sh': nas_deploy_entrypoint,
+          'compose.yaml': nas_deploy_compose,
+          'config.alloy': nas_deploy_alloy_config,
+          '.env': nas_deploy_env,
+          'alloy-secrets.env': nas_deploy_alloy_secrets}
+         | dict2items | selectattr('value.changed') | map(attribute='key') | list }}
+
+# --- The apply — flag-gated END-OF-ROLE tasks, deliberately NOT a notify/handler pair. Two
+# findings (2026-07-17) killed the handler mechanism: (a) a notify consumed by a when:-skipped
+# handler is NOT deferred to the next run, so the documented render-then-apply two-command
+# sequence could never apply — the flagged second run found every file unchanged, nothing
+# re-notified, and the guarded handler never fired; (b) even a flagged converge missed
+# entrypoint-only changes — `compose up -d` recreates a container only on a service-config-hash
+# change, and a bind-mounted file's CONTENT is not part of that hash. So the flag itself is the
+# trigger: under -e nas_apply_compose=true these tasks ALWAYS run, applying everything currently
+# rendered — not just what changed this run. Idempotent-safe: restarting an already-current
+# container is a harmless few seconds of downtime on best-effort loops.
+- name: apply — converge the containers onto the rendered files
+  ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose up -d
+  when: nas_apply_compose | default(false) | bool
+  changed_when: true
+
+# The entrypoint is bind-mounted, so a content change never alters the compose hash; an
+# unconditional restart under the apply flag is the only way a script edit reliably takes effect
+# (finding, 2026-07-17).
+- name: apply — restart archive-pull (bind-mounted entrypoint changes are invisible to `up -d`)
+  ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose restart archive-pull
+  when: nas_apply_compose | default(false) | bool
+  changed_when: true
+
+# T0048 CODIFIED: after any `up -d` that recreates a container, Alloy's docker tailer keeps
+# following the DEAD container id and the recreated service's logs silently stop shipping until
+# Alloy restarts. Baking the restart into the apply makes that runbook step impossible to forget.
+- name: apply — restart alloy (T0048; recreated containers' logs stop shipping until it restarts)
+  ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose restart alloy
+  when: nas_apply_compose | default(false) | bool
+  changed_when: true
