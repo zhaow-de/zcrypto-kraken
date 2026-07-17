@@ -2,46 +2,96 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-verified-replay — do not hand-edit
 # on the host, edit infra/ansible/roles/ops/templates/verified-replay.sh.j2 and re-converge instead.
 #
-# Daily verified-path replay of the pulled engine journal (spec 00051 OPS-3): runs
+# Verified-path replay of the pulled engine journal (spec 00051 OPS-3): replays every
+# still-unverified UTC day (watermark catch-up loop, T0059) by running
 # `zcrypto engine replay --path verified` (the oracle builder) in the digest-pinned default-AVX
 # image, publishes the outcome as a node-exporter textfile (ops_verified_replay_*; a non-zero
-# exit_code is the CLI's own mismatch/validation-failure verdict), and pings the dead-man URL on a
-# clean run only — an empty URL skips the ping (the CLI's optional `ping_healthcheck` semantics,
-# shell edition).
+# exit_code is the CLI's own mismatch/validation-failure verdict), and pings the dead-man URL only
+# on a clean, fully-caught-up run — an empty URL skips the ping (the CLI's optional
+# `ping_healthcheck` semantics, shell edition).
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verified-replay.prom"
 URL="{{ ops_verified_replay_healthcheck_url }}"
+WATERMARK="{{ ops_data_dir }}/.verified-replay-watermark"
 
-# D9 (spec 00054): scope the replay to ONE day instead of the whole journal. Unscoped, this cost
-# grows with the archive forever -- the ops node's speed would merely hide that, which is exactly
-# why it is bounded now rather than when it next hurts. YESTERDAY, not today: at 05:23 UTC today's
-# journal holds at most the 00:00/04:00 cycles, so scoping to today would replay an incomplete day
-# and call it verified. Yesterday is complete and immutable, so the verdict is final.
-REPLAY_DATE=$(date -u -d yesterday +%F)
+# D9 (spec 00054) scoped the replay to single days so the cost stops growing with the archive.
+# YESTERDAY, not today: at 05:23 UTC today's journal holds at most the 00:00/04:00 cycles, so
+# scoping to today would replay an incomplete day and call it verified. Yesterday is complete and
+# immutable, so the verdict is final.
+#
+# T0059: the timer's `Persistent=true` runs a missed timer ONCE after an outage — not once per
+# missed occurrence — so a bare `--date yesterday` replayed one day of a multi-day outage and
+# silently skipped the rest. The watermark (last successfully replayed UTC day, persisted below)
+# turns the run into a catch-up loop over watermark+1 .. yesterday, so every missed day is
+# eventually replayed.
+YESTERDAY=$(date -u -d yesterday +%F)
 
-# T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each run,
-# and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. Since
-# the journal cutover the name's log role is the PRECISE DROP: config.alloy's docker path drops the
-# `zcrypto-*` ephemerals by name (their stdout ships via this unit's journal instead -- this run is
-# attached, not -d), which no regex could target while the names were random. A leftover container
-# after a dockerd crash makes the NEXT run fail loudly on a name conflict (unit rc!=0 -> the
-# exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every normal path.
-docker run --rm --pull never \
-    --name zcrypto-verified-replay \
-    --user "{{ ops_uid }}:{{ ops_gid }}" \
-    -v "{{ ops_data_dir }}:/data:ro" \
-    --entrypoint zcrypto \
-    "{{ ops_image }}@{{ ops_image_digest }}" \
-    engine replay --path verified --date "$REPLAY_DATE" --journal-dir "/data/{{ ops_journal_subdir }}"
-rc=$?
+if [ -f "$WATERMARK" ]; then
+    WM=$(cat "$WATERMARK")
+else
+    # Seed so that exactly YESTERDAY is replayed on the first run — identical to the previous
+    # single-day behaviour, no surprise catch-up storm on first deploy.
+    WM=$(date -u -d "$YESTERDAY - 1 day" +%F)
+fi
+
+# Bounded daily budget: a capped catch-up beats an unbounded one (a month-deep backlog would
+# otherwise hold the host for hours in one run). If the backlog is deeper, the remainder resumes
+# tomorrow, and because last_success_timestamp does not bump until fully caught up (below), the
+# staleness alert keeps firing if the loop never catches up.
+MAX_DAYS=30
+
+rc=0
+attempted=0
+day=$(date -u -d "$WM + 1 day" +%F)
+# ISO YYYY-MM-DD dates compare correctly as strings, so the lexicographic bound is exact.
+while [[ ! "$day" > "$YESTERDAY" ]]; do
+    if [ "$attempted" -ge "$MAX_DAYS" ]; then
+        remaining=$(( ($(date -u -d "$YESTERDAY" +%s) - $(date -u -d "$WM" +%s)) / 86400 ))
+        echo "verified-replay: capped at $MAX_DAYS day(s) this run; $remaining day(s) still unverified, resuming tomorrow"
+        break
+    fi
+
+    # T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each
+    # run, and each name minted a brand-new Loki stream, forever, on a backend that bills per
+    # stream. Since the journal cutover the name's log role is the PRECISE DROP: config.alloy's
+    # docker path drops the `zcrypto-*` ephemerals by name (their stdout ships via this unit's
+    # journal instead -- this run is attached, not -d), which no regex could target while the names
+    # were random. The catch-up loop's runs are sequential, so the reused name never conflicts with
+    # itself; a leftover container after a dockerd crash makes the NEXT run fail loudly on a name
+    # conflict (unit rc!=0 -> the exit-code alert) -- acceptable and self-describing; `--rm` cleans
+    # up in every normal path.
+    docker run --rm --pull never \
+        --name zcrypto-verified-replay \
+        --user "{{ ops_uid }}:{{ ops_gid }}" \
+        -v "{{ ops_data_dir }}:/data:ro" \
+        --entrypoint zcrypto \
+        "{{ ops_image }}@{{ ops_image_digest }}" \
+        engine replay --path verified --date "$day" --journal-dir "/data/{{ ops_journal_subdir }}"
+    rc=$?
+    attempted=$((attempted + 1))
+
+    # First failure stops the loop WITHOUT advancing the watermark: the failed day is retried on
+    # the next run, and no later day is verified past a gap.
+    if [ "$rc" -ne 0 ]; then
+        break
+    fi
+
+    printf '%s\n' "$day" > "$WATERMARK"
+    WM="$day"
+    day=$(date -u -d "$WM + 1 day" +%F)
+done
 
 now=$(date -u +%s)
-# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
-# "time since last clean replay" stays directly alertable (same reason the reconcile exporter
-# freezes last_success on a failed cycle).
+days_behind=$(( ($(date -u -d "$YESTERDAY" +%s) - $(date -u -d "$WM" +%s)) / 86400 ))
+
+# last_success bumps ONLY when the loop ends fully caught up with no failure: the staleness alert
+# keys on this series, and a stalled watermark (a failing day, or a budget-capped backlog) must
+# look STALE, not healthy — bumping it while days are still unverified would hide exactly the gap
+# T0059 exists to surface. Any other outcome carries the previous value forward (same reason the
+# reconcile exporter freezes last_success on a failed cycle).
 prev_success=$(awk '/^ops_verified_replay_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
-if [ "$rc" -eq 0 ]; then
+if [ "$rc" -eq 0 ] && [ "$days_behind" -le 0 ]; then
     success=$now
 else
     success="${prev_success:-0}"
@@ -49,21 +99,28 @@ fi
 
 # Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
 # half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
+# ops_verified_replay_days_behind is the one new series here; the Alloy keep-regex already admits
+# it via `ops_verified_replay_.*`, so no config change is needed for it to reach Grafana.
 tmp="$PROM.tmp"
 {
-    printf '# HELP ops_verified_replay_exit_code Exit code of the last verified-path journal replay (0 = no mismatch, no validation failure).\n'
+    printf '# HELP ops_verified_replay_exit_code Exit code of the last attempted day of verified-path journal replay (0 = no mismatch, no validation failure).\n'
     printf '# TYPE ops_verified_replay_exit_code gauge\n'
     printf 'ops_verified_replay_exit_code %s\n' "$rc"
     printf '# HELP ops_verified_replay_last_run_timestamp Unix time of the last run, clean or not.\n'
     printf '# TYPE ops_verified_replay_last_run_timestamp gauge\n'
     printf 'ops_verified_replay_last_run_timestamp %s\n' "$now"
-    printf '# HELP ops_verified_replay_last_success_timestamp Unix time of the last clean run (0 = never).\n'
+    printf '# HELP ops_verified_replay_last_success_timestamp Unix time of the last clean, fully-caught-up run (0 = never).\n'
     printf '# TYPE ops_verified_replay_last_success_timestamp gauge\n'
     printf 'ops_verified_replay_last_success_timestamp %s\n' "$success"
+    printf '# HELP ops_verified_replay_days_behind Days between the replay watermark and yesterday (0 = fully caught up).\n'
+    printf '# TYPE ops_verified_replay_days_behind gauge\n'
+    printf 'ops_verified_replay_days_behind %s\n' "$days_behind"
 } > "$tmp"
 mv "$tmp" "$PROM"
 
-if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
+# Dead-man ping only when fully caught up AND the last attempted day was clean — a stalled
+# catch-up must trip the dead man, not feed it.
+if [ "$rc" -eq 0 ] && [ "$days_behind" -le 0 ] && [ -n "$URL" ]; then
     curl -fsS -m 10 -o /dev/null "$URL" || true
 fi
 exit "$rc"
