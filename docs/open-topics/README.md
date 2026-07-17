@@ -31,6 +31,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0063 — deployable docs name the superseded record 33, not trial 44](T0063-deployable-docs-name-superseded-record-33.md) — the Phase-5 closeout, the runbook body, and spec 00039's decision-5 prose still name record 33 (daily-only, `build_combined_system`, dataset `ba47e37e`) as the deployable, but the engine actually runs trial 44 (crossfreq daily+4h, `build_crossfreq_system`, `dataset_hash 45275ebe`); the true identity/hash live only in the registry — reconcile the docs so "what deploys?" is one honest lookup (ripe when: autonomous now — a doc-consistency fix, no code change).
 
+- [T0065 — data-pipeline maturity for strategy research](T0065-data-pipeline-maturity-for-strategy-research.md) — umbrella synthesis (2026-07-18 clarification session): the core (frozen hash-pinned drift-gated canonical, validated reconstruction) is strong and the current 1d/4h strategy is not data-constrained, but the connective tissue is thin — reach (fine-cadence ceiling: trades→bars producer unbuilt + Q2/Q3 dumps un-ingested), validation (\[[T0064]\]), bookkeeping/reproducibility (no committed backtest command, uncommitted hash recipes, stale catalog → OPS-6). Holds the data-model taxonomy + the not-yet-tracked dedicated rounds (ripe when: worked in dedicated rounds; the reach round is ripe now).
+
 ### Partially done<a name="partially-done"></a>
 
 - [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); the OI backfill + harness are autonomous when B2 is picked.
