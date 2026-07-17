@@ -124,11 +124,13 @@ Manager's `restart: unless-stopped` policy is what survives a NAS reboot.
 
 The reconcile counters (`zcrypto_reconcile_residual_gap_seconds_total`, `_healable_gap_seconds_total`, the hour/deficit counters) are **summed from the whole append-only** `reconcile-ledger.jsonl` on every cycle, so they are monotone as long as the ledger only ever grows. The one operation that breaks that is a **correction** — removing a record a classifier bug wrote (as on 2026-07-14, a false `total_loss`). A correction *decreases* a counter, Prometheus reads the decrease as a **reset**, and a bare `increase()` would report the whole post-reset value as fresh change. The two `increase()`-based alert rules (`Reconciler · residual gap increased`, `Reconciler · primary gap rate high`) are guarded with `and resets(...) == 0` precisely so a correction cannot false-page — so **expect both to go quiet for one window after a correction; that is the guard working, not a fault.**
 
-The procedure (a deliberate, one-off exception to the ledger's append-only discipline):
+The procedure (a deliberate, one-off exception to the ledger's append-only discipline) — run it on the **writer host's** copy (the ops node since spec `00054` moved the overlay writer there; a correction made only on the NAS's pulled copy is overwritten by the next `RECONCILED_SOURCE` pull):
 
 ```bash
-L=/volume1/ZhaoCrypto/capture-reconciled/reconcile-ledger.jsonl
-sudo cp "$L" "$L.bak-$(date -u +%Y%m%d-%H%M%S)"        # 1. back up VERBATIM (the audit trail of the bug)
+L=/var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl
+B=/var/lib/zcrypto-ops/ledger-corrections              # OUTSIDE the replicated tree — see the backup rules below
+sudo mkdir -p "$B"
+sudo cp "$L" "$B/reconcile-ledger.jsonl.bak-$(date -u +%Y%m%d-%H%M%S)"   # 1. back up VERBATIM (the audit trail of the bug)
 # 2. filter by an EXACT-MATCH predicate, asserting the count you expect to drop:
 sudo python3 - "$L" <<'PY'
 import json, sys
@@ -144,10 +146,17 @@ assert len(dropped) == 1, f"expected exactly 1 record, found {len(dropped)}"   #
 open("/tmp/ledger.new", "w").write("".join(json.dumps(r) + "\n" for r in keep))
 print(f"dropped {len(dropped)}, kept {len(keep)}")
 PY
-sudo cp /tmp/ledger.new "$L" && sudo chown zcrypto:zcrypto "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
+sudo cp /tmp/ledger.new "$L" && sudo chown deploy:deploy "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
 ```
 
+(`deploy:deploy` is the writer uid on the ops node; a NAS-side copy is `zcrypto:zcrypto`.)
+
 Rules: keep **one record per line** (`_load_ledger` raises `CaptureError` on a malformed line, which fails the next cycle loudly); never truncate to shrink the file (that resets every counter — see [[T0044]] for the compaction design that preserves the totals); and confirm the two alert rules return to Normal within a window after the reset ages out.
+
+Backup rules ([[T0057]]):
+
+- **The backup never goes inside `capture-reconciled/`.** The tree carries data + manifests + the ledger, **nothing else** — it is replicated into custody, so any extra file is copied to every consumer forever, and a single permission mismatch on one stray file fails the entire tree's rsync (exit 23). That is exactly what the 2026-07-14 correction's in-place `.bak` did to the ops→NAS channel on 2026-07-16. Write the backup to a `ledger-corrections/` dir beside the stack/data dirs on the writer host (outside the rrsync-pinned overlay root), as in step 1 above.
+- **Commit the correction's diff to the repo as the durable record** — the removed line(s) verbatim, the backup's hash/size/line count, and why — so the evidence outlives any on-host cleanup. Worked example: `ledger-correction-20260714-link-eur.md` beside this file.
 
 ## Alloy telemetry stack (spec 00049 Role B, Task 3)
 
