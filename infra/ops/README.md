@@ -43,12 +43,12 @@ Pull-only transport, mirroring the capture channels (`infra/nas/README.md`): the
 
 ## Replay timers (OPS-3)
 
-Two daily systemd timers run the `zcrypto` CLI in the digest-pinned image (`docker run --rm --entrypoint zcrypto <image>@<digest> ...`, as the `deploy` uid/gid, with `ops_data_dir` mounted read-only at `/data`):
+Two daily systemd timers run the `zcrypto` CLI in the digest-pinned image (`docker run --rm --entrypoint zcrypto <image>@<digest> ...`, as the `deploy` uid/gid, with the NAS NFS export mounted read-only at `/nas` and — where the local overlay is an input — `ops_data_dir` read-only at `/data`; T0058):
 
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
-| `zcrypto-verify-replay.timer` | daily 03:41 | `zcrypto archive verify-replay /data/capture-segments /data/capture-reconciled` — continuity-replays the pulled canonical archive (reconciled-first) through `OrderBook`; exits non-zero if any hour is not (chain-)anchored / ts-ordered / checksum-attested / structurally replayable. |
-| `zcrypto-verified-replay.timer` | daily 05:23 | `zcrypto engine replay --path verified --journal-dir /data/engine-journal` — the oracle-builder replay of the pulled journal; exits non-zero on any mismatch or validation failure. |
+| `zcrypto-verify-replay.timer` | daily 03:41 | `zcrypto archive verify-replay /nas/capture-segments /data/capture-reconciled` — continuity-replays the canonical archive (reconciled-first) through `OrderBook`; exits non-zero if any hour is not (chain-)anchored / ts-ordered / checksum-attested / structurally replayable. |
+| `zcrypto-verified-replay.timer` | daily 05:23 | `zcrypto engine replay --path verified --journal-dir /nas/engine-journal` — the oracle-builder replay of the journal (watermark catch-up loop over every still-unverified day, T0059); exits non-zero on any mismatch or validation failure, and refuses loudly on an invalid/future watermark. A day whose journal day-dir is absent or empty stops the loop without advancing the watermark (rc 0 alone is not proof of verification — the day retries once the journal has caught up). |
 
 Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC) and the capture hosts' maintenance windows (21:25/22:25 UTC). `Persistent=true`: a host that was down at the slot runs on the next boot instead of skipping the day.
 
@@ -79,7 +79,7 @@ Two wiring notes: (1) a digest-only converge arms `panel-materialize` before any
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
 | `zcrypto-archive-pull.timer` | half-hourly, :12 and :42 (T0058 — NFS reads cost no transfer) | The overlay-writer cycle: first the **fail-closed gate** — read `{{ ops_nas_mount }}/.pull-status` (written by the NAS right after its own VPS capture pulls, `infra/nas/pull-entrypoint.sh`) and skip the whole cycle (reconcile **and** backfill, exit 0, loud WARNING) unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 4 h. Then `zcrypto archive reconcile /nas/capture-segments /nas/capture-segments-red /data/capture-reconciled` (detect-only until T0039) and the daily `zcrypto archive backfill-trades /nas/capture-segments /data/capture-reconciled`, both in the digest-pinned image with the NFS mount at `/nas:ro`. A persistent skip surfaces via the reconcile-staleness alert (the skipped cycle never rewrites `reconcile.prom`). |
-| `zcrypto-panel-materialize.timer` | hourly, :22 | `zcrypto panel materialize /data/capture-segments /data/capture-reconciled --panel-root /data/l2-panel` in the digest-pinned image — watermarked, so only canonical hours strictly newer than the panel's per-pair watermark are processed (installed inside the same `ops_image_digest is defined` guard as the replay timers). |
+| `zcrypto-panel-materialize.timer` | hourly, :22 | `zcrypto panel materialize /nas/capture-segments /data/capture-reconciled --panel-root /data/l2-panel` in the digest-pinned image, with the NFS mount at `/nas:ro` (T0058) — watermarked, so only canonical hours strictly newer than the panel's per-pair watermark are processed (installed inside the same `ops_image_digest is defined` guard as the replay timers). |
 
 Both slots are off the hour boundary and clear of the ops reboot window (02:25 UTC), the capture
 hosts' maintenance windows (21:25/22:25 UTC), and the daily replay timers (03:41/05:23).

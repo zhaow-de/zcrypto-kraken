@@ -2,18 +2,35 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-verified-replay — do not hand-edit
 # on the host, edit infra/ansible/roles/ops/templates/verified-replay.sh.j2 and re-converge instead.
 #
-# Verified-path replay of the pulled engine journal (spec 00051 OPS-3): replays every
-# still-unverified UTC day (watermark catch-up loop, T0059) by running
-# `zcrypto engine replay --path verified` (the oracle builder) in the digest-pinned default-AVX
-# image, publishes the outcome as a node-exporter textfile (ops_verified_replay_*; a non-zero
-# exit_code is the CLI's own mismatch/validation-failure verdict), and pings the dead-man URL only
-# on a clean, fully-caught-up run — an empty URL skips the ping (the CLI's optional
-# `ping_healthcheck` semantics, shell edition).
+# Verified-path replay of the engine journal (spec 00051 OPS-3): replays every still-unverified
+# UTC day (watermark catch-up loop, T0059) by running `zcrypto engine replay --path verified`
+# (the oracle builder) in the digest-pinned default-AVX image, reading the journal straight from
+# the NAS's read-only NFS export (T0058 — the local engine-journal mirror is retired), publishes
+# the outcome as a node-exporter textfile (ops_verified_replay_*; a non-zero exit_code is the
+# CLI's own mismatch/validation-failure verdict), and pings the dead-man URL only on a clean,
+# fully-caught-up run — an empty URL skips the ping (the CLI's optional `ping_healthcheck`
+# semantics, shell edition).
+#
+# A REFUSED run (invalid or future watermark below) exits non-zero without touching the watermark
+# or the textfile: the unit goes red, the error line ships to Loki via the unit journal (T0060),
+# the dead man misses its ping (healthchecks.io pages on the silence), and the 48h staleness
+# alert backs both.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verified-replay.prom"
 URL="{{ ops_verified_replay_healthcheck_url }}"
 WATERMARK="{{ ops_data_dir }}/.verified-replay-watermark"
+# The journal root on the HOST side, through the NFS automount (the day-dir emptiness probe in
+# the loop reads it here; the container sees the same tree at /nas).
+JOURNAL="{{ ops_nas_mount }}/{{ ops_journal_subdir }}"
+
+# Watermark writes are tmp+mv ONLY (same-dir rename — the PROM pattern below): the previous
+# in-place `> "$WATERMARK"` truncates before writing, so a crash/ENOSPC between the two minted a
+# durable ZERO-BYTE watermark — which parsed as day=TOMORROW, skipped the loop forever, and read
+# fully healthy while doing so (review 2026-07-17, finding 1).
+write_watermark() {
+    printf '%s\n' "$1" > "$WATERMARK.tmp" && mv "$WATERMARK.tmp" "$WATERMARK"
+}
 
 # D9 (spec 00054) scoped the replay to single days so the cost stops growing with the archive.
 # YESTERDAY, not today: at 05:23 UTC today's journal holds at most the 00:00/04:00 cycles, so
@@ -29,10 +46,37 @@ YESTERDAY=$(date -u -d yesterday +%F)
 
 if [ -f "$WATERMARK" ]; then
     WM=$(cat "$WATERMARK")
+    # Finding 1 (review 2026-07-17): the watermark used to be interpolated unvalidated into
+    # `date -d "$WM + 1 day"` — an EMPTY file parsed as TOMORROW, so the loop never ran, rc stayed
+    # 0, days_behind read -1 (caught up), last_success bumped and the dead man was fed, and since
+    # the loop is the only writer the file stayed empty: a permanent silent-skip that read fully
+    # healthy. Invalid content is a LOUD error instead (see the refused-run contract in the
+    # header), and the file is left untouched for inspection.
+    if ! [[ "$WM" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "verified-replay: ERROR: watermark file $WATERMARK does not hold a YYYY-MM-DD day (got '$WM'); refusing to run — restore it to the last verified day, or delete it to re-seed from yesterday-1" >&2
+        exit 1
+    fi
 else
     # Seed so that exactly YESTERDAY is replayed on the first run — identical to the previous
     # single-day behaviour, no surprise catch-up storm on first deploy.
     WM=$(date -u -d "$YESTERDAY - 1 day" +%F)
+    # Finding 2: persist the seed NOW, not only after the first success. Unpersisted, a failed
+    # first run left no file, so the next run re-seeded from ITS yesterday-1 and the failed day —
+    # potentially a real MISMATCH day, the highest-value verdict this pipeline produces — was
+    # never replayed at all, while everything read caught-up.
+    if ! write_watermark "$WM"; then
+        echo "verified-replay: ERROR: cannot persist the seed watermark $WM to $WATERMARK; refusing to run without a durable anchor" >&2
+        exit 1
+    fi
+fi
+
+# Finding 4: a watermark BEYOND yesterday (clock skew, manual edit) made days_behind negative,
+# which `-le 0` read as fully caught up — last_success bumped and the dead man was fed off a
+# garbage state, and the CLI's rc-0-on-empty-day behaviour would even "verify" the nonexistent
+# future days. Same loud refused-run contract as the format check above; watermark untouched.
+if [[ "$WM" > "$YESTERDAY" ]]; then
+    echo "verified-replay: ERROR: watermark $WM is beyond yesterday ($YESTERDAY) — clock skew or a manual edit; refusing to run, watermark left untouched" >&2
+    exit 1
 fi
 
 # Bounded daily budget: a capped catch-up beats an unbounded one (a month-deep backlog would
@@ -52,6 +96,22 @@ while [[ ! "$day" > "$YESTERDAY" ]]; do
         break
     fi
 
+    # Finding 3: `engine replay --date <day>` exits 0 for a day with NO journal artifacts at all
+    # ("no journaled cycles found", cli/engine/command.py) — rc==0 alone is NOT proof of
+    # verification. The failure story: the NAS's own journal pull stalls overnight, so at 05:23
+    # the day-dir is absent (or holds only the early cycles); advancing the watermark past it
+    # would mark the day verified FOREVER — when the pull recovers, the day is already behind the
+    # watermark and is never replayed (the T0059 silent-skip class, reintroduced for pull
+    # outages). So an absent/EMPTY day-dir stops the loop WITHOUT advancing the watermark: the
+    # day retries next run, once the journal has caught up. days_behind stays >= 1, so
+    # last_success does not bump and the dead man is not fed — a persistent stall pages by
+    # silence, then by staleness. An EIO on the soft NFS mount lands in this same branch:
+    # unreadable is not proven present, fail closed.
+    if ! compgen -G "$JOURNAL/$day/*" > /dev/null; then
+        echo "verified-replay: journal has not caught up: $JOURNAL/$day is absent or empty; stopping without advancing the watermark (day $day retries next run)"
+        break
+    fi
+
     # T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each
     # run, and each name minted a brand-new Loki stream, forever, on a backend that bills per
     # stream. Since the journal cutover the name's log role is the PRECISE DROP: config.alloy's
@@ -64,10 +124,10 @@ while [[ ! "$day" > "$YESTERDAY" ]]; do
     docker run --rm --pull never \
         --name zcrypto-verified-replay \
         --user "{{ ops_uid }}:{{ ops_gid }}" \
-        -v "{{ ops_data_dir }}:/data:ro" \
+        -v "{{ ops_nas_mount }}:/nas:ro" \
         --entrypoint zcrypto \
         "{{ ops_image }}@{{ ops_image_digest }}" \
-        engine replay --path verified --date "$day" --journal-dir "/data/{{ ops_journal_subdir }}"
+        engine replay --path verified --date "$day" --journal-dir "/nas/{{ ops_journal_subdir }}"
     rc=$?
     attempted=$((attempted + 1))
 
@@ -77,19 +137,31 @@ while [[ ! "$day" > "$YESTERDAY" ]]; do
         break
     fi
 
-    printf '%s\n' "$day" > "$WATERMARK"
+    if ! write_watermark "$day"; then
+        echo "verified-replay: ERROR: $day verified but its watermark could not be persisted; stopping so the day is retried rather than silently re-lost" >&2
+        rc=1
+        break
+    fi
     WM="$day"
     day=$(date -u -d "$WM + 1 day" +%F)
 done
 
 now=$(date -u +%s)
 days_behind=$(( ($(date -u -d "$YESTERDAY" +%s) - $(date -u -d "$WM" +%s)) / 86400 ))
+# Finding 5: with the future-watermark guard above, WM <= YESTERDAY always holds here, so
+# days_behind cannot go negative on any live path — but the gauge is an alert input and a
+# negative value reads HEALTHIER than 0 (it satisfies every `<= 0` caught-up check), so clamp
+# defensively: if a future regression re-opens a negative path, it saturates at "caught up",
+# never at "more than caught up".
+if [ "$days_behind" -lt 0 ]; then
+    days_behind=0
+fi
 
 # last_success bumps ONLY when the loop ends fully caught up with no failure: the staleness alert
-# keys on this series, and a stalled watermark (a failing day, or a budget-capped backlog) must
-# look STALE, not healthy — bumping it while days are still unverified would hide exactly the gap
-# T0059 exists to surface. Any other outcome carries the previous value forward (same reason the
-# reconcile exporter freezes last_success on a failed cycle).
+# keys on this series, and a stalled watermark (a failing day, a not-yet-caught-up journal, or a
+# budget-capped backlog) must look STALE, not healthy — bumping it while days are still unverified
+# would hide exactly the gap T0059 exists to surface. Any other outcome carries the previous value
+# forward (same reason the reconcile exporter freezes last_success on a failed cycle).
 prev_success=$(awk '/^ops_verified_replay_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
 if [ "$rc" -eq 0 ] && [ "$days_behind" -le 0 ]; then
     success=$now
