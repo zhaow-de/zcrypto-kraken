@@ -181,3 +181,11 @@ ______________________________________________________________________
 - **(2026-07-17) The old channel is retired for real.** The `sync_nas_archive` key pair + `nas_known_hosts` removed on ops, the rrsync `authorized_keys` entry removed on the NAS, and ansible re-verified with a ping AFTER the removal. The one un-run T0058 next step — the `/volume1` btrfs-vs-ext4 readdir probe — split to [[T0062]] rather than buried in the archive.
 - **(2026-07-17) New topic [[T0061]]**: the live Kraken trade key is group-scoped to `capture_host`, so the capture-only secondary resolves it (only the engine play's targeting keeps it off `zcrypto-red`); the fix is a small ciphertext move but touches the live trading credential — human-gated, parked for go-live hardening ([[T0049]]).
 - **(2026-07-17) What the review machinery earned this branch:** the final review found the two-hop gate blindness that drove the T0058 pivot, and the octal/leading-zero gate arithmetic that failed the gate OPEN (`ts_epoch=0999999999` read as invalid octal aborted the `if/elif` chain; every arithmetic site now forces base-10). Across five review waves, **~40 confirmed findings — every one either fixed or registered**, none dropped.
+
+
+## 2026-07-17 — iter-102: the liquidations poller stops re-submitting at source (spec 00055, T0060)
+
+- Per-coin bucket watermarks (`prime_bucket_watermarks` + `poll_cycle(watermarks=…)` in `cli/liquidations/coinalyze.py`): primed from the segment tree at startup, advanced in-memory on submit; already-persisted buckets are skipped before the writer, eliminating the ~15,800/h `dropping replayed event` WARNINGs on ops. The 30 h fetch window, writer dedup, and late-event floor are untouched — surviving dedup drops are now genuine anomalies.
+- Cycle log truth: `poll cycle: submitted=N skipped_at_watermark=M closed bucket(s)` (was a bare submitted count annotated "re-submissions are dropped by dedup/floor"); startup logs `primed bucket watermarks for N/10 coin(s)`.
+- Spec 00055 D5 answered empirically: no restart-duplication — dedup keys reseed from open-hour parts (T0026); pinned by a new regression test in `tests/test_capture_segment_writer.py`.
+- No CLI/config surface change; deploy to ops is a follow-up tracked in T0060 (ripe when a capture image containing the fix exists).

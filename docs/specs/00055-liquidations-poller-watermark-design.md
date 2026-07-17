@@ -33,3 +33,7 @@ The fetch window and `_FINALIZE_LAG_SECONDS`/floor logic (the invariant above). 
 ## Verify
 
 In-scope proof is test-level: a multi-cycle simulation (overlapping windows, a failed cycle, a restart with re-priming) asserting zero writer-level dedup drops in steady state, correct catch-up after failure, and the D5 answer. Every new test mutation-verified able to fail. The post-deploy outcome measurement is recorded in T0060 as the closing evidence when the deploy happens.
+
+## D5 outcome (measured 2026-07-17)
+
+No duplication. The presumed live bug does not exist: `_open_hour` reseeds `_seen` from the open hour's `.part` files (the T0026 seeding, `segment_writer.py:614-616`), so a dedup-keyed writer restarted over an open hour with flushed parts drops a re-submitted event rather than appending it. The abrupt-death variant (no clean close) loses the unflushed buffer entirely — those rows never reached disk, so re-submission is recovery, not duplication. Pinned by the regression test `test_restart_reseeds_dedup_keys_from_open_hour_parts` in `tests/test_capture_segment_writer.py`.

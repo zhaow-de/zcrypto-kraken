@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the poller-side watermark fix is picked as an iteration (owner ratified the direction 2026-07-17) — the pipeline itself is now sound, but the ~15,800 WARNING/h re-submission noise remains until that fix lands
+ripe_when: the fix PR is merged and a capture-image build containing it is available
 ---
 
 # The ops node's logs reach Loki but are unusable, and 99.9% of them are by-design noise
@@ -48,8 +48,10 @@ The infra half — defects 1–3 above, plus the alert gap they implied — is d
 - **All five `docker run --rm` jobs named** (`8fc7b73`), which enabled the second half: the ephemeral containers are **dropped** from Docker discovery and their logs ship via `loki.source.journal` instead (`357ddb2`, hardened `29370e6`) — the journal also carries the host scripts' own gate-decision lines (e.g. `zcrypto-archive-pull: trade backfill failed (exit=2), continuing`), which existed in no container log by construction. Verified live in Loki: `container=zcrypto-archive-pull` streams with parsed levels, including `reconcile complete` CLI lines and script echo lines.
 - **Alert coverage closed and provisioned on the live instance** (verified by API read-back: 10 rules in the `zcrypto-ops` group): ERROR logs, two green-when-blind canaries (`log pipeline dead`, `journal transport dead`, both noData=Alerting), and exit-code rules for all four timer jobs.
 - **Empirical record of the Docker transport's unfitness for the ephemerals**: a quiet reconcile run shipped 1 line of 1 by timing luck; the structural gaps (host-script lines invisible to Docker; polling discovery vs second-lived containers; `--rm` deleting the log at exit) are architecture, not measurement.
+- **The source fix landed (defect 4)** — spec `docs/specs/00055-liquidations-poller-watermark-design.md`, plan `docs/plans/00055-liquidations-poller-watermark.md`, commits `3103d19` (prime per-coin bucket watermarks from the segment tree), `d5abb42` (filter re-submissions at source in `poll_cycle`), `bf5b1fb` (prime at startup and thread through the poll loop), branch `fix/t0060-poller-watermark`: per-coin bucket watermarks primed from disk at startup and advanced in-memory on submit skip already-persisted buckets *before* the writer, so the ~15,800/h `dropping replayed event` WARNINGs stop at source and any surviving dedup drop is genuine signal. The 30 h fetch window, writer dedup, and late-event floor are untouched.
+- **Loki ingest volume re-checked (owner-provided Grafana Cloud figures, 2026-07-17)**: Current Billable Logs — Process 621.1 MiB, Write 61.9 MiB, Query 166 MiB against the free tier's 50 GB/month; the ≈1.2 GiB/month pace is ≈2.4% of the cap. Ingest volume is NOT a forcing constraint — the source fix's rationale is signal-to-noise, not cost.
 
 ## Suggested next steps
 
-- **Stop the poller re-submitting at source** (owner ratified 2026-07-17): give the poll path a per-pair watermark so it does not re-submit what it has already written — then the writer's dedup becomes a genuine anomaly detector and any surviving drop-warning is meaningful. This is the next iteration's spec.
-- **Re-check the Loki ingest volume once the poller fix lands** — the free tier has a monthly ingest allowance, and the pre-fix ~390k lines/day was dominated by the re-submission warnings.
+- **Deploy the fixed poller image to the ops node** (attended): the poller restart is loss-free by design — its REST lookback re-covers the stop window. Pull/pin the capture-image build containing the fix and restart `zcrypto-ops-liquidations`.
+- **Verify post-deploy by outcome**: on the ops node's Loki streams, `dropping replayed event` falls from ~15,800/h to ~0, while the new `poll cycle: submitted=N skipped_at_watermark=M closed bucket(s)` INFO line carries the skip count per cycle.
