@@ -53,9 +53,11 @@
 #
 # NOTE (attended step, deliberately NOT automated): once the NFS read path is verified live, the
 # operator retires the old pull channel's credentials — the `sync_nas_archive` private key (+ the
-# nas_known_hosts pin) under ~deploy/.ssh on this host, the matching authorized_keys entry on the
-# NAS, and the now-unpinged `archive-pull` healthchecks.io check. Deleting live-looking keys is an
-# irreversible, verify-first action, so no converge task does it.
+# nas_known_hosts pin) under ~deploy/.ssh on this host and the matching authorized_keys entry on
+# the NAS. (Credentials retired 2026-07-17.) The `archive-pull` healthchecks.io check is NOT part
+# of this retirement: the overlay writer pings it again since 2026-07-17 — it is live and
+# load-bearing. Deleting live-looking keys is an irreversible, verify-first action, so no
+# converge task does it.
 - name: fstab entry for the NAS custody export (read-only NFS; the automount owns mounting) (T0058)
   ansible.posix.mount:
     src: 192.168.100.5:/volume1/ZhaoCrypto

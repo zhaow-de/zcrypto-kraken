@@ -102,7 +102,12 @@ the disk, and the rollout is needed for Role C anyway).
 - **(autonomous)** Decide and implement **retention** for the capture segments — prune-after-verified-pull,
   the same shape as [[T0021]]'s journal retention. **There is no ring buffer anywhere**: nothing prunes
   capture segments on any host, so the disk simply fills. With the dead-man fix this now *pages* rather
-  than silently losing data, but the underlying growth is unbounded. (Spec `00050`'s D9 adds a retention
-  timer to the *secondary* capture host; the **primary** still has none.)
+  than silently losing data, but the underlying growth is unbounded. (Spec `00050`'s **D8** — not D9, and it does
+  **not** stop at the secondary — adds a `zcrypto-capture-prune` systemd timer to the **`capture` role,
+  pruning *both* hosts** (primary included: 14-day retention deleting only `<HH>.parquet` finals +
+  `.sha256` sidecars, never `.part`/`.held`/`.corrupt`; `infra/ansible/roles/capture/`, tested by
+  `tests/test_capture_prune.py`). So capture-host retention is now *implemented in config for both hosts*,
+  superseding the "nothing prunes on any host" note above — this remainder is half-done; deploy +
+  at-host verification are the open half. The NAS mirror itself is still never pruned.)
 - **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.
 - **(residual, noted)** Compound fault: if the disk actually FILLS *during* an unmeasurable-probe window, `_write_part`'s `ENOSPC` is caught, logged, and the buffer dropped -- a real, un-booked loss, because `breached` is frozen at its last (green) value so no watermark gap is booked. Narrow (needs a disk that fills exactly while the probe is also down), and it still pages within ~20 min via the withheld ping, but the exit-bar gap accounting under-counts that window. A full fix would treat an unmeasurable window as a provisional gap and reconcile once the probe recovers.

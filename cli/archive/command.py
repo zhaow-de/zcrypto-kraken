@@ -311,24 +311,25 @@ def reconcile(
         30.0,
         "--min-gap-seconds",
         help="Primary book silence longer than this, with the secondary alive inside it, is a gap. "
-        "The default 30 s is 2x the measured 14.78 s maximum natural quiescence and is NOT yet "
-        "validated cross-host (T0039) -- which is why --detect-only is the default.",
+        "The default 30 s is validated cross-host (T0039, resolved 2026-07-17): 2.48x the worst "
+        "coalescing artifact in a 66h/217-window soak, 2.8x below the smallest real outage.",
     ),
     textfile: Optional[Path] = typer.Option(None, "--textfile", help="Prometheus textfile to publish."),
     mint: bool = typer.Option(
         False,
         "--mint/--detect-only",
-        help="DEFAULT is --detect-only: ledger what WOULD be spliced and mint nothing. Do not flip to "
-        "--mint until T0039's soak has pinned --min-gap-seconds from real cross-host data.",
+        help="DEFAULT is --detect-only: ledger what WOULD be spliced and mint nothing. The deployed "
+        "reconciler runs --mint (since 2026-07-17, T0039 validated); ad-hoc runs stay detect-only.",
     ),
 ) -> None:
     """Reconcile the two raw mirrors into the healed overlay.
 
     Detect-only by default: it ledgers every `would_mint` and writes no parquet. `--min-gap-seconds`
-    is unvalidated cross-host (T0039) -- the measured single-host MAXIMUM natural quiescence is
-    14.78 s and one secondary update row is enough to witness a gap, so a per-connection coalescing
-    artifact could plausibly trip a phantom splice: an unaudited data swap into an archive that cannot
-    be backfilled. Minting is unlocked only once the soak has pinned the threshold from real data.
+    30 s is validated cross-host (T0039, resolved 2026-07-17): 2.48x the worst per-connection
+    coalescing artifact in a 66 h / 217-window two-host soak (12.08 s), 2.03x the single-host
+    maximum natural quiescence (14.78 s), and 2.8x below the smallest real outage on record -- and
+    a live 25-minute drill outage healed exactly, CRC-clean, while a healthy hour minted nothing.
+    The deployed reconciler runs `--mint`; ad-hoc runs stay detect-only.
 
     The two correlated-loss detectors run regardless of the flag and are never minted from: when BOTH
     streams are dark there is no witness to heal with, and no flag can conjure one.

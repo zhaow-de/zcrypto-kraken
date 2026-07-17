@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the NAS capture archive grows large enough that one hourly `verify_tree` sweep approaches the pull interval (est. ~1–2 months in, ~250–600 GB of segments), or an attended optimization window before then
+ripe_when: the NAS capture archive grows large enough that one hourly `verify_tree` sweep approaches the pull interval (est. onset ~8–9 months in at ~250 GB, cliff ~1.7 years at ~600 GB — corrected from the original ~1–2 months, which rested on T0003's 20×-wrong ~10 GB/day fill figure; the sweep walks BOTH pulled mirrors, growing ~0.96 GB/day combined per spec 00050), or an attended optimization window before then
 ---
 
 # Role A NAS pull re-hashes the whole archive every cycle
@@ -11,7 +11,7 @@ The three-tier Role A pull (`zcrypto archive pull`, spec/plan `00048`) verifies 
 
 ## Why this matters
 
-The capture verify sweep is therefore **O(total archive size) per hourly cycle**. Back-of-envelope on RAID-5 spinning disk (~150 MB/s): ~70 GB (1 week) → ~8 min; ~300 GB (~1 month) → ~33 min; ~600 GB (~2 months) → ~66 min > the 3600 s interval, at which point a single sweep no longer fits in the pull period and the in-container loop stalls (each cycle runs long, pull-lag climbs, the health signal degrades). Found by the iter-093 final whole-branch review of Role A (finding #2). Not deploy-blocking (the archive starts near-empty and grows), but it will bite within ~2 months if unaddressed. Part of the [[T0003]] → three-tier pipeline.
+The capture verify sweep is therefore **O(total archive size) per hourly cycle**. Back-of-envelope on RAID-5 spinning disk (~150 MB/s): ~70 GB (1 week) → ~8 min; ~300 GB (~1 month) → ~33 min; ~600 GB (~2 months) → ~66 min > the 3600 s interval, at which point a single sweep no longer fits in the pull period and the in-container loop stalls (each cycle runs long, pull-lag climbs, the health signal degrades). Found by the iter-093 final whole-branch review of Role A (finding #2). Not deploy-blocking (the archive starts near-empty and grows), but it will bite within **~1.7 years** if unaddressed. **[Corrected 2026-07-17 per [[T0032]] + spec 00050, re-derived at branch review: the wall-clock figures in this paragraph (1 week / ~1 month / ~2 months) rest on T0003's 20×-wrong ~10 GB/day fill rate. The hourly cycle verifies BOTH pulled mirrors, which together grow ~0.96 GB/day (spec 00050), so the ~250 GB sweep-lengthening onset is ~8–9 months out and the ~600 GB sweep-stall cliff ~1.7 years — not ~2 months, and not the ~1–2-years-to-onset a primary-only 0.48 GB/day would suggest. The GB→minutes sweep-time mapping (150 MB/s) is unaffected.]** Part of the [[T0003]] → three-tier pipeline.
 
 ## Findings so far
 

@@ -18,6 +18,7 @@
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-archive-pull.prom"
+URL="{{ ops_archive_pull_healthcheck_url }}"
 STATUS="{{ ops_nas_mount }}/.pull-status"
 # 4h: below the 6h LATE_MINT line (a stale gate must force a skip BEFORE a frozen view could
 # ledger a permanent late-mint verdict), well above the NAS's ~1.2h normal pull cadence (a healthy
@@ -106,6 +107,14 @@ else
     #     zcrypto_trade_backfill_exit_code metric and its existing critical alert; the UTC-day
     #     stamp is written BEFORE the run, so a stale leftover extends the outage by up to 24h.
     # Acceptable and self-describing either way; `--rm` cleans up in every normal path.
+    # The mint/detect flag below: `| bool` is LOAD-BEARING, not style — a CLI override
+    # (-e ops_reconcile_mint=false) arrives as the STRING "false", which is truthy; without the
+    # cast, the override meant to DISABLE minting would enable it. (`bool` is an Ansible filter;
+    # plain-Jinja2 render checks must register a shim.) And keep Jinja comments OUT of the
+    # backslash-continuation chain: under plain Jinja (no trim_blocks) a stripped Jinja comment
+    # tag leaves a blank line that ENDS the command mid-flags — the rendered script stays valid
+    # bash whose if-condition silently becomes "--mint: command not found", so bash -n cannot
+    # catch it. Ansible's trim_blocks masked it; a render harness found it (2026-07-17).
     if ! docker run --rm --pull never \
             --name zcrypto-reconcile \
             --user "{{ ops_uid }}:{{ ops_gid }}" \
@@ -117,6 +126,7 @@ else
             archive reconcile "/nas/{{ ops_capture_subdir }}" "/nas/capture-segments-red" "/data/{{ ops_reconciled_subdir }}" \
             --window-hours "{{ ops_reconcile_window_hours }}" \
             --min-gap-seconds "{{ ops_reconcile_min_gap_seconds }}" \
+            {{ '--mint' if ops_reconcile_mint | default(false) | bool else '--detect-only' }} \
             --textfile /textfile/reconcile.prom; then
         echo "zcrypto-archive-pull: reconcile failed, continuing"
         rc=1
@@ -194,5 +204,14 @@ tmp="$PROM.tmp"
     printf 'ops_archive_pull_last_success_timestamp %s\n' "$success"
 } > "$tmp"
 mv "$tmp" "$PROM"
+
+# Dead-man ping on a clean cycle (healthchecks.io — the independent failure domain; restored
+# 2026-07-17 after the T0058 rewrite dropped it and the check starved into DOWN). rc=0 includes
+# gate-skips DELIBERATELY: a skip means THIS unit is alive and correctly refusing stale input — the
+# upstream problem pages through its own channels (NAS silence alert, reconcile staleness). Feeding
+# the dead-man on skips keeps it measuring what it names: the writer cycle's own liveness.
+if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
+    curl -fsS -m 10 -o /dev/null "$URL" || true
+fi
 
 exit "$rc"

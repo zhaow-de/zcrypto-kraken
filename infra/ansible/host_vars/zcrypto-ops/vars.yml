@@ -22,15 +22,25 @@ base_unattended_upgrades_reboot_time: "02:25"
 ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
 
 # Same wiring for the replay/panel timers' dead-men (vault.yml holds the encrypted URLs). The
-# archive-pull dead-man wiring is GONE (T0058): the pull it watched is retired and the overlay
-# writer that inherited the unit name pings nothing -- pausing/removing the healthchecks.io check
-# itself (and the vaulted archive_pull_healthcheck_url, now dead) is an attended step, or the
-# check pages on the missing pings.
+# archive-pull dead-man is LIVE again (restored 2026-07-17): the T0058 rewrite dropped the ping
+# with the retired pull, and the check went DOWN silently while Grafana stayed green on fresh
+# metrics -- the overlay writer now pings on rc=0 INCLUDING gate-skips (a skip = alive, refusing
+# stale input; the upstream problem pages through its own channels). Do NOT pause or remove the
+# `zcrypto-archive-pull` check -- it is the independent failure domain for this unit.
 ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
 ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
+ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
 ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
 
 # The operator's fleet-wide deploy pubkey, loaded from the same file group_vars/capture_host reads
 # (single source: infra/ansible/files/ -- a key rotation edits the .pub file once). The bootstrap
 # play installs it for the `deploy` user; `run.sh` then converges over it.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
+
+# THE --mint FLIP (spec 00050 Task 12's final step; flipped 2026-07-17, owner present). Unlocked by
+# the 66 h cross-host soak: 217 witnessed silence windows, max 12.08 s (a hand-classified coalescing
+# artifact — 9 sibling pairs flowing on a healthy primary), threshold pinned at 30 s = 2.48x that
+# max. The ledger held ZERO would_mint entries at flip time, so this applied no backlog — the first
+# mint ever will be spec 00050 Task 13's Leg-A drill gap, deliberately created and fully observed.
+# Derivation: T0039. To disable: set false (or override -e ops_reconcile_mint=false) + converge.
+ops_reconcile_mint: true
