@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ripe_when: the next attended NAS session — the probe is one command on the NAS
 ---
 
@@ -17,6 +17,10 @@ On an **ext4** export, a paged NFS READDIR spanning an htree bucket split can tr
 
 - No probe has been run yet; the full reasoning lives in [[T0058]] (archived) and above.
 - The reconciler is still detect-only ([[T0039]]), so today's worst case is a polluted soak ledger or a skipped panel hour, not a wrong mint — but the soak analysis is exactly what pins `--min-gap-seconds`, so the pollution matters before the `--mint` flip.
+
+## Done so far
+
+- **Probed 2026-07-17 (read-only, `mount | grep /volume1`):** `/dev/mapper/cachedev_0 on /volume1 type btrfs (rw,nodev,noatime,ssd,synoacl,space_cache=v2,…)` — **btrfs**, the stable-readdir-cookie case. NFSv3 READDIR against the ops mount is safe from the ext4-hash-collision cookie instability this probe existed to rule out. No client-side workaround needed; the mount options stand as deployed.
 
 ## Suggested next steps
 

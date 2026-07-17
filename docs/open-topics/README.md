@@ -75,8 +75,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0061 — the live trade key is group-scoped to capture_host](T0061-trade-key-group-scope.md) — the capture-only secondary resolves the live Kraken trade key + secret (only the engine play's targeting keeps them off `zcrypto-red`); moving them to a dedicated `engine_host` vault scope is a small ciphertext move but touches the live trading credential — human-gated (ripe when: go-live hardening (T0049), or the next trade-key rotation).
 
-- [T0062 — is the NFS export's filesystem btrfs or ext4?](T0062-nfs-export-readdir-consistency-check.md) — the readdir-consistency probe split from T0058's close: on an ext4 export a paged NFS READDIR under concurrent NAS writes can transiently omit an older entry, turning absence into a permanent `would_mint` verdict or a skipped panel hour; btrfs = record and done (ripe when: the next attended NAS session — one command).
-
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
@@ -144,3 +142,5 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0058 — the ops mirror was two hops from source](archive/T0058-ops-mirror-is-two-hops-from-source.md) — resolved 2026-07-17: the owner-ratified NFS pivot is live (RO export + automount, fail-closed `.pull-status` gate through the mount, cadence ×2, the rsync channel retired with keys removed on both sides); the post-NFS 1.7–2.2 h sawtooth is the custody hop the owner ruled unavoidable, so the 3 h alert margin is structural again (≥ 0.8 h worst-phase); the readdir/filesystem probe split to T0062.
 
 - [T0059 — `Persistent=true` + `--date yesterday` skipped multi-day outages](archive/T0059-persistent-timer-replay-coverage-gap.md) — resolved 2026-07-17 by the watermark catch-up loop: the verified-replay replays every unverified day from the persisted watermark through yesterday (hardened against zero-byte/garbage/unpersisted-seed/empty-journal-day/future dates, each execution-reproduced), making the `Persistent=true` interaction harmless by construction; first organic run 2026-07-18 05:23 UTC.
+
+- [T0062 — is the NFS export's filesystem btrfs or ext4?](archive/T0062-nfs-export-readdir-consistency-check.md) — resolved 2026-07-17 the day it was split: `/volume1` is btrfs (stable readdir cookies), so NFSv3 READDIR against the ops mount is safe; probed read-only at the next NAS touch, exactly as the ripe trigger prescribed.
