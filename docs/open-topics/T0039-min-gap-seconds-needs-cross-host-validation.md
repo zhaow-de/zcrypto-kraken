@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: FIRED — the secondary went live 2026-07-14 and both mirrors land on the NAS; the detect-only soak is running, its analysis due ≈2026-07-16 19:15 UTC (spec 00050 Task 12, feeds the "(2 of 2)" PR)
+status: partial
+ripe_when: the Task-12 measurement is DONE (2026-07-17, below) and confirms the deployed 30 s. What remains is the --mint flip, which is a separate decision this topic now has the evidence for — take it when spec 00050's Task 13 drills have shown the detector CATCHES a real gap (this soak had no real outage in it, so that leg is untested)
 ---
 
 # The reconciler's `--min-gap-seconds` cannot be pinned from single-host data
@@ -39,6 +39,39 @@ This is the same failure shape as the invalidated first draft of spec 00050: **a
 - The decisive measurement — *how often, on healthy hours, is the primary silent > X s while the secondary has update rows in that window?* — **requires two concurrent streams**. None exist: the secondary is provisioned but not capturing, and the three-host data from the 2026-07-13 T0008 investigation was discarded.
 - Real primary outages are **83 s** (kernel reboot) and **270 s** (WS-503 crash) — 6–33× above even a 30 s threshold. Raising the threshold therefore costs essentially nothing in detection power.
 - **Soak-window caveat (2026-07-17, T0058):** between the 2026-07-16 OPS-5 cutover and the T0058 status-file gate landing, the ops reconciler's pull-failure gate keyed on the NAS→ops rsync — which succeeds even when the NAS's **own** VPS capture pulls are broken — so soak-ledger entries in that window were exposed to the two-hop blindness: a frozen mirror could have ledgered false `would_mint` verdicts once an hour crossed the 6 h `LATE_MINT` line. **No false entries were observed**: `residual_gap` stayed 2662 and no new `would_mint` decisions were ledgered in the window — exactly that, nothing more. **This exoneration is currently UNANCHORED** (review 2026-07-17): the ledger lives under gitignored `data/` on the hosts and `residual_gap` in Grafana, and no snapshot, query output, or ledger line-count was committed — nothing in the repo can substantiate or refute it, and a misread (e.g. checked against the NAS's pulled copy rather than the ops writer copy, or a Grafana window missing the cutover hours) would go undetected into the soak analysis. At the next attended host session, anchor it here: the ops-side ledger's line count + last-entry timestamp (or its sha256) **checked against the writer copy**, and the exact Grafana window/query used. The gate now consumes the NAS-written `.pull-status` file through the read-only NFS mount, fail-closed (spec `00054` addendum, [[T0058]]), so the soak's later windows consume the actual NAS pull outcomes, one cycle delayed.
+
+## Done so far — the cross-host soak, measured 2026-07-17 (spec 00050 Task 12)
+
+**Result: the deployed default of 30 s is validated by data. No change.** The measurement's job was to test whether 30 s is right, not to assume it; it is, with 2.5× margin above the measured tail and 2.8× below the smallest real outage on record.
+
+**Method.** `infra/scripts/gap_distribution.py` over a throwaway snapshot of the two RAW mirrors (never the overlay, never the live dirs — rsynced off the ops node's read-only NFS mount into `/var/lib/zcrypto-ops/soak-snapshot`, analysed in the pinned image on the i7, then deleted). Window: `--since 2026-07-14 --probe-seconds 1.0`, i.e. the whole concurrent period from the secondary's first hour (2026-07-14 19:00) to 2026-07-17 12:00 — **66 h, comfortably past the ≥48 h gate**, all 10 pairs present on both mirrors.
+
+**The distribution** (primary book-silence windows the secondary witnessed):
+
+| | value |
+|---|---|
+| windows observed | 217 |
+| p50 / p90 / p99 | 3.26 / 6.10 / 6.54 s |
+| p99.9 / max | 12.08 / 12.08 s |
+| single-host reference | 14.78 s (max natural quiescence) |
+| deployed default | **30 s** |
+
+**Every window in this soak is natural — there were no real outages to exclude.** The harness warns that a benign ~80 s reboot window normally tops this list; there is none, and nothing above 12.08 s at all. The reason: the primary **did not reboot during the soak** — `uptime` 6 d 10 h (booted 2026-07-11 04:01 UTC), capture container up since 2026-07-14 04:00 with `RestartCount=0`. The 21:25 UTC slot is the *unattended-upgrades* reboot time, not a nightly reboot: it fires only when a package demands one, and none did. So the whole distribution is quiescence + coalescing asymmetry, and per the harness's rule every window here **must be covered** by the threshold.
+
+**The outlier, classified by hand as the harness requires.** The max (12.08 s) is **1.85× the p99** — a clean outlier, so it was classified individually rather than trusted:
+
+- **AVAX/EUR, 2026-07-17 06:36:45.631 → 06:36:57.707** (12.08 s of primary silence; 97,104 primary rows that hour, so the stream was otherwise busy).
+- The secondary recorded **59 AVAX rows inside that window** — the witness that makes it a "gap" to the detector.
+- **The decisive test — cross-pair on the same host, same window:** ADA 100, BTC 160, DOGE 319, DOT 311, ETH 181, LINK 121, LTC 242, SOL 47, XRP 315 rows — **9 pairs flowing, only AVAX silent.**
+- **Verdict: a coalescing artifact, not a gap.** The primary host was demonstrably healthy; only AVAX's per-connection stream was asymmetric. This is precisely the mechanism this topic was opened to measure, and it is now observed rather than hypothesised: **at a 10 s threshold the reconciler would have spliced the secondary's AVAX block into an hour the primary never lost** — an unaudited data swap into an archive that cannot be backfilled.
+
+**Why 30 s and not the harness's suggested 25 s.** The harness suggests `ceil(2 × cross-host max)` = 25 s, which is decision-support, not a verdict. 30 s is kept because it satisfies the conservative rule against **both** measurements: 2.03× the single-host max (14.78 s) and 2.48× the cross-host max (12.08 s), where 25 s is only 1.69× the single-host figure. The cost asymmetry decides the tie — a missed 20 s gap is a *recorded residual*, a phantom splice is an *unaudited data swap* — so the threshold errs high. 30 s also stays 2.8× below the smallest real outage on record (83 s kernel reboot; the other is a 270 s WS-503 crash), so it costs no detection power. Not changing a deployed default is also the zero-risk direction.
+
+**What this soak did NOT establish, stated plainly:**
+
+- **The tail is under-resolved.** With 217 windows, `p99.9 == max` is arithmetic, not an estimate — it is simply the largest of 217 observations, and the spec's rule ("above the p99.9 of the thinnest pair") is therefore satisfied only in the weak sense. The max being 1.85× the p99 says the tail is fat; a longer soak could plausibly surface a larger artifact. 30 s has 2.5× headroom over what was seen, so this does not threaten the choice — but it is a reason to re-read the distribution before the `--mint` flip rather than treat this as final.
+- **No negative control.** The window contained no real primary outage, so this soak never tested the other leg — that the detector *catches* a real gap at 30 s. Real outages (83 s, 270 s) are far above the threshold and the arithmetic is not in doubt, but the empirical proof belongs to spec 00050's **Task 13 drills**, which is exactly what they are for.
+- **The detect-only soak keeps running and costs nothing.** It should keep accumulating; the ledger's `would_mint` entries are the same measurement continuing.
 
 ## Suggested next steps
 
