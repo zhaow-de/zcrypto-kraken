@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: before go-live hardening (T0049), or the next time the trade key is rotated anyway
+status: resolved
 ---
 
 # The live trade key is group-scoped to capture_host
@@ -18,7 +17,29 @@ The inventory says `zcrypto-red` "must never join engine_host, or the live Krake
 - Boolean-probe evidence from the 2026-07-16 vault re-scoping (commits `4acb7f0`, `8b6d21c`): `zcrypto-red` resolves the trade-key vars (`trade=True`); `zcrypto-ops` and `localhost` do **not** (spec 00051 D10 holds for ops).
 - The move is small — two `!vault` ciphertext blocks relocate verbatim (same vault password; per-value encryption means no decrypt is ever needed) — but it touches the **live trading credential**, so it is human-gated: schedule it into go-live hardening (T0049) or fold it into the next trade-key rotation, when the values are being replaced anyway.
 
-## Suggested next steps
+## Done so far — RESOLVED 2026-07-17 (owner present, as the gate required)
+
+The recipe below was executed exactly as written, with one deliberate extension.
+
+- **`group_vars/engine_host/vault.yml` created**; `kraken_trade_api_key`, `kraken_trade_api_secret` **and `engine_healthcheck_url`** moved into it. The third var was not in the original recipe: it is consumed by the *same single template* (`roles/engine/templates/engine.env.j2`) and shares the identical mis-scope, so leaving it behind would have made the new group's own definition ("what the engine play needs") false on arrival — the exact class of claim-vs-fact gap that produced this topic. It is a dead-man ping URL, not a credential, and carries a safe role default (`engine_healthcheck_url: ""`), so the extension added no risk.
+- **Ciphertext verified byte-identical** to the pre-move blocks (659 / 812 / 661 chars, compared programmatically against `git show HEAD:…capture_host/vault.yml`). Same vault password, per-value encryption — nothing was decrypted, re-encrypted, or printed at any point.
+- **The fix, proven by boolean probe** (never a value):
+
+  | host | before | after |
+  |---|---|---|
+  | `zcrypto` (engine_host) | `key==True secret==True` | `key==True secret==True hc==True` |
+  | `zcrypto-red` (capture-only) | **`key==True secret==True`** | **`key==False secret==False hc==False`** |
+  | `zcrypto-ops` | `key==False secret==False` | `key==False secret==False hc==False` |
+
+- **The engine play is unaffected** — dry-run (`--limit zcrypto --tags engine -e converge_primary=true -e engine_image_digest=<the running digest>`, `--check --diff`): `ok=30 changed=0 failed=0`. `changed=0` is the strongest available evidence: the `engine.env` the play *would* render is byte-identical to what is live, so the variables resolve to the same values through the new scope. (The task is `no_log: true` + `diff: false`, so nothing leaked even under `--diff`.)
+- **`group_vars/observed/vault.yml`'s header corrected**: its parenthetical described the pre-move state (it was itself the review finding that registered this topic — a comment asserting a boundary that did not exist). It now states the boundary that does.
+- **`capture_host/vault.yml`** keeps only genuinely capture-scoped values (`ansible_host`, `healthchecks_api_key`, `capture_healthcheck_url`); its header's read-example no longer names a variable that left the file, and a note records where the engine's secrets went.
+
+**Adding a host to `engine_host` now grants it the live trade key** — that is the group's entire purpose, and why it has exactly one member. The inventory's long-standing comment ("`zcrypto-red` must never join `engine_host`, or the live Kraken trade key would be rendered onto a host that has no business holding it") is, as of this change, describing a real mechanism rather than an intention.
+
+**Observed while here, not fixed (out of scope, no security consequence):** `ansible_host`, `healthchecks_api_key` and `capture_healthcheck_url` live in `group_vars/capture_host/` while `host_vars/zcrypto-red/` overrides all three — i.e. the group file is effectively holding `zcrypto`'s per-host values as "defaults that the secondary happens to override". It works, and nothing sensitive rides on it, but it is a latent trap for anyone who assumes the group file describes the group.
+
+## The recipe that was executed (retained for the record)
 
 All steps are the exact recipe the 2026-07-16 `observed`-group move used — ciphertext-verbatim, boolean-probe verified, never a decrypted value anywhere:
 

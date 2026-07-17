@@ -73,8 +73,6 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0049 — go-live drill matrix + day-2 operations runbook](T0049-go-live-drill-matrix-day2-runbook.md) — the exit-bar alerting drill is passed (owner sign-off 2026-07-16, live incident); before live orders, deliberately drill the full failure-scenario matrix (dead-men, watermark, engine `/fail`, Loki path, Alloy death, Grafana outage → healthchecks independence) and distill `docs/reference/day2-operations-runbook.md` (ripe when: the final go-live preparation, before the Stage-6b executor session).
 
-- [T0061 — the live trade key is group-scoped to capture_host](T0061-trade-key-group-scope.md) — the capture-only secondary resolves the live Kraken trade key + secret (only the engine play's targeting keeps them off `zcrypto-red`); moving them to a dedicated `engine_host` vault scope is a small ciphertext move but touches the live trading credential — human-gated (ripe when: go-live hardening (T0049), or the next trade-key rotation).
-
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
@@ -144,3 +142,5 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 - [T0059 — `Persistent=true` + `--date yesterday` skipped multi-day outages](archive/T0059-persistent-timer-replay-coverage-gap.md) — resolved 2026-07-17 by the watermark catch-up loop: the verified-replay replays every unverified day from the persisted watermark through yesterday (hardened against zero-byte/garbage/unpersisted-seed/empty-journal-day/future dates, each execution-reproduced), making the `Persistent=true` interaction harmless by construction; first organic run 2026-07-18 05:23 UTC.
 
 - [T0062 — is the NFS export's filesystem btrfs or ext4?](archive/T0062-nfs-export-readdir-consistency-check.md) — resolved 2026-07-17 the day it was split: `/volume1` is btrfs (stable readdir cookies), so NFSv3 READDIR against the ops mount is safe; probed read-only at the next NAS touch, exactly as the ripe trigger prescribed.
+
+- [T0061 — the live trade key was group-scoped to capture_host](archive/T0061-trade-key-group-scope.md) — resolved 2026-07-17 (owner present): the live Kraken credential moved to a new `group_vars/engine_host/` scope, so the capture-only secondary no longer resolves it — `zcrypto-red` went `key==True` → `key==False` by boolean probe, ciphertext byte-identical, and the engine play dry-runs `changed=0`. Membership is the boundary now, not play targeting.
