@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the ops node is offline (or its timer misses) for more than one day
+status: resolved
 ---
 
 # `Persistent=true` + `--date yesterday` silently skips a multi-day outage
@@ -21,10 +20,10 @@ The previous whole-journal replay covered this **by accident**: replaying everyt
 - The same reasoning applies to `zcrypto-verify-replay.timer` (03:41 daily, also `Persistent=true`), which was **not** re-scoped by D9 — so it is unaffected today, but any later `--date` scoping of it inherits this gap.
 - Not yet triggered: the ops node has not been offline for more than a day since the change landed.
 
-## Suggested next steps
+## Done so far
 
-- Pick a mechanism and implement it:
-  - **Watermark, not "yesterday"** — persist the last successfully-replayed date and replay every day from there to yesterday. Self-healing, bounded in steady state, and the honest fix; costs a state file and a loop.
-  - **Detect and report** — keep `--date yesterday` but compare the journal's available days against a watermark and publish an `ops_verified_replay_unverified_days` gauge, alerting when it is non-zero. Cheaper; converts a silent gap into a visible one without changing behaviour.
-  - **Accept and document** — decide multi-day outages are rare enough and their re-verification manual. Only defensible if written down where the operator will read it after an outage.
-- Recommend the **watermark**: it is the only option where the system is correct after an outage without a human remembering anything.
+Resolved 2026-07-17 (iter-101, `feat/ops5-offload`) by the recommended **watermark** — the only option where the system is correct after an outage without a human remembering anything:
+
+- **The catch-up loop shipped and is deployed to ops (converged)**: the verified-replay persists the last successfully-replayed date and replays every day from the watermark through yesterday (`24c58b6`), so a multi-day outage is caught up on the next run instead of silently skipped. The `Persistent=true` interaction is now **harmless by construction** — the missed timer's single catch-up run covers every missed day.
+- **Hardened against every failure mode found, each execution-reproduced then fixed** (`d100a6f`, `df56b8b`): a zero-byte watermark (interpolated into `date(1)` it parsed as TOMORROW — a permanent silent-skip that bumped `last_success` and fed the dead-man forever), garbage and shape-valid-but-nonexistent dates (loud refusal, watermark untouched), an unpersisted seed, an empty journal day (the day probe requires actual cycle artifacts, and the watermark only advances past a day once its successor has started arriving — a mid-day journal stall can no longer mark a partial day verified forever), and future dates.
+- **First organic timer run: 2026-07-18 05:23 UTC.** `zcrypto-verify-replay.timer` (03:41, also `Persistent=true`) was never `--date`-scoped and remains whole-journal, so it stays unaffected — and any future scoping of it now has the watermark loop as the established template.

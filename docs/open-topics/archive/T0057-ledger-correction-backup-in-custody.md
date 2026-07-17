@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the reconcile ledger is corrected again (the [[T0044]] runbook is run), or the overlay's ops->NAS pull fails on a permission error
+status: resolved
 ---
 
 # The ledger-correction backup lives inside the canonical overlay, and it breaks the sync
@@ -23,8 +22,10 @@ ripe_when: the reconcile ledger is corrected again (the [[T0044]] runbook is run
 - The ops-side copy is `deploy:deploy 0777`; the mode asymmetry across hosts is what rsync tried, and failed, to reconcile.
 - This is the only `.bak` in the tree today, so the failure is currently one file wide — but the runbook creates one per correction, so the next correction adds another.
 
-## Suggested next steps
+## Done so far
 
-- **Decide where correction backups belong.** They should almost certainly live *outside* the replicated tree (e.g. a sibling `overlay-corrections/` dir on the host that ran the runbook, or committed to the repo as evidence since they are small and text). Update [[T0044]]'s runbook accordingly — it currently writes the `.bak` in place, which is what put it here.
-- **Decide what to do with this one.** It is evidence of a real correction; do not delete it without recording its content somewhere durable first. Preferred: commit its diff (one JSON line) into the repo as part of the T0044 record, then remove it from the tree.
-- Consider whether the overlay's replication should tolerate a non-canonical file at all (e.g. pull with an exclude), or whether the tree should simply contain nothing but data + manifests + the ledger — the stricter invariant is the easier one to keep.
+Resolved 2026-07-17 (iter-101, `feat/ops5-offload`) — all three suggested steps executed, evidence-first:
+
+- **The evidence is committed**: `infra/nas/ledger-correction-20260714-link-eur.md` (commit `18ec391`) records the [[T0044]] correction — the removed LINK/EUR `total_loss` line and its circumstances — so the audit trail no longer depends on a stray file inside custody.
+- **The `.bak` is removed from custody, evidence-then-remove**: sha-verified `1da63f1cce679d6e` on **both** hosts first, then removed from both; the trees are identical at **1174 files** after (from 1175 with the `.bak`).
+- **The runbook now writes backups outside the replicated tree** (`18ec391`), closing the general shape — the overlay again contains nothing but data + manifests + the ledger, which is the stricter (and easier-kept) invariant the last suggested step asked for. No future correction can re-create this failure.

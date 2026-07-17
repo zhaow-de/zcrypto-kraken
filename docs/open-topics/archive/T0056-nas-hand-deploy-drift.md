@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the first attended NAS converge (`./scripts/run.sh site.yml --limit nas`) — the TZ guard is EXPECTED to fail until DSM is flipped to UTC; resolve once that converge + apply verifies by outcome
+status: resolved
 ---
 
 # The NAS runs whatever was last hand-copied to it, and nothing detects the drift
@@ -31,7 +30,5 @@ All three originally-suggested steps are delivered on `feat/ops5-offload` (commi
 - **The model was decided as option (a), bring the NAS under Ansible** — the `nas` role deploys `pull-entrypoint.sh`/`compose.yaml`/`config.alloy` verbatim from `infra/nas/`, renders the `.env` + `alloy-secrets.env` from the vault, and applies via the flag-gated `-e nas_apply_compose=true` tasks; `run.sh` loads `deploy_nas_ed25519` into its throwaway agent. The DSM blocker turned out not to exist (plain ssh + `ansible_ssh_transfer_method: piped`).
 - **The placeholder trap is dead**: `compose.yaml` pins via `${CAPTURE_IMAGE:?...}` (and `${ALLOY_IMAGE:?...}`) from the ansible-rendered `.env`, so a copy without the rendered pin refuses to start instead of silently running `:latest` on the AVX-less Atom.
 - **The quirks are recorded** in `infra/nas/README.md` (docker at `/usr/local/bin/docker` off sudo's PATH, CEST-vs-UTC `docker logs --since`, no scp/sftp) and encoded in `host_vars/nas/vars.yml`; the TZ guard turns the CEST quirk into a hard converge refusal.
-
-## Suggested next steps
-
-- **Run the first attended NAS converge** (`./scripts/run.sh site.yml --limit nas`, preview with `--check --diff` first): flip DSM to UTC when the TZ guard refuses (DSM Control Panel → Regional Options → Time Zone → (GMT) Greenwich Mean Time), converge, then apply with `-e nas_apply_compose=true` and verify by outcome (pulls green, gate.prom fresh, Alloy shipping). Resolve this topic once that verifies — the drift class is only dead once a real converge has driven the host.
+- **Resolved 2026-07-17 — the maiden converge ran and verified by outcome.** The owner ratified the model with the rationale that decided it: **quirks become code, not prompt-knowledge**. The converge: the TZ guard **PASSED on live UTC evidence** — the owner flipped DSM to UTC (recorded in `infra/external-systems.md`), and the guard's fail-first behavior had already been proven in `--check` the day the TZ was still CEST. **8 changed**, including **both digest pins via the rendered `.env`** — the `:latest` traps are dead in the *deployed* state, not just the repo. Deployed entrypoint sha == repo sha, and the apply tasks ran (`up -d` + both restart tasks). `run.sh` loads the NAS deploy key into its throwaway agent (fixed after review).
+- **No live deferred sub-item remains.** The originally-mooted drift *detection* is moot by construction — hand-deploys no longer exist, the converge IS the deploy path. The NAS's alerts/dashboards belong to [[T0020]], not here.
