@@ -111,8 +111,8 @@ else
     # (-e ops_reconcile_mint=false) arrives as the STRING "false", which is truthy; without the
     # cast, the override meant to DISABLE minting would enable it. (`bool` is an Ansible filter;
     # plain-Jinja2 render checks must register a shim.) And keep Jinja comments OUT of the
-    # backslash-continuation chain: under plain Jinja (no trim_blocks) a stripped {# #} leaves a
-    # blank line that ENDS the command mid-flags — the rendered script stays syntactically valid
+    # backslash-continuation chain: under plain Jinja (no trim_blocks) a stripped Jinja comment
+    # tag leaves a blank line that ENDS the command mid-flags — the rendered script stays valid
     # bash whose if-condition silently becomes "--mint: command not found", so bash -n cannot
     # catch it. Ansible's trim_blocks masked it; a render harness found it (2026-07-17).
     if ! docker run --rm --pull never \

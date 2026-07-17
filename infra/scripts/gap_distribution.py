@@ -1,13 +1,15 @@
 """Pin `--min-gap-seconds` from real cross-host data (spec 00050, Task 12 / T0039).
 
-The reconciler's `--min-gap-seconds` default (30) is 2x the single-host measured maximum natural
-quiescence (14.78 s). It is UNVALIDATED cross-host: Kraken coalesces book updates per WebSocket
-connection, so the two hosts record different message sequences for the same pair, and a coalescing
-artifact could make the primary *appear* silent for longer than 14.78 s while the secondary shows
-activity inside the silence. If `--min-gap-seconds` sits below that apparent-silence tail, the
-reconciler would splice a secondary block into an hour the primary never actually lost -- an unaudited
-data swap into an archive that cannot be backfilled. Minting stays OFF until this soak pins the
-threshold ABOVE the measured tail.
+[Pinned 2026-07-17: this soak ran (66 h, 217 windows) and validated the deployed 30 s -- 2.48x the
+worst coalescing artifact (12.08 s), 2.03x the single-host maximum (14.78 s); T0039 resolved, the
+deployed reconciler runs --mint. The harness remains reusable for re-pinning.]
+
+The measurement problem it answers: Kraken coalesces book updates per WebSocket connection, so the
+two hosts record different message sequences for the same pair, and a coalescing artifact can make
+the primary *appear* silent while the secondary shows activity inside the silence. If
+`--min-gap-seconds` sits below that apparent-silence tail, the reconciler would splice a secondary
+block into an hour the primary never actually lost -- an unaudited data swap into an archive that
+cannot be backfilled. The threshold must sit ABOVE the measured tail.
 
 This measures the thing that must be pinned above: over the soaked RAW mirrors (never the overlay),
 the distribution of primary book-silence windows the secondary witnessed -- exactly the `find_book_gaps`

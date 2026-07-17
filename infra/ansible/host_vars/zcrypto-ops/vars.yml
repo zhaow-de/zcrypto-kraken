@@ -22,10 +22,11 @@ base_unattended_upgrades_reboot_time: "02:25"
 ops_liquidations_healthcheck_url: "{{ liquidations_healthcheck_url }}"
 
 # Same wiring for the replay/panel timers' dead-men (vault.yml holds the encrypted URLs). The
-# archive-pull dead-man wiring is GONE (T0058): the pull it watched is retired and the overlay
-# writer that inherited the unit name pings nothing -- pausing/removing the healthchecks.io check
-# itself is an attended step, or the
-# check pages on the missing pings.
+# archive-pull dead-man is LIVE again (restored 2026-07-17): the T0058 rewrite dropped the ping
+# with the retired pull, and the check went DOWN silently while Grafana stayed green on fresh
+# metrics -- the overlay writer now pings on rc=0 INCLUDING gate-skips (a skip = alive, refusing
+# stale input; the upstream problem pages through its own channels). Do NOT pause or remove the
+# `zcrypto-archive-pull` check -- it is the independent failure domain for this unit.
 ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
 ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
 ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
