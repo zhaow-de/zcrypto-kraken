@@ -147,6 +147,38 @@
     append: true
   when: ops_research_probe.rc == 0
 
+# --- The four NAS pull channels, now role-provisioned on zcrypto-data (spec 00057; they were
+# hand-installed on deploy). Each `rrsync -ro` pins its own subtree -- least-privilege per channel,
+# mirroring the capture/engine roles' sync forced commands. exclusive:false so these ADD to (do not
+# replace) zcrypto-data's keys; deploy keeps its copies until the Task-4 NAS repoint cuts over.
+- name: install the liquidations pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_liquidations_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_liquidations_subdir }}",restrict'
+
+- name: install the panel pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_panel_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_panel_subdir }}",restrict'
+
+- name: install the reconciled pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_reconciled_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_reconciled_subdir }}",restrict'
+
+- name: install the hot-out pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_hot_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_hot_out_subdir }}",restrict'
+
 # Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1 fix; extended by OPS-5 D2 to
 # cover the archive-pull block too): these two tasks used to live inside the ops_image_digest
 # block, but the Alloy block also needs ops_uid/ops_gid for its container `user:` mapping, and now

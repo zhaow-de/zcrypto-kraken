@@ -37,6 +37,15 @@ ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
 # play installs it for the `deploy` user; `run.sh` then converges over it.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
 
+# Fleet users/groups (spec 00057): the four NAS pull-channel public keys the ops role installs on
+# zcrypto-data as `rrsync -ro` forced commands (they were hand-installed on deploy). Same lookup
+# idiom as deploy_authorized_key above -- public material only; the private halves live on the NAS
+# (/volume1/docker/zcrypto-archive/keys). The forced-command roots are in roles/ops/tasks/main.yml.
+ops_sync_liquidations_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_liquidations_ed25519.pub') }}"
+ops_sync_panel_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_panel_ed25519.pub') }}"
+ops_sync_reconciled_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_reconciled_ed25519.pub') }}"
+ops_sync_hot_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hot_ed25519.pub') }}"
+
 # THE --mint FLIP (spec 00050 Task 12's final step; flipped 2026-07-17, owner present). Unlocked by
 # the 66 h cross-host soak: 217 witnessed silence windows, max 12.08 s (a hand-classified coalescing
 # artifact — 9 sibling pairs flowing on a healthy primary), threshold pinned at 30 s = 2.48x that
