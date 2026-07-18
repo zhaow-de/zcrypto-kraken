@@ -85,15 +85,15 @@ nas_capture_source: "deploy@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "deploy@zcrypto.zhaow.me:"
 nas_capture_red_source: "deploy@zcrypto-red.zhaow.me:"
-nas_liquidations_source: "deploy@192.168.100.6:"
+nas_liquidations_source: "zcrypto-data@192.168.100.6:"
 nas_liquidations_ssh_port: 22
-nas_panel_source: "deploy@192.168.100.6:"
+nas_panel_source: "zcrypto-data@192.168.100.6:"
 nas_panel_ssh_port: 22
-nas_reconciled_source: "deploy@192.168.100.6:"
+nas_reconciled_source: "zcrypto-data@192.168.100.6:"
 nas_reconciled_ssh_port: 22
 # OPS-6 (spec 00056 D2/D4): the ops node's hot-out outbox, pulled into the hot/ hub. Its own
 # least-privilege read-only key (sync_hot) + home-LAN port 22, same shape as panel/reconciled.
-nas_hot_source: "deploy@192.168.100.6:"
+nas_hot_source: "zcrypto-data@192.168.100.6:"
 nas_hot_ssh_port: 22
 
 # OPS-6 (spec 00056 D2): the workstation's hot-PUSH public half, installed by the nas role as a
