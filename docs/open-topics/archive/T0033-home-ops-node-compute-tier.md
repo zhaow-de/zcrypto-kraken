@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ripe_when: now — OPS-1…4 landed (iter-097/098); the remainder is OPS-5 Offload (reconciler off the Atom, ops-node scraper, staleness alert) and OPS-6 Loop (24×7 research loop + the workstation ./data migration), both autonomous
 ---
 
@@ -77,6 +77,18 @@ we keep paying for it in workarounds rather than capability. What a real CPU buy
 **Two things the move revealed that the spec had wrong**, both now registered: the ops image was too old to run the code being moved onto it (re-pinned), and `source_lag` **rose** rather than fell — ops is one hourly hop further from source by construction ([[T0058]]). Also found: the trade-backfill had never actually been deployed to the NAS, so its daily gate had never run once ([[T0056]]).
 
 Still open under this topic: **OPS-6** (the workstation's `data/`, its two leftover systemd payloads, and the bi-directional NAS sync).
+
+## Done so far — OPS-6 Loop (spec `00056`, iter-103, 2026-07-18) — RESOLVES this topic
+
+OPS-6, the final increment, landed the hot-cluster dataset exchange and proved research runnable on ops (full detail in `docs/iterations-history-phase1.md` iter-103):
+
+- **Topology + tool (D1/D2/D3/D8):** the custody / hot / private cluster split; the `zcrypto data` fetch/push/rebuild group over a NAS `hot/` hub keyed on one `[zcrypto].nfs_mount_dir`; the catalog rewritten by the taxonomy (`docs/reference/data-catalog-full.md`).
+- **The channel:** the write-capable push into `hot/` jailed by a vendored `rrsync` (four containment layers, append-only enforced server-side; validated live on the NAS's rsync 3.1.2), and a new dedicated `sync_hot -ro` ops→NAS pull.
+- **Seed + acceptance (D4):** all six authored sets seeded (74 files); ops provisioned as a research node (`uv` + clone as `zhaow`), `zcrypto data fetch` works cross-host, and the two data-dependent regression suites **ran (not skipped) and passed on ops (62 tests)** — the ratified flow (workstation authors, ops consumes) works end-to-end. The acceptance caught + fixed a real `data fetch --verify` manifest-parsing bug.
+- **Cleanups (D5/D6):** `backup_dir` + dead fetch fields removed; the workstation's `zcrypto-engine-shadow.service` (Phase-6a soak, superseded by the live VPS engine per [[T0018]]) + `zcrypto-engine-gateops.timer` retired **outright** (owner-decided) with their key; `data/ohlc` (v0) + `data/engine-journal-vps` deleted.
+- **Decisions continuity (D7):** the per-phase decision logs are git-tracked, one file per phase.
+
+**No live deferred sub-item remains under this topic.** What OPS-6 surfaced but did not do — the ops identity migration (`deploy`→`zcrypto-data`) and the hot-out **authoring** writability (zhaow→hot-out) — is a *new* whole-fleet users/groups regularization, ratified in spec `00057` and tracked as its own follow-on topics [[T0067]] (ops phase) / [[T0068]] (capture/engine phase). OPS-6's ratified flow is complete without them.
 
 ## Suggested next steps
 
