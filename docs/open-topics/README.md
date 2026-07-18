@@ -79,6 +79,10 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0064 — the deployed strategy (trial 44) has no out-of-time holdout evidence](T0064-deployed-strategy-has-no-holdout-evidence.md) — the single budgeted holdout look (budget spent 1→0) tested the *superseded* record 33 on a degenerate [0,0] window, so the deployable (trial 44, a different construction) carries no out-of-sample validation at all — paper trading becomes its only genuine OOS test; a go-live-confidence fact the human should hold explicitly (ripe when: paper evidence accumulates, or before any live-capital go/no-go).
 
+- [T0067 — fleet users/groups: ops migration](T0067-fleet-users-groups-ops-migration.md) — migrate the ops data path `deploy → zcrypto-data` (container run-as, data ownership, the four m2m pull keys now Ansible-provisioned, NAS sources repointed, `deploy → zcrypto-deploy`, hot-out authoring) per spec 00057; the OPS-6 follow-on (ripe when: OPS-6 / spec 00056 has merged to develop).
+
+- [T0068 — fleet users/groups: capture/engine hosts](T0068-fleet-users-groups-capture-engine-migration.md) — rename `kraken-* → zcrypto-*`, move the pull-export keys to `zcrypto-data` + Ansible-provision, `deploy → zcrypto-deploy`, and first-time `zcrypto-alloy` on the capture hosts, landing the accepted telemetry residual (spec 00057 D5, T0042) (ripe when: T0067 done + a capture-host maintenance window scheduled).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
