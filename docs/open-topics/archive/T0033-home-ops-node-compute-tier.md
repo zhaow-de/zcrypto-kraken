@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: now — OPS-1…4 landed (iter-097/098); the remainder is OPS-5 Offload (reconciler off the Atom, ops-node scraper, staleness alert) and OPS-6 Loop (24×7 research loop + the workstation ./data migration), both autonomous
 ---
 
 # Home ops node — a real-CPU compute tier
