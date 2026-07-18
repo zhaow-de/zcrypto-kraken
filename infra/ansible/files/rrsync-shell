@@ -1,0 +1,24 @@
+#!/bin/sh
+# rrsync-only login shell for the zcrypto-data machine-to-machine data user
+# (spec 00057). It permits ONLY the two known rrsync binaries, invoked as a
+# forced command, and refuses everything else -- no interactive shell, no
+# arbitrary path, no other binary. Defense-in-depth on top of each
+# authorized_keys command="..."/restrict jail: even a key that somehow lacked
+# its forced command could run nothing but rrsync through this shell.
+#   * The account has NO password and its keys are all command="..."-forced, so
+#     $2 is normally the trusted forced command; this shell is the backstop.
+#   * `exec $2` runs the binary directly (no /bin/sh), so shell metacharacters in
+#     a hostile $2 are never interpreted -- they become inert rrsync args, which
+#     rrsync rejects. It preserves SSH_ORIGINAL_COMMAND, which rrsync reads.
+#   * The `case` arms pin the two EXACT absolute rrsync paths (the NAS one is
+#     nas_stack_dir/rrsync); a planted /tmp/rrsync, a PATH lookup, or a
+#     `/usr/bin/rrsync-evil` can't match. If nas_stack_dir ever moves, update the
+#     NAS arm (until then that pull fails closed). The unquoted `exec $2` relies
+#     on the forced commands' subtree paths being space/glob-free -- they are
+#     (/var/lib/zcrypto-ops/*, /volume1/ZhaoCrypto/hot, the capture data dir).
+[ "$1" = "-c" ] || { echo "this account runs rrsync only (no interactive shell)" >&2; exit 1; }
+case "$2" in
+	/usr/bin/rrsync\ *)                          exec $2 ;;  # ops / capture hosts (Debian rsync package)
+	/volume1/docker/zcrypto-archive/rrsync\ *)   exec $2 ;;  # the NAS's vendored python3 rrsync (T0056)
+	*) echo "this account runs rrsync only (rejected)" >&2; exit 1 ;;
+esac

@@ -27,10 +27,15 @@ ops_liquidations_subdir: liquidations
 
 # Fleet users/groups (spec 00057): the machine-to-machine data user. Runs the data containers
 # (--user), owns the data trees, serves the NAS pulls via rrsync -ro forced-command keys. No sudo,
-# no password; its shell is /bin/bash -- a nologin shell would block the forced commands (sshd runs
-# them via the login shell), but the command=+restrict keys keep it jailed to one read-only subtree
-# each so no interactive login is reachable -- deploy leaves the data path.
+# no password; its shell is the rrsync-only wrapper (ops_rrsync_shell) -- a nologin shell would block
+# the forced commands (sshd runs them via the login shell), and a general shell (bash) would grant
+# more than needed, so the wrapper permits ONLY rrsync and refuses everything else -- deploy leaves
+# the data path.
 ops_data_user: zcrypto-data
+# The rrsync-only login shell for zcrypto-data (infra/ansible/files/rrsync-shell): serves the
+# forced-command pulls, refuses interactive shells + any non-rrsync command. Defense-in-depth over
+# the per-key command=/restrict jail.
+ops_rrsync_shell: /usr/local/sbin/rrsync-shell
 # hot-out's two-role handoff group (setgid): zcrypto-data owns + serves; zhaow authors into it.
 ops_hot_group: zcrypto-hot
 # The interactive-research user (workstation-aligned; created by the research role, NOT this pipeline

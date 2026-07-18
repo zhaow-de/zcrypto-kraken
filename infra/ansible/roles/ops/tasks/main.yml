@@ -116,17 +116,26 @@
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
 # exist before any data ownership or container-user change (Task 3).
 #
-# Shell is /bin/bash, NOT nologin: this user SERVES the NAS pulls via `command="rrsync -ro ..."`
-# forced-command keys, and sshd runs a forced command as `<login-shell> -c "<cmd>"` -- a nologin
-# shell prints "account not available" and never execs rrsync, so every pull fails (caught by the
-# Task-4 pre-flight). The keys stay fully jailed by command=+restrict (one read-only subtree each,
-# no pty/forwarding) and the account has no password, so no interactive login is reachable despite
-# the real shell -- the "no interactive login" intent, by the right mechanism (spec 00057 correction).
-- name: create the zcrypto-data m2m user (no password; real shell jailed to rrsync by the forced-command keys; owns the data + runs the containers)
+# Shell is the rrsync-only wrapper (ops_rrsync_shell), NOT nologin and NOT a general shell: this user
+# SERVES the NAS pulls via `command="rrsync -ro ..."` forced-command keys, and sshd runs a forced
+# command as `<login-shell> -c "<cmd>"`. A nologin shell swallows it ("account not available", every
+# pull fails -- caught by the Task-4 pre-flight); a general shell (/bin/bash) works but grants more
+# than needed. The wrapper permits ONLY rrsync and refuses everything else, so even a mis-added
+# forced-command-less key still can't get a shell. With command=+restrict per key + no password, no
+# interactive login is reachable. Deployed just below, BEFORE the account's shell points at it.
+- name: install the rrsync-only login shell for zcrypto-data (spec 00057)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/rrsync-shell"
+    dest: "{{ ops_rrsync_shell }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: create the zcrypto-data m2m user (no password; rrsync-only shell; owns the data + runs the containers)
   ansible.builtin.user:
     name: "{{ ops_data_user }}"
     system: true
-    shell: /bin/bash
+    shell: "{{ ops_rrsync_shell }}"
     create_home: true
     state: present
 
