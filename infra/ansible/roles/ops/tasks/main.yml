@@ -8,8 +8,8 @@
   ansible.builtin.file:
     path: "{{ ops_data_dir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
     mode: "0755"
 
 - name: ensure the ops compose project directory exists
@@ -96,8 +96,8 @@
   ansible.builtin.file:
     path: "{{ ops_textfile_dir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
     mode: "0755"
 
 # OPS-6 (spec 00056 D2/D4): the hot-out outbox the NAS pulls into its hot/ hub via a new
@@ -108,9 +108,9 @@
   ansible.builtin.file:
     path: "{{ ops_data_dir }}/{{ ops_hot_out_subdir }}"
     state: directory
-    owner: deploy
-    group: deploy
-    mode: "0755"
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_hot_group }}"
+    mode: "2775"
 
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
@@ -186,21 +186,21 @@
 # below). Without the hoist, an Alloy-only converge (ops_alloy_digest passed, ops_image_digest not)
 # would render `user: ":"` -- a real coupling bug this hoist removes rather than works around, so
 # any of the three digest-gated blocks can converge independently.
-- name: look up the deploy account (the ops containers run as its uid/gid)
+- name: look up the zcrypto-data account (the ops containers run as its uid/gid — spec 00057)
   ansible.builtin.getent:
     database: passwd
-    key: deploy
+    key: "{{ ops_data_user }}"
 
-- name: derive the deploy uid/gid for the container user mapping
+- name: derive the zcrypto-data uid/gid for the container user mapping
   ansible.builtin.set_fact:
-    ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
-    ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
+    ops_uid: "{{ ansible_facts['getent_passwd'][ops_data_user][1] }}"
+    ops_gid: "{{ ansible_facts['getent_passwd'][ops_data_user][2] }}"
 
 # Corrects a one-time ownership mismatch left behind by the NOW-REMOVED NAS pull of this tree
 # (spec 00054 D2): capture-reconciled arrived here via `rsync -a` run by a root systemd unit, and
 # `-a` preserves NUMERIC ownership, so every file/dir under it still carries the NAS's uid/gid 1000
 # -- not ops's `deploy` (1001). The reconcile container runs `--user {{ ops_uid }}:{{ ops_gid }}`
-# (deploy), and `ledger_append` (cli/archive/mint.py) opens reconcile-ledger.jsonl in APPEND mode on
+# (zcrypto-data since spec 00057), and `ledger_append` (cli/archive/mint.py) opens reconcile-ledger.jsonl in APPEND mode on
 # EVERY cycle -- including detect-only, where the ledger is the entire point -- so without this,
 # every reconcile run fails EACCES: the directory being 0777 is a red herring, the ledger FILE is
 # 0664 owned by 1000, and appending needs write on the file, not just search on the directory.
@@ -216,12 +216,12 @@
 # it on the digest would leave a digest-less converge (or a host that never gets one) permanently
 # stuck with the NAS's ownership. It must merely run before the archive-pull runner below, which
 # Ansible's linear task order already guarantees.
-- name: ensure the overlay tree is owned by deploy (spec 00054 D2)
+- name: ensure the overlay tree is owned by zcrypto-data (spec 00054 D2; spec 00057)
   ansible.builtin.file:
     path: "{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
     recurse: true
 
 # The overlay-writer runner (OPS-5, spec 00054 D2; re-plumbed by T0058): archive-pull.sh.j2
