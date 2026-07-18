@@ -22,8 +22,6 @@ class FetchConfig:
     http_timeout_get_secs: int = 60
     http_retry_attempts: int = 3
     fetch_progress_log_interval: int = 50
-    backfill_right_edge_grace_days: int = 7
-    rename_synth_warn_days: int = 7
 
 
 @dataclass(frozen=True)
@@ -41,7 +39,6 @@ class EngineConfig:
 @dataclass(frozen=True)
 class AppConfig:
     data_dir: Path | None
-    backup_dir: Path | None
     ohlcvt_source_dir: Path | None
     fetch: FetchConfig
     engine: EngineConfig
@@ -118,7 +115,7 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
 
 def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
     if not config_path.exists():
-        return AppConfig(data_dir=None, backup_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig())
+        return AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig())
     try:
         raw = tomllib.loads(config_path.read_text())
     except tomllib.TOMLDecodeError as e:
@@ -128,7 +125,6 @@ def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
         raise ConfigError(f"[{CONFIG_TABLE}] in {config_path} must be a table")
     return AppConfig(
         data_dir=_read_path(table, "data_dir", config_path),
-        backup_dir=_read_path(table, "backup_dir", config_path),
         ohlcvt_source_dir=_read_path(table, "ohlcvt_source_dir", config_path),
         fetch=_build_fetch(table, config_path),
         engine=_build_engine(table, config_path),
@@ -145,10 +141,6 @@ def _resolve(flag_value: Path | None, config_value: Path | None, *, name: str, f
 
 def resolve_data_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
     return _resolve(flag_value, cfg.data_dir, name="data_dir", flag="--data-dir")
-
-
-def resolve_backup_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
-    return _resolve(flag_value, cfg.backup_dir, name="backup_dir", flag="--backup-dir")
 
 
 def resolve_ohlcvt_source_dir(flag_value: Path | None, cfg: AppConfig) -> Path:

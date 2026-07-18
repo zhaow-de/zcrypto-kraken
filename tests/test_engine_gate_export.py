@@ -36,7 +36,6 @@ def _patch_config(monkeypatch, tmp_path: Path) -> EngineConfig:
     """Point load_config (as cli.engine.command sees it) at tmp-dir engine paths."""
     cfg = AppConfig(
         data_dir=None,
-        backup_dir=None,
         ohlcvt_source_dir=None,
         fetch=FetchConfig(),
         engine=EngineConfig(store_dir=tmp_path / "store", journal_dir=tmp_path / "journal"),
