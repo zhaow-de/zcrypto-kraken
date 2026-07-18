@@ -329,6 +329,7 @@ git commit -m "feat(infra): NAS pulls ops data as zcrypto-data, deploy out of th
 **Files:**
 - Modify: `infra/ansible/bootstrap.yml` (ops play: provision `zcrypto-deploy` for virgin hosts)
 - Modify: `infra/ansible/host_vars/zcrypto-ops/vars.yml` (`ansible_user: zcrypto-deploy`)
+- Modify: `infra/ansible/roles/ops/tasks/main.yml` (retarget the 5 admin-plane `owner: deploy`/`group: deploy` refs → `zcrypto-deploy`: compose project dir, compose-file render, and the 3 Alloy config items — Task-3 review finding; they'd fail user-lookup on the first post-rename converge otherwise)
 - Modify: `~/.ssh/config` (workstation-local: `Host hp` → `User zcrypto-deploy`)
 - Modify: `infra/ops/README.md` (the admin user is `zcrypto-deploy`)
 
@@ -351,7 +352,7 @@ ssh root@192.168.100.6 'pgrep -u deploy -a || echo "no deploy processes"; \
 ```
 (If `pgrep -u deploy` shows anything, stop and resolve it before renaming — Task 3 should have left none.)
 
-- [ ] **Step 3: Update the workstation's connection identity.** In `~/.ssh/config`, `Host hp` → `User zcrypto-deploy`. In `host_vars/zcrypto-ops/vars.yml`, `ansible_user: zcrypto-deploy`.
+- [ ] **Step 3: Update the repo's admin-user references to `zcrypto-deploy`.** In `~/.ssh/config`, `Host hp` → `User zcrypto-deploy`. In `host_vars/zcrypto-ops/vars.yml`, `ansible_user: zcrypto-deploy`. In `roles/ops/tasks/main.yml`, retarget the 5 admin-plane `owner: deploy`/`group: deploy` refs → `zcrypto-deploy` (the compose project dir, the compose-file render, and the Alloy project dir / `config.alloy` / alloy compose file) — the only `deploy` owners Task 3 deliberately left admin-plane; after `usermod -l` (Step 2) they'd fail user-lookup on the next converge (Task-3 review finding).
 
 - [ ] **Step 4: Verify by outcome — the box is converge-able as zcrypto-deploy.**
   - `ssh hp 'whoami; sudo -n true && echo "passwordless sudo OK"'` → `zcrypto-deploy` + sudo OK (the ssh alias now lands as `zcrypto-deploy`, the key + sudoers moved with the home).
@@ -360,7 +361,7 @@ ssh root@192.168.100.6 'pgrep -u deploy -a || echo "no deploy processes"; \
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add infra/ansible/bootstrap.yml infra/ansible/host_vars/zcrypto-ops/vars.yml infra/ops/README.md
+git add infra/ansible/bootstrap.yml infra/ansible/host_vars/zcrypto-ops/vars.yml infra/ansible/roles/ops/tasks/main.yml infra/ops/README.md
 git commit -m "feat(infra): rename ops admin deploy -> zcrypto-deploy (spec 00057 D1)"
 ```
 
