@@ -1,6 +1,6 @@
 # Decisions log
 
-The **per-phase** git-tracked running logs `docs/research/<serial>.phase<N>-decisions-running.md` (`<serial>` = the phase's own serial — the one its close-out uses: Phase 1 `02`, Phase 4 `10`, Phase 5 `13`, Phase 6 `14`) record **subject-matter research decisions** — one paragraph per decision, prefixed `[iter-<NNN>]` (the iteration number tracked in `docs/iterations-history.md`); `<N>` is the master-plan-§12 phase whose subject matter the decision concerns (see *Phase persistence*). Applies in **both** interactive and unattended modes.
+One git-tracked decision log **per phase**, `docs/research/<serial>.phase<N>-decisions.md`, records **subject-matter research decisions** — one paragraph per decision, prefixed `[iter-<NNN>]` (the iteration number tracked in `docs/iterations-history.md`); `<N>` is the master-plan-§12 phase whose subject matter the decision concerns (see *Routing*). Appended live and committed with each iteration's closing commit, exactly like the changelog — no draining, no continuation files. Applies in **both** interactive and unattended modes.
 
 ## The gate — when to log
 
@@ -20,17 +20,15 @@ One paragraph per decision prefixed `[iter-<NNN>]`: the question, **2–3 option
 - **Unattended:** log the decision **you** made — options, your pick with `(Decision: N)` + a one-line why. (A parked irreversible/high-stakes step goes here too, recorded as parked.)
 - **Interactive:** log what the **user** answered — the numbered pick (which + gist), any freestyle "Other" text, or a one-sentence summary if it was resolved by discussion rather than a clean pick.
 
-## Phase persistence — drain running logs into committed close-out siblings
+## Routing — one file per phase
 
-Iterations *append* to the running logs and commit the append as part of each iteration's closing commit. Draining into a committed close-out sibling still happens only at a phase **close-out report**, never per iteration. **Route each decision by its subject-matter phase, not the iteration's home phase** — phases run concurrently (e.g. the attended Phase-6 build alongside resumed Phase-4/5 backlog), and one iteration can produce another phase's decision (iter-088 was Phase-4 backlog but its §10 risk-layer decision is Phase 5). The §12 phases: 1 data foundation, 2 validation harness, 3 benchmarks, 4 alpha sprints, 5 portfolio assembly & risk layer, 6 execution — so alpha-family research → 4, combining validated sleeves into a deployable + the §10 risk layer → 5, execution/paper-trading → 6.
+Each decision appends to its phase's single decision log; there is no draining and there are no continuation files. To place a decision:
 
-**Trigger: a phase's close-out report drains EVERY non-empty running log** — the report written when its exit bar is met (§12 "Exit bar"/"Artifacts"); interim orientation/progress memos never trigger, and a phase §12 names no single report for (e.g. Phase 0) still gets a short dedicated boundary report as its trigger. At that close-out:
+1. **Determine its subject-matter phase `N`** — the §12 phase whose subject matter it concerns, *not* the iteration's home phase (phases run concurrently: iter-088 was Phase-4 backlog but its §10 risk-layer decision is Phase 5). The §12 phases: 1 data foundation, 2 validation harness, 3 benchmarks, 4 alpha sprints, 5 portfolio assembly & risk layer, 6 execution — so alpha-family research → 4, combining validated sleeves into a deployable + the §10 risk layer → 5, execution/paper-trading → 6.
+2. **Find phase `N`'s serial.** A phase's serial is fixed by its **first** `docs/research/` doc and shared by all its docs (Phase 1 `02`, Phase 4 `10`, Phase 5 `13`, Phase 6 `14`): if any `docs/research/<serial>.phase<N>-*` file exists, reuse that serial; if the phase has **no** doc yet, this decision log is its first doc — take the next-free serial (highest existing + 1).
+3. **Append the `[iter-<NNN>]` entry** to `docs/research/<serial>.phase<N>-decisions.md` (create it if absent), committed with the iteration's closing commit.
+4. **Post-close backlog:** when a **closed** phase (its `<serial>.phase<N>-…closeout…`/exit-bar report exists) receives its first entry after that close-out, precede it with a one-line `**Continuation — …**` divider between two `______` rules — cosmetic, the changelog's own convention. Pre-close entries stay verbatim above it, never edited.
 
-- **The closing phase's own log** → `<serial>.phase<N>-decisions.md`, `<serial>` = the close-out report's serial (e.g. `04.phase2-…-results.md` → `04.phase2-decisions.md`). One base file per phase.
-- **Each already-closed phase's floating log** (backlog decisions made *after* that phase closed) → `<closed-serial>.phase<N>-cont-decisions-<K>.md`, reusing the closed phase's own serial (`10` Phase 4, `13` Phase 5) with `<K>` a per-phase counter (next = highest existing + 1, from **0**). This groups every Phase-`<N>` doc under its serial while the base file stays immutable.
+**A decision bound to no phase** (rare — e.g. one that opens a brand-new phase) routes to the phase it concerns: a decision that *creates* a specific new phase is that new phase's founding entry (step 2, first doc). A decision that restructures §12 without a single target phase is a **master-plan revision** — captured by the `00.master-plan.md` edit and its commit, not a decisions-log entry.
 
-So a close-out **fans out**: at the Phase-6 close-out, `14.phase6-decisions-running.md` → `14.phase6-decisions.md`, `10.phase4-decisions-running.md` → `10.phase4-cont-decisions-0.md`, `13.phase5-decisions-running.md` → `13.phase5-cont-decisions-0.md`; later Phase-4 backlog drains at the Phase-7 close-out → `10.phase4-cont-decisions-1.md`.
-
-Mechanics: **copy-then-truncate, never `mv`** — the running log must survive the close-out as the still-live file the next iteration appends to, so copy verbatim into the committed sibling, `git add`, then truncate it to empty. **Each continuation file opens with a one-paragraph memo** (what it continues, which close-out era drained it, the `[iter-<NNN>]` range), then the verbatim entries. **Decisions logs are verbatim** — never let a formatter restructure their option lists or `(Decision: N)` markers.
-
-**Never cross a close-out with a running log un-drained** — the Phase 0 → 1 boundary drifted this way once (fixed retroactively by `docs/research/01.3.phase0-closeout.md`); the fan-out trigger sweeps **all** staged logs to prevent it.
+**Decisions logs are verbatim** — kept off the mdformat allowlist; never let a formatter restructure their option lists or `(Decision: N)` markers.
