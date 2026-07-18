@@ -16,8 +16,8 @@
   ansible.builtin.file:
     path: "{{ ops_compose_dir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: zcrypto-deploy
+    group: zcrypto-deploy
     mode: "0755"
 
 # rsync STAYS after T0058 retired the ops-side pull loop: it ships /usr/bin/rrsync, which the
@@ -283,13 +283,13 @@
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
     #
     # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (Task 10,
-    # spec 00051 OPS-2) — deploy-only readable, matching the vault's own secrecy expectation.
+    # spec 00051 OPS-2) — zcrypto-deploy-only readable, matching the vault's own secrecy expectation.
     - name: render the ops compose file (liquidations poller)
       ansible.builtin.template:
         src: compose.yaml.j2
         dest: "{{ ops_compose_dir }}/compose.yaml"
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0600"
 
     - name: install the replay + panel runner scripts
@@ -407,11 +407,11 @@
       ansible.builtin.file:
         path: "{{ ops_alloy_dir }}"
         state: directory
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0755"
 
-    # Owned by the dedicated Alloy user, not `deploy`: this holds the remote_write WAL + Loki log
+    # Owned by the dedicated Alloy user, not `zcrypto-deploy`: this holds the remote_write WAL + Loki log
     # read-positions, which must survive container replacement, or a redeploy re-ships the retained
     # log backlog into the ingest quota (00043) -- and Alloy (running as zcrypto-alloy) needs WRITE
     # here, unlike everything else under ops_alloy_dir.
@@ -429,8 +429,8 @@
       ansible.builtin.copy:
         src: config.alloy
         dest: "{{ ops_alloy_dir }}/config.alloy"
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0644"
 
     # Renders straight from the vault (group_vars/observed/vault.yml) -- the NAS's copy is rendered
@@ -439,7 +439,7 @@
     # diff: false: without both, a converge prints the six Grafana Cloud credentials to the terminal
     # and to any log capturing the run's output (the established pattern -- see docs/plans/00043 --
     # applied wherever this role renders a secret, e.g. the liquidations compose file above). Owned
-    # by zcrypto-alloy (not deploy): the container runs as that uid (`user:` in
+    # by zcrypto-alloy (not zcrypto-deploy): the container runs as that uid (`user:` in
     # alloy-compose.yaml.j2) and must be able to read a 0600 file it does not own by default.
     - name: render the alloy secrets env file
       ansible.builtin.template:
@@ -455,6 +455,6 @@
       ansible.builtin.template:
         src: alloy-compose.yaml.j2
         dest: "{{ ops_alloy_dir }}/compose.yaml"
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0644"
