@@ -26,7 +26,10 @@ ops_hot_out_subdir: hot-out
 ops_liquidations_subdir: liquidations
 
 # Fleet users/groups (spec 00057): the machine-to-machine data user. Runs the data containers
-# (--user), owns the data trees, serves the NAS pulls. nologin, no sudo -- deploy leaves the data path.
+# (--user), owns the data trees, serves the NAS pulls via rrsync -ro forced-command keys. No sudo,
+# no password; its shell is /bin/bash -- a nologin shell would block the forced commands (sshd runs
+# them via the login shell), but the command=+restrict keys keep it jailed to one read-only subtree
+# each so no interactive login is reachable -- deploy leaves the data path.
 ops_data_user: zcrypto-data
 # hot-out's two-role handoff group (setgid): zcrypto-data owns + serves; zhaow authors into it.
 ops_hot_group: zcrypto-hot

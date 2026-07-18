@@ -4,13 +4,13 @@
 
 **Goal:** Migrate the ops node's entire machine-to-machine data path from `deploy` (the sudo user) to a new dedicated `zcrypto-data` identity, wire `zhaow`'s hot-out authoring, and rename `deploy → zcrypto-deploy` — landing the ops node in the fleet users/groups model (spec `00057`, phase 1).
 
-**Architecture:** `zcrypto-data` (nologin, no sudo) becomes the ops node's m2m identity: it runs the data containers (`--user`), owns the data trees, and serves the four NAS pull channels via Ansible-provisioned `rrsync -ro` forced commands. `deploy` leaves the data path entirely and is renamed `zcrypto-deploy` (interactive+sudo only). `zhaow` authors into the `hot-out` outbox via a shared setgid `zcrypto-hot` group. The whole migration is ordered so the live liquidations pull is never lost — the Coinalyze poller back-fills its ~30 h window across a brief restart, and every rsync pull is `--ignore-existing` (a delayed pull catches up, never loses).
+**Architecture:** `zcrypto-data` (no sudo, no password; a real `/bin/bash` shell jailed to `rrsync -ro` by the forced-command keys — `nologin` would block the pulls, corrected during execution) becomes the ops node's m2m identity: it runs the data containers (`--user`), owns the data trees, and serves the four NAS pull channels via Ansible-provisioned `rrsync -ro` forced commands. `deploy` leaves the data path entirely and is renamed `zcrypto-deploy` (interactive+sudo only). `zhaow` authors into the `hot-out` outbox via a shared setgid `zcrypto-hot` group. The whole migration is ordered so the live liquidations pull is never lost — the Coinalyze poller back-fills its ~30 h window across a brief restart, and every rsync pull is `--ignore-existing` (a delayed pull catches up, never loses).
 
 **Tech Stack:** Ansible (`ansible.builtin.user`/`group`/`file`, `ansible.posix.authorized_key`), the `ops`/`nas`/`base` roles + `bootstrap.yml`, rootful Docker with `--user`, rsync-over-ssh with `rrsync` forced commands, `infra/ansible/scripts/run.sh` (vaulted deploy-key throwaway agent).
 
 ## Global Constraints
 
-- **`zcrypto-data`**: `system: true`, `shell: /usr/sbin/nologin`, **no sudo, no tty**; uid/gid auto-assigned (spec D8 — only `zhaow` needs a pinned uid). Runs the data containers via `--user`, never invokes Docker itself.
+- **`zcrypto-data`**: `system: true`, `shell: /bin/bash` (corrected from `nologin` — it must serve the `rrsync -ro` forced-command pulls, which sshd runs via the login shell, so `nologin` swallows them; the `command=`/`restrict` keys keep each jailed to one read-only subtree, and there is no password, so no interactive login is reachable), **no sudo, no tty**; uid/gid auto-assigned (spec D8 — only `zhaow` needs a pinned uid). Runs the data containers via `--user`, never invokes Docker itself.
 - **`zhaow`**: uid/gid **1000**, unchanged (spec D7, hard constraint). The ops-role tasks add it to a group only when the account already exists — the pipeline role never *creates* it.
 - **`zcrypto-deploy`** (was `deploy`): interactive + sudo, Ansible + human ssh only; **never in the data path**; `authorized_keys` = one key (`exclusive: true`).
 - **Everything on captures/red/ops is Ansible-provisioned** (owner constraint). The four sync pull keys stop being hand-installed and become role-managed.
@@ -58,7 +58,9 @@
 
 ```yaml
 # Fleet users/groups (spec 00057): the machine-to-machine data user. Runs the data containers
-# (--user), owns the data trees, serves the NAS pulls. nologin, no sudo -- deploy leaves the data path.
+# (--user), owns the data trees, serves the NAS pulls via rrsync -ro forced-command keys. No sudo,
+# no password; its shell is /bin/bash (nologin would block the forced commands) but the keys are
+# command=+restrict-jailed so no interactive login is reachable -- deploy leaves the data path.
 ops_data_user: zcrypto-data
 # hot-out's two-role handoff group (setgid): zcrypto-data owns + serves; zhaow authors into it.
 ops_hot_group: zcrypto-hot
@@ -73,11 +75,11 @@ ops_research_user: zhaow
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
 # exist before any data ownership or container-user change.
-- name: create the zcrypto-data m2m user (nologin, no sudo; runs the data containers + owns the data)
+- name: create the zcrypto-data m2m user (no password; real shell jailed to rrsync by the forced-command keys; owns the data + runs the containers)
   ansible.builtin.user:
     name: "{{ ops_data_user }}"
     system: true
-    shell: /usr/sbin/nologin
+    shell: /bin/bash
     create_home: true
     state: present
 
@@ -114,7 +116,7 @@ ops_research_user: zhaow
 
 - [ ] **Step 5: Verify by outcome.**
   Run: `ssh hp 'id zcrypto-data; getent group zcrypto-hot; id -Gn zhaow | tr " " "\n" | grep -c zcrypto-hot'`
-  Expected: `zcrypto-data` exists (nologin, its own gid); `zcrypto-hot` group lists `zcrypto-data` and `zhaow`; the `zhaow` grep prints `1`.
+  Expected: `zcrypto-data` exists (`/bin/bash` shell — see the Task-4 correction note; its own gid); `zcrypto-hot` group lists `zcrypto-data` and `zhaow`; the `zhaow` grep prints `1`.
 
 - [ ] **Step 6: Commit.**
 

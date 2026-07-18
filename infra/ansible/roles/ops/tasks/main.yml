@@ -115,11 +115,18 @@
 # --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
 # authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
 # exist before any data ownership or container-user change (Task 3).
-- name: create the zcrypto-data m2m user (nologin, no sudo; runs the data containers + owns the data)
+#
+# Shell is /bin/bash, NOT nologin: this user SERVES the NAS pulls via `command="rrsync -ro ..."`
+# forced-command keys, and sshd runs a forced command as `<login-shell> -c "<cmd>"` -- a nologin
+# shell prints "account not available" and never execs rrsync, so every pull fails (caught by the
+# Task-4 pre-flight). The keys stay fully jailed by command=+restrict (one read-only subtree each,
+# no pty/forwarding) and the account has no password, so no interactive login is reachable despite
+# the real shell -- the "no interactive login" intent, by the right mechanism (spec 00057 correction).
+- name: create the zcrypto-data m2m user (no password; real shell jailed to rrsync by the forced-command keys; owns the data + runs the containers)
   ansible.builtin.user:
     name: "{{ ops_data_user }}"
     system: true
-    shell: /usr/sbin/nologin
+    shell: /bin/bash
     create_home: true
     state: present
 
