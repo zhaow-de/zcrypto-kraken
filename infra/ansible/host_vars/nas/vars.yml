@@ -7,6 +7,15 @@
 ansible_host: 192.168.100.5
 ansible_user: zcrypto-deploy
 
+# Fleet users/groups (spec 00057): the m2m data user (uid 1000; renamed from `zcrypto`). It owns the
+# custody trees AND receives the inbound hot-push (an m2m data channel, so it belongs on zcrypto-data,
+# not the admin `zcrypto-deploy`). Serving the push means running an rrsync forced command, so its
+# DSM login shell is the rrsync-only wrapper below (set manually per infra/external-systems.md; the
+# nas role deploys the wrapper file). `ansible_user` (zcrypto-deploy) stays purely admin.
+nas_data_user: zcrypto-data
+# The rrsync-only login shell (infra/ansible/files/rrsync-shell), deployed beside the vendored rrsync.
+nas_rrsync_shell: "{{ nas_stack_dir }}/rrsync-shell"
+
 # DSM's /usr/bin/python3 is 3.8.15 — BELOW ansible-core 2.21's target floor (3.9). The installed
 # `python314` package provides this interpreter; ad-hoc `ping` + `setup --become` both measured
 # working with it.

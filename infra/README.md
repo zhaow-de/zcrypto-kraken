@@ -8,6 +8,7 @@ new address, and re-run — no edits to the config layer.
 <!-- mdformat-toc start --slug=github --maxlevel=4 --minlevel=2 -->
 
 - [Layout](#layout)
+- [Dataset ownership model — the `1000:1000` invariant](#dataset-ownership-model-%E2%80%94-the-10001000-invariant)
 - [Running it](#running-it)
 - [The two-firewall model — IMPORTANT](#the-two-firewall-model-%E2%80%94-important)
 - [Break-glass — you are locked out of SSH](#break-glass-%E2%80%94-you-are-locked-out-of-ssh)
@@ -26,6 +27,14 @@ new address, and re-run — no edits to the config layer.
   the SSH keys + host secrets (`files/*_ed25519`, `group_vars/capture_host/vault.yml`).
 - `docker/` — the capture daemon's `Dockerfile` + reference `compose.yaml`. The image is
   `ghcr.io/zhaow-de/zcrypto-capture` (CI: `.github/workflows/capture-image.yml`).
+
+## Dataset ownership model — the `1000:1000` invariant<a name="dataset-ownership-model-%E2%80%94-the-10001000-invariant"></a>
+
+Every dataset on the NAS custody share (`/volume1/ZhaoCrypto`), from **every** channel, is owned `1000:1000` — `zcrypto-data:zcrypto` on the NAS, which the research nodes read back over NFS as `zhaow:zhaow` (uid/gid 1000 are aligned across NAS + ops + workstation *solely* so this no-mapping NFS read works). The invariant is what keeps custody accessible everywhere without per-file chowns.
+
+**Why it holds regardless of the source host's uid** (ops `zcrypto-data`=997, capture=999, engine=997 — all different): the NAS archive-pull container runs **`--user 1000:1000`, non-root**. A non-root receiver cannot honor rsync's `-o`/`-g` (only root chowns to arbitrary uids), so those are silently ignored and **every pulled file is (re-)written as the receiver's own `1000:1000`**. The source-host uids are purely local; they never leak into custody. The inbound hot-push is symmetric: it lands on `zcrypto-data` (uid 1000) too (spec 00057 — the m2m data channel belongs on the m2m user, not the admin `zcrypto-deploy`), so pushed files are `1000:1000` as well.
+
+**The one mechanism to preserve:** an ssh-login writer (the hot-push, received as `zcrypto-data`) has egid = its *primary* group (`users`/100 on DSM), not `zcrypto`. So the `hot/` hub is **setgid `2775`** to force new files to group `zcrypto` (1000). The pull trees don't need setgid because the container's `--user 1000:1000` sets egid 1000 explicitly. (Ownership never depends on the login shell or the `usermod -l` renames — those touch only login/local uids.)
 
 ## Running it<a name="running-it"></a>
 

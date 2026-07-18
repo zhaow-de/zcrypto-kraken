@@ -107,11 +107,13 @@
 # dir-replace delete, measured). -ro is dropped (it would forbid writes; it is also the only flag that
 # implies -no-del, so both -no-del and -no-overwrite are named explicitly here).
 # 2775 = setgid: hot/ is the fleet's ONLY two-writer custody dir. The pull container writes as uid 1000
-# (primary group zcrypto), but the workstation push writes as zcrypto-deploy whose PRIMARY group is
-# `users` -- without setgid its subtrees would drift to group `users` and break the custody-wide
+# (egid zcrypto, set explicitly by --user 1000:1000), but the workstation push is received by
+# zcrypto-data over ssh (spec 00057 -- the m2m data channel now lands on the m2m user, not the admin
+# zcrypto-deploy), and an ssh login's egid is the account's PRIMARY group, which is `users`, not
+# zcrypto. Without setgid the push's subtrees would drift to group `users` and break the custody-wide
 # group-zcrypto invariant (spec 00048), the precondition for the exit-23 whole-pull failure class. The
 # setgid forces both writers' children to inherit group zcrypto. (Siblings are plain 0775 because they
-# have a single writer whose primary group already IS zcrypto.)
+# have a single writer whose egid already IS zcrypto.)
 - name: ensure the hot/ hub directory exists (setgid so both writers' children inherit group zcrypto)
   ansible.builtin.file:
     path: /volume1/ZhaoCrypto/hot
@@ -131,9 +133,27 @@
     mode: "0755"
   register: nas_deploy_rrsync
 
-- name: install the hot-push pubkey as a write-capable rrsync forced command jailed to hot/
+# The rrsync-only login shell zcrypto-data uses to serve the inbound hot-push (spec 00057). Its DSM
+# shell is pointed here MANUALLY (external-systems.md); this deploys the file the shell resolves to.
+# The wrapper's case allows the NAS's vendored rrsync path ({{ nas_stack_dir }}/rrsync), so it must
+# stay in sync with nas_stack_dir.
+- name: deploy the rrsync-only login shell for zcrypto-data
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/rrsync-shell"
+    dest: "{{ nas_rrsync_shell }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+# The inbound hot-push forced command lands on zcrypto-data (the m2m data user), NOT the admin
+# zcrypto-deploy (spec 00057 -- keep the admin account out of the data path). exclusive:false so it
+# ADDS without disturbing zcrypto-data's other keys. The OLD copy on zcrypto-deploy is dropped by a
+# one-time MANUAL step AFTER the zcrypto-data path is verified (external-systems.md / closeout) --
+# never role-enforced here, so the fallback survives until the cutover proves out (mirrors the ops
+# deploy-key drop). The workstation's `nas-hot` alias repoints deploy->zcrypto-data in the same change.
+- name: install the hot-push pubkey as a write-capable rrsync forced command jailed to hot/ (on zcrypto-data)
   ansible.posix.authorized_key:
-    user: "{{ ansible_user }}"
+    user: "{{ nas_data_user }}"
     exclusive: false
     key: "{{ nas_hot_push_authorized_key }}"
     key_options: 'command="{{ nas_stack_dir }}/rrsync -munge -no-del -no-overwrite /volume1/ZhaoCrypto/hot",restrict'
