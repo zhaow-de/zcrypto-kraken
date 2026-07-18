@@ -102,7 +102,7 @@ The `.env` next to `compose.yaml` is **rendered in full by the `nas` role** (`ro
 
 Every channel above is a **pull** — the NAS reaches out and the fleet stays pull-only into custody. The `hot/` hub is the **one exception**: the workstation *pushes* the replicated working set (`zcrypto data push`) into `/volume1/ZhaoCrypto/hot`, the only write path into custody. It never goes through the read-only NFS mount (a soft-mounted write can corrupt on a timeout); it is rsync-over-ssh, jailed by a vendored `rrsync` forced command:
 
-- **Ansible-managed** by the `nas` role (not a bootstrap step): the role creates `hot/` (`zcrypto:zcrypto` `0775`), deploys the vendored `rrsync` (rsync 3.4.1's python3 jailer — the NAS ships none; `infra/nas/rrsync`) to `nas_stack_dir`, and installs the workstation's `zcrypto_hot_push_ed25519.pub` in `zcrypto-deploy`'s `authorized_keys` as `command="<nas_stack_dir>/rrsync /volume1/ZhaoCrypto/hot",restrict` — write-capable (no `-ro`), root pinned to `hot/`.
+- **Ansible-managed** by the `nas` role (not a bootstrap step): the role creates `hot/` (`zcrypto-data:zcrypto` `2775` setgid), deploys the vendored `rrsync` (rsync 3.4.1's python3 jailer — the NAS ships none; `infra/nas/rrsync`) to `nas_stack_dir`, and installs the workstation's `zcrypto_hot_push_ed25519.pub` in `zcrypto-deploy`'s `authorized_keys` as `command="<nas_stack_dir>/rrsync /volume1/ZhaoCrypto/hot",restrict` — write-capable (no `-ro`), root pinned to `hot/`.
 - **Containment (four layers), all holding against a stolen key running its own rsync client:** `restrict` (SSH-level — no port/agent/pty/X11 forwarding); the `command=""` path jail pins the command-line dest under `hot/`; `-munge` (rsync `--munge-links`) mangles incoming symlink targets so a pushed symlink cannot traverse *out* of `hot/` — the documented writable-rrsync escape; and `-no-del -no-overwrite` enforce the append-only contract **server-side** — strip every `--delete*`/`--remove*` and force `--ignore-existing` (which also neutralizes `--force`'s dir-replace delete, measured). So a stolen key can neither escape the pinned root nor delete/overwrite custody within it. (`-ro` is deliberately absent — it would forbid writes; it is also the only flag that implies `-no-del`, so both are named explicitly.) `hot/` itself is created **`2775` (setgid)** so both writers' subtrees inherit group `zcrypto` (the push writer's primary group is `users`).
 - Both writers coexist under `hot/`: the workstation push authors its own set names (`ohlc-full`, …), the ops→NAS `HOT_SOURCE` pull brings ops-authored set names — disjoint subtrees in practice. The pull applies `--chmod=D0775,F0664` (like every other channel) so its trees stay group-writable, and `-no-overwrite`/`--ignore-existing` mean that even if the two ever share a set-name subtree, neither can clobber the other's files.
 
@@ -155,10 +155,10 @@ assert len(dropped) == 1, f"expected exactly 1 record, found {len(dropped)}"   #
 open("/tmp/ledger.new", "w").write("".join(json.dumps(r) + "\n" for r in keep))
 print(f"dropped {len(dropped)}, kept {len(keep)}")
 PY
-sudo cp /tmp/ledger.new "$L" && sudo chown deploy:deploy "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
+sudo cp /tmp/ledger.new "$L" && sudo chown zcrypto-data:zcrypto-data "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
 ```
 
-(`deploy:deploy` is the writer uid on the ops node; a NAS-side copy is `zcrypto:zcrypto`.)
+(`zcrypto-data:zcrypto-data` is the writer uid on the ops node since spec 00057; a NAS-side copy is `zcrypto-data:zcrypto` — the NAS user was renamed `zcrypto → zcrypto-data`, the group `zcrypto` kept.)
 
 Rules: keep **one record per line** (`_load_ledger` raises `CaptureError` on a malformed line, which fails the next cycle loudly); never truncate to shrink the file (that resets every counter — see [[T0044]] for the compaction design that preserves the totals); and confirm the two alert rules return to Normal within a window after the reset ages out.
 

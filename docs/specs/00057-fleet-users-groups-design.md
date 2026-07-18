@@ -71,4 +71,4 @@ The NAS renames (D6) are already applied manually; the workstation needs none (o
 
 ## Iterations-history
 
-Append the `iter-<NNN>` entry to `docs/iterations-history-phase6.md` at each phase's closeout (per `iterations-history.md`).
+Append the `iter-<NNN>` entry to `docs/iterations-history-phase1.md` at each phase's closeout (per `iterations-history.md`).
