@@ -60,7 +60,8 @@ repos:
       # automatically (no per-file edit here).
       # Excluded by the negative lookahead: the verbatim decision logs — *-decisions.md and the
       # *-cont-decisions-<K>.md continuations — whose option lists + "(Decision: N)" markers mdformat
-      # would restructure (see .claude/rules/decisions-log.md). Nothing else under docs/ is covered
+      # would restructure (see .claude/rules/decisions-log.md), and the git-tracked running logs
+      # decisions-running-phase<N>.md (spec 00056 D7). Nothing else under docs/ is covered
       # (reference/, specs/, plans/, open-topics topic files format by hand).
       files: |
         (?x)^(
@@ -68,5 +69,5 @@ repos:
             infra/README\.md|
             infra/external-systems\.md|
             docs/open-topics/README\.md|
-            docs/research/(?!.*-(cont-decisions-\d+|decisions)\.md$).*\.md
+            docs/research/(?!(.*-(cont-decisions-\d+|decisions)|decisions-running-phase\d+)\.md$).*\.md
         )$

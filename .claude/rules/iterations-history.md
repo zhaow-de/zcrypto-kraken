@@ -6,7 +6,7 @@ The per-iteration changelog is **split by master-plan §12 phase**: `docs/iterat
 
 Each entry is a new section appended at the bottom of its phase file (`## <YYYY-MM-DD> — <heading>`) followed by a bullet list: one bullet per feature/change/fix, covering what landed, the artifacts/settings/log events it introduced, and any non-obvious behavior.
 
-**Not part of this per-iteration close-out:** persisting a running decisions log (`.tmp/decisions-phase<N>.md`) into its committed close-out sibling is a **phase**-level close-out task — done once when a phase's close-out report is written, never per iteration. See `decisions-log.md` (*Phase persistence*).
+**Not part of this per-iteration close-out:** persisting a running decisions log (`docs/research/decisions-running-phase<N>.md`) into its committed close-out sibling is a **phase**-level close-out task — done once when a phase's close-out report is written, never per iteration. See `decisions-log.md` (*Phase persistence*).
 
 ## Dataset-catalog sync (every dataset-introducing closeout)
 
