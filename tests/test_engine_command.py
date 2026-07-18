@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 
 import cli.engine.command as command
 from cli.__main__ import app
-from cli.config import AppConfig, ConfigError, EngineConfig, FetchConfig
+from cli.config import AppConfig, ConfigError, DataConfig, EngineConfig, FetchConfig
 from cli.engine import concordance
 from cli.engine.cycle import CycleResult
 from cli.engine.errors import EngineError
@@ -47,6 +47,7 @@ def _patch_config(monkeypatch, tmp_path: Path) -> EngineConfig:
         ohlcvt_source_dir=None,
         fetch=FetchConfig(),
         engine=EngineConfig(store_dir=tmp_path / "store", journal_dir=tmp_path / "journal"),
+        data=DataConfig(),
     )
     monkeypatch.setattr(command, "load_config", lambda: cfg)
     return cfg.engine

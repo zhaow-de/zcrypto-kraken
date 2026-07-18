@@ -3,3 +3,10 @@
 data_dir = "data"
 # Kraken OHLCVT full-history ZIP archive (base dump + quarterly updates).
 ohlcvt_source_dir = "../zcrypto-kraken-data/kraken-ohlcvt-updates"
+
+# The hot-cluster exchange (spec 00056): fetch source (NFS read path), push destination
+# (ssh alias pinned by the NAS rrsync forced command -- NEVER the rw NFS mount), authored sets.
+[zcrypto.data]
+hot_dir = "../zcrypto-kraken-data/hot"
+push_dest = "nas-hot:"
+authored_sets = ["ohlc-full", "ohlc-15m", "ohlc-holdout-2026-07-10", "derivatives-funding", "snapshots", "universe"]

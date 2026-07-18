@@ -37,11 +37,22 @@ class EngineConfig:
 
 
 @dataclass(frozen=True)
+class DataConfig:
+    """The hot-cluster exchange (spec 00056): where to fetch the replicated working set from,
+    where this node pushes what it authors, and which sets it authors."""
+
+    hot_dir: Path | None = None  # the mounted NAS hot/ (fetch source; NFS read path)
+    push_dest: str | None = None  # rsync destination for push (ssh alias or path; rrsync-pinned)
+    authored_sets: tuple[str, ...] = ()  # set names this node may push
+
+
+@dataclass(frozen=True)
 class AppConfig:
     data_dir: Path | None
     ohlcvt_source_dir: Path | None
     fetch: FetchConfig
     engine: EngineConfig
+    data: DataConfig
 
 
 def _read_path(table: dict, key: str, config_path: Path) -> Path | None:
@@ -113,9 +124,41 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
     return EngineConfig(**overrides)
 
 
+def _build_data(table: dict, config_path: Path) -> DataConfig:
+    raw = table.get("data", {})
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{CONFIG_TABLE}.data] in {config_path} must be a table")
+    known = {f.name for f in fields(DataConfig)}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ConfigError(f"[{CONFIG_TABLE}.data] in {config_path} has unknown key(s): {', '.join(unknown)}")
+
+    overrides: dict = {}
+
+    if "hot_dir" in raw:
+        value = raw["hot_dir"]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"[{CONFIG_TABLE}.data].hot_dir in {config_path} must be a non-empty string")
+        overrides["hot_dir"] = Path(value)
+
+    if "push_dest" in raw:
+        value = raw["push_dest"]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"[{CONFIG_TABLE}.data].push_dest in {config_path} must be a non-empty string")
+        overrides["push_dest"] = value
+
+    if "authored_sets" in raw:
+        value = raw["authored_sets"]
+        if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+            raise ConfigError(f"[{CONFIG_TABLE}.data].authored_sets in {config_path} must be a list of non-empty strings")
+        overrides["authored_sets"] = tuple(value)
+
+    return DataConfig(**overrides)
+
+
 def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
     if not config_path.exists():
-        return AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig())
+        return AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig())
     try:
         raw = tomllib.loads(config_path.read_text())
     except tomllib.TOMLDecodeError as e:
@@ -128,6 +171,7 @@ def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
         ohlcvt_source_dir=_read_path(table, "ohlcvt_source_dir", config_path),
         fetch=_build_fetch(table, config_path),
         engine=_build_engine(table, config_path),
+        data=_build_data(table, config_path),
     )
 
 
@@ -145,3 +189,13 @@ def resolve_data_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
 
 def resolve_ohlcvt_source_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
     return _resolve(flag_value, cfg.ohlcvt_source_dir, name="ohlcvt_source_dir", flag="--ohlcvt-source-dir")
+
+
+def resolve_hot_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
+    return _resolve(flag_value, cfg.data.hot_dir, name="data.hot_dir", flag="--hot-dir")
+
+
+def resolve_push_dest(cfg: AppConfig) -> str:
+    if cfg.data.push_dest is not None:
+        return cfg.data.push_dest
+    raise ConfigError(f"no data.push_dest configured — set [{CONFIG_TABLE}.data].push_dest in {CONFIG_FILENAME}.")

@@ -5,11 +5,14 @@ import pytest
 from cli.config import (
     AppConfig,
     ConfigError,
+    DataConfig,
     EngineConfig,
     FetchConfig,
     load_config,
     resolve_data_dir,
+    resolve_hot_dir,
     resolve_ohlcvt_source_dir,
+    resolve_push_dest,
 )
 
 
@@ -191,7 +194,7 @@ def test_resolve_ohlcvt_source_dir_falls_back_to_config(tmp_path):
 
 
 def test_resolve_unconfigured_raises_with_both_remedies():
-    cfg = AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig())
+    cfg = AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig())
     with pytest.raises(ConfigError) as exc:
         resolve_data_dir(None, cfg)
     msg = str(exc.value)
@@ -199,7 +202,7 @@ def test_resolve_unconfigured_raises_with_both_remedies():
 
 
 def test_resolve_ohlcvt_source_dir_unconfigured_raises_with_both_remedies():
-    cfg = AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig())
+    cfg = AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig())
     with pytest.raises(ConfigError) as exc:
         resolve_ohlcvt_source_dir(None, cfg)
     msg = str(exc.value)
@@ -209,3 +212,50 @@ def test_resolve_ohlcvt_source_dir_unconfigured_raises_with_both_remedies():
 def test_removed_keys_are_rejected(tmp_path):
     with pytest.raises(ConfigError, match="unknown key"):
         load_config(_write(tmp_path, "[zcrypto.fetch]\nbackfill_right_edge_grace_days = 7\n"))
+
+
+def test_data_config_defaults_when_absent(tmp_path):
+    cfg = load_config(_write(tmp_path, "[zcrypto]\n"))
+    assert cfg.data == DataConfig()
+
+
+def test_data_config_parses_all_keys(tmp_path):
+    cfg = load_config(
+        _write(
+            tmp_path,
+            '[zcrypto.data]\nhot_dir = "../zcrypto-kraken-data/hot"\npush_dest = "nas-hot:"\n'
+            'authored_sets = ["ohlc-full", "snapshots"]\n',
+        )
+    )
+    assert cfg.data.hot_dir == Path("../zcrypto-kraken-data/hot")
+    assert cfg.data.push_dest == "nas-hot:"
+    assert cfg.data.authored_sets == ("ohlc-full", "snapshots")
+
+
+def test_data_config_unknown_key_raises(tmp_path):
+    with pytest.raises(ConfigError, match="unknown key"):
+        load_config(_write(tmp_path, '[zcrypto.data]\nhot_root = "x"\n'))
+
+
+def test_data_config_rejects_bad_types(tmp_path):
+    with pytest.raises(ConfigError):
+        load_config(_write(tmp_path, '[zcrypto.data]\nauthored_sets = "ohlc-full"\n'))
+    with pytest.raises(ConfigError):
+        load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = ""\n'))
+
+
+def test_resolve_hot_dir_flag_beats_config_and_errors_when_absent(tmp_path):
+    cfg = load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = "cfg_hot"\n'))
+    assert resolve_hot_dir(Path("flag_hot"), cfg) == Path("flag_hot")
+    assert resolve_hot_dir(None, cfg) == Path("cfg_hot")
+    empty = load_config(_write(tmp_path, "[zcrypto]\n"))
+    with pytest.raises(ConfigError):
+        resolve_hot_dir(None, empty)
+
+
+def test_resolve_push_dest_unset_raises_and_set_returns(tmp_path):
+    empty = load_config(_write(tmp_path, "[zcrypto]\n"))
+    with pytest.raises(ConfigError):
+        resolve_push_dest(empty)
+    cfg = load_config(_write(tmp_path, '[zcrypto.data]\npush_dest = "nas-hot:"\n'))
+    assert resolve_push_dest(cfg) == "nas-hot:"
