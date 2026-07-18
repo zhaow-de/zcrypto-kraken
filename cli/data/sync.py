@@ -49,32 +49,52 @@ def _count_files(root: Path) -> int:
     return sum(1 for p in root.rglob("*") if p.is_file())
 
 
+def _manifest_sha256s(node: object) -> set[str]:
+    """Every per-artifact ``sha256`` value anywhere in a (possibly deeply nested) manifest -- the
+    content hashes the producer vouches for. The hot sets' manifests nest ``series`` by symbol (and
+    by grid for OHLC: ``series[symbol][grid].sha256``; funding is ``series[symbol].sha256``), and
+    each set lays its parquets out differently, so a file path cannot be derived from the manifest
+    keys without per-set knowledge. Instead we attest each fetched parquet's content hash against
+    this set -- catching transfer corruption (the real risk on an append-only, rsync-checksummed
+    channel) without coupling this code to any set's on-disk layout. A manifest-level ``manifest_sha256``
+    (the holdout carries one; it is not a per-parquet hash) is deliberately NOT collected -- the key
+    must be exactly ``sha256``, so a set that exposes no per-parquet hashes yields the empty set."""
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "sha256" and isinstance(value, str):
+                found.add(value)
+            else:
+                found |= _manifest_sha256s(value)
+    elif isinstance(node, list):
+        for item in node:
+            found |= _manifest_sha256s(item)
+    return found
+
+
 def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]) -> None:
     new_by_set: dict[str, set[str]] = {}
     for rel in new_files:
         set_name, _, sub_path = rel.partition("/")
-        if not sub_path:
-            continue
-        new_by_set.setdefault(set_name, set()).add(sub_path)
+        if sub_path.endswith(".parquet"):  # only parquet content is manifest-attested; skip json/ledgers
+            new_by_set.setdefault(set_name, set()).add(sub_path)
 
     for set_name, sub_paths in new_by_set.items():
         manifest_path = hot_dir / set_name / "manifest.json"
         if not manifest_path.is_file():
+            continue  # e.g. universe/snapshots ship no manifest
+        vouched = _manifest_sha256s(json.loads(manifest_path.read_text()))
+        if not vouched:
+            logger.warning(
+                "data fetch verify: %s manifest exposes no per-parquet sha256 -- transfer integrity for "
+                "this set rests on rsync + the append-only contract, not a content re-check",
+                set_name,
+            )
             continue
-        manifest = json.loads(manifest_path.read_text())
-        for entry in manifest.get("series", []):
-            path = entry.get("path")
-            if path is None:
-                logger.warning("data fetch verify: %s manifest entry has no 'path' -- skipping", set_name)
-                continue
-            if path not in sub_paths:
-                continue
-            actual = dataset_hash(read_parquet(data_root / set_name / path))
-            expected = entry.get("sha256")
-            if actual != expected:
-                raise DataSyncError(
-                    f"data fetch: manifest hash mismatch for {set_name}/{path} -- expected {expected}, got {actual}"
-                )
+        for sub_path in sub_paths:
+            actual = dataset_hash(read_parquet(data_root / set_name / sub_path))
+            if actual not in vouched:
+                raise DataSyncError(f"data fetch: {set_name}/{sub_path} content hash {actual} is not attested by the manifest")
 
 
 def fetch_hot(hot_dir: Path, data_root: Path, *, verify: bool = True, runner=subprocess.run) -> SyncReport:
