@@ -1,5 +1,13 @@
 # Full-History OHLCVT Dataset Catalog
 
+Datasets are organized into three clusters by sync behavior and mutability (spec `00056` D1) — **custody** (the NAS keeps everything forever; read it where it lies), **hot** (the small working set every research node carries; fetch all of it, push what you authored), **private** (this machine's own state; never synced). Provenance (which team, which producer) is a per-set column within each cluster, never the structuring principle.
+
+## hot
+
+The `~140 MB` stable working set every research node needs local at start. Append-only at file level (hash-stable-at-file, additive-at-set): any revision mints a **sibling** (a new dir or dated file), never an overwrite, so the registry's file-level pins stay valid forever (spec `00056` D1c). The `zcrypto data` command group is the standard exchange for this cluster: `fetch` mirrors the NAS `hot/` into `data/` (additive, idempotent, verify-manifests-after), `push` transmits a node's authored-set allowlist back to `hot/`, `rebuild` re-freezes/refreshes a named set from the existing library code, minting a new sibling rather than touching the live dir (spec `00056` D2/D3).
+
+### `ohlc-full`
+
 Reconstructed from Kraken OHLCVT 1-minute dumps (base + quarterly) at `../zcrypto-kraken-data/kraken-ohlcvt-updates`; generated 2026-07-07T21:17:30.846941+00:00 (⏱).
 Cadences 1h/4h/1d reconstructed from 1-minute bars (vwap = Σ(close·vol)/Σvol, a proxy — the dumps carry no vwap).
 Dataset root `data/ohlc-full/` (gitignored); `basket_sha256` `70c2728e0badf7015f6a13f6261bb4d41e58a8047afe91aacc0d0f895d0cc9cd`.
@@ -43,22 +51,44 @@ Dataset root `data/ohlc-full/` (gitignored); `basket_sha256` `70c2728e0badf7015f
 | XRP/EUR | 240 | 19423 | 2017-05-18 | 2026-03-31 | `7cd898a849056dab…` |
 | XRP/EUR | 60 | 77653 | 2017-05-18 | 2026-03-31 | `71cb1883a64062fd…` |
 
-## QA (coverage / gaps over the reconstructed grid)
+#### QA (coverage / gaps over the reconstructed grid)
 
 - Series: 36  ·  total gaps: 7807  ·  min coverage: 90.5465623863223
 
-## Reconciliation vs v0 REST
+#### Reconciliation vs v0 REST
 
 - See `docs/research/02.phase1-ohlcvt-backfill-reconciliation.md` — 36 overlapping series, min OHLC match rate 1.0000 over 9120 overlap rows.
 
-## Live-accruing operational datasets (ops node + NAS replica)
+### `ohlc-15m`
 
-Unlike the frozen baskets above, these accrue continuously and are **hash-versioned at consumption**: a research iteration extracts its window and records that frame's `dataset_hash` in the trial registry (never "latest"). Primary copies live on the **ops node** (`/var/lib/zcrypto-ops/`), hash-verified replicas on the NAS (`/volume1/ZhaoCrypto/`); the workstation holds neither by default (pull on demand — and OPS-6 migrates the research loop to the ops node where these are local).
+12 pairs, full dump history (BTC from 2013-09) at 15-minute cadence, ~3.12M bars, derived from the 1-minute OHLCVT dumps via `cli/backfill/substrate15m.py` (iter-085, spec/plan `00044`). Dataset root `data/ohlc-15m/`; `basket_sha256` `0fed24a6…`. Tick-reconciled bit-exact against Q1-2026 windows across all 12 pairs (100,759 comparisons); the 15m→1h seam is bit-identical on prices, ≤1 ULP on volume, zero Int64 count-leg mismatches over 25,909 hours. Consumer: the B1 seasonality-conditioning family, trials 45–46 ([[T0022]]).
+
+### `derivatives-funding`
+
+10 USDT-M perpetuals' full realized-funding history from Binance Vision monthly `fundingRate` dumps, checksum-verified per file, via `cli/derivatives/funding.py` (iter-090, spec/plan `00047`). Dataset root `data/derivatives-funding/`; `basket_sha256` `e08ea1a9…`. 68,281 funding prints; balanced-panel start 2020-09-22 (AVAX); zero cadence gaps except SOL's 2022-11-09→18 window of 4h→2h funding (a real venue action around the FTX collapse, preserved via `interval_hours`). Staged for the B2 derivatives-positioning family ([[T0023]]) — this substrate is funding-only; OI and liquidations are separate.
+
+### `ohlc-holdout-2026-07-10`
+
+The pre-registered out-of-time holdout pull: 100 bars/pair, 2026-04-01 → 2026-07-09 (621 overlap bars/pair verified exact against the canonical `ohlc-full`). Dataset root `data/ohlc-holdout-2026-07-10/`; manifest sha256 `4e251df2…`. The holdout look budget is spent (1 → 0, executed 2026-07-10); see `docs/research/13.phase5-holdout-ledger.md` for the full ledger and the (degenerate) result.
+
+### `snapshots` + `universe`
+
+**`snapshots`** — venue point-in-time reference snapshots (`AssetPairs`/`Assets`: margin/leverage, order minimums, symbol aliases) from `cli/snapshot/`, each content-hashed. Dataset root `data/snapshots/`; see `docs/research/01.1.kraken-snapshot-register.md` for the live register and provenance.
+**`universe`** — the derived mechanical universe selection (`cli/universe/`), built from a snapshot plus the OHLC basket's median volume. Dataset root `data/universe/`; see `docs/universe/point-in-time-universe.md` for the current point-in-time selection.
+
+## custody
+
+The NAS (`/volume1/ZhaoCrypto`) keeps everything forever; both research nodes read it in place (workstation `../zcrypto-kraken-data`, ops `/mnt/zhao-crypto`) rather than fetching a local copy — the `ohlcvt_source_dir` config is the standing precedent. Append-only per each producer's own contract; accruing caches are final-once-written under their settle discipline, tree-regenerable on a generation bump. No fetch-cache of accruing sets (owner: YAGNI) and no change from the new `zcrypto data` tool, which never transmits this cluster (spec `00056` D1a).
+
+### Source dumps
+
+- `kraken-ohlcvt-updates` (13G) — Kraken's downloadable OHLCVT ZIP archive (base + quarterly), the source `ohlc-full` reconstructs from.
+- `kraken-trades` (15G) — Kraken's downloadable trades dumps, read in place by the trade-backfill tooling.
 
 ### Canonical trades — healed (`capture-reconciled/…/trades/`, since 2026-07-08; daily)
 
 - **Read it reconciled-first, never the raw mirror alone.** `canonical_segments(primary_root, reconciled_root, kind="trades")` yields the healed view; a bare glob over `capture-segments/` returns the **un-healed** stream and, for pre-2026-07-16 hours, silently double-counts (10,986 duplicate `trade_id`s existed archive-wide before this pass).
-- **Producer:** `zcrypto archive backfill-trades` (spec `00053`, iter-100) — daily on the NAS beside the reconciler, minting into the same overlay. Detects `trade_id` gaps + duplicates from the archive itself, fetches only the missing ids from Kraken's public REST `/Trades`, unions via `union_trades` (dedupe on `trade_id`, keep-first, **primary priority**), mints whole hours atomically with `<HH>.provenance.json` (`tool: zcrypto archive backfill-trades`, `recovered_id_ranges`).
+- **Producer:** `zcrypto archive reconcile` + `zcrypto archive backfill-trades`, run on the **ops node** (spec `00054`, OPS-5 offload, iter-100/101), reading the canonical trees through the NAS's read-only NFS export (T0058); the NAS **pulls** the overlay back — it never receives a push, the same pull-only grain as the `PANEL_*` channels. Detects `trade_id` gaps + duplicates from the archive itself, fetches only the missing ids from Kraken's public REST `/Trades`, unions via `union_trades` (dedupe on `trade_id`, keep-first, **primary priority**), mints whole hours atomically with `<HH>.provenance.json` (`tool: zcrypto archive backfill-trades`, `recovered_id_ranges`).
 - **The invariant, and why it is the check:** per pair, canonical `trade_id` is **contiguous and unique** across the captured span. Kraken's `trade_id` is dense per pair, so a hole IS missing data. **Do not trust the `.sha256`**: a minted hour's manifest is *regenerated*, so it verifies while being wrong (this is exactly how the T0026 trade overwrite stayed invisible). Re-run `--detect-only` to check the invariant; it is the only honest test.
 - **State (2026-07-16):** `gaps=0 missing=0 duplicates=0` across all 10 pairs; 17,362 trades recovered, 10,986 duplicates collapsed, 391 hours minted, raw mirrors byte-identical.
 - **Caveat for consumers:** a **recovered** row's `ts` comes from REST and sits ~+1 µs from what the WS would have recorded (venue offset; float64 ULP at this epoch is 0.238 µs, so no rounding closes it — spec `00053` D6a). Rows present in both keep their WS `ts` (dedupe is `trade_id`-keyed with primary priority). Irrelevant at any research horizon here, but do not treat trade `ts` as sub-microsecond truth. Provenance names which ids came from REST.
@@ -75,3 +105,11 @@ Unlike the frozen baskets above, these accrue continuously and are **hash-versio
 - **Producer:** `zcrypto liquidations-poll` (spec 00051 OPS-2 / plan Task 10, the T0023 Coinalyze fallback — Binance geo-fences its futures WS from every egress we own). Coinalyze `/v1/liquidation-history`, `interval=1min`, `convert_to_usd=true`, the 10 Binance USDT perps (`<COIN>USDT_PERP.A`), closed-bucket discipline (`t+60 ≤ now−120`).
 - **Schema:** `ts, symbol, long_usd, short_usd, event_id` per bucket; **zero-liquidation minutes have no bucket** (sparse by source design). Layout `liquidations/<COIN>/liquidations-1m/<YYYY>/…/<HH>.parquet` + manifests; sparse hours finalize at a 31 h wall-clock lag (T0046).
 - **Hard caveat:** the stream is a **lower-bound proxy, not the tape** (Binance's own feed has been lossy since 2021), and Coinalyze retains only ~25–33 h of 1-min bars — **poller downtime beyond ~30 h is a permanent gap** (dead-man `zcrypto-liquidations` pages on silence). Consumer: the B2 derivatives-positioning family ([[T0023]]/[[T0016]]).
+
+## private
+
+This machine's own state; never synced by `zcrypto data` or any other channel.
+
+- **`engine-store`** — rebuildable from the hot cluster on demand (`engine seed`); no durability requirement of its own.
+- **`engine-journal`** — per-host, unreproducible (the one private-cluster member with no local backup); the VPS journal is pulled to custody by the existing Role-B channel, host-scoped.
+- **scratch** — working files with no contract at all.
