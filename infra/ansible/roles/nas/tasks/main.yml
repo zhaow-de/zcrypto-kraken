@@ -116,7 +116,9 @@
   ansible.builtin.file:
     path: /volume1/ZhaoCrypto/hot
     state: directory
-    owner: zcrypto
+    # The custody data user was renamed zcrypto -> zcrypto-data (uid 1000 kept; fleet users/groups
+    # regularization, spec 00057); the GROUP stayed zcrypto (gid 1000). Matches every sibling custody dir.
+    owner: zcrypto-data
     group: zcrypto
     mode: "2775"
 
