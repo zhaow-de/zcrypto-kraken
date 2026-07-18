@@ -83,6 +83,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0068 — fleet users/groups: capture/engine hosts](T0068-fleet-users-groups-capture-engine-migration.md) — rename `kraken-* → zcrypto-*`, move the pull-export keys to `zcrypto-data` + Ansible-provision, `deploy → zcrypto-deploy`, and first-time `zcrypto-alloy` on the capture hosts, landing the accepted telemetry residual (spec 00057 D5, T0042) (ripe when: T0067 done + a capture-host maintenance window scheduled).
 
+- [T0069 — gate-export CPU cost](T0069-gate-export-cpu-cost.md) — `zcrypto engine gate-export` is CPU-bound ~8 min per hourly archive-pull cycle on a 96 MB engine-journal (steady-state, in-budget, but super-linear-looking); it delays the ops mirror pulls that follow it in the loop and risks overrunning the 3600 s interval as the journal grows; profile + bound the per-cycle cost (ripe when: a run exceeds ~20 min wall, or the journal exceeds ~500 MB / ~5000 files).
+
 ### Partially done<a name="partially-done-1"></a>
 
 - [T0018 — Phase-6 build sequence](T0018-phase6-build-sequence.md) — the kickoff roadmap with its cross-iteration constraints; builder + concordance core (iter-082), the shadow node + workstation soak (iter-083), and the VPS deployment (iter-084, gate clock ticking since 2026-07-11 00:00 UTC) all landed; remainder = the 6b executor (ripe when: the Stage-6a gate is met — ≥ 14 consecutive clean complete-UTC days — and the human convenes the 6b session).
