@@ -19,6 +19,10 @@ ops_journal_subdir: engine-journal
 # mounts ops_data_dir at /data, so this is the container-visible tree name.
 ops_panel_subdir: l2-panel
 
+# The hot-out outbox (spec 00056 D2/D4), under ops_data_dir: what this node stages for the NAS to
+# pull into its hot/ hub via the sync_hot -ro channel (infra/ops/README.md).
+ops_hot_out_subdir: hot-out
+
 # node-exporter-style textfile-collector dir the replay/archive-pull/panel timers publish their
 # .prom files into.
 ops_textfile_dir: "{{ ops_data_dir }}/textfile"

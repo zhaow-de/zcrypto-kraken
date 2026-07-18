@@ -73,6 +73,14 @@ services:
       RECONCILED_SOURCE: ${RECONCILED_SOURCE:-}
       RECONCILED_SSH_KEY: /keys/sync_reconciled
       RECONCILED_SSH_PORT: ${RECONCILED_SSH_PORT:-22}
+      # OPS-6 (spec 00056 D2/D4): the ops node's hot-out outbox, additively pulled into the hot/ hub
+      # (/archive == /volume1/ZhaoCrypto, so /archive/hot IS the hub). Own least-privilege read-only
+      # key + home-LAN port 22, same shape as panel/reconciled. Unset HOT_SOURCE and the pull is
+      # skipped entirely, so this compose file stays valid on a NAS not yet given the channel.
+      HOT_SOURCE: ${HOT_SOURCE:-}
+      HOT_DEST: ${HOT_DEST:-/archive/hot}
+      HOT_SSH_KEY: /keys/sync_hot
+      HOT_SSH_PORT: ${HOT_SSH_PORT:-22}
       CAPTURE_SSH_KEY: /keys/sync_capture
       JOURNAL_SSH_KEY: /keys/sync_journal
       ARCHIVE_SSH_KNOWN_HOSTS: /keys/known_hosts

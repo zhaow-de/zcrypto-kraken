@@ -151,6 +151,33 @@ like the panel/liquidations channels (every minted hour carries a `.sha256` side
 5. **NAS** — set `RECONCILED_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
+### The `sync_hot` replication channel (the NAS pulls this node)
+
+Pull-only transport, mirroring `sync_reconciled`/`sync_panel` above -- spec 00056 D2/D4: the hot-out
+outbox this node stages (the hot-cluster working set it authors) is pulled into the NAS `hot/` hub.
+A **new dedicated 4th D9 channel**: the three existing `rrsync -ro` roots are each exact-subtree
+pinned, so none is a parent of `hot-out` -- it MUST get its own least-privilege key, not a widened
+root. Two differences from the reconciled/panel channels: the NAS pulls it with a **raw
+`rsync --archive --ignore-existing`** (not `zcrypto archive pull`), because hot sets are
+append-only-at-file (D1c) and carry `manifest.json`, not the `.sha256` sidecars `verify_tree`
+expects -- so the pull is unverified-at-transport and append-only-by-construction (a content-changed
+file is simply untransmittable).
+
+1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_hot_ed25519 -C zcrypto-sync-hot-pullonly -N ""`.
+2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys`, pinning the outbox root:
+
+   ```
+   command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/hot-out",restrict ssh-ed25519 AAAA... zcrypto-sync-hot-pullonly
+   ```
+
+3. **NAS** — drop the private key at `/volume1/docker/zcrypto-archive/keys/sync_hot`, mode
+   `0600` (matches the fixed `HOT_SSH_KEY=/keys/sync_hot` in `infra/nas/compose.yaml`).
+4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
+   `sync_liquidations` setup above (step 4 there); no re-pin needed for a fourth channel to the
+   same host.
+5. **NAS** — set `HOT_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
+   `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
+
 ## Alloy telemetry stack (Task 1, spec 00054 D1/D7)
 
 Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default

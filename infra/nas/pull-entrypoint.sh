@@ -151,6 +151,30 @@ while true; do
 		log WARNING "reconciled channel unwired (RECONCILED_SOURCE unset) — custody is not re-acquiring the overlay"
 	fi
 
+	# OPS-6 (spec 00056 D2/D4): the hot-cluster working set the ops node authors, pulled into the
+	# hot/ hub. A RAW rsync, NOT `zcrypto archive pull`: hot sets are append-only-at-file (D1c needs
+	# --ignore-existing, which the wrapper never passes) and carry manifest.json, not the .sha256
+	# sidecars verify_tree expects -- so this rebuilds the same pinned SSH options the wrapper uses.
+	# --archive --ignore-existing, never --delete: a content-changed file is simply untransmittable,
+	# so the append-only contract is enforced by the transport itself. Own least-privilege key +
+	# home-LAN port 22, like panel/reconciled. Best-effort; NOT a reconcile-gate input. Skipped
+	# entirely (silently, like PANEL -- deliberately NOT the reconciled channel's else-WARNING) when
+	# HOT_SOURCE is unset: hot is optional secondary durability for ops-AUTHORED artifacts and is
+	# legitimately unset until ops authors any, whereas an unwired reconciled overlay is anomalous
+	# (its writer moved to ops in OPS-5, so it is expected wired). A NAS not given the channel runs on.
+	# --chmod=D0775,F0664 matches the `zcrypto archive pull` wrapper on every other channel: the
+	# Synology share is plain POSIX with no ACL inheritance and this container is non-root (uid 1000,
+	# cannot chown), so without it pulled dirs keep the ops source's non-group-writable 0755 and the
+	# workstation push (zcrypto-deploy, group zcrypto) could not append into a shared subtree. hot/ is
+	# the fleet's only two-writer dir, so keeping the pulled tree group-writable is load-bearing.
+	if [ -n "${HOT_SOURCE:-}" ]; then
+		if ! rsync --archive --ignore-existing --chmod=D0775,F0664 \
+				-e "ssh -i $HOT_SSH_KEY -p ${HOT_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
+				"$HOT_SOURCE" "$HOT_DEST"; then
+			log ERROR "hot pull failed (source=$HOT_SOURCE dest=$HOT_DEST), continuing"
+		fi
+	fi
+
 	# The reconcile + trade-backfill steps MOVED to the ops node (spec 00054 D2/OPS-5): this host
 	# kept custody, Role A's pull/prune, and its Alloy (D3), and shed the computation -- the Atom tax
 	# on every step sharing this clock had stretched the "hourly" loop to ~103 minutes. The healed

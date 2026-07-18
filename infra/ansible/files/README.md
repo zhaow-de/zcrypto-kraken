@@ -13,3 +13,4 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `sync_ed25519.pub` | NAS (`/volume1/docker/zcrypto-archive/keys/`) | engine-journal pull channel (`group_vars/capture_host`) |
 | `sync_capture_ed25519.pub` | NAS | primary capture pull channel |
 | `sync_capture_red_ed25519.pub` | NAS | secondary capture pull channel (`host_vars/zcrypto-red`) |
+| `zcrypto_hot_push_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh/zcrypto-hot-push_ed25519`) | the workstation's `zcrypto data push` via the `nas-hot` ssh alias; installed on the NAS by the nas role as a write-capable rrsync forced command jailed to `hot/` (`host_vars/nas`). The **only** write channel into custody (spec 00056 D2). |

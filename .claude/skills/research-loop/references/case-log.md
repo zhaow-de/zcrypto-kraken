@@ -36,7 +36,7 @@ Once the worst-slice leg was shown to fail the frozen benchmark itself, spending
 
 ## The Phase 0 → 1 boundary drift
 
-The loop advanced into Phase 1 on a bare "phase complete" note, leaving Phase 0's decisions un-drained in the running log — fixed retroactively by `01.3.phase0-closeout.md`. → *Never cross a phase boundary without the close-out report and the drained decisions sibling.*
+The loop advanced into Phase 1 on a bare "phase complete" note, leaving Phase 0 without its close-out report — fixed retroactively by `01.3.phase0-closeout.md`. → *Never cross a phase boundary without the close-out report* (decisions are now persisted live per iteration, so nothing to drain — but the close-out report is still mandatory).
 
 ## The A2 double-division (iters 065–066 — caller-convention drift)
 

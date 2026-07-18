@@ -298,7 +298,7 @@ def liquidations_poll(
 ) -> None:
     """Poll Coinalyze's `/v1/liquidation-history` REST endpoint every $COINALYZE_POLL_SECONDS
     (default 300s) for the funding basket's 10 USDT perps, writing closed 1-min liquidation buckets
-    to per-coin zstd-Parquet segments. The T0023 fallback for the shelved Binance forceOrder WS
+    to per-coin zstd-Parquet segments. The fallback for the shelved Binance forceOrder WS
     recorder (`zcrypto liquidations`), which Binance geo-fences from every egress we own."""
     api_key = os.environ.get(API_KEY_ENV_VAR)
     if not api_key:

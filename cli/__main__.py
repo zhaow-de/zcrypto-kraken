@@ -6,6 +6,7 @@ import typer
 
 from cli.archive.command import archive_app
 from cli.capture.command import capture
+from cli.data.command import data_app
 from cli.engine.command import engine_app
 from cli.liquidations.coinalyze import liquidations_poll
 from cli.liquidations.command import liquidations
@@ -21,6 +22,7 @@ app.command(name="liquidations")(liquidations)
 app.command(name="liquidations-poll")(liquidations_poll)
 app.add_typer(engine_app, name="engine")
 app.add_typer(archive_app, name="archive")
+app.add_typer(data_app, name="data")
 app.add_typer(panel_app, name="panel")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}

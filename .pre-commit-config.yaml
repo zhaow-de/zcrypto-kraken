@@ -1,3 +1,9 @@
+# infra/nas/rrsync is vendored VERBATIM — rsync 3.4.1's upstream python3 rrsync, byte-identical to the
+# fleet's own /usr/bin/rrsync (sha256 d4739b6f…). Our formatters must never rewrite third-party
+# security code: a reformat both defeats the provenance and edits the sole write-jail into custody
+# (spec 00056 D2). Excluded globally; its integrity is verified by hash against the in-fleet copy.
+exclude: '^infra/nas/rrsync$'
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -58,15 +64,15 @@ repos:
       # Allowlist of mdformat-managed docs: the three READMEs + infra/external-systems.md + EVERY
       # report under docs/research/, matched by glob so a new research paper is covered
       # automatically (no per-file edit here).
-      # Excluded by the negative lookahead: the verbatim decision logs — *-decisions.md and the
-      # *-cont-decisions-<K>.md continuations — whose option lists + "(Decision: N)" markers mdformat
-      # would restructure (see .claude/rules/decisions-log.md). Nothing else under docs/ is covered
-      # (reference/, specs/, plans/, open-topics topic files format by hand).
+      # Excluded by the negative lookahead: the verbatim per-phase decision logs *-decisions.md,
+      # whose option lists + "(Decision: N)" markers mdformat would restructure (see
+      # .claude/rules/decisions-log.md). Nothing else under docs/ is covered (reference/, specs/,
+      # plans/, open-topics topic files format by hand).
       files: |
         (?x)^(
             README\.md|
             infra/README\.md|
             infra/external-systems\.md|
             docs/open-topics/README\.md|
-            docs/research/(?!.*-(cont-decisions-\d+|decisions)\.md$).*\.md
+            docs/research/(?!.*-decisions\.md$).*\.md
         )$

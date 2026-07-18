@@ -93,6 +93,51 @@
   diff: false
   register: nas_deploy_alloy_secrets
 
+# --- The hot/ hub push channel (spec 00056 D2/D4): the ONE write path into custody. The workstation
+# pushes the replicated working set here over rsync-over-ssh, jailed by a vendored rrsync forced
+# command pinned to hot/ -- never through the rw NFS mount (a soft-mounted write can corrupt on
+# timeout). Deploy-time only (dir + binary + authorized_key); nothing restarts, so NOT gated on
+# nas_apply_compose. Ops-authored hot artifacts arrive by the SEPARATE pull channel (HOT_SOURCE in
+# pull-entrypoint.sh), not this key. Containment (four layers, all holding against a stolen key running
+# its OWN rsync client, not merely a cooperating one): `restrict` (SSH-level, the fleet's D9 idiom); the
+# command="" path jail pins the command-line dest under hot/; -munge (rsync --munge-links) mangles
+# incoming symlink targets so a pushed symlink cannot be used to traverse OUT of hot/ (the documented
+# writable-rrsync escape); and -no-del -no-overwrite enforce the D1c append-only contract SERVER-SIDE
+# (strip every --delete*/--remove*, force --ignore-existing -- which also neutralizes --force's
+# dir-replace delete, measured). -ro is dropped (it would forbid writes; it is also the only flag that
+# implies -no-del, so both -no-del and -no-overwrite are named explicitly here).
+# 2775 = setgid: hot/ is the fleet's ONLY two-writer custody dir. The pull container writes as uid 1000
+# (primary group zcrypto), but the workstation push writes as zcrypto-deploy whose PRIMARY group is
+# `users` -- without setgid its subtrees would drift to group `users` and break the custody-wide
+# group-zcrypto invariant (spec 00048), the precondition for the exit-23 whole-pull failure class. The
+# setgid forces both writers' children to inherit group zcrypto. (Siblings are plain 0775 because they
+# have a single writer whose primary group already IS zcrypto.)
+- name: ensure the hot/ hub directory exists (setgid so both writers' children inherit group zcrypto)
+  ansible.builtin.file:
+    path: /volume1/ZhaoCrypto/hot
+    state: directory
+    # The custody data user was renamed zcrypto -> zcrypto-data (uid 1000 kept; fleet users/groups
+    # regularization, spec 00057); the GROUP stayed zcrypto (gid 1000). Matches every sibling custody dir.
+    owner: zcrypto-data
+    group: zcrypto
+    mode: "2775"
+
+- name: deploy the vendored rrsync jailer (the NAS ships no rrsync -- rsync 3.4.1's python3 rrsync, T0056)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../nas/rrsync"
+    dest: "{{ nas_stack_dir }}/rrsync"
+    owner: root
+    group: root
+    mode: "0755"
+  register: nas_deploy_rrsync
+
+- name: install the hot-push pubkey as a write-capable rrsync forced command jailed to hot/
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user }}"
+    exclusive: false
+    key: "{{ nas_hot_push_authorized_key }}"
+    key_options: 'command="{{ nas_stack_dir }}/rrsync -munge -no-del -no-overwrite /volume1/ZhaoCrypto/hot",restrict'
+
 # --- Render-only report: an unflagged converge lands files and says which ones changed, nothing
 # restarts. Safe to print for the no_log tasks too — but NOT because the framework censors them:
 # in this ansible-core a no_log task's REGISTERED variable keeps the full result dict (dest,
@@ -110,6 +155,7 @@
       {{ {'pull-entrypoint.sh': nas_deploy_entrypoint,
           'compose.yaml': nas_deploy_compose,
           'config.alloy': nas_deploy_alloy_config,
+          'rrsync': nas_deploy_rrsync,
           '.env': nas_deploy_env,
           'alloy-secrets.env': nas_deploy_alloy_secrets}
          | dict2items | selectattr('value.changed') | map(attribute='key') | list }}

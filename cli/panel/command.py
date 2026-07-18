@@ -29,7 +29,7 @@ logger = get_logger("panel.command")
 
 panel_app = typer.Typer(
     no_args_is_help=True,
-    help="The 1s L2 primitive panel (spec 00052): materialize the canonical book archive into it.",
+    help="The 1s L2 primitive panel: materialize the canonical book archive into it.",
 )
 
 
@@ -154,7 +154,7 @@ def materialize(
         help="Proceed even if --since is newer than a pair's panel watermark, permanently skipping the hole in between.",
     ),
 ) -> None:
-    """Materialize canonical book hours (reconciled-first) into the 1s L2 panel (spec 00052).
+    """Materialize canonical book hours (reconciled-first) into the 1s L2 panel.
 
     Writes `panel-meta.json` if absent; refuses if an existing one's generation differs from this
     code's. Exits non-zero iff any hour errored, mirroring `archive verify-replay`'s contract.

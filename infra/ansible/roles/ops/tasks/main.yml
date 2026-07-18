@@ -100,6 +100,18 @@
     group: deploy
     mode: "0755"
 
+# OPS-6 (spec 00056 D2/D4): the hot-out outbox the NAS pulls into its hot/ hub via a new
+# least-privilege `rrsync -ro` forced command (a 4th D9 pull channel -- the three existing roots
+# are exact-subtree pinned, none a parent of hot-out; setup in infra/ops/README.md). Ungated, like
+# the other data dirs above: the NAS pulls it irrespective of any image/alloy digest.
+- name: ensure the ops hot-out outbox directory exists
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}/{{ ops_hot_out_subdir }}"
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
 # Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1 fix; extended by OPS-5 D2 to
 # cover the archive-pull block too): these two tasks used to live inside the ops_image_digest
 # block, but the Alloy block also needs ops_uid/ops_gid for its container `user:` mapping, and now
