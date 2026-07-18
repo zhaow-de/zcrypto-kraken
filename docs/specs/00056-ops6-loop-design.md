@@ -1,0 +1,52 @@
+# 00056 — OPS-6 "Loop": the dataset topology, the `zcrypto data` exchange, and multi-host research continuity
+
+The sixth and final increment of the spec `00051` ops-node program (roadmap row: *"24×7 autonomous research on the node; workstation fully optional"*, deps OPS-4/5 — both landed). Charter carried by [[T0033]]'s next-steps plus the owner ratifications of 2026-07-16/17/18. The implementation plan is `docs/plans/00056-ops6-loop.md`; iteration `iter-103`.
+
+## Goal
+
+Make research runnable on **either** the ops node or the workstation — never in parallel, manually started (the owner's ratified operating model) — by giving the datasets a behavior-first topology, building the one missing transport (the small replicated working set), retiring the workstation's stale payloads, and making the decisions-log survive host switches. Everything else already has a channel; OPS-6 connects, it does not rebuild.
+
+## The dataset topology (D1) — three clusters, by sync behavior × mutability
+
+Partitioned by how data **moves** and how it may **change** — not by provenance (which stays a catalog column). Names reuse the ratified vocabulary (spec `00051` D1 "custody by durability"; "hot tier"):
+
+| Cluster | One-liner | Members | Sync behavior | Mutability |
+| --- | --- | --- | --- | --- |
+| **custody** | The NAS keeps everything forever; read it where it lies | OHLCVT + trades dumps, both L2 mirrors, `capture-reconciled`, `l2-panel`, `liquidations`, journal backups | Read-in-place over NFS; fed by the existing dedicated channels (Role A/B pulls, D9 ops-pull). **Never transmitted by the new tool.** | Append-only per each producer's own contract; accruing caches are final-once-written under their settle discipline, tree-regenerable on a generation bump |
+| **hot** | The small working set every research node carries; fetch all of it, push what you authored | `ohlc-full`, `ohlc-15m`, `ohlc-holdout-*`, `derivatives-funding`, `snapshots`, `universe`, future re-freeze siblings + ops-authored research artifacts (~140 MB, stable) | The **sole scope** of `zcrypto data` fetch/push; NAS `hot/` is the hub | **Append-only at file level**: hash-stable-at-file, additive-at-set; any revision mints a **sibling** (new dir or dated file), never overwrites |
+| **private** | This machine's own state; never synced | `engine-store`, the live `engine-journal`, scratch | None. The one unreproducible member (the VPS engine journal) already reaches custody via the existing Role-B pull, host-scoped | Node-owned (`engine seed` rewrites the store; the journal appends) |
+
+- **D1a — custody requires zero migration and zero new code.** It *is* the current share root (`/volume1/ZhaoCrypto`), unchanged; every member already has a purpose-built hash-verified channel. Both research nodes read it in place (workstation `../zcrypto-kraken-data`, ops `/mnt/zhao-crypto`) — the `ohlcvt_source_dir` config is the standing precedent. No fetch-cache of accruing sets (owner: YAGNI).
+- **D1b — hot is one flat new NAS subdir** (`/volume1/ZhaoCrypto/hot/`, owner-approved flat). Locally there is **no layout change**: `data/<set>/` *is* the hot materialization, exactly where the hardcoded consumer paths (the regression tests' `DATA_ROOT`, the engine's `CANONICAL_DIR`) already point; private members are excluded by construction because they never exist under `hot/`.
+- **D1c — the append-only contract is enforced by the transport itself**: both fetch and push run rsync with `--ignore-existing` (and never `--delete`), so a content-changed file is structurally untransmittable. A producer that must revise a published set mints a sibling (the re-freeze pattern; dated snapshots; a versioned funding refresh) — the registry's file-level pins stay valid forever.
+
+## Decision register
+
+- **D2 — Transport, on the pull-only grain.** Fetch (both nodes): recursive rsync `hot/` → `data/` over each node's **read-only-safe NFS read path** (reads over the soft mount are safe; the compiled files are immutable). Push (workstation only): **rsync-over-ssh** to the NAS via an `rrsync`-forced-command key pinned to `hot/` — never through the rw+soft NFS mount (a soft-mounted write can silently corrupt on timeout; owner-flagged). **Ops never pushes**: the NAS pulls ops-authored hot artifacts by extending the existing spec-`00051`-D9 pull channel. `hot/` therefore has exactly two writers, each on its established grain.
+- **D3 — The `zcrypto data` command group** (Typer, TDD, README-documented):
+  - `data fetch` — mirror `hot/` into `data/` (additive, idempotent, verify-manifests-after).
+  - `data push` — transmit the **authored-set allowlist** (config, per node) to `hot/` (additive-only by D1c).
+  - `data rebuild [SET …]` — dataset-aware re-freeze/refresh orchestrating the **existing, tested library code** (no new pipeline logic; the builders all take an `out_root` argument, so sibling-minting is an orchestration-level choice of output directory, never a library change): frozen canonicals rebuild from the dumps (`cli/backfill` + `cli/ohlc`, reading custody in place) and **mint new siblings**; substrates refresh from their sources (`cli/derivatives/funding`, `cli/snapshot`, `cli/universe`) minting versioned outputs; writes manifests/hashes; then pushes. Host-agnostic by implementation; **workstation-owned by convention** (owner's Option-3 ratification — ops only consumes frozen baskets).
+  - Config: a `[zcrypto.data]` table (hot mount path, ssh push target, authored-set list). No CLI surface beyond this group.
+- **D4 — Seeding NAS `hot/` is the first act.** The NAS holds none of the compiled sets today (verified 2026-07-17); the workstation's ~281 MB `data/` is genuinely single-copy on an intermittent host. First `data push` seeds `hot/`; the first ops `data fetch` from the seeded hub is the acceptance test. The dead **v0 `data/ohlc` is deleted, not migrated** (zero consumers — verified; its catalog stays as the historical record).
+- **D5 — Dead-config removal.** `backup_dir` (config key, `AppConfig` field, `resolve_backup_dir`, its test — no runtime consumer; its target never existed on the dedicated share) and the two never-wired fetch fields `backfill_right_edge_grace_days` + `rename_synth_warn_days` are **removed**. Every removal was consumer-verified this session.
+- **D6 — Retire the two leftover workstation payloads.** `zcrypto-engine-gateops.timer` (declared retired long ago but still firing daily; README ships the exact disable procedure) and `zcrypto-engine-shadow.service` (superseded by the VPS deployment; a second shadow would recreate the two-journals-one-name hazard — owner's earlier lean, now ratified by the private-cluster design). Retirement dissolves the `engine-journal` name collision, so **no host-scoped journal renames are needed**; `data/engine-journal-vps` becomes a historical artifact (delete). Make README/T0003's "retired" claim actually true.
+- **D7 — Decisions-log continuity across hosts (owner: "surely 3").** The per-phase running decisions logs move from gitignored `.tmp/decisions-phase<N>.md` to **git-tracked running files** `docs/research/decisions-running-phase<N>.md`, appended and **committed as part of each iteration's closing commit** — exactly the mechanism the iterations-history changelog already uses, making git the cross-host baton (both hosts pull before starting, merge after each iteration; the never-parallel rule precludes concurrent appends). Phase close-out semantics are **unchanged**: copy verbatim into the serial-numbered file, truncate the running file, one commit. The running files join the mdformat exclusion (verbatim-preservation precedent). `.claude/rules/decisions-log.md` and the research-loop skill's `.tmp` references are updated in this same PR. Any surviving `.tmp` log content migrates into the new running files at cutover.
+- **D8 — The catalog rewrite rides this iteration** (owner: fold everything in). `docs/reference/data-catalog-full.md` is restructured by the D1 taxonomy and corrected: the canonical-trades producer line (stale "daily on the NAS" → the ops overlay writer, spec `00054`/T0058); the four uncataloged datasets added (`ohlc-15m`, `derivatives-funding`, `ohlc-holdout-2026-07-10`, `snapshots`); the "OPS-6 migrates the research loop" framing updated to the ratified replication model; provenance recorded as a column, not a structure.
+- **D9 — The loop itself stays manually started.** No scheduler, no cron: the ratified operating model is a human-started run with hot datasets local at start, interactive and autonomous never in parallel. OPS-6 delivers the *data locality* that makes the ops-started loop equivalent to a workstation-started one; the start remains a deliberate act.
+
+## Non-goals
+
+- **The trade-bar materializer and Q2/Q3 dump ingestion** — the fine-cadence reach round, registered in [[T0065]]; it lands in custody beside the panel when built, with its settle-discipline question answered in its own spec (see also the panel re-mint race, [[T0066]]).
+- **T0063 / T0064** (deployable doc drift; holdout evidence) — tracked separately.
+- **Any change to the capture, reconcile, panel, or liquidations producers** and their channels; any NAS layout change beyond the one `hot/` subdir.
+- **A 24×7 scheduler** (D9) and any fetch-cache of accruing sets (D1a).
+- **Committed backtest command / hash-recipe committing** — the execution-reproducibility round in [[T0065]].
+
+## Verify
+
+- **Tool**: TDD unit tests (fetch additive + idempotent + a no-op when nothing is new; push allowlist-only + `--ignore-existing` proven to refuse a content-changed file; rebuild mints siblings and never overwrites; config resolution); mutation-verified where they pin invariants.
+- **End-to-end**: seed `hot/` from the workstation → ops `data fetch` → the data-dependent regression tests **run and pass on ops** (they skip today for want of `data/ohlc-full`) — the sharpest possible proof that research is runnable there.
+- **Round-trip**: a sibling-minted test set pushes up, fetches down byte-identical, manifests verify; a deliberate content-change push attempt is refused.
+- **Retirement**: both workstation units gone (`systemctl --user` clean), no new journal writes, README claim true.
+- **Closeout**: [[T0033]] resolved (OPS-6 was its last increment); catalog rewritten (D8); iterations-history `iter-103` entry; decisions-log rule + skill updated (D7); README `## Usage` documents the `data` group.
