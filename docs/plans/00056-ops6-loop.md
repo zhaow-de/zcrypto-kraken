@@ -264,7 +264,7 @@ def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
 
 - [ ] **Step 2: Run to verify failure.** `uv run pytest tests/test_data_sync.py -v` — ImportError.
 - [ ] **Step 3: Implement `cli/data/sync.py` + `errors.py`** per Interfaces. Loggers `get_logger("data.sync")`.
-- [ ] **Step 4: Command layer + registration.** `cli/data/command.py`: `data_app = typer.Typer(help="Hot-cluster dataset exchange (spec 00056): fetch, push, rebuild.")`; `@data_app.command() fetch(hot_dir: Optional[Path] --hot-dir, no_verify: bool --no-verify)` and `push(hot_dir-independent; uses resolve_push_dest + cfg.data.authored_sets)`; each loads config, resolves, calls the library, logs a one-line summary (`data fetch: new=%d skipped=%d` / `data push: ...`), exits non-zero on `DataSyncError` (log via `get_logger("data.command").error`, `raise typer.Exit(1)`). In `cli/__main__.py`: `from cli.data.command import data_app` (alphabetical between capture and engine imports) + `app.add_typer(data_app, name="data")` after the `archive` line.
+- [ ] **Step 4: Command layer + registration.** `cli/data/command.py`: `data_app = typer.Typer(help="Hot-cluster dataset exchange: fetch the shared working set, push what this node authored, rebuild frozen sets.")` — **spec D10 binds every help string and command docstring in this package: no iter-N / spec-serial / OPS-N / phase-N / T-NNNN tracker ids in user-facing help; put such references in code comments only.** `@data_app.command() fetch(hot_dir: Optional[Path] --hot-dir, no_verify: bool --no-verify)` and `push(hot_dir-independent; uses resolve_push_dest + cfg.data.authored_sets)`; each loads config, resolves, calls the library, logs a one-line summary (`data fetch: new=%d skipped=%d` / `data push: ...`), exits non-zero on `DataSyncError` (log via `get_logger("data.command").error`, `raise typer.Exit(1)`). In `cli/__main__.py`: `from cli.data.command import data_app` (alphabetical between capture and engine imports) + `app.add_typer(data_app, name="data")` after the `archive` line.
 - [ ] **Step 5: Command tests** (`tests/test_data_command.py`, `CliRunner` + `monkeypatch.chdir(tmp_path)` with a written `zcrypto.toml` pointing hot_dir/push_dest at tmp dirs): `zcrypto data fetch` happy path prints/logs the summary and exits 0; missing hot_dir exits 1; `data push` respects the allowlist. Follow `tests/test_liquidations_coinalyze.py`'s CliRunner idiom (`runner.invoke(app, ["data", "fetch"])`, assert `result.exit_code`).
 - [ ] **Step 6: Verify.** `uv run pytest tests/test_data_sync.py tests/test_data_command.py -q` green; then the fast suite `uv run pytest -q` (data-dependent tests run on this workstation — expect the full ~7 min once; all green).
 - [ ] **Step 7: Commit.** `feat(data): zcrypto data fetch/push — the hot-cluster exchange (spec 00056 D2/D3)`
@@ -345,9 +345,48 @@ def test_push_extra_sets_pushes_minted_siblings(tmp_path):
 ```
 
 Command computes `stamp` from `datetime.now(UTC)` and passes it in.
-- [ ] **Step 4: README Usage** — add the `data` group section after the `panel` section, matching the house style: fetch (mirror hot/ additively; verify manifests), push (authored allowlist, ssh channel, never the NFS mount), rebuild (sibling-minting re-freeze/refresh; workstation-owned by convention; `--no-push` for inspection), plus one paragraph on the custody/hot/private topology pointing at spec 00056.
-- [ ] **Step 5: Verify** (`uv run pytest tests/test_data_rebuild.py tests/test_data_command.py -q`, then `uv run pre-commit run -a`).
-- [ ] **Step 6: Commit.** `feat(data): zcrypto data rebuild — sibling-minting re-freeze/refresh + README (spec 00056 D3)`
+- [ ] **Step 4: README Usage** — add the `data` group section after the `panel` section, matching the house style: fetch (mirror hot/ additively; verify manifests), push (authored allowlist, ssh channel, never the NFS mount), rebuild (sibling-minting re-freeze/refresh; workstation-owned by convention; `--no-push` for inspection), plus one paragraph on the custody/hot/private topology pointing at spec 00056. (README is docs — spec/topic references are fine THERE; D10 covers only `--help` output.)
+- [ ] **Step 5: Help-hygiene sweep (spec D10).** Enumerate every existing offender: `grep -rnE "iter-[0-9]+|spec [0-9]{5}|OPS-[0-9]|phase[- ][0-9]|T[0-9]{4}" cli/ --include="*.py"` and, of the hits, fix ONLY those inside Typer `help=` strings or **command-function docstrings** (Typer renders those in `--help`; module docstrings and `#` comments are exempt — leave them). Known offenders to fix (current text verbatim in `cli/archive/command.py`): the `--min-gap-seconds` help ("validated cross-host (T0039, resolved 2026-07-17): 2.48x…") → `"Primary book silence longer than this, with the secondary alive inside it, is a gap. The default 30 s is validated from a 66h/217-window two-host soak: 2.48x the worst coalescing artifact, 2.8x below the smallest real outage on record."`; the `--mint` help → `"DEFAULT is --detect-only: ledger what WOULD be spliced and mint nothing. The deployed reconciler runs --mint; ad-hoc runs stay detect-only."`; the `reconcile` docstring's "(T0039, resolved 2026-07-17)" clause → drop the parenthetical, keep the figures. Rewrite any further hits the grep surfaces the same way: keep the substance, drop the tracker id; list every changed string in your report.
+- [ ] **Step 6: The regression test** (`tests/test_cli_help_hygiene.py`) — walks the whole command tree so no future help string regresses:
+
+```python
+import re
+
+import click
+import typer
+from typer.testing import CliRunner
+
+from cli.__main__ import app
+
+_INTERNAL = re.compile(r"iter-\d+|spec\s*`?\d{5}|OPS-\d|phase[- ]\d|T\d{4}", re.IGNORECASE)
+runner = CliRunner()
+
+
+def _all_paths():
+    stack = [([], typer.main.get_command(app))]
+    while stack:
+        path, cmd = stack.pop()
+        yield path
+        if isinstance(cmd, click.Group):
+            for name, sub in cmd.commands.items():
+                stack.append(([*path, name], sub))
+
+
+def test_no_internal_tracker_terms_in_any_help():
+    offenders = []
+    for path in _all_paths():
+        result = runner.invoke(app, [*path, "--help"])
+        assert result.exit_code == 0, path
+        match = _INTERNAL.search(result.output)
+        if match:
+            offenders.append((path, match.group(0)))
+    assert offenders == []
+```
+
+Run it BEFORE the Step-5 fixes to watch it fail on the known offenders (the TDD order: test first, then scrub until green — the failure list IS the sweep's checklist), then after the fixes: green. Mutation-check: temporarily re-add "T0039" to one help string, watch the test name it, revert.
+
+- [ ] **Step 7: Verify** (`uv run pytest tests/test_data_rebuild.py tests/test_data_command.py tests/test_cli_help_hygiene.py -q`, then `uv run pre-commit run -a`).
+- [ ] **Step 8: Commit.** `feat(data): zcrypto data rebuild + CLI help-hygiene sweep and regression test (spec 00056 D3/D10)`
 
 ______________________________________________________________________
 
