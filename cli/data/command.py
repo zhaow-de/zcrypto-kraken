@@ -105,7 +105,9 @@ def rebuild(
         raise _abort(str(exc)) from exc
 
     try:
-        report = push_hot(data_root, cfg.data.authored_sets, dest, extra_sets=[p.name for p in minted])
+        # Push ONLY the freshly-minted siblings, not the whole authored set (a rebuild publishes what
+        # it just built; re-pushing every authored set would also abort here on a node missing one).
+        report = push_hot(data_root, [], dest, extra_sets=[p.name for p in minted])
     except DataSyncError as exc:
         raise _abort(str(exc)) from exc
 

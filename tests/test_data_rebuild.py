@@ -61,6 +61,18 @@ def test_rebuild_never_touches_live_dir(tmp_path, monkeypatch):
     assert sorted(p.name for p in live.iterdir()) == ["keep.parquet"]
 
 
+def test_rebuild_cleans_up_empty_sibling_on_builder_failure(tmp_path, monkeypatch):
+    # A builder that raises must not orphan an empty sibling — else the per-day stamp blocks retry.
+    def _boom(ctx, out):
+        raise RuntimeError("network down")
+
+    monkeypatch.setitem(rebuild.REBUILDABLE, "snapshots", _boom)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=tmp_path, stamp="20260718")
+    with pytest.raises(RuntimeError, match="network down"):
+        rebuild.rebuild_sets(["snapshots"], ctx)
+    assert not (tmp_path / "snapshots-20260718").exists()  # retryable same day
+
+
 def test_rebuild_unknown_set_raises(tmp_path):
     with pytest.raises(DataSyncError, match="unknown"):
         rebuild.rebuild_sets(["ohlc"], rebuild.RebuildContext(tmp_path, None, "20260718"))

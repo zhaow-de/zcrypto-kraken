@@ -125,6 +125,14 @@ def rebuild_sets(sets: Sequence[str], ctx: RebuildContext) -> list[Path]:
         if out_root.exists():
             raise DataSyncError(f"data rebuild: sibling already exists: {out_root}")
         out_root.mkdir(parents=True)
-        builder(ctx, out_root)
+        try:
+            builder(ctx, out_root)
+        except Exception:
+            # A builder that raises mid-run must not leave an empty sibling behind: the per-day stamp
+            # would then make a same-day retry trip the "already exists" guard forever. Clean up the
+            # dir we just minted (only when still empty -- never delete builder output) and re-raise.
+            if not any(out_root.iterdir()):
+                out_root.rmdir()
+            raise
         minted.append(out_root)
     return minted
