@@ -62,6 +62,14 @@ def test_push_never_overwrites_dest(tmp_path):
     assert kept.read_bytes() == b"dest-old"
 
 
+def test_push_extra_sets_pushes_minted_siblings(tmp_path):
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "ohlc-full-20260718/a.parquet", b"A")
+    dest.mkdir()
+    push_hot(data, [], str(dest) + "/", extra_sets=["ohlc-full-20260718"])
+    assert (dest / "ohlc-full-20260718/a.parquet").read_bytes() == b"A"
+
+
 def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
     import json
 

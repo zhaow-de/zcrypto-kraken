@@ -38,7 +38,7 @@ _urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-exp
 
 engine_app = typer.Typer(
     no_args_is_help=True,
-    help="The Phase-6 shadow engine: store seeding, the node, manual cycles, journal replay, the gate report, and gate export.",
+    help="The shadow engine: store seeding, the node, manual cycles, journal replay, the gate report, and gate export.",
 )
 
 

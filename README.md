@@ -20,6 +20,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
     - [VPS journal pull and daily gate ops — retired (moved to the NAS)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas)
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
+  - [`zcrypto data`](#zcrypto-data)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -229,6 +230,40 @@ zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>
 Each pair is watermarked at its newest existing panel hour; a sweep only materializes hours strictly newer than that. **`--since` that would open a gap above a pair's watermark — or above a fresh pair's earliest canonical hour — refuses by default**: skipping straight to `--since` would permanently strand the hours in `[watermark+1h, since)` once later hours advance the watermark past them. Pass `--allow-holes` to proceed anyway (a warning still names the pair, the watermark, and the stranded range).
 
 `OrderBook` state is threaded across hours per pair: Kraken snapshots arrive on subscribe, not once per capture hour, so an hour opening with a plain update continues from the previous hour's end-of-hour book (persisted as a `<HH>.state.json` sidecar next to its parquet, enabling O(1) resume) rather than being rebuilt from nothing. An hour that cannot anchor — an update-opening hour with no carried book, e.g. after a gap in the archive — is counted in `hours_unanchored`: an honest gap, not a failure, logged once per contiguous run of them. A per-hour failure of any other kind is isolated and logged (`panel hour failed pair=... hour=...: ...`); the sweep continues past it. Exits **1** iff any hour errored (`hours_unanchored` never affects the exit code), else **0**.
+
+### `zcrypto data`<a name="zcrypto-data"></a>
+
+The hot-cluster dataset exchange: every research node — the workstation, the ops node — fetches the same small `hot/` working set from the NAS hub and pushes back only what it authored; a revision never overwrites a published file, it mints a sibling instead. Three clusters make up the full topology: **custody** (the unbackfillable capture archive + raw dumps, replicated once to the NAS, read in place), **hot** (the small working set every node fetches/pushes via this command), and **private** (per-node state — the engine store/journal — that never syncs). See `docs/reference/data-catalog-full.md` for the full inventory.
+
+`fetch` additively mirrors the NAS `hot/` hub into the local data root, verifying newly fetched files against their manifest's `sha256` by default.
+
+```bash
+zcrypto data fetch
+```
+
+| Option | Description |
+| -- | -- |
+| `--hot-dir` | Override the configured `[zcrypto.data].hot_dir`. |
+| `--no-verify` | Skip manifest hash verification of newly fetched files. |
+
+`push` sends this node's authored sets (`[zcrypto.data].authored_sets`) to the configured `push_dest` — an ssh alias pinned by the NAS's forced rsync command, never the read-write NFS mount.
+
+```bash
+zcrypto data push
+```
+
+`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation, which alone has `ohlcvt_source_dir` configured; the ops node only consumes frozen baskets via `fetch`.
+
+```bash
+zcrypto data rebuild <SET>...
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-15m`, `derivatives-funding`, `snapshots`, `universe`. |
+| `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
+
+All three exit **1** on a configuration or sync error (a missing/unmountable `hot_dir`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 
 ## Configuration<a name="configuration"></a>
 

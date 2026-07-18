@@ -311,23 +311,23 @@ def reconcile(
         30.0,
         "--min-gap-seconds",
         help="Primary book silence longer than this, with the secondary alive inside it, is a gap. "
-        "The default 30 s is validated cross-host (T0039, resolved 2026-07-17): 2.48x the worst "
-        "coalescing artifact in a 66h/217-window soak, 2.8x below the smallest real outage.",
+        "The default 30 s is validated from a 66h/217-window two-host soak: 2.48x the worst "
+        "coalescing artifact, 2.8x below the smallest real outage on record.",
     ),
     textfile: Optional[Path] = typer.Option(None, "--textfile", help="Prometheus textfile to publish."),
     mint: bool = typer.Option(
         False,
         "--mint/--detect-only",
         help="DEFAULT is --detect-only: ledger what WOULD be spliced and mint nothing. The deployed "
-        "reconciler runs --mint (since 2026-07-17, T0039 validated); ad-hoc runs stay detect-only.",
+        "reconciler runs --mint; ad-hoc runs stay detect-only.",
     ),
 ) -> None:
     """Reconcile the two raw mirrors into the healed overlay.
 
     Detect-only by default: it ledgers every `would_mint` and writes no parquet. `--min-gap-seconds`
-    30 s is validated cross-host (T0039, resolved 2026-07-17): 2.48x the worst per-connection
-    coalescing artifact in a 66 h / 217-window two-host soak (12.08 s), 2.03x the single-host
-    maximum natural quiescence (14.78 s), and 2.8x below the smallest real outage on record -- and
+    30 s is validated cross-host: 2.48x the worst per-connection coalescing artifact in a 66 h /
+    217-window two-host soak (12.08 s), 2.03x the single-host maximum natural quiescence
+    (14.78 s), and 2.8x below the smallest real outage on record -- and
     a live 25-minute drill outage healed exactly, CRC-clean, while a healthy hour minted nothing.
     The deployed reconciler runs `--mint`; ad-hoc runs stay detect-only.
 
@@ -656,11 +656,10 @@ def verify_replay(
 ) -> None:
     """Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
     `OrderBook` and report, per hour: anchored (chain-anchored -- opens with a snapshot, or its exact
-    predecessor hour was present and itself anchored and error-free; spec 00052 D3 correction),
-    ts-ordered, checksum-present, replay-ok. Exits non-zero if any hour errs or fails any of the four
-    checks (mirroring `engine replay`'s non-zero-on-drift contract). The stored `checksum` is trusted
-    as capture-time ground truth; no CRC is re-derived (T0045 — the Float64 archive cannot reproduce
-    it byte-exactly)."""
+    predecessor hour was present and itself anchored and error-free), ts-ordered, checksum-present,
+    replay-ok. Exits non-zero if any hour errs or fails any of the four checks (mirroring `engine
+    replay`'s non-zero-on-drift contract). The stored `checksum` is trusted as capture-time ground
+    truth; no CRC is re-derived (the Float64 archive cannot reproduce it byte-exactly)."""
     since_dt = None
     if since is not None:
         try:
@@ -718,7 +717,7 @@ def backfill_trades(
     the reconciled overlay. Never fabricates a trade -- an id REST will not serve is `trades_unrecoverable`,
     a row fetched for an unsettled hour is `trades_deferred`, never minted and never silently dropped.
 
-    THE loss report (spec 00053 D11): `--detect-only` prints the magnitude of the damage, not just the
+    THE loss report: `--detect-only` prints the magnitude of the damage, not just the
     gap count -- `trades_missing` and `duplicate_rows_found` are what the detector FOUND, populated in
     both modes; `recovered`/`duplicates_collapsed` are what actually landed and are 0 in `--detect-only`.
 

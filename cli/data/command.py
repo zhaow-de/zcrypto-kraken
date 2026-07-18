@@ -4,13 +4,15 @@ exit codes only -- the rsync mechanics live in `cli.data.sync`."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from cli.config import ConfigError, load_config, resolve_data_dir, resolve_hot_dir, resolve_push_dest
+from cli.config import ConfigError, load_config, resolve_data_dir, resolve_hot_dir, resolve_ohlcvt_source_dir, resolve_push_dest
 from cli.data.errors import DataSyncError
+from cli.data.rebuild import RebuildContext, rebuild_sets
 from cli.data.sync import fetch_hot, push_hot
 from cli.logging import get_logger
 
@@ -65,3 +67,46 @@ def push() -> None:
         raise _abort(str(exc)) from exc
 
     logger.info("data push: new=%d skipped=%d", len(report.new_files), report.skipped_existing)
+
+
+@data_app.command()
+def rebuild(
+    sets: list[str] = typer.Argument(
+        ..., help="Dataset names to rebuild (ohlc-full, ohlc-15m, derivatives-funding, snapshots, universe)."
+    ),
+    push_after: bool = typer.Option(True, "--push/--no-push", help="Push the minted sibling(s) to push_dest after rebuilding."),
+) -> None:
+    """Re-freeze/refresh dataset(s) by minting a new sibling dir -- never touches the live set."""
+    try:
+        cfg = load_config()
+        data_root = resolve_data_dir(None, cfg)
+        try:
+            ohlcvt_source_dir = resolve_ohlcvt_source_dir(None, cfg)
+        except ConfigError:
+            ohlcvt_source_dir = None
+    except ConfigError as exc:
+        raise _abort(str(exc)) from exc
+
+    ctx = RebuildContext(data_root=data_root, ohlcvt_source_dir=ohlcvt_source_dir, stamp=datetime.now(UTC).strftime("%Y%m%d"))
+
+    try:
+        minted = rebuild_sets(sets, ctx)
+    except DataSyncError as exc:
+        raise _abort(str(exc)) from exc
+
+    logger.info("data rebuild: minted %s", ", ".join(str(p) for p in minted))
+
+    if not push_after:
+        return
+
+    try:
+        dest = resolve_push_dest(cfg)
+    except ConfigError as exc:
+        raise _abort(str(exc)) from exc
+
+    try:
+        report = push_hot(data_root, cfg.data.authored_sets, dest, extra_sets=[p.name for p in minted])
+    except DataSyncError as exc:
+        raise _abort(str(exc)) from exc
+
+    logger.info("data rebuild push: new=%d skipped=%d", len(report.new_files), report.skipped_existing)

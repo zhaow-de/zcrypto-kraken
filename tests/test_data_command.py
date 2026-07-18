@@ -54,3 +54,40 @@ def test_push_respects_the_allowlist(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert (dest / "ohlc-full" / "a.parquet").read_bytes() == b"A"
     assert not (dest / "engine-store").exists()
+
+
+def test_rebuild_mints_sibling_no_push(tmp_path, monkeypatch):
+    from cli.data import rebuild as rebuild_module
+
+    monkeypatch.setitem(rebuild_module.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
+    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest="nas-hot:", authored_sets=["ohlc-full"])
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["data", "rebuild", "ohlc-full", "--no-push"])
+    assert result.exit_code == 0
+    minted = [p for p in (tmp_path / "data").iterdir() if p.name.startswith("ohlc-full-")]
+    assert len(minted) == 1
+    assert (minted[0] / "ok").exists()
+
+
+def test_rebuild_pushes_minted_sibling_by_default(tmp_path, monkeypatch):
+    from cli.data import rebuild as rebuild_module
+
+    monkeypatch.setitem(rebuild_module.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest=str(dest) + "/", authored_sets=[])
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["data", "rebuild", "ohlc-full"])
+    assert result.exit_code == 0
+    minted = [p for p in (tmp_path / "data").iterdir() if p.name.startswith("ohlc-full-")]
+    assert (dest / minted[0].name / "ok").exists()
+
+
+def test_rebuild_unknown_set_exits_nonzero(tmp_path, monkeypatch):
+    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest="nas-hot:", authored_sets=[])
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["data", "rebuild", "not-a-set", "--no-push"])
+    assert result.exit_code == 1

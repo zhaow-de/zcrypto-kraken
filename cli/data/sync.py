@@ -91,14 +91,17 @@ def fetch_hot(hot_dir: Path, data_root: Path, *, verify: bool = True, runner=sub
     return SyncReport(new_files=new_files, skipped_existing=total_files - len(new_files))
 
 
-def push_hot(data_root: Path, authored_sets: Sequence[str], dest: str, *, runner=subprocess.run) -> SyncReport:
-    missing = [s for s in authored_sets if not (data_root / s).is_dir()]
+def push_hot(
+    data_root: Path, authored_sets: Sequence[str], dest: str, *, extra_sets: Sequence[str] = (), runner=subprocess.run
+) -> SyncReport:
+    all_sets = [*authored_sets, *extra_sets]
+    missing = [s for s in all_sets if not (data_root / s).is_dir()]
     if missing:
         raise DataSyncError(f"data push: authored set(s) not found under {data_root}: {', '.join(missing)}")
 
     all_new: list[str] = []
     skipped_total = 0
-    for set_name in authored_sets:
+    for set_name in all_sets:
         set_dir = data_root / set_name
         total_files = _count_files(set_dir)
         output = _run_rsync(set_dir, f"{dest}{set_name}/", runner)
