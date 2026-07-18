@@ -144,6 +144,7 @@
     owner: root
     group: root
     mode: "0755"
+  register: nas_deploy_rrsync_shell
 
 # The inbound hot-push forced command lands on zcrypto-data (the m2m data user), NOT the admin
 # zcrypto-deploy (spec 00057 -- keep the admin account out of the data path). exclusive:false so it
@@ -176,6 +177,7 @@
           'compose.yaml': nas_deploy_compose,
           'config.alloy': nas_deploy_alloy_config,
           'rrsync': nas_deploy_rrsync,
+          'rrsync-shell': nas_deploy_rrsync_shell,
           '.env': nas_deploy_env,
           'alloy-secrets.env': nas_deploy_alloy_secrets}
          | dict2items | selectattr('value.changed') | map(attribute='key') | list }}
