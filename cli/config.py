@@ -6,6 +6,7 @@ from pathlib import Path
 
 CONFIG_FILENAME = "zcrypto.toml"
 CONFIG_TABLE = "zcrypto"
+_DEFAULT_NFS_MOUNT = Path("/mnt/zhao-crypto")  # the NAS mount root; aligned across the workstation + ops
 
 
 class ConfigError(Exception):
@@ -38,10 +39,9 @@ class EngineConfig:
 
 @dataclass(frozen=True)
 class DataConfig:
-    """The hot-cluster exchange (spec 00056): where to fetch the replicated working set from,
-    where this node pushes what it authors, and which sets it authors."""
+    """The hot-cluster exchange (spec 00056): where this node pushes what it authors, and which
+    sets it authors. The fetch source is derived from [zcrypto].nfs_mount_dir, not stored here."""
 
-    hot_dir: Path | None = None  # the mounted NAS hot/ (fetch source; NFS read path)
     push_dest: str | None = None  # rsync destination for push (ssh alias or path; rrsync-pinned)
     authored_sets: tuple[str, ...] = ()  # set names this node may push
 
@@ -49,7 +49,7 @@ class DataConfig:
 @dataclass(frozen=True)
 class AppConfig:
     data_dir: Path | None
-    ohlcvt_source_dir: Path | None
+    nfs_mount_dir: Path  # the NAS mount root; the hot/ fetch source and custody sets derive from it
     fetch: FetchConfig
     engine: EngineConfig
     data: DataConfig
@@ -135,12 +135,6 @@ def _build_data(table: dict, config_path: Path) -> DataConfig:
 
     overrides: dict = {}
 
-    if "hot_dir" in raw:
-        value = raw["hot_dir"]
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigError(f"[{CONFIG_TABLE}.data].hot_dir in {config_path} must be a non-empty string")
-        overrides["hot_dir"] = Path(value)
-
     if "push_dest" in raw:
         value = raw["push_dest"]
         if not isinstance(value, str) or not value.strip():
@@ -158,7 +152,9 @@ def _build_data(table: dict, config_path: Path) -> DataConfig:
 
 def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
     if not config_path.exists():
-        return AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig())
+        return AppConfig(
+            data_dir=None, nfs_mount_dir=_DEFAULT_NFS_MOUNT, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig()
+        )
     try:
         raw = tomllib.loads(config_path.read_text())
     except tomllib.TOMLDecodeError as e:
@@ -168,7 +164,7 @@ def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
         raise ConfigError(f"[{CONFIG_TABLE}] in {config_path} must be a table")
     return AppConfig(
         data_dir=_read_path(table, "data_dir", config_path),
-        ohlcvt_source_dir=_read_path(table, "ohlcvt_source_dir", config_path),
+        nfs_mount_dir=_read_path(table, "nfs_mount_dir", config_path) or _DEFAULT_NFS_MOUNT,
         fetch=_build_fetch(table, config_path),
         engine=_build_engine(table, config_path),
         data=_build_data(table, config_path),
@@ -188,11 +184,13 @@ def resolve_data_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
 
 
 def resolve_ohlcvt_source_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
-    return _resolve(flag_value, cfg.ohlcvt_source_dir, name="ohlcvt_source_dir", flag="--ohlcvt-source-dir")
+    # Custody set — derived from the NAS mount root (a real default always exists).
+    return flag_value if flag_value is not None else cfg.nfs_mount_dir / "kraken-ohlcvt-updates"
 
 
-def resolve_hot_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
-    return _resolve(flag_value, cfg.data.hot_dir, name="data.hot_dir", flag="--hot-dir")
+def resolve_hot_source(cfg: AppConfig) -> Path:
+    # The hot-cluster fetch source — the hot/ subdir of the NAS mount root.
+    return cfg.nfs_mount_dir / "hot"
 
 
 def resolve_push_dest(cfg: AppConfig) -> str:

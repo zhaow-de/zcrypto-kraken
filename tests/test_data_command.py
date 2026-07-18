@@ -11,19 +11,19 @@ from cli.__main__ import app
 runner = CliRunner()
 
 
-def _write_config(tmp_path: Path, *, hot_dir: Path, push_dest: str, authored_sets: list[str]) -> None:
+def _write_config(tmp_path: Path, *, nfs_mount_dir: Path, push_dest: str, authored_sets: list[str]) -> None:
     (tmp_path / "zcrypto.toml").write_text(
-        f'[zcrypto]\ndata_dir = "{tmp_path / "data"}"\n\n'
-        f'[zcrypto.data]\nhot_dir = "{hot_dir}"\npush_dest = "{push_dest}"\n'
+        f'[zcrypto]\ndata_dir = "{tmp_path / "data"}"\nnfs_mount_dir = "{nfs_mount_dir}"\n\n'
+        f'[zcrypto.data]\npush_dest = "{push_dest}"\n'
         f"authored_sets = {authored_sets!r}\n"
     )
 
 
 def test_fetch_happy_path_exits_zero(tmp_path, monkeypatch):
-    hot = tmp_path / "hot"
-    (hot / "ohlc-full").mkdir(parents=True)
-    (hot / "ohlc-full" / "a.parquet").write_bytes(b"A")
-    _write_config(tmp_path, hot_dir=hot, push_dest="nas-hot:", authored_sets=["ohlc-full"])
+    # fetch source derives as nfs_mount_dir/hot, so the mount root is the hot dir's parent.
+    (tmp_path / "hot" / "ohlc-full").mkdir(parents=True)
+    (tmp_path / "hot" / "ohlc-full" / "a.parquet").write_bytes(b"A")
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest="nas-hot:", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["data", "fetch"])
@@ -31,8 +31,9 @@ def test_fetch_happy_path_exits_zero(tmp_path, monkeypatch):
     assert (tmp_path / "data" / "ohlc-full" / "a.parquet").read_bytes() == b"A"
 
 
-def test_fetch_missing_hot_dir_exits_nonzero(tmp_path, monkeypatch):
-    _write_config(tmp_path, hot_dir=tmp_path / "absent", push_dest="nas-hot:", authored_sets=[])
+def test_fetch_missing_hot_source_exits_nonzero(tmp_path, monkeypatch):
+    # nfs_mount_dir/hot does not exist under an absent mount root.
+    _write_config(tmp_path, nfs_mount_dir=tmp_path / "absent", push_dest="nas-hot:", authored_sets=[])
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["data", "fetch"])
@@ -47,7 +48,7 @@ def test_push_respects_the_allowlist(tmp_path, monkeypatch):
     (data_dir / "engine-store" / "secret.parquet").write_bytes(b"NO")
     dest = tmp_path / "dest"
     dest.mkdir()
-    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest=str(dest) + "/", authored_sets=["ohlc-full"])
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest=str(dest) + "/", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["data", "push"])
@@ -60,7 +61,7 @@ def test_rebuild_mints_sibling_no_push(tmp_path, monkeypatch):
     from cli.data import rebuild as rebuild_module
 
     monkeypatch.setitem(rebuild_module.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
-    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest="nas-hot:", authored_sets=["ohlc-full"])
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest="nas-hot:", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["data", "rebuild", "ohlc-full", "--no-push"])
@@ -76,7 +77,7 @@ def test_rebuild_pushes_minted_sibling_by_default(tmp_path, monkeypatch):
     monkeypatch.setitem(rebuild_module.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
     dest = tmp_path / "dest"
     dest.mkdir()
-    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest=str(dest) + "/", authored_sets=[])
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest=str(dest) + "/", authored_sets=[])
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["data", "rebuild", "ohlc-full"])
@@ -86,7 +87,7 @@ def test_rebuild_pushes_minted_sibling_by_default(tmp_path, monkeypatch):
 
 
 def test_rebuild_unknown_set_exits_nonzero(tmp_path, monkeypatch):
-    _write_config(tmp_path, hot_dir=tmp_path / "hot", push_dest="nas-hot:", authored_sets=[])
+    _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest="nas-hot:", authored_sets=[])
     monkeypatch.chdir(tmp_path)
 
     result = runner.invoke(app, ["data", "rebuild", "not-a-set", "--no-push"])

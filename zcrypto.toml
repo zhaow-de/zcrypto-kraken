@@ -1,12 +1,12 @@
 [zcrypto]
 # Compiled dataset directory.
 data_dir = "data"
-# Kraken OHLCVT full-history ZIP archive (base dump + quarterly updates).
-ohlcvt_source_dir = "../zcrypto-kraken-data/kraken-ohlcvt-updates"
+# NAS mount root: the hot/ fetch source and the custody sets (kraken-ohlcvt-updates, ...) derive from
+# it. Aligned across the workstation and ops so one committed value serves both (spec 00056).
+nfs_mount_dir = "/mnt/zhao-crypto"
 
-# The hot-cluster exchange (spec 00056): fetch source (NFS read path), push destination
-# (ssh alias pinned by the NAS rrsync forced command -- NEVER the rw NFS mount), authored sets.
+# The hot-cluster exchange (spec 00056): push destination (ssh alias pinned by the NAS rrsync forced
+# command -- NEVER the rw NFS mount) + the sets this node may push. Fetch source derives from nfs_mount_dir.
 [zcrypto.data]
-hot_dir = "../zcrypto-kraken-data/hot"
 push_dest = "nas-hot:"
 authored_sets = ["ohlc-full", "ohlc-15m", "ohlc-holdout-2026-07-10", "derivatives-funding", "snapshots", "universe"]

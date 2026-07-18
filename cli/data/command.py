@@ -6,11 +6,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import typer
 
-from cli.config import ConfigError, load_config, resolve_data_dir, resolve_hot_dir, resolve_ohlcvt_source_dir, resolve_push_dest
+from cli.config import ConfigError, load_config, resolve_data_dir, resolve_hot_source, resolve_ohlcvt_source_dir, resolve_push_dest
 from cli.data.errors import DataSyncError
 from cli.data.rebuild import RebuildContext, rebuild_sets
 from cli.data.sync import fetch_hot, push_hot
@@ -32,13 +31,12 @@ def _abort(message: str) -> typer.Exit:
 
 @data_app.command()
 def fetch(
-    hot_dir: Optional[Path] = typer.Option(None, "--hot-dir", help="Override the configured [zcrypto.data].hot_dir."),
     no_verify: bool = typer.Option(False, "--no-verify", help="Skip manifest hash verification of newly fetched files."),
 ) -> None:
     """Additively mirror the NAS hot/ hub into the local data root."""
     try:
         cfg = load_config()
-        resolved_hot_dir = resolve_hot_dir(hot_dir, cfg)
+        resolved_hot_dir = resolve_hot_source(cfg)
         data_root = resolve_data_dir(None, cfg)
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
@@ -80,14 +78,15 @@ def rebuild(
     try:
         cfg = load_config()
         data_root = resolve_data_dir(None, cfg)
-        try:
-            ohlcvt_source_dir = resolve_ohlcvt_source_dir(None, cfg)
-        except ConfigError:
-            ohlcvt_source_dir = None
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
 
-    ctx = RebuildContext(data_root=data_root, ohlcvt_source_dir=ohlcvt_source_dir, stamp=datetime.now(UTC).strftime("%Y%m%d"))
+    # ohlcvt now derives from nfs_mount_dir (always a path); a missing mount fails loudly at read time.
+    ctx = RebuildContext(
+        data_root=data_root,
+        ohlcvt_source_dir=resolve_ohlcvt_source_dir(None, cfg),
+        stamp=datetime.now(UTC).strftime("%Y%m%d"),
+    )
 
     try:
         minted = rebuild_sets(sets, ctx)

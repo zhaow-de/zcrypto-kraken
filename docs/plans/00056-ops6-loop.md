@@ -50,6 +50,8 @@ ______________________________________________________________________
 
 ### Task 2: The `[zcrypto.data]` config table (spec D3)
 
+> **Superseded in part (overnight feedback 4b):** the fetch source is no longer a `[zcrypto.data].hot_dir` key. It derives from a top-level `[zcrypto].nfs_mount_dir` (default `/mnt/zhao-crypto`, one committed value serving both nodes); `resolve_hot_dir` and the `--hot-dir` flag were dropped, `resolve_hot_source(cfg)` returns `nfs_mount_dir/hot`, and `resolve_ohlcvt_source_dir` derives `nfs_mount_dir/kraken-ohlcvt-updates`. The snippets below record the as-executed Task-2 commit (39db5da); the final surface lives in `cli/config.py` + the committed `zcrypto.toml`.
+
 **Files:**
 
 - Modify: `cli/config.py`, `zcrypto.toml`, `tests/test_config.py`
@@ -435,6 +437,7 @@ ______________________________________________________________________
 
 **Files:** `infra/ansible/roles/nas/` (+ `host_vars/nas`), `infra/ansible/roles/ops/tasks/main.yml`, `infra/nas/` (vendored rrsync + pull-entrypoint extension), vault additions.
 
+- [ ] **Step 0 (workstation prerequisite, overnight feedback 4b): align the workstation NAS mount to `/mnt/zhao-crypto`.** The committed `nfs_mount_dir` is `/mnt/zhao-crypto` — one value serving both nodes — but the workstation currently mounts the share at `../zcrypto-kraken-data`. Repoint the workstation's NAS mount (fstab) to `/mnt/zhao-crypto` and remount, so the workstation's own `data fetch` (`nfs_mount_dir/hot`) and `rebuild` (`nfs_mount_dir/kraken-ohlcvt-updates`) resolve without a per-node config override. Verify: `ls /mnt/zhao-crypto/kraken-ohlcvt-updates` lists the dumps and no remaining config points at `../zcrypto-kraken-data`.
 - [ ] **Step 1: Design the channel pieces on the branch (code-reviewable before any converge):**
   - Vendor OpenSSH's `rrsync` into `infra/nas/rrsync` (the NAS has no rrsync; it has rsync + python — T0056 facts).
   - NAS role: create `/volume1/ZhaoCrypto/hot` (owner zhaow, 0775); deploy `rrsync` to the NAS payload dir; add the **push key**'s public half to the NAS user's `authorized_keys` with forced command `<payload>/rrsync /volume1/ZhaoCrypto/hot` (write-capable, root pinned to hot/ — the whole point), `no-agent-forwarding,no-port-forwarding,no-pty,no-X11-forwarding`.
@@ -450,7 +453,7 @@ ______________________________________________________________________
 
 - [ ] **Step 1: Seed.** On the workstation: `uv run zcrypto data push` → seeds all six authored sets (~281 MB) into `hot/`. Verify: NAS-side listing matches the local tree file-for-file; spot-verify two `sha256`s.
 - [ ] **Step 2: Delete the dead sets.** Workstation: `rm -rf data/ohlc data/engine-journal-vps` (v0 dead — spec D4; the VPS-journal pull copy — spec D6; both verified consumer-free). Confirm the fast suite still passes.
-- [ ] **Step 3: Ops acceptance.** On ops (repo checkout, `git pull`, `uv sync`): configure `[zcrypto.data] hot_dir = "/mnt/zhao-crypto/hot"` (ops pushes nothing — no `push_dest`, empty `authored_sets`); `uv run zcrypto data fetch`; then the **sharpest acceptance test**: `uv run pytest tests/test_crossfreq_system.py tests/test_portfolio_builder.py -q` — the data-dependent regression tests must **RUN (not skip) and pass on ops**. Record runtimes.
+- [ ] **Step 3: Ops acceptance.** On ops (repo checkout, `git pull`, `uv sync`): no mount config needed — the committed `nfs_mount_dir` default `/mnt/zhao-crypto` already resolves the hot source `/mnt/zhao-crypto/hot`, and ops simply never runs `push` (its committed `push_dest`/`authored_sets` go unused on `fetch`). Run `uv run zcrypto data fetch`; then the **sharpest acceptance test**: `uv run pytest tests/test_crossfreq_system.py tests/test_portfolio_builder.py -q` — the data-dependent regression tests must **RUN (not skip) and pass on ops**. Record runtimes.
 - [ ] **Step 4: Round-trip.** Push a tiny sibling-minted test set from the workstation, fetch it on ops byte-identical, verify manifest; attempt a content-changed re-push of the same file and confirm rsync transmits nothing (the D1c proof, live). Remove the test set from `hot/` (attended NAS-side `rm` — the one sanctioned deletion, it never entered any registry).
 
 ______________________________________________________________________

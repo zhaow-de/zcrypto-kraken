@@ -243,7 +243,6 @@ zcrypto data fetch
 
 | Option | Description |
 | -- | -- |
-| `--hot-dir` | Override the configured `[zcrypto.data].hot_dir`. |
 | `--no-verify` | Skip manifest hash verification of newly fetched files. |
 
 `push` sends this node's authored sets (`[zcrypto.data].authored_sets`) to the configured `push_dest` — an ssh alias pinned by the NAS's forced rsync command, never the read-write NFS mount.
@@ -252,7 +251,7 @@ zcrypto data fetch
 zcrypto data push
 ```
 
-`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation, which alone has `ohlcvt_source_dir` configured; the ops node only consumes frozen baskets via `fetch`.
+`rebuild` re-freezes or refreshes one or more sets from their sources (the OHLCVT dumps; the funding/snapshot/universe fetchers) and mints a new sibling directory — it never writes into the live set. By convention this runs on the workstation — the authoring node; the ops node is pull-only and only consumes frozen baskets via `fetch`. Its dump source (`nfs_mount_dir/kraken-ohlcvt-updates`) derives from the NAS mount root.
 
 ```bash
 zcrypto data rebuild <SET>...
@@ -263,7 +262,7 @@ zcrypto data rebuild <SET>...
 | `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-15m`, `derivatives-funding`, `snapshots`, `universe`. |
 | `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
 
-All three exit **1** on a configuration or sync error (a missing/unmountable `hot_dir`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
+All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 
 ## Configuration<a name="configuration"></a>
 
@@ -273,12 +272,11 @@ All three exit **1** on a configuration or sync error (a missing/unmountable `ho
 
 ```toml
 [zcrypto]
-data_dir = "data"                                                   # compiled dataset directory
-backup_dir = "../zcrypto-kraken-data/zcrypto"                       # durable backup root (raw/ mirror + snapshots/)
-ohlcvt_source_dir = "../zcrypto-kraken-data/kraken-ohlcvt-updates"  # Kraken OHLCVT full-history ZIP archive (base dump + quarterly updates)
+data_dir = "data"                  # compiled dataset directory
+nfs_mount_dir = "/mnt/zhao-crypto"  # NAS mount root: the hot/ fetch source and the custody sets (kraken-ohlcvt-updates, ...) derive from it
 ```
 
-Paths resolve via **flag → config → error**: if a path is neither passed as a CLI flag nor set in `zcrypto.toml`, the command exits immediately with a clear error message (`ERROR: no <name> configured — set [zcrypto].<name> in zcrypto.toml or pass --<flag> <path>`). There is no built-in fallback.
+`data_dir` resolves via **flag → config → error**: if it is neither passed as a CLI flag nor set in `zcrypto.toml`, the command exits immediately with a clear error message (`ERROR: no data_dir configured — set [zcrypto].data_dir in zcrypto.toml or pass --data-dir <path>`). `nfs_mount_dir` instead has a built-in default (`/mnt/zhao-crypto`, aligned across the workstation and ops so one committed value serves both), so it always resolves; override it in `zcrypto.toml` only if a node mounts the NAS elsewhere.
 
 ### `[zcrypto.engine]`: shadow-engine settings<a name="zcryptoengine-shadow-engine-settings"></a>
 

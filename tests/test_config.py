@@ -10,7 +10,7 @@ from cli.config import (
     FetchConfig,
     load_config,
     resolve_data_dir,
-    resolve_hot_dir,
+    resolve_hot_source,
     resolve_ohlcvt_source_dir,
     resolve_push_dest,
 )
@@ -25,7 +25,7 @@ def _write(tmp_path: Path, body: str) -> Path:
 def test_absent_file_yields_none_paths_and_default_fetch(tmp_path):
     cfg = load_config(tmp_path / "zcrypto.toml")
     assert cfg.data_dir is None
-    assert cfg.ohlcvt_source_dir is None
+    assert cfg.nfs_mount_dir == Path("/mnt/zhao-crypto")  # a real default always exists
     assert cfg.fetch == FetchConfig()
     assert cfg.engine == EngineConfig()
 
@@ -34,11 +34,11 @@ def test_reads_paths(tmp_path):
     cfg = load_config(
         _write(
             tmp_path,
-            '[zcrypto]\ndata_dir = "data"\nohlcvt_source_dir = "../zcrypto-ohlcvt"\n',
+            '[zcrypto]\ndata_dir = "data"\nnfs_mount_dir = "/mnt/nas"\n',
         )
     )
     assert cfg.data_dir == Path("data")
-    assert cfg.ohlcvt_source_dir == Path("../zcrypto-ohlcvt")
+    assert cfg.nfs_mount_dir == Path("/mnt/nas")
 
 
 def test_missing_one_path_key_is_none(tmp_path):
@@ -184,29 +184,25 @@ def test_resolve_flag_wins(tmp_path):
 
 
 def test_resolve_ohlcvt_source_dir_flag_wins(tmp_path):
-    cfg = load_config(_write(tmp_path, '[zcrypto]\nohlcvt_source_dir = "from_config"\n'))
+    cfg = load_config(_write(tmp_path, '[zcrypto]\nnfs_mount_dir = "/mnt/nas"\n'))
     assert resolve_ohlcvt_source_dir(Path("from_flag"), cfg) == Path("from_flag")
 
 
-def test_resolve_ohlcvt_source_dir_falls_back_to_config(tmp_path):
-    cfg = load_config(_write(tmp_path, '[zcrypto]\nohlcvt_source_dir = "cfg_ohlcvt"\n'))
-    assert resolve_ohlcvt_source_dir(None, cfg) == Path("cfg_ohlcvt")
+def test_resolve_ohlcvt_source_dir_derives_from_nfs_mount(tmp_path):
+    cfg = load_config(_write(tmp_path, '[zcrypto]\nnfs_mount_dir = "/mnt/nas"\n'))
+    assert resolve_ohlcvt_source_dir(None, cfg) == Path("/mnt/nas/kraken-ohlcvt-updates")
+    # and with no config at all, from the default mount root
+    assert resolve_ohlcvt_source_dir(None, load_config(tmp_path / "absent.toml")) == Path("/mnt/zhao-crypto/kraken-ohlcvt-updates")
 
 
 def test_resolve_unconfigured_raises_with_both_remedies():
-    cfg = AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig())
+    cfg = AppConfig(
+        data_dir=None, nfs_mount_dir=Path("/mnt/zhao-crypto"), fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig()
+    )
     with pytest.raises(ConfigError) as exc:
         resolve_data_dir(None, cfg)
     msg = str(exc.value)
     assert "--data-dir" in msg and "[zcrypto].data_dir" in msg
-
-
-def test_resolve_ohlcvt_source_dir_unconfigured_raises_with_both_remedies():
-    cfg = AppConfig(data_dir=None, ohlcvt_source_dir=None, fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig())
-    with pytest.raises(ConfigError) as exc:
-        resolve_ohlcvt_source_dir(None, cfg)
-    msg = str(exc.value)
-    assert "--ohlcvt-source-dir" in msg and "[zcrypto].ohlcvt_source_dir" in msg
 
 
 def test_removed_keys_are_rejected(tmp_path):
@@ -223,34 +219,29 @@ def test_data_config_parses_all_keys(tmp_path):
     cfg = load_config(
         _write(
             tmp_path,
-            '[zcrypto.data]\nhot_dir = "../zcrypto-kraken-data/hot"\npush_dest = "nas-hot:"\n'
-            'authored_sets = ["ohlc-full", "snapshots"]\n',
+            '[zcrypto.data]\npush_dest = "nas-hot:"\nauthored_sets = ["ohlc-full", "snapshots"]\n',
         )
     )
-    assert cfg.data.hot_dir == Path("../zcrypto-kraken-data/hot")
     assert cfg.data.push_dest == "nas-hot:"
     assert cfg.data.authored_sets == ("ohlc-full", "snapshots")
 
 
 def test_data_config_unknown_key_raises(tmp_path):
     with pytest.raises(ConfigError, match="unknown key"):
-        load_config(_write(tmp_path, '[zcrypto.data]\nhot_root = "x"\n'))
+        load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = "x"\n'))  # hot_dir is now removed → unknown
 
 
 def test_data_config_rejects_bad_types(tmp_path):
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, '[zcrypto.data]\nauthored_sets = "ohlc-full"\n'))
     with pytest.raises(ConfigError):
-        load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = ""\n'))
+        load_config(_write(tmp_path, '[zcrypto.data]\npush_dest = ""\n'))
 
 
-def test_resolve_hot_dir_flag_beats_config_and_errors_when_absent(tmp_path):
-    cfg = load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = "cfg_hot"\n'))
-    assert resolve_hot_dir(Path("flag_hot"), cfg) == Path("flag_hot")
-    assert resolve_hot_dir(None, cfg) == Path("cfg_hot")
-    empty = load_config(_write(tmp_path, "[zcrypto]\n"))
-    with pytest.raises(ConfigError):
-        resolve_hot_dir(None, empty)
+def test_resolve_hot_source_derives_from_nfs_mount(tmp_path):
+    cfg = load_config(_write(tmp_path, '[zcrypto]\nnfs_mount_dir = "/mnt/nas"\n'))
+    assert resolve_hot_source(cfg) == Path("/mnt/nas/hot")
+    assert resolve_hot_source(load_config(tmp_path / "absent.toml")) == Path("/mnt/zhao-crypto/hot")
 
 
 def test_resolve_push_dest_unset_raises_and_set_returns(tmp_path):

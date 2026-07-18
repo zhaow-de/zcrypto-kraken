@@ -78,7 +78,7 @@ The pre-registered out-of-time holdout pull: 100 bars/pair, 2026-04-01 → 2026-
 
 ## custody
 
-The NAS (`/volume1/ZhaoCrypto`) keeps everything forever; both research nodes read it in place (workstation `../zcrypto-kraken-data`, ops `/mnt/zhao-crypto`) rather than fetching a local copy — the `ohlcvt_source_dir` config is the standing precedent. Append-only per each producer's own contract; accruing caches are final-once-written under their settle discipline, tree-regenerable on a generation bump. No fetch-cache of accruing sets (owner: YAGNI) and no change from the new `zcrypto data` tool, which never transmits this cluster (spec `00056` D1a).
+The NAS (`/volume1/ZhaoCrypto`) keeps everything forever; both research nodes read it in place over their aligned `nfs_mount_dir` mount (`/mnt/zhao-crypto`) rather than fetching a local copy — the read-in-place OHLCVT-dumps path (now derived from `nfs_mount_dir`) is the standing precedent. Append-only per each producer's own contract; accruing caches are final-once-written under their settle discipline, tree-regenerable on a generation bump. No fetch-cache of accruing sets (owner: YAGNI) and no change from the new `zcrypto data` tool, which never transmits this cluster (spec `00056` D1a).
 
 Unlike the frozen `hot` baskets (pinned at the file level), the accruing operational members below are **hash-versioned at consumption**: a research iteration extracts its window and records that frame's `dataset_hash` in the trial registry (never "latest").
 
