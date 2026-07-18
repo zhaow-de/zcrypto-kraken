@@ -58,16 +58,16 @@ repos:
       # Allowlist of mdformat-managed docs: the three READMEs + infra/external-systems.md + EVERY
       # report under docs/research/, matched by glob so a new research paper is covered
       # automatically (no per-file edit here).
-      # Excluded by the negative lookahead: the verbatim decision logs — *-decisions.md and the
-      # *-cont-decisions-<K>.md continuations — whose option lists + "(Decision: N)" markers mdformat
-      # would restructure (see .claude/rules/decisions-log.md), and the git-tracked running logs
-      # decisions-running-phase<N>.md (spec 00056 D7). Nothing else under docs/ is covered
-      # (reference/, specs/, plans/, open-topics topic files format by hand).
+      # Excluded by the negative lookahead: the verbatim decision logs — *-decisions.md, the
+      # *-cont-decisions-<K>.md continuations, and the *-decisions-running.md running logs — whose
+      # option lists + "(Decision: N)" markers mdformat would restructure (see
+      # .claude/rules/decisions-log.md). Nothing else under docs/ is covered (reference/, specs/,
+      # plans/, open-topics topic files format by hand).
       files: |
         (?x)^(
             README\.md|
             infra/README\.md|
             infra/external-systems\.md|
             docs/open-topics/README\.md|
-            docs/research/(?!(.*-(cont-decisions-\d+|decisions)|decisions-running-phase\d+)\.md$).*\.md
+            docs/research/(?!.*-(cont-decisions-\d+|decisions|decisions-running)\.md$).*\.md
         )$
