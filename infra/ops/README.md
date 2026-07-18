@@ -4,6 +4,17 @@ The home ops node (`zcrypto-ops`, `ssh hp`) is the fleet's compute tier: a home-
 
 Everything below is installed by the `ops` Ansible role (`infra/ansible/roles/ops/`) **only when the pinned image digest is supplied** (`-e ops_image_digest=sha256:<...>`, always the **default AVX** build of `ghcr.io/zhaow-de/zcrypto-capture`, never `-compat`, never `:latest`); a converge without the digest skips those installs rather than rendering artifacts that point at a broken image reference.
 
+## Users and groups (spec 00057)
+
+The node runs on the fleet users/groups model (all Ansible-provisioned):
+
+- **`zcrypto-deploy`** — the interactive admin: sudo, the `ansible_user`, the `ssh hp` login. Renamed from `deploy` (uid 1001 kept); its `authorized_keys` holds exactly the one operator login key (`exclusive: true`, spec 00057 D1). Never in the data path.
+- **`zcrypto-data`** — the machine-to-machine data user (no sudo, no password). It runs every data container via `--user`, owns the data trees (`liquidations`, `l2-panel`, `capture-reconciled`, `hot-out`, `textfile`), and **serves** the four NAS pull channels via `rrsync -ro` forced-command keys (role-provisioned; the committed pubs in `infra/ansible/files/sync_*_ed25519.pub`). Its shell is `/bin/bash`, **not** `nologin`: sshd runs a `command="rrsync …"` forced command through the login shell, so `nologin` would swallow it — the keys stay jailed by `command=`/`restrict` (one read-only subtree each) and there is no password, so no interactive login is reachable despite the real shell.
+- **`zcrypto-alloy`** — the telemetry stack's dedicated non-admin user (see the Alloy section).
+- **`zhaow`** (uid 1000) — the research user; authors into `hot-out` via the shared setgid `zcrypto-hot` group (`zcrypto-data` owns + serves it, `zhaow` writes into it).
+
+No trade key ever touches this host (D10).
+
 ## Liquidations poller (OPS-2)
 
 The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_compose_dir }}/compose.yaml` (default `/etc/zcrypto-ops/compose.yaml`), rendered by the role from `infra/ansible/roles/ops/templates/compose.yaml.j2`. It polls Coinalyze's `/v1/liquidation-history` REST endpoint (interval `1min`, `convert_to_usd=true`) every `COINALYZE_POLL_SECONDS` (default 300 s) for the funding basket's 10 Binance USDT perps, ingesting only buckets **proven closed** (`t+60 <= now-120`) into hourly Parquet segments + `.sha256` manifests under `<COIN>/liquidations-1m/`. It replaced the Binance `forceOrder` WS recorder (`zcrypto liquidations`, shelved in place — Binance geo-fences its futures streams from every egress we own; see [T0023]). Liquidations are **not backfillable** beyond Coinalyze's ~25–33 h retention, so the tree replicates to the NAS (D10 no-sole-custody — the channel below) and the daemon is **never auto-(re)started by a converge**: the role only renders the file; starting is a deliberate attended step.
@@ -24,14 +35,14 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 | `LIQUIDATIONS_HEALTHCHECK_URL` | healthchecks.io dead-man ping URL; pinged after each fully-successful poll cycle (~300 s cadence) while disk-healthy. Empty → pings skipped. | role var `ops_liquidations_healthcheck_url` ← vaulted `liquidations_healthcheck_url` |
 | `COINALYZE_POLL_SECONDS` | Poll cadence (default 300; one 10-symbol call per cycle ≈ 2 of Coinalyze's 40/min per-symbol budget). | compose default; override for testing only |
 
-The service runs digest-pinned (`{{ ops_image }}@{{ ops_image_digest }}`), as the `deploy` uid:gid, `restart: unless-stopped`, `json-file` logging capped 10m×3. The shelved WS recorder shares the same data dir and `single_instance_lock`, so the two can never run concurrently.
+The service runs digest-pinned (`{{ ops_image }}@{{ ops_image_digest }}`), as the `zcrypto-data` uid:gid (spec 00057 — the m2m user, not the sudo admin), `restart: unless-stopped`, `json-file` logging capped 10m×3. The shelved WS recorder shares the same data dir and `single_instance_lock`, so the two can never run concurrently.
 
 ### The `sync_liquidations` replication channel (the NAS pulls this node)
 
 Pull-only transport, mirroring the capture channels (`infra/nas/README.md`): the NAS pulls the liquidations tree hash-verified (the recorder writes `.sha256` manifests — never `--no-verify`), over a **dedicated** read-only rrsync forced-command keypair. One difference from the VPS channels: the ops node is a home-LAN box on SSH **port 22** (not 10022), so the NAS side scopes `LIQUIDATIONS_SSH_PORT` per call.
 
 1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_liquidations_ed25519 -C zcrypto-sync-liquidations-pullonly -N ""`.
-2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys` (rrsync lives at `/usr/bin/rrsync` on Debian 13; the role installs `rsync`):
+2. **Ops node** — the ops role installs the public half (committed in `infra/ansible/files/`) as a forced-command entry in `zcrypto-data`'s `~/.ssh/authorized_keys` (rrsync lives at `/usr/bin/rrsync` on Debian 13; the role installs `rsync`):
 
    ```
    command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/liquidations",restrict ssh-ed25519 AAAA... zcrypto-sync-liquidations-pullonly
@@ -39,11 +50,11 @@ Pull-only transport, mirroring the capture channels (`infra/nas/README.md`): the
 
 3. **NAS** — drop the private key at `/volume1/docker/zcrypto-archive/keys/sync_liquidations`, mode `0600` (matches the fixed `LIQUIDATIONS_SSH_KEY=/keys/sync_liquidations` in `infra/nas/compose.yaml`).
 4. **NAS** — pin the ops host key: from a machine with `ssh-keyscan`, run `ssh-keyscan -p 22 <ops-host>` and **append** its output to `/volume1/docker/zcrypto-archive/keys/known_hosts` (the shared pinned file; host-key checking is strict). Verify the key against the ops node's own `/etc/ssh/ssh_host_ed25519_key.pub` — never trust-on-first-use.
-5. **NAS** — set `LIQUIDATIONS_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` (the rrsync forced command pins the actual remote subtree) and `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely. The pull is deliberately **not** an input to the NAS reconcile gate — the reconciler reasons only about the two capture mirrors.
+5. **NAS** — set `LIQUIDATIONS_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` (the rrsync forced command pins the actual remote subtree) and `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely. The pull is deliberately **not** an input to the NAS reconcile gate — the reconciler reasons only about the two capture mirrors.
 
 ## Replay timers (OPS-3)
 
-Two daily systemd timers run the `zcrypto` CLI in the digest-pinned image (`docker run --rm --entrypoint zcrypto <image>@<digest> ...`, as the `deploy` uid/gid, with the NAS NFS export mounted read-only at `/nas` and — where the local overlay is an input — `ops_data_dir` read-only at `/data`; T0058):
+Two daily systemd timers run the `zcrypto` CLI in the digest-pinned image (`docker run --rm --entrypoint zcrypto <image>@<digest> ...`, as the `zcrypto-data` uid/gid, with the NAS NFS export mounted read-only at `/nas` and — where the local overlay is an input — `ops_data_dir` read-only at `/data`; T0058):
 
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
@@ -75,7 +86,7 @@ Two wiring notes: (1) a digest-only converge arms `panel-materialize` before any
 
 **The NAS→ops rsync mirror is retired (T0058).** The NAS exports `/volume1/ZhaoCrypto` read-only over NFS; the role writes the fstab entry (`ops_nas_mount`, default `/mnt/zhao-crypto`; `ro,nfsvers=3,nolock,soft,timeo=100,retrans=3,noatime,nosuid,nodev,noauto,x-systemd.automount,x-systemd.mount-timeout=15` — `timeo` is **deciseconds**, so 10 s) and the systemd automount owns mounting. The export's server side is a hand-made DSM rule — a `ZhaoCrypto` NFS permission for the ops node's IP with privilege **Read-Only**, recorded in `infra/external-systems.md` (NAS → Initial setup): the export-side Read-Only is the server half of the D10 no-write-toward-custody boundary, so the boundary never rests on the client `ro` flag alone. The canonical trees (`capture-segments`, `capture-segments-red`, `engine-journal`) are read through the mount; the write-back direction is unchanged (overlay + panel return via the NAS-initiated rrsync pulls below). `zcrypto-archive-pull` keeps its unit + metric names for the provisioned alerts' sake, but it is now the **overlay-writer cycle**: it pulls nothing.
 
-**Attended retirement step (after the NFS path is verified live):** remove the old pull channel's credentials — the `sync_nas_archive` private key + `nas_known_hosts` pin under `~deploy/.ssh` on this host, the matching forced-command entry in the NAS-side `authorized_keys`, and the now-unpinged `archive-pull` healthchecks.io check (it alerts on missed pings, so leaving it armed pages). Deliberately not automated: deleting live-looking keys is an irreversible, verify-first action.
+**Attended retirement step — completed 2026-07-17:** the old pull channel's credentials were removed — the `sync_nas_archive` private key + `nas_known_hosts` pin that had lived under the admin home's `.ssh` (now `/home/zcrypto-deploy/.ssh` after the spec-00057 rename — **verified absent**), the matching forced-command entry in the NAS-side `authorized_keys`, and the now-unpinged `archive-pull` healthchecks.io check (it alerts on missed pings, so leaving it armed pages). It was deliberately a manual, verify-first step: deleting live-looking keys is irreversible.
 
 | Unit | Schedule (UTC) | What it runs |
 | -- | -- | -- |
@@ -115,7 +126,7 @@ D7): the panel is recomputable from raw (`f(raw)`, spec 00052), so this copy is 
 custody-critical.
 
 1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_panel_ed25519 -C zcrypto-sync-panel-pullonly -N ""`.
-2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys`, pinning the panel root:
+2. **Ops node** — the ops role installs the public half (committed in `infra/ansible/files/`) as a forced-command entry in `zcrypto-data`'s `~/.ssh/authorized_keys`, pinning the panel root:
 
    ```
    command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/l2-panel",restrict ssh-ed25519 AAAA... zcrypto-sync-panel-pullonly
@@ -126,7 +137,7 @@ custody-critical.
 4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
    `sync_liquidations` setup above (step 4 there); no re-pin needed for a second channel to the
    same host.
-5. **NAS** — set `PANEL_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
+5. **NAS** — set `PANEL_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` and
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
 ### The `sync_reconciled` replication channel (the NAS pulls this node)
@@ -137,7 +148,7 @@ instead of writing it. Custody stays on the NAS (D3); only the computation moved
 like the panel/liquidations channels (every minted hour carries a `.sha256` sidecar).
 
 1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_reconciled_ed25519 -C zcrypto-sync-reconciled-pullonly -N ""`.
-2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys`, pinning the overlay root:
+2. **Ops node** — the ops role installs the public half (committed in `infra/ansible/files/`) as a forced-command entry in `zcrypto-data`'s `~/.ssh/authorized_keys`, pinning the overlay root:
 
    ```
    command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/capture-reconciled",restrict ssh-ed25519 AAAA... zcrypto-sync-reconciled-pullonly
@@ -148,7 +159,7 @@ like the panel/liquidations channels (every minted hour carries a `.sha256` side
 4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
    `sync_liquidations` setup above (step 4 there); no re-pin needed for a third channel to the
    same host.
-5. **NAS** — set `RECONCILED_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
+5. **NAS** — set `RECONCILED_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` and
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
 ### The `sync_hot` replication channel (the NAS pulls this node)
@@ -164,7 +175,7 @@ expects -- so the pull is unverified-at-transport and append-only-by-constructio
 file is simply untransmittable).
 
 1. **Keygen** (workstation; vault the private half like the other sync keys): `ssh-keygen -t ed25519 -f sync_hot_ed25519 -C zcrypto-sync-hot-pullonly -N ""`.
-2. **Ops node** — install the public half as a forced-command entry in `deploy`'s `~/.ssh/authorized_keys`, pinning the outbox root:
+2. **Ops node** — the ops role installs the public half (committed in `infra/ansible/files/`) as a forced-command entry in `zcrypto-data`'s `~/.ssh/authorized_keys`, pinning the outbox root:
 
    ```
    command="/usr/bin/rrsync -ro /var/lib/zcrypto-ops/hot-out",restrict ssh-ed25519 AAAA... zcrypto-sync-hot-pullonly
@@ -175,7 +186,7 @@ file is simply untransmittable).
 4. **NAS** — the ops host key is already pinned in the shared `known_hosts` file from the
    `sync_liquidations` setup above (step 4 there); no re-pin needed for a fourth channel to the
    same host.
-5. **NAS** — set `HOT_SOURCE=deploy@<ops-host>:` in the `.env` next to `compose.yaml` and
+5. **NAS** — set `HOT_SOURCE=zcrypto-data@<ops-host>:` in the `.env` next to `compose.yaml` and
    `docker compose up -d` to pick it up. Leave it unset and the pull cycle is skipped entirely.
 
 ## Alloy telemetry stack (Task 1, spec 00054 D1/D7)
@@ -186,7 +197,7 @@ Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
 host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
 series, and every container's logs to Grafana Cloud — mirroring `infra/nas/config.alloy`'s pipeline
 (see `infra/ansible/roles/ops/files/config.alloy` for the three deliberate divergences: no
-cadvisor, dedicated non-`deploy` uid + rootfs mount, compose-service-first log labelling).
+cadvisor, dedicated non-admin uid + rootfs mount, compose-service-first log labelling).
 
 Ops log streams are labelled two ways (T0060): the long-lived compose-managed containers
 (`liquidations`, `alloy`) ship via the docker path, labelled from the **compose service label**;
@@ -201,15 +212,16 @@ future-proofing for a later non-compose container; today it matches nothing.) Th
 differs from the NAS's docker-name-derived scheme (whose selectors, copied verbatim, were dead on
 ops — T0060); unifying the fleet's labelling is T0020's fleet-wide dashboards pass.
 
-**Runs as the dedicated `zcrypto-alloy` system user, never `deploy`.** The role creates it
-(`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for `ops_uid`. This
-is load-bearing, not cosmetic: `/home/deploy/.ssh` (0700 `deploy:deploy`) still holds the
-`sync_nas_archive` private key (0600) of the T0058-retired pull channel (on the host until the
-attended retirement step above runs), and Alloy mounts
-`/:/host/root:ro` for its free-disk-space collector. Running Alloy as `deploy` would let it read
-that key directly through the mount, no escalation needed — defeating the protection this stack
-claims to replicate from the NAS (T0030). `zcrypto-alloy` owns nothing under `/home/deploy/.ssh`, so
-the direct read is closed. Docker-socket access is granted via `group_add` set to the host's real
+**Runs as the dedicated `zcrypto-alloy` system user, never `zcrypto-deploy` or `zcrypto-data`.** The role creates it
+(`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for the `zcrypto-data`
+container uid. This is least-privilege defense-in-depth: Alloy mounts `/:/host/root:ro` for its
+free-disk-space collector, so running it as a user whose `~/.ssh` held a private key would let it read
+that key straight through the mount, no escalation needed — the exact protection this stack replicates
+from the NAS (T0030). The acute case this originally guarded — the `sync_nas_archive` pull key under the
+admin home — is now moot: that channel was retired, credentials removed 2026-07-17 (T0058), and today
+neither the admin (`zcrypto-deploy`) nor the m2m (`zcrypto-data`) home holds any private key (only public
+`authorized_keys`). `zcrypto-alloy` owns nothing under either home, so the direct-read path stays closed
+by construction. Docker-socket access is granted via `group_add` set to the host's real
 numeric docker gid, derived at converge time with `getent` (`infra/ansible/roles/ops/tasks/main.yml`)
 — **not** a named `"docker"` entry: Docker resolves a named `group_add` entry against the
 **container's own** `/etc/group`, not the host's, and the upstream `grafana/alloy` image ships only
