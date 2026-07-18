@@ -112,6 +112,41 @@
     group: deploy
     mode: "0755"
 
+# --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
+# authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
+# exist before any data ownership or container-user change (Task 3).
+- name: create the zcrypto-data m2m user (nologin, no sudo; runs the data containers + owns the data)
+  ansible.builtin.user:
+    name: "{{ ops_data_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: true
+    state: present
+
+- name: create the zcrypto-hot exchange group (bridges zcrypto-data + the research user zhaow)
+  ansible.builtin.group:
+    name: "{{ ops_hot_group }}"
+    state: present
+
+- name: add zcrypto-data to the exchange group (owns + serves hot-out; reads zhaow-authored files)
+  ansible.builtin.user:
+    name: "{{ ops_data_user }}"
+    groups: "{{ ops_hot_group }}"
+    append: true
+
+- name: probe for the research user (created by the research role; optional to this pipeline role)
+  ansible.builtin.command: "getent passwd {{ ops_research_user }}"
+  register: ops_research_probe
+  failed_when: false
+  changed_when: false
+
+- name: add the research user to the exchange group when it exists (authors into hot-out)
+  ansible.builtin.user:
+    name: "{{ ops_research_user }}"
+    groups: "{{ ops_hot_group }}"
+    append: true
+  when: ops_research_probe.rc == 0
+
 # Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1 fix; extended by OPS-5 D2 to
 # cover the archive-pull block too): these two tasks used to live inside the ops_image_digest
 # block, but the Alloy block also needs ops_uid/ops_gid for its container `user:` mapping, and now
