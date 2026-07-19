@@ -89,6 +89,7 @@ def test_panel_materialize_help() -> None:
     assert "--panel-root" in squashed
     assert "--since" in squashed
     assert "--allow-holes" in squashed
+    assert "--settle-hours" in squashed
 
 
 # --- end-to-end run + meta on first run --------------------------------------------------------------
@@ -102,7 +103,7 @@ def test_materialize_end_to_end_writes_the_panel_and_the_meta(tmp_path: Path) ->
     result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
 
     assert result.exit_code == 0, result.output
-    assert "pairs=1 hours_written=1 hours_skipped=0 hours_unanchored=0 rows=3600 errors=0" in result.output
+    assert "pairs=1 hours_written=1 hours_skipped=0 hours_unsettled=0 hours_unanchored=0 rows=3600 errors=0" in result.output
 
     final = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet"
     assert final.exists()

@@ -292,6 +292,34 @@ def test_materialize_skips_hours_at_or_below_the_watermark(tmp_path: Path) -> No
     assert second.rows == 2 * 3600
 
 
+def test_materialize_defers_an_unsettled_hour_then_takes_it_once_settled(tmp_path: Path) -> None:
+    # T0066 / spec 00052 D6 correction: an hour is heal-complete only after the reconciler's H+6h
+    # max mint (+ a pull cycle), so `materialize` must NOT consume an hour whose settle margin has not
+    # elapsed -- otherwise the monotone watermark permanently captures the un-healed primary. Inject
+    # `now` to control the clock: with settle=7h and now=H+7.5h, H is settled but H+1h (only 6.5h old)
+    # is not.
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _messages()))  # H: snapshot-open
+    h1 = H + timedelta(hours=1)
+    h1_messages = [{"offset": 0, "type": "update", "bids": [(99.0, 5.0)], "asks": [], "checksum": 2}]
+    _book(primary, "BTC/EUR", h1, _explode("BTC/EUR", h1, h1_messages))  # update-open: needs H's state
+
+    first = materialize(primary, None, panel_root, pair="BTC/EUR", now=H + timedelta(hours=7, minutes=30))
+    assert first.hours_written == 1  # only H (settled: 7.5h >= 7h)
+    assert first.hours_unsettled == 1  # h1 deferred (6.5h < 7h), NOT written, NOT unanchored, NOT an error
+    assert first.hours_unanchored == 0 and first.errors == []
+    assert panel_watermark(panel_root, "BTC/EUR") == H  # the watermark did NOT advance onto the unsettled hour
+
+    # Later, once h1 has settled, a fresh sweep takes it -- resuming from H's state (proving deferral
+    # left the threading intact, not stranded).
+    second = materialize(primary, None, panel_root, pair="BTC/EUR", now=H + timedelta(hours=9))
+    assert second.hours_written == 1  # h1 now settled (8h >= 7h)
+    assert second.hours_skipped == 1  # H, already <= the watermark
+    assert second.hours_unsettled == 0
+    assert panel_watermark(panel_root, "BTC/EUR") == h1
+
+
 def test_materialize_isolates_a_corrupt_hour_and_continues(tmp_path: Path) -> None:
     # The corrupt hour sorts FIRST (H before H+1h), proving a later good hour still proceeds past it.
     primary = tmp_path / "primary"

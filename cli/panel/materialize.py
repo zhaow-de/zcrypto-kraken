@@ -42,6 +42,15 @@ logger = get_logger("panel.materialize")
 
 SECONDS_PER_HOUR = 3600
 
+# T0066 / spec 00052 D6 correction: an hour being "settled" (its canonical final is committed +
+# hash-verified) is NOT the same as "heal-complete" (the reconciled-first view will not change). The
+# reconciler mints healed book hours at H+2h..H+6h from the hour start; consuming an hour before then
+# lets the panel derive from the un-healed primary, and because the panel watermark is monotone with
+# no re-mint invalidation, that stale hour becomes permanent. So `materialize` waits until
+# `now >= hour_start + PANEL_SETTLE` before taking an hour -- H+6h (the reconciler's max mint) plus a
+# 1h pull/visibility buffer. The cost is ~7h of panel freshness, which no current consumer needs.
+PANEL_SETTLE = timedelta(hours=7)
+
 # Cumulative-depth price levels the panel reports (mirrors `primitives._DEPTH_LEVELS` -- kept as its
 # own constant here since that name is module-private and this is generation metadata, not math).
 K_LEVELS: tuple[int, int, int] = (1, 5, 10)
@@ -210,13 +219,15 @@ def panel_watermark(panel_root: Path, pair: str) -> datetime | None:
 
 @dataclass(frozen=True)
 class MaterializeResult:
-    """One sweep's verdict: what got written, what the watermark already covered, which hours
-    couldn't anchor to prior state (honest gaps, spec 00052 D3), and which hours failed outright
-    (isolated, never raised -- see `materialize`)."""
+    """One sweep's verdict: what got written, what the watermark already covered, which hours were
+    deferred as not-yet-heal-complete (spec 00052 D6 / T0066), which couldn't anchor to prior state
+    (honest gaps, spec 00052 D3), and which failed outright (isolated, never raised -- see
+    `materialize`)."""
 
     hours_written: int
     hours_skipped: int
     hours_unanchored: int
+    hours_unsettled: int
     rows: int
     errors: list[tuple[str, datetime, str]]
 
@@ -229,10 +240,18 @@ def materialize(
     pair: str | None = None,
     since: datetime | None = None,
     depth: int = 100,
+    settle: timedelta = PANEL_SETTLE,
+    now: datetime | None = None,
 ) -> MaterializeResult:
     """Sweep canonical book hours (reconciled-first, spec 00052 D3) into the panel, per-pair
     watermarked (D6): only hours strictly newer than `panel_watermark` are materialized, and hours
     at-or-below it are counted `hours_skipped`.
+
+    Settle gate (spec 00052 D6 correction / T0066): an hour is only taken once `now - hour >= settle`
+    (`PANEL_SETTLE`, 7h) -- long enough for the reconciler's H+6h max mint to have healed it, so the
+    reconciled-first read is heal-complete. A newer, not-yet-settled hour is counted `hours_unsettled`
+    and left for a future sweep; because the watermark never advances onto it, the un-healed primary is
+    never permanently captured. `now` is injectable for testing (defaults to the wall clock).
 
     Threads `OrderBook` state across hours, per pair (D3 correction): a fresh sweep resumes a pair's
     book from `load_state` at its watermark hour; within the sweep, a hour that is NOT exactly the
@@ -245,9 +264,11 @@ def materialize(
     continues, mirroring `cli.archive.replay.verify_replay`'s isolation contract; one bad hour must
     never abort the rest.
     """
+    now = now if now is not None else datetime.now(UTC)
     hours_written = 0
     hours_skipped = 0
     hours_unanchored = 0
+    hours_unsettled = 0
     rows = 0
     errors: list[tuple[str, datetime, str]] = []
     watermarks: dict[str, datetime | None] = {}
@@ -269,6 +290,14 @@ def materialize(
         watermark = watermarks[seg_pair]
         if watermark is not None and hour <= watermark:
             hours_skipped += 1
+            continue
+
+        # Settle gate (T0066): defer an hour that is not yet heal-complete. Newer hours are also
+        # unsettled, so the pair simply stops advancing here; the watermark holds and a later sweep
+        # takes this hour once the reconciler has had until H+6h to heal it. Left BEFORE the gap/anchor
+        # bookkeeping so a deferred hour touches none of it (it is re-processed cleanly next sweep).
+        if now - hour < settle:
+            hours_unsettled += 1
             continue
 
         if prev_hour[seg_pair] is None or hour != prev_hour[seg_pair] + timedelta(hours=1):
@@ -305,7 +334,7 @@ def materialize(
         books[seg_pair] = book_out
         unanchored_run[seg_pair] = False
 
-    return MaterializeResult(hours_written, hours_skipped, hours_unanchored, rows, errors)
+    return MaterializeResult(hours_written, hours_skipped, hours_unanchored, hours_unsettled, rows, errors)
 
 
 def _code_ref() -> str:

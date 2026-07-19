@@ -153,6 +153,12 @@ def materialize(
         "--allow-holes",
         help="Proceed even if --since is newer than a pair's panel watermark, permanently skipping the hole in between.",
     ),
+    settle_hours: float = typer.Option(
+        7.0,
+        "--settle-hours",
+        help="Defer hours newer than this many hours: heal-settle margin so an hour is only taken once "
+        "the reconciler (H+6h max mint) has healed it (spec 00052 D6 / T0066). Default 7h.",
+    ),
 ) -> None:
     """Materialize canonical book hours (reconciled-first) into the 1s L2 panel.
 
@@ -166,16 +172,19 @@ def materialize(
     if since_dt is not None:
         _check_since_holes(affected_pairs, panel_root, primary_root, reconciled_root, since=since_dt, allow_holes=allow_holes)
 
-    result = materialize_hours(primary_root, reconciled_root, panel_root, pair=pair, since=since_dt, depth=depth)
+    result = materialize_hours(
+        primary_root, reconciled_root, panel_root, pair=pair, since=since_dt, depth=depth, settle=timedelta(hours=settle_hours)
+    )
 
     for seg_pair, hour, message in result.errors:
         logger.error("panel hour failed pair=%s hour=%s: %s", seg_pair, hour.isoformat(), message)
 
     logger.info(
-        "panel materialize complete pairs=%d hours_written=%d hours_skipped=%d hours_unanchored=%d rows=%d errors=%d",
+        "panel materialize complete pairs=%d hours_written=%d hours_skipped=%d hours_unsettled=%d hours_unanchored=%d rows=%d errors=%d",
         len(affected_pairs),
         result.hours_written,
         result.hours_skipped,
+        result.hours_unsettled,
         result.hours_unanchored,
         result.rows,
         len(result.errors),
