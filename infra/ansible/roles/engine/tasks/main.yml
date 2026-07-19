@@ -285,9 +285,10 @@
   # and a later dry-run (unit already on the host) still verifies the enabled/started state.
   when: not (ansible_check_mode and engine_unit_install is changed)
 
-# --- 9. The journal pull channel: rrsync forced-command keys pinned read-only to the journal
-# subtree — on deploy (existing) and, during the spec-00057 migration, also on zcrypto-data (see
-# below); deploy's copy drops once the NAS repoints (Task 7/8).
+# --- 9. The journal pull channel: the rrsync forced-command key the NAS uses to pull the engine
+# journal, read-only, on zcrypto-data (the m2m data user, spec 00057). deploy's old copy was dropped
+# at the migration cutover (Task 7) and deploy no longer exists (renamed zcrypto-deploy), so the role
+# manages only the zcrypto-data key below.
 - name: ensure rsync (which ships the rrsync helper) is installed
   ansible.builtin.package:
     name: rsync
@@ -296,26 +297,8 @@
 # rrsync lives at /usr/bin/rrsync on Debian 13 (trixie) — the rsync package installs it there
 # since bookworm (rsync 3.2.4 promoted it out of /usr/share/doc/rsync/scripts/). The absolute
 # path keeps the forced command independent of the login shell's PATH.
-- name: install the sync pubkey as a forced-command entry in deploy's authorized_keys (journal read-only)
-  ansible.posix.authorized_key:
-    user: deploy
-    exclusive: false
-    key: "{{ sync_authorized_key }}"
-    key_options: 'command="/usr/bin/rrsync -ro {{ engine_state_dir }}/journal",restrict'
 
-- name: add deploy to the zcrypto-engine group (makes the 0750 state dirs traversable for the pull)
-  ansible.builtin.user:
-    name: deploy
-    groups: zcrypto-engine
-    append: true
-  # First-run check mode: the zcrypto-engine account (and thus its group) was never really
-  # created above, so the membership edit cannot resolve the group — skip exactly that case;
-  # every real converge still runs it (same guard rationale as the account lookup in section 2).
-  when: not (ansible_check_mode and not engine_account_known)
-  vars:
-    engine_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['zcrypto-engine'] | default(none)) is not none }}"
-
-# The journal export the NAS pulls now lands on zcrypto-data (the m2m data user, spec 00057), not the
+# The journal export the NAS pulls lands on zcrypto-data (the m2m data user, spec 00057), not the
 # admin `deploy`. zcrypto-data is not the journal's owner (zcrypto-engine is), so it joins the
 # zcrypto-engine group to TRAVERSE the 0750 dirs; and the journal files must be group-READABLE for the
 # rrsync -ro pull. exclusive:false — deploy's old copy is dropped after the NAS repoints (Task 7/8).
