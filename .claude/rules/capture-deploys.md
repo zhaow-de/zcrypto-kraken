@@ -22,7 +22,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 ## SSH
 
 - Root SSH is key-only break-glass; the operator installs the master pubkey manually at bootstrap.
-- Day-to-day access: `deploy` user (passwordless sudo) — `ssh zcrypto` / `ssh red` / `ssh nas` / `ssh hp`.
+- Day-to-day access: `zcrypto-deploy` user (passwordless sudo; renamed from `deploy`, spec 00057 D1) — `ssh zcrypto` / `ssh red` / `ssh nas` / `ssh hp`.
 
 ## Ansible secrets
 
