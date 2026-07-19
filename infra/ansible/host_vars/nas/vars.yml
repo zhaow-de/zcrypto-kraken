@@ -93,7 +93,7 @@ nas_alloy_image: grafana/alloy@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523
 nas_capture_source: "deploy@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
 nas_journal_source: "deploy@zcrypto.zhaow.me:"
-nas_capture_red_source: "deploy@zcrypto-red.zhaow.me:"
+nas_capture_red_source: "zcrypto-data@zcrypto-red.zhaow.me:"
 nas_liquidations_source: "zcrypto-data@192.168.100.6:"
 nas_liquidations_ssh_port: 22
 nas_panel_source: "zcrypto-data@192.168.100.6:"

@@ -28,3 +28,10 @@ sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capt
 
 # This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-red_ed25519.pub') }}"
+
+# Post-rename identity override (spec 00057 D1, T0068): `deploy` was renamed to `zcrypto-deploy` on
+# this host (2026-07-19), so Ansible connects as — and the docker role's admin user is — zcrypto-deploy.
+# Per-host (NOT group_vars/capture_host) so the not-yet-migrated primary keeps converging as `deploy`
+# until its own Task-7 cutover; consolidate into the group default once both hosts are migrated.
+ansible_user: zcrypto-deploy
+docker_deploy_user: zcrypto-deploy
