@@ -1,12 +1,11 @@
 hardening_ssh_port: "10022"
-# Transitional superset (spec 00057 D1, T0068): zcrypto-data is the new m2m pull user the NAS
-# connects as — sshd gates AllowUsers at session setup BEFORE the forced command, so it must be
-# listed here even though the account only ever runs an rrsync forced command; zcrypto-deploy is
-# pre-listed so the post-rename admin can connect the moment each host's usermod lands; deploy is
-# kept until it is renamed on each host; root is the key-only break-glass — never drop it. A
-# listed-but-absent user is a harmless sshd no-op, so this one value is correct for both hosts in
-# every rename state.
-hardening_ssh_allow_users: zcrypto-data zcrypto-deploy deploy root
+# AllowUsers (spec 00057 D1, T0068): zcrypto-data is the m2m pull user the NAS connects as — sshd
+# gates AllowUsers at session setup BEFORE the forced command, so it must be listed even though the
+# account only ever runs an rrsync forced command; zcrypto-deploy is the admin/Ansible user; root is
+# the key-only break-glass — never drop it. The transitional `deploy` entry was dropped once both
+# capture hosts were renamed (2026-07-19) — leaving it would silently re-admit a resurrected `deploy`.
+# A virgin host is bootstrapped straight to zcrypto-deploy, so this value is correct there too.
+hardening_ssh_allow_users: zcrypto-data zcrypto-deploy root
 
 # devsec.hardening.ssh_hardening hard-codes ssh_listen_to: [0.0.0.0] by default even though
 # network_ipv6_enable defaults to true (AddressFamily any) — list both explicitly so sshd

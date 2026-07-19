@@ -96,7 +96,7 @@
   failed_when: false
   check_mode: false
 
-- name: "§8 gate — assert the sshd posture (no root login, no passwords, deploy-only)"
+- name: "§8 gate — assert the sshd posture (no root login, no passwords, AllowUsers has zcrypto-data + zcrypto-deploy)"
   ansible.builtin.assert:
     that:
       - engine_gate_sshd.rc == 0

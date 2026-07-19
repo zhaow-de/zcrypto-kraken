@@ -88,10 +88,16 @@ prometheus.remote_write "grafana" {
 }
 
 // ---- Logs: long-lived containers, via the docker API ----------------------------------------
-// Discover and ship the containers on this host: the capture daemon (compose service `capture`) and
-// Alloy itself (compose service `alloy`). Both are long-lived, so the POLLING discovery reliably
-// finds them -- there are NO ephemeral `docker run --rm` jobs on a capture host, so no drop rule is
-// needed here (unlike the ops copy, whose systemd-launched ephemerals it must exclude).
+// Discover and ship EVERY long-lived container on this host -- the see-everything default (the logs
+// dashboard filters by `container`; a keep/drop here would silently shrink what it can show). On a
+// capture-only host that is the capture daemon (compose service `capture`) + Alloy (`alloy`). On the
+// PRIMARY -- which is ALSO the engine host -- the engine container (compose service `engine`) is
+// long-lived too, so it is discovered and shipped as well: its stdout thus egresses to Grafana Cloud
+// FROM the trade-key host. Benign today (the engine does not trade live), but a go-live security
+// decision (drop `engine` vs ship it parsed, since live engine logs may carry order/PnL detail) --
+// tracked in T0042 alongside the docker-socket residual. The POLLING discovery reliably finds these
+// long-lived containers; there are NO ephemeral `docker run --rm` jobs on a capture host, so no drop
+// rule is needed for those (unlike the ops copy, whose systemd-launched ephemerals it must exclude).
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"
 }
