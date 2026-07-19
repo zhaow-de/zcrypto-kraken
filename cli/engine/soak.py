@@ -7,6 +7,17 @@ Also builds the REALIZED forward-return observation from the engine's journal + 
 each cycle T, the position decided at T is held over [T, T+4h) and scored against that bar's
 actual forward return, joined against the store BY TIMESTAMP -- see `realized_series` for the
 exact timing model and its off-by-one cross-check (`chain_ok`).
+
+Also builds the backtest NULL the realized series is judged against: `build_null` rebuilds the
+same strategy over the full frozen canonical history and derives its P&L under the LIVE cost
+convention (`_net_live_from_result`) -- the builder's `governed_net` charges cost on the capped
+book's turnover, but a live engine trades `final_targets = mult x capped` and pays cost on THAT
+turnover instead, so on a governor multiplier-transition bar the two differ by exactly the
+governor's turnover bias. Recasting the null onto the live convention makes that bias cancel in
+the realized-vs-null comparison instead of masquerading as an unrelated mismatch. `windowed_null`
+and `block_bootstrap_null` turn a null series into reference distributions of a chosen window
+length: the former enumerates every overlapping window, the latter draws a stationary
+(Politis-Romano) block bootstrap of resampled paths of that length.
 """
 
 from __future__ import annotations
@@ -16,9 +27,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
+
+from cli.engine.cycle import _union_align
 from cli.engine.errors import EngineError
 from cli.engine.journal import CycleRecord, SnapshotEntry
-from cli.engine.store import read_store_series
+from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
+from cli.portfolio import CrossfreqSystemConfig, build_crossfreq_system_fast
+from cli.risk.limits import apply_position_caps
 
 
 def structural_metrics(
@@ -248,3 +264,123 @@ def realized_series(
         chain_ok=_chain_consistent(cycle_ts, closes),
         implausible=implausible,
     )
+
+
+def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool]:
+    """Recompute a crossfreq-system result's net P&L under the LIVE cost convention: cost charged
+    on `final_targets = mult x capped` turnover instead of the builder's `governed_net` convention
+    (cost on the capped book's own turnover). The gross legs are identical either way, so only the
+    turnover cost differs -- that difference is exactly the governor's turnover bias:
+
+        net_live[k] = governed_net[k] + mult[k]*fee_builder*turn_capped[k] - fee*turn_final[k]
+
+    `capped` is reconstructed from `result.sleeve_positions` (the 1/3-combined B/A1/A2 sleeves,
+    position-capped) rather than read from `final_targets`/`multipliers` directly, since dividing
+    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar. Returns
+    (net_live over the n_periods completed bars, reconcile_ok), where reconcile_ok cross-checks
+    that mult[k]*capped[a][k] == final_targets[a][k] for every asset and row (including the
+    forming interval) -- proof the reconstruction faithfully matches the builder's internal capped
+    book.
+    """
+    n = result.n_periods
+    assets = tuple(result.final_targets)
+    sleeves = result.sleeve_positions
+    combined = {a: [(sleeves["B"][a][k] + sleeves["A1"][a][k] + sleeves["A2"][a][k]) / 3.0 for k in range(n + 1)] for a in assets}
+    capped = apply_position_caps(combined)
+    mult = result.multipliers
+    final_targets = result.final_targets
+
+    reconcile_ok = all(abs(mult[k] * capped[a][k] - final_targets[a][k]) <= 1e-9 for a in assets for k in range(n + 1))
+
+    net_live: list[float] = []
+    for k in range(n):
+        turn_capped = sum(abs(capped[a][k] - (capped[a][k - 1] if k > 0 else 0.0)) for a in assets)
+        turn_final = sum(abs(final_targets[a][k] - (final_targets[a][k - 1] if k > 0 else 0.0)) for a in assets)
+        net_live.append(result.governed_net[k] + mult[k] * fee_builder * turn_capped - fee * turn_final)
+
+    return net_live, reconcile_ok
+
+
+@dataclass(frozen=True)
+class NullSystem:
+    """The backtest reference the realized series is judged against: the same strategy rebuilt
+    over the full frozen canonical history, with P&L recast onto the live cost convention (see
+    `_net_live_from_result`)."""
+
+    weights: list[dict[str, float]]  # final_targets transposed to per-bar dicts, completed bars only (n_periods)
+    net_live: list[float]  # n_periods
+    multipliers: list[float]  # n_periods (sliced from the n_periods+1 result)
+    day_index: list[int]  # n_periods
+    assets: tuple[str, ...]
+    reconcile_ok: bool
+    n_periods: int
+
+
+def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, fee: float = 0.006) -> NullSystem:
+    """Load the frozen canonical dataset, rebuild the SAME strategy with `build_crossfreq_system_fast`,
+    and derive the live-cost-convention null (`NullSystem`) the realized series is compared against."""
+    raw = {(a, iv): read_store_series(canonical_dir, a, iv) for a in PAIR_KEYS for iv in GRID_INTERVALS}
+    daily_ts, daily_prices = _union_align(raw, 1440)
+    h4_ts, h4_prices = _union_align(raw, 240)
+    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
+
+    net_live, reconcile_ok = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
+    assets = tuple(result.final_targets)
+    n = result.n_periods
+    weights = [{a: result.final_targets[a][k] for a in assets} for k in range(n)]
+
+    return NullSystem(
+        weights=weights,
+        net_live=net_live,
+        multipliers=list(result.multipliers[:n]),
+        day_index=list(result.day_index[:n]),
+        assets=assets,
+        reconcile_ok=reconcile_ok,
+        n_periods=n,
+    )
+
+
+def _reduce(values: list[float], reducer: str) -> float:
+    if reducer == "mean":
+        return sum(values) / len(values)
+    raise SoakError(f"unsupported reducer {reducer!r}")
+
+
+def windowed_null(series: list[float], window: int, *, reducer: str = "mean") -> list[float]:
+    """All contiguous overlapping length-`window` window statistics over `series` (len(series) -
+    window + 1 windows). reducer 'mean' reduces each window to its mean. Returns [] if window >
+    len(series) or window <= 0."""
+    if window <= 0 or window > len(series):
+        return []
+    return [_reduce(series[i : i + window], reducer) for i in range(len(series) - window + 1)]
+
+
+def block_bootstrap_null(
+    series: list[float],
+    window: int,
+    *,
+    n: int = 10000,
+    mean_block: int = 6,
+    seed: int = 0,
+    reducer: str = "mean",
+) -> list[float]:
+    """Stationary (Politis-Romano) block bootstrap: `n` resampled length-`window` paths, each
+    built by concatenating blocks of geometrically-distributed length (mean `mean_block`) starting
+    at random offsets into `series` and wrapping circularly (so every offset stays equally
+    likely), truncated to exactly `window`; each path is reduced via `reducer`. Deterministic
+    given `seed` -- one `numpy.random.default_rng(seed)` drives the whole call."""
+    rng = np.random.default_rng(seed)
+    n_obs = len(series)
+    p = 1.0 / mean_block
+    out: list[float] = []
+    for _ in range(n):
+        path: list[float] = []
+        while len(path) < window:
+            start = int(rng.integers(0, n_obs))
+            block_len = int(rng.geometric(p))
+            for j in range(block_len):
+                if len(path) >= window:
+                    break
+                path.append(series[(start + j) % n_obs])
+        out.append(_reduce(path, reducer))
+    return out

@@ -1,4 +1,5 @@
 import math
+import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,10 +10,13 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 from cli.engine.soak import (
     SoakError,
     _chain_consistent,
+    _net_live_from_result,
+    block_bootstrap_null,
     governor_engaged_daily,
     realized_series,
     select_clean_segment,
     structural_metrics,
+    windowed_null,
 )
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 
@@ -185,3 +189,88 @@ def test_chain_consistent_detects_gap():
     scored_ts = [d, d + timedelta(hours=8)]  # a gap: the 04:00 cycle was skipped
     closes_by_asset = {"BTC": {d: 100.0, d + timedelta(hours=4): 105.0, d + timedelta(hours=8): 110.0}}
     assert _chain_consistent(scored_ts, closes_by_asset) is False
+
+
+def _fake_result(*, n_periods, sleeve_B, sleeve_A1, sleeve_A2, multipliers, governed_net):
+    """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'."""
+    assets = ("BTC",)
+    combined = [(sleeve_B[k] + sleeve_A1[k] + sleeve_A2[k]) / 3.0 for k in range(n_periods + 1)]
+    # caps at 0.20/0.10 — keep the synthetic values inside the caps so capped == combined here
+    final_targets = {"BTC": [multipliers[k] * combined[k] for k in range(n_periods + 1)]}
+    return types.SimpleNamespace(
+        final_targets=final_targets,
+        governed_net=governed_net,
+        ungoverned_net=governed_net,
+        multipliers=multipliers,
+        sleeve_positions={"B": {"BTC": sleeve_B}, "A1": {"BTC": sleeve_A1}, "A2": {"BTC": sleeve_A2}},
+        cap_breach_bars=0,
+        governor_engaged_bars=0,
+        day_index=[0] * (n_periods + 1),
+        n_periods=n_periods,
+    )
+
+
+def test_net_live_reconciles_and_equals_governed_when_mult_constant():
+    # constant mult=1.0, combined within caps → capped==combined, final_targets==combined
+    n = 3
+    B = [0.09, 0.12, 0.06, 0.0]
+    A1 = [0.09, 0.12, 0.06, 0.0]
+    A2 = [0.09, 0.12, 0.06, 0.0]
+    mult = [1.0, 1.0, 1.0, 1.0]
+    # governed_net arbitrary (n rows) — reconcile is independent of it; net_live identity uses it directly
+    gnet = [0.01, -0.02, 0.005]
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
+    net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    # mult constant + equal fees → the recost cancels bar-by-bar → net_live == governed_net
+    for k in range(n):
+        assert math.isclose(net_live[k], gnet[k], abs_tol=1e-12)
+
+
+def test_net_live_differs_on_multiplier_transition():
+    n = 2
+    B = A1 = A2 = [0.12, 0.12, 0.0]  # combined = 0.12 each of the first two bars
+    mult = [1.0, 0.5, 0.5]  # transition at k=1 → D4 gap active
+    gnet = [0.0, 0.0]
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
+    net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    # capped: [0.12,0.12]; final_targets: [0.12, 0.06]. At k=1:
+    #   turn_capped = |0.12-0.12| = 0.0 ; turn_final = |0.06-0.12| = 0.06
+    #   net_live[1] = gnet[1] + 0.5*0.006*0.0 - 0.006*0.06 = -0.00036  (≠ gnet[1]=0)
+    assert math.isclose(net_live[1], -0.006 * 0.06, abs_tol=1e-12)
+    assert not math.isclose(net_live[1], gnet[1], abs_tol=1e-9)
+
+
+def test_net_live_reconcile_false_on_inconsistent_result():
+    # tamper final_targets so mult*capped != final_targets → reconcile_ok False
+    n = 2
+    B = A1 = A2 = [0.09, 0.09, 0.0]
+    mult = [1.0, 1.0, 1.0]
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0, 0.0])
+    r.final_targets["BTC"][0] += 0.05  # break the identity
+    _net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is False
+
+
+def test_windowed_null_basic():
+    assert windowed_null([1.0, 3.0, 5.0], 2) == [2.0, 4.0]  # means of [1,3] and [3,5]
+    assert windowed_null([1.0], 2) == []  # window > len
+
+
+def test_block_bootstrap_deterministic_and_centered():
+    s = [0.01, -0.02, 0.03, 0.0, 0.015, -0.005] * 20
+    a = block_bootstrap_null(s, 6, n=500, mean_block=3, seed=0)
+    b = block_bootstrap_null(s, 6, n=500, mean_block=3, seed=0)
+    assert a == b and len(a) == 500  # deterministic given seed
+    assert abs(sum(a) / len(a) - sum(s) / len(s)) < 0.01  # bootstrap mean ≈ series mean
+
+
+@pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
+def test_build_null_on_real_canonical():
+    from cli.engine.soak import build_null
+
+    ns = build_null(Path("data/ohlc-full"), fee=0.006)
+    assert ns.reconcile_ok is True
+    assert ns.n_periods > 1000 and len(ns.net_live) == ns.n_periods
+    assert len(ns.weights) == ns.n_periods and set(ns.weights[0]) == set(ns.assets)
