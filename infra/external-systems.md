@@ -45,20 +45,21 @@ IP: home network dynamic.
 Add the following line to `/etc/fstab`:
 
 ```
-<nas-ip>:/volume1/ZhaoCrypto  /home/zhaow/Projects/zcrypto-kraken-data  nfs  nfsvers=4.1,rw,noauto,x-systemd.automount,x-systemd.mount-timeout=10,soft,timeo=10,retrans=5,noatime,sync  0  0
+<nas-ip>:/volume1/ZhaoCrypto  /mnt/zhao-crypto  nfs  ro,nfsvers=3,nolock,soft,timeo=100,retrans=3,noatime,nosuid,nodev,noauto,x-systemd.automount,x-systemd.mount-timeout=15  0  0
 ```
 
 Then start the systemd daemon:
 
 ```shell
 sudo systemctl daemon-reload
-sudo systemctl restart 'home-zhaow-Projects-zcrypto\x2dkraken\x2ddata.automount'
+sudo mount -a
+sudo systemctl restart 'mnt-zhao\x2dcrypto.automount'
 ```
 
 So that the NFS mount could take effect:
 
 ```shell
-ls -la /home/zhaow/Projects/zcrypto-kraken-data
+ls -la /mnt/zhao-crypto
 df -h
 ```
 
@@ -66,32 +67,37 @@ df -h
 
 Append the following lines to `~/.ssh/config` for some shortcuts to ease the remote connection. Assumptions:
 
-- Each node has its own deploy SSH key: locally `~/.ssh/zcrypto-deploy-{zcrypto,red,ops,nas}_ed25519`, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`deploy` at the Linode VPSes and the local ops node, `zcrypto-deploy` at the Synology NAS)
-- Except for NAS, the `deploy` user is provisioned by the Ansible script
-- Both `deploy` and `zcrypto-deploy` on all the 4x nodes are passwordless sudo enabled
+- Each node has its own deploy SSH key: locally `~/.ssh/zcrypto-deploy-{zcrypto,red,ops,nas}_ed25519`, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`zcrypto-deploy`)
+- Except for NAS, the `zcrypto-deploy` user is provisioned by the Ansible play
+- User `zcrypto-deploy` on all the 4x nodes are passwordless sudo enabled
 
 ```
 Host zcrypto
   HostName zcrypto.zhaow.me
   Port 10022
-  User deploy
+  User zcrypto-deploy
   IdentityFile ~/.ssh/zcrypto-deploy-zcrypto_ed25519
+  PreferredAuthentications publickey
   IdentitiesOnly yes
+  UpdateHostKeys yes
 
 Host red
   HostName zcrypto-red.zhaow.me
   Port 10022
-  User deploy
+  User zcrypto-deploy
   IdentityFile ~/.ssh/zcrypto-deploy-red_ed25519
+  PreferredAuthentications publickey
   IdentitiesOnly yes
+  UpdateHostKeys yes
 
 Host hp
   HostName <ops-node-ip>
   Port 22
-  User deploy
+  User zcrypto-deploy
   IdentityFile ~/.ssh/zcrypto-deploy-ops_ed25519
   PreferredAuthentications publickey
-  UpdateHostKeys no
+  IdentitiesOnly yes
+  UpdateHostKeys yes
 
 Host nas
   HostName <nas-ip>
@@ -99,7 +105,8 @@ Host nas
   User zcrypto-deploy
   IdentityFile ~/.ssh/zcrypto-deploy-nas_ed25519
   PreferredAuthentications publickey
-  UpdateHostKeys no
+  IdentitiesOnly yes
+  UpdateHostKeys yes
 ```
 
 ## Self-managed: Synology NAS<a name="self-managed-synology-nas"></a>
@@ -119,48 +126,62 @@ IP: home network `<nas-ip>`
 ### Initial setup<a name="initial-setup"></a>
 
 - From DSM web, install `Container Manager` from Package Center
-- DSM web -> Control Panel -> Regional Options -> Time Zone: **(GMT) Greenwich Mean Time** — the NAS clock must stay UTC: `docker logs --since` parses its argument in the host's **local** time, and the CEST default produced false review verdicts on 2026-07-16. The `nas` Ansible role's first act is a fail-closed TZ guard (`date +%z` must print `+0000`), so a rebuilt NAS left on local time fails every converge until this is set (see `infra/nas/README.md`).
+- DSM web -> Control Panel -> Regional Options -> Time Zone: **(GMT) Greenwich Mean Time** — the NAS clock must stay UTC: `docker logs --since` parses its argument in the host's **local** time. The `nas` Ansible role's first act is a fail-closed TZ guard (`date +%z` must print `+0000`), so a rebuilt NAS left on local time fails every converge until this is set (see `infra/nas/README.md`).
 - DSM web -> Control Panel -> Terminal & SNMP, "Enable Telnet service" + "Enable SSH service"
+- DSM web -> Control Panel -> File Services -> FTP, "Enable SFTP service" (otherwise, `scp` command from the modern OpenSSH client will not work)
 - From the local workstation, `telnet <nas-ip>`, login with the Synology DSM admin (the one to login http://<nas-ip>:5000 for administration). `sudo -i`, then:
   - `cat /etc/passwd` to ensure no user has UID 1000
   - `cat /etc/group` to ensure no group has GID 1000 (The `1000:1000` above is to match the UID:GID of the local workstation, because the local workstation can create dirs/files in NAS shared folder via NFS. We align the UID:GID to ease the permission mapping and management)
 - DSM web -> Control Panel -> User & Group:
   - "Advanced" tab, check "Enable user home service"
-  - "User" tab, create users: `zcrypto`, `zcrypto-dummy`, `zcrypto-deploy`
-  - "Group" tab, create group: `zcrypto`, add the three users above into the group
+  - "User" tab, create users: `zcrypto-data`, `zcrypto-alloy`, `zcrypto-deploy`
+  - "Group" tab, create group: `zcrypto`, add `zcrypto-data`, `zcrypto-deploy` above into the group (`zcrypto-alloy` **must** be excluded. It runs telemetry, never touches the ZhaoCrypto data — least-privilege)
 - DSM web -> Control Panel -> Shared Folder, "Create Shared Folder"
   - Name: `ZhaoCrypto`
   - Permissions: group `zcrypto` can "Read/Write"
   - Advanced Permissions: uncheck "Enabled advances share permissions"
-  - NFS Permissions: create a new one:
+  - NFS Permissions: create a new one (Both the ops node and the workstation read the canonical trees through this export, automounted read-only at `/mnt/zhao-crypto`; the export-side **Read-Only** privilege is the server half of spec `00051` D10's "no write path toward custody" boundary — without this rule the boundary rests solely on the client-side `ro` mount flag):
     - Hostname or IP: `<home-lan>/24`
-    - Privilege: `Read/Write`
-    - Squash: `No mapping` (\<-- this is the root cause why we align the UID and GID between `zhaow`@local-workstation and `zcrypto`@nas)
+    - Privilege: `Read only`
+    - Squash: `No mapping` (\<-- this is the root cause why we align the UID and GID between `zhaow`@local-workstation and `zcrypto-data`@nas)
     - Security: `sys`
     - Enable asynchronous: **checked**
-    - Allow connections from non-priviledged ports (ports higher than 1024): **unchecked**
+    - Allow connections from non-priviledged ports (ports higher than 1024): **checked**
     - Allow users to access mounted subfolders: **checked**
-  - NFS Permissions: create a second rule for the ops node (T0058 / spec `00054` addendum, 2026-07-17 — the ops node reads the canonical trees through this export, automounted read-only at `/mnt/zhao-crypto`; the export-side **Read-Only** privilege is the server half of spec `00051` D10's "no write path toward custody" boundary — without this rule the boundary rests solely on the ops-side `ro` mount flag):
-    - Hostname or IP: `<ops-node-ip>`
-    - Privilege: `Read-Only`
-    - Squash: `No mapping`
-    - Security: `sys`
-    - Enable asynchronous: **checked**
-    - Allow connections from non-priviledged ports (ports higher than 1024): **unchecked**
-    - Allow users to access mounted subfolders: **checked**
+- DSM web -> Control Panel -> Notification:
+  - "Email": **uncheck** "Receive notifications directly in your Synology Account when system status changes or errors occur. These notifications are sent through Synology's email server"
+  - "Webhooks": create a new webhook,
+    - Provider: `Custom`
+    - Rule: `Warning`
+    - Provider name: `Slack Notification`
+    - Subject: `[z-home-nas]`
+    - Webhook URL: `https://hooks.slack.com/services/T0BG...` (replace it will the real Slack incoming message webhook)
+    - Send notification messages in English: **checked**
+    - HTTP Method: `POST`
+    - Content-Type: `application/json`
+    - HTTP Body: `{"text": "@@TEXT@@"}`
+- DSM web -> Package Center -> Settings -> Package Sources, add a new source:
+  - Name: `SynoCommunity`
+  - Location: `https://packages.synocommunity.com`
+- DSM web -> Package Center -> Community. Install `Python 3.14`, `Perl`
 - At the terminal:
-  - `vim /etc/group` to change the GID of group to `1000` (or the same as group `zhaow`@local-workstation)
+  - `vim /etc/group` to:
+    - change the GID of group `zcrypto` to `1000` (or the same as group `zhaow`@local-workstation)
+    - add users `zcrypto-data` and `zcrypto-deploy` to the system group `administrators` (at Synology DSM, only users in `administrators` group can use SSH — `zcrypto-deploy` for admin/Ansible, and `zcrypto-data` because it **receives the inbound hot-push over SSH**, spec 00057)
   - `vim /etc/passwd` to:
-    - change the UID of user to `1000` (or the same as user `zhaow`@local-workstation)
-    - change the home dir of user `zcrypto` and `zcrypto-dummy` to `/nonexist`
-    - change the shell of user `zcrypto` and `zcrypto-dummy` to `/usr/bin/nologin`
+    - change the UID of user `zcrypto-data` to `1000` (or the same as user `zhaow`@local-workstation)
+    - change the home dir of user `zcrypto-alloy` to `/nonexist`
+    - change the home dir of user `zcrypto-data` to `/var/services/homes/zcrypto-data` — unlike `zcrypto-alloy`, `zcrypto-data` **receives the inbound hot-push over SSH** (spec 00057), so it needs a real home for `~/.ssh/authorized_keys` (the DSM symlink path — resilient to a `/volume1`→`/volume2` layout change; matches `zcrypto-deploy`'s home)
+    - change the shell of user `zcrypto-alloy` to `/usr/bin/nologin`
+    - change the shell of user `zcrypto-data` to `/bin/sh` (same as `zcrypto-deploy`) — `zcrypto-data` **serves the inbound hot-push**, which runs an rrsync forced command via the account's login shell, so it needs a real shell (`/usr/bin/nologin` would swallow the forced command). DSM accepts **only its own built-in shells** as an SSH login shell: a custom rrsync-only wrapper (like the one the ops host uses) is refused — DSM authenticates the key but then denies the session *before* exec'ing the shell, at any path, script or binary, and regardless of `/etc/shells` (verified 2026-07-19). So the rrsync-only restriction here is enforced **solely by the key's `command="…rrsync…",restrict` forced command** (installed by the `nas` role; it fully jails the key — no shell, no arbitrary command), not by the login shell as on ops.
     - double check the home dir of user `zcrypto-deploy` is `/var/services/homes/zcrypto-deploy`, and its shell is `/bin/sh`
-  - `synouser --rebuild all` (NOTE: after this step, the user `zcrypto` will disappear from DSM web Control Panel -> User & Group)
+  - `synouser --rebuild all` (NOTE: after this step, the user `zcrypto-data` will disappear from DSM web Control Panel -> User & Group)
   - `synogroup --rebuild all` (NOTE: after this step, the group `zcrypto` will disappear from DSM web Control Panel -> User & Group)
   - `mkdir -p /volume1/homes/zcrypto-deploy/.ssh/`, append the content of the NAS deploy public key (`infra/ansible/files/deploy_nas_ed25519.pub`) to `/volume1/homes/zcrypto-deploy/.ssh/authorized_keys`
   - `chown -R zcrypto-deploy: /volume1/homes/zcrypto-deploy/.ssh/`
   - `chmod 0600 /volume1/homes/zcrypto-deploy/.ssh/authorized_keys`
-  - `chown -R zcrypto: /volume1/ZhaoCrypto`
+  - `mkdir -p /var/services/homes/zcrypto-data/.ssh && chown -R zcrypto-data: /var/services/homes/zcrypto-data/.ssh && chmod 0700 /var/services/homes/zcrypto-data/.ssh` — the `nas` role installs the hot-push `rrsync` forced-command key into `~zcrypto-data/.ssh/authorized_keys` (spec 00057); this ensures the home + `.ssh` exist for it. **After** the `zcrypto-data` push path is verified end-to-end, remove the old hot-push key from `~zcrypto-deploy/.ssh/authorized_keys` (the migration fallback; a from-scratch install never has it).
+  - `chown -R zcrypto-data:zcrypto /volume1/ZhaoCrypto`
   - `chown -R zcrypto:users /volume1/ZhaoCrypto/@eaDir`
   - `echo "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zcrypto-deploy && chmod 440 /etc/sudoers.d/zcrypto-deploy`
   - Put the following script in a file and run it:
@@ -221,7 +242,9 @@ IP: home network `<ops-node-ip>`
 - Ubuntu Server 26.04 LTS
 - User: `zhaow:zhaow`
 - Place the content of SSH public key `zhaow-master-2018.out` to `/root/.ssh/authorized_keys`
-- As root, `echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy`
+- As root, `echo "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zcrypto-deploy && chmod 440 /etc/sudoers.d/zcrypto-deploy`
+- As root, `apt update && apt install git gh`
+- As `zhaow`, `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ## Linode `zcrypto-primary`<a name="linode-zcrypto-primary"></a>
 
@@ -237,7 +260,7 @@ Create a new node:
 - Debian 13
 - Firewall: `ssh10022`
 
-Run `echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy`
+Run `echo "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zcrypto-deploy && chmod 440 /etc/sudoers.d/zcrypto-deploy`
 
 ## Linode `zcrypto-redundant`<a name="linode-zcrypto-redundant"></a>
 
@@ -251,4 +274,4 @@ Create a new node:
 - Debian 13
 - Firewall: `ssh10022`
 
-Run `echo "deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy`
+Run `echo "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/zcrypto-deploy && chmod 440 /etc/sudoers.d/zcrypto-deploy`

@@ -78,22 +78,31 @@
     enabled: true
     state: started
 
-- name: create the kraken-capture system user (nologin, home = its state dir)
+- name: create the zcrypto-data system user (rrsync-only shell, home = its state dir)
   ansible.builtin.user:
     name: "{{ base_capture_user }}"
     system: true
-    shell: /usr/sbin/nologin
+    # the capture user now also SERVES the NAS pulls — spec 00057 — so it needs the rrsync-only
+    # wrapper, not nologin; the wrapper file is deployed by the capture role in the same converge
+    shell: "{{ base_capture_shell }}"
     home: "{{ base_capture_data_dir }}"
     create_home: false
     state: present
+  # Capture hosts ONLY. The ops node also runs `base`, but it owns its OWN `zcrypto-data` (the ops
+  # role — home /home/zcrypto-data, holding its four rrsync pull-channel keys). Without this guard,
+  # base would `usermod -d` that same-named m2m user's home to the capture state dir on the next ops
+  # converge — no `-m`, so its authorized_keys is orphaned and all four NAS->ops pulls are denied
+  # (spec 00057; the rename kraken-capture->zcrypto-data introduced the name collision).
+  when: inventory_hostname in groups['capture_host']
 
-- name: ensure the capture state dir exists and is owned by kraken-capture
+- name: ensure the capture state dir exists and is owned by zcrypto-data
   ansible.builtin.file:
     path: "{{ base_capture_data_dir }}"
     state: directory
     owner: "{{ base_capture_user }}"
     group: "{{ base_capture_user }}"
     mode: "0750"
+  when: inventory_hostname in groups['capture_host']  # capture-only, same reason as the user above
 
 - name: single folder for the rotated capture console logs
   ansible.builtin.file:

@@ -12,3 +12,6 @@ base_unattended_upgrades_reboot_time: "21:25"
 
 # This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto_ed25519.pub') }}"
+
+# The admin identity (zcrypto-deploy after the spec-00057 D1 rename) is now the group default:
+# `ansible_user` in group_vars/capture_host, `docker_deploy_user` in the docker role default.

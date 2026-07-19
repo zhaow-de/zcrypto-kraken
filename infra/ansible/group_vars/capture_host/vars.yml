@@ -5,5 +5,16 @@ capture_image: ghcr.io/zhaow-de/zcrypto-capture
 healthchecks_project_id: "32eaee6f-cb82-4773-9471-4b802136adc1"
 sync_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_ed25519.pub') }}"
 sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capture_ed25519.pub') }}"
-ansible_user: deploy
+# Fleet users/groups (spec 00057): exempt zcrypto-data from devsec.os_hardening's "Remove shell for
+# linux system accounts" task (tasks/user_accounts.yml). zcrypto-data is a uid-999 SYSTEM account, so
+# that task would reset its rrsync-only login shell to nologin -- which swallows the NAS pull's rrsync
+# forced command (the same nologin trap as the NAS). The ops node never hit this (it runs no hardening
+# role). Keep the devsec defaults (vagrant, kitchen) for parity. zcrypto-engine stays nologin (it
+# serves no pull), so it is deliberately NOT exempted.
+os_ignore_users: [zcrypto-data, vagrant, kitchen]
+# Both capture hosts run their admin account as zcrypto-deploy (spec 00057 D1, T0068 cutover 2026-07-19):
+# `deploy` was renamed to zcrypto-deploy on each, so Ansible connects as zcrypto-deploy. Set here at the
+# group (not per host) now that both are migrated. bootstrap.yml still overrides with `ansible_user: root`
+# at play scope (a virgin host has no zcrypto-deploy yet — play vars beat group_vars).
+ansible_user: zcrypto-deploy
 ansible_port: 10022

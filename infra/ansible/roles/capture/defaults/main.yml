@@ -4,6 +4,10 @@
 #   -e capture_image_digest=sha256:<...>
 capture_image_digest: ""
 
+# The rrsync-only login shell for zcrypto-data (spec 00057) — deployed by this role, pointed at by
+# the base role's base_capture_shell.
+capture_rrsync_shell: /usr/local/sbin/rrsync-shell
+
 capture_cpu_limit: "1.5"
 capture_memory_limit: "2g"
 capture_log_max_size: "50m"
@@ -19,3 +23,12 @@ capture_healthcheck_url: ""
 # `<HH>.parquet` finals + their `.sha256` sidecars; never `.part` / `.held` / `.corrupt` (live hour,
 # quarantine, evidence). Raising this is safe; lowering it below a day is not, and the timer refuses.
 capture_retention_days: 14
+
+# --- Alloy (spec 00057; T0020's first-time telemetry stand-up on the capture VPSes): this host's own
+# Grafana Cloud shipper. Gated on `capture_alloy_digest` (no default — passed per run, the same way
+# capture_image_digest is): a converge without it skips the whole Alloy block rather than rendering a
+# compose file pointing at a broken image reference. The secrets file (the six GRAFANA_* names) has no
+# role var — alloy-compose.yaml.j2 hardcodes its relative `env_file: ./alloy-secrets.env` — it is
+# rendered by this role from group_vars/observed/vault.yml (tasks/main.yml), owned by zcrypto-alloy.
+capture_alloy_dir: /etc/zcrypto-capture/alloy
+capture_alloy_image: grafana/alloy

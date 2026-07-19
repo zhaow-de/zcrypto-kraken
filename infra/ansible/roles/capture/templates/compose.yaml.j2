@@ -5,6 +5,7 @@
 services:
   capture:
     image: "{{ capture_image }}@{{ capture_image_digest }}"
+    container_name: zcrypto-capture
     restart: unless-stopped
     user: "{{ capture_uid }}:{{ capture_gid }}"
     environment:

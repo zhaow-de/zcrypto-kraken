@@ -21,16 +21,16 @@
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]
 
-    - name: deploy sudo user
-      ansible.builtin.user: {name: deploy, groups: sudo, shell: /bin/bash, create_home: true}
-    - name: passwordless sudo for deploy (automation)
+    - name: zcrypto-deploy sudo user
+      ansible.builtin.user: {name: zcrypto-deploy, groups: sudo, shell: /bin/bash, create_home: true}
+    - name: passwordless sudo for zcrypto-deploy (automation)
       ansible.builtin.copy:
-        dest: /etc/sudoers.d/deploy
-        content: "deploy ALL=(ALL) NOPASSWD:ALL\n"
+        dest: /etc/sudoers.d/zcrypto-deploy
+        content: "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL\n"
         mode: '0440'
         validate: 'visudo -cf %s'
-    - name: install deploy authorized key
-      ansible.posix.authorized_key: {user: deploy, key: "{{ deploy_authorized_key }}", state: present}
+    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift, spec 00057 D1)
+      ansible.posix.authorized_key: {user: zcrypto-deploy, key: "{{ deploy_authorized_key }}", state: present, exclusive: true}
     - name: ensure python3 + sudo
       ansible.builtin.apt: {name: [python3, sudo], state: present, update_cache: true}
     - name: sshd drop-in — add 10022, disable root + password, key-only
@@ -48,11 +48,12 @@
     - name: reload sshd
       ansible.builtin.service: {name: ssh, state: reloaded}
 
-- name: Bootstrap ops node — deploy user only (home-LAN box, no SSH hardening per owner)
+- name: Bootstrap ops node — zcrypto-deploy user only (home-LAN box, no SSH hardening per owner)
   # Deliberately minimal vs the capture play above: the ops node is a home-LAN box behind NAT, not a
   # public-IP host, so it gets NO sshd drop-in — SSH stays on port 22 with Debian's defaults, and the
-  # box keeps its existing root break-glass. This play only makes the box converge-able: the `deploy`
-  # user + its key + passwordless sudo, so `run.sh` (deploy key) can run site.yml afterward. It never
+  # box keeps its existing root break-glass. This play only makes the box converge-able: the
+  # `zcrypto-deploy` user + its key + passwordless sudo, so `run.sh` (the vaulted deploy_zcrypto-ops
+  # key, filename unchanged per spec 00057 D1) can run site.yml afterward. It never
   # touches engine_host, so no converge_primary guard is needed here.
   hosts: ops_host
   gather_facts: false
@@ -60,15 +61,15 @@
     ansible_user: root
     ansible_port: 22
   tasks:
-    - name: deploy sudo user
-      ansible.builtin.user: {name: deploy, groups: sudo, shell: /bin/bash, create_home: true}
-    - name: passwordless sudo for deploy (automation)
+    - name: zcrypto-deploy sudo user
+      ansible.builtin.user: {name: zcrypto-deploy, groups: sudo, shell: /bin/bash, create_home: true}
+    - name: passwordless sudo for zcrypto-deploy (automation)
       ansible.builtin.copy:
-        dest: /etc/sudoers.d/deploy
-        content: "deploy ALL=(ALL) NOPASSWD:ALL\n"
+        dest: /etc/sudoers.d/zcrypto-deploy
+        content: "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL\n"
         mode: '0440'
         validate: 'visudo -cf %s'
-    - name: install deploy authorized key
-      ansible.posix.authorized_key: {user: deploy, key: "{{ deploy_authorized_key }}", state: present}
+    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift, spec 00057 D1)
+      ansible.posix.authorized_key: {user: zcrypto-deploy, key: "{{ deploy_authorized_key }}", state: present, exclusive: true}
     - name: ensure python3 + sudo
       ansible.builtin.apt: {name: [python3, sudo], state: present, update_cache: true}

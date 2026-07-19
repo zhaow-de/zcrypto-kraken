@@ -8,16 +8,16 @@
   ansible.builtin.file:
     path: "{{ ops_data_dir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
     mode: "0755"
 
 - name: ensure the ops compose project directory exists
   ansible.builtin.file:
     path: "{{ ops_compose_dir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: zcrypto-deploy
+    group: zcrypto-deploy
     mode: "0755"
 
 # rsync STAYS after T0058 retired the ops-side pull loop: it ships /usr/bin/rrsync, which the
@@ -53,8 +53,8 @@
 #
 # NOTE (attended step, deliberately NOT automated): once the NFS read path is verified live, the
 # operator retires the old pull channel's credentials — the `sync_nas_archive` private key (+ the
-# nas_known_hosts pin) under ~deploy/.ssh on this host and the matching authorized_keys entry on
-# the NAS. (Credentials retired 2026-07-17.) The `archive-pull` healthchecks.io check is NOT part
+# nas_known_hosts pin) under the admin home's ~/.ssh on this host and the matching authorized_keys
+# entry on the NAS. (Credentials retired 2026-07-17, verified absent post-rename.) The `archive-pull` healthchecks.io check is NOT part
 # of this retirement: the overlay writer pings it again since 2026-07-17 — it is live and
 # load-bearing. Deleting live-looking keys is an irreversible, verify-first action, so no
 # converge task does it.
@@ -96,8 +96,8 @@
   ansible.builtin.file:
     path: "{{ ops_textfile_dir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
     mode: "0755"
 
 # OPS-6 (spec 00056 D2/D4): the hot-out outbox the NAS pulls into its hot/ hub via a new
@@ -108,9 +108,92 @@
   ansible.builtin.file:
     path: "{{ ops_data_dir }}/{{ ops_hot_out_subdir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_hot_group }}"
+    mode: "2775"
+
+# --- Fleet users/groups (spec 00057, ops phase): the zcrypto-data m2m identity + the hot-out
+# authoring bridge. Created in the unconditional preamble (no digest gate) -- these accounts must
+# exist before any data ownership or container-user change (Task 3).
+#
+# Shell is the rrsync-only wrapper (ops_rrsync_shell), NOT nologin and NOT a general shell: this user
+# SERVES the NAS pulls via `command="rrsync -ro ..."` forced-command keys, and sshd runs a forced
+# command as `<login-shell> -c "<cmd>"`. A nologin shell swallows it ("account not available", every
+# pull fails -- caught by the Task-4 pre-flight); a general shell (/bin/bash) works but grants more
+# than needed. The wrapper permits ONLY rrsync and refuses everything else, so even a mis-added
+# forced-command-less key still can't get a shell. With command=+restrict per key + no password, no
+# interactive login is reachable. Deployed just below, BEFORE the account's shell points at it.
+- name: install the rrsync-only login shell for zcrypto-data (spec 00057)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/rrsync-shell"
+    dest: "{{ ops_rrsync_shell }}"
+    owner: root
+    group: root
     mode: "0755"
+
+- name: create the zcrypto-data m2m user (no password; rrsync-only shell; owns the data + runs the containers)
+  ansible.builtin.user:
+    name: "{{ ops_data_user }}"
+    system: true
+    shell: "{{ ops_rrsync_shell }}"
+    create_home: true
+    state: present
+
+- name: create the zcrypto-hot exchange group (bridges zcrypto-data + the research user zhaow)
+  ansible.builtin.group:
+    name: "{{ ops_hot_group }}"
+    state: present
+
+- name: add zcrypto-data to the exchange group (owns + serves hot-out; reads zhaow-authored files)
+  ansible.builtin.user:
+    name: "{{ ops_data_user }}"
+    groups: "{{ ops_hot_group }}"
+    append: true
+
+- name: probe for the research user (created by the research role; optional to this pipeline role)
+  ansible.builtin.command: "getent passwd {{ ops_research_user }}"
+  register: ops_research_probe
+  failed_when: false
+  changed_when: false
+
+- name: add the research user to the exchange group when it exists (authors into hot-out)
+  ansible.builtin.user:
+    name: "{{ ops_research_user }}"
+    groups: "{{ ops_hot_group }}"
+    append: true
+  when: ops_research_probe.rc == 0
+
+# --- The four NAS pull channels, now role-provisioned on zcrypto-data (spec 00057; they were
+# hand-installed on deploy). Each `rrsync -ro` pins its own subtree -- least-privilege per channel,
+# mirroring the capture/engine roles' sync forced commands. exclusive:false so these ADD to (do not
+# replace) zcrypto-data's keys; deploy kept its copies through the Task-4 NAS-repoint cutover, then dropped.
+- name: install the liquidations pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_liquidations_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_liquidations_subdir }}",restrict'
+
+- name: install the panel pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_panel_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_panel_subdir }}",restrict'
+
+- name: install the reconciled pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_reconciled_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_reconciled_subdir }}",restrict'
+
+- name: install the hot-out pull key (rrsync -ro) on zcrypto-data
+  ansible.posix.authorized_key:
+    user: "{{ ops_data_user }}"
+    exclusive: false
+    key: "{{ ops_sync_hot_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ ops_data_dir }}/{{ ops_hot_out_subdir }}",restrict'
 
 # Hoisted above ALL THREE digest-gated blocks below (spec 00054 Task 1 fix; extended by OPS-5 D2 to
 # cover the archive-pull block too): these two tasks used to live inside the ops_image_digest
@@ -119,21 +202,21 @@
 # below). Without the hoist, an Alloy-only converge (ops_alloy_digest passed, ops_image_digest not)
 # would render `user: ":"` -- a real coupling bug this hoist removes rather than works around, so
 # any of the three digest-gated blocks can converge independently.
-- name: look up the deploy account (the ops containers run as its uid/gid)
+- name: look up the zcrypto-data account (the ops containers run as its uid/gid — spec 00057)
   ansible.builtin.getent:
     database: passwd
-    key: deploy
+    key: "{{ ops_data_user }}"
 
-- name: derive the deploy uid/gid for the container user mapping
+- name: derive the zcrypto-data uid/gid for the container user mapping
   ansible.builtin.set_fact:
-    ops_uid: "{{ ansible_facts['getent_passwd']['deploy'][1] }}"
-    ops_gid: "{{ ansible_facts['getent_passwd']['deploy'][2] }}"
+    ops_uid: "{{ ansible_facts['getent_passwd'][ops_data_user][1] }}"
+    ops_gid: "{{ ansible_facts['getent_passwd'][ops_data_user][2] }}"
 
 # Corrects a one-time ownership mismatch left behind by the NOW-REMOVED NAS pull of this tree
 # (spec 00054 D2): capture-reconciled arrived here via `rsync -a` run by a root systemd unit, and
 # `-a` preserves NUMERIC ownership, so every file/dir under it still carries the NAS's uid/gid 1000
 # -- not ops's `deploy` (1001). The reconcile container runs `--user {{ ops_uid }}:{{ ops_gid }}`
-# (deploy), and `ledger_append` (cli/archive/mint.py) opens reconcile-ledger.jsonl in APPEND mode on
+# (zcrypto-data since spec 00057), and `ledger_append` (cli/archive/mint.py) opens reconcile-ledger.jsonl in APPEND mode on
 # EVERY cycle -- including detect-only, where the ledger is the entire point -- so without this,
 # every reconcile run fails EACCES: the directory being 0777 is a red herring, the ledger FILE is
 # 0664 owned by 1000, and appending needs write on the file, not just search on the directory.
@@ -149,12 +232,12 @@
 # it on the digest would leave a digest-less converge (or a host that never gets one) permanently
 # stuck with the NAS's ownership. It must merely run before the archive-pull runner below, which
 # Ansible's linear task order already guarantees.
-- name: ensure the overlay tree is owned by deploy (spec 00054 D2)
+- name: ensure the overlay tree is owned by zcrypto-data (spec 00054 D2; spec 00057)
   ansible.builtin.file:
     path: "{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
     state: directory
-    owner: deploy
-    group: deploy
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
     recurse: true
 
 # The overlay-writer runner (OPS-5, spec 00054 D2; re-plumbed by T0058): archive-pull.sh.j2
@@ -209,13 +292,13 @@
     # liquidations stream is not backfillable, so restarting it is never a converge side effect.
     #
     # mode 0600 (not 0644): the rendered file now carries COINALYZE_API_KEY in plaintext (Task 10,
-    # spec 00051 OPS-2) — deploy-only readable, matching the vault's own secrecy expectation.
+    # spec 00051 OPS-2) — zcrypto-deploy-only readable, matching the vault's own secrecy expectation.
     - name: render the ops compose file (liquidations poller)
       ansible.builtin.template:
         src: compose.yaml.j2
         dest: "{{ ops_compose_dir }}/compose.yaml"
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0600"
 
     - name: install the replay + panel runner scripts
@@ -249,15 +332,16 @@
 - name: install the ops telemetry stack — Grafana Alloy (spec 00054 D1; needs the pinned Alloy digest)
   when: ops_alloy_digest is defined
   block:
-    # Review finding 1 (CRITICAL): Alloy mounts /:/host/root:ro for free-disk-space metrics, and
-    # /home/deploy/.ssh (0700 deploy:deploy) holds the LIVE `sync_nas_archive` private key (0600)
-    # that the NAS-pull channel depends on. Running Alloy as `deploy` -- as an earlier revision of
-    # this role did -- would let it read that key directly through the mount, no escalation needed,
-    # defeating the exact protection this stack claims to replicate from the NAS (T0030: uid 1031
-    # there is deliberately NOT the key-owning uid 1000). `zcrypto-alloy` is the ops-node analogue: a
-    # dedicated, non-login system user that owns nothing under /home/deploy/.ssh, so the
-    # /host/root mount cannot reach `sync_nas_archive` -- this MIRRORS the NAS's uid-1031 choice,
-    # not merely resembles it. `group_add` (alloy-compose.yaml.j2) grants Docker socket access via
+    # Review finding 1 (CRITICAL, corrected 2026-07-18): Alloy mounts /:/host/root:ro for
+    # free-disk-space metrics, so running it as a user whose ~/.ssh held a private key would let it
+    # read that key straight through the mount, no escalation -- the exact protection this stack
+    # replicates from the NAS (T0030: uid 1031 there is deliberately NOT the key-owning uid 1000). The
+    # acute case this originally guarded -- the `sync_nas_archive` pull key under the admin home -- is
+    # now moot: that channel was retired (T0058, credentials removed 2026-07-17), and today neither the
+    # admin (`zcrypto-deploy`) nor the m2m (`zcrypto-data`) home holds any private key (only public
+    # authorized_keys). Running Alloy as a key-owning user would still be the wrong default, so
+    # `zcrypto-alloy` is a dedicated, non-login system user that owns nothing under any such home -- the
+    # direct-read path stays closed by construction, mirroring the NAS's uid-1031 choice. `group_add` (alloy-compose.yaml.j2) grants Docker socket access via
     # the host's real numeric docker gid, derived below via `getent` -- NOT a named "docker" entry:
     # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
     # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
@@ -333,11 +417,11 @@
       ansible.builtin.file:
         path: "{{ ops_alloy_dir }}"
         state: directory
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0755"
 
-    # Owned by the dedicated Alloy user, not `deploy`: this holds the remote_write WAL + Loki log
+    # Owned by the dedicated Alloy user, not `zcrypto-deploy`: this holds the remote_write WAL + Loki log
     # read-positions, which must survive container replacement, or a redeploy re-ships the retained
     # log backlog into the ingest quota (00043) -- and Alloy (running as zcrypto-alloy) needs WRITE
     # here, unlike everything else under ops_alloy_dir.
@@ -355,8 +439,8 @@
       ansible.builtin.copy:
         src: config.alloy
         dest: "{{ ops_alloy_dir }}/config.alloy"
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0644"
 
     # Renders straight from the vault (group_vars/observed/vault.yml) -- the NAS's copy is rendered
@@ -365,7 +449,7 @@
     # diff: false: without both, a converge prints the six Grafana Cloud credentials to the terminal
     # and to any log capturing the run's output (the established pattern -- see docs/plans/00043 --
     # applied wherever this role renders a secret, e.g. the liquidations compose file above). Owned
-    # by zcrypto-alloy (not deploy): the container runs as that uid (`user:` in
+    # by zcrypto-alloy (not zcrypto-deploy): the container runs as that uid (`user:` in
     # alloy-compose.yaml.j2) and must be able to read a 0600 file it does not own by default.
     - name: render the alloy secrets env file
       ansible.builtin.template:
@@ -381,6 +465,6 @@
       ansible.builtin.template:
         src: alloy-compose.yaml.j2
         dest: "{{ ops_alloy_dir }}/compose.yaml"
-        owner: deploy
-        group: deploy
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
         mode: "0644"

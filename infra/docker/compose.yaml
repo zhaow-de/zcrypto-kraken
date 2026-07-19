@@ -11,6 +11,7 @@
 services:
   capture:
     image: ghcr.io/zhaow-de/zcrypto-capture@${CAPTURE_IMAGE_DIGEST}
+    container_name: zcrypto-capture
     restart: unless-stopped
     user: "${CAPTURE_UID:-10001}:${CAPTURE_GID:-10001}"
     environment:

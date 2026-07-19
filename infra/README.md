@@ -8,6 +8,7 @@ new address, and re-run — no edits to the config layer.
 <!-- mdformat-toc start --slug=github --maxlevel=4 --minlevel=2 -->
 
 - [Layout](#layout)
+- [Dataset ownership model — the `1000:1000` invariant](#dataset-ownership-model-%E2%80%94-the-10001000-invariant)
 - [Running it](#running-it)
 - [The two-firewall model — IMPORTANT](#the-two-firewall-model-%E2%80%94-important)
 - [Break-glass — you are locked out of SSH](#break-glass-%E2%80%94-you-are-locked-out-of-ssh)
@@ -19,13 +20,21 @@ new address, and re-run — no edits to the config layer.
 
 ## Layout<a name="layout"></a>
 
-- `ansible/` — the source of truth. `bootstrap.yml` (one-time: root → `deploy@10022`), `site.yml`
+- `ansible/` — the source of truth. `bootstrap.yml` (one-time: root → `zcrypto-deploy@10022`), `site.yml`
   (steady-state converge: hardening → firewall → fail2ban → chrony → docker → capture), and the
   `roles/`. Secrets are two-layer: **sops+GPG** encrypts the ansible-vault password
   (`vault-password.sops.yaml`, GPG recipient `zhaow.km@gmail.com`), and **ansible-vault** encrypts
   the SSH keys + host secrets (`files/*_ed25519`, `group_vars/capture_host/vault.yml`).
 - `docker/` — the capture daemon's `Dockerfile` + reference `compose.yaml`. The image is
   `ghcr.io/zhaow-de/zcrypto-capture` (CI: `.github/workflows/capture-image.yml`).
+
+## Dataset ownership model — the `1000:1000` invariant<a name="dataset-ownership-model-%E2%80%94-the-10001000-invariant"></a>
+
+Every dataset on the NAS custody share (`/volume1/ZhaoCrypto`), from **every** channel, is owned `1000:1000` — `zcrypto-data:zcrypto` on the NAS, which the research nodes read back over NFS as `zhaow:zhaow` (uid/gid 1000 are aligned across NAS + ops + workstation *solely* so this no-mapping NFS read works). The invariant is what keeps custody accessible everywhere without per-file chowns.
+
+**Why it holds regardless of the source host's uid** (ops `zcrypto-data`=997, capture=999, engine=997 — each host-local, none is 1000): the NAS archive-pull container runs **`--user 1000:1000`, non-root**. A non-root receiver cannot honor rsync's `-o`/`-g` (only root chowns to arbitrary uids), so those are silently ignored and **every pulled file is (re-)written as the receiver's own `1000:1000`**. The source-host uids are purely local; they never leak into custody. The inbound hot-push is symmetric: it lands on `zcrypto-data` (uid 1000) too (spec 00057 — the m2m data channel belongs on the m2m user, not the admin `zcrypto-deploy`), so pushed files are `1000:1000` as well.
+
+**The one mechanism to preserve:** an ssh-login writer (the hot-push, received as `zcrypto-data`) has egid = its *primary* group (`users`/100 on DSM), not `zcrypto`. So the `hot/` hub is **setgid `2775`** to force new files to group `zcrypto` (1000). The pull trees don't need setgid because the container's `--user 1000:1000` sets egid 1000 explicitly. (Ownership never depends on the login shell or the `usermod -l` renames — those touch only login/local uids.)
 
 ## Running it<a name="running-it"></a>
 
@@ -74,7 +83,7 @@ rule in the Linode Cloud Manager. Editing only one silently fails.
 ## Break-glass — you are locked out of SSH<a name="break-glass-%E2%80%94-you-are-locked-out-of-ssh"></a>
 
 SSH is **key-only on port 10022**, root + password login are disabled, and port 22 no longer
-listens. If you lose `deploy@10022` access:
+listens. If you lose `zcrypto-deploy@10022` access:
 
 1. **Linode Lish console** (out-of-band, bypasses SSH and the network entirely): Linode Cloud
    Manager → your Linode → **Launch LISH Console** (or `ssh <user>@lish-<region>.linode.com`). Log
@@ -97,11 +106,11 @@ listens. If you lose `deploy@10022` access:
 
 1. Provision a fresh host (any provider/distro Ansible + dev-sec.io support; the roles target
    Debian-family here). Ensure the Linode/cloud firewall allows 22 (bootstrap) + 10022.
-2. `uv run ansible-playbook bootstrap.yml --limit <host> -e ansible_user=root -e ansible_port=22` — creates `deploy`,
+2. `uv run ansible-playbook bootstrap.yml --limit <host> -e ansible_user=root -e ansible_port=22` — creates `zcrypto-deploy`,
    moves SSH to 10022, disables root/password. Run it directly, not via `run.sh`: a virgin host only
    answers to the operator's master key, which `run.sh`'s throwaway agent excludes.
 3. `./scripts/run.sh site.yml --limit <host> -e capture_image_digest=sha256:<...>` — hardens + installs Docker + deploys the capture container.
-4. Drop 22 from the cloud firewall once `deploy@10022` is confirmed.
+4. Drop 22 from the cloud firewall once `zcrypto-deploy@10022` is confirmed.
 
 ## Key rotation<a name="key-rotation"></a>
 

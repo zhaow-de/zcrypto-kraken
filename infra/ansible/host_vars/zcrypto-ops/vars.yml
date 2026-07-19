@@ -4,10 +4,10 @@
 #
 # The box currently calls itself zcrypto-red (collision with the secondary capture host); this pins
 # the inventory name + on-host hostname to zcrypto-ops instead.
-# Converge as the deploy user (same as the capture fleet, which sets this in
-# group_vars/capture_host). The bootstrap play overrides this with `-e ansible_user=root` to create
-# the deploy user in the first place; every run.sh converge afterward connects as deploy.
-ansible_user: deploy
+# Converge as the zcrypto-deploy user (the fleet's admin identity since spec 00057 D1 — the capture
+# group defaults to it too). The bootstrap play overrides this with `-e ansible_user=root` to create
+# the zcrypto-deploy user in the first place; every run.sh converge afterward connects as zcrypto-deploy.
+ansible_user: zcrypto-deploy
 
 base_hostname: zcrypto-ops
 
@@ -34,8 +34,17 @@ ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
 
 # The operator's fleet-wide deploy pubkey, loaded from the same file group_vars/capture_host reads
 # (single source: infra/ansible/files/ -- a key rotation edits the .pub file once). The bootstrap
-# play installs it for the `deploy` user; `run.sh` then converges over it.
+# play installs it for the `zcrypto-deploy` user (spec 00057 D1); `run.sh` then converges over it.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-ops_ed25519.pub') }}"
+
+# Fleet users/groups (spec 00057): the four NAS pull-channel public keys the ops role installs on
+# zcrypto-data as `rrsync -ro` forced commands (they were hand-installed on deploy). Same lookup
+# idiom as deploy_authorized_key above -- public material only; the private halves live on the NAS
+# (/volume1/docker/zcrypto-archive/keys). The forced-command roots are in roles/ops/tasks/main.yml.
+ops_sync_liquidations_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_liquidations_ed25519.pub') }}"
+ops_sync_panel_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_panel_ed25519.pub') }}"
+ops_sync_reconciled_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_reconciled_ed25519.pub') }}"
+ops_sync_hot_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hot_ed25519.pub') }}"
 
 # THE --mint FLIP (spec 00050 Task 12's final step; flipped 2026-07-17, owner present). Unlocked by
 # the 66 h cross-host soak: 217 witnessed silence windows, max 12.08 s (a hand-classified coalescing

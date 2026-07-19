@@ -20,6 +20,7 @@ services:
     # (defaults/main.yml), so a converge without it skips this whole role block rather than
     # rendering a compose file pointing at a broken image reference.
     image: "{{ ops_alloy_image }}@{{ ops_alloy_digest }}"
+    container_name: grafana-alloy
     restart: unless-stopped
     # DIVERGENCE 2: run as the dedicated `zcrypto-alloy` uid/gid (a non-login system user created by
     # the role, looked up via `getent` -- tasks/main.yml), NOT the `deploy` uid/gid that owns the

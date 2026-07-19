@@ -23,8 +23,12 @@ capture_cpu_limit: "0.9"
 # The NAS's pull-only channel to THIS host — its own keypair (infra/ansible/files/sync_capture_red_ed25519,
 # private half vaulted), never the primary's: per-channel least privilege, so a compromised NAS key
 # reaches one host's segments. The capture role already installs this var as an `rrsync -ro`
-# forced-command entry on the deploy user, so overriding it here needs no role change.
+# forced-command entry on zcrypto-data (the m2m data user, spec 00057), so overriding it here needs no
+# role change.
 sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capture_red_ed25519.pub') }}"
 
 # This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-red_ed25519.pub') }}"
+
+# The admin identity (zcrypto-deploy after the spec-00057 D1 rename) is now the group default:
+# `ansible_user` in group_vars/capture_host, `docker_deploy_user` in the docker role default.

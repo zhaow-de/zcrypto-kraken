@@ -18,5 +18,6 @@ base_packages:
 base_unattended_upgrades_reboot_time: "21:25"
 base_unattended_upgrades_mail_to: root
 
-base_capture_user: kraken-capture
+base_capture_user: zcrypto-data
+base_capture_shell: /usr/local/sbin/rrsync-shell
 base_capture_data_dir: /var/lib/zcrypto-capture

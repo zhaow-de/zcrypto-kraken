@@ -1,0 +1,26 @@
+#!/bin/sh
+# rrsync-only login shell for the zcrypto-data machine-to-machine data user on
+# the Debian fleet hosts -- the ops node and (T0068) the capture hosts (spec
+# 00057). It permits ONLY the known rrsync binary, invoked as a forced command,
+# and refuses everything else -- no interactive shell, no arbitrary path, no
+# other binary. Defense-in-depth on top of each authorized_keys
+# command="..."/restrict jail: even a key that somehow lacked its forced command
+# could run nothing but rrsync through this shell.
+#   NOT USED ON THE NAS. DSM accepts only its own built-in shells as an SSH login
+#   shell and refuses a custom one at session setup (verified 2026-07-19), so the
+#   NAS's zcrypto-data keeps /bin/sh and relies on the forced command alone -- see
+#   roles/nas/tasks/main.yml and infra/external-systems.md.
+#   * The account has NO password and its keys are all command="..."-forced, so
+#     $2 is normally the trusted forced command; this shell is the backstop.
+#   * `exec $2` runs the binary directly (no /bin/sh), so shell metacharacters in
+#     a hostile $2 are never interpreted -- they become inert rrsync args, which
+#     rrsync rejects. It preserves SSH_ORIGINAL_COMMAND, which rrsync reads.
+#   * The `case` arm pins the EXACT absolute rrsync path; a planted /tmp/rrsync, a
+#     PATH lookup, or a `/usr/bin/rrsync-evil` can't match. The unquoted `exec $2`
+#     relies on the forced commands' subtree paths being space/glob-free -- they
+#     are (/var/lib/zcrypto-ops/*, the capture data dir).
+[ "$1" = "-c" ] || { echo "this account runs rrsync only (no interactive shell)" >&2; exit 1; }
+case "$2" in
+	/usr/bin/rrsync\ *)   exec $2 ;;  # ops / capture hosts (Debian rsync package)
+	*) echo "this account runs rrsync only (rejected)" >&2; exit 1 ;;
+esac
