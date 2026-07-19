@@ -88,18 +88,28 @@ discovery.docker "containers" {
 discovery.relabel "container_logs" {
   targets = discovery.docker.containers.targets
 
-  // Ship EVERY container on this host, not just archive-pull. `loki.source.docker` attaches no
-  // `container` label of its own, so derive one from the Docker name: compose sets no
-  // `container_name:`, so the real name is project-prefixed and slash-led (e.g.
-  // `/zcrypto-archive-archive-pull-1`). Strip the leading `/`, the compose project prefix and the
-  // trailing replica index, leaving the service name (`archive-pull`, `alloy`, …) — which is what
-  // the alert rules and the logs dashboard select on.
+  // Derive the `container` label from the compose SERVICE name — authoritative, stable across
+  // restarts, and unaffected by `container_name:`. Spec 00057 added explicit container names
+  // (`zcrypto-archive-pull`, `grafana-alloy`); the OLD rule read the docker NAME and its
+  // `zcrypto-archive-` prefix-strip would collapse `zcrypto-archive-pull` → `pull`, silently breaking
+  // the `container="archive-pull"` selectors + the NAS archive-pull alerts (errors + the dead-man).
+  // NAS compose services are `archive-pull` and `alloy` — what the alert rules and the logs dashboard
+  // select on. (Now matches the capture/ops Alloy scheme — fleet-uniform, closing the T0020 divergence.)
   rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/?(?:zcrypto-archive-)?(.*?)(?:-[0-9]+)?"
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    target_label  = "container"
+  }
+
+  // Name fallback for FUTURE non-compose containers — today it matches nothing (both NAS containers are
+  // compose-managed). The join with the (possibly empty) container label makes it match ONLY when the
+  // compose rule above did not set it (relabel regexes are fully anchored).
+  rule {
+    source_labels = ["container", "__meta_docker_container_name"]
+    separator     = ";"
+    regex         = ";/?(.*?)(?:-[0-9]+)?"
     target_label  = "container"
     replacement   = "$1"
-    action        = "replace"
   }
 
   // A `host` label so logs can be filtered by origin machine. Static because Alloy runs only on the

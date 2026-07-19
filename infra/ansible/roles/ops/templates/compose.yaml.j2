@@ -11,6 +11,7 @@ services:
     # liquidations` WS recorder (shelved in place, not deleted) is replaced here by `zcrypto
     # liquidations-poll` — same output tree, so the NAS replication channel + dead-man are unchanged.
     image: "{{ ops_image }}@{{ ops_image_digest }}"
+    container_name: zcrypto-ops-liquidations
     restart: unless-stopped
     user: "{{ ops_uid }}:{{ ops_gid }}"
     entrypoint: ["zcrypto", "liquidations-poll"]

@@ -19,6 +19,7 @@ services:
     # (defaults/main.yml), so a converge without it skips this whole role block rather than rendering
     # a compose file pointing at a broken image reference.
     image: "{{ capture_alloy_image }}@{{ capture_alloy_digest }}"
+    container_name: grafana-alloy
     restart: unless-stopped
     # Run as the dedicated `zcrypto-alloy` uid/gid (a non-login system user created by the role,
     # looked up via `getent` -- tasks/main.yml), NEVER a key-owning user: Alloy mounts /:/host/root:ro

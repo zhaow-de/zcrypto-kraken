@@ -182,9 +182,9 @@ discovery.relabel "container_logs" {
   // so NEITHER parse selector below matched and every ops stream shipped level=- (T0060).
 
   // Compose-managed containers: the compose SERVICE name is authoritative — it is stable across
-  // restarts and does not carry the project prefix or replica index the docker NAME does
-  // (zcrypto-ops-liquidations-1 -> liquidations, alloy-alloy-1 -> alloy). The NAS still derives
-  // labels from the docker name; unifying the fleet's scheme is T0020's dashboards package.
+  // restarts and unaffected by the explicit container_name (spec 00057: zcrypto-ops-liquidations ->
+  // liquidations, grafana-alloy -> alloy). The NAS now uses this same scheme (was docker-name-derived),
+  // so the fleet's container-labelling is uniform.
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
     regex         = "(.+)"

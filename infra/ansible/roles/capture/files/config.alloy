@@ -99,9 +99,9 @@ discovery.docker "containers" {
 discovery.relabel "container_logs" {
   targets = discovery.docker.containers.targets
 
-  // The compose SERVICE name is authoritative -- stable across restarts, and it carries neither the
-  // project prefix nor the replica index the docker NAME does (zcrypto-capture-capture-1 -> capture,
-  // alloy-alloy-1 -> alloy). This is what the logs dashboard and the parse selectors below key on.
+  // The compose SERVICE name is authoritative -- stable across restarts, and unaffected by the explicit
+  // container_name (spec 00057: zcrypto-capture -> capture, grafana-alloy -> alloy). This is what the
+  // logs dashboard and the parse selectors below key on.
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
     regex         = "(.+)"
