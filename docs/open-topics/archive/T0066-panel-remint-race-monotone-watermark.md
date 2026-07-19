@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the trade-bar materializer's spec is written (it must answer the same settle-discipline question, T0065's reach round), or any panel hour is ever observed derived from un-healed data
+status: resolved
 ---
 
 # The panel's monotone watermark can permanently capture an un-healed hour (re-mint race)
@@ -18,6 +17,13 @@ A panel hour materialized from a gappy primary shows honest-looking gaps/unancho
 - **Drill evidence (2026-07-17, measured 2026-07-18):** drill hour 15 was minted healed at 17:21:05Z; the panel's hour-15 file was written **17:22:30** — one minute *after* the mint — and holds 3600 gap-free rows (healed-fed). But it was saved by **ordering luck, not design**: the ops cycle happens to run reconcile (:12/:42) before the panel pass, and the NFS lag happened to exceed the mint time. D6's own text denies needing the margin that saved it.
 - The race window for **books** is narrow (lag trough 1.7 h vs mint floor 2 h ≈ tens of minutes, only at trough phase). For **trade-derived bars** (the future materializer, [[T0065]]'s reach round) the same design would be broken almost always: trades are heal-complete only after the *next day's* REST backfill (≤ ~28 h) — a chasm, not a race.
 - The panel is `f(canonical)`, recomputable: any hour found un-healed-derived can be repaired by re-deriving that hour (or a generation regen). No data is lost — the defect is silent staleness, not loss.
+
+## Resolution (2026-07-19)
+
+- **Settle discipline chosen: option (a), the explicit book-settle watermark.** `cli/panel/materialize.py` now defers an hour until `now - hour >= PANEL_SETTLE` (7h = the reconciler's H+6h max mint + a 1h pull/visibility buffer), counting a not-yet-settled hour `hours_unsettled` and leaving the monotone watermark untouched so a later sweep takes it once heal-complete. `--settle-hours` on the CLI (default 7); injectable `now` for deterministic tests. TDD: `test_materialize_defers_an_unsettled_hour_then_takes_it_once_settled`. Spec `00052` D6's "no extra settle margin is needed" claim corrected in place. Option (b) (ledger-driven invalidation) was the more complex alternative and unnecessary — the ~5h freshness cost of (a) has no current consumer.
+- **One-time audit: 0 un-healed panel hours.** Read-only comparison on the ops node of every `book`/`minted` ledger record's `at` time vs the panel hour's mtime (`reconcile-ledger.jsonl` has exactly 10 book mints — the 2026-07-17T15:00 drill across all 10 pairs): every panel hour was written 17:22-17:23Z, ~10 min AFTER the 17:12:16Z mint, so all 10 are healed-derived. Nothing to re-derive; the pre-fix tree is clean. (A one-time audit — no committed tool, per YAGNI; the forward fix structurally prevents recurrence.)
+- **Trade-bar materializer binding moved to its home ([[T0065]]'s reach round):** the materializer's future spec must answer the same settle question (trades are heal-complete only after the ≤~28h daily REST backfill — a chasm), recorded in T0065's next-steps so it survives this topic's close.
+- **Deploy tail:** the settle gate activates on the ops node at the next ops image re-pin (the panel timer then runs the new code); until then the interim risk is low (the current tree is clean and the reconcile→panel ordering has held).
 
 ## Suggested next steps
 
