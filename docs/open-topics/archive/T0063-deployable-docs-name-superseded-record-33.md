@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # The deployable-system docs name the superseded record 33, not the actual deployable (trial 44)
@@ -24,6 +24,10 @@ The deployable's **true identity and dataset_hash (`45275ebe`) appear only in th
 - The stale pins: `13.phase5-closeout.md`, `12.phase5-system-spec-runbook.md` body (~line 39), `docs/specs/00039-phase6-kickoff-design.md` decision-5 prose.
 - Trial 44 spec_hash `a25d7102…` (pins spec 00038 + its iter-080 execution-precision amendments); dataset_hash `45275ebe…` = `sha256(daily-manifest ba47e37e ‖ 4h-manifest 81dc9b44)`, span 2013-09-10 → 2026-03-31, 10 EUR pairs.
 - Related lesson already logged ([iter-085]): hash the spec after any execution-time amendment (records 34/35 carry the pre-amendment spec_hash). This topic is the deployable-identity analogue of that drift.
+
+## Resolution (2026-07-19)
+
+All three prescriptions delivered in one docs pass: dated inline supersession pointers at every stale site — `13.phase5-closeout.md` (the exit-deployable sentence + the `build_combined_system` build-target line), `00039-phase6-kickoff-design.md` (decision-5 prose + the non-goals record-33 line) — plus a **one-lookup "Current deployable" line** atop `12.phase5-system-spec-runbook.md` (record 44 · `build_crossfreq_system_fast` · `dataset_hash 45275ebe…` = daily `ba47e37e` ‖ 4h `81dc9b44`) and a historical-pin note on the runbook body's `ba47e37e` dataset line. Historical narratives marked in place, never rewritten; the registry stays the source of truth.
 
 ## Suggested next steps
 

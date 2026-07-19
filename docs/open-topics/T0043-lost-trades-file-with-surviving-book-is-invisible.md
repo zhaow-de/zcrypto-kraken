@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: a trades segment is ever found missing from a mirror while its book sibling is present (any manual audit, any consumer error), or before the reconciled overlay feeds a paid/production consumer
 ---
 
@@ -22,11 +22,7 @@ The exposure is narrower than it first looks, and the narrowing is what makes th
 - The reconciler's `available` set for trades is already the **cross-host union** of both mirrors, so the blind spot needs the loss to hit **both** archives independently for the same pair+hour. A loss on one mirror only is still healed by the ordinary union path.
 - A single-mirror loss is therefore *repaired*, not merely detected.
 
-But it is a real gap, and a review (2026-07-14) confirmed there is **no compensating signal** anywhere in the stack:
-
-- `infra/scripts/continuity.py` measures **book-only** gaps by explicit design ("trades legitimately go quiet, so they cannot measure uptime").
-- `verify_tree` / the `.sha256` manifests validate only files that **exist** — there is no notion of an *expected* file whose absence is a failure.
-- The `trade_deficit` QA path needs the secondary to hold *some* rows to union against, so a both-mirrors-absent hour never reaches it.
+At review time (2026-07-14) there was **no compensating signal** anywhere in the stack — `infra/scripts/continuity.py` is book-only by design, `verify_tree`/manifests validate only files that exist, and the `trade_deficit` QA path needs the secondary to hold *some* rows. **Superseded 2026-07-16 (iter-100, spec `00053`): the daily REST trade-backfill IS now that compensating signal for the data itself.** It compares the archive against Kraken's REST tape (dense per-pair `trade_id`, so a hole is *provable*, not inferred), repairs any missing trades, and is staleness/exit-code-alerted ([[T0052]]). A trades hour lost on both mirrors is therefore **detected and repaired within a day** — the false negative no longer costs the data forever.
 
 ## Findings so far
 
@@ -34,8 +30,11 @@ But it is a real gap, and a review (2026-07-14) confirmed there is **no compensa
 - Confirmed at the source (`cli/capture/segment_writer.py`): an hour with zero events for a `(pair, kind)` never becomes `_current_hour`, is never finalized, and produces **no file at all** — never an empty `<HH>.parquet`. So "absent" and "empty" are the same thing on disk, which is precisely why absence alone cannot distinguish silence from loss.
 - The counterpart gap for the **book** stream does not exist: book is continuous, so its absence really is darkness, and it is still judged on bracketing alone.
 
+## Done so far
+
+- **The data-loss half is closed by iter-100 (spec `00053`, 2026-07-16):** the daily REST trade-backfill detects a missing trades hour against Kraken's dense `trade_id` tape and repairs it, alerted by [[T0052]]'s staleness dead-man + exit-code rules. The expected-file check the first next-step proposed is superseded — REST comparison is strictly stronger (it checks against the venue's truth, not the capture host's own file list).
+
 ## Suggested next steps
 
-- Decide whether an *expected-file* check is worth building: the capture side knows which `(pair, kind, hour)` it committed (the manifest sidecars exist per final). A cheap version is to assert, per pair+hour, that a `trades` final exists **iff** the capture host actually wrote one — i.e. compare the mirror against the source's own file list rather than against a bracketing heuristic. This turns "absent" into a checkable claim instead of an inference.
-- Cheaper interim: have the reconciler emit a **low-severity QA metric** (not a page) counting `(pair, hour)` where the book final exists and the trades final does not, so the rate is at least *observable*. A sudden jump in that rate is the signature of real loss; the steady baseline is just quiet pairs. This is decision-support and needs no verdict.
-- Reconsider before the reconciled overlay ever feeds a paid or production consumer (`ripe_when`), since that is the point at which a silent trades hole stops being an archive-quality question and starts being a trading-input question.
+- **The residual is loss-event *attribution*, not loss:** `is_total_loss` (`cli/archive/settle.py`) still classifies a genuinely lost both-mirrors trades hour as "nobody traded" — no ledger entry, no page — and the backfill then repairs it *silently*, so a real infrastructure loss event (disk error, truncated rsync) leaves no operator-visible trace of ever having happened. Cheap fix when ripe: a **low-severity QA metric** counting `(pair, hour)` where the book final exists, the trades final doesn't, and the backfill later inserted rows for it — that combination is the signature of a repaired real loss, distinguishable from quiet pairs (which the backfill never touches).
+- Reconsider before the reconciled overlay ever feeds a paid or production consumer (`ripe_when`), since that is the point at which loss attribution stops being an archive-forensics question and starts being a trading-input-trust question.

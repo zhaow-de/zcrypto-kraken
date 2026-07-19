@@ -125,8 +125,8 @@
       stderr: {{ engine_gate_sshd.stderr | default("") | trim }}
 
 # --- 2. The zcrypto-engine service account — created by this role itself, deliberately unlike
-# kraken-capture (which the base role creates): in-role creation keeps `--tags engine`
-# self-sufficient on first deploy.
+# zcrypto-data (which the base role creates on capture hosts; renamed from kraken-capture, spec
+# 00057): in-role creation keeps `--tags engine` self-sufficient on first deploy.
 - name: create the zcrypto-engine system user (nologin, home = its state dir)
   ansible.builtin.user:
     name: zcrypto-engine
