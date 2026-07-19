@@ -30,6 +30,7 @@ outside it by chance alone.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -37,6 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
+from cli.engine.concordance import replay_cycle
 from cli.engine.cycle import _union_align
 from cli.engine.errors import EngineError
 from cli.engine.journal import CycleRecord, SnapshotEntry
@@ -324,12 +326,27 @@ class NullSystem:
     n_periods: int
 
 
-def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, fee: float = 0.006) -> NullSystem:
-    """Load the frozen canonical dataset, rebuild the SAME strategy with `build_crossfreq_system_fast`,
-    and derive the live-cost-convention null (`NullSystem`) the realized series is compared against."""
+def _canonical_present(canonical_dir: Path) -> bool:
+    """True iff the frozen canonical dataset looks present at `canonical_dir` (checked via BTC's
+    240 store file, the same file every canonical-gated test in this suite skips on)."""
+    return (canonical_dir / "BTC" / "EUR" / "240.parquet").exists()
+
+
+def _load_canonical(
+    canonical_dir: Path,
+) -> tuple[dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], list[datetime]]:
+    """Load the frozen canonical dataset's daily and 4h price panels, shared by `build_null` and
+    `instrument_self_check` so the two never drift apart on how the canonical is read."""
     raw = {(a, iv): read_store_series(canonical_dir, a, iv) for a in PAIR_KEYS for iv in GRID_INTERVALS}
     daily_ts, daily_prices = _union_align(raw, 1440)
     h4_ts, h4_prices = _union_align(raw, 240)
+    return daily_prices, daily_ts, h4_prices, h4_ts
+
+
+def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, fee: float = 0.006) -> NullSystem:
+    """Load the frozen canonical dataset, rebuild the SAME strategy with `build_crossfreq_system_fast`,
+    and derive the live-cost-convention null (`NullSystem`) the realized series is compared against."""
+    daily_prices, daily_ts, h4_prices, h4_ts = _load_canonical(canonical_dir)
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
 
     net_live, reconcile_ok = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
@@ -488,3 +505,157 @@ def summarize_panel(verdicts: dict[str, MetricVerdict], *, band: float = 0.90) -
     expected_by_chance = n_metrics * (1.0 - band)
     line = f"{n_outside} of {n_metrics} outside band (~{expected_by_chance:.1f} expected by chance at {band * 100:.0f}%)"
     return PanelSummary(n_metrics=n_metrics, n_outside=n_outside, expected_by_chance=expected_by_chance, line=line)
+
+
+@dataclass(frozen=True)
+class SelfTestReport:
+    """Before any verdict is read, the instrument must prove itself: `instrument_ok` reproduces a
+    known registry result, `identity_ok` shows the journaled positions reproduce under replay,
+    `reconcile_ok` shows the null and the realized series' own internal bookkeeping check out, and
+    `plausibility_checks` (folded into `messages`) shows every value sits within bounds. `void`
+    REFUSES the run (rather than emit a plausible-but-wrong verdict) the moment any self-test
+    RAN and FAILED -- `None` (skipped, e.g. no canonical data or nothing to replay) never VOIDs by
+    itself, only an explicit `False` does."""
+
+    instrument_ok: bool | None  # None = canonical absent (skipped, NOT a fail)
+    identity_ok: bool | None  # None = no cycle could be replayed (e.g. snapshots absent)
+    reconcile_ok: bool
+    messages: tuple[str, ...]
+
+    @property
+    def void(self) -> bool:
+        return self.instrument_ok is False or self.identity_ok is False or self.reconcile_ok is False
+
+
+def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
+    """Return the JSON object in `registry_path` (JSON-lines) whose `trial_id == trial_id`."""
+    with registry_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if record.get("trial_id") == trial_id:
+                return record
+    raise SoakError(f"no trial_id={trial_id} record in {registry_path}")
+
+
+def _instrument_expectations(registry_path: Path) -> dict[str, int]:
+    """{'governor_engaged_bars': ..., 'cap_breach_bars': ...} from record 44's metrics -- the
+    ratified deployable-system trial (docs/reference/trial-registry.jsonl) the frozen engine build
+    must reproduce exactly."""
+    metrics = _load_registry_record(registry_path, 44)["metrics"]
+    return {
+        "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
+        "cap_breach_bars": int(metrics["cap_breach_bars"]),
+    }
+
+
+def instrument_self_check(
+    canonical_dir: Path, registry_path: Path, config: CrossfreqSystemConfig = CrossfreqSystemConfig()
+) -> tuple[bool | None, str]:
+    """Rebuild the frozen strategy over the full canonical history (the same load `build_null`
+    uses, via `_load_canonical`) and assert its `governor_engaged_bars`/`cap_breach_bars` EXACTLY
+    match record 44's registry values. Returns (None, 'canonical absent') without building
+    anything when `canonical_dir` has no data (skip, not fail) -- this is expected on a host
+    without `data/ohlc-full`."""
+    if not _canonical_present(canonical_dir):
+        return None, "canonical absent"
+
+    daily_prices, daily_ts, h4_prices, h4_ts = _load_canonical(canonical_dir)
+    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
+    expected = _instrument_expectations(registry_path)
+
+    mismatches = [
+        f"{key}={getattr(result, key)} != registry {value}" for key, value in expected.items() if getattr(result, key) != value
+    ]
+    if mismatches:
+        return False, "instrument mismatch: " + "; ".join(mismatches)
+    return True, "instrument reproduces record 44"
+
+
+def identity_self_check(record, snapshot_reader, *, tol: float = 1e-6) -> tuple[bool, str]:
+    """Recompute `record`'s newest-row targets via `replay_cycle(record, snapshot_reader)` and
+    compare against `record.final_targets`, per asset, within `tol`. A replay failure (missing or
+    corrupt journaled snapshots) is NOT caught here -- it propagates to the caller (`self_tests`),
+    which treats "could not be checked" (identity_ok=None) as distinct from this function's only
+    failure mode, a genuine value mismatch (identity_ok=False)."""
+    replayed = replay_cycle(record, snapshot_reader)
+    mismatches = [
+        f"{asset}: replayed={replayed.get(asset)!r} recorded={value!r}"
+        for asset, value in record.final_targets.items()
+        if asset not in replayed or abs(replayed[asset] - value) > tol
+    ]
+    if mismatches:
+        return False, "identity mismatch: " + "; ".join(mismatches)
+    return True, "identity check passed"
+
+
+def plausibility_checks(realized, null) -> list[str]:
+    """Scan `realized`/`null` for out-of-bounds diagnostics; returns one message per violation
+    found (empty = all in bounds). Bounds: `realized.implausible` (already flags any |r_fwd| > 0.5
+    in the scored segment); every `realized.gross` bar within [-2, 2] (a book beyond 200% gross is
+    instrument breakage, not strategy); every `null.net_live` value finite; and both reconcile
+    flags (`realized.chain_ok`, `null.reconcile_ok`) on."""
+    messages: list[str] = []
+    if realized.implausible:
+        messages.append("realized: implausible forward return |r_fwd| > 0.5 in the scored segment")
+    messages.extend(f"realized: gross {g!r} outside plausibility bound [-2, 2]" for g in realized.gross if not (-2.0 <= g <= 2.0))
+    messages.extend(f"null: net_live value {v!r} is not finite" for v in null.net_live if not math.isfinite(v))
+    if not realized.chain_ok:
+        messages.append("realized: chain_ok is False (forward join integrity broken)")
+    if not null.reconcile_ok:
+        messages.append("null: reconcile_ok is False (live-cost reconstruction diverged)")
+    return messages
+
+
+def self_tests(
+    records: list[CycleRecord],
+    null: NullSystem,
+    *,
+    realized: RealizedSeries,
+    canonical_dir: Path,
+    registry_path: Path,
+    snapshot_reader,
+    config: CrossfreqSystemConfig = CrossfreqSystemConfig(),
+) -> SelfTestReport:
+    """Run the instrument, identity, and reconcile self-tests plus the plausibility scan, and roll
+    them into a `SelfTestReport`. Extends the sketched signature with a required keyword-only
+    `realized: RealizedSeries` -- `plausibility_checks` and the chain-of-custody half of
+    `reconcile_ok` both need it, and `NullSystem` alone doesn't carry it.
+
+    `identity_self_check` replays the NEWEST record in `records` (by `cycle_ts`) -- the journaled
+    cycle closest to the live edge, where a replay break matters most. An empty `records`, or a
+    replay that raises `EngineError` (missing/corrupt snapshots), both skip identity
+    (`identity_ok=None`) rather than failing it -- matching instrument's None-on-absent-data
+    convention. `reconcile_ok = null.reconcile_ok and realized.chain_ok`: the backtest null's own
+    internal bookkeeping and the realized series' forward-join integrity must both hold.
+    """
+    messages: list[str] = []
+
+    instrument_ok, instrument_msg = instrument_self_check(canonical_dir, registry_path, config=config)
+    messages.append(f"instrument: {instrument_msg}")
+
+    if not records:
+        identity_ok: bool | None = None
+        messages.append("identity: skipped, no records to replay")
+    else:
+        newest = max(records, key=lambda r: r.cycle_ts)
+        try:
+            identity_ok, identity_msg = identity_self_check(newest, snapshot_reader)
+            messages.append(f"identity: {identity_msg}")
+        except EngineError as exc:
+            identity_ok = None
+            messages.append(f"identity: skipped, replay failed: {exc}")
+
+    reconcile_ok = null.reconcile_ok and realized.chain_ok
+    messages.append(f"reconcile: {'ok' if reconcile_ok else 'FAILED'}")
+
+    messages.extend(plausibility_checks(realized, null))
+
+    return SelfTestReport(
+        instrument_ok=instrument_ok,
+        identity_ok=identity_ok,
+        reconcile_ok=reconcile_ok,
+        messages=tuple(messages),
+    )

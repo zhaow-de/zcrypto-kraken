@@ -6,17 +6,24 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+import cli.engine.soak as soak
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 from cli.engine.soak import (
+    SelfTestReport,
     SoakError,
     _chain_consistent,
+    _instrument_expectations,
     _net_live_from_result,
     block_bootstrap_null,
     degenerate,
     governor_engaged_daily,
+    identity_self_check,
+    instrument_self_check,
     metric_verdict,
+    plausibility_checks,
     realized_series,
     select_clean_segment,
+    self_tests,
     structural_metrics,
     summarize_panel,
     windowed_null,
@@ -317,3 +324,99 @@ def test_summarize_panel_multiplicity_line():
     assert s.n_outside == 1 and s.n_metrics == 3
     assert abs(s.expected_by_chance - 3 * 0.10) < 1e-9
     assert "outside band" in s.line and "expected by chance" in s.line
+
+
+def test_instrument_expectations_reads_record_44():
+    exp = _instrument_expectations(Path("docs/reference/trial-registry.jsonl"))
+    assert exp["governor_engaged_bars"] == 7302 and exp["cap_breach_bars"] == 1318
+
+
+def test_identity_self_check_pass_and_fail(monkeypatch):
+    rec = types.SimpleNamespace(final_targets={"BTC": 0.1, "ETH": -0.05})
+    monkeypatch.setattr(soak, "replay_cycle", lambda r, reader, path="fast": {"BTC": 0.1, "ETH": -0.05})
+    ok, _ = identity_self_check(rec, snapshot_reader=None, tol=1e-6)
+    assert ok is True
+    monkeypatch.setattr(soak, "replay_cycle", lambda r, reader, path="fast": {"BTC": 0.1 + 2e-6, "ETH": -0.05})
+    ok2, _ = identity_self_check(rec, snapshot_reader=None, tol=1e-6)
+    assert ok2 is False
+
+
+def test_plausibility_flags_implausible_forward_return():
+    realized = types.SimpleNamespace(implausible=True, gross=[0.1, 0.2], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01, -0.02], reconcile_ok=True)
+    msgs = plausibility_checks(realized, null)
+    assert any("implausible" in m.lower() or "r_fwd" in m.lower() for m in msgs)
+
+
+def test_plausibility_clean_when_in_bounds():
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1, 0.2], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01, -0.02], reconcile_ok=True)
+    assert plausibility_checks(realized, null) == []
+
+
+@pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
+def test_instrument_self_check_reproduces_record_44():
+    ok, msg = instrument_self_check(Path("data/ohlc-full"), Path("docs/reference/trial-registry.jsonl"))
+    assert ok is True, msg  # the frozen build must reproduce record 44's exact integer diagnostics
+
+
+def test_instrument_self_check_skips_when_canonical_absent(tmp_path):
+    ok, msg = instrument_self_check(tmp_path / "no-such-canonical", Path("docs/reference/trial-registry.jsonl"))
+    assert ok is None and "absent" in msg.lower()
+
+
+def test_instrument_self_check_flags_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        soak,
+        "_instrument_expectations",
+        lambda registry_path: {"governor_engaged_bars": -1, "cap_breach_bars": -1},
+    )
+    ok, msg = instrument_self_check(Path("data/ohlc-full"), Path("docs/reference/trial-registry.jsonl"))
+    assert ok is False and "governor_engaged_bars" in msg
+
+
+def test_selftestreport_void_property():
+    assert SelfTestReport(instrument_ok=None, identity_ok=True, reconcile_ok=True, messages=()).void is False
+    assert SelfTestReport(instrument_ok=False, identity_ok=True, reconcile_ok=True, messages=()).void is True
+    assert SelfTestReport(instrument_ok=True, identity_ok=False, reconcile_ok=True, messages=()).void is True
+    assert SelfTestReport(instrument_ok=True, identity_ok=None, reconcile_ok=False, messages=()).void is True
+
+
+def test_self_tests_wires_checks_and_computes_void(monkeypatch):
+    monkeypatch.setattr(soak, "instrument_self_check", lambda canonical_dir, registry_path, config=None: (True, "instrument ok"))
+    monkeypatch.setattr(soak, "identity_self_check", lambda record, snapshot_reader, tol=1e-6: (False, "identity mismatch"))
+    rec = types.SimpleNamespace(cycle_ts=datetime(2026, 7, 16, 0, 0, tzinfo=UTC))
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01], reconcile_ok=True)
+
+    report = self_tests(
+        [rec],
+        null,
+        realized=realized,
+        canonical_dir=Path("data/ohlc-full"),
+        registry_path=Path("docs/reference/trial-registry.jsonl"),
+        snapshot_reader=None,
+    )
+    assert report.instrument_ok is True
+    assert report.identity_ok is False
+    assert report.reconcile_ok is True  # null.reconcile_ok and realized.chain_ok both True
+    assert report.void is True  # identity_ok False alone VOIDs the run
+    assert any("identity mismatch" in m for m in report.messages)
+
+
+def test_self_tests_skips_identity_when_no_records(monkeypatch):
+    monkeypatch.setattr(soak, "instrument_self_check", lambda canonical_dir, registry_path, config=None: (None, "canonical absent"))
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01], reconcile_ok=True)
+
+    report = self_tests(
+        [],
+        null,
+        realized=realized,
+        canonical_dir=Path("data/ohlc-full"),
+        registry_path=Path("docs/reference/trial-registry.jsonl"),
+        snapshot_reader=None,
+    )
+    assert report.instrument_ok is None
+    assert report.identity_ok is None
+    assert report.void is False  # both None (skipped), reconcile true, no plausibility violations
