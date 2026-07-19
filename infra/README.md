@@ -20,7 +20,7 @@ new address, and re-run — no edits to the config layer.
 
 ## Layout<a name="layout"></a>
 
-- `ansible/` — the source of truth. `bootstrap.yml` (one-time: root → `deploy@10022`), `site.yml`
+- `ansible/` — the source of truth. `bootstrap.yml` (one-time: root → `zcrypto-deploy@10022`), `site.yml`
   (steady-state converge: hardening → firewall → fail2ban → chrony → docker → capture), and the
   `roles/`. Secrets are two-layer: **sops+GPG** encrypts the ansible-vault password
   (`vault-password.sops.yaml`, GPG recipient `zhaow.km@gmail.com`), and **ansible-vault** encrypts
@@ -83,7 +83,7 @@ rule in the Linode Cloud Manager. Editing only one silently fails.
 ## Break-glass — you are locked out of SSH<a name="break-glass-%E2%80%94-you-are-locked-out-of-ssh"></a>
 
 SSH is **key-only on port 10022**, root + password login are disabled, and port 22 no longer
-listens. If you lose `deploy@10022` access:
+listens. If you lose `zcrypto-deploy@10022` access:
 
 1. **Linode Lish console** (out-of-band, bypasses SSH and the network entirely): Linode Cloud
    Manager → your Linode → **Launch LISH Console** (or `ssh <user>@lish-<region>.linode.com`). Log
@@ -106,11 +106,11 @@ listens. If you lose `deploy@10022` access:
 
 1. Provision a fresh host (any provider/distro Ansible + dev-sec.io support; the roles target
    Debian-family here). Ensure the Linode/cloud firewall allows 22 (bootstrap) + 10022.
-2. `uv run ansible-playbook bootstrap.yml --limit <host> -e ansible_user=root -e ansible_port=22` — creates `deploy`,
+2. `uv run ansible-playbook bootstrap.yml --limit <host> -e ansible_user=root -e ansible_port=22` — creates `zcrypto-deploy`,
    moves SSH to 10022, disables root/password. Run it directly, not via `run.sh`: a virgin host only
    answers to the operator's master key, which `run.sh`'s throwaway agent excludes.
 3. `./scripts/run.sh site.yml --limit <host> -e capture_image_digest=sha256:<...>` — hardens + installs Docker + deploys the capture container.
-4. Drop 22 from the cloud firewall once `deploy@10022` is confirmed.
+4. Drop 22 from the cloud firewall once `zcrypto-deploy@10022` is confirmed.
 
 ## Key rotation<a name="key-rotation"></a>
 

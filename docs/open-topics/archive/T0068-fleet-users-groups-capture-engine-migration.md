@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the ops migration ([[T0067-fleet-users-groups-ops-migration]]) is complete and a maintenance window for the capture hosts is scheduled
+status: resolved
 ---
 
 # Fleet users/groups regularization — capture/engine hosts
