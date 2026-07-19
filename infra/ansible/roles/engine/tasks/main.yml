@@ -111,11 +111,16 @@
       - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
       # \\b (not \b): assert `that:` expressions unicode-escape the Jinja string literal, so a
       # single \b reaches the regex as backspace (\x08) and silently never matches.
+      # Superset gate (spec 00057 D1, T0068): both the m2m pull user (zcrypto-data) and the
+      # renamed admin (zcrypto-deploy) must be present in AllowUsers; deploy/root may also be
+      # present (transitional superset, roles/hardening/defaults/main.yml) — that's fine.
+      - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bzcrypto-data\\b')
       - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bzcrypto-deploy\\b')
     fail_msg: >-
       §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): sshd -T must
-      report permitrootlogin no|prohibit-password, passwordauthentication no, and allowusers zcrypto-deploy before the
-      engine (and its trade key) may land. Effective posture lines (rc={{ engine_gate_sshd.rc }}):
+      report permitrootlogin no|prohibit-password, passwordauthentication no, and allowusers
+      containing both zcrypto-data and zcrypto-deploy before the engine (and its trade key) may
+      land. Effective posture lines (rc={{ engine_gate_sshd.rc }}):
       {{ engine_gate_sshd.stdout_lines | select("match", "^(allowusers|allowgroups|denyusers|denygroups|permitrootlogin|passwordauthentication)") | list }};
       stderr: {{ engine_gate_sshd.stderr | default("") | trim }}
 
