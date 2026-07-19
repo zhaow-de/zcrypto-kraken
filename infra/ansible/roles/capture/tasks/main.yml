@@ -130,3 +130,127 @@
     daemon_reload: true
     enabled: true
     state: started
+
+# --- The capture host's telemetry stack — Grafana Alloy (spec 00057; T0020's first-time telemetry
+# stand-up on the capture VPSes). Gated on the pinned Alloy digest: a converge without it skips the
+# whole block, so this stays inert until the attended first-start step (plan Tasks 5/7) passes a
+# digest. This RENDERS the stack only — it never starts Alloy (no systemd unit, no `docker compose
+# up`, no restart handler), mirroring the ops role's render-only Alloy block: the first start is an
+# attended step, not a converge side effect.
+- name: install the capture telemetry stack — Grafana Alloy (needs the pinned Alloy digest)
+  when: capture_alloy_digest is defined
+  block:
+    # Alloy mounts /:/host/root:ro (alloy-compose.yaml.j2) for free-disk-space metrics, so a
+    # key-owning user's ~/.ssh would be readable straight through that mount, no escalation needed —
+    # the exact protection the NAS replicates with its dedicated uid-1031 (T0030). The capture hosts
+    # hold no private key today, but running Alloy as a key-owning user would still be the wrong
+    # default, so `zcrypto-alloy` is a dedicated, non-login system user that owns nothing key-adjacent
+    # — the direct-read path stays closed by construction. Socket access (group_add below) is
+    # root-equivalent and remains a known, accepted residual; the dedicated uid closes only the
+    # narrower DIRECT, no-escalation read.
+    - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
+      ansible.builtin.user:
+        name: zcrypto-alloy
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: look up the zcrypto-alloy account
+      ansible.builtin.getent:
+        database: passwd
+        key: zcrypto-alloy
+
+    - name: derive the zcrypto-alloy uid/gid for the container user mapping
+      ansible.builtin.set_fact:
+        capture_alloy_uid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][1] }}"
+        capture_alloy_gid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][2] }}"
+
+    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
+    # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
+    # never resolve and the container would fail to start. The fix is the host's real numeric docker
+    # gid, derived here (never hardcoded — it is a per-host accident). Safe to look up: the `docker`
+    # role runs before this one in the capture play (site.yml), creating the `docker` group as a side
+    # effect of the docker-ce install. `getent group` rows are `name:passwd:gid:members`, so index 1
+    # is the gid (NOT passwd's index-2 gid).
+    - name: look up the docker group (created by the docker role; Alloy's group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: docker
+
+    - name: derive the docker group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        capture_docker_gid: "{{ ansible_facts['getent_group']['docker'][1] }}"
+
+    # Same numeric-gid derivation, same reason: the host's persistent journal files are
+    # root:systemd-journal 0640, and Alloy (running as the non-root zcrypto-alloy user) reads them
+    # through the /var/log/journal:/host/journal:ro mount for the capture-prune unit's host-side lines
+    # (which exist in no container log). The `systemd-journal` group is created by the systemd package
+    # itself, so it exists on any Debian host.
+    - name: look up the systemd-journal group (Alloy's journal-read group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: systemd-journal
+
+    - name: derive the systemd-journal group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        capture_journal_gid: "{{ ansible_facts['getent_group']['systemd-journal'][1] }}"
+
+    # Admin-plane files (this dir, config.alloy, compose.yaml) are owned root:root — NOT the ops
+    # role's zcrypto-deploy, which does not exist on the capture hosts at this converge (the
+    # deploy→zcrypto-deploy rename is a later attended step) and would fail user-lookup. root:root also
+    # matches the capture role's own /opt/zcrypto-capture + compose convention. ONLY alloy-data and the
+    # rendered secrets file are owned by the dedicated Alloy user (it must WRITE the WAL, and READ the
+    # 0600 secrets it does not own by default).
+    - name: ensure the alloy project directory exists
+      ansible.builtin.file:
+        path: "{{ capture_alloy_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Owned by the dedicated Alloy user, not root: this holds the remote_write WAL + Loki log
+    # read-positions, which must survive container replacement, or a redeploy re-ships the retained log
+    # backlog into the ingest quota (00043) — and Alloy (running as zcrypto-alloy) needs WRITE here,
+    # unlike everything else under capture_alloy_dir.
+    - name: ensure the alloy data directory exists, owned by the dedicated Alloy user
+      ansible.builtin.file:
+        path: "{{ capture_alloy_dir }}/alloy-data"
+        state: directory
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0755"
+
+    # Plain `copy`, not `template` — this file is 100% static (the host label is read at runtime from
+    # constants.hostname, not templated); see the file's own header for why `template:` would be wrong.
+    - name: install the alloy pipeline config
+      ansible.builtin.copy:
+        src: config.alloy
+        dest: "{{ capture_alloy_dir }}/config.alloy"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # Renders straight from the vault (group_vars/observed/vault.yml) — capture_host is in the
+    # `observed` group, so the six GRAFANA_* creds resolve. no_log + diff: false: without both, a
+    # converge prints the six Grafana Cloud credentials to the terminal and any log capturing the run.
+    # Owned by zcrypto-alloy (the container's `user:`), so it can read a 0600 file it does not own by
+    # default.
+    - name: render the alloy secrets env file
+      ansible.builtin.template:
+        src: alloy-secrets.env.j2
+        dest: "{{ capture_alloy_dir }}/alloy-secrets.env"
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0600"
+      no_log: true
+      diff: false
+
+    - name: render the alloy compose file
+      ansible.builtin.template:
+        src: alloy-compose.yaml.j2
+        dest: "{{ capture_alloy_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0644"

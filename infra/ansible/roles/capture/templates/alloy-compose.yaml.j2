@@ -1,0 +1,99 @@
+# Grafana Alloy compose file for a capture host's telemetry stack (spec 00057; T0020's first-time
+# telemetry stand-up on the capture VPSes). Rendered by the `capture` Ansible role at
+# {{ capture_alloy_dir }}/compose.yaml -- do not hand-edit on the host, it is overwritten on the next
+# converge. Edit infra/ansible/roles/capture/templates/alloy-compose.yaml.j2 instead.
+#
+# Its OWN compose project (this file, not /opt/zcrypto-capture/compose.yaml's capture project): an
+# Alloy redeploy (image bump, config change) must never restart the capture daemon, whose L2 stream
+# is UNBACKFILLABLE -- the exact isolation the capture-deploys discipline exists to protect. Separate
+# projects, so `docker compose` on one never touches the other.
+#
+# Modeled on infra/ansible/roles/ops/templates/alloy-compose.yaml.j2; see config.alloy for the
+# capture-specific pipeline (no textfile/gate scrape, host label from the runtime hostname).
+# Deliberately NOT started here -- the first Alloy start on a capture host is an attended step (plan
+# Tasks 5/7), same rationale as the capture daemon: this task's job is to make the render correct,
+# not to start anything as a converge side effect.
+services:
+  alloy:
+    # Pin this to a digest at deploy time (plan Tasks 5/7) -- capture_alloy_digest has NO default
+    # (defaults/main.yml), so a converge without it skips this whole role block rather than rendering
+    # a compose file pointing at a broken image reference.
+    image: "{{ capture_alloy_image }}@{{ capture_alloy_digest }}"
+    restart: unless-stopped
+    # Run as the dedicated `zcrypto-alloy` uid/gid (a non-login system user created by the role,
+    # looked up via `getent` -- tasks/main.yml), NEVER a key-owning user: Alloy mounts /:/host/root:ro
+    # below for free-disk-space metrics, and a key-owning user's ~/.ssh would be readable straight
+    # through that mount, no escalation needed. `zcrypto-alloy` owns nothing key-adjacent, so that
+    # direct-read path stays closed by construction (the NAS's uid-1031 choice, T0030, replicated).
+    # `group_add` is the host's real numeric docker gid (derived at converge time via `getent` --
+    # tasks/main.yml -- never hardcoded, since it is a per-host accident), NOT a named "docker" entry:
+    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
+    # and the upstream grafana/alloy image ships only `alloy:x:473:` -- no `docker` entry -- so a
+    # literal "docker" here would fail to resolve and the container would refuse to start. Socket
+    # access this way is defence in depth only (see config.alloy's header comment for the residual).
+    user: "{{ capture_alloy_uid }}:{{ capture_alloy_gid }}"
+    group_add:
+      - "{{ capture_docker_gid }}"
+      # Journal files are root:systemd-journal 0640 and the container runs as the non-root
+      # zcrypto-alloy user above, so reading the /host/journal mount below needs the host's
+      # systemd-journal gid -- NUMERIC, derived at converge time via `getent` (tasks/main.yml), never
+      # hardcoded, for exactly the reason the docker gid above is numeric. This grants read of the
+      # WHOLE system journal, read-only -- broader than the capture units the pipeline keeps, but
+      # strictly telemetry-class data, and far narrower than the docker-socket residual already
+      # accepted for this container.
+      - "{{ capture_journal_gid }}"
+    network_mode: host
+    environment:
+      # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
+      GOMEMLIMIT: 460MiB
+    env_file:
+      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
+      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- 0600, never committed, rendered by this role
+      # (tasks/main.yml, from group_vars/observed/vault.yml) with no_log: true + diff: false so a
+      # converge never prints the values, owned by the `zcrypto-alloy` user (Alloy's container
+      # `user:` above) so it can read a 0600 file it does not own by default.
+      - ./alloy-secrets.env
+    command:
+      - run
+      - --storage.path=/var/lib/alloy
+      - --server.http.listen-addr=127.0.0.1:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      # Alternate-path RO mounts (mounting over Alloy's own container /proc//sys is impossible) --
+      # config.alloy points procfs_path/sysfs_path/rootfs_path at these. The capture hosts hold no
+      # private key today, but running Alloy as a non-key-owning user keeps this the safe default the
+      # moment one ever lands (the `user:` override above is what makes /host/root safe to mount).
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      # Docker API, for discovery.docker + loki.source.docker. `:ro` is cosmetic -- it makes the
+      # socket FILE read-only, not the API -- the accepted residual (root-equivalent) noted above.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
+      # redeploy re-ships the retained log backlog into the ingest quota (00043).
+      - ./alloy-data:/var/lib/alloy
+      # The host's persistent journal, for loki.source.journal (config.alloy): the capture prune
+      # unit's host-side lines, which exist in NO container log and so can never arrive via the docker
+      # socket above. The `group_add` gid above is what makes the 0640 root:systemd-journal files
+      # readable.
+      - /var/log/journal:/host/journal:ro
+      # Journal readers resolve the CURRENT boot's files via the host's machine id
+      # (/var/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
+      - /etc/machine-id:/etc/machine-id:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          # DIVERGENCE from the ops copy (cpus: 2.0): that value is sized for the ops node's 24-thread
+          # box and its overlay writer. A capture host is a 1-2 vCPU VPS whose SOLE load-bearing job is
+          # the capture daemon -- Alloy, a metrics/logs shipper, must never be able to contend with it
+          # for a whole core (the secondary has only 1 vCPU). Debian has a real CPU cgroup, so this
+          # ceiling actually holds; 0.5 is ample for shipping 10 pairs' logs + host metrics and leaves
+          # the daemon its headroom on both hosts.
+          cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,274 @@
+// Grafana Alloy config for a capture host's telemetry stack (spec 00057; T0020's first-time
+// telemetry stand-up on the capture VPSes). Installed by the `capture` Ansible role via
+// `ansible.builtin.copy` at capture_alloy_dir/config.alloy -- do not hand-edit on the host, it is
+// overwritten on the next converge. Edit infra/ansible/roles/capture/files/config.alloy instead --
+// files/, NOT templates/: `copy:` only ever searches a role's files/ dir, so an edit made to a
+// templates/ copy silently never deploys (tests/test_infra_alloy_series.py records the lesson for
+// the ops copy; a converge proved it, no syntax check could).
+//
+// Plain `copy:`, not `template:` -- this file's pipeline stages further down use Go template `{{ }}`
+// syntax (loki.process's stage.template blocks, e.g. `{{ ToUpper .Value }}`) that Jinja2 would try
+// to evaluate and fail on. The ONE value that would otherwise want per-host parameterisation -- the
+// `host` label, which differs between zcrypto and zcrypto-red -- is instead read at RUNTIME from
+// `constants.hostname` (Alloy's stdlib host-name constant), so a single static file labels correctly
+// on both hosts with no Jinja. Under `network_mode: host` (alloy-compose.yaml.j2) the container
+// shares the host UTS namespace -- Docker even refuses `--hostname` in that mode -- so
+// `constants.hostname` returns the host's own name, which the base role sets distinctly per host
+// (`zcrypto` / `zcrypto-red`, host_vars/zcrypto-red overrides base_hostname). Grafana Cloud
+// credentials are NOT in this file: they arrive as environment variables from a rendered, 0600,
+// never-committed secrets file (alloy-secrets.env.j2), read here via the `sys.env(...)` stdlib
+// function -- the same six names the ops and nas Alloy copies read.
+
+// ---- Host metrics -------------------------------------------------------------------------
+// The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
+// /->/host/root) let this exporter see the capture host's own /proc, /sys and rootfs without
+// colliding with Alloy's own container /proc//sys.
+//
+// NO textfile collector here (the ops/nas copies keep one): the capture hosts publish no
+// node-exporter textfile .prom -- there is no gate/replay/archive timer on them -- so the collector
+// and its /textfile mount are both dropped. free disk space (`filesystem`) IS kept: the capture
+// spool fills toward the prune horizon and disk-full is the classic capture-killer.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev"]
+
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+}
+
+// ---- Container metrics: intentionally NOT collected -----------------------------------------
+// cadvisor is omitted (the capture hosts are Debian with a normal cgroup hierarchy, so it would
+// work) BY CHOICE, not by constraint: this stack's job is host health + the capture/prune logs
+// reaching Grafana; container CPU/mem is not part of that, and cadvisor's series would eat into the
+// active-series budget (00043). A future task can add it if a container-level gate ever needs it.
+
+// ---- Scrape -> remote_write ------------------------------------------------------------------
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.remote_write "grafana" {
+  // `host="<this host>"` on every metric this component ships, from the runtime hostname (see the
+  // file header) -- so zcrypto and zcrypto-red are distinguishable in Grafana and a per-host alert
+  // selector (`node_load1{host="zcrypto-red"}`) resolves. `external_labels` is applied
+  // component-wide, before the write_relabel_config blocks below run -- so it does not touch the
+  // drop/keep pair (both match on `__name__` only).
+  external_labels = {
+    host = constants.hostname,
+  }
+
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USERNAME")
+      password = sys.env("GRAFANA_PROM_PASSWORD")
+    }
+
+    // Series minimization (00043): drop Alloy's own self-metrics first (defense in depth -- nothing
+    // scraped above is Alloy's own /metrics endpoint, so this is normally a no-op), then keep-only
+    // the host series this stack wants. A `keep` action drops everything it does not list, so a
+    // series missing here does not merely go undashboarded -- it does not exist (T0051). This host
+    // publishes only the unix-exporter host metrics: no textfile series (no collector), no
+    // ops_*/reconcile/trade-backfill families (those are the ops node's).
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "go_.*|process_.*|alloy_.*"
+      action        = "drop"
+    }
+
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_scrape_collector_success|node_scrape_collector_duration_seconds"
+      action        = "keep"
+    }
+  }
+}
+
+// ---- Logs: long-lived containers, via the docker API ----------------------------------------
+// Discover and ship the containers on this host: the capture daemon (compose service `capture`) and
+// Alloy itself (compose service `alloy`). Both are long-lived, so the POLLING discovery reliably
+// finds them -- there are NO ephemeral `docker run --rm` jobs on a capture host, so no drop rule is
+// needed here (unlike the ops copy, whose systemd-launched ephemerals it must exclude).
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "container_logs" {
+  targets = discovery.docker.containers.targets
+
+  // The compose SERVICE name is authoritative -- stable across restarts, and it carries neither the
+  // project prefix nor the replica index the docker NAME does (zcrypto-capture-capture-1 -> capture,
+  // alloy-alloy-1 -> alloy). This is what the logs dashboard and the parse selectors below key on.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    target_label  = "container"
+  }
+
+  // Name fallback for FUTURE non-compose containers -- today it matches nothing (both containers on
+  // this host are compose-managed). The join with the (possibly empty) container label makes it
+  // match ONLY when the compose rule above did not set it: relabel regexes are fully anchored, so a
+  // joined value that does not START with ";" (i.e. container already set) cannot match "^;...".
+  rule {
+    source_labels = ["container", "__meta_docker_container_name"]
+    separator     = ";"
+    regex         = ";/?(.*?)(?:-[0-9]+)?"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  // `host="<this host>"` from the runtime hostname (see the file header) -- one label scheme across
+  // the metrics path (external_labels above) and both log transports.
+  rule {
+    target_label = "host"
+    replacement  = constants.hostname
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.container_logs.output
+  forward_to = [loki.process.parse.receiver]
+}
+
+// ---- Logs: the host-side capture units, via the host journal --------------------------------
+// The docker path above carries the capture CONTAINER's own stdout in full (it is long-lived, so
+// discovery never misses it). What it CANNOT carry is host-side lines that exist in no container
+// log: the segment-prune oneshot (zcrypto-capture-prune.service) runs a bash script under systemd,
+// not a container, so the journal is its ONLY transport.
+//
+// Deliberately KEPT NARROW to the prune unit -- zcrypto-capture.service is NOT kept here. That unit
+// runs `docker compose up` ATTACHED, so the capture container's stdout also flows into ITS journal;
+// keeping it would double-ingest exactly the lines the docker path already ships. The prune unit has
+// no such container twin, so it ships once, here, and only here.
+loki.relabel "journal_units" {
+  // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
+  // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
+  forward_to = []
+
+  // KEEP only the prune unit: the journal carries every unit on the host, and this pipeline's
+  // contract is the host-side capture jobs only -- sshd, cron, dockerd and the rest stay local.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "zcrypto-capture-prune\\.service"
+    action        = "keep"
+  }
+
+  // Unit name minus ".service" -> the `container` label, so these journal streams wear the same
+  // label scheme as the docker path (the parse stage below scopes its zcrypto stage by
+  // {container=~"capture|zcrypto-.*"}, so mapping the unit name in means these streams get parsed
+  // with NO selector change).
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)\\.service"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  // `host="<this host>"` from the runtime hostname, exactly like the docker path above.
+  rule {
+    target_label = "host"
+    replacement  = constants.hostname
+  }
+}
+
+loki.source.journal "capture_units" {
+  // The compose file mounts the host's persistent journal here read-only; journal readers also need
+  // the host's /etc/machine-id (mounted alongside) to resolve the current boot's files
+  // (/var/log/journal/<machine-id>/...).
+  path          = "/host/journal"
+  relabel_rules = loki.relabel.journal_units.rules
+  forward_to    = [loki.process.parse.receiver]
+
+  // After an Alloy outage this component resumes from its saved cursor but never reads further back
+  // than max_age -- UNSET it defaults to 7h, so a longer outage would permanently skip the window
+  // between the cursor and now-7h. 48h is cheap for one low-volume daily unit: lossless up to a 48h
+  // Alloy outage; beyond that the skipped window survives only in the host journal, never in Loki.
+  max_age       = "48h"
+}
+
+// Parse ONCE, here at ingest -- never at query time. Two stages: our Python services' own timestamped
+// log line, and Alloy's own logfmt output.
+loki.process "parse" {
+  forward_to = [loki.write.grafana.receiver]
+
+  // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.capture.command [command.py:75] - msg`
+  // Scoped by container, so a container with a different format can never be mangled by this regex.
+  // The capture container emits this shape; the prune unit's bash lines do not match and fall through
+  // untouched (action_on_failure = "skip" keeps their journal capture time and adds no level label).
+  stage.match {
+    selector = "{container=~\"capture|zcrypto-.*\"}"
+
+    stage.regex {
+      expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
+    }
+
+    stage.timestamp {
+      source   = "ts"
+      format   = "2006-01-02 15:04:05,000"
+      location = "UTC"
+      // "skip", NOT the default "fudge": lines that fail the stage.regex above (the prune script's
+      // echoes, tracebacks) have no `ts` in the extracted map, and "fudge" would rewrite their
+      // timestamp to the stream's LAST PARSED app timestamp +1ns -- time-warping a headline warning
+      // into the past. "skip" keeps the capture time for non-matching lines; matching lines still get
+      // the app timestamp.
+      action_on_failure = "skip"
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ ToUpper .Value }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    stage.output {
+      source = "rest"
+    }
+  }
+
+  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`.
+  // `{container="alloy"}` matches because the compose-service rule above labels this stack's own
+  // container "alloy" (compose project `alloy`, service `alloy`).
+  stage.match {
+    selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
+
+    stage.regex {
+      expression = "^ts=\\S+ level=(?P<level>\\w+) msg=(?:\"(?P<msg>(?:[^\"\\\\]|\\\\.)*)\"|(?P<msg_bare>\\S+))\\s*(?P<rest>.*)$"
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+
+    stage.template {
+      source   = "line"
+      template = "{{ if .msg }}{{ .msg }}{{ if .rest }} {{ .rest }}{{ end }}{{ else if .msg_bare }}{{ .msg_bare }}{{ if .rest }} {{ .rest }}{{ end }}{{ else }}{{ .Entry }}{{ end }}"
+    }
+
+    stage.output {
+      source = "line"
+    }
+  }
+}
+
+loki.write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_LOKI_USERNAME")
+      password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}
