@@ -4,6 +4,10 @@
 #   -e capture_image_digest=sha256:<...>
 capture_image_digest: ""
 
+# The rrsync-only login shell for zcrypto-data (spec 00057) — deployed by this role, pointed at by
+# the base role's base_capture_shell.
+capture_rrsync_shell: /usr/local/sbin/rrsync-shell
+
 capture_cpu_limit: "1.5"
 capture_memory_limit: "2g"
 capture_log_max_size: "50m"

@@ -2,15 +2,26 @@
 # Deploys the capture daemon: renders compose.yaml + the systemd unit, and lets the unit's own
 # ExecStartPre/ExecStart/ExecStop ("docker compose pull" / "up" / "down") own the actual
 # pull+run — that's also what resumes capture on boot. Ansible only starts/enables/restarts it.
-- name: look up the kraken-capture service account (created by the base role)
+# Fleet users/groups (spec 00057): zcrypto-data (renamed from kraken-capture, uid kept) SERVES the
+# NAS capture pull via an rrsync forced-command key, so it needs a login-capable shell. DSM rejects a
+# custom shell, but these hosts are Debian, so the same rrsync-only wrapper the ops node uses works.
+- name: install the rrsync-only login shell for zcrypto-data (spec 00057)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/rrsync-shell"
+    dest: "{{ capture_rrsync_shell }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: look up the zcrypto-data service account (created by the base role)
   ansible.builtin.getent:
     database: passwd
-    key: kraken-capture
+    key: zcrypto-data
 
-- name: derive the kraken-capture uid/gid for the container's user mapping
+- name: derive the zcrypto-data uid/gid for the container's user mapping
   ansible.builtin.set_fact:
-    capture_uid: "{{ ansible_facts['getent_passwd']['kraken-capture'][1] }}"
-    capture_gid: "{{ ansible_facts['getent_passwd']['kraken-capture'][2] }}"
+    capture_uid: "{{ ansible_facts['getent_passwd']['zcrypto-data'][1] }}"
+    capture_gid: "{{ ansible_facts['getent_passwd']['zcrypto-data'][2] }}"
 
 - name: fail fast if the pinned image digest was not supplied
   ansible.builtin.assert:
@@ -24,8 +35,8 @@
   ansible.builtin.file:
     path: "{{ capture_data_dir }}"
     state: directory
-    owner: kraken-capture
-    group: kraken-capture
+    owner: zcrypto-data
+    group: zcrypto-data
     mode: "0750"
 
 - name: ensure the compose project directory exists
@@ -61,9 +72,9 @@
     enabled: true
     state: started
 
-# --- The segments pull channel: an rrsync forced-command key on the deploy account, pinned
-# read-only to the capture data dir regardless of deploy's other powers (mirrors the engine
-# role's journal pull channel, section 9 of infra/ansible/roles/engine/tasks/main.yml).
+# --- The segments pull channel: an rrsync forced-command key, pinned read-only to the capture
+# data dir (mirrors the engine role's journal pull channel, section 9 of
+# infra/ansible/roles/engine/tasks/main.yml).
 - name: ensure rsync (which ships the rrsync helper) is installed
   ansible.builtin.package:
     name: rsync
@@ -72,25 +83,16 @@
 # rrsync lives at /usr/bin/rrsync on Debian 13 (trixie) — the rsync package installs it there
 # since bookworm (rsync 3.2.4 promoted it out of /usr/share/doc/rsync/scripts/). The absolute
 # path keeps the forced command independent of the login shell's PATH.
-- name: install the sync_capture pubkey as a forced-command entry in deploy's authorized_keys (segments read-only)
+# The capture data export the NAS pulls now lands on zcrypto-data (the m2m data user, spec 00057),
+# not the admin `deploy`. exclusive:false ADDS it; deploy's old copy is dropped by a one-time step
+# AFTER the NAS repoints (Task 5/8) — dual authorization so the pull never drops. zcrypto-data OWNS
+# the 0750 capture dir now, so the old `deploy`-in-kraken-capture-group traversal hack is gone.
+- name: install the sync_capture pubkey as a forced-command entry on zcrypto-data (segments read-only)
   ansible.posix.authorized_key:
-    user: deploy
+    user: zcrypto-data
     exclusive: false
     key: "{{ sync_capture_authorized_key }}"
     key_options: 'command="/usr/bin/rrsync -ro {{ capture_data_dir }}",restrict'
-
-- name: add deploy to the kraken-capture group (makes the 0750 capture data dir traversable for the pull)
-  ansible.builtin.user:
-    name: deploy
-    groups: kraken-capture
-    append: true
-  # First-run check mode: the kraken-capture account is created by the base role, which itself
-  # no-ops under --check — so on a first-run dry run the account (and its group) doesn't really
-  # exist yet and this membership edit cannot resolve it. Skip exactly that case; every real
-  # converge still runs it (same guard rationale as the engine role's journal pull channel).
-  when: not (ansible_check_mode and not capture_account_known)
-  vars:
-    capture_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['kraken-capture'] | default(none)) is not none }}"
 
 # --- Segment retention (spec 00050 D8, closes T0032's retention half): a daily timer bounds the
 # host's local spool at `capture_retention_days` of committed hours. The NAS mirror is the durable
