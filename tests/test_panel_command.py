@@ -100,7 +100,7 @@ def test_materialize_end_to_end_writes_the_panel_and_the_meta(tmp_path: Path) ->
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "BTC/EUR", H)
 
-    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code == 0, result.output
     assert "pairs=1 hours_written=1 hours_skipped=0 hours_unsettled=0 hours_unanchored=0 rows=3600 errors=0" in result.output
@@ -129,7 +129,7 @@ def test_meta_mismatch_refuses_before_writing_anything(tmp_path: Path) -> None:
     meta["grid"] = "5s"  # a generation change that must never be silently mixed
     meta_path.write_text(json.dumps(meta))
 
-    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code != 0
     assert "generation" in result.output
@@ -146,7 +146,7 @@ def test_since_newer_than_watermark_refuses_without_allow_holes(tmp_path: Path) 
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "BTC/EUR", H)
-    first = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+    first = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
     assert first.exit_code == 0, first.output  # seeds the BTC/EUR watermark at H
 
     later = H + timedelta(hours=3)
@@ -178,7 +178,7 @@ def test_since_newer_than_watermark_proceeds_with_allow_holes(tmp_path: Path) ->
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "BTC/EUR", H)
-    first = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+    first = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
     assert first.exit_code == 0, first.output  # seeds the BTC/EUR watermark at H
 
     later = H + timedelta(hours=3)
@@ -216,7 +216,7 @@ def test_hours_unanchored_reported_in_summary_and_exits_zero(tmp_path: Path) -> 
     gap_messages = [{"offset": 0, "type": "update", "bids": [(99.0, 1.0)], "asks": [(102.0, 1.0)], "checksum": 9}]
     _book(primary, "BTC/EUR", gap_hour, _explode("BTC/EUR", gap_hour, gap_messages))
 
-    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code == 0, result.output  # an honest gap must not fail the run
     assert "hours_unanchored=1" in result.output
@@ -235,7 +235,7 @@ def test_a_corrupt_hour_exits_one_but_other_hours_still_materialize(tmp_path: Pa
     good_hour = H + timedelta(hours=1)
     _seed_primary(primary, "BTC/EUR", good_hour)
 
-    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root)])
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code == 1
     assert "panel hour failed pair=BTC/EUR hour=" in result.output
@@ -263,7 +263,9 @@ def test_hole_guard_checks_every_pair_and_the_fresh_pair_case(tmp_path):
             _seed_primary(primary, pair, H + timedelta(hours=offset))
 
     # Materialize BTC fully; ETH not at all (fresh pair).
-    r = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--pair", "BTC/EUR"])
+    r = runner.invoke(
+        app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--pair", "BTC/EUR", "--settle-hours", "0"]
+    )
     assert r.exit_code == 0, r.output
 
     # --since H+2 across ALL pairs: BTC's watermark is H+3 (no hole for BTC: since < watermark),
@@ -276,7 +278,19 @@ def test_hole_guard_checks_every_pair_and_the_fresh_pair_case(tmp_path):
 
     # --allow-holes proceeds and materializes ETH from `since` onward only.
     r = runner.invoke(
-        app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--since", since, "--allow-holes"]
+        app,
+        [
+            "panel",
+            "materialize",
+            str(primary),
+            "--panel-root",
+            str(panel_root),
+            "--since",
+            since,
+            "--allow-holes",
+            "--settle-hours",
+            "0",
+        ],
     )
     assert r.exit_code == 0, r.output
     eth_hours = sorted(p.name for p in eth_dir.rglob("*.parquet"))
@@ -291,7 +305,19 @@ def test_since_parsing_edges(tmp_path):
 
     aware = (H + timedelta(hours=2)).astimezone(timezone(timedelta(hours=2))).isoformat()  # +02:00, on-hour in UTC
     r = runner.invoke(
-        app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--since", aware, "--allow-holes"]
+        app,
+        [
+            "panel",
+            "materialize",
+            str(primary),
+            "--panel-root",
+            str(panel_root),
+            "--since",
+            aware,
+            "--allow-holes",
+            "--settle-hours",
+            "0",
+        ],
     )
     assert r.exit_code == 0, r.output
 
