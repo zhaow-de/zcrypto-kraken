@@ -156,8 +156,9 @@ def materialize(
     settle_hours: float = typer.Option(
         7.0,
         "--settle-hours",
-        help="Defer hours newer than this many hours: heal-settle margin so an hour is only taken once "
-        "the reconciler (H+6h max mint) has healed it (spec 00052 D6 / T0066). Default 7h.",
+        help="Defer hours newer than this many hours: a heal-settle margin so an hour is only "
+        "materialized once the reconciler has finished healing it (its max mint is 6h after the "
+        "hour). Default 7h.",
     ),
 ) -> None:
     """Materialize canonical book hours (reconciled-first) into the 1s L2 panel.
