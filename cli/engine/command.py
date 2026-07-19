@@ -26,6 +26,7 @@ from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, 
 from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import SnapshotEntry, from_json
+from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
 from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet
@@ -459,6 +460,70 @@ def report(
         typer.echo("last failure: none")
     else:
         typer.echo(f"last failure: {status.last_failure.cycle_ts.isoformat()} -- {status.last_failure.reason}")
+
+
+@engine_app.command(name="soak-check")
+def soak_check(
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
+    store_dir: Optional[Path] = typer.Option(
+        None, "--store-dir", help="Live price store to read instead of the configured store_dir."
+    ),
+    canonical_dir: Path = typer.Option(
+        CANONICAL_DIR,
+        "--canonical-dir",
+        help="Frozen canonical dataset root used to rebuild the backtest null; absent skips the null and any verdict.",
+    ),
+    registry: Path = typer.Option(
+        Path("docs/reference/trial-registry.jsonl"),
+        "--registry",
+        help="Trial-registry JSON-lines file the instrument self-test reproduces the ratified record against.",
+    ),
+    fee_per_side: float = typer.Option(
+        0.006, "--fee-per-side", help="Per-side cost rate applied to both the realized series and the backtest null."
+    ),
+    band: float = typer.Option(
+        0.90, "--band", help="Two-sided outer band width used to judge each structural metric against its null distribution."
+    ),
+    floor: int = typer.Option(30, "--floor", help="Minimum scored realized bars required before any metric verdict is attempted."),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Write the full report payload as JSON to this path (atomic write)."
+    ),
+) -> None:
+    """Compare the realized shadow-engine journal against its backtest null and render a soak-check
+    report -- read-only decision-support, never the concordance gate or a stand-alone validation
+    exercise, and it consumes no holdout budget."""
+    config = _load_engine_config()
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    store_root = store_dir if store_dir is not None else config.store_dir
+
+    try:
+        text, payload = soak_report(
+            journal_dir=journal_root,
+            store_dir=store_root,
+            canonical_dir=canonical_dir,
+            registry_path=registry,
+            fee=fee_per_side,
+            band=band,
+            floor=floor,
+        )
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+
+    typer.echo(text)
+
+    if json_out is not None:
+        tmp_path = json_out.with_suffix(json_out.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        os.replace(tmp_path, json_out)
+
+    self_test = payload.get("self_test")
+    if self_test is not None and self_test.get("void"):
+        # A ran-and-failed instrument/identity/reconcile check means the tool itself can't be
+        # trusted -- distinct from a short-window/canonical-absent "no verdict" refusal, which
+        # exits 0 like any other successful emit.
+        raise typer.Exit(code=1)
 
 
 @engine_app.command(name="gate-export")
