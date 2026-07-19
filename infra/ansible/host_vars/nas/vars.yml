@@ -90,9 +90,9 @@ nas_alloy_image: grafana/alloy@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523
 # nas role renders them back into {{ nas_stack_dir }}/.env (roles/nas/templates/env.j2; the
 # env-var contract lives in infra/nas/README.md). GATE_HEALTHCHECK_URL is deliberately NOT here:
 # it is a secret, vaulted as nas_gate_healthcheck_url in host_vars/nas/vault.yml.
-nas_capture_source: "deploy@zcrypto.zhaow.me:"
+nas_capture_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_archive_ssh_port: 10022
-nas_journal_source: "deploy@zcrypto.zhaow.me:"
+nas_journal_source: "zcrypto-data@zcrypto.zhaow.me:"
 nas_capture_red_source: "zcrypto-data@zcrypto-red.zhaow.me:"
 nas_liquidations_source: "zcrypto-data@192.168.100.6:"
 nas_liquidations_ssh_port: 22

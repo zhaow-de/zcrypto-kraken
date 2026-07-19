@@ -12,3 +12,10 @@ base_unattended_upgrades_reboot_time: "21:25"
 
 # This machine's OWN deploy pubkey (per-machine keys, 2026-07-16): rotation edits files/ once.
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto_ed25519.pub') }}"
+
+# Post-rename identity override (spec 00057 D1, T0068): `deploy` was renamed to `zcrypto-deploy` on
+# this host (2026-07-19), so Ansible connects as — and the docker role's admin user is — zcrypto-deploy.
+# Per-host override (both capture hosts are now migrated); consolidate into group_vars/capture_host and
+# drop the per-host overrides in a follow-up cleanup.
+ansible_user: zcrypto-deploy
+docker_deploy_user: zcrypto-deploy
