@@ -354,6 +354,20 @@ def test_plausibility_clean_when_in_bounds():
     assert plausibility_checks(realized, null) == []
 
 
+def test_plausibility_flags_gross_out_of_bounds():
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1, 3.5], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01, -0.02], reconcile_ok=True)
+    msgs = plausibility_checks(realized, null)
+    assert any("gross" in m.lower() and "bound" in m.lower() for m in msgs)
+
+
+def test_plausibility_flags_non_finite_net_live():
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1, 0.2], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01, float("inf")], reconcile_ok=True)
+    msgs = plausibility_checks(realized, null)
+    assert any("net_live" in m.lower() and "finite" in m.lower() for m in msgs)
+
+
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
 def test_instrument_self_check_reproduces_record_44():
     ok, msg = instrument_self_check(Path("data/ohlc-full"), Path("docs/reference/trial-registry.jsonl"))
@@ -365,7 +379,8 @@ def test_instrument_self_check_skips_when_canonical_absent(tmp_path):
     assert ok is None and "absent" in msg.lower()
 
 
-def test_instrument_self_check_flags_mismatch(tmp_path, monkeypatch):
+@pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
+def test_instrument_self_check_flags_mismatch(monkeypatch):
     monkeypatch.setattr(
         soak,
         "_instrument_expectations",
