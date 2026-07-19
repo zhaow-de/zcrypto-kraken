@@ -12,5 +12,9 @@ sync_capture_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_capt
 # role). Keep the devsec defaults (vagrant, kitchen) for parity. zcrypto-engine stays nologin (it
 # serves no pull), so it is deliberately NOT exempted.
 os_ignore_users: [zcrypto-data, vagrant, kitchen]
-ansible_user: deploy
+# Both capture hosts run their admin account as zcrypto-deploy (spec 00057 D1, T0068 cutover 2026-07-19):
+# `deploy` was renamed to zcrypto-deploy on each, so Ansible connects as zcrypto-deploy. Set here at the
+# group (not per host) now that both are migrated. bootstrap.yml still overrides with `ansible_user: root`
+# at play scope (a virgin host has no zcrypto-deploy yet — play vars beat group_vars).
+ansible_user: zcrypto-deploy
 ansible_port: 10022
