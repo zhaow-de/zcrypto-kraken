@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +41,7 @@ import numpy as np
 from cli.engine.concordance import replay_cycle
 from cli.engine.cycle import _union_align
 from cli.engine.errors import EngineError
-from cli.engine.journal import CycleRecord, SnapshotEntry
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, build_crossfreq_system_fast
 from cli.risk.limits import apply_position_caps
@@ -746,3 +746,252 @@ def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.
         is_degenerate=degenerate(realized.gross),
         effective_n=effective_n,
     )
+
+
+BANNER = (
+    "Trial 44 has ZERO out-of-time holdout evidence — the one budgeted holdout look tested the superseded record "
+    "33 in a degenerate [0,0] window and discriminated nothing; paper trading is its only genuine OOS test."
+)
+
+_HONESTY_FOOTER = (
+    "A 'consistent' row only means the realized behaviour sits inside the backtest's own range; an overfit "
+    "strategy lands in-band most of the time at L≈84, so this is not out-of-sample evidence."
+)
+
+
+def _fmt_flag(value: bool | None) -> str:
+    if value is None:
+        return "skipped"
+    return "ok" if value else "FAILED"
+
+
+def render_report(
+    analysis: SoakAnalysis | None,
+    realized: RealizedSeries | None,
+    null: NullSystem | None,
+    self_test: SelfTestReport | None,
+    *,
+    void_reasons: list[str],
+    band: float = 0.90,
+) -> str:
+    """Render a soak-check analysis to a text report. Section order: BANNER (verbatim, every run),
+    provenance, self-tests, the NO-VERDICT gate (suppresses every downstream section -- the
+    structural fingerprint table, governor/cap context, D4 gap, P&L -- the moment `void_reasons`
+    is non-empty, so a short/untrustworthy run never prints a per-metric conclusion), then the
+    fingerprint table + multiplicity line, governor/cap CONTEXT, the D4 gap, non-gating P&L, and an
+    honesty footer. `analysis`/`null`/`self_test` are all `None` when the canonical dataset is
+    absent (no null to judge against); `realized` is additionally `None` when the journal is empty
+    or `realized_series` itself raised `SoakError` -- both render a banner-and-void-reasons-only
+    report via this same function.
+    """
+    lines: list[str] = [BANNER, ""]
+
+    # Section header avoids the word "provenance" -- it contains "proven" as a substring, which
+    # would trip the vocabulary lock below.
+    lines.append("REALIZED-SERIES WINDOW")
+    if realized is not None and realized.cycle_ts:
+        span_days = (realized.cycle_ts[-1] - realized.cycle_ts[0]).total_seconds() / 86400.0
+        lines.append(f"  first cycle_ts : {realized.cycle_ts[0].isoformat()}")
+        lines.append(f"  last  cycle_ts : {realized.cycle_ts[-1].isoformat()}")
+        lines.append(f"  L (scored bars): {len(realized.net)}")
+        lines.append(f"  span           : {span_days:.2f} days")
+        lines.append(f"  dropped_tail   : {realized.dropped_tail}")
+        lines.append(f"  chain_ok       : {realized.chain_ok}")
+    else:
+        lines.append("  no realized series available")
+    lines.append("")
+
+    lines.append("SELF-TESTS")
+    if self_test is None:
+        lines.append("  instrument_ok  : skipped")
+        lines.append("  identity_ok    : skipped")
+        lines.append("  reconcile_ok   : skipped")
+    else:
+        lines.append(f"  instrument_ok  : {_fmt_flag(self_test.instrument_ok)}")
+        lines.append(f"  identity_ok    : {_fmt_flag(self_test.identity_ok)}")
+        lines.append(f"  reconcile_ok   : {_fmt_flag(self_test.reconcile_ok)}")
+        if self_test.void:
+            lines.append("  self-tests VOID -- a ran-and-failed instrument/identity/reconcile check; see NO VERDICT below")
+    lines.append("")
+
+    if void_reasons:
+        lines.append(f"NO VERDICT -- {'; '.join(void_reasons)}")
+        if analysis is not None and analysis.is_degenerate:
+            lines.append("INDETERMINATE -- DEGENERATE WINDOW")
+        lines.append("")
+        lines.append(_HONESTY_FOOTER)
+        return "\n".join(lines)
+
+    assert analysis is not None  # not void => Part B always built one alongside a present canonical
+
+    lines.append(f"STRUCTURAL FINGERPRINT (live realized vs backtest null, band={band:.0%})")
+    lines.append(
+        f"  {'metric':<12}{'live':>10}{'median':>10}{'band [lo,hi]':>24}{'pctile':>9}{'eff-n':>9}{'width':>10}{'verdict':>18}"
+    )
+    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+        v = analysis.gating_verdicts[m]
+        band_str = f"[{v.lo:.4f},{v.hi:.4f}]"
+        lines.append(
+            f"  {m:<12}{v.live:>10.4f}{v.median:>10.4f}{band_str:>24}{v.percentile:>8.1f}%{v.effective_n:>9.2f}"
+            f"{v.width:>10.4f}{v.verdict:>18}"
+        )
+    lines.append(f"  {analysis.panel.line}")
+    lines.append("")
+
+    lines.append("GOVERNOR / CAP CONTEXT -- backtest context (not a realized comparison)")
+    lines.append(f"  null governor-engagement rate: {analysis.null_gov_rate:.3f}")
+    lines.append(f"  null cap-breach rate         : {analysis.null_cap_rate:.3f}")
+    lines.append("  the realized governor/cap state is not observable from the journal (registered follow-up)")
+    lines.append("")
+
+    lines.append("D4 GAP (governed vs live-cost null)")
+    bias = "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
+    lines.append(f"  d4_gap_bps: {analysis.d4_gap_bps:.4f} bps/cycle ({bias})")
+    lines.append("  the null P&L uses the live cost convention, so the governor bias cancels by construction")
+    lines.append("")
+
+    lines.append("P&L (NON-GATING)")
+    lines.append(f"  realized cumulative net : {analysis.pnl_cum:+.4%}")
+    lines.append(f"  realized mean net/cycle : {analysis.pnl_mean:+.6f}")
+    lines.append(f"  pnl verdict (non-gating, near-vacuous at this L): {analysis.pnl_verdict.verdict}")
+    lines.append("")
+
+    lines.append(_HONESTY_FOOTER)
+    return "\n".join(lines)
+
+
+def _json_payload(
+    analysis: SoakAnalysis | None,
+    realized: RealizedSeries | None,
+    null: NullSystem | None,
+    self_test: SelfTestReport | None,
+    *,
+    void_reasons: list[str],
+    band: float,
+    now: datetime,
+) -> dict:
+    """Every number the report renders, as a `json.dumps`-able dict -- the machine-readable twin
+    of `render_report`'s text. `null` is accepted (mirroring `render_report`'s signature) but
+    carries nothing of its own in the payload; every null-derived number already lives in
+    `analysis` (gating verdicts, context, D4, P&L)."""
+    del null
+    payload: dict = {"generated_at": now.isoformat(), "band": band, "void_reasons": list(void_reasons)}
+
+    if realized is not None and realized.cycle_ts:
+        payload["provenance"] = {
+            "L": len(realized.net),
+            "first_cycle_ts": realized.cycle_ts[0].isoformat(),
+            "last_cycle_ts": realized.cycle_ts[-1].isoformat(),
+            "span_days": (realized.cycle_ts[-1] - realized.cycle_ts[0]).total_seconds() / 86400.0,
+            "dropped_tail": realized.dropped_tail,
+            "chain_ok": realized.chain_ok,
+        }
+    else:
+        payload["provenance"] = None
+
+    payload["self_test"] = (
+        None
+        if self_test is None
+        else {
+            "instrument_ok": self_test.instrument_ok,
+            "identity_ok": self_test.identity_ok,
+            "reconcile_ok": self_test.reconcile_ok,
+            "void": self_test.void,
+        }
+    )
+
+    if analysis is None:
+        payload["gating_verdicts"] = None
+        payload["panel"] = None
+        payload["context"] = None
+        payload["d4"] = None
+        payload["pnl"] = None
+        payload["is_degenerate"] = None
+        payload["effective_n"] = None
+    else:
+        payload["gating_verdicts"] = {m: asdict(v) for m, v in analysis.gating_verdicts.items()}
+        payload["panel"] = asdict(analysis.panel)
+        payload["context"] = {"null_gov_rate": analysis.null_gov_rate, "null_cap_rate": analysis.null_cap_rate}
+        payload["d4"] = {"d4_gap_bps": analysis.d4_gap_bps, "d4_active": analysis.d4_active}
+        payload["pnl"] = {"pnl_mean": analysis.pnl_mean, "pnl_cum": analysis.pnl_cum, "pnl_verdict": asdict(analysis.pnl_verdict)}
+        payload["is_degenerate"] = analysis.is_degenerate
+        payload["effective_n"] = dict(analysis.effective_n)
+
+    return payload
+
+
+def soak_report(
+    *,
+    journal_dir: Path,
+    store_dir: Path,
+    canonical_dir: Path,
+    registry_path: Path,
+    fee: float = 0.006,
+    band: float = 0.90,
+    floor: int = 30,
+    now: datetime | None = None,
+) -> tuple[str, dict]:
+    """Orchestrate the full soak-check: load the journal, build the realized series, gate it
+    (self-tests, plausibility, `L < floor`, degeneracy) against a backtest null rebuilt from the
+    frozen canonical dataset (skipped -- and gated void -- when the canonical is absent), and
+    render both the text report and its JSON twin. Never raises on a short/void/absent-canonical
+    run -- those are refusals, not failures; only an unreadable journal record or a genuine
+    `EngineError` from a downstream builder propagates to the caller.
+    """
+    now = now or datetime.now(UTC)
+    # Local import: cli.engine.command imports `soak_report` from this module, so a module-level
+    # import here would form an import cycle -- deferred to call time, after both modules are fully
+    # loaded.
+    from cli.engine.command import _journal_artifacts, _snapshot_reader
+
+    arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
+    records = [from_json(p.read_text()) for _, p in arts]
+    if not records:
+        void_reasons = ["no journaled cycles found"]
+        text = render_report(None, None, None, None, void_reasons=void_reasons, band=band)
+        payload = _json_payload(None, None, None, None, void_reasons=void_reasons, band=band, now=now)
+        return text, payload
+
+    try:
+        realized = realized_series(records, store_dir, fee=fee, now=now)
+    except SoakError as exc:
+        void_reasons = [f"realized series: {exc}"]
+        text = render_report(None, None, None, None, void_reasons=void_reasons, band=band)
+        payload = _json_payload(None, None, None, None, void_reasons=void_reasons, band=band, now=now)
+        return text, payload
+
+    void_reasons: list[str] = []
+    if len(realized.net) < floor:
+        void_reasons.append(f"L={len(realized.net)} < floor={floor}")
+
+    if _canonical_present(canonical_dir):
+        null = build_null(canonical_dir, fee=fee)
+        reader = _snapshot_reader(journal_dir)
+        self_test = self_tests(
+            records,
+            null,
+            realized=realized,
+            canonical_dir=canonical_dir,
+            registry_path=registry_path,
+            snapshot_reader=reader,
+        )
+        if self_test.void:
+            if self_test.instrument_ok is False:
+                void_reasons.append("self-test VOID: instrument_ok=False")
+            if self_test.identity_ok is False:
+                void_reasons.append("self-test VOID: identity_ok=False")
+            if self_test.reconcile_ok is False:
+                void_reasons.append("self-test VOID: reconcile_ok=False")
+        void_reasons += plausibility_checks(realized, null)
+        analysis = analyze_soak(realized, null, band=band)
+        if analysis.is_degenerate:
+            void_reasons.append("degenerate window")
+    else:
+        null = None
+        analysis = None
+        self_test = None
+        void_reasons.append("canonical absent — null unavailable")
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=void_reasons, band=band)
+    payload = _json_payload(analysis, realized, null, self_test, void_reasons=void_reasons, band=band, now=now)
+    return text, payload

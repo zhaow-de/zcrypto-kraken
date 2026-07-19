@@ -25,6 +25,7 @@ from cli.engine.soak import (
     metric_verdict,
     plausibility_checks,
     realized_series,
+    render_report,
     select_clean_segment,
     self_tests,
     structural_metrics,
@@ -504,3 +505,54 @@ def test_analyze_soak_context_and_d4():
     assert math.isclose(a.null_cap_rate, 10 / 100)
     assert a.d4_active is True  # mult drops to 0.5
     assert a.pnl_verdict.verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+
+
+# --- render_report -----------------------------------------------------------------------------------
+
+FORBIDDEN = ("validated", "passed", "confirmed", "proven")
+
+
+def test_render_report_banner_and_vocabulary_lock():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "ZERO out-of-time holdout" in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "expected by chance" in low  # multiplicity line present
+    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+        assert m in text  # the 5 gating rows
+
+
+def test_render_report_void_suppresses_verdict():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=["L=5 < floor=30"], band=0.90)
+
+    assert "NO VERDICT" in text.upper()
+    # a void report must not claim a per-metric conclusion -- banner still present
+    assert "ZERO out-of-time holdout" in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
+def test_render_report_handles_all_none_before_realized_series():
+    """The empty-journal and SoakError early-outs render with analysis/realized/null/self_test all
+    None -- render_report must not crash on that shape."""
+    text = render_report(None, None, None, None, void_reasons=["no journaled cycles found"], band=0.90)
+    assert "ZERO out-of-time holdout" in text
+    assert "NO VERDICT" in text.upper()
+    assert "no journaled cycles found" in text
