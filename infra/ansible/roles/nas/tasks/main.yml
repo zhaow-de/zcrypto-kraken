@@ -133,18 +133,13 @@
     mode: "0755"
   register: nas_deploy_rrsync
 
-# The rrsync-only login shell zcrypto-data uses to serve the inbound hot-push (spec 00057). Its DSM
-# shell is pointed here MANUALLY (external-systems.md); this deploys the file the shell resolves to.
-# The wrapper's case allows the NAS's vendored rrsync path ({{ nas_stack_dir }}/rrsync), so it must
-# stay in sync with nas_stack_dir.
-- name: deploy the rrsync-only login shell for zcrypto-data
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/files/rrsync-shell"
-    dest: "{{ nas_rrsync_shell }}"
-    owner: root
-    group: root
-    mode: "0755"
-  register: nas_deploy_rrsync_shell
+# NOTE — no rrsync-only login shell on the NAS (unlike ops). DSM accepts ONLY its own built-in shells
+# as an SSH login shell and refuses a custom one at SESSION setup: it authenticates the key, then
+# denies before ever exec'ing the shell -- at any path, script or binary, and regardless of /etc/shells
+# (verified 2026-07-19). So zcrypto-data keeps DSM's /bin/sh (set manually, external-systems.md), and
+# the rrsync-only jail comes SOLELY from the forced command on the key below -- command="...",restrict
+# fully confines it (no shell, no arbitrary command; verified: a client requesting `id` runs rrsync,
+# never id). The ops host uses the files/rrsync-shell wrapper as defense-in-depth; the NAS cannot.
 
 # The inbound hot-push forced command lands on zcrypto-data (the m2m data user), NOT the admin
 # zcrypto-deploy (spec 00057 -- keep the admin account out of the data path). exclusive:false so it
@@ -177,7 +172,6 @@
           'compose.yaml': nas_deploy_compose,
           'config.alloy': nas_deploy_alloy_config,
           'rrsync': nas_deploy_rrsync,
-          'rrsync-shell': nas_deploy_rrsync_shell,
           '.env': nas_deploy_env,
           'alloy-secrets.env': nas_deploy_alloy_secrets}
          | dict2items | selectattr('value.changed') | map(attribute='key') | list }}
