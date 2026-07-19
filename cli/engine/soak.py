@@ -397,7 +397,14 @@ def block_bootstrap_null(
     built by concatenating blocks of geometrically-distributed length (mean `mean_block`) starting
     at random offsets into `series` and wrapping circularly (so every offset stays equally
     likely), truncated to exactly `window`; each path is reduced via `reducer`. Deterministic
-    given `seed` -- one `numpy.random.default_rng(seed)` drives the whole call."""
+    given `seed` -- one `numpy.random.default_rng(seed)` drives the whole call.
+
+    This is the secondary-null robustness primitive: `windowed_null`'s overlapping windows share
+    observations across windows and so understate the true sampling variance, while this block
+    bootstrap resamples independent paths and gives a cross-check reference distribution. Provided
+    for a planned follow-up that compares verdicts under both nulls side by side; not yet consumed
+    by `analyze_soak`/`soak_report`, which drive their verdicts from `windowed_null` alone.
+    """
     rng = np.random.default_rng(seed)
     n_obs = len(series)
     p = 1.0 / mean_block
@@ -688,7 +695,7 @@ class SoakAnalysis:
     pnl_mean: float  # realized interior mean net/cycle
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
     pnl_verdict: MetricVerdict  # NON-GATING: realized interior mean net vs null net_live windows
-    is_degenerate: bool  # degenerate(realized.gross)
+    is_degenerate: bool  # degenerate(structural_metrics(realized.weights)["gross"]) -- exposure, not P&L
     effective_n: dict[str, float]  # per gating metric + "pnl"
 
 
@@ -743,14 +750,15 @@ def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.
         pnl_mean=pnl_mean,
         pnl_cum=pnl_cum,
         pnl_verdict=pnl_verdict,
-        is_degenerate=degenerate(realized.gross),
+        is_degenerate=degenerate(rm["gross"]),
         effective_n=effective_n,
     )
 
 
 BANNER = (
-    "Trial 44 has ZERO out-of-time holdout evidence — the one budgeted holdout look tested the superseded record "
-    "33 in a degenerate [0,0] window and discriminated nothing; paper trading is its only genuine OOS test."
+    "Trial 44 has ZERO out-of-time holdout evidence — the one budgeted holdout look (budget now 0) tested the "
+    "SUPERSEDED record 33 in a degenerate [0,0] window and discriminated nothing; paper trading is its only "
+    "genuine OOS test."
 )
 
 _HONESTY_FOOTER = (
@@ -897,6 +905,7 @@ def _json_payload(
             "identity_ok": self_test.identity_ok,
             "reconcile_ok": self_test.reconcile_ok,
             "void": self_test.void,
+            "messages": list(self_test.messages),
         }
     )
 

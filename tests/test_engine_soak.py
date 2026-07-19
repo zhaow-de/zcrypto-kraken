@@ -474,13 +474,14 @@ def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, 
 
 
 def test_analyze_soak_planted_consistent():
-    # realized gross ~0.30 matches a null whose gross clusters around 0.30 -> gross verdict "consistent"
+    # realized gross ~0.30 matches a null whose gross jitters symmetrically around 0.30 -> non-degenerate
+    # band (non-zero width, effective_n >= 3) with live landing inside the inner band -> "consistent"
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
-    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200  # null gross = 0.30 everywhere
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
     a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90)
     assert a.L == 6
     assert set(a.gating_verdicts) == {"gross", "net", "active_frac", "turnover", "hhi"}
-    assert a.gating_verdicts["gross"].verdict in ("consistent", "n/a")  # matches or undiscriminating
+    assert a.gating_verdicts["gross"].verdict == "consistent"
 
 
 def test_analyze_soak_planted_inconsistent_gross():
