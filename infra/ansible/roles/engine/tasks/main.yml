@@ -1,7 +1,7 @@
 ---
 # Deploys the shadow engine as a second compose service beside capture (same image, compose-level
 # entrypoint override; spec docs/specs/00042-vps-deployment-design.md): the §8-hardening gate
-# first, then the kraken-engine account, the state dirs, the QA'd store (only when absent), the
+# first, then the zcrypto-engine account, the state dirs, the QA'd store (only when absent), the
 # secrets env file, zcrypto.toml, the compose file, the systemd unit, and the rrsync journal pull
 # channel. Like capture, the unit's own ExecStartPre/ExecStart/ExecStop ("docker compose pull" /
 # "up" / "down") owns the actual pull+run — ansible only starts/enables/restarts it.
@@ -111,53 +111,53 @@
       - engine_gate_sshd.stdout is search('(?m)^passwordauthentication no$')
       # \\b (not \b): assert `that:` expressions unicode-escape the Jinja string literal, so a
       # single \b reaches the regex as backspace (\x08) and silently never matches.
-      - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bdeploy\\b')
+      - engine_gate_sshd.stdout is search('(?m)^allowusers .*\\bzcrypto-deploy\\b')
     fail_msg: >-
       §8-hardening gate failed (spec docs/specs/00042-vps-deployment-design.md): sshd -T must
-      report permitrootlogin no|prohibit-password, passwordauthentication no, and allowusers deploy before the
+      report permitrootlogin no|prohibit-password, passwordauthentication no, and allowusers zcrypto-deploy before the
       engine (and its trade key) may land. Effective posture lines (rc={{ engine_gate_sshd.rc }}):
       {{ engine_gate_sshd.stdout_lines | select("match", "^(allowusers|allowgroups|denyusers|denygroups|permitrootlogin|passwordauthentication)") | list }};
       stderr: {{ engine_gate_sshd.stderr | default("") | trim }}
 
-# --- 2. The kraken-engine service account — created by this role itself, deliberately unlike
+# --- 2. The zcrypto-engine service account — created by this role itself, deliberately unlike
 # kraken-capture (which the base role creates): in-role creation keeps `--tags engine`
 # self-sufficient on first deploy.
-- name: create the kraken-engine system user (nologin, home = its state dir)
+- name: create the zcrypto-engine system user (nologin, home = its state dir)
   ansible.builtin.user:
-    name: kraken-engine
+    name: zcrypto-engine
     system: true
     shell: /usr/sbin/nologin
     home: "{{ engine_state_dir }}"
     create_home: false
     state: present
 
-- name: look up the kraken-engine service account
+- name: look up the zcrypto-engine service account
   ansible.builtin.getent:
     database: passwd
-    key: kraken-engine
+    key: zcrypto-engine
   register: engine_getent
   # First-run check mode: the user task above didn't really create the account, so the lookup
   # legitimately comes up empty — only a real run may fail here.
   failed_when: engine_getent is failed and not ansible_check_mode
 
-- name: derive the kraken-engine uid/gid for the container's user mapping
+- name: derive the zcrypto-engine uid/gid for the container's user mapping
   # On a first-run --check the account doesn't exist yet, so a placeholder keeps the dry-run
   # rendering/diffing; a real converge always re-derives the actual uid/gid before anything is
   # written to the host.
   ansible.builtin.set_fact:
-    engine_uid: "{{ engine_passwd['kraken-engine'][1] if engine_account_known else 'first-run-check-mode' }}"
-    engine_gid: "{{ engine_passwd['kraken-engine'][2] if engine_account_known else 'first-run-check-mode' }}"
+    engine_uid: "{{ engine_passwd['zcrypto-engine'][1] if engine_account_known else 'first-run-check-mode' }}"
+    engine_gid: "{{ engine_passwd['zcrypto-engine'][2] if engine_account_known else 'first-run-check-mode' }}"
   vars:
     engine_passwd: "{{ ansible_facts['getent_passwd'] | default({}) }}"
-    engine_account_known: "{{ (engine_passwd['kraken-engine'] | default(none)) is not none }}"
+    engine_account_known: "{{ (engine_passwd['zcrypto-engine'] | default(none)) is not none }}"
 
 # --- 3. State directories.
 - name: ensure the engine state directories exist (state dir + store + journal)
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: kraken-engine
-    group: kraken-engine
+    owner: zcrypto-engine
+    group: zcrypto-engine
     mode: "0750"
   loop:
     - "{{ engine_state_dir }}"
@@ -185,8 +185,8 @@
   ansible.builtin.copy:
     src: "{{ engine_store_src }}"
     dest: "{{ engine_state_dir }}/store/"
-    owner: kraken-engine
-    group: kraken-engine
+    owner: zcrypto-engine
+    group: zcrypto-engine
     mode: "0640"
     directory_mode: "0750"
   register: engine_store_delivery
@@ -280,8 +280,9 @@
   # and a later dry-run (unit already on the host) still verifies the enabled/started state.
   when: not (ansible_check_mode and engine_unit_install is changed)
 
-# --- 9. The journal pull channel: an rrsync forced-command key on the deploy account, pinned
-# read-only to the journal subtree regardless of deploy's other powers.
+# --- 9. The journal pull channel: rrsync forced-command keys pinned read-only to the journal
+# subtree — on deploy (existing) and, during the spec-00057 migration, also on zcrypto-data (see
+# below); deploy's copy drops once the NAS repoints (Task 7/8).
 - name: ensure rsync (which ships the rrsync helper) is installed
   ansible.builtin.package:
     name: rsync
@@ -297,14 +298,41 @@
     key: "{{ sync_authorized_key }}"
     key_options: 'command="/usr/bin/rrsync -ro {{ engine_state_dir }}/journal",restrict'
 
-- name: add deploy to the kraken-engine group (makes the 0750 state dirs traversable for the pull)
+- name: add deploy to the zcrypto-engine group (makes the 0750 state dirs traversable for the pull)
   ansible.builtin.user:
     name: deploy
-    groups: kraken-engine
+    groups: zcrypto-engine
     append: true
-  # First-run check mode: the kraken-engine account (and thus its group) was never really
+  # First-run check mode: the zcrypto-engine account (and thus its group) was never really
   # created above, so the membership edit cannot resolve the group — skip exactly that case;
   # every real converge still runs it (same guard rationale as the account lookup in section 2).
   when: not (ansible_check_mode and not engine_account_known)
   vars:
-    engine_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['kraken-engine'] | default(none)) is not none }}"
+    engine_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['zcrypto-engine'] | default(none)) is not none }}"
+
+# The journal export the NAS pulls now lands on zcrypto-data (the m2m data user, spec 00057), not the
+# admin `deploy`. zcrypto-data is not the journal's owner (zcrypto-engine is), so it joins the
+# zcrypto-engine group to TRAVERSE the 0750 dirs; and the journal files must be group-READABLE for the
+# rrsync -ro pull. exclusive:false — deploy's old copy is dropped after the NAS repoints (Task 7/8).
+- name: install the sync pubkey as a forced-command entry on zcrypto-data (journal read-only)
+  ansible.posix.authorized_key:
+    user: zcrypto-data
+    exclusive: false
+    key: "{{ sync_authorized_key }}"
+    key_options: 'command="/usr/bin/rrsync -ro {{ engine_state_dir }}/journal",restrict'
+
+- name: add zcrypto-data to the zcrypto-engine group (traverse the 0750 journal subtree for the pull)
+  ansible.builtin.user:
+    name: zcrypto-data
+    groups: zcrypto-engine
+    append: true
+  when: not (ansible_check_mode and not engine_account_known)
+  vars:
+    engine_account_known: "{{ ((ansible_facts['getent_passwd'] | default({}))['zcrypto-engine'] | default(none)) is not none }}"
+
+- name: ensure the journal subtree is group-readable (zcrypto-data pulls it as rrsync -ro)
+  ansible.builtin.file:
+    path: "{{ engine_state_dir }}/journal"
+    state: directory
+    recurse: true
+    mode: g+rX
