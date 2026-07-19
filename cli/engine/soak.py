@@ -324,6 +324,8 @@ class NullSystem:
     assets: tuple[str, ...]
     reconcile_ok: bool
     n_periods: int
+    governed_net: list[float]  # n_periods
+    cap_breach_bars: int
 
 
 def _canonical_present(canonical_dir: Path) -> bool:
@@ -362,6 +364,8 @@ def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSys
         assets=assets,
         reconcile_ok=reconcile_ok,
         n_periods=n,
+        governed_net=result.governed_net,
+        cap_breach_bars=result.cap_breach_bars,
     )
 
 
@@ -658,4 +662,87 @@ def self_tests(
         identity_ok=identity_ok,
         reconcile_ok=reconcile_ok,
         messages=tuple(messages),
+    )
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+@dataclass(frozen=True)
+class SoakAnalysis:
+    """The full soak-check analysis tying the realized series to its backtest null: a verdict per
+    GATING metric (gross/net/active_frac/turnover/hhi -- the 5 of the 7 spec metrics computable
+    from the journaled weights), the panel summary over those 5, the governor/cap-breach rates as
+    NULL-side backtest CONTEXT (`cap_breach`/`governor_engagement` need strategy internals the
+    journal doesn't carry, so they're never judged as a realized-vs-null verdict), the D4
+    governed-vs-live P&L gap, and the NON-GATING realized-vs-null P&L verdict."""
+
+    L: int  # scored realized bars
+    gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi
+    panel: PanelSummary  # summarize_panel over the 5 gating verdicts
+    null_gov_rate: float  # backtest CONTEXT: fraction of null days governor-engaged
+    null_cap_rate: float  # backtest CONTEXT: cap_breach_bars / n_periods
+    d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
+    d4_active: bool  # governor engaged anywhere in the null (any mult < 1)
+    pnl_mean: float  # realized interior mean net/cycle
+    pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
+    pnl_verdict: MetricVerdict  # NON-GATING: realized interior mean net vs null net_live windows
+    is_degenerate: bool  # degenerate(realized.gross)
+    effective_n: dict[str, float]  # per gating metric + "pnl"
+
+
+def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.90) -> SoakAnalysis:
+    """Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`.
+
+    Gates on 5 structural metrics (gross/net/active_frac/turnover/hhi); reports governor engagement
+    and cap-breach rate as backtest context only (never gated); reports the D4 governed-vs-live gap;
+    and judges P&L (realized interior mean net vs null net_live windows) as a non-gating verdict.
+    Turnover and P&L are prev-dependent, so both aggregate/compare INTERIOR bars (each series' first
+    element dropped) on BOTH the live and null sides -- the other 4 gating metrics use all L bars.
+    """
+    L = len(realized.net)
+    rm = structural_metrics(realized.weights)
+    nm = structural_metrics(null.weights)
+
+    gating_verdicts: dict[str, MetricVerdict] = {}
+    effective_n: dict[str, float] = {}
+    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+        if m == "turnover":
+            live_series, null_series, window = rm[m][1:], nm[m][1:], L - 1
+        else:
+            live_series, null_series, window = rm[m], nm[m], L
+        eff_n = len(null_series) / window if window > 0 else 0.0
+        gating_verdicts[m] = metric_verdict(_mean(live_series), windowed_null(null_series, window), band=band, effective_n=eff_n)
+        effective_n[m] = eff_n
+
+    panel = summarize_panel(gating_verdicts, band=band)
+
+    null_gov_rate = _mean(governor_engaged_daily(null.multipliers, null.day_index))
+    null_cap_rate = null.cap_breach_bars / null.n_periods if null.n_periods > 0 else 0.0
+
+    d4_gap_bps = _mean([g - n for g, n in zip(null.governed_net, null.net_live)]) * 1e4
+    d4_active = any(m < 1.0 for m in null.multipliers)
+
+    null_pnl = null.net_live[1:]
+    pnl_window = L - 1
+    pnl_eff_n = len(null_pnl) / pnl_window if pnl_window > 0 else 0.0
+    pnl_mean = _mean(realized.net[1:])
+    pnl_cum = math.prod(1.0 + x for x in realized.net) - 1.0
+    pnl_verdict = metric_verdict(pnl_mean, windowed_null(null_pnl, pnl_window), band=band, effective_n=pnl_eff_n)
+    effective_n["pnl"] = pnl_eff_n
+
+    return SoakAnalysis(
+        L=L,
+        gating_verdicts=gating_verdicts,
+        panel=panel,
+        null_gov_rate=null_gov_rate,
+        null_cap_rate=null_cap_rate,
+        d4_gap_bps=d4_gap_bps,
+        d4_active=d4_active,
+        pnl_mean=pnl_mean,
+        pnl_cum=pnl_cum,
+        pnl_verdict=pnl_verdict,
+        is_degenerate=degenerate(realized.gross),
+        effective_n=effective_n,
     )

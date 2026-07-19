@@ -9,11 +9,14 @@ import pytest
 import cli.engine.soak as soak
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 from cli.engine.soak import (
+    NullSystem,
+    RealizedSeries,
     SelfTestReport,
     SoakError,
     _chain_consistent,
     _instrument_expectations,
     _net_live_from_result,
+    analyze_soak,
     block_bootstrap_null,
     degenerate,
     governor_engaged_daily,
@@ -284,6 +287,8 @@ def test_build_null_on_real_canonical():
     assert ns.reconcile_ok is True
     assert ns.n_periods > 1000 and len(ns.net_live) == ns.n_periods
     assert len(ns.weights) == ns.n_periods and set(ns.weights[0]) == set(ns.assets)
+    assert len(ns.governed_net) == ns.n_periods
+    assert ns.cap_breach_bars >= 0
 
 
 def test_metric_verdict_consistent_inside_inner_band():
@@ -435,3 +440,67 @@ def test_self_tests_skips_identity_when_no_records(monkeypatch):
     assert report.instrument_ok is None
     assert report.identity_ok is None
     assert report.void is False  # both None (skipped), reconcile true, no plausibility violations
+
+
+def _mk_realized(weights_per_bar, nets):
+    L = len(nets)
+    return RealizedSeries(
+        cycle_ts=[datetime(2026, 7, 16, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(L)],
+        weights=weights_per_bar,
+        gross=[sum(abs(v) for v in w.values()) for w in weights_per_bar],
+        turnover=[0.0] * L,
+        net=nets,
+        dropped_tail=0,
+        assets=("BTC", "ETH"),
+        chain_ok=True,
+        implausible=False,
+    )
+
+
+def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, governed_net=None):
+    n = len(net_live)
+    return NullSystem(
+        weights=weights_per_bar,
+        net_live=net_live,
+        multipliers=multipliers or [1.0] * n,
+        day_index=list(range(n)),
+        assets=("BTC", "ETH"),
+        reconcile_ok=True,
+        n_periods=n,
+        governed_net=governed_net if governed_net is not None else list(net_live),
+        cap_breach_bars=cap_breach_bars,
+    )
+
+
+def test_analyze_soak_planted_consistent():
+    # realized gross ~0.30 matches a null whose gross clusters around 0.30 -> gross verdict "consistent"
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200  # null gross = 0.30 everywhere
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90)
+    assert a.L == 6
+    assert set(a.gating_verdicts) == {"gross", "net", "active_frac", "turnover", "hhi"}
+    assert a.gating_verdicts["gross"].verdict in ("consistent", "n/a")  # matches or undiscriminating
+
+
+def test_analyze_soak_planted_inconsistent_gross():
+    # realized gross ~2.0 vs a null clustered at 0.30 -> "inconsistent"
+    rw = [{"BTC": 1.0, "ETH": 1.0}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * (k % 5), "ETH": 0.15} for k in range(200)]  # clustered near 0.30, non-degenerate band
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90)
+    assert a.gating_verdicts["gross"].verdict == "inconsistent"
+
+
+def test_analyze_soak_degenerate_zero_exposure():
+    rw = [{"BTC": 0.0, "ETH": 0.0}] * 6
+    a = analyze_soak(_mk_realized(rw, [0.0] * 6), _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.0] * 100))
+    assert a.is_degenerate is True
+
+
+def test_analyze_soak_context_and_d4():
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 100
+    null = _mk_null(nw, [0.001] * 100, multipliers=[1.0] * 50 + [0.5] * 50, cap_breach_bars=10, governed_net=[0.0015] * 100)
+    a = analyze_soak(_mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6), null, band=0.90)
+    assert 0.0 <= a.null_gov_rate <= 1.0 and a.null_gov_rate > 0.0  # half the days engaged
+    assert math.isclose(a.null_cap_rate, 10 / 100)
+    assert a.d4_active is True  # mult drops to 0.5
+    assert a.pnl_verdict.verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
