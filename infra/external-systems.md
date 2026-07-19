@@ -138,7 +138,7 @@ IP: home network `<nas-ip>`
   - "Group" tab, create group: `zcrypto`, add `zcrypto-data`, `zcrypto-deploy` above into the group (`zcrypto-alloy` **must** be excluded. It runs telemetry, never touches the ZhaoCrypto data — least-privilege)
 - DSM web -> Control Panel -> Shared Folder, "Create Shared Folder"
   - Name: `ZhaoCrypto`
-  - Permissions: group `zcrypto-data` can "Read/Write"
+  - Permissions: group `zcrypto` can "Read/Write"
   - Advanced Permissions: uncheck "Enabled advances share permissions"
   - NFS Permissions: create a new one (Both the ops node and the workstation read the canonical trees through this export, automounted read-only at `/mnt/zhao-crypto`; the export-side **Read-Only** privilege is the server half of spec `00051` D10's "no write path toward custody" boundary — without this rule the boundary rests solely on the client-side `ro` mount flag):
     - Hostname or IP: `<home-lan>/24`

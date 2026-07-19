@@ -301,7 +301,8 @@
 # The journal export the NAS pulls lands on zcrypto-data (the m2m data user, spec 00057), not the
 # admin `deploy`. zcrypto-data is not the journal's owner (zcrypto-engine is), so it joins the
 # zcrypto-engine group to TRAVERSE the 0750 dirs; and the journal files must be group-READABLE for the
-# rrsync -ro pull. exclusive:false — deploy's old copy is dropped after the NAS repoints (Task 7/8).
+# rrsync -ro pull. exclusive:false so it never disturbs zcrypto-data's other keys (deploy's old copy
+# was dropped at the cutover and deploy no longer exists — see the header above).
 - name: install the sync pubkey as a forced-command entry on zcrypto-data (journal read-only)
   ansible.posix.authorized_key:
     user: zcrypto-data
