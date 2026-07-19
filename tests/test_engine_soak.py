@@ -2,15 +2,19 @@ import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import polars as pl
+import pytest
+
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 from cli.engine.soak import (
+    SoakError,
     _chain_consistent,
     governor_engaged_daily,
     realized_series,
     select_clean_segment,
     structural_metrics,
 )
-from cli.ohlc.dataset import to_frame, write_parquet
+from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 
 
 def test_structural_metrics_basic():
@@ -137,6 +141,38 @@ def test_offbyone_shifted_store_breaks_chain(tmp_path):
     # deliberately wrong store is out of scope -- instead, assert the guard's POSITIVE contract holds on
     # good data, AND add a unit check that a hand-built inconsistent close-map (end != start) yields False.
     assert rs.chain_ok is True
+
+
+def test_realized_series_skips_cycle_with_none_store_close(tmp_path):
+    """A cycle whose forward boundary close is present-but-None in the store (the store's close
+    column is nullable) must be SKIPPED by the realizability gate, not crash with TypeError from
+    math.isfinite(None)."""
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {
+        d - timedelta(hours=4): 100.0,
+        d: 110.0,
+        d + timedelta(hours=4): 121.0,
+        d + timedelta(hours=8): 133.1,
+    }
+    records, store_dir, now = _mk_records_and_store(tmp_path, closes)
+
+    target_label = d  # the END label of the FIRST cycle (cycle_ts 00:00) -> null it out
+    p = _store_path(store_dir, "BTC", 240)
+    df = read_parquet(p).with_columns(
+        pl.when(pl.col("ts") == pl.lit(target_label)).then(None).otherwise(pl.col("close")).alias("close")
+    )
+    write_parquet(df, p)
+
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+    assert d not in rs.cycle_ts  # cycle 0 (00:00) was skipped by the realizability gate
+    assert rs.dropped_tail > 1  # more cycles dropped than just the always-unscored tail cycle
+
+
+def test_realized_series_empty_clean_segment_raises_soak_error(tmp_path):
+    """No records -> select_clean_segment returns [] -> a typed SoakError, not an IndexError from
+    indexing clean[0]."""
+    with pytest.raises(SoakError):
+        realized_series([], tmp_path, now=datetime(2026, 7, 16, tzinfo=UTC))
 
 
 def test_chain_consistent_detects_gap():

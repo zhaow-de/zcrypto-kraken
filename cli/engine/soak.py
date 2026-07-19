@@ -181,6 +181,8 @@ def realized_series(
     see `_chain_consistent`.
     """
     clean = select_clean_segment(records)
+    if not clean:
+        raise SoakError("no contiguous clean cycle segment in the journal")
     assets = tuple(sorted(clean[0].final_targets))
     for rec in clean:
         if tuple(sorted(rec.final_targets)) != assets:
@@ -212,7 +214,9 @@ def realized_series(
         if not all(
             start_ts in closes[a]
             and end_ts in closes[a]
+            and closes[a][start_ts] is not None
             and math.isfinite(closes[a][start_ts])
+            and closes[a][end_ts] is not None
             and math.isfinite(closes[a][end_ts])
             for a in assets
         ):
