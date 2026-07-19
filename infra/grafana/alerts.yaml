@@ -1209,3 +1209,274 @@ rules:
       severity: critical
     notification_settings:
       receiver: logs
+
+  # ---- Capture hosts (zcrypto = primary + engine, zcrypto-red = secondary) --------------------
+  # First alert rules for the capture VPSes. They ship host metrics + container logs via Alloy only
+  # since iter-105 (spec 00057 D5); before that no rule selected host="zcrypto"/"zcrypto-red", so the
+  # unbackfillable L2 spool's disk-free and the capture daemon's ERROR logs were unwatched in Grafana.
+  # The three CONTENT rules (disk/load/error) carry host=~"zcrypto|zcrypto-red" (external_labels
+  # host=<hostname>, roles/capture/files/config.alloy) and fire per host. They are noDataState: OK,
+  # deliberately UNLIKE the NAS host-resource rules' Alerting -- and stay OK permanently, because
+  # "this host's telemetry went dark" is owned by the two per-host log-dead CANARIES below
+  # (noDataState: Alerting), not by making each content rule page on NoData (which would false-page on
+  # a transient Alloy remote_write gap, like the ops-node DNS incident). Division of labor: the content
+  # rules own "bad while alive"; the canaries own "this host's capture log plane is dark" -- a
+  # parse-chain regression on a live daemon (the T0060 class, which silently blinds the ERROR rule) OR
+  # that host's Alloy dying; the healthchecks.io dead-man (withheld-ping, T0032; independent domain)
+  # owns "the daemon itself died / the disk actually filled". The canaries are PER-HOST (not one
+  # collective) because a SINGLE host's Alloy death is otherwise invisible to everything: the content
+  # rules go NoData->OK and the daemon keeps pinging the dead-man.
+  - uid: zcrypto-capture-disk-low
+    title: "Capture · spool disk low"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The unbackfillable L2 spool (/var/lib/zcrypto-capture) is on the root fs -- mountpoint="/"
+      # resolves live for both hosts (verified 2026-07-19; free ratio 0.70 primary / 0.79 secondary).
+      # 10% free is ~8 GB / ~16 days of runway at the measured 0.48 GB/day -- a wide EARLY warning that
+      # fires long before the daemon's own 1 GiB DiskWatermark (whose breach withholds the dead-man
+      # ping, T0032) and the ~14-day prune ring (spec 00050 D8). Firing here means the ring broke or an
+      # unexpected consumer appeared.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_avail_bytes{host=~"zcrypto|zcrypto-red", mountpoint="/"}
+            / node_filesystem_size_bytes{host=~"zcrypto|zcrypto-red", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.1]}  # < 10% free
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + healthchecks dead-man are the last line. Check the zcrypto-capture-prune timer and for an unexpected disk consumer."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-load-high
+    title: "Capture · node load high"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # NORMALIZED per core, because the two boxes differ: the primary has 2 vCPU, the secondary 1
+      # (measured live). Dividing load1 by the host's core count (count of idle-mode
+      # node_cpu_seconds_total series) makes one threshold mean the same on both. `on(host)
+      # group_left()` matches the per-host core count onto load1's richer label set. Baseline is
+      # ~0.02-0.11 per core; > 1.5 per core sustained 10m is clear saturation (a runaway/thrashing
+      # process), not the seconds-long hourly NAS rsync-pull spike (`for: 10m` outlasts that).
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_load1{host=~"zcrypto|zcrypto-red"}
+            / on(host) group_left()
+            count by (host) (node_cpu_seconds_total{host=~"zcrypto|zcrypto-red", mode="idle"})
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [1.5]}  # > 1.5x per core, sustained
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "1-minute load average per core on a capture host exceeds 1.5x its cores, sustained 10m -- runaway/thrashing, not the transient hourly pull (the capture daemon is light, ~0.1/core baseline)."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-error-logs
+    title: "Capture · daemon ERROR logs"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Loki, level LABEL not a text grep (config.alloy's parse stages strip level out of the message
+      # line -- a grep would be silently blind). The capture daemon's logs get a level label via the
+      # `{container=~"capture|zcrypto-.*"}` parse selector (verified live: INFO/WARNING present, ZERO
+      # ERROR/CRITICAL in 7d -- a clean baseline). Scoped to container="capture": the daemon on both
+      # hosts, whose errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal.
+      # (Out of scope here: Alloy self-errors -- a separate instrument-health concern; and the engine's
+      # logs, which get no level label on the capture-host parse and are the T0042 egress question.)
+      # `sum by (host)` names the firing host; `or on() vector(0)` keeps a clean window an explicit 0.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum by (host) (count_over_time({host=~"zcrypto|zcrypto-red", container="capture", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR/CRITICAL log lines from the capture daemon (container=capture) on a capture host in the last 15 minutes -- desync storms, ENOSPC, or reconnect failures on the unbackfillable stream. Zero is the healthy baseline."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
+
+  # Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
+  # The ERROR rule selects on the `level` label, which exists ONLY because config.alloy's parse stages
+  # attach it -- so if the capture container's parse chain regresses (the T0060 class: the label scheme,
+  # a selector, or the zcrypto line format drifting), its lines ship level=- again, `level=~"ERROR|CRITICAL"`
+  # selects nothing, and the ERROR rule reads 0 = healthy FOREVER. These fire on the absence of ANY
+  # parsed capture line (level matching anything). Scoped to container="capture" -- NOT host-wide -- on
+  # purpose: a capture-parse regression leaves Alloy's OWN leveled lines flowing, so a host-wide canary
+  # would stay green in exactly the blind state this exists to page on. The capture daemon emits ~35
+  # parsed lines/hr (evidence: 342/341 INFO + 499/497 WARNING per 24h), so <1 in 6h means the capture
+  # log plane is dead (parse regression, Alloy death, or the container gone), not a quiet daemon. One
+  # rule per host: Loki cannot synthesize a per-host zero (an absent stream is no series, not a 0 series),
+  # so `or on() vector(0)` only injects a 0 for a SINGLE-host query -- a `sum by(host)` would fire only
+  # when BOTH hosts go dark and miss a single host's Alloy death.
+  - uid: zcrypto-capture-log-dead-primary
+    title: "Capture · log pipeline dead — primary (zcrypto)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="zcrypto", container="capture", level=~".+"} [6h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting (not OK): this is a fires-on-silence dead-man -- the `or on() vector(0)` fallback keeps
+    # the query returning data while intact, and Alerting is the belt-and-braces layer for the day an
+    # edit drops the fallback or Loki maps an empty response to NoData; with OK it would park green in
+    # exactly the blind state it exists to page on.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (parse regression -> level=- (T0060), Alloy death, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-capture-log-dead-secondary
+    title: "Capture · log pipeline dead — secondary (zcrypto-red)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="zcrypto-red", container="capture", level=~".+"} [6h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (parse regression -> level=- (T0060), Alloy death, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs
