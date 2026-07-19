@@ -196,12 +196,12 @@
       ansible.builtin.set_fact:
         capture_journal_gid: "{{ ansible_facts['getent_group']['systemd-journal'][1] }}"
 
-    # Admin-plane files (this dir, config.alloy, compose.yaml) are owned root:root — NOT the ops
-    # role's zcrypto-deploy, which does not exist on the capture hosts at this converge (the
-    # deploy→zcrypto-deploy rename is a later attended step) and would fail user-lookup. root:root also
-    # matches the capture role's own /opt/zcrypto-capture + compose convention. ONLY alloy-data and the
-    # rendered secrets file are owned by the dedicated Alloy user (it must WRITE the WAL, and READ the
-    # 0600 secrets it does not own by default).
+    # Admin-plane files (this dir, config.alloy, compose.yaml) are owned root:root — NOT a per-user
+    # owner like the admin zcrypto-deploy: root:root matches the capture role's own /opt/zcrypto-capture
+    # + compose convention and keeps the render decoupled from any admin account's existence/uid (it
+    # rendered before zcrypto-deploy existed, during the D1 rename). ONLY alloy-data and the rendered
+    # secrets file are owned by the dedicated Alloy user (it must WRITE the WAL, and READ the 0600
+    # secrets it does not own by default).
     - name: ensure the alloy project directory exists
       ansible.builtin.file:
         path: "{{ capture_alloy_dir }}"

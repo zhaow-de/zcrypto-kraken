@@ -4,10 +4,9 @@
 #
 # The box currently calls itself zcrypto-red (collision with the secondary capture host); this pins
 # the inventory name + on-host hostname to zcrypto-ops instead.
-# Converge as the zcrypto-deploy user (the ops node's admin identity since spec 00057; the capture
-# fleet still sets `deploy` in group_vars/capture_host until the T0068 rename). The bootstrap play
-# overrides this with `-e ansible_user=root` to create the zcrypto-deploy user in the first place;
-# every run.sh converge afterward connects as zcrypto-deploy.
+# Converge as the zcrypto-deploy user (the fleet's admin identity since spec 00057 D1 — the capture
+# group defaults to it too). The bootstrap play overrides this with `-e ansible_user=root` to create
+# the zcrypto-deploy user in the first place; every run.sh converge afterward connects as zcrypto-deploy.
 ansible_user: zcrypto-deploy
 
 base_hostname: zcrypto-ops
