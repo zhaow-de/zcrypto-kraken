@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the retention/eviction remainder is ripe now (design work is autonomous); the disk-fill deadline itself is ≈2026-11-23 at the measured fill rate — but the breach is no longer silent, so it now pages instead of losing data unnoticed
+ripe_when: (1) ~2026-07-22/23 — verify the FIRST real prune deletion pass on both hosts (oldest 2026-07-08 finals cross the 14-day retention; timers verified live 2026-07-19); (2) the next capture-image rollout — it carries the not-yet-deployed measurable-probe fix 3e03aac
 ---
 
 # Capture stops silently when the disk watermark breaches — and the dead-man still reports healthy
@@ -22,8 +22,10 @@ if client.connected and monitor.is_healthy(pairs):
     ping_healthcheck(url)
 ```
 
-The only signal is a single `logger.error("disk watermark breached …")` on the **transition** — and the
-VPS's logs currently ship **nowhere** (the VPS `obs` role is exactly the unbuilt remainder of [[T0020]]).
+The only signal is a single `logger.error("disk watermark breached …")` on the **transition** — and at
+the time of writing the VPS's logs shipped **nowhere** *\[since 2026-07-19 (iter-105) the capture hosts
+ship container logs via Alloy, so that ERROR line now reaches Loki — though no alert rule selects
+capture-host logs yet; see [[T0020]]'s capture-host alert-rules item\]*.
 
 Net effect: **the disk fills → capture silently produces nothing → every monitor stays green → the
 unbackfillable L2 stream is lost until a human happens to look.**
@@ -89,25 +91,18 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
   polling; and `_run`'s shutdown awaits log-and-continue on a task's non-`CancelledError` corpse so
   every writer still flushes on the way out.
 
-**Not yet deployed:** the fix ships with the next capture-image rollout (there is ~135 days of runway on
-the disk, and the rollout is needed for Role C anyway).
+~~Not yet deployed: the fix ships with the next capture-image rollout~~ *\[superseded 2026-07-19: the
+breach-withhold fix has been **deployed since 2026-07-14** (verified inside the running image
+`sha256:63708539…`); only the (c) measurable-probe sub-fix `3e03aac` remains undeployed and rides the
+next rollout — see the next-steps section. The ~135-day runway framing is dissolved by the live prune
+timers (a ~14-day ring once the first deletion pass verifies).\]*
 
 - **(b) 00048's eviction rationale corrected** — the body §Non-goals now carries an inline `[Superseded — …]` marker flagging that the "~12× margin makes delete-after-verified unnecessary" claim rests on the 20×-wrong fill figure, and that eviction is in fact *not* implemented (disk fills ≈2026-11-23).
 - **(c) probe-outage blind spot closed** — `DiskWatermark` now tracks `measurable`; a probe that raises sets it False, and the dead-man ping is gated on `not breached AND measurable`, so "cannot measure" no longer pings green on a frozen `breached` (the healthcheck grace absorbs a transient blip; a sustained failure pages).
 
 ## Suggested next steps
 
-- **(process, at the re-pin)** When the secondary re-pin happens, schedule the T+24 h canary reminder via the Slack MCP per `.claude/rules/capture-deploys.md` (added 2026-07-15) so the primary-eligibility gate is never carried in memory.
-
-- **(autonomous)** Decide and implement **retention** for the capture segments — prune-after-verified-pull,
-  the same shape as [[T0021]]'s journal retention. **There is no ring buffer anywhere**: nothing prunes
-  capture segments on any host, so the disk simply fills. With the dead-man fix this now *pages* rather
-  than silently losing data, but the underlying growth is unbounded. (Spec `00050`'s **D8** — not D9, and it does
-  **not** stop at the secondary — adds a `zcrypto-capture-prune` systemd timer to the **`capture` role,
-  pruning *both* hosts** (primary included: 14-day retention deleting only `<HH>.parquet` finals +
-  `.sha256` sidecars, never `.part`/`.held`/`.corrupt`; `infra/ansible/roles/capture/`, tested by
-  `tests/test_capture_prune.py`). So capture-host retention is now *implemented in config for both hosts*,
-  superseding the "nothing prunes on any host" note above — this remainder is half-done; deploy +
-  at-host verification are the open half. The NAS mirror itself is still never pruned.)
-- **(verification)** Confirm the deployed daemon actually withholds the ping, at the next image rollout.
+- ~~(process, at the re-pin) schedule the T+24 h canary reminder~~ **(done as standing process, 2026-07-15):** codified in `.claude/rules/capture-deploys.md` — the reminder is scheduled via the Slack MCP at every secondary re-pin, no longer this topic's item.
+- **Retention: designed, config-implemented AND deployed (verified 2026-07-19).** Spec `00050` D8's `zcrypto-capture-prune` timer is **live on both hosts** (`systemctl list-timers`: secondary ran 2026-07-19 03:17, primary enabled at the iter-105 converge, next run 2026-07-20 03:17; 14-day retention, finals + `.sha256` only, never `.part`/`.held`/`.corrupt`). **The only open sub-item: verify the FIRST real deletion pass** (~2026-07-22/23, when the oldest finals — 2026-07-08 — cross 14 days): read-only check on both hosts that the expected oldest day vanished, `.part`/`.held` untouched, and disk-used flattens. That verification **dissolves the ≈2026-11-23 disk-fill deadline** into a steady ~14-day ring. **Recorded stance (explicit, 2026-07-19): the NAS custody mirror is deliberately never pruned** — it is the keep-forever archive (spec `00048` Role A); only the capture-host working copies ring-buffer.
+- **(verification of the breach-withhold: DONE 2026-07-19)** — the running image (`sha256:63708539…`) contains the `watermark.breached` ping-gate (checked inside the image). The **(c) measurable-probe fix (`3e03aac`) is NOT in that image** (committed 2026-07-14 23:51 UTC, ~20 h after the image build) — it deploys with the next capture-image rollout, whose canary/bake steps this sub-item now rides.
 - **(residual, noted)** Compound fault: if the disk actually FILLS *during* an unmeasurable-probe window, `_write_part`'s `ENOSPC` is caught, logged, and the buffer dropped -- a real, un-booked loss, because `breached` is frozen at its last (green) value so no watermark gap is booked. Narrow (needs a disk that fills exactly while the probe is also down), and it still pages within ~20 min via the withheld ping, but the exit-bar gap accounting under-counts that window. A full fix would treat an unmeasurable window as a provisional gap and reconcile once the probe recovers.

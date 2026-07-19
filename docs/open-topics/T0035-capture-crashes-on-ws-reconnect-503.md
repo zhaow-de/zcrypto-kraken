@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the fixed capture image is deployed on the VPS — verify the next venue-side WS restart (close 1012 / handshake 503) is ridden out in-process
+ripe_when: a venue-side WS restart (close 1012 / handshake 503) is observed after 2026-07-14 — verify it was ridden out in-process, then close
 ---
 
 # Capture crashes when a WS reconnect attempt is rejected (Kraken 503)
@@ -93,10 +93,13 @@ status flip:
   removes the crash-restart this incident produced (the retry now stays in-process), and generic
   process-restart observability belongs to the T0020 Grafana/Alloy stack if it ever recurs.
 
+- **Deployed 2026-07-14 (verified 2026-07-19):** the fix rode the T0036 deploy — the digest running on
+  both capture hosts (`sha256:63708539…`, image built 2026-07-14 03:51 UTC, ten minutes after the fix
+  commit `a57b2c6`) contains the fixed `ws_client.py` (`WebSocketException` handler present, checked
+  inside the image itself). The deploy sub-item is done; only the live verification remains.
+
 ## Suggested next steps
 
-- Deploy the fix to the VPS: rebuild the capture image off `develop` once the branch merges, re-pin
-  the digest (per the T0031 flow), and restart the capture container in a low-cost window.
 - Verify on the next venue-side WS restart (Kraken close 1012): the container journal must show
   `WS connect attempt failed, reconnecting: ...` followed by `reconnecting in ...s (attempt N)` and a
   resumed stream — **no** container restart, no `InvalidStatus` traceback, no non-zero exit. Then

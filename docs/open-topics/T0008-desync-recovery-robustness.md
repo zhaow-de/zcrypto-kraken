@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the resubscribe-robustness remainder is far less pressing now that the desync *cause* is fixed (desyncs should fall to ~zero); revisit at the next attended capture-maintenance window, or immediately on a recurrence of a stuck-pair desync
+ripe_when: a stuck-pair desync recurs (a pair stays desynced past its single resubscribe), or the post-fix desync rate re-elevates above ~1/day — deliberately NOT re-evaluated at routine maintenance windows (re-deferred 2026-07-19; the single-attempt residual is loud, dead-man-guarded, and archive loss is healed by the 00050 splice)
 ---
 
 # Capture daemon — robust book-desync recovery (retry / ack-correlated resubscribe)
@@ -59,10 +59,10 @@ snapshot/update, keeping the book congruent with Kraken's window (`cli/capture/b
 tests cover it, including the exact phantom-resurfacing scenario. `depth` is deliberately required —
 defaulting it would silently reintroduce this.
 
-**Not yet deployed** — ships with the next capture-image rollout.
+**Deployed 2026-07-14** — the depth-prune fix (`71b72e9`, 2026-07-13) rode the T0036 image (`sha256:63708539…`, built 2026-07-14 03:51 UTC), running on both capture hosts since.
 
 ## Suggested next steps
 
-- **Investigate the underlying desync *rate*** (registered 2026-07-09 from the 09:24 UTC session's dangling follow-up question, per the deferral rule): why do the high-activity pairs fail checksums this often — `book.py`'s checksum window vs Kraken's update coalescing at depth-100? Quantify rate vs message volume from the logs/captured segments; assess whether a different depth or checksum-window handling reduces it. The read-only analysis (logs + code + captured data) is autonomous-safe; any daemon change still deploys via the attended window above.
-- **(autonomous)** Make recovery robust to a failed single attempt. Options to weigh: (a) retry `resubscribe_book` with backoff while a pair remains desynced past a grace period / N updates (bounded, so it can't re-storm the rate limit); (b) `req_id`-correlate the resubscribe — wait for the `unsubscribe_ack` before sending the `subscribe`, and treat an `unsubscribe_error`/`subscribe_error` as a signal to retry; (c) escalate to a full reconnect (which re-subscribes everything with fresh snapshots) if a pair stays desynced beyond a threshold. TDD on the WS-client/handler with a fake connection that simulates a rejected/failed recovery.
+- ~~Investigate the underlying desync *rate*~~ **(answered by the root cause above, 2026-07-13):** the ~200/day rate WAS the unpruned book resurfacing phantom levels — replaying a real hour went 482/117/398 CRC failures → **0** with the depth prune, so there is no residual rate question to investigate (any post-fix desync is a genuine venue/network event, handled below).
+- **(autonomous — consciously re-deferred 2026-07-19)** Make recovery robust to a failed single attempt. Options to weigh: (a) retry `resubscribe_book` with backoff while a pair remains desynced past a grace period / N updates (bounded, so it can't re-storm the rate limit); (b) `req_id`-correlate the resubscribe — wait for the `unsubscribe_ack` before sending the `subscribe`, and treat an `unsubscribe_error`/`subscribe_error` as a signal to retry; (c) escalate to a full reconnect (which re-subscribes everything with fresh snapshots) if a pair stays desynced beyond a threshold. TDD on the WS-client/handler with a fake connection that simulates a rejected/failed recovery.
 - **(verification, pending a natural event)** The fix is now **deployed** (2026-07-08, via the CI GHCR image — see T0003 Incident); a 14-min watcher saw no natural desync, so the live self-heal is still unobserved. Watch the **first natural desync** self-heal on the live feed (a `checksum desync … resubscribing` followed by the pair returning to sync, **no** "Already subscribed"/"unsubscribe error") — that is the only real test of the Kraken unsubscribe→subscribe ordering. If it does **not** cleanly self-heal, this topic jumps in priority. The healthcheck dead-man's switch guards it meanwhile.
