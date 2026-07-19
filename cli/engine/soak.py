@@ -18,6 +18,14 @@ the realized-vs-null comparison instead of masquerading as an unrelated mismatch
 and `block_bootstrap_null` turn a null series into reference distributions of a chosen window
 length: the former enumerates every overlapping window, the latter draws a stationary
 (Politis-Romano) block bootstrap of resampled paths of that length.
+
+Also judges a live metric value against its null distribution: `metric_verdict` applies a
+two-sided band (inner band consistent, edge zones weakly-consistent, outside the outer band
+inconsistent on EITHER side -- too-low is a bug tell too, not just too-high) with an "n/a" escape
+for a degenerate discriminator (zero-width band or a tiny `effective_n`); `degenerate` flags a
+near-zero-exposure window that can't be judged at all; `summarize_panel` rolls a panel of verdicts
+into a multiplicity-aware summary line, since judging N metrics at a 90% band will show ~N*0.10
+outside it by chance alone.
 """
 
 from __future__ import annotations
@@ -384,3 +392,99 @@ def block_bootstrap_null(
                 path.append(series[(start + j) % n_obs])
         out.append(_reduce(path, reducer))
     return out
+
+
+@dataclass(frozen=True)
+class MetricVerdict:
+    """The judgment of a single live metric value against its null distribution: which band zone
+    `live` falls in (see `metric_verdict`), plus the null summary (`median`/`lo`/`hi`/`width`) and
+    `live`'s percentile rank within it."""
+
+    verdict: str  # "consistent" | "weakly-consistent" | "inconsistent" | "n/a"
+    live: float
+    median: float
+    lo: float  # p5
+    hi: float  # p95
+    percentile: float  # the percentile rank of `live` within the null (0..100)
+    effective_n: float
+    width: float  # hi - lo
+
+
+def metric_verdict(
+    live: float,
+    null_values: list[float],
+    *,
+    band: float = 0.90,
+    effective_n: float = float("inf"),
+) -> MetricVerdict:
+    """Judge `live` against the null distribution `null_values` using a two-sided band.
+
+    `band` sets the outer interval: `lo_out = (1-band)/2` and `hi_out = 1-lo_out` percentiles
+    (0.90 -> p5/p95) bound "inconsistent" on either side (too-low is a bug tell too, not just
+    too-high). The inner half-width interval `[lo_out*2, 1-lo_out*2]` percentiles (0.90 -> p10/p90)
+    bounds "consistent"; the two edge zones between inner and outer bound "weakly-consistent".
+    A degenerate discriminator -- zero-width outer band or `effective_n < 3` -- is "n/a"
+    regardless of where `live` falls. Empty/singleton `null_values` is also "n/a" (width 0).
+    """
+    if len(null_values) < 2:
+        return MetricVerdict(
+            verdict="n/a", live=live, median=live, lo=live, hi=live, percentile=50.0, effective_n=effective_n, width=0.0
+        )
+
+    lo_out_q = (1.0 - band) / 2.0
+    hi_out_q = 1.0 - lo_out_q
+    lo_in_q = lo_out_q * 2.0
+    hi_in_q = 1.0 - lo_in_q
+
+    lo = float(np.percentile(null_values, lo_out_q * 100.0, method="linear"))
+    hi = float(np.percentile(null_values, hi_out_q * 100.0, method="linear"))
+    inner_lo = float(np.percentile(null_values, lo_in_q * 100.0, method="linear"))
+    inner_hi = float(np.percentile(null_values, hi_in_q * 100.0, method="linear"))
+    median = float(np.percentile(null_values, 50.0, method="linear"))
+    width = hi - lo
+    percentile = (sum(1 for v in null_values if v <= live) / len(null_values)) * 100.0
+
+    if width == 0.0 or effective_n < 3:
+        verdict = "n/a"
+    elif inner_lo <= live <= inner_hi:
+        verdict = "consistent"
+    elif lo <= live <= hi:
+        verdict = "weakly-consistent"
+    else:
+        verdict = "inconsistent"
+
+    return MetricVerdict(
+        verdict=verdict, live=live, median=median, lo=lo, hi=hi, percentile=percentile, effective_n=effective_n, width=width
+    )
+
+
+def degenerate(live_gross_series: list[float], *, floor: float = 1e-6) -> bool:
+    """True if the window carries near-zero exposure (mean |gross| < floor) -- echoes the [0,0]
+    holdout: a run where the strategy never actually put on a position can't be judged against a
+    null built from an active strategy."""
+    if not live_gross_series:
+        return True
+    return (sum(abs(v) for v in live_gross_series) / len(live_gross_series)) < floor
+
+
+@dataclass(frozen=True)
+class PanelSummary:
+    """The panel-level multiplicity-aware summary: how many of the judged metrics landed
+    "inconsistent" against how many would be expected by chance alone at this band."""
+
+    n_metrics: int
+    n_outside: int  # count of "inconsistent"
+    expected_by_chance: float  # n_metrics * (1 - band)
+    line: str  # e.g. "1 of 7 outside band (~0.7 expected by chance at 90%)"
+
+
+def summarize_panel(verdicts: dict[str, MetricVerdict], *, band: float = 0.90) -> PanelSummary:
+    """Summarize a panel of per-metric verdicts, resisting multiplicity: judging N metrics at
+    `band` will show ~N*(1-band) outside the band by chance alone, so the summary reports the
+    observed count against that expectation rather than alarming on any single worst-of-N metric.
+    """
+    n_metrics = len(verdicts)
+    n_outside = sum(1 for v in verdicts.values() if v.verdict == "inconsistent")
+    expected_by_chance = n_metrics * (1.0 - band)
+    line = f"{n_outside} of {n_metrics} outside band (~{expected_by_chance:.1f} expected by chance at {band * 100:.0f}%)"
+    return PanelSummary(n_metrics=n_metrics, n_outside=n_outside, expected_by_chance=expected_by_chance, line=line)

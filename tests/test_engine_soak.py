@@ -12,10 +12,13 @@ from cli.engine.soak import (
     _chain_consistent,
     _net_live_from_result,
     block_bootstrap_null,
+    degenerate,
     governor_engaged_daily,
+    metric_verdict,
     realized_series,
     select_clean_segment,
     structural_metrics,
+    summarize_panel,
     windowed_null,
 )
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
@@ -274,3 +277,43 @@ def test_build_null_on_real_canonical():
     assert ns.reconcile_ok is True
     assert ns.n_periods > 1000 and len(ns.net_live) == ns.n_periods
     assert len(ns.weights) == ns.n_periods and set(ns.weights[0]) == set(ns.assets)
+
+
+def test_metric_verdict_consistent_inside_inner_band():
+    null = list(range(101))  # 0..100 → p5=5, p10=10, p90=90, p95=95
+    assert metric_verdict(50, null, band=0.90).verdict == "consistent"
+
+
+def test_metric_verdict_edge_zone():
+    null = list(range(101))
+    assert metric_verdict(7, null, band=0.90).verdict == "weakly-consistent"  # in [p5, p10)
+    assert metric_verdict(93, null, band=0.90).verdict == "weakly-consistent"  # in (p90, p95]
+
+
+def test_metric_verdict_inconsistent_both_sides():
+    null = list(range(101))
+    assert metric_verdict(200, null, band=0.90).verdict == "inconsistent"  # > p95 (too high)
+    assert metric_verdict(-50, null, band=0.90).verdict == "inconsistent"  # < p5 (too low ALSO flags)
+
+
+def test_metric_verdict_na_on_zero_width_or_tiny_n():
+    assert metric_verdict(1.0, [3.0] * 50, band=0.90).verdict == "n/a"  # zero-width band
+    assert metric_verdict(50, list(range(101)), band=0.90, effective_n=2).verdict == "n/a"  # tiny effective_n
+
+
+def test_degenerate_flags_zero_exposure():
+    assert degenerate([0.0, 1e-9, 0.0]) is True
+    assert degenerate([0.30, 0.25, 0.28]) is False
+
+
+def test_summarize_panel_multiplicity_line():
+    null = list(range(101))
+    vs = {
+        "gross": metric_verdict(50, null),  # consistent
+        "net": metric_verdict(50, null),  # consistent
+        "turnover": metric_verdict(200, null),  # inconsistent
+    }
+    s = summarize_panel(vs, band=0.90)
+    assert s.n_outside == 1 and s.n_metrics == 3
+    assert abs(s.expected_by_chance - 3 * 0.10) < 1e-9
+    assert "outside band" in s.line and "expected by chance" in s.line
