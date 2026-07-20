@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: ripe NOW for the decision — a proven under-invalidation hole in gate evidence. The work is small; what needs deciding is whether to keep hand-enumerating modules or hash the transitive import closure, since only the latter can make spec 00060 D3's invariant actually true.
+status: resolved
 ---
 
 # `replay_fingerprint` misses the re-export layers the fast verdict path binds through
@@ -44,6 +43,18 @@ AFTER   fast-builder bound to: build_crossfreq_system
 - D9 itself was **not** wrong, only incomplete: the fingerprint now does respond to a `_snapshot_reader` `close`→`open` edit (`cc08f1e0…` → `b88361b5…`) where pre-D9 it was byte-identical.
 
 **The structural point, which outlives the specific files.** Every fix so far has enumerated one more module after someone noticed it was missing — the four originals, the six added at review, then these two. Hand-enumeration cannot establish "the modules that determine a replay's result"; it can only ever record the ones somebody thought of. That is why the same class of hole has now been found three separate times in this list. See [[T0075]] for the same fix-the-instance pattern one level down.
+
+## Resolution
+
+**Resolved 2026-07-20** by spec `00065`, same PR that opened this topic. The owner ruled **option 2** — hash the transitive `cli.*` import closure — and it is implemented (`fe16327`, `4e212b6`, `bb72901`).
+
+Measured before designing, because the obvious objection was cost: adding `command.py` as a root costs 8 more modules, not the whole CLI; the walk is ~59 ms against a 55–627 s run, 0.1% of the cheapest case. The same measurement showed the hand-list covered 12 of 61 executing modules (~20%), so the three previous rounds of "add one more module" were converging on nothing.
+
+**Adversarial verification found the first implementation shipped the same hole one level up.** `_resolve_module` mapped a dotted name to its leaf file only, but importing `cli.engine.command` *executes* `cli/__init__.py` and `cli/engine/__init__.py` first. Six modules ran on every replay unhashed, exploitable identically: rebinding `build_crossfreq_system_fast` in `cli/engine/__init__.py` changed every verdict at a **byte-identical** fingerprint with all 64 tests green. Fixed in `bb72901`; ancestors are now resolved explicitly (spec `00065` D10).
+
+**The durable outcome is not the closure — it is the test.** `test_closure_covers_every_module_the_replay_roots_actually_execute` (D11) imports the roots in a clean subprocess, reads `sys.modules`, and asserts the closure is a superset of what actually ran. It enumerates nothing, so it cannot go stale, and it **failed on the first implementation**, which is what makes it the right pin. Measured after the fix: **61 covered, 60 executed, 0 executed-but-uncovered**, 1 harmless over-inclusion.
+
+Spec `00060` D3 was amended at its root (`8a77014`): the wording was the defect as much as the list, and it now points at the superset test with the instruction that if the two disagree, believe the test.
 
 ## Suggested next steps
 

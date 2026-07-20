@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: ripe NOW — the gaps are in merged, gate-critical code and every sub-item is autonomous; take it as a dedicated iteration before the Stage-6a soak gate is read, since every finding here concerns the evidence that gate is read FROM
+status: resolved
 ---
 
 # The gate-evidence cache's safety guarantees are generalised in code but pinned only at the instance that prompted them
@@ -71,6 +70,20 @@ Full re-audit, committed as durable evidence: `docs/research/14.phase6-gate-guar
 **Docstring inaccuracy (small, but the same false-artifact class the audit was chasing):** `_REPLAY_CODE_PATHS` labels `a1.py` / `a2.py` / `builder.py` / `strategies.py` as "LATENT — verified route only", but `crossfreq_system.py:53-56` imports all four at module scope, so they are live on the fast route. Harmless today; the risk is that the false label invites a future cleanup to drop them from the list.
 
 **Worth preserving — what the audit found already airtight.** Category 5 (attribution/order) caught all 9 same-typed swaps, several with 9 failing tests. The pattern that makes it work is `_counted_replay_cycle` asserting *which* `cycle_ts` was replayed — identity, not count — and it is the direct antidote to what failed in iter-111. Reuse it when pinning the gaps above.
+
+## Resolution
+
+**Resolved 2026-07-20** by spec `00064` (+ `00065`), PR into `develop`. All 19 gaps are pinned and every pin was mutation-verified under bytecode control; the whole-branch review re-derived coverage independently, writing its own 19 mutations from the audit's mutant definitions rather than reading the mapping, and each was killed by exactly the test claiming it.
+
+- **Findings 1–4, 18** — `52a99bf` (full-tuple module pin; the call-site coupling moved to Task 3 after the planned step proved a duplicate).
+- **Findings 5–8, 10** — `10a3283` (each evidence-key field pinned by a stale HIT, with the order-preserving tamper D3 requires).
+- **Findings 9, 11, 14–17** — `78aa58f` (the corrupt-journal keystone asserted at journal level, fail-open, schema gate repaired to fail for the right reason).
+- **Findings 12, 13, 19** — `13b0ea3`, and finding 13's surviving sibling in `8a77014`.
+- **D9 (was the last live sub-item)** — ruled by the owner and implemented, not deferred: `4827e5b` hashed `command.py` + `dataset.py`, then spec `00065` replaced enumeration entirely with the import closure (`fe16327`, `4e212b6`, `bb72901`).
+
+**No live deferred sub-item remains.** The residual under-invalidation gap discovered while closing D9 — the re-export and ancestor layers — was **split into [[T0080]]** rather than left inside this file, and is itself resolved. The `_REPLAY_CODE_PATHS` docstring bullet below was executed but was **wrong as written**; the correction is recorded in place so the archived copy cannot re-seed it.
+
+**What this topic was actually about, worth carrying forward:** every one of the 20+ defects found across this work was an artifact asserting something untrue — a spec decision, a comment, a commit subject, a docstring — never a computation returning a wrong number. Four separately claimed coverage was complete when it was not, including spec `00060` D3 itself. The durable countermeasure is not another pin but `test_closure_covers_every_module_the_replay_roots_actually_execute`, which enumerates nothing and so cannot go stale.
 
 ## Suggested next steps
 
