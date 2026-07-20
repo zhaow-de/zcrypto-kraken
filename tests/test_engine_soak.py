@@ -777,6 +777,107 @@ def test_render_report_handles_all_none_before_realized_series():
     assert "no journaled cycles found" in text
 
 
+def test_render_report_shows_seven_metric_rows():
+    # a non-void analysis with internals available -> all 7 gating verdicts real rows, and the
+    # deleted "GOVERNOR / CAP CONTEXT -- backtest context" block must be gone.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=_mk_internals(realized.cycle_ts))
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    for m in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
+        assert m in text
+    assert "backtest context" not in text.lower()
+
+
+def test_render_report_vocabulary_lock_and_banner_hold():
+    # plant "passed" inside RealizedInternals.identity_detail/cap_detail -- analyze_soak discards
+    # both (SoakAnalysis never carries them), so render_report has no way to leak them regardless
+    # of how the two new rows are formatted; this pins that structural guarantee.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    internals = RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=dict.fromkeys(realized.cycle_ts, 1.0),
+        breach_by_cycle=dict.fromkeys(realized.cycle_ts, False),
+        identity_ok=True,
+        identity_detail="identity check passed at cycle=2026-07-16T00:00:00+00:00",
+        cap_consistent=True,
+        cap_detail="cap check passed: completed-bar breach count matches",
+    )
+    analysis = analyze_soak(realized, null, band=0.90, internals=internals)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "ZERO out-of-time holdout" in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
+def test_render_report_degraded_internals_shows_na_and_reason():
+    # internals=None -> D7 degrade: governor_engagement/cap_breach render "n/a" across every
+    # column and a line states the reason, while the other 5 metrics still gate for real.
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=None)
+    assert analysis.internals_available is False
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert analysis.internals_reason in text
+    assert "n/a" in text
+    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+        v = analysis.gating_verdicts[m]
+        assert v.verdict != "n/a"
+        assert v.verdict in text
+
+
+def test_render_report_disclosures_block():
+    # non-empty: constant mult on a long-only book -> constancy + redundancy + day-granularity
+    # disclosures, each rendered under a DISCLOSURES header.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    internals = _mk_internals(realized.cycle_ts, mult_by_cycle=dict.fromkeys(realized.cycle_ts, 0.5))
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90, internals=internals)
+    assert analysis.disclosures  # sanity: this fixture actually produces disclosures
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+    assert "DISCLOSURES" in text
+    for d in analysis.disclosures:
+        assert d in text
+
+    # empty: genuine shorts (kills the redundancy disclosure) + internals=None (kills the
+    # unconditional day-granularity disclosure) -> no disclosures at all, no stray header.
+    rw_b = [
+        {"BTC": 0.10, "ETH": -0.10},
+        {"BTC": 0.15, "ETH": -0.05},
+        {"BTC": 0.05, "ETH": -0.15},
+        {"BTC": 0.20, "ETH": -0.02},
+        {"BTC": 0.02, "ETH": -0.20},
+        {"BTC": 0.12, "ETH": -0.08},
+    ]
+    realized_b = _mk_realized(rw_b, [0.001] * 6)
+    null_b = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis_b = analyze_soak(realized_b, null_b, band=0.90, internals=None)
+    assert analysis_b.disclosures == ()
+    text_b = render_report(analysis_b, realized_b, null_b, self_test, void_reasons=[], band=0.90)
+    assert "DISCLOSURES" not in text_b
+
+
 # --- realized_internals --------------------------------------------------------------------------------
 
 

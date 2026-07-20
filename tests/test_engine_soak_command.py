@@ -10,9 +10,11 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import cli.engine.command as command
+import cli.engine.soak as soak
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
+from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
 from cli.ohlc.dataset import to_frame, write_parquet
 
 runner = CliRunner()
@@ -120,3 +122,168 @@ def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatc
     assert payload["provenance"]["L"] < 30
     assert payload["self_test"] is None  # canonical absent -> self-tests never ran
     assert payload["gating_verdicts"] is None  # void -> no per-metric conclusion in the payload either
+    # canonical absent -> soak_report never builds an internals rebuild either; both new keys are
+    # present in the payload shape but carry no analysis, symmetric with the other analysis fields.
+    assert "internals" in payload and payload["internals"] is None
+    assert "disclosures" in payload and payload["disclosures"] is None
+
+
+def _mk_fake_null(n: int = 40) -> NullSystem:
+    return NullSystem(
+        weights=[{"BTC": 1.0}] * n,
+        net_live=[0.001] * n,
+        multipliers=[1.0] * n,
+        day_index=list(range(n)),
+        assets=("BTC",),
+        reconcile_ok=True,
+        n_periods=n,
+        governed_net=[0.001] * n,
+        cap_breach=[0.0] * n,
+        cap_breach_bars=0,
+    )
+
+
+def _patch_canonical_pipeline(
+    monkeypatch, *, available: bool = True, reason: str = "", identity_ok: bool = True, cap_consistent: bool = True
+) -> None:
+    """Stub the canonical-present branch of `soak_report` so a command test can exercise the new
+    internals wiring without a real frozen canonical dataset or trial registry: `_canonical_present`
+    always True, `build_null`/`self_tests` return canned non-void results, and `realized_internals`
+    (which `soak_report` now calls) returns a `RealizedInternals` built from the actual scored
+    records it's given, with the caller-controlled `available`/`identity_ok`/`cap_consistent`."""
+    monkeypatch.setattr(soak, "_canonical_present", lambda canonical_dir: True)
+    monkeypatch.setattr(soak, "build_null", lambda canonical_dir, fee=0.006: _mk_fake_null())
+    monkeypatch.setattr(
+        soak,
+        "self_tests",
+        lambda *a, **kw: SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=()),
+    )
+
+    def _fake_realized_internals(scored_records, latest_record, reader):
+        cycle_ts = [r.cycle_ts for r in scored_records]
+        return RealizedInternals(
+            available=available,
+            reason=reason,
+            mult_by_cycle=dict.fromkeys(cycle_ts, 1.0),
+            breach_by_cycle=dict.fromkeys(cycle_ts, False),
+            identity_ok=identity_ok,
+            identity_detail="worst |diff|=0.0",
+            cap_consistent=cap_consistent,
+            cap_detail="completed-bar breach count=0",
+        )
+
+    monkeypatch.setattr(soak, "realized_internals", _fake_realized_internals)
+
+
+def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {
+        d - timedelta(hours=4): 100.0,
+        d: 110.0,
+        d + timedelta(hours=4): 121.0,
+        d + timedelta(hours=8): 133.1,
+    }
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(tmp_path / "fake-canonical"),
+            "--registry",
+            str(tmp_path / "fake-registry.jsonl"),
+            "--floor",
+            "1",
+            "--json",
+            str(json_out),
+        ],
+    )
+
+    out = result.output
+    assert result.exit_code == 0, out
+    assert not json.loads(json_out.read_text())["void_reasons"]  # non-void: full analysis ran
+
+    payload = json.loads(json_out.read_text())
+    assert set(payload["gating_verdicts"]) == {
+        "gross",
+        "net",
+        "active_frac",
+        "turnover",
+        "hhi",
+        "governor_engagement",
+        "cap_breach",
+    }
+    assert payload["internals"] == {
+        "available": True,
+        "reason": "",
+        "identity_ok": True,
+        "identity_detail": "worst |diff|=0.0",
+        "cap_consistent": True,
+        "cap_detail": "completed-bar breach count=0",
+        "n_scored_cycles": payload["provenance"]["L"],
+    }
+    assert isinstance(payload["disclosures"], list) and payload["disclosures"]  # day-granularity note at least
+
+
+def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
+    """The D2/D3-vs-D7 void distinction, wired at the `soak_report` level: `available=True` with
+    `identity_ok=False` or `cap_consistent=False` VOIDS the run (the instrument is lying about
+    alignment); `available=False` DEGRADES (governor_engagement/cap_breach read "n/a") but never
+    voids on its own."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {
+        d - timedelta(hours=4): 100.0,
+        d: 110.0,
+        d + timedelta(hours=4): 121.0,
+        d + timedelta(hours=8): 133.1,
+    }
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    common_args = [
+        "engine",
+        "soak-check",
+        "--journal-dir",
+        str(journal_dir),
+        "--store-dir",
+        str(store_dir),
+        "--canonical-dir",
+        str(tmp_path / "fake-canonical"),
+        "--registry",
+        str(tmp_path / "fake-registry.jsonl"),
+        "--floor",
+        "1",
+    ]
+
+    _patch_canonical_pipeline(monkeypatch, identity_ok=False)
+    identity_out = tmp_path / "identity.json"
+    result = runner.invoke(app, [*common_args, "--json", str(identity_out)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(identity_out.read_text())
+    assert any("identity mismatch" in r for r in payload["void_reasons"])
+
+    _patch_canonical_pipeline(monkeypatch, cap_consistent=False)
+    cap_out = tmp_path / "cap.json"
+    result = runner.invoke(app, [*common_args, "--json", str(cap_out)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(cap_out.read_text())
+    assert any("cap-breach inconsistent" in r for r in payload["void_reasons"])
+
+    _patch_canonical_pipeline(monkeypatch, available=False, reason="mocked internals rebuild degrade")
+    degraded_out = tmp_path / "degraded.json"
+    result = runner.invoke(app, [*common_args, "--json", str(degraded_out)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(degraded_out.read_text())
+    assert not any("identity mismatch" in r or "cap-breach inconsistent" in r for r in payload["void_reasons"])
+    assert payload["internals"]["available"] is False
+    assert payload["internals"]["reason"] == "mocked internals rebuild degrade"
+    assert payload["gating_verdicts"]["governor_engagement"]["verdict"] == "n/a"
+    assert payload["gating_verdicts"]["cap_breach"]["verdict"] == "n/a"

@@ -1055,13 +1055,17 @@ def render_report(
 ) -> str:
     """Render a soak-check analysis to a text report. Section order: BANNER (verbatim, every run),
     provenance, self-tests, the NO-VERDICT gate (suppresses every downstream section -- the
-    structural fingerprint table, governor/cap context, D4 gap, P&L -- the moment `void_reasons`
-    is non-empty, so a short/untrustworthy run never prints a per-metric conclusion), then the
-    fingerprint table + multiplicity line, governor/cap CONTEXT, the D4 gap, non-gating P&L, and an
-    honesty footer. `analysis`/`null`/`self_test` are all `None` when the canonical dataset is
-    absent (no null to judge against); `realized` is additionally `None` when the journal is empty
-    or `realized_series` itself raised `SoakError` -- both render a banner-and-void-reasons-only
-    report via this same function.
+    structural fingerprint table, disclosures, D4 gap, P&L -- the moment `void_reasons` is
+    non-empty, so a short/untrustworthy run never prints a per-metric conclusion), then the 7-row
+    fingerprint table + multiplicity line, DISCLOSURES (when `analysis.disclosures` is non-empty),
+    the D4 gap, non-gating P&L, and an honesty footer. When `analysis.internals_available` is
+    False, the governor_engagement/cap_breach rows render `n/a` across every column (D7 degrade,
+    not void) and a line states `analysis.internals_reason` -- never `RealizedInternals`'
+    `identity_detail`/`cap_detail`, which are diagnostic strings that may carry vocabulary-locked
+    words and are never passed to this function. `analysis`/`null`/`self_test` are all `None` when
+    the canonical dataset is absent (no null to judge against); `realized` is additionally `None`
+    when the journal is empty or `realized_series` itself raised `SoakError` -- both render a
+    banner-and-void-reasons-only report via this same function.
     """
     lines: list[str] = [BANNER, ""]
 
@@ -1107,21 +1111,26 @@ def render_report(
     lines.append(
         f"  {'metric':<12}{'live':>10}{'median':>10}{'band [lo,hi]':>24}{'pctile':>9}{'eff-n':>9}{'width':>10}{'verdict':>18}"
     )
-    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+    for m in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
         v = analysis.gating_verdicts[m]
+        if m in ("governor_engagement", "cap_breach") and not analysis.internals_available:
+            lines.append(f"  {m:<12}{'n/a':>10}{'n/a':>10}{'n/a':>24}{'n/a':>9}{'n/a':>9}{'n/a':>10}{'n/a':>18}")
+            continue
         band_str = f"[{v.lo:.4f},{v.hi:.4f}]"
         lines.append(
             f"  {m:<12}{v.live:>10.4f}{v.median:>10.4f}{band_str:>24}{v.percentile:>8.1f}%{v.effective_n:>9.2f}"
             f"{v.width:>10.4f}{v.verdict:>18}"
         )
     lines.append(f"  {analysis.panel.line}")
+    if not analysis.internals_available:
+        lines.append(f"  governor_engagement/cap_breach unavailable: {analysis.internals_reason}")
     lines.append("")
 
-    lines.append("GOVERNOR / CAP CONTEXT -- backtest context (not a realized comparison)")
-    lines.append(f"  null governor-engagement rate: {analysis.null_gov_rate:.3f}")
-    lines.append(f"  null cap-breach rate         : {analysis.null_cap_rate:.3f}")
-    lines.append("  the realized governor/cap state is not observable from the journal (registered follow-up)")
-    lines.append("")
+    if analysis.disclosures:
+        lines.append("DISCLOSURES")
+        for d in analysis.disclosures:
+            lines.append(f"  {d}")
+        lines.append("")
 
     lines.append("D4 GAP (governed vs live-cost null)")
     bias = "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
@@ -1148,13 +1157,31 @@ def _json_payload(
     void_reasons: list[str],
     band: float,
     now: datetime,
+    internals: RealizedInternals | None = None,
 ) -> dict:
     """Every number the report renders, as a `json.dumps`-able dict -- the machine-readable twin
-    of `render_report`'s text. `null` is accepted (mirroring `render_report`'s signature) but
-    carries nothing of its own in the payload; every null-derived number already lives in
-    `analysis` (gating verdicts, context, D4, P&L)."""
+    of `render_report`'s text, plus fields the (vocabulary-locked) text never carries: `internals`
+    (raw `RealizedInternals` diagnostics -- `identity_detail`/`cap_detail` included, since the JSON
+    is not vocabulary-locked) and `disclosures`. `null` is accepted (mirroring `render_report`'s
+    signature) but carries nothing of its own in the payload; every null-derived number already
+    lives in `analysis` (gating verdicts, context, D4, P&L). `internals` is `None` exactly when
+    `analysis` is (the canonical was absent, so `soak_report` never built either)."""
     del null
     payload: dict = {"generated_at": now.isoformat(), "band": band, "void_reasons": list(void_reasons)}
+
+    payload["internals"] = (
+        None
+        if internals is None
+        else {
+            "available": internals.available,
+            "reason": internals.reason,
+            "identity_ok": internals.identity_ok,
+            "identity_detail": internals.identity_detail,
+            "cap_consistent": internals.cap_consistent,
+            "cap_detail": internals.cap_detail,
+            "n_scored_cycles": len(internals.mult_by_cycle),
+        }
+    )
 
     if realized is not None and realized.cycle_ts:
         payload["provenance"] = {
@@ -1188,6 +1215,7 @@ def _json_payload(
         payload["pnl"] = None
         payload["is_degenerate"] = None
         payload["effective_n"] = None
+        payload["disclosures"] = None
     else:
         payload["gating_verdicts"] = {m: asdict(v) for m, v in analysis.gating_verdicts.items()}
         payload["panel"] = asdict(analysis.panel)
@@ -1196,6 +1224,7 @@ def _json_payload(
         payload["pnl"] = {"pnl_mean": analysis.pnl_mean, "pnl_cum": analysis.pnl_cum, "pnl_verdict": asdict(analysis.pnl_verdict)}
         payload["is_degenerate"] = analysis.is_degenerate
         payload["effective_n"] = dict(analysis.effective_n)
+        payload["disclosures"] = list(analysis.disclosures)
 
     return payload
 
@@ -1212,11 +1241,17 @@ def soak_report(
     now: datetime | None = None,
 ) -> tuple[str, dict]:
     """Orchestrate the full soak-check: load the journal, build the realized series, gate it
-    (self-tests, plausibility, `L < floor`, degeneracy) against a backtest null rebuilt from the
-    frozen canonical dataset (skipped -- and gated void -- when the canonical is absent), and
-    render both the text report and its JSON twin. Never raises on a short/void/absent-canonical
-    run -- those are refusals, not failures; only an unreadable journal record or a genuine
-    `EngineError` from a downstream builder propagates to the caller.
+    (self-tests, plausibility, `L < floor`, degeneracy, and -- when the internals rebuild succeeded
+    -- its own `identity_ok`/`cap_consistent` window-wide proofs) against a backtest null rebuilt
+    from the frozen canonical dataset (skipped -- and gated void -- when the canonical is absent),
+    and render both the text report and its JSON twin. The internals rebuild itself
+    (`realized_internals`) is built from the scored cycles' own journal records and the newest
+    record's snapshots, once per call; its `available=False` DEGRADES governor_engagement/cap_breach
+    to "n/a" (D7) rather than voiding the run, but `available=True` with `identity_ok=False` or
+    `cap_consistent=False` DOES void -- the instrument would be lying about alignment. Never raises
+    on a short/void/absent-canonical run -- those are refusals, not failures; only an unreadable
+    journal record or a genuine `EngineError` (including a `SoakError` from `realized_internals`,
+    e.g. a missing T-4h stamp) propagates to the caller.
     """
     now = now or datetime.now(UTC)
     # Local import: cli.engine.command imports `soak_report` from this module, so a module-level
@@ -1247,6 +1282,12 @@ def soak_report(
     if _canonical_present(canonical_dir):
         null = build_null(canonical_dir, fee=fee)
         reader = _snapshot_reader(journal_dir)
+
+        by_ts = {r.cycle_ts: r for r in records}
+        scored_records = [by_ts[t] for t in realized.cycle_ts]
+        latest_record = max(records, key=lambda r: r.cycle_ts)
+        internals = realized_internals(scored_records, latest_record, reader)
+
         self_test = self_tests(
             records,
             null,
@@ -1263,15 +1304,20 @@ def soak_report(
             if self_test.reconcile_ok is False:
                 void_reasons.append("self-test VOID: reconcile_ok=False")
         void_reasons += plausibility_checks(realized, null)
-        analysis = analyze_soak(realized, null, band=band)
+        if internals.available and not internals.identity_ok:
+            void_reasons.append("realized-internals identity mismatch")
+        if internals.available and not internals.cap_consistent:
+            void_reasons.append("cap-breach inconsistent")
+        analysis = analyze_soak(realized, null, band=band, internals=internals)
         if analysis.is_degenerate:
             void_reasons.append("degenerate window")
     else:
         null = None
         analysis = None
         self_test = None
+        internals = None
         void_reasons.append("canonical absent — null unavailable")
 
     text = render_report(analysis, realized, null, self_test, void_reasons=void_reasons, band=band)
-    payload = _json_payload(analysis, realized, null, self_test, void_reasons=void_reasons, band=band, now=now)
+    payload = _json_payload(analysis, realized, null, self_test, void_reasons=void_reasons, band=band, now=now, internals=internals)
     return text, payload
