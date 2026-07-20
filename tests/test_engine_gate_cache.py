@@ -499,9 +499,17 @@ def test_load_cache_degrades_never_raises(tmp_path):
 
 
 def test_v1_cache_is_rejected_wholesale(tmp_path):
-    # D6: CACHE_SCHEMA_VERSION 1 -> 2 (verified_at changes the entry shape). A v1 file on disk must
-    # be rejected wholesale -- no partial read of its (now-shaped-differently) entries -- forcing one
-    # full replay and rewrite, per the existing fail-open contract (never a migration).
+    # D6 (finding 14/G14): CACHE_SCHEMA_VERSION 1 -> 2 (verified_at changes the entry shape). A v1
+    # file on disk must be rejected wholesale -- no partial read of its (now-shaped-differently)
+    # entries -- forcing one full replay and rewrite, per the existing fail-open contract (never a
+    # migration). The entry below is deliberately v2-SHAPED (verified_at present): a REAL v1 file
+    # would lack it and die on a KeyError inside the entry loop regardless of whether the explicit
+    # schema_version check fires at all -- which is exactly how this test used to pass for the
+    # wrong reason (the audit's `!=` -> `>` mutation slips a v1-declaring file straight past a
+    # KeyError-shaped payload undetected: `1 > 2` is False, so the check doesn't fire, but the
+    # entry loop then dies on the missing verified_at anyway, and the test still sees rejected).
+    # v2-shaping the row isolates the schema_version check as the ONLY thing that can reject this
+    # file, so the test now fails for the right reason.
     replay_fp = "fixed-replay-fp"
     path = tmp_path / "gate-cache.json"
     v1_payload = {
@@ -510,6 +518,7 @@ def test_v1_cache_is_rejected_wholesale(tmp_path):
         "entries": [
             {
                 "evidence_fp": "evidence-fp",
+                "verified_at": CYCLE_TS.isoformat(),
                 "cycle_ts": CYCLE_TS.isoformat(),
                 "completed_at": (CYCLE_TS + timedelta(minutes=5)).isoformat(),
                 "compare_passed": True,
@@ -519,6 +528,86 @@ def test_v1_cache_is_rejected_wholesale(tmp_path):
         ],
     }
     path.write_text(json.dumps(v1_payload))
+
+    loaded = load_cache(path, replay_fp)
+
+    assert loaded.entries == {}
+    assert loaded.rejected is True
+
+
+def test_higher_schema_version_is_also_rejected_wholesale(tmp_path):
+    # The schema gate must reject ANY mismatched version, not just an older one -- a v2-shaped file
+    # (verified_at present, so nothing else could reject it) declaring a version NEWER than
+    # CACHE_SCHEMA_VERSION exercises the other direction, which a `!=` -> `<` mutation (permissive
+    # toward newer versions) would silently accept while still passing the v1 test above.
+    replay_fp = "fixed-replay-fp"
+    path = tmp_path / "gate-cache.json"
+    v_next_payload = {
+        "schema_version": CACHE_SCHEMA_VERSION + 1,
+        "replay_fp": replay_fp,
+        "entries": [
+            {
+                "evidence_fp": "evidence-fp",
+                "verified_at": CYCLE_TS.isoformat(),
+                "cycle_ts": CYCLE_TS.isoformat(),
+                "completed_at": (CYCLE_TS + timedelta(minutes=5)).isoformat(),
+                "compare_passed": True,
+                "mismatch": False,
+                "validation_failed": False,
+            }
+        ],
+    }
+    path.write_text(json.dumps(v_next_payload))
+
+    loaded = load_cache(path, replay_fp)
+
+    assert loaded.entries == {}
+    assert loaded.rejected is True
+
+
+def test_load_cache_rejects_wholesale_on_one_malformed_row(tmp_path):
+    # Finding 11/G8 (spec D5): every existing fail-open test corrupts the file BEFORE the entry
+    # loop (truncated JSON, wrong schema, replay_fp mismatch, an unreadable path) -- this is the
+    # ONE path where "discard the file" and "skip the bad row" diverge: a structurally valid,
+    # correct-schema file with one good row and one malformed row (an unparseable cycle_ts). The
+    # malformed row's `datetime.fromisoformat` call is not individually guarded, so it propagates
+    # out of the entry loop into load_cache's own except clause and discards the WHOLE file -- the
+    # good row must never be served alone.
+    replay_fp = "fixed-replay-fp"
+    path = tmp_path / "gate-cache.json"
+
+    def _row(cycle_ts_str: str, evidence_fp: str) -> dict:
+        return {
+            "evidence_fp": evidence_fp,
+            "verified_at": CYCLE_TS.isoformat(),
+            "cycle_ts": cycle_ts_str,
+            "completed_at": (CYCLE_TS + timedelta(minutes=5)).isoformat(),
+            "compare_passed": True,
+            "mismatch": False,
+            "validation_failed": False,
+        }
+
+    payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "replay_fp": replay_fp,
+        "entries": [_row(CYCLE_TS.isoformat(), "evidence-fp-good"), _row("not-a-timestamp", "evidence-fp-bad")],
+    }
+    path.write_text(json.dumps(payload))
+
+    loaded = load_cache(path, replay_fp)
+
+    assert loaded.entries == {}, "one malformed row must invalidate the WHOLE file, not just be skipped"
+    assert loaded.rejected is True
+
+
+def test_load_cache_never_raises_on_wrong_top_level_type(tmp_path):
+    # D5 (finding 15/G15): valid JSON that parses fine but is the wrong top-level type -- a list,
+    # not a dict -- raises TypeError on `payload["schema_version"]`; caught by the same except
+    # tuple as every other fail-open path here, degrading to an empty, rejected cache rather than
+    # propagating out of load_cache.
+    replay_fp = "fixed-replay-fp"
+    path = tmp_path / "wrong-type.json"
+    path.write_text(json.dumps([1, 2, 3]))
 
     loaded = load_cache(path, replay_fp)
 
@@ -555,6 +644,27 @@ def test_save_cache_is_atomic(tmp_path, monkeypatch):
     save_cache(path, other_cache)  # must not raise
 
     assert path.read_text() == original_content  # the prior cache survives untouched
+
+
+def test_save_cache_never_raises_on_mixed_key_types(tmp_path):
+    # D5/D6 (finding 16/G16): save_cache's `sorted(cache.entries.items())` compares keys; a cache
+    # holding both a datetime and a str key raises TypeError from the comparison itself ("'<' not
+    # supported between instances of 'str' and 'datetime.datetime'") -- the `TypeError` arm of
+    # `except (OSError, TypeError)` is reachable and load-bearing, not dead code. Must degrade
+    # silently (log + continue), never abort a run that already succeeded; nothing is partially
+    # written since the TypeError fires while building the payload, before any write.
+    path = tmp_path / "gate-cache.json"
+    replay_fp = "fixed-replay-fp"
+    outcome = _outcome()
+    mixed_entries = {
+        CYCLE_TS: ("evidence-fp-1", outcome, CYCLE_TS),
+        "not-a-datetime-key": ("evidence-fp-2", outcome, CYCLE_TS),
+    }
+    cache = GateCache(replay_fp=replay_fp, entries=mixed_entries)
+
+    save_cache(path, cache)  # must not raise
+
+    assert not path.exists()  # nothing partially written
 
 
 # --- slice_of / due_for_reverification (D2/D3) ---------------------------------------------------
