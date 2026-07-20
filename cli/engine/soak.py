@@ -49,9 +49,9 @@ import numpy as np
 from cli.engine.concordance import HashMismatchError, replay_cycle
 from cli.engine.cycle import _union_align
 from cli.engine.errors import EngineError, EngineJournalError
-from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
-from cli.portfolio import CrossfreqSystemConfig, build_crossfreq_system_fast
+from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system_fast
 from cli.risk.limits import apply_position_caps
 
 
@@ -616,10 +616,11 @@ class RealizedInternals:
     resolved row, recovered by rebuilding on the latest journaled cycle's own hash-verified
     snapshot history (see `realized_internals`) -- the journal itself only carries
     `final_targets`, not the pre-cap combined position or the multiplier the two new gating
-    metrics need. `available=False` DEGRADES the run (missing/corrupt snapshots, a builder
-    EngineError) rather than voiding it -- the caller decides what an unavailable rebuild means
-    for the overall soak verdict. `identity_ok`/`cap_consistent` are D2's window-wide proof that
-    each resolved row `k` really is that scored cycle's decision row -- see `realized_internals`."""
+    metrics need. `available=False` DEGRADES the run (missing/corrupt snapshots, an invalid record,
+    a builder EngineError/PortfolioError) rather than voiding it -- the caller decides what an
+    unavailable rebuild means for the overall soak verdict. `identity_ok`/`cap_consistent` are D2's
+    window-wide proof that each resolved row `k` really is that scored cycle's decision row -- see
+    `realized_internals`."""
 
     available: bool
     reason: str  # why unavailable ("" when available)
@@ -685,6 +686,9 @@ def realized_internals(
     THE KEYSTONE: the row for the decision made at cycle T is the index k where h4_ts[k] ==
     T - 4h, resolved from a `{ts: index}` dict -- NEVER by offset arithmetic. If T - 4h is absent
     from the rebuilt grid, raises SoakError naming T -- a genuine inconsistency, not a degrade.
+    Likewise, if a scored cycle's final_targets names an asset outside the rebuilt universe
+    (plausible across a universe change), raises SoakError naming the asset and cycle rather than
+    letting a bare KeyError escape.
 
     D2 (the proof): at that same k, the rebuild's `final_targets[a][k]` must equal the journaled
     cycle's `final_targets[a]` to `tol`, for every scored cycle and every asset -- `identity_ok` is
@@ -700,16 +704,20 @@ def realized_internals(
     can never itself show a breach. `cap_consistent` cross-checks the completed-bar breach count
     (`breach[:result.n_periods]`) against the rebuild's own `cap_breach_bars`.
 
-    Assembly + build (the snapshot read/hash-verify and the builder call) DEGRADE the run on any
-    `EngineError` (missing/corrupt snapshots, a grid-assembly disagreement): returns
-    `available=False` with `reason=str(exc)` and empty/void fields, never voiding the whole
-    soak-check outright -- that decision belongs to the caller. A `SoakError` from a missing T-4h
-    stamp is a genuine inconsistency in the per-cycle loop below and propagates instead.
+    Record validation (`validate_record`), assembly, and build (the snapshot read/hash-verify and
+    the builder call) DEGRADE the run on any `EngineError` (missing/corrupt snapshots, a
+    grid-assembly disagreement, a schema/boundary violation) or `PortfolioError` (e.g. the
+    rebuilt grid's asset set disagreeing with the builder's universe): returns `available=False`
+    with `reason=str(exc)` and empty/void fields, never voiding the whole soak-check outright --
+    that decision belongs to the caller. A `SoakError` from a missing T-4h stamp or an asset
+    outside the rebuilt universe is a genuine inconsistency in the per-cycle loop below and
+    propagates instead.
     """
     try:
+        validate_record(latest_record)
         daily_ts, daily_prices, h4_ts, h4_prices = _assemble_latest_grids(latest_record, snapshot_reader)
         result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
-    except EngineError as exc:
+    except (EngineError, PortfolioError) as exc:
         return RealizedInternals(
             available=False,
             reason=str(exc),
@@ -725,7 +733,11 @@ def realized_internals(
     assets = tuple(result.final_targets)
     n_rows = len(h4_ts)
     sleeves = result.sleeve_positions
-    combined = {a: [(sleeves["B"][a][k] + sleeves["A1"][a][k] + sleeves["A2"][a][k]) / 3.0 for k in range(n_rows)] for a in assets}
+    third = 1 / 3
+    combined = {
+        a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n_rows)]
+        for a in assets
+    }
     capped = apply_position_caps(combined)
     breach = [any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) for k in range(n_rows)]
 
@@ -742,8 +754,10 @@ def realized_internals(
         mult_by_cycle[t] = result.multipliers[k]
         breach_by_cycle[t] = breach[k]
         for a, value in rec.final_targets.items():
+            if a not in result.final_targets:
+                raise SoakError(f"cycle {t!r}: asset {a!r} not in the rebuilt universe {sorted(result.final_targets)}")
             diff = abs(result.final_targets[a][k] - value)
-            if diff > worst_diff:
+            if diff >= worst_diff:
                 worst_diff = diff
                 worst_detail = f"cycle={t!r} asset={a!r}"
             if diff > tol:

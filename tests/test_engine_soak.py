@@ -572,9 +572,18 @@ def test_render_report_handles_all_none_before_realized_series():
 
 
 def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
-    """A CycleRecord whose lone 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the
-    `latest_record` realized_internals rebuilds on."""
-    entry = SnapshotEntry(
+    """A CycleRecord with a real 240 SnapshotEntry hash-verifying against (h4_ts, closes) -- the
+    data `realized_internals` rebuilds on -- plus a minimal, independently-consistent 1440
+    SnapshotEntry so `validate_record` (called for real on `latest_record` since Fix 2) passes its
+    per-pair grid-completeness and snapshot-boundary checks; the 1440 entry's last_ts is derived
+    with `validate_record`'s own formula, which is generally NOT h4_ts[-1]. Returns (record,
+    reader): reader routes by entry.grid so both entries resolve against their own data."""
+    midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_last = midnight - timedelta(days=1)
+    daily_ts = [daily_last - timedelta(days=1), daily_last]
+    daily_closes = [100.0, 100.0]
+
+    h4_entry = SnapshotEntry(
         pair="BTC",
         grid="240",
         n_bars=len(h4_ts),
@@ -583,16 +592,30 @@ def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
         content_hash=snapshot_content_hash(h4_ts, closes),
         path="p240",
     )
-    return CycleRecord(
+    daily_entry = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=len(daily_ts),
+        first_ts=daily_ts[0],
+        last_ts=daily_ts[-1],
+        content_hash=snapshot_content_hash(daily_ts, daily_closes),
+        path="p1440",
+    )
+    record = CycleRecord(
         schema_version=1,
         cycle_ts=cycle_ts,
-        snapshots=(entry,),
+        snapshots=(h4_entry, daily_entry),
         final_targets={"BTC": 0.0},
         started_at=cycle_ts,
         completed_at=cycle_ts,
         code_version="test",
         builder_path="fast",
     )
+
+    def reader(entry):
+        return (daily_ts, daily_closes) if entry.grid == "1440" else (h4_ts, closes)
+
+    return record, reader
 
 
 def _mk_scored_record(cycle_ts, final_targets):
@@ -618,8 +641,7 @@ def test_realized_internals_identity_holds(monkeypatch):
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
     monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
 
-    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
-    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
 
     # scored cycle at row k has cycle_ts = h4_ts[k] + 4h -- the resolved-row identity under test.
     scored = [
@@ -648,8 +670,7 @@ def test_realized_internals_shift_breaks_identity(monkeypatch):
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
     monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
 
-    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
-    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
 
     k = 2
     shifted = _mk_scored_record(h4_ts[k] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][k + 1]})
@@ -669,8 +690,7 @@ def test_realized_internals_missing_stamp_raises(monkeypatch):
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
     monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
 
-    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
-    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
 
     off_grid = _mk_scored_record(base + timedelta(hours=999), {"BTC": 0.05})  # T - 4h absent from h4_ts
     with pytest.raises(SoakError):
@@ -688,8 +708,7 @@ def test_realized_internals_cap_breach_matches_builder(monkeypatch):
     fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
     monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
 
-    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
-    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
 
     scored = [_mk_scored_record(h4_ts[k] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][k]}) for k in range(n + 1)]
 
@@ -715,7 +734,7 @@ def test_realized_internals_unavailable_degrades():
     base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
     h4_ts = [base + timedelta(hours=4 * k) for k in range(3)]
     closes = [100.0, 101.0, 102.0]
-    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    latest, _ = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
 
     def bad_reader(entry):
         raise EngineJournalError("journaled snapshot missing on disk")
@@ -727,6 +746,44 @@ def test_realized_internals_unavailable_degrades():
     assert ri.identity_ok is False and ri.cap_consistent is False
 
 
+def test_realized_internals_degrades_on_builder_portfolio_error():
+    """A single-pair (BTC-only) snapshot satisfies validate_record and _assemble_latest_grids, but
+    the REAL builder's default 10-asset universe doesn't match -- _validate_grid raises
+    PortfolioError, not an EngineError. D7 requires the degrade net to catch it too: available is
+    False with a non-empty reason, and (the point of this test) no exception escapes the call."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(3)]
+    closes = [100.0, 101.0, 102.0]
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    ri = realized_internals([], latest, reader)  # build_crossfreq_system_fast NOT mocked here
+    assert ri.available is False
+    assert ri.reason
+    assert ri.identity_ok is False and ri.cap_consistent is False
+
+
+def test_realized_internals_asset_outside_universe_raises(monkeypatch):
+    """A scored cycle whose final_targets names an asset outside the rebuilt universe (plausible
+    across a universe change) must raise a typed SoakError naming the asset and cycle, not a bare
+    KeyError."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 2
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    B = A1 = A2 = [0.09, 0.06, 0.0]
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    drifted = _mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][1], "ETH": 0.05})
+
+    with pytest.raises(SoakError) as exc_info:
+        realized_internals([drifted], latest, reader)
+    assert "ETH" in str(exc_info.value)
+
+
 @pytest.mark.skipif(not Path("/mnt/zhao-crypto/engine-journal").exists(), reason="ops journal mirror absent")
 def test_realized_internals_on_real_journal():
     from cli.engine.command import _journal_artifacts, _snapshot_reader
@@ -735,13 +792,14 @@ def test_realized_internals_on_real_journal():
     arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
     records = sorted((from_json(p.read_text()) for _, p in arts), key=lambda r: r.cycle_ts)
     latest = records[-1]
-    scored = records[-6:-1]  # a handful of earlier records, excluding latest
+    scored = records[:-1]  # every scored cycle in the window, excluding latest -- D2 is window-wide
     reader = _snapshot_reader(journal_dir)
 
     ri = realized_internals(scored, latest, reader)
     assert ri.available is True, ri.reason
     assert ri.identity_ok is True, ri.identity_detail
     assert ri.cap_consistent is True, ri.cap_detail
+    assert len(ri.mult_by_cycle) == len(records) - 1
     for rec in scored:
         assert rec.cycle_ts in ri.mult_by_cycle
         assert 0.0 <= ri.mult_by_cycle[rec.cycle_ts] <= 1.0
