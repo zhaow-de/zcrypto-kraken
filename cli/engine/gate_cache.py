@@ -40,7 +40,8 @@ from cli.portfolio import CrossfreqSystemConfig
 
 logger = get_logger("engine.gate_cache")
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
+_ROTATION_SLICES = 24
 
 # The modules that determine a replay's result (D3): source-bytes changes to any of these must
 # invalidate the whole cache. Monkeypatched by tests to point at synthetic files instead of
@@ -115,9 +116,28 @@ def evidence_fingerprint(record: CycleRecord) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def slice_of(cycle_ts: datetime) -> int:
+    """The cycle's permanent re-verification slice, in [0, _ROTATION_SLICES) (D2). sha256 over the
+    ISO timestamp -- NOT the builtin hash(), which is not guaranteed stable across processes or
+    releases -- and keyed on cycle_ts, NOT a loop index or list position: the journal grows and
+    artifact ordering can shift, so an index-keyed slice would move between runs and coverage would
+    be neither uniform nor provable. A cycle's slice is therefore a fixed property of the cycle,
+    for all time."""
+    digest = hashlib.sha256(cycle_ts.isoformat().encode())
+    return int(digest.hexdigest(), 16) % _ROTATION_SLICES
+
+
+def due_for_reverification(cycle_ts: datetime, now: datetime) -> bool:
+    """True when this cycle falls in the run's current slice (D3): `now.hour % _ROTATION_SLICES`.
+    Stateless -- no rotation cursor to persist, corrupt, or reset."""
+    return slice_of(cycle_ts) == now.hour % _ROTATION_SLICES
+
+
 @dataclass(frozen=True)
 class GateCache:
-    """`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome) pair.
+    """`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome, verified_at)
+    triple (schema v2, D5). `verified_at` is when the entry was last *actually replayed*: a cache
+    hit carries the stored value forward, a replay stamps `now`.
 
     `rejected` distinguishes, for the caller's invalidated-metric (D8), "empty because no cache
     file existed" (rejected=False) from "empty because a file existed but load_cache discarded it"
@@ -125,8 +145,18 @@ class GateCache:
     -- load_cache's fail-open contract (never raise) is unchanged either way."""
 
     replay_fp: str
-    entries: dict[datetime, tuple[str, CycleOutcome]]
+    entries: dict[datetime, tuple[str, CycleOutcome, datetime]]
     rejected: bool = False
+
+
+def oldest_verification_age(cache: GateCache, now: datetime) -> float | None:
+    """now - min(verified_at) in seconds, across every entry (D5); None when the cache is empty.
+    Makes the cache's staleness observable -- a rotation that silently stops looks exactly like a
+    healthy cache without this."""
+    if not cache.entries:
+        return None
+    oldest = min(verified_at for _, _, verified_at in cache.entries.values())
+    return (now - oldest).total_seconds()
 
 
 def _outcome_to_dict(outcome: CycleOutcome) -> dict:
@@ -163,10 +193,11 @@ def load_cache(path: Path | None, replay_fp: str) -> GateCache:
             return rejected
         if payload["replay_fp"] != replay_fp:
             return rejected
-        entries: dict[datetime, tuple[str, CycleOutcome]] = {}
+        entries: dict[datetime, tuple[str, CycleOutcome, datetime]] = {}
         for item in payload["entries"]:
             outcome = _outcome_from_dict(item)
-            entries[outcome.cycle_ts] = (item["evidence_fp"], outcome)
+            verified_at = datetime.fromisoformat(item["verified_at"])
+            entries[outcome.cycle_ts] = (item["evidence_fp"], outcome, verified_at)
         return GateCache(replay_fp=replay_fp, entries=entries)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         logger.warning("load_cache: failed reading %s (%s); falling back to a full replay", path, exc)
@@ -183,8 +214,8 @@ def save_cache(path: Path | None, cache: GateCache) -> None:
             "schema_version": CACHE_SCHEMA_VERSION,
             "replay_fp": cache.replay_fp,
             "entries": [
-                {"evidence_fp": evidence_fp, **_outcome_to_dict(outcome)}
-                for _, (evidence_fp, outcome) in sorted(cache.entries.items())
+                {"evidence_fp": evidence_fp, "verified_at": verified_at.isoformat(), **_outcome_to_dict(outcome)}
+                for _, (evidence_fp, outcome, verified_at) in sorted(cache.entries.items())
             ],
         }
         tmp_path = path.with_suffix(path.suffix + ".tmp")
