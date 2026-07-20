@@ -81,6 +81,15 @@ Safety: the cache invalidates wholesale on any change to the ten modules on the 
 
 **Still open here: the attended relocation to the ops node**, and enabling `--cache` in the deployment (both need a maintenance window; the code ships inert until then).
 
+### Update 2026-07-20 — enabling `--cache` is BLOCKED on [[T0077]], and this topic's urgency framing is wrong
+
+Two corrections, both established by reading the deployed loop rather than the projections above:
+
+- **Enabling `--cache` would remove the only continuous integrity check on the gate's evidence.** The hourly full replay is the sole place the journal's parquet bytes are re-hashed; the pull delegates to it explicitly (`--no-verify`), and `evidence_fingerprint` keys on the `content_hash` *recorded in the record*, not a fresh read — so a cache hit serves a PASS for a snapshot altered in place. Registered as [[T0077]] with an autonomous mitigation (bounded rotating re-verification). **The `--cache` sub-item here is blocked until that lands.** This also reframes the iter-109 finding above: the per-cycle rebuild is not *only* redundant work, it is the integrity monitor, and any optimisation removing the redundancy must replace the monitoring.
+- **The "loop can no longer keep up" cliff does not exist.** `infra/nas/pull-entrypoint.sh` sleeps *after* the work (`sleep "${ARCHIVE_PULL_INTERVAL:-3600}"` at the end of the loop body), so the period is `3600 + work` unconditionally and the loop cannot fall behind — it drifts. The same file records the loop already running at ~103 min pre-OPS-5 with nothing breaking. The dates in the budget table above therefore mark *drift*, not a failure threshold. The constraint that actually binds is the `zcrypto_gate_journal_pull_lag_seconds > 18000` alert (`infra/grafana/alerts.yaml:153`), whose own comment concedes the value was copied from `gate-export`'s `--lag-fail-seconds` default rather than derived from the loop's real period — worth re-deriving.
+
+**Consequence for the remedy comparison.** With no cliff, the relocation's constant ~6.8x may be sufficient on its own, and it preserves the integrity check that `--cache` removes. Relocation is therefore the *safer* remedy, not the redundant one — the opposite of what the comparison above concludes. Re-decide on that basis.
+
 ## Suggested next steps
 
 - **(Autonomous, the structural fix — recommended first)** Implement **incremental scoring** in `_evaluate_journal`: persist a cache of already-verified cycles keyed on the journal's own `content_hash` values, replay only cycles absent from it, and keep a full-recompute escape hatch (a flag, plus automatic invalidation if any cached hash no longer matches). This is gate *evidence*, so it wants its own iteration with TDD: a cache hit must be provably identical to a fresh replay, a tampered/renamed journal must miss the cache rather than trust it, and the streak arithmetic must be unchanged. Expected effect: hourly cost drops from ~8.5 min (rising) to roughly one cycle's rebuild (~11 s on the Atom) and stays flat as the journal grows.

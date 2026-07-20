@@ -197,6 +197,60 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-gate-cache-reverify-stalled
+    title: "Gate · cache re-verification stalled"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    # The gate cache (spec 00060) skips replay_cycle on a fingerprint hit -- and that replay is the
+    # ONLY place the journal's parquet bytes are re-hashed (the NAS pull uses --no-verify and
+    # delegates to it). Spec 00062 therefore force-replays a rotating ~1/24 slice each run so the
+    # whole journal is re-verified about daily. THIS RULE IS THAT MECHANISM'S ONLY WITNESS: if the
+    # rotation stops, a stalled cache is indistinguishable from a healthy one except through this
+    # number. Note save_cache logs a warning and continues on write failure, so a full disk presents
+    # as a working cache with invalidated=0 and a quietly-ageing age here (T0077).
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_gate_cache_oldest_verification_age_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 3d. A full rotation is ~24h, so this is ~3 sweeps of slack: late enough that a skipped
+            # hour or a restart never pages, early enough that a genuinely stopped rotation surfaces
+            # long before the evidence is meaningfully stale.
+            - evaluator: {type: gt, params: [259200]}
+    # OK, NOT Alerting -- deliberately unlike its zcrypto-gate siblings. gate-export emits this
+    # metric only when --cache is active and non-empty, and --cache is NOT deployed today (T0069's
+    # remaining attended step), so the series is simply absent. Alerting on no-data would page
+    # continuously for a feature that is not switched on. "The exporter vanished entirely" is
+    # already owned by zcrypto-gate-exporter-stale above, so nothing is lost by this choice.
+    noDataState: OK
+    execErrState: Alerting
+    # 15m rather than the 5m its zcrypto-gate siblings use: the underlying value is monotonic and the
+    # threshold is 3-day-scale, so a longer window costs no meaningful detection time while absorbing
+    # a restart or a skipped hour without a transient page.
+    for: 15m
+    annotations:
+      summary: "The gate cache's oldest cycle has not been re-verified for over 3 days -- the rotating re-verification has stopped, so cached gate verdicts are being served against parquet bytes nobody has re-hashed. Check zcrypto_gate_cache_replayed (should be >0 every run) and the NAS disk."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas

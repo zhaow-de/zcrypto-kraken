@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import threading
+import time
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -25,7 +26,15 @@ from cli.config import ConfigError, EngineConfig, load_config
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.errors import EngineError, EngineJournalError
-from cli.engine.gate_cache import GateCache, evidence_fingerprint, load_cache, replay_fingerprint, save_cache
+from cli.engine.gate_cache import (
+    GateCache,
+    due_for_reverification,
+    evidence_fingerprint,
+    load_cache,
+    oldest_verification_age,
+    replay_fingerprint,
+    save_cache,
+)
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
@@ -142,11 +151,18 @@ class CacheStats:
     """_evaluate_journal's per-run scoring-cache tally (spec 00060 D8): how many success records
     this run actually replayed vs served from cache, and whether the cache was discarded wholesale
     (a schema/replay-fingerprint mismatch or an unreadable file) -- all zero/False when `cache_path`
-    is None, so a degrading cache is visible in the metrics rather than looking like a working one."""
+    is None, so a degrading cache is visible in the metrics rather than looking like a working one.
+    A forced rotation re-verification (spec 00062 D4/D1) counts in `replayed`, never `from_cache` --
+    a forced-replay failure is a real gate failure, not a cache event.
+
+    `oldest_verification_age` (spec 00062 D5) is `now - min(verified_at)` across the cache's final
+    (post-run) entries, in seconds; None when the cache is inactive or empty. Makes a rotation that
+    silently stops visible rather than indistinguishable from a healthy cache."""
 
     replayed: int
     from_cache: int
     invalidated: bool
+    oldest_verification_age: float | None
 
 
 _EVALUATE_JOURNAL_REPLAY_PATH = "fast"  # threaded into replay_fingerprint() below (spec 00060 D3)
@@ -167,7 +183,7 @@ def _replay_one(record: CycleRecord, reader) -> CycleOutcome:
 
 
 def _evaluate_journal(
-    journal_root: Path, *, cache_path: Path | None = None
+    journal_root: Path, *, cache_path: Path | None = None, now: datetime
 ) -> tuple[list[CycleOutcome], JournalCounts, datetime | None, CacheStats]:
     """Replay every journaled cycle-*.json (fast path) and classify every failed-cycle-*.json
     sidecar into CycleOutcome entries -- report's and gate-export's shared evidence-gathering pass.
@@ -187,7 +203,16 @@ def _evaluate_journal(
     byte-for-byte promise, structurally. When `cache_path` is set but `replay_fingerprint()` itself
     raises OSError, that's caught here and degrades THIS RUN to the same no-cache path (logged, never
     aborted) -- a cache is an optimization, gate evidence is not. Same principle per record for
-    `evidence_fingerprint`: a failure there means "replay this one cycle", never "abort the run"."""
+    `evidence_fingerprint`: a failure there means "replay this one cycle", never "abort the run".
+
+    `now` (spec 00062, threaded from the caller rather than read via `_utc_now()` here so tests can
+    drive the clock) also decides, per otherwise cache-eligible cycle, whether this run FORCES a
+    replay regardless of a cache hit: `due_for_reverification(record.cycle_ts, now)` is true for
+    exactly 1/24 of cycles per run (D2/D3), so the whole journal is re-verified about daily even
+    with the cache warm -- the parquet bytes are re-hashed by `replay_cycle`'s own check, which a
+    cache hit would otherwise skip forever. A forced replay that fails is a real gate failure (D4):
+    it produces the same CycleOutcome any replay would and is counted in `replayed`, never
+    `from_cache`."""
     reader = _snapshot_reader(journal_root)
 
     cache_active = cache_path is not None
@@ -206,7 +231,7 @@ def _evaluate_journal(
             cache = load_cache(cache_path, replay_fp)
 
     record_outcomes: list[CycleOutcome] = []
-    updated_entries: dict[datetime, tuple[str, CycleOutcome]] = {}
+    updated_entries: dict[datetime, tuple[str, CycleOutcome, datetime]] = {}
     replayed_count = from_cache_count = 0
     for boundary, record_path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
         try:
@@ -226,14 +251,15 @@ def _evaluate_journal(
                     exc,
                 )
         cached_entry = cache.entries.get(record.cycle_ts) if fp is not None else None
-        if cached_entry is not None and cached_entry[0] == fp:
-            outcome = cached_entry[1]
+        reverify = due_for_reverification(record.cycle_ts, now)
+        if cached_entry is not None and cached_entry[0] == fp and not reverify:
+            outcome, verified_at = cached_entry[1], cached_entry[2]  # carry verified_at forward
             from_cache_count += 1
         else:
-            outcome = _replay_one(record, reader)
+            outcome, verified_at = _replay_one(record, reader), now  # stamp on real verification
             replayed_count += 1
         if fp is not None:
-            updated_entries[record.cycle_ts] = (fp, outcome)
+            updated_entries[record.cycle_ts] = (fp, outcome, verified_at)
         record_outcomes.append(outcome)
 
     # Counters derived from the resulting outcome, in one place -- see the docstring's THE TRAP note.
@@ -249,9 +275,14 @@ def _evaluate_journal(
         sidecar_count += 1
 
     newest_ts = max((entry.cycle_ts for entry in entries), default=None)
+    oldest_age = None
     if cache_active:
-        save_cache(cache_path, GateCache(replay_fp=replay_fp, entries=updated_entries))
-    cache_stats = CacheStats(replayed=replayed_count, from_cache=from_cache_count, invalidated=cache.rejected)
+        final_cache = GateCache(replay_fp=replay_fp, entries=updated_entries)
+        save_cache(cache_path, final_cache)
+        oldest_age = oldest_verification_age(final_cache, now)
+    cache_stats = CacheStats(
+        replayed=replayed_count, from_cache=from_cache_count, invalidated=cache.rejected, oldest_verification_age=oldest_age
+    )
     return entries, JournalCounts(replayed_ok, mismatches, validation_failures, sidecar_count), newest_ts, cache_stats
 
 
@@ -275,12 +306,18 @@ def _write_prom_textfile(
     mismatch_total: int,
     cache_stats: CacheStats,
     now: datetime,
+    duration_seconds: float,
 ) -> None:
     """Atomically write the gate-export Prometheus textfile-collector metrics: write to a `.tmp`
     sibling then `os.replace` onto `path`, so a node-exporter scrape never observes a partial file
     and a write failure (e.g. an unwritable parent) leaves no partial artifact behind. The cache
     metrics (spec 00060 D8) are always emitted, zeroed/False when `--cache` was omitted, so a
-    silently-degrading cache is visible rather than looking indistinguishable from a working one."""
+    silently-degrading cache is visible rather than looking indistinguishable from a working one.
+    `zcrypto_gate_cache_replayed`/`_hits` (spec 00062 D7) carry no `_total` suffix -- they are
+    per-run gauges, not monotonic counters; enabling `--cache` drops `replayed` from N to ~1, which
+    `rate()`/`increase()` would otherwise read as a counter reset. `_oldest_verification_age_seconds`
+    (D5) is omitted, like `_journal_pull_lag_seconds`, when there is nothing to report (cache
+    inactive or empty)."""
     lines = [
         "# HELP zcrypto_gate_status 1 if the >=14-clean-day gate is MET else 0",
         f"zcrypto_gate_status {1 if status.gate_met else 0}",
@@ -293,12 +330,26 @@ def _write_prom_textfile(
         "replay mismatches + corrupt records + failed-cycle sidecars"
     )
     lines.append(f"zcrypto_gate_mismatch_total {mismatch_total}")
-    lines.append("# HELP zcrypto_gate_cache_replayed_total cycles actually replayed this run (cache miss or no --cache)")
-    lines.append(f"zcrypto_gate_cache_replayed_total {cache_stats.replayed}")
-    lines.append("# HELP zcrypto_gate_cache_hits_total cycles served from the incremental scoring cache this run")
-    lines.append(f"zcrypto_gate_cache_hits_total {cache_stats.from_cache}")
+    lines.append(
+        "# HELP zcrypto_gate_cache_replayed cycles actually replayed this run (cache miss, forced "
+        "rotation re-verification, or no --cache)"
+    )
+    lines.append(f"zcrypto_gate_cache_replayed {cache_stats.replayed}")
+    lines.append("# HELP zcrypto_gate_cache_hits cycles served from the incremental scoring cache this run")
+    lines.append(f"zcrypto_gate_cache_hits {cache_stats.from_cache}")
     lines.append("# HELP zcrypto_gate_cache_invalidated 1 if the cache file was discarded wholesale this run, else 0")
     lines.append(f"zcrypto_gate_cache_invalidated {1 if cache_stats.invalidated else 0}")
+    if cache_stats.oldest_verification_age is not None:
+        lines.append(
+            "# HELP zcrypto_gate_cache_oldest_verification_age_seconds seconds since the least-recently "
+            "actually-replayed cached cycle was last verified"
+        )
+        lines.append(f"zcrypto_gate_cache_oldest_verification_age_seconds {cache_stats.oldest_verification_age}")
+    lines.append(
+        "# HELP zcrypto_gate_export_duration_seconds wall time to evaluate the journal "
+        "(excludes writing this textfile and the healthcheck ping)"
+    )
+    lines.append(f"zcrypto_gate_export_duration_seconds {duration_seconds}")
     lines.append(f"zcrypto_gate_export_timestamp_seconds {now.timestamp()}")
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text("\n".join(lines) + "\n")
@@ -538,10 +589,11 @@ def report(
     path): streak length, gate status, and the most recent failure."""
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
-    entries, counts, _, _ = _evaluate_journal(journal_root, cache_path=None)
+    now = _utc_now()
+    entries, counts, _, _ = _evaluate_journal(journal_root, cache_path=None, now=now)
 
     try:
-        status = evaluate_gate(entries, now=_utc_now())
+        status = evaluate_gate(entries, now=now)
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 
@@ -671,11 +723,12 @@ def gate_export(
     the gate has a mismatch or the journal is stale (those are findings, surfaced via the metrics
     and a /fail ping); non-zero only on an operational failure (unreadable journal, unwritable
     textfile)."""
+    export_started = time.monotonic()
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
-    entries, counts, newest_ts, cache_stats = _evaluate_journal(journal_root, cache_path=cache)
-
     now = _utc_now()
+    entries, counts, newest_ts, cache_stats = _evaluate_journal(journal_root, cache_path=cache, now=now)
+
     try:
         status = evaluate_gate(entries, now=now)
     except EngineError as exc:
@@ -688,9 +741,16 @@ def gate_export(
     # and the dead-man ping "clean" through a real gate failure).
     mismatch_total = counts.mismatches + counts.validation_failures + counts.sidecar_count
 
+    duration_seconds = time.monotonic() - export_started
     try:
         _write_prom_textfile(
-            textfile, status=status, lag_seconds=lag, mismatch_total=mismatch_total, cache_stats=cache_stats, now=now
+            textfile,
+            status=status,
+            lag_seconds=lag,
+            mismatch_total=mismatch_total,
+            cache_stats=cache_stats,
+            now=now,
+            duration_seconds=duration_seconds,
         )
     except OSError as exc:
         raise _abort(f"could not write gate textfile {textfile}: {exc}") from exc

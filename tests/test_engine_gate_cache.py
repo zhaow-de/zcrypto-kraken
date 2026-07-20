@@ -5,18 +5,25 @@ no dataset access, no real replay."""
 
 from __future__ import annotations
 
+import inspect
 import json
+from collections import Counter
 from datetime import datetime, timedelta
+
+import pytest
 
 import cli.engine.gate_cache as gate_cache
 from cli.engine import CycleOutcome, CycleRecord, SnapshotEntry
 from cli.engine.gate_cache import (
     CACHE_SCHEMA_VERSION,
     GateCache,
+    due_for_reverification,
     evidence_fingerprint,
     load_cache,
+    oldest_verification_age,
     replay_fingerprint,
     save_cache,
+    slice_of,
 )
 from cli.portfolio import CrossfreqSystemConfig
 
@@ -251,9 +258,9 @@ def test_cache_round_trip_preserves_outcome_exactly(tmp_path):
     cache = GateCache(
         replay_fp=replay_fp,
         entries={
-            passing.cycle_ts: ("evidence-fp-1", passing),
-            mismatch.cycle_ts: ("evidence-fp-2", mismatch),
-            validation_failed.cycle_ts: ("evidence-fp-3", validation_failed),
+            passing.cycle_ts: ("evidence-fp-1", passing, CYCLE_TS),
+            mismatch.cycle_ts: ("evidence-fp-2", mismatch, CYCLE_TS),
+            validation_failed.cycle_ts: ("evidence-fp-3", validation_failed, CYCLE_TS),
         },
     )
     save_cache(path, cache)
@@ -261,14 +268,45 @@ def test_cache_round_trip_preserves_outcome_exactly(tmp_path):
 
     assert loaded.replay_fp == replay_fp
     assert loaded.entries.keys() == cache.entries.keys()
-    for cycle_ts, (evidence_fp, outcome) in cache.entries.items():
-        loaded_evidence_fp, loaded_outcome = loaded.entries[cycle_ts]
+    for cycle_ts, (evidence_fp, outcome, verified_at) in cache.entries.items():
+        loaded_evidence_fp, loaded_outcome, loaded_verified_at = loaded.entries[cycle_ts]
         assert loaded_evidence_fp == evidence_fp
         assert loaded_outcome == outcome
+        assert loaded_verified_at == verified_at
         # A cached failure must never come back as a pass.
         assert loaded_outcome.mismatch == outcome.mismatch
         assert loaded_outcome.validation_failed == outcome.validation_failed
         assert loaded_outcome.compare_passed == outcome.compare_passed
+
+
+def test_cache_round_trip_preserves_verified_at(tmp_path):
+    # D5/D6 (schema v2): verified_at round-trips alongside mismatch=True and validation_failed=True
+    # entries, not just a passing one.
+    path = tmp_path / "gate-cache.json"
+    replay_fp = "fixed-replay-fp"
+
+    passing = _outcome()
+    mismatch = _outcome(cycle_ts=CYCLE_TS + timedelta(hours=4), mismatch=True, compare_passed=False)
+    validation_failed = _outcome(cycle_ts=CYCLE_TS + timedelta(hours=8), validation_failed=True, compare_passed=False)
+
+    verified_at_passing = CYCLE_TS + timedelta(minutes=1)
+    verified_at_mismatch = CYCLE_TS + timedelta(hours=4, minutes=1)
+    verified_at_validation_failed = CYCLE_TS + timedelta(hours=8, minutes=1)
+
+    cache = GateCache(
+        replay_fp=replay_fp,
+        entries={
+            passing.cycle_ts: ("evidence-fp-1", passing, verified_at_passing),
+            mismatch.cycle_ts: ("evidence-fp-2", mismatch, verified_at_mismatch),
+            validation_failed.cycle_ts: ("evidence-fp-3", validation_failed, verified_at_validation_failed),
+        },
+    )
+    save_cache(path, cache)
+    loaded = load_cache(path, replay_fp)
+
+    assert loaded.entries[passing.cycle_ts][2] == verified_at_passing
+    assert loaded.entries[mismatch.cycle_ts][2] == verified_at_mismatch
+    assert loaded.entries[validation_failed.cycle_ts][2] == verified_at_validation_failed
 
 
 # --- load_cache: fail open, never raise (D5) ------------------------------------------------------
@@ -306,7 +344,7 @@ def test_load_cache_degrades_never_raises(tmp_path):
     # replay_fp mismatch -- discarded.
     good_path = tmp_path / "good.json"
     outcome = _outcome()
-    cache = GateCache(replay_fp=replay_fp, entries={outcome.cycle_ts: ("evidence-fp", outcome)})
+    cache = GateCache(replay_fp=replay_fp, entries={outcome.cycle_ts: ("evidence-fp", outcome, CYCLE_TS)})
     save_cache(good_path, cache)
     mismatched = load_cache(good_path, "a-different-replay-fp")
     assert mismatched.entries == {}
@@ -321,6 +359,34 @@ def test_load_cache_degrades_never_raises(tmp_path):
     assert unreadable.rejected is True
 
 
+def test_v1_cache_is_rejected_wholesale(tmp_path):
+    # D6: CACHE_SCHEMA_VERSION 1 -> 2 (verified_at changes the entry shape). A v1 file on disk must
+    # be rejected wholesale -- no partial read of its (now-shaped-differently) entries -- forcing one
+    # full replay and rewrite, per the existing fail-open contract (never a migration).
+    replay_fp = "fixed-replay-fp"
+    path = tmp_path / "gate-cache.json"
+    v1_payload = {
+        "schema_version": 1,
+        "replay_fp": replay_fp,
+        "entries": [
+            {
+                "evidence_fp": "evidence-fp",
+                "cycle_ts": CYCLE_TS.isoformat(),
+                "completed_at": (CYCLE_TS + timedelta(minutes=5)).isoformat(),
+                "compare_passed": True,
+                "mismatch": False,
+                "validation_failed": False,
+            }
+        ],
+    }
+    path.write_text(json.dumps(v1_payload))
+
+    loaded = load_cache(path, replay_fp)
+
+    assert loaded.entries == {}
+    assert loaded.rejected is True
+
+
 # --- save_cache: atomic write (D6) ----------------------------------------------------------------
 
 
@@ -330,7 +396,7 @@ def test_save_cache_is_atomic(tmp_path, monkeypatch):
 
     # A normal write lands via a .tmp sibling that is gone afterward.
     outcome = _outcome()
-    cache = GateCache(replay_fp=replay_fp, entries={outcome.cycle_ts: ("evidence-fp", outcome)})
+    cache = GateCache(replay_fp=replay_fp, entries={outcome.cycle_ts: ("evidence-fp", outcome, CYCLE_TS)})
     save_cache(path, cache)
     assert path.exists()
     assert not path.with_suffix(path.suffix + ".tmp").exists()
@@ -346,7 +412,95 @@ def test_save_cache_is_atomic(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gate_cache.os, "replace", _boom)
     other_outcome = _outcome(cycle_ts=CYCLE_TS + timedelta(hours=4))
-    other_cache = GateCache(replay_fp=replay_fp, entries={other_outcome.cycle_ts: ("evidence-fp-2", other_outcome)})
+    other_cache = GateCache(replay_fp=replay_fp, entries={other_outcome.cycle_ts: ("evidence-fp-2", other_outcome, CYCLE_TS)})
     save_cache(path, other_cache)  # must not raise
 
     assert path.read_text() == original_content  # the prior cache survives untouched
+
+
+# --- slice_of / due_for_reverification (D2/D3) ---------------------------------------------------
+
+
+def test_slice_of_is_deterministic_and_process_stable():
+    # Hardcoded (cycle_ts -> slice) pairs, computed once from the sha256(isoformat) % 24 derivation
+    # and pinned here: a future change to the derivation must FAIL this test rather than silently
+    # redistributing every cycle's slice, which would look like nothing happened while quietly
+    # resetting the whole rotation schedule.
+    pinned = {
+        datetime(2026, 7, 10, 8, 0): 13,
+        datetime(2020, 1, 1, 0, 0): 13,
+        datetime(2026, 12, 31, 23, 0): 23,
+    }
+    for cycle_ts, expected_slice in pinned.items():
+        assert slice_of(cycle_ts) == expected_slice
+        # Same cycle_ts -> same slice across repeated calls (process-stable, not e.g. seeded by
+        # builtin hash() randomization).
+        assert slice_of(cycle_ts) == slice_of(cycle_ts)
+
+
+def test_slice_of_distributes_without_gross_skew():
+    base = datetime(2024, 1, 1, 0, 0)
+    n = 480
+    slices = [slice_of(base + timedelta(hours=i)) for i in range(n)]
+
+    counts = Counter(slices)
+    assert set(counts) == set(range(24))  # every slice covered
+
+    mean = n / 24
+    for slice_index, count in counts.items():
+        assert count <= 3 * mean, f"slice {slice_index} holds {count}, more than 3x the mean {mean}"
+
+
+def test_due_for_reverification_matches_the_run_hour():
+    cycle_ts = datetime(2026, 7, 10, 8, 0)
+    expected_slice = slice_of(cycle_ts)
+    for hour in range(24):
+        now = datetime(2026, 7, 15, hour, 0)
+        assert due_for_reverification(cycle_ts, now) == (expected_slice == hour % 24)
+
+
+def test_rotation_slices_guard_rejects_values_above_24():
+    """`slice_of` returns `[0, _ROTATION_SLICES)` but `due_for_reverification` selects the current
+    slice via `now.hour % _ROTATION_SLICES`, which can only ever produce `[0, 23]` -- any
+    `_ROTATION_SLICES > 24` would leave the high slices permanently unreachable, silently never
+    re-verified. The module-level guard immediately below the constant must actually fire for such
+    a value, not just exist as inert prose next to it -- extracts the real constant-plus-guard
+    lines from the module source (comment lines and blank lines around it drift-tolerant) and execs
+    them standalone with the constant patched to 25."""
+    lines = inspect.getsource(gate_cache).splitlines()
+    start = lines.index("_ROTATION_SLICES = 24")
+    end = start + 1
+    while end < len(lines) and (lines[end].startswith("#") or lines[end] == ""):
+        end += 1
+    assert lines[end].startswith("assert"), (
+        "expected a module-level guard (an `assert`) immediately below `_ROTATION_SLICES = 24` "
+        "(only comment/blank lines in between) -- none found"
+    )
+    snippet = "\n".join(lines[start : end + 1])
+    mutated = snippet.replace("_ROTATION_SLICES = 24", "_ROTATION_SLICES = 25", 1)
+    with pytest.raises(AssertionError):
+        exec(compile(mutated, "<gate_cache _ROTATION_SLICES guard, patched to 25>", "exec"), {})
+
+
+# --- oldest_verification_age (D5) -----------------------------------------------------------------
+
+
+def test_oldest_verification_age():
+    now = CYCLE_TS + timedelta(days=2)
+
+    assert oldest_verification_age(GateCache(replay_fp="fp", entries={}), now) is None
+
+    passing = _outcome()
+    mismatch = _outcome(cycle_ts=CYCLE_TS + timedelta(hours=4), mismatch=True, compare_passed=False)
+    oldest_verified_at = CYCLE_TS - timedelta(hours=10)  # the least-recent of the two
+    newest_verified_at = CYCLE_TS + timedelta(hours=1)
+
+    cache = GateCache(
+        replay_fp="fp",
+        entries={
+            passing.cycle_ts: ("evidence-fp-1", passing, newest_verified_at),
+            mismatch.cycle_ts: ("evidence-fp-2", mismatch, oldest_verified_at),
+        },
+    )
+    age = oldest_verification_age(cache, now)
+    assert age == (now - oldest_verified_at).total_seconds()
