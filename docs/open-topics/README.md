@@ -31,6 +31,8 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0071 — capture-era data-hygiene map](T0071-capture-era-data-hygiene-map.md) — consumer-side keep/flag/excise verdicts for the early-capture bug-era windows (07-08→07-13 phantom-depth desyncs et al.): the trades stream is REST-proven dense, but the book/panel side's pre-depth-prune hours feed the spread/depth calibration — map before research reads them; excision itself is the owner's call (ripe when: before the T0014/T0024 calibration ≈2026-07-22, and before the T0065 reach round).
 
+- [T0078 — the trade-backfill run summary omits fetch failures](T0078-trade-backfill-summary-omits-fetch-failures.md) — `pair_fetch_error_missing` is a per-pair local that never reaches `BackfillResult` or the run summary, surfacing only inside the D9 invariant-violation message once the invariant has ALREADY failed — while `README.md:209` asserts the summary lists "every outcome bucket" and that "a run can never read as clean by omitting one", which is false today. Low severity (the per-gap warnings make it manually derivable, and D9 subtracts the bucket) but it is the operator's first diagnostic on a daily step whose retry was deliberately deleted. Found by the archived-topic audit; known and dropped rather than out of scope (ripe when: NOW — ~5 lines + a README correction, fully specified).
+
 ### Partially done<a name="partially-done"></a>
 
 - [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); the OI backfill + harness are autonomous when B2 is picked.

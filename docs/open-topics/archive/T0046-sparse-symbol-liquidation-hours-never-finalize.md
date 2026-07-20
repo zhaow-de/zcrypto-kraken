@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: n/a — resolved 2026-07-15 (wall-clock finalization landed + tested; ships to the running poller with the next ops-node image re-pin)
 ---
 
 # Sparse-symbol liquidation hours never finalize promptly

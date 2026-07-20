@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: live now — both failure modes were hit for real on 2026-07-13, and the script is the only path we have for provisioning alerts
 ---
 
 # `grafana-push.sh` can silently mis-point every alert, and never deletes a removed rule
@@ -67,9 +66,9 @@ The git-vs-live divergence is the same class of bug as the deployed-compose drif
 - **Read-back datasource assertion landed**: after pushing, every rule is read back and the run fails (non-zero exit) if any query node points at a datasource that is neither the prom nor the loki UID — closing the "API accepts a wrong UID happily and reports health=ok" hole. Verified live: all 12 rules pass.
 
 
-- **The prune half is still open.** The push never deletes: a rule removed from `alerts.yaml` keeps
-  evaluating and emailing forever, and a *renamed* rule (new `uid`) leaves the old one live beside it.
-  Add a prune step that lists the live rules in the folder and deletes any whose `uid` is absent from
-  `alerts.yaml` — with a dry-run first, since deleting an alert rule is not reversible from the repo.
-- **Always read the rules back after a push** and assert each `datasourceUid` — the API accepts a wrong
-  UID happily and reports `health=ok`.
+## The original ask (historical — both items landed; see *Done so far* above)
+
+These two bullets are the topic's opening request, left in place when *Done so far* was written. They are **discharged**, and are kept only as the record of what was asked. Read them in the past tense — as written they contradict the resolution directly above, which is what made this file look like it had been archived with live work still in it.
+
+- ~~**The prune half is still open.**~~ **Landed** (`aba46f7` + `8931bf3`). The original ask: the push never deletes, so a rule removed from `alerts.yaml` keeps evaluating and emailing forever, and a *renamed* rule (new `uid`) leaves the old one live beside it. Delivered at `infra/scripts/grafana-push.sh:199-215` — lists every folder-live rule whose `uid` is absent from `alerts.yaml`, dry-run by default (deleting an alert rule is not reversible from the repo), deleting only under `GRAFANA_PRUNE=1`.
+- ~~**Always read the rules back after a push** and assert each `datasourceUid`.~~ **Landed.** The original ask: the API accepts a wrong UID happily and reports `health=ok`. Delivered as the read-back assertion, which exits non-zero if any query node points at neither the prom nor the loki UID. Verified live on all 12 rules.

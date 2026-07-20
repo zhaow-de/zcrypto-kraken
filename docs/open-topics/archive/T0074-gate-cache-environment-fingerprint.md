@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: a dependency bump touching numpy/Python lands in uv.lock while the gate-export cache is enabled in a deployment, OR any observed cross-environment replay drift approaching the 1e-6 compare_targets budget
 ---
 
 # gate-export cache: the replay fingerprint covers the code but not the execution environment

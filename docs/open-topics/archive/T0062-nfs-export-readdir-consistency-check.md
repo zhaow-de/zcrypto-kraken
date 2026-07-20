@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: the next attended NAS session — the probe is one command on the NAS
 ---
 
 # Is the NFS export's filesystem btrfs or ext4? — the readdir-consistency probe

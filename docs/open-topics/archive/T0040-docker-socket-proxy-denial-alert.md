@@ -4,6 +4,8 @@ status: resolved
 
 # Alert on docker-socket-proxy denials and non-routine calls
 
+## Resolution
+
 > **Closed 2026-07-14 without being built — the subject no longer exists.** The `docker-socket-proxy` was removed from the NAS stack on the same day (owner's decision): its HAProxy `timeout client/server 10m` was severing Docker's long-lived log stream and causing every line on a quiet container to be re-ingested into Loki every 10 minutes. Alloy now reads the Docker socket directly, so there is no proxy, no denial stream, and nothing for this alert to watch. The security residual that replaces it — Alloy now holds root-equivalent Docker access — is tracked in [[T0042-alloy-holds-root-equivalent-docker-access]], which also records how to restore the boundary (a two-line patch to the proxy's HAProxy template) if that residual is ever judged unacceptable. The detection idea below is preserved because it becomes live again the moment the proxy returns.
 
 ## Context — what

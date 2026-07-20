@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: the Phase-5 holdout event (D3(v), human present) — this decision IS the event's first agenda item
 ---
 
 # Holdout window ratification — the pre-registered definition was never carved out
