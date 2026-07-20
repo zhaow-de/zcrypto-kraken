@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the mitigation has landed, so what remains is (a) the >3-day staleness alert rule, ripe NOW and autonomous, (b) the cache-file siting decision, ripe when the `--cache` deployment is actually scheduled, and (c) the owner's threat-model judgement on in-place parquet alteration, which gates how much of (a)/(b) is warranted -- ask at the next attended session
+ripe_when: one residual only — push the committed alert rule to the live Grafana instance with `infra/scripts/grafana-push.sh` (needs GRAFANA_SA_TOKEN from the vault, so attended). Ripe NOW; until it is pushed the staleness metric has no witness. Everything else in this topic is delivered or decided.
 ---
 
 # Enabling `gate-export --cache` removes the only continuous integrity check on the gate's evidence
@@ -63,8 +63,10 @@ This reframes iter-109's original finding. That iteration characterised the per-
 
 **Known and deliberate:** a mismatch outcome is itself cached, so after repairing corrupted evidence the gate can stay red for up to one rotation. Fail-closed by design; the README documents deleting the cache file as the immediate remedy.
 
+- The **>3-day staleness alert rule** is committed (`infra/grafana/alerts.yaml`, uid `zcrypto-gate-cache-reverification-stalled`). It deliberately uses `noDataState: OK`, unlike its `zcrypto-gate` siblings: the metric is emitted only when `--cache` is active and non-empty, and `--cache` is not deployed, so the series is simply absent — alerting on no-data would page continuously for a feature that is switched off. "The exporter vanished entirely" is already owned by `zcrypto-gate-exporter-stale`, so the choice loses no coverage.
+
 ## Suggested next steps
 
-- **(Autonomous, ripe NOW — the metric ships, the RULE does not)** Add the Grafana alert on `zcrypto_gate_cache_oldest_verification_age_seconds` above ~3 days to `infra/grafana/alerts.yaml`. Emitting the number without alerting on it leaves the rotation's failure mode exactly as invisible as before: `save_cache` logs a warning and continues on write failure, so a full disk presents as a working cache with `invalidated` reading 0 and a quietly-ageing staleness number nobody is watching.
-- **(Decision, then autonomous)** Site the cache file **container-ephemeral, never on `/archive`**. The NAS runs `polars-runtime-compat` while ops runs stock polars, and `replay_fingerprint` digests neither — so a cache file on a share both hosts can reach is mutually poisonable.
-- **(For the owner, one judgement)** Confirm whether in-place alteration of an already-verified parquet is a threat worth defending against in this environment. If the answer is no, the rotating re-verification can be dropped to a weekly slice or dropped entirely with the reasoning recorded here — but that should be a decision, not an omission.
+- **(Attended, small)** Push the alert rule to the live Grafana instance with `infra/scripts/grafana-push.sh` (needs `GRAFANA_SA_TOKEN` from the vault). The rule is **committed** but a repo rule is not a live rule; until it is pushed, the metric still has no witness.
+- ~~Site the cache file container-ephemeral~~ — **decided and recorded as spec `00062` D9.** Ephemeral, never on `/archive` or any share both hosts reach: the NAS builds `POLARS_RUNTIME=compat` (no AVX) while ops uses the default runtime, and `replay_fingerprint` digests neither, so a shared file would let two hosts compute identical fingerprints over different numeric runtimes and serve each other's entries. Nothing to do at deploy time beyond *not* pointing `--cache` at the share.
+- ~~Owner's threat-model judgement~~ — **answered 2026-07-20: yes, keep daily.** In-place alteration is judged worth defending against (bit-rot on the RAID, partial or interrupted writes, and anything holding group-write on the deliberately `0775`/`0664` share), and ~1.5% of the pull interval is an acceptable premium. `_ROTATION_SLICES = 24` stands as built — no change required. Recorded here because the alternative was to leave it an omission rather than a decision.

@@ -35,6 +35,8 @@ Note what this reframes: iter-109 characterised the per-cycle rebuild as pure wa
 
 - **D8 — emit `zcrypto_gate_export_duration_seconds`** (wall). [[T0069]]'s entire budget table is a linear extrapolation from one datapoint on the Atom; the step's real cost has never been measured in production. This closes that, and makes the effect of enabling `--cache` observable rather than inferred. Both new metric names match the existing Alloy keep-regex `zcrypto_gate_.*`, so no infra change is required.
 
+- **D9 — the cache file is container-ephemeral, and never on `/archive` or any share both hosts can reach.** The NAS image builds with `POLARS_RUNTIME=compat` (`polars-runtime-compat`, no AVX — the Atom Goldmont has none) while ops runs the default AVX runtime; same polars *version*, different compiled runtime (`infra/docker/Dockerfile:31-34`, [[T0029]]). `replay_fingerprint` digests neither the runtime nor polars, deliberately ([[T0074]]'s closure argued the decode path fails loudly via the content hash — which is true for a *replay*, and precisely what a cache hit skips). Two hosts sharing one cache file would therefore compute **identical** replay fingerprints while potentially producing different numeric results, so each could serve the other's entries as its own. Ephemeral siting makes that unreachable by construction rather than by a fingerprint field nobody has added. The cost is one cold rebuild per container restart, which is the same ~94 s the run already costs today with no cache at all.
+
 ## Non-goals
 
 - Not enabling `--cache` anywhere. This makes it *safe to enable*; the deployment change stays attended and is [[T0069]]'s sub-item.
