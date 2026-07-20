@@ -63,6 +63,24 @@ This **corrects the 2026-07-19 trigger check** ("both thresholds still comfortab
 
 **Recommendation: do both, incremental first.** Incremental scoring is the structural fix (bounded, not merely postponed); relocation is a complementary operational win that also decouples the pull loop. Relocation is an **attended** deploy (it moves a Role-B deliverable across hosts, with its healthcheck + textfile wiring), so it is parked for a maintenance window.
 
+### Update 2026-07-20 (iter-110, spec `00060`) — incremental scoring landed
+
+The structural fix is **built and verified**, opt-in via `gate-export --cache PATH` (no flag ⇒ today's behaviour byte-for-byte; `report` is never cached). Measured on the ops journal mirror (39 cycles):
+
+| run | wall | replayed | from cache |
+|---|---|---|---|
+| no `--cache` | 63.11 s | 39 | 0 |
+| `--cache` cold | 62.77 s | 39 | 0 |
+| `--cache` warm | **0.30 s** | 0 | 39 |
+
+**Gate metrics were identical across all three runs** — the load-bearing property (a cache hit is indistinguishable from a fresh replay) verified on real production evidence, not just fixtures. Cold costs the same as no-cache, so there is no overhead penalty for enabling it.
+
+The 212× is the zero-new-cycles case; steady state is one new cycle per hour ⇒ ~2 s here and ~13 s on the Atom (vs ~510 s today, ~39×). The point is not the ratio but that **the cost stops growing with the journal**, which is what dissolves the ≈2026-08-07 / ≈2026-09-04 budget deadlines projected above.
+
+Safety: the cache invalidates wholesale on any change to the ten modules on the replay call graph, the effective config, or the replay path; per-cycle entries key on the **full** `SnapshotEntry` (not just `content_hash`, so a metadata tamper the real replay would reject cannot be served as a cached pass); it fails open on any cache problem. The residual — the execution *environment* (numpy/Python) is not fingerprinted — is registered as [[T0074]].
+
+**Still open here: the attended relocation to the ops node**, and enabling `--cache` in the deployment (both need a maintenance window; the code ships inert until then).
+
 ## Suggested next steps
 
 - **(Autonomous, the structural fix — recommended first)** Implement **incremental scoring** in `_evaluate_journal`: persist a cache of already-verified cycles keyed on the journal's own `content_hash` values, replay only cycles absent from it, and keep a full-recompute escape hatch (a flag, plus automatic invalidation if any cached hash no longer matches). This is gate *evidence*, so it wants its own iteration with TDD: a cache hit must be provably identical to a fresh replay, a tampered/renamed journal must miss the cache rather than trust it, and the streak arithmetic must be unchanged. Expected effect: hourly cost drops from ~8.5 min (rising) to roughly one cycle's rebuild (~11 s on the Atom) and stays flat as the journal grows.
