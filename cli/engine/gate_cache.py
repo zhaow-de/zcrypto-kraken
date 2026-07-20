@@ -8,10 +8,12 @@ depends on from the journal side (every journaled SnapshotEntry IN FULL -- pair,
 first_ts, last_ts, content_hash, path, not just content_hash -- plus cycle_ts, completed_at,
 final_targets) -- a mismatch invalidates just that cycle's entry. `replay_fingerprint` covers the
 REPLAY CODE instead -- the source bytes of the modules that determine a replay's result on either
-the "fast" or "verified" route, the effective CrossfreqSystemConfig, and the replay path itself --
-stored once per cache file; a mismatch invalidates the whole cache. Deliberately over-sensitive (a
-comment-only edit to a covered module costs one full rebuild): over-invalidation is safe,
-under-invalidation silently corrupts gate evidence.
+the "fast" or "verified" route, the effective CrossfreqSystemConfig, the replay path itself, and
+the execution environment (installed numpy version, Python major.minor) -- stored once per cache
+file; a mismatch invalidates the whole cache. Deliberately over-sensitive (a comment-only edit to a
+covered module, or a `uv.lock` bump that changes numpy/Python numeric behaviour with the journal
+and replay code otherwise unchanged, costs one full rebuild): over-invalidation is safe,
+under-invalidation silently corrupts gate evidence (T0074).
 
 D5 -- fail open, never fail trusting: `load_cache` never raises; any problem (absent/unreadable/
 truncated/unparseable file, wrong schema_version, or a replay_fp mismatch) degrades to an EMPTY
@@ -25,8 +27,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from cli.engine.concordance import CycleOutcome
@@ -61,14 +65,25 @@ _REPLAY_CODE_PATHS: tuple[Path, ...] = (
 
 def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, path: str = "fast") -> str:
     """sha256 over the source bytes of the modules that determine a replay's result, the effective
-    config, and the replay path ("fast"/"verified" select different builders -- a route switch
-    must not serve the other route's cached verdicts). Deliberately over-sensitive: a comment-only
-    edit invalidates the cache."""
+    config, the replay path ("fast"/"verified" select different builders -- a route switch must
+    not serve the other route's cached verdicts), and the execution environment (T0074: numpy
+    version + Python major.minor -- a `uv.lock` bump can change numeric behaviour with the journal
+    and every covered module's bytes unchanged, which would otherwise serve a stale cached PASS).
+    Deliberately over-sensitive: a comment-only edit to any covered module, a numpy version
+    change, or a Python MINOR bump all invalidate the cache. A Python PATCH release deliberately
+    does not -- patch releases do not change float arithmetic, so the full rebuild would buy
+    nothing; `sys.version_info[:2]` is the digested value."""
     digest = hashlib.sha256()
     for module_path in _REPLAY_CODE_PATHS:
         digest.update(module_path.read_bytes())
     digest.update(repr(config).encode())
     digest.update(path.encode())
+    try:
+        numpy_version = version("numpy")
+    except PackageNotFoundError:
+        numpy_version = "numpy-not-found"
+    digest.update(numpy_version.encode())
+    digest.update(repr(sys.version_info[:2]).encode())
     return digest.hexdigest()
 
 

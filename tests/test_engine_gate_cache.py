@@ -207,6 +207,36 @@ def test_replay_fingerprint_covers_the_replay_path():
     assert replay_fingerprint() == replay_fingerprint(path="fast")
 
 
+def test_replay_fingerprint_covers_the_environment(monkeypatch):
+    # T0074: a uv.lock bump touching numpy/Python numeric behaviour must invalidate the cache even
+    # though the journal and the replay code are byte-for-byte unchanged -- otherwise a stale cache
+    # silently serves a pre-bump verdict as gate evidence.
+    fp_before = replay_fingerprint()
+    assert replay_fingerprint() == fp_before  # stable when nothing changes
+
+    monkeypatch.setattr(gate_cache, "version", lambda _pkg: "99.99.99")
+    fp_numpy_changed = replay_fingerprint()
+    assert fp_numpy_changed != fp_before
+
+    monkeypatch.undo()
+    monkeypatch.setattr(gate_cache.sys, "version_info", (3, 99, 0, "final", 0))
+    fp_python_changed = replay_fingerprint()
+    assert fp_python_changed != fp_before
+
+
+def test_replay_fingerprint_survives_missing_distribution(monkeypatch):
+    # importlib.metadata.version raises PackageNotFoundError for an odd/uninstalled distribution --
+    # per D5's fail-open philosophy this must degrade to a sentinel string, never crash the
+    # fingerprint (the caller's OSError guard does not cover this exception type).
+    def _boom(_pkg):
+        raise gate_cache.PackageNotFoundError("numpy")
+
+    monkeypatch.setattr(gate_cache, "version", _boom)
+    fp = replay_fingerprint()
+    assert isinstance(fp, str)
+    assert len(fp) == 64
+
+
 # --- cache round-trip (D4/D8 of the spec test list) ----------------------------------------------
 
 
