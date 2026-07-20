@@ -173,13 +173,21 @@ while true; do
 	# HOT_SOURCE is unset: hot is optional secondary durability for ops-AUTHORED artifacts and is
 	# legitimately unset until ops authors any, whereas an unwired reconciled overlay is anomalous
 	# (its writer moved to ops in OPS-5, so it is expected wired). A NAS not given the channel runs on.
-	# --chmod=D0775,F0664 matches the `zcrypto archive pull` wrapper on every other channel: the
-	# Synology share is plain POSIX with no ACL inheritance and this container is non-root (uid 1000,
-	# cannot chown), so without it pulled dirs keep the ops source's non-group-writable 0755 and the
-	# workstation push (zcrypto-deploy, group zcrypto) could not append into a shared subtree. hot/ is
-	# the fleet's only two-writer dir, so keeping the pulled tree group-writable is load-bearing.
+	# --chmod: the Synology share is plain POSIX with no ACL inheritance and this container is
+	# non-root (uid 1000, cannot chown), so without it pulled dirs keep the ops source's
+	# non-group-writable 0755 and the workstation push (zcrypto-deploy, group zcrypto) could not
+	# append into a shared subtree. hot/ is the fleet's only two-writer dir, so keeping the pulled
+	# tree group-writable is load-bearing.
+	#
+	# D2775, NOT the D0775 every other channel uses -- the ONE place the fleet's channels diverge.
+	# The nas role sets /volume1/ZhaoCrypto/hot to 02775 precisely so both writers' children inherit
+	# group zcrypto (roles/nas/tasks/main.yml), but D0775 forces every directory rsync writes to
+	# exactly 0775 and STRIPS that setgid bit on each pull. The role restored it on converge, the
+	# next pull removed it again, and the drift was invisible until an --check --diff happened to
+	# run between the two. Siblings keep D0775 correctly: they are single-writer and their writer's
+	# egid is already zcrypto, so they need no setgid and the role declares them plain 0775.
 	if [ -n "${HOT_SOURCE:-}" ]; then
-		if ! rsync --archive --ignore-existing --chmod=D0775,F0664 \
+		if ! rsync --archive --ignore-existing --chmod=D2775,F0664 \
 				-e "ssh -i $HOT_SSH_KEY -p ${HOT_SSH_PORT:-22} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=$ARCHIVE_SSH_KNOWN_HOSTS" \
 				"$HOT_SOURCE" "$HOT_DEST"; then
 			log ERROR "hot pull failed (source=$HOT_SOURCE dest=$HOT_DEST), continuing"
