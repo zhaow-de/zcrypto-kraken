@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ripe_when: a dependency bump touching numpy/Python lands in uv.lock while the gate-export cache is enabled in a deployment, OR any observed cross-environment replay drift approaching the 1e-6 compare_targets budget
 ---
 
@@ -28,3 +28,11 @@ This is the same class of failure the fingerprint exists to prevent — a **sile
 - **(Autonomous, one line)** Fold the environment into `replay_fingerprint`: `importlib.metadata.version("numpy")` plus `sys.version_info[:2]` (and `polars` if the decode path is ever hashed). Consistent with spec `00060` D3's stated rationale that over-invalidation is safe and under-invalidation silently corrupts evidence — the cost of a version bump is exactly one full rebuild.
 - **(Autonomous)** Add a test that a changed environment string moves the fingerprint, mirroring the existing byte-mutation tests for the ten covered modules.
 - **(Judgement, cheap)** Decide whether to also hash the parquet decode path. The review's argument for leaving it is that a decode change fails loudly rather than silently — record the decision either way so it does not get silently revisited.
+
+## Resolution — 2026-07-20
+
+`replay_fingerprint` now digests the execution environment alongside the ten replay modules, the effective config and the replay path: the **full** installed `numpy` version string, and Python **major.minor** (`sys.version_info[:2]`). A `PackageNotFoundError` degrades to a sentinel rather than propagating — it is deliberately caught *inside* the function, because it is not an `OSError` and the caller's degrade-to-no-cache net only catches `OSError`.
+
+**Granularity is asymmetric on purpose.** numpy is tracked at full version granularity (its changelogs do carry numeric-correctness fixes in patch releases); Python is tracked at major.minor, because patch releases are bugfix-only and float arithmetic is IEEE-754-via-C, orthogonal to the patch number — and this repo's own `.python-version` pins `"3.14"`, with no patch component to invalidate against. Verified empirically: a patch bump leaves the digest unchanged, a minor bump moves it.
+
+**The polars question is settled, and more tightly than this topic originally argued.** The concern was that a decode-behaviour change could alter a replay silently. It cannot: `journal.snapshot_content_hash` hashes the **decoded values** (int64 epoch-seconds and IEEE-754 float64 via `struct.pack`), not the raw file bytes, and `replay_cycle` raises `HashMismatchError` on any mismatch with the journaled `entry.content_hash`. So a decode change that altered even one bit flips that hash and fails loudly as `validation_failed` before the value reaches the builder. polars is deliberately **not** fingerprinted, and the `errors.py` residual is likewise judged non-silent.
