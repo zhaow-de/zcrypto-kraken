@@ -35,8 +35,16 @@ prometheus.exporter.unix "host" {
 // requested telemetry) come from the unix exporter above.
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
+// T0048 defect 1: discovery.docker can wedge permanently, and the ONLY positive signal is
+// prometheus_sd_refresh_duration_seconds_count going flat. Those counters live on Alloy's OWN
+// /metrics endpoint, which nothing here scraped -- so admitting them to the keep-list below was a
+// no-op and the alert built on them could never fire. This exporter is what actually puts them in
+// the pipeline. The drop rule below still discards go_/process_/alloy_, so the added cardinality is
+// only the two prometheus_sd_ series the keep-list names.
+prometheus.exporter.self "alloy" {}
+
 prometheus.scrape "host" {
-  targets         = prometheus.exporter.unix.host.targets
+  targets         = array.concat(prometheus.exporter.unix.host.targets, prometheus.exporter.self.alloy.targets)
   forward_to      = [prometheus.remote_write.grafana.receiver]
   scrape_interval = "60s"
 }
@@ -63,7 +71,7 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|prometheus_sd_refresh_duration_seconds_count|prometheus_sd_refresh_failures_total"
       action        = "keep"
     }
   }
