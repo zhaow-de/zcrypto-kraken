@@ -527,12 +527,19 @@ class PanelSummary:
 
 
 def summarize_panel(verdicts: dict[str, MetricVerdict], *, band: float = 0.90) -> PanelSummary:
-    """Summarize a panel of per-metric verdicts, resisting multiplicity: judging N metrics at
-    `band` will show ~N*(1-band) outside the band by chance alone, so the summary reports the
-    observed count against that expectation rather than alarming on any single worst-of-N metric.
+    """Summarize a panel of per-metric verdicts, resisting multiplicity: judging N DISCRIMINATING
+    metrics at `band` will show ~N*(1-band) outside the band by chance alone, so the summary reports
+    the observed count against that expectation rather than alarming on any single worst-of-N metric.
+
+    `n_metrics` counts only verdicts that actually discriminate (`verdict != "n/a"`, spec D6) -- a
+    degenerate band or an unavailable internals rebuild can't contribute a false positive, so
+    counting it would overstate the expected-by-chance baseline. This also makes a degraded run
+    self-consistent with no special-casing: with 2 of 7 metrics `"n/a"`, the line reads "... of 5"
+    automatically.
     """
-    n_metrics = len(verdicts)
-    n_outside = sum(1 for v in verdicts.values() if v.verdict == "inconsistent")
+    discriminating = [v for v in verdicts.values() if v.verdict != "n/a"]
+    n_metrics = len(discriminating)
+    n_outside = sum(1 for v in discriminating if v.verdict == "inconsistent")
     expected_by_chance = n_metrics * (1.0 - band)
     line = f"{n_outside} of {n_metrics} outside band (~{expected_by_chance:.1f} expected by chance at {band * 100:.0f}%)"
     return PanelSummary(n_metrics=n_metrics, n_outside=n_outside, expected_by_chance=expected_by_chance, line=line)
@@ -870,15 +877,17 @@ def _mean(values: list[float]) -> float:
 @dataclass(frozen=True)
 class SoakAnalysis:
     """The full soak-check analysis tying the realized series to its backtest null: a verdict per
-    GATING metric (gross/net/active_frac/turnover/hhi -- the 5 of the 7 spec metrics computable
-    from the journaled weights), the panel summary over those 5, the governor/cap-breach rates as
-    NULL-side backtest CONTEXT (`cap_breach`/`governor_engagement` need strategy internals the
-    journal doesn't carry, so they're never judged as a realized-vs-null verdict), the D4
-    governed-vs-live P&L gap, and the NON-GATING realized-vs-null P&L verdict."""
+    GATING metric -- gross/net/active_frac/turnover/hhi (computable from the journaled weights
+    alone) plus governor_engagement/cap_breach (computed from `internals` when available, else
+    `"n/a"` with `internals_reason` naming why -- D7 degrade, not void) -- 7 keys total, the panel
+    summary over the DISCRIMINATING subset (`summarize_panel` excludes `"n/a"`, spec D6), the D4
+    governed-vs-live P&L gap, the NON-GATING realized-vs-null P&L verdict, and `disclosures`:
+    human-readable interpretation notes (constant realized multiplier/cap-breach, near-redundant
+    gross/net, governor day-granularity) that change no verdict."""
 
     L: int  # scored realized bars
-    gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi
-    panel: PanelSummary  # summarize_panel over the 5 gating verdicts
+    gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi, governor_engagement, cap_breach
+    panel: PanelSummary  # summarize_panel over the discriminating (non-"n/a") gating verdicts
     null_gov_rate: float  # backtest CONTEXT: fraction of null days governor-engaged
     null_cap_rate: float  # backtest CONTEXT: cap_breach_bars / n_periods
     d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
@@ -887,17 +896,32 @@ class SoakAnalysis:
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
     pnl_verdict: MetricVerdict  # NON-GATING: realized interior mean net vs null net_live windows
     is_degenerate: bool  # degenerate(structural_metrics(realized.weights)["gross"]) -- exposure, not P&L
-    effective_n: dict[str, float]  # per gating metric + "pnl"
+    effective_n: dict[str, float]  # per gating metric (7) + "pnl"
+    internals_available: bool  # False -> governor_engagement/cap_breach degraded to "n/a" (D7)
+    internals_reason: str  # why internals is unavailable ("" when available)
+    disclosures: tuple[str, ...]  # human-readable interpretation notes; never changes a verdict
 
 
-def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.90) -> SoakAnalysis:
+def analyze_soak(
+    realized: RealizedSeries, null: NullSystem, *, band: float = 0.90, internals: RealizedInternals | None = None
+) -> SoakAnalysis:
     """Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`.
 
-    Gates on 5 structural metrics (gross/net/active_frac/turnover/hhi); reports governor engagement
-    and cap-breach rate as backtest context only (never gated); reports the D4 governed-vs-live gap;
-    and judges P&L (realized interior mean net vs null net_live windows) as a non-gating verdict.
-    Turnover and P&L are prev-dependent, so both aggregate/compare INTERIOR bars (each series' first
-    element dropped) on BOTH the live and null sides -- the other 4 gating metrics use all L bars.
+    Gates on 7 structural metrics: gross/net/active_frac/turnover/hhi (from the journaled weights
+    alone) plus governor_engagement/cap_breach, recovered from `internals` (see `realized_internals`).
+    governor_engagement is judged at DAY granularity (a day is engaged iff any of its scored bars has
+    mult < 1.0; window = the realized day count); cap_breach at BAR granularity (window = L). When
+    `internals` is `None` or `internals.available` is `False`, both verdicts degrade to `"n/a"` with
+    the reason carried in `internals_reason` (D7) -- the other 5 metrics still gate normally, a
+    missing rebuild degrades the fingerprint, it does not invalidate it. `summarize_panel` counts
+    only DISCRIMINATING verdicts (spec D6), so a degraded run's multiplicity line reads "... of 5"
+    with no special-casing. A constant realized multiplier/cap-breach series is a LEGITIMATE verdict
+    -- never suppressed to "n/a" -- but is disclosed (`disclosures`) so a reader can interpret it,
+    alongside a near-redundant gross/net note (spec D6a) and the governor day-granularity caveat.
+    Also reports the D4 governed-vs-live gap and judges P&L (realized interior mean net vs null
+    net_live windows) as a non-gating verdict. Turnover and P&L are prev-dependent, so both
+    aggregate/compare INTERIOR bars (each series' first element dropped) on BOTH the live and null
+    sides -- the other gating metrics use all L bars.
     """
     L = len(realized.net)
     rm = structural_metrics(realized.weights)
@@ -913,6 +937,59 @@ def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.
         eff_n = len(null_series) / window if window > 0 else 0.0
         gating_verdicts[m] = metric_verdict(_mean(live_series), windowed_null(null_series, window), band=band, effective_n=eff_n)
         effective_n[m] = eff_n
+
+    disclosures: list[str] = []
+
+    if internals is not None and internals.available:
+        internals_available = True
+        internals_reason = ""
+
+        mult_values = [internals.mult_by_cycle[t] for t in realized.cycle_ts]
+        breach_values = [internals.breach_by_cycle[t] for t in realized.cycle_ts]
+
+        engaged_by_day: dict[object, bool] = {}
+        for t, m in zip(realized.cycle_ts, mult_values):
+            day = t.date()
+            engaged_by_day[day] = engaged_by_day.get(day, False) or m < 1.0
+        total_days = len(engaged_by_day)
+        gov_live = sum(1 for engaged in engaged_by_day.values() if engaged) / total_days if total_days else 0.0
+        gov_null = governor_engaged_daily(null.multipliers, null.day_index)
+        gov_eff_n = len(gov_null) / total_days if total_days > 0 else 0.0
+        gating_verdicts["governor_engagement"] = metric_verdict(
+            gov_live, windowed_null(gov_null, total_days), band=band, effective_n=gov_eff_n
+        )
+        effective_n["governor_engagement"] = gov_eff_n
+
+        cap_live = _mean([1.0 if b else 0.0 for b in breach_values])
+        cap_eff_n = len(null.cap_breach) / L if L > 0 else 0.0
+        gating_verdicts["cap_breach"] = metric_verdict(
+            cap_live, windowed_null(null.cap_breach, L), band=band, effective_n=cap_eff_n
+        )
+        effective_n["cap_breach"] = cap_eff_n
+
+        if mult_values and min(mult_values) == max(mult_values):
+            disclosures.append(f"realized multiplier was {mult_values[0]:g} on all {len(mult_values)} scored cycles (no variance)")
+        if breach_values and len(set(breach_values)) == 1:
+            flag = "1" if breach_values[0] else "0"
+            disclosures.append(f"realized cap-breach was {flag} on all {len(breach_values)} scored cycles (no variance)")
+        disclosures.append(f"governor-engagement is judged at day granularity over {total_days} realized days")
+    else:
+        internals_available = False
+        internals_reason = internals.reason if internals is not None else "no internals rebuild provided"
+        na = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+        gating_verdicts["governor_engagement"] = na
+        gating_verdicts["cap_breach"] = na
+        effective_n["governor_engagement"] = 0.0
+        effective_n["cap_breach"] = 0.0
+
+    long_only = all(w >= -1e-12 for bar in realized.weights for w in bar.values())
+    near_redundant = long_only
+    if not near_redundant and len(rm["gross"]) >= 2:
+        g_arr, n_arr = np.array(rm["gross"]), np.array(rm["net"])
+        if g_arr.std() > 0 and n_arr.std() > 0:
+            near_redundant = float(np.corrcoef(g_arr, n_arr)[0, 1]) >= 0.99
+    if near_redundant:
+        disclosures.append("gross and net are near-identical on a long-only book — the metric count overstates independent trials")
 
     panel = summarize_panel(gating_verdicts, band=band)
 
@@ -943,6 +1020,9 @@ def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.
         pnl_verdict=pnl_verdict,
         is_degenerate=degenerate(rm["gross"]),
         effective_n=effective_n,
+        internals_available=internals_available,
+        internals_reason=internals_reason,
+        disclosures=tuple(disclosures),
     )
 
 
