@@ -239,7 +239,7 @@ def test_replay_fingerprint_covers_replay_code(tmp_path, monkeypatch):
     f2 = tmp_path / "b.py"
     f1.write_text("# module a v1\n")
     f2.write_text("# module b v1\n")
-    monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", (f1, f2))
+    monkeypatch.setattr(gate_cache, "_replay_code_paths", lambda: (f1, f2))
 
     fp_before = replay_fingerprint()
 
@@ -265,51 +265,6 @@ def test_replay_fingerprint_default_covers_the_real_files():
     assert fp == replay_fingerprint()  # stable/reproducible
 
 
-def test_replay_code_paths_is_pinned_as_the_full_ordered_tuple():
-    # D1: pin the WHOLE tuple, not a membership subset -- a membership check only proves the
-    # modules added at review are present; findings 1-4 showed the four originals were droppable
-    # from the tuple without failing any test. Exact tuple equality catches removing ANY of the
-    # twelve entries, reordering them, or a thirteenth entry added later going unpinned. The last
-    # two arrived with spec 00064 D9 and are pinned here for the same reason as the rest.
-    assert gate_cache._REPLAY_CODE_PATHS == (
-        gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
-        gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
-        gate_cache._REPO_ROOT / "cli" / "risk" / "limits.py",
-        gate_cache._REPO_ROOT / "cli" / "risk" / "governor.py",
-        gate_cache._REPO_ROOT / "cli" / "engine" / "concordance.py",
-        gate_cache._REPO_ROOT / "cli" / "engine" / "journal.py",
-        gate_cache._REPO_ROOT / "cli" / "alpha" / "a1.py",
-        gate_cache._REPO_ROOT / "cli" / "alpha" / "a2.py",
-        gate_cache._REPO_ROOT / "cli" / "portfolio" / "builder.py",
-        gate_cache._REPO_ROOT / "cli" / "benchmark" / "strategies.py",
-        gate_cache._REPO_ROOT / "cli" / "engine" / "command.py",
-        gate_cache._REPO_ROOT / "cli" / "ohlc" / "dataset.py",
-    )
-
-
-def test_replay_fingerprint_covers_the_live_and_latent_gap_modules():
-    # D3 was missing every module below -- a revised drawdown_governor ladder or a changed
-    # validate_record/snapshot_content_hash (both LIVE, reachable on the "fast" path
-    # _evaluate_journal actually uses) flips a replay's verdict with an unchanged fingerprint; the
-    # LATENT THREE (a2/builder/strategies) are only reachable on the "verified" path but cost nothing
-    # to over-cover (D3). a1.py is NOT among them -- it is live on the fast route via _asset_returns;
-    # see the label block in gate_cache.py, corrected in 1acb852.
-    # Membership check on the REAL, non-monkeypatched list -- must fail against the original
-    # four-file list (crossfreq_system.py/crossfreq.py/limits.py/concordance.py only).
-    covered = set(gate_cache._REPLAY_CODE_PATHS)
-    expected_new = {
-        gate_cache._REPO_ROOT / "cli" / "risk" / "governor.py",  # LIVE
-        gate_cache._REPO_ROOT / "cli" / "engine" / "journal.py",  # LIVE
-        gate_cache._REPO_ROOT / "cli" / "alpha" / "a1.py",  # LATENT
-        gate_cache._REPO_ROOT / "cli" / "alpha" / "a2.py",  # LATENT
-        gate_cache._REPO_ROOT / "cli" / "portfolio" / "builder.py",  # LATENT
-        gate_cache._REPO_ROOT / "cli" / "benchmark" / "strategies.py",  # LATENT
-    }
-    assert expected_new <= covered
-    for path in expected_new:
-        assert path.is_file(), f"{path} must exist -- a covered module must not silently hash nothing"
-
-
 def test_replay_fingerprint_changes_when_a_live_gap_module_changes(tmp_path, monkeypatch):
     # The two LIVE gaps in particular: mutating either's bytes must change the fingerprint. Swaps
     # in a mutable tmp copy of the real file's current bytes so the real repo source is never
@@ -320,8 +275,8 @@ def test_replay_fingerprint_changes_when_a_live_gap_module_changes(tmp_path, mon
     ):
         stand_in = tmp_path / real_path.name
         stand_in.write_bytes(real_path.read_bytes())
-        patched = tuple(stand_in if p == real_path else p for p in gate_cache._REPLAY_CODE_PATHS)
-        monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", patched)
+        patched = tuple(stand_in if p == real_path else p for p in gate_cache._replay_code_paths())
+        monkeypatch.setattr(gate_cache, "_replay_code_paths", lambda patched=patched: patched)
 
         fp_before = replay_fingerprint()
         stand_in.write_bytes(stand_in.read_bytes() + b"\n# mutated\n")
@@ -330,7 +285,7 @@ def test_replay_fingerprint_changes_when_a_live_gap_module_changes(tmp_path, mon
 
 
 def test_replay_fingerprint_changes_when_an_original_module_changes(tmp_path, monkeypatch):
-    # Findings 1-4: these four have been in _REPLAY_CODE_PATHS since before the T0075 audit, but no
+    # Findings 1-4: these four were in the hand-enumerated list from before the T0075 audit, but no
     # test asserted the fingerprint actually responds to their bytes -- they were droppable from
     # the tuple without failing anything. Same tmp-copy pattern as
     # test_replay_fingerprint_changes_when_a_live_gap_module_changes above (never mutate real repo
@@ -343,8 +298,8 @@ def test_replay_fingerprint_changes_when_an_original_module_changes(tmp_path, mo
     ):
         stand_in = tmp_path / real_path.name
         stand_in.write_bytes(real_path.read_bytes())
-        patched = tuple(stand_in if p == real_path else p for p in gate_cache._REPLAY_CODE_PATHS)
-        monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", patched)
+        patched = tuple(stand_in if p == real_path else p for p in gate_cache._replay_code_paths())
+        monkeypatch.setattr(gate_cache, "_replay_code_paths", lambda patched=patched: patched)
 
         fp_before = replay_fingerprint()
         stand_in.write_bytes(stand_in.read_bytes() + b"\n# mutated\n")
@@ -368,8 +323,8 @@ def test_replay_fingerprint_changes_when_a_verdict_path_module_changes(tmp_path,
     ):
         stand_in = tmp_path / real_path.name
         stand_in.write_bytes(real_path.read_bytes())
-        patched = tuple(stand_in if p == real_path else p for p in gate_cache._REPLAY_CODE_PATHS)
-        monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", patched)
+        patched = tuple(stand_in if p == real_path else p for p in gate_cache._replay_code_paths())
+        monkeypatch.setattr(gate_cache, "_replay_code_paths", lambda patched=patched: patched)
 
         fp_before = replay_fingerprint()
         stand_in.write_bytes(stand_in.read_bytes() + b"\n# mutated\n")
@@ -414,6 +369,133 @@ def test_replay_fingerprint_survives_missing_distribution(monkeypatch):
     fp = replay_fingerprint()
     assert isinstance(fp, str)
     assert len(fp) == 64
+
+
+# --- the import closure (spec 00065) -------------------------------------------------------------
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_replay_roots_is_pinned_as_the_full_ordered_tuple():
+    # Spec 00065 D1, same whole-tuple discipline as 00064 D1. Coverage is now DERIVED, so the roots
+    # are the only hand-maintained input left -- and therefore the only thing that can silently
+    # drift. Exact tuple equality catches dropping a root, reordering, or a fourth going unpinned.
+    #
+    # This pin is doing real work, and it is measured, not assumed: TWO of the three roots are
+    # currently REDUNDANT. Dropping concordance.py or dataset.py leaves the closure at all 54
+    # modules (both are reachable from command.py), so no coverage test can see them go. Only
+    # command.py is load-bearing today -- dropping it loses 8 modules. That redundancy is a fact
+    # about today's import graph, not a reason to trim the tuple: each root is an independent
+    # replay entry point, and an edit that stops command.py importing concordance would silently
+    # drop the whole replay core out of coverage if concordance were not also a root.
+    assert gate_cache._REPLAY_ROOTS == (
+        gate_cache._REPO_ROOT / "cli" / "engine" / "concordance.py",
+        gate_cache._REPO_ROOT / "cli" / "engine" / "command.py",
+        gate_cache._REPO_ROOT / "cli" / "ohlc" / "dataset.py",
+    )
+
+
+def test_replay_code_paths_contains_every_previously_enumerated_module():
+    # Test-list 3. The twelve paths _REPLAY_CODE_PATHS enumerated by hand before 00065 must all
+    # still be covered -- the closure REPLACES that list, it must not shrink it. A walk that
+    # collapsed (e.g. an edge-resolution bug returning nothing) fails here rather than silently
+    # under-invalidating the cache.
+    covered = set(gate_cache._replay_code_paths())
+    for rel in (
+        ("cli", "portfolio", "crossfreq_system.py"),
+        ("cli", "portfolio", "crossfreq.py"),
+        ("cli", "risk", "limits.py"),
+        ("cli", "risk", "governor.py"),
+        ("cli", "engine", "concordance.py"),
+        ("cli", "engine", "journal.py"),
+        ("cli", "alpha", "a1.py"),
+        ("cli", "alpha", "a2.py"),
+        ("cli", "portfolio", "builder.py"),
+        ("cli", "benchmark", "strategies.py"),
+        ("cli", "engine", "command.py"),
+        ("cli", "ohlc", "dataset.py"),
+    ):
+        assert gate_cache._REPO_ROOT.joinpath(*rel) in covered, f"{'/'.join(rel)} dropped out of the closure"
+
+
+def test_replay_code_paths_contains_the_re_export_layers():
+    # Test-list 3 / D5 -- the modules hand-enumeration MISSED, and the reason 00065 exists.
+    # cli/engine/concordance.py:24 does `from cli.portfolio import build_crossfreq_system_fast`, so
+    # every replay binds the fast builder THROUGH cli/portfolio/__init__.py; rebinding it there
+    # changed every verdict while leaving the pre-00065 fingerprint byte-identical. These four are
+    # reachable only by resolving `from cli.pkg import X` to the package __init__ as well as to
+    # cli/pkg/X.py -- drop that half of D5 and this test is what fails.
+    covered = set(gate_cache._replay_code_paths())
+    for rel in (
+        ("cli", "portfolio", "__init__.py"),
+        ("cli", "risk", "__init__.py"),
+        ("cli", "alpha", "__init__.py"),
+        ("cli", "engine", "errors.py"),
+    ):
+        assert gate_cache._REPO_ROOT.joinpath(*rel) in covered, f"{'/'.join(rel)} is not covered"
+
+
+def test_replay_code_paths_is_sorted_and_cli_only():
+    # D4: sorted order is load-bearing. An unstable digest rebuilds the cache EVERY run -- which
+    # looks exactly like a working cache while doing no work, so it is pinned, never assumed.
+    # D3: third-party stays out (numpy's version is digested separately, T0074), so every covered
+    # path lives under cli/.
+    paths = gate_cache._replay_code_paths()
+    assert list(paths) == sorted(paths)
+    assert len(set(paths)) == len(paths), "the closure must not digest the same file twice"
+    for path in paths:
+        assert path.is_relative_to(gate_cache._REPO_ROOT / "cli"), f"{path} is outside cli/"
+
+
+def test_replay_code_paths_excludes_non_cli_imports(tmp_path, monkeypatch):
+    # Test-list 9 / D3. A synthetic tree whose root imports third-party and stdlib modules: the
+    # closure is exactly the cli modules, never the imported outsiders.
+    #
+    # `json.py` and `numpy/__init__.py` are planted AT THE TREE ROOT deliberately, so that the
+    # `parts[0] != "cli"` guard is the only thing keeping them out. Without them the test is
+    # decorative: `import json` would resolve to a path that does not exist and drop out anyway, so
+    # deleting the guard would not fail anything. With them, deleting the guard fails this test.
+    _write(tmp_path / "json.py", "# a stdlib name that also exists in-tree\n")
+    _write(tmp_path / "numpy" / "__init__.py", "# a third-party name that also exists in-tree\n")
+    _write(tmp_path / "cli" / "engine" / "root.py", "import json\nimport numpy\nfrom cli.pkg import helper\n")
+    _write(tmp_path / "cli" / "pkg" / "__init__.py", "from cli.pkg.helper import thing\n")
+    _write(tmp_path / "cli" / "pkg" / "helper.py", "thing = 1\n")
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (tmp_path / "cli" / "engine" / "root.py",))
+
+    assert gate_cache._replay_code_paths() == (
+        tmp_path / "cli" / "engine" / "root.py",
+        tmp_path / "cli" / "pkg" / "__init__.py",
+        tmp_path / "cli" / "pkg" / "helper.py",
+    )
+
+
+def test_unparseable_module_is_still_digested(tmp_path, monkeypatch):
+    # Test-list 7 / D6 -- the direction that matters. A module that fails to parse loses only its
+    # OUT-EDGES; its bytes are digested regardless. Swallowing a SyntaxError into "no imports" is
+    # survivable, swallowing it into "not covered" is exactly the under-invalidation 00065 closes.
+    broken = tmp_path / "cli" / "broken.py"
+    _write(tmp_path / "cli" / "engine" / "root.py", "from cli.broken import thing\n")
+    _write(broken, "def (((  # not valid Python\n")
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (tmp_path / "cli" / "engine" / "root.py",))
+
+    assert broken in gate_cache._replay_code_paths()
+
+    fp_before = replay_fingerprint()
+    broken.write_text("def ))) still not valid Python\n")
+    assert replay_fingerprint() != fp_before
+
+
+def test_replay_code_paths_does_not_collapse(tmp_path):
+    # A floor, not a pin of the exact set: the closure measured 54 modules when 00065 landed, and
+    # every contains-test above would still pass if the walk collapsed to just the ~16 modules they
+    # name. This catches that collapse. It is deliberately loose -- adding or removing an import in
+    # cli/ legitimately moves the count, and this must not become a tripwire on ordinary edits.
+    assert len(gate_cache._replay_code_paths()) >= 40
 
 
 # --- cache round-trip (D4/D8 of the spec test list) ----------------------------------------------

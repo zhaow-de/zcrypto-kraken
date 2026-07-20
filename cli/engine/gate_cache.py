@@ -7,13 +7,20 @@ Two fingerprints (D2/D3): `evidence_fingerprint` covers what a single cycle's re
 depends on from the journal side (every journaled SnapshotEntry IN FULL -- pair, grid, n_bars,
 first_ts, last_ts, content_hash, path, not just content_hash -- plus cycle_ts, completed_at,
 final_targets) -- a mismatch invalidates just that cycle's entry. `replay_fingerprint` covers the
-REPLAY CODE instead -- the source bytes of the modules that determine a replay's result on either
-the "fast" or "verified" route, the effective CrossfreqSystemConfig, the replay path itself, and
-the execution environment (installed numpy version, Python major.minor) -- stored once per cache
-file; a mismatch invalidates the whole cache. Deliberately over-sensitive (a comment-only edit to a
-covered module, or a `uv.lock` bump that changes numpy/Python numeric behaviour with the journal
-and replay code otherwise unchanged, costs one full rebuild): over-invalidation is safe,
-under-invalidation silently corrupts gate evidence (T0074).
+REPLAY CODE instead -- the source bytes of the modules that determine a replay's result, the
+effective CrossfreqSystemConfig, the replay path itself, and the execution environment (installed
+numpy version, Python major.minor) -- stored once per cache file; a mismatch invalidates the whole
+cache. Since spec 00065 that module set is DERIVED, not enumerated: `_replay_code_paths()` walks
+the transitive `cli.*` import closure of `_REPLAY_ROOTS`. The hand-maintained list it replaced
+covered 12 of those 54 modules and was wrong three separate times -- most consequentially it never
+hashed `cli/portfolio/__init__.py`, the re-export layer every replay binds
+`build_crossfreq_system_fast` through, so rebinding the fast builder to the verified one changed
+every verdict while leaving the fingerprint byte-identical.
+
+Deliberately over-sensitive (a comment-only edit to a covered module, or a `uv.lock` bump that
+changes numpy/Python numeric behaviour with the journal and replay code otherwise unchanged, costs
+one full rebuild): over-invalidation is safe, under-invalidation silently corrupts gate evidence
+(T0074).
 
 D5 -- fail open, never fail trusting: `load_cache` never raises; any problem (absent/unreadable/
 truncated/unparseable file, wrong schema_version, or a replay_fp mismatch) degrades to an EMPTY
@@ -24,6 +31,7 @@ cache intact, and the cache is an optimization: the run already succeeded withou
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -47,59 +55,102 @@ _ROTATION_SLICES = 24
 # unreachable, silently never re-verified (the exact failure D2/D3 exist to prevent).
 assert _ROTATION_SLICES <= 24, "_ROTATION_SLICES > 24 would leave high slices unreachable via now.hour % _ROTATION_SLICES"
 
-# The modules that determine a replay's result (D3): source-bytes changes to any of these must
-# invalidate the whole cache. Monkeypatched by tests to point at synthetic files instead of
-# mutating this repo's real source on disk.
+# The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
+# below -- the transitive cli.* import closure -- so the roots are the only hand-maintained input
+# left, and therefore the only thing that can silently drift. concordance.py holds replay_cycle /
+# compare_targets / evaluate_gate; command.py holds `_snapshot_reader` (the closure every replay
+# reads price data through) and `_replay_one` (the exception->verdict classifier); dataset.py holds
+# `read_parquet`, which feeds both that reader and the snapshot content hash.
+#
+# _REPO_ROOT and _REPLAY_ROOTS are read at call time, not captured, so tests can monkeypatch both
+# at a synthetic tree instead of mutating this repo's real source on disk.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_REPLAY_CODE_PATHS: tuple[Path, ...] = (
-    # LIVE -- reachable on the "fast" route _evaluate_journal actually uses.
-    _REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
-    _REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
-    _REPO_ROOT / "cli" / "risk" / "limits.py",
-    _REPO_ROOT / "cli" / "risk" / "governor.py",
+_REPLAY_ROOTS: tuple[Path, ...] = (
     _REPO_ROOT / "cli" / "engine" / "concordance.py",
-    _REPO_ROOT / "cli" / "engine" / "journal.py",
-    # a1.py is LIVE: build_crossfreq_system_fast calls _asset_returns (defined a1.py:176) at
-    # crossfreq_system.py:617, and the fast helpers _b_daily_positions_fast /
-    # _a1_asset_positions_fast / _a2_arm_asset_positions_fast call it at :475/:505/:537. A change
-    # to _asset_returns' body moves the fast route's replay verdict, so it belongs with the block
-    # above on merit, not on the over-invalidation rationale.
-    _REPO_ROOT / "cli" / "alpha" / "a1.py",
-    # LATENT -- only the "verified" route's build_crossfreq_system calls into these three
-    # (a2_book_returns / sma_gate / vol_target / dynamic_inverse_vol_basket / build_combined_system,
-    # all at crossfreq_system.py:215-276); the fast helpers at :469+ re-implement that arithmetic
-    # locally and bit-identically, and no caller passes path="verified" today. Covered anyway per
-    # D3's over-invalidation-is-safe rationale. NOTE: they are imported at module scope
-    # (crossfreq_system.py:53-56), but that alone would NOT justify hashing them -- import-time
-    # execution binds defs, it does not make a function body determine a replay's result. The
-    # justification is D3, not the import. (Spec 00064 D7, corrected at review: the label this
-    # replaced claimed all four were live on the strength of the module-scope import, which
-    # understated a1.py and mis-justified the other three.)
-    _REPO_ROOT / "cli" / "alpha" / "a2.py",
-    _REPO_ROOT / "cli" / "portfolio" / "builder.py",
-    _REPO_ROOT / "cli" / "benchmark" / "strategies.py",
-    # LIVE -- the two files D3's own wording ("the modules that determine a replay's result")
-    # already claimed, while hashing neither; spec 00064 D9 adds them. This NARROWS the gap and does
-    # not close it: D3's invariant still does not hold, because the re-export layers the fast route
-    # binds through (cli/portfolio/__init__.py, cli/risk/__init__.py, cli/engine/errors.py) stay
-    # unhashed -- rebinding build_crossfreq_system_fast there moves every verdict with this
-    # fingerprint byte-identical. Tracked as T0080. Hand-enumeration cannot make the invariant
-    # true; only hashing the transitive import closure could. Do not restate it as complete. The
-    # discarded wording said the invariant is
-    # true. command.py holds `_snapshot_reader`, the reader closure EVERY replay reads price data
-    # through (`frame["ts"].to_list(), frame["close"].to_list()`) -- swapping "close" for "open"
-    # runs every replay on a different series, a different verdict, and left the fingerprint
-    # BYTE-IDENTICAL before this entry existed (measured: 7a1e371f193be417 both ways). It also
-    # holds `_replay_one`, the classifier for exceptions raised BY replay_cycle, so which maps to
-    # mismatch vs validation_failed is decided here too. dataset.py holds `read_parquet`, which
-    # feeds both that reader and the snapshot content hash -- a change to how bytes become a frame
-    # moves the replay's inputs. D9 deliberately hashes the whole files rather than extracting the
-    # verdict-path code: moving code on the verdict path is riskier than the cache efficiency it
-    # would buy, so the accepted cost is that unrelated CLI edits also invalidate the cache
-    # (over-invalidation is safe, under-invalidation silently corrupts gate evidence -- T0074).
     _REPO_ROOT / "cli" / "engine" / "command.py",
     _REPO_ROOT / "cli" / "ohlc" / "dataset.py",
 )
+
+
+def _resolve_module(dotted: str, repo_root: Path) -> list[Path]:
+    """The files a dotted `cli.*` module name can live in, under `repo_root`. Non-`cli` names
+    resolve to nothing (D3: third-party is out -- numpy's version is digested separately per T0074,
+    and walking site-packages would be enormous and version-noisy).
+
+    Returns BOTH `cli/pkg/__init__.py` and `cli/pkg.py`-style candidates when both exist, because
+    D5's over-inclusion is the point: for `from cli.pkg import X`, `X` may be a submodule or a name
+    re-exported by the package's `__init__`, and static analysis cannot always tell which. Hashing
+    both is safe (over-invalidation costs one rebuild); hashing the wrong one silently corrupts gate
+    evidence."""
+    parts = dotted.split(".")
+    if parts[0] != "cli":
+        return []
+    base = repo_root.joinpath(*parts)
+    return [candidate for candidate in (base / "__init__.py", base.with_suffix(".py")) if candidate.is_file()]
+
+
+def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
+    """The `cli.*` modules `module_path` imports. Best-effort BY DESIGN (D6): a file that cannot be
+    read or parsed yields NO edges rather than raising, and the caller digests its bytes anyway. The
+    safe direction is always-hash / sometimes-fail-to-traverse -- swallowing a SyntaxError into "no
+    imports" is survivable, swallowing it into "not covered" is the exact under-invalidation this
+    walker exists to close. Traversal loss is bounded: a file that does not parse does not import.
+
+    Only ABSOLUTE `cli.*` imports are traversed. `cli/` contains no relative imports (verified: 0 of
+    54 modules in the closure), so this loses no edge today -- but a relative import added later
+    would not be followed."""
+    try:
+        tree = ast.parse(module_path.read_bytes())
+    except (OSError, SyntaxError, ValueError) as exc:
+        logger.warning(
+            "replay-fingerprint closure: cannot parse %s (%s); its bytes are still digested, but its imports are not traversed",
+            module_path,
+            exc,
+        )
+        return []
+    edges: list[Path] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                edges.extend(_resolve_module(alias.name, repo_root))
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            # D5: the package itself AND each imported name as a possible submodule.
+            edges.extend(_resolve_module(node.module, repo_root))
+            for alias in node.names:
+                edges.extend(_resolve_module(f"{node.module}.{alias.name}", repo_root))
+    return edges
+
+
+def _replay_code_paths() -> tuple[Path, ...]:
+    """The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the modules that
+    determine a replay's result, DERIVED rather than enumerated. Replaces the hand-maintained
+    twelve-path list, which covered 12 of these 54 modules (~22%) and was wrong three separate
+    times; the re-export layers it missed (`cli/portfolio/__init__.py` above all) are how every
+    replay binds `build_crossfreq_system_fast`.
+
+    A STATIC walk (D2), never `sys.modules`: a runtime view would make the fingerprint depend on
+    which CLI subcommand is running, since a different entry point imports a different set --
+    `gate-export` and `report` would then disagree on identical code and the cache would invalidate
+    on invocation shape rather than on code change.
+
+    Sorted (D4). Every path shares the `repo_root` prefix, so sorting the absolute paths is exactly
+    sorted repo-relative order. Determinism is load-bearing, not cosmetic: an unstable digest
+    rebuilds the cache on every run, which looks exactly like a working cache while doing no work.
+
+    Reads `_REPO_ROOT` / `_REPLAY_ROOTS` at call time so tests can point both at a synthetic tree.
+    Raises nothing itself; a root that does not exist simply contributes no edges, and the missing
+    bytes surface as the OSError `_evaluate_journal` already catches to degrade to a full replay
+    without a cache (D8 / spec 00060 D5)."""
+    repo_root = _REPO_ROOT
+    seen: set[Path] = set()
+    pending = list(_REPLAY_ROOTS)
+    while pending:
+        module_path = pending.pop()
+        if module_path in seen:
+            continue
+        seen.add(module_path)
+        pending.extend(edge for edge in _import_edges(module_path, repo_root) if edge not in seen)
+    return tuple(sorted(seen))
 
 
 def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, path: str = "fast") -> str:
@@ -111,13 +162,17 @@ def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), 
     Deliberately over-sensitive: a comment-only edit to any covered module, a numpy version
     change, or a Python MINOR bump all invalidate the cache. A Python PATCH release deliberately
     does not -- patch releases do not change float arithmetic, so the full rebuild would buy
-    nothing; `sys.version_info[:2]` is the digested value. Since spec 00064 D9 the covered set
-    includes the two whole files carrying the reader closure and the exception classifier
-    (`cli/engine/command.py`) and the parquet reader (`cli/ohlc/dataset.py`), so edits anywhere in
-    those files -- including parts unrelated to replay -- also invalidate the cache; that cost is
-    accepted because under-invalidation silently corrupts gate evidence."""
+    nothing; `sys.version_info[:2]` is the digested value.
+
+    Since spec 00065 the covered set is `_replay_code_paths()` -- the transitive `cli.*` import
+    closure of `_REPLAY_ROOTS`, not a hand-maintained list -- so an edit anywhere in any module
+    reachable from a replay entry point invalidates the cache, including parts of those modules
+    unrelated to replay. That cost is accepted, and is the same trade as before, only wider:
+    over-invalidation costs one rebuild, under-invalidation silently corrupts gate evidence
+    (T0074). Whole files are digested rather than the verdict-path code extracted, because moving
+    code onto and off the verdict path is riskier than the cache efficiency that would buy."""
     digest = hashlib.sha256()
-    for module_path in _REPLAY_CODE_PATHS:
+    for module_path in _replay_code_paths():
         digest.update(module_path.read_bytes())
     digest.update(repr(config).encode())
     digest.update(path.encode())
