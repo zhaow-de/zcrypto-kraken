@@ -25,7 +25,8 @@ from cli.config import ConfigError, EngineConfig, load_config
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.errors import EngineError, EngineJournalError
-from cli.engine.journal import SnapshotEntry, from_json
+from cli.engine.gate_cache import GateCache, evidence_fingerprint, load_cache, replay_fingerprint, save_cache
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
 from cli.logging import get_logger
@@ -136,36 +137,111 @@ class JournalCounts:
     sidecar_count: int
 
 
-def _evaluate_journal(journal_root: Path) -> tuple[list[CycleOutcome], JournalCounts, datetime | None]:
+@dataclass(frozen=True)
+class CacheStats:
+    """_evaluate_journal's per-run scoring-cache tally (spec 00060 D8): how many success records
+    this run actually replayed vs served from cache, and whether the cache was discarded wholesale
+    (a schema/replay-fingerprint mismatch or an unreadable file) -- all zero/False when `cache_path`
+    is None, so a degrading cache is visible in the metrics rather than looking like a working one."""
+
+    replayed: int
+    from_cache: int
+    invalidated: bool
+
+
+_EVALUATE_JOURNAL_REPLAY_PATH = "fast"  # threaded into replay_fingerprint() below (spec 00060 D3)
+
+
+def _replay_one(record: CycleRecord, reader) -> CycleOutcome:
+    """Replay one journaled success record and classify the outcome -- factored out so a cache hit
+    and a fresh replay build the exact same CycleOutcome shape; _evaluate_journal derives its
+    counters from that outcome afterward, in one place, so neither path can silently undercount."""
+    try:
+        replayed = replay_cycle(record, reader, path=_EVALUATE_JOURNAL_REPLAY_PATH)
+    except HashMismatchError:
+        return CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, mismatch=True)
+    except EngineJournalError:
+        return CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, validation_failed=True)
+    verdict = compare_targets(record.final_targets, replayed)
+    return CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, compare_passed=verdict.passed)
+
+
+def _evaluate_journal(
+    journal_root: Path, *, cache_path: Path | None = None
+) -> tuple[list[CycleOutcome], JournalCounts, datetime | None, CacheStats]:
     """Replay every journaled cycle-*.json (fast path) and classify every failed-cycle-*.json
     sidecar into CycleOutcome entries -- report's and gate-export's shared evidence-gathering pass.
     Absent boundaries are NOT fabricated -- evaluate_gate scores them missing. The third element is
-    the newest cycle_ts seen across every outcome (None when the journal is empty)."""
+    the newest cycle_ts seen across every outcome (None when the journal is empty).
+
+    `cache_path` (spec 00060, opt-in -- None is today's full replay, byte-for-byte) reuses a prior
+    run's CycleOutcome for a success record whose evidence_fingerprint is unchanged, skipping
+    replay_cycle entirely for that cycle; sidecars and unparseable records are never cached (D7).
+    JournalCounts is always derived from the resulting outcome (cached or freshly replayed) in one
+    place below, never from which branch produced it -- a cache hit must count exactly like a
+    replay would have. The fourth element, CacheStats, is spec 00060 D8's observability tally.
+
+    `cache_path is None` takes exactly the pre-`--cache` code path: neither `replay_fingerprint` nor
+    `evidence_fingerprint` is ever called, so a bug in either (e.g. replay_fingerprint's unguarded
+    `read_bytes()` over ten source files) can never reach a no-cache caller like `report` -- D1's
+    byte-for-byte promise, structurally. When `cache_path` is set but `replay_fingerprint()` itself
+    raises OSError, that's caught here and degrades THIS RUN to the same no-cache path (logged, never
+    aborted) -- a cache is an optimization, gate evidence is not. Same principle per record for
+    `evidence_fingerprint`: a failure there means "replay this one cycle", never "abort the run"."""
     reader = _snapshot_reader(journal_root)
 
-    entries: list[CycleOutcome] = []
-    replayed_ok = mismatches = validation_failures = 0
+    cache_active = cache_path is not None
+    cache = GateCache(replay_fp="", entries={})
+    replay_fp = ""
+    if cache_active:
+        try:
+            replay_fp = replay_fingerprint(path=_EVALUATE_JOURNAL_REPLAY_PATH)
+        except OSError as exc:
+            logger.warning(
+                "gate-export cache: replay_fingerprint failed (%s); degrading this run to a full replay without a cache",
+                exc,
+            )
+            cache_active = False
+        else:
+            cache = load_cache(cache_path, replay_fp)
+
+    record_outcomes: list[CycleOutcome] = []
+    updated_entries: dict[datetime, tuple[str, CycleOutcome]] = {}
+    replayed_count = from_cache_count = 0
     for boundary, record_path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
         try:
             record = from_json(record_path.read_text())
         except EngineJournalError:
-            validation_failures += 1
-            entries.append(CycleOutcome(cycle_ts=boundary, completed_at=boundary, validation_failed=True))
+            record_outcomes.append(CycleOutcome(cycle_ts=boundary, completed_at=boundary, validation_failed=True))
             continue
-        try:
-            replayed = replay_cycle(record, reader, path="fast")
-        except HashMismatchError:
-            mismatches += 1
-            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, mismatch=True))
-            continue
-        except EngineJournalError:
-            validation_failures += 1
-            entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, validation_failed=True))
-            continue
-        verdict = compare_targets(record.final_targets, replayed)
-        replayed_ok += verdict.passed
-        mismatches += not verdict.passed
-        entries.append(CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, compare_passed=verdict.passed))
+
+        fp = None
+        if cache_active:
+            try:
+                fp = evidence_fingerprint(record)
+            except (OSError, TypeError, AttributeError) as exc:
+                logger.warning(
+                    "gate-export cache: evidence_fingerprint failed for %s (%s); replaying this cycle uncached",
+                    record.cycle_ts,
+                    exc,
+                )
+        cached_entry = cache.entries.get(record.cycle_ts) if fp is not None else None
+        if cached_entry is not None and cached_entry[0] == fp:
+            outcome = cached_entry[1]
+            from_cache_count += 1
+        else:
+            outcome = _replay_one(record, reader)
+            replayed_count += 1
+        if fp is not None:
+            updated_entries[record.cycle_ts] = (fp, outcome)
+        record_outcomes.append(outcome)
+
+    # Counters derived from the resulting outcome, in one place -- see the docstring's THE TRAP note.
+    replayed_ok = sum(1 for o in record_outcomes if not o.validation_failed and not o.mismatch and o.compare_passed)
+    mismatches = sum(1 for o in record_outcomes if not o.validation_failed and (o.mismatch or not o.compare_passed))
+    validation_failures = sum(1 for o in record_outcomes if o.validation_failed)
+
+    entries = list(record_outcomes)
     sidecar_count = 0
     for boundary, sidecar_path in _journal_artifacts(journal_root, "*", "failed-cycle-*.json"):
         cycle_ts, completed_at, _ = _sidecar_fields(boundary, sidecar_path)
@@ -173,7 +249,10 @@ def _evaluate_journal(journal_root: Path) -> tuple[list[CycleOutcome], JournalCo
         sidecar_count += 1
 
     newest_ts = max((entry.cycle_ts for entry in entries), default=None)
-    return entries, JournalCounts(replayed_ok, mismatches, validation_failures, sidecar_count), newest_ts
+    if cache_active:
+        save_cache(cache_path, GateCache(replay_fp=replay_fp, entries=updated_entries))
+    cache_stats = CacheStats(replayed=replayed_count, from_cache=from_cache_count, invalidated=cache.rejected)
+    return entries, JournalCounts(replayed_ok, mismatches, validation_failures, sidecar_count), newest_ts, cache_stats
 
 
 def _gate_ping(url: str, success: bool) -> None:
@@ -188,10 +267,20 @@ def _gate_ping(url: str, success: bool) -> None:
         logger.warning("gate-export healthcheck ping failed url=%s error=%s", ping_url, exc)
 
 
-def _write_prom_textfile(path: Path, *, status: GateStatus, lag_seconds: float | None, mismatch_total: int, now: datetime) -> None:
+def _write_prom_textfile(
+    path: Path,
+    *,
+    status: GateStatus,
+    lag_seconds: float | None,
+    mismatch_total: int,
+    cache_stats: CacheStats,
+    now: datetime,
+) -> None:
     """Atomically write the gate-export Prometheus textfile-collector metrics: write to a `.tmp`
     sibling then `os.replace` onto `path`, so a node-exporter scrape never observes a partial file
-    and a write failure (e.g. an unwritable parent) leaves no partial artifact behind."""
+    and a write failure (e.g. an unwritable parent) leaves no partial artifact behind. The cache
+    metrics (spec 00060 D8) are always emitted, zeroed/False when `--cache` was omitted, so a
+    silently-degrading cache is visible rather than looking indistinguishable from a working one."""
     lines = [
         "# HELP zcrypto_gate_status 1 if the >=14-clean-day gate is MET else 0",
         f"zcrypto_gate_status {1 if status.gate_met else 0}",
@@ -204,6 +293,12 @@ def _write_prom_textfile(path: Path, *, status: GateStatus, lag_seconds: float |
         "replay mismatches + corrupt records + failed-cycle sidecars"
     )
     lines.append(f"zcrypto_gate_mismatch_total {mismatch_total}")
+    lines.append("# HELP zcrypto_gate_cache_replayed_total cycles actually replayed this run (cache miss or no --cache)")
+    lines.append(f"zcrypto_gate_cache_replayed_total {cache_stats.replayed}")
+    lines.append("# HELP zcrypto_gate_cache_hits_total cycles served from the incremental scoring cache this run")
+    lines.append(f"zcrypto_gate_cache_hits_total {cache_stats.from_cache}")
+    lines.append("# HELP zcrypto_gate_cache_invalidated 1 if the cache file was discarded wholesale this run, else 0")
+    lines.append(f"zcrypto_gate_cache_invalidated {1 if cache_stats.invalidated else 0}")
     lines.append(f"zcrypto_gate_export_timestamp_seconds {now.timestamp()}")
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text("\n".join(lines) + "\n")
@@ -443,7 +538,7 @@ def report(
     path): streak length, gate status, and the most recent failure."""
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
-    entries, counts, _ = _evaluate_journal(journal_root)
+    entries, counts, _, _ = _evaluate_journal(journal_root, cache_path=None)
 
     try:
         status = evaluate_gate(entries, now=_utc_now())
@@ -544,6 +639,12 @@ def gate_export(
         "--lag-fail-seconds",
         help="Journal-pull staleness threshold in seconds beyond which the ping counts as unclean (default 18000, 5h).",
     ),
+    cache: Optional[Path] = typer.Option(
+        None,
+        "--cache",
+        help="Incremental scoring cache path: reuse prior replay outcomes for unchanged cycles instead of "
+        "re-replaying the whole journal every run. Omit for today's full replay, unchanged.",
+    ),
 ) -> None:
     """Emit the >= 14-clean-day gate as machine-readable Prometheus metrics (atomic textfile write)
     and ping an independent dead-man's-switch healthcheck. Exits 0 on a successful emit even when
@@ -552,7 +653,7 @@ def gate_export(
     textfile)."""
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
-    entries, counts, newest_ts = _evaluate_journal(journal_root)
+    entries, counts, newest_ts, cache_stats = _evaluate_journal(journal_root, cache_path=cache)
 
     now = _utc_now()
     try:
@@ -568,7 +669,9 @@ def gate_export(
     mismatch_total = counts.mismatches + counts.validation_failures + counts.sidecar_count
 
     try:
-        _write_prom_textfile(textfile, status=status, lag_seconds=lag, mismatch_total=mismatch_total, now=now)
+        _write_prom_textfile(
+            textfile, status=status, lag_seconds=lag, mismatch_total=mismatch_total, cache_stats=cache_stats, now=now
+        )
     except OSError as exc:
         raise _abort(f"could not write gate textfile {textfile}: {exc}") from exc
 
