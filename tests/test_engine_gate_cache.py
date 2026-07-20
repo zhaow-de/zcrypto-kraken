@@ -181,26 +181,33 @@ def test_cache_round_trip_preserves_outcome_exactly(tmp_path):
 def test_load_cache_degrades_never_raises(tmp_path):
     replay_fp = "fixed-replay-fp"
 
-    # None path.
+    # None path -- absent, not rejected.
     empty = load_cache(None, replay_fp)
     assert empty.entries == {}
     assert empty.replay_fp == replay_fp
+    assert empty.rejected is False
 
-    # Absent file.
+    # Absent file -- absent, not rejected (no file ever existed to discard).
     absent_path = tmp_path / "does-not-exist.json"
-    assert load_cache(absent_path, replay_fp).entries == {}
+    absent = load_cache(absent_path, replay_fp)
+    assert absent.entries == {}
+    assert absent.rejected is False
 
-    # Truncated/unparseable JSON.
+    # Truncated/unparseable JSON -- a file existed and was discarded.
     truncated_path = tmp_path / "truncated.json"
     truncated_path.write_text('{"schema_version": 1, "replay_fp": "x", "entries": [')
-    assert load_cache(truncated_path, replay_fp).entries == {}
+    truncated = load_cache(truncated_path, replay_fp)
+    assert truncated.entries == {}
+    assert truncated.rejected is True
 
-    # Wrong schema_version.
+    # Wrong schema_version -- discarded.
     wrong_schema_path = tmp_path / "wrong-schema.json"
     wrong_schema_path.write_text(json.dumps({"schema_version": CACHE_SCHEMA_VERSION + 1, "replay_fp": replay_fp, "entries": []}))
-    assert load_cache(wrong_schema_path, replay_fp).entries == {}
+    wrong_schema = load_cache(wrong_schema_path, replay_fp)
+    assert wrong_schema.entries == {}
+    assert wrong_schema.rejected is True
 
-    # replay_fp mismatch.
+    # replay_fp mismatch -- discarded.
     good_path = tmp_path / "good.json"
     outcome = _outcome()
     cache = GateCache(replay_fp=replay_fp, entries={outcome.cycle_ts: ("evidence-fp", outcome)})
@@ -208,11 +215,14 @@ def test_load_cache_degrades_never_raises(tmp_path):
     mismatched = load_cache(good_path, "a-different-replay-fp")
     assert mismatched.entries == {}
     assert mismatched.replay_fp == "a-different-replay-fp"
+    assert mismatched.rejected is True
 
-    # Unreadable path (a directory, not a file, raises IsADirectoryError on read).
+    # Unreadable path (a directory, not a file, raises IsADirectoryError on read) -- discarded.
     unreadable_path = tmp_path / "a-directory"
     unreadable_path.mkdir()
-    assert load_cache(unreadable_path, replay_fp).entries == {}
+    unreadable = load_cache(unreadable_path, replay_fp)
+    assert unreadable.entries == {}
+    assert unreadable.rejected is True
 
 
 # --- save_cache: atomic write (D6) ----------------------------------------------------------------

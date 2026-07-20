@@ -74,10 +74,16 @@ def evidence_fingerprint(record: CycleRecord) -> str:
 
 @dataclass(frozen=True)
 class GateCache:
-    """`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome) pair."""
+    """`entries` maps a cycle's cycle_ts to its (evidence_fingerprint, CycleOutcome) pair.
+
+    `rejected` distinguishes, for the caller's invalidated-metric (D8), "empty because no cache
+    file existed" (rejected=False) from "empty because a file existed but load_cache discarded it"
+    (rejected=True: wrong schema_version, a replay_fp mismatch, or an unreadable/unparseable file)
+    -- load_cache's fail-open contract (never raise) is unchanged either way."""
 
     replay_fp: str
     entries: dict[datetime, tuple[str, CycleOutcome]]
+    rejected: bool = False
 
 
 def _outcome_to_dict(outcome: CycleOutcome) -> dict:
@@ -102,16 +108,18 @@ def _outcome_from_dict(d: dict) -> CycleOutcome:
 
 def load_cache(path: Path | None, replay_fp: str) -> GateCache:
     """Read + validate. Returns an EMPTY cache (never raises) on: path None/absent, unreadable,
-    unparseable, wrong schema_version, or a replay_fp mismatch (D3/D5)."""
+    unparseable, wrong schema_version, or a replay_fp mismatch (D3/D5). `rejected` is True only
+    for the latter group -- a path that existed but was discarded -- never for path None/absent."""
     empty = GateCache(replay_fp=replay_fp, entries={})
-    if path is None:
+    if path is None or not path.exists():
         return empty
+    rejected = GateCache(replay_fp=replay_fp, entries={}, rejected=True)
     try:
         payload = json.loads(path.read_text())
         if payload["schema_version"] != CACHE_SCHEMA_VERSION:
-            return empty
+            return rejected
         if payload["replay_fp"] != replay_fp:
-            return empty
+            return rejected
         entries: dict[datetime, tuple[str, CycleOutcome]] = {}
         for item in payload["entries"]:
             outcome = _outcome_from_dict(item)
@@ -119,7 +127,7 @@ def load_cache(path: Path | None, replay_fp: str) -> GateCache:
         return GateCache(replay_fp=replay_fp, entries=entries)
     except Exception as exc:
         logger.warning("load_cache: failed reading %s (%s); falling back to a full replay", path, exc)
-        return empty
+        return rejected
 
 
 def save_cache(path: Path | None, cache: GateCache) -> None:
