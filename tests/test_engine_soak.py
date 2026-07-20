@@ -335,6 +335,45 @@ def test_build_null_on_real_canonical():
     assert sum(ns.cap_breach) == ns.cap_breach_bars
 
 
+def test_build_null_path_selects_builder(monkeypatch, tmp_path):
+    # D5: --path threads to the null build. Stub _load_canonical (no real canonical data needed)
+    # and both builders, and prove 'fast' calls build_crossfreq_system_fast, 'verified' calls
+    # build_crossfreq_system, and an unknown path raises rather than silently defaulting.
+    calls = []
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: ({}, [], {}, []))
+
+    def _stub_result():
+        return types.SimpleNamespace(
+            final_targets={"BTC": [1.0]},
+            governed_net=[],
+            multipliers=[1.0],
+            sleeve_positions={"B": {"BTC": [0.0]}, "A1": {"BTC": [0.0]}, "A2": {"BTC": [0.0]}},
+            cap_breach_bars=0,
+            governor_engaged_bars=0,
+            day_index=[0],
+            n_periods=0,
+        )
+
+    def _mk_fake(tag):
+        def _fake(*a, **kw):
+            calls.append(tag)
+            return _stub_result()
+
+        return _fake
+
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", _mk_fake("fast"))
+    monkeypatch.setattr(soak, "build_crossfreq_system", _mk_fake("verified"))
+
+    soak.build_null(tmp_path, fee=0.006, path="fast")
+    assert calls == ["fast"]
+
+    soak.build_null(tmp_path, fee=0.006, path="verified")
+    assert calls == ["fast", "verified"]
+
+    with pytest.raises(SoakError):
+        soak.build_null(tmp_path, fee=0.006, path="bogus")
+
+
 def test_metric_verdict_consistent_inside_inner_band():
     null = list(range(101))  # 0..100 → p5=5, p10=10, p90=90, p95=95
     assert metric_verdict(50, null, band=0.90).verdict == "consistent"
@@ -549,7 +588,9 @@ def test_selftestreport_void_property():
 
 def test_self_tests_wires_checks_and_computes_void(monkeypatch):
     monkeypatch.setattr(soak, "instrument_self_check", lambda canonical_dir, registry_path, config=None: (True, "instrument ok"))
-    monkeypatch.setattr(soak, "identity_self_check", lambda record, snapshot_reader, tol=1e-6: (False, "identity mismatch"))
+    monkeypatch.setattr(
+        soak, "identity_self_check", lambda record, snapshot_reader, tol=1e-6, path="fast": (False, "identity mismatch")
+    )
     rec = types.SimpleNamespace(cycle_ts=datetime(2026, 7, 16, 0, 0, tzinfo=UTC))
     realized = types.SimpleNamespace(implausible=False, gross=[0.1], chain_ok=True)
     null = types.SimpleNamespace(net_live=[0.01], reconcile_ok=True)
@@ -567,6 +608,32 @@ def test_self_tests_wires_checks_and_computes_void(monkeypatch):
     assert report.reconcile_ok is True  # null.reconcile_ok and realized.chain_ok both True
     assert report.void is True  # identity_ok False alone VOIDs the run
     assert any("identity mismatch" in m for m in report.messages)
+
+
+def test_self_tests_threads_path_to_identity_self_check(monkeypatch):
+    # D5: --path threads to the identity self-check (identity_self_check -> replay_cycle).
+    captured = {}
+    monkeypatch.setattr(soak, "instrument_self_check", lambda canonical_dir, registry_path, config=None: (True, "instrument ok"))
+
+    def _fake_identity(record, snapshot_reader, tol=1e-6, path="fast"):
+        captured["path"] = path
+        return True, "identity ok"
+
+    monkeypatch.setattr(soak, "identity_self_check", _fake_identity)
+    rec = types.SimpleNamespace(cycle_ts=datetime(2026, 7, 16, 0, 0, tzinfo=UTC))
+    realized = types.SimpleNamespace(implausible=False, gross=[0.1], chain_ok=True)
+    null = types.SimpleNamespace(net_live=[0.01], reconcile_ok=True)
+
+    self_tests(
+        [rec],
+        null,
+        realized=realized,
+        canonical_dir=Path("data/ohlc-full"),
+        registry_path=Path("docs/reference/trial-registry.jsonl"),
+        snapshot_reader=None,
+        path="verified",
+    )
+    assert captured["path"] == "verified"
 
 
 def test_self_tests_skips_identity_when_no_records(monkeypatch):
@@ -800,6 +867,105 @@ def test_analyze_soak_seven_gating_keys():
     assert set(a.gating_verdicts) == {"gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"}
 
 
+# --- spec 00061: dual-null reconciliation wired into analyze_soak --------------------------------------
+
+
+def test_analyze_soak_null_mode_windows_reproduces_todays_verdict():
+    # The D4 regression guard: null_mode="windows" must reproduce the EXACT verdict this fixture
+    # produced before this iteration (test_analyze_soak_planted_consistent), byte-for-byte, and
+    # must never populate dual_verdicts -- a single null selected means no reconciliation (D4).
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, null_mode="windows")
+    assert a.L == 6
+    assert a.gating_verdicts["gross"].verdict == "consistent"
+    assert a.dual_verdicts == {}
+
+
+def test_analyze_soak_null_mode_windows_matches_both_modes_gating_verdicts():
+    # D2: the windowed null's numeric stats/verdict are NEVER touched by reconciliation -- "both"
+    # mode must produce the IDENTICAL gating_verdicts/pnl_verdict as "windows" mode, only adding
+    # dual_verdicts on top.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    a_windows = analyze_soak(realized, null, band=0.90, null_mode="windows")
+    a_both = analyze_soak(realized, null, band=0.90, null_mode="both")
+    for m in a_windows.gating_verdicts:
+        assert a_windows.gating_verdicts[m] == a_both.gating_verdicts[m]
+    assert a_windows.pnl_verdict == a_both.pnl_verdict
+    assert a_windows.dual_verdicts == {}
+
+
+def test_analyze_soak_null_mode_block_bootstrap_uses_only_bootstrap():
+    # D4: a single null selected means no reconciliation -- dual_verdicts stays empty even though
+    # null_mode is not "windows".
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, null_mode="block-bootstrap")
+    assert a.dual_verdicts == {}
+    assert a.gating_verdicts["gross"].verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+
+
+def test_analyze_soak_invalid_null_mode_raises():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 100
+    with pytest.raises(SoakError):
+        analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 100), null_mode="bogus")
+
+
+def test_analyze_soak_both_nulls_agree_on_planted_consistent_no_spurious_fragility():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, null_mode="both")
+    assert a.gating_verdicts["gross"].verdict == "consistent"
+    assert a.dual_verdicts["gross"].verdict == "consistent"
+    assert a.dual_verdicts["gross"].disclosure == ""
+
+
+def test_analyze_soak_both_nulls_agree_on_planted_inconsistent_no_spurious_fragility():
+    rw = [{"BTC": 1.0, "ETH": 1.0}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * (k % 5), "ETH": 0.15} for k in range(200)]
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, null_mode="both")
+    assert a.gating_verdicts["gross"].verdict == "inconsistent"
+    assert a.dual_verdicts["gross"].verdict != "indeterminate (instrument-fragile)"
+
+
+def test_analyze_soak_fragility_flag_fires_and_requires_reconciliation(monkeypatch):
+    # Force EVERY windowed_null call to return a null centered low (p95=95) and EVERY
+    # block_bootstrap_null call to return a null centered on live=200 (inner band ~[160,240]): the
+    # SAME live value reads "inconsistent" against the windowed null and "consistent" against the
+    # bootstrap null -- an opposite-extremes split that MUST reconcile to
+    # "indeterminate (instrument-fragile)" (D1). This fails the moment analyze_soak stops calling
+    # reconcile_verdicts: the windowed verdict alone is "inconsistent", never this label.
+    monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
+    monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
+
+    rw = [{"BTC": 200.0}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, null_mode="both")
+
+    assert a.gating_verdicts["gross"].verdict == "inconsistent"  # D2: numeric stats/verdict stay windowed's
+    assert a.dual_verdicts["gross"].verdict == "indeterminate (instrument-fragile)"
+    assert a.dual_verdicts["gross"].disclosure != ""
+    assert any("gross" in d and "opposite" in d for d in a.disclosures)
+
+
+def test_analyze_soak_null_mode_both_deterministic_across_runs():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    a1 = analyze_soak(realized, null, band=0.90, null_mode="both")
+    a2 = analyze_soak(realized, null, band=0.90, null_mode="both")
+    assert a1.dual_verdicts == a2.dual_verdicts
+    for m in a1.gating_verdicts:
+        assert a1.gating_verdicts[m] == a2.gating_verdicts[m]
+
+
 def test_summarize_panel_counts_only_discriminating():
     null = list(range(101))
     real_verdict = metric_verdict(50, null)  # consistent
@@ -816,6 +982,37 @@ def test_summarize_panel_counts_only_discriminating():
     s = summarize_panel(verdicts, band=0.90)
     assert s.n_metrics == 5
     assert math.isclose(s.expected_by_chance, 5 * 0.10)
+
+
+# --- spec 00061 D3: summarize_panel indeterminate-metric multiplicity ----------------------------------
+
+
+def test_summarize_panel_indeterminate_counts_in_n_metrics_not_outside():
+    # hhi's own null-vs-null verdict is "inconsistent", but it reconciled to an opposite-extremes
+    # split (indeterminate) -- D3 says it must still count toward n_metrics (both nulls DID
+    # discriminate) but must NEVER inflate n_outside (there is no agreed finding), and it gets its
+    # own line naming the count.
+    null = list(range(101))
+    consistent_v = metric_verdict(50, null)
+    inconsistent_v = metric_verdict(200, null)
+    verdicts = {"gross": consistent_v, "net": consistent_v, "hhi": inconsistent_v}
+    dual = {"hhi": reconcile_verdicts("inconsistent", "consistent")}
+
+    s = summarize_panel(verdicts, band=0.90, dual_verdicts=dual)
+
+    assert s.n_metrics == 3
+    assert s.n_outside == 0  # hhi's raw "inconsistent" must NOT count once reconciled to indeterminate
+    assert s.n_indeterminate == 1
+    assert "1 of 3" in s.indeterminate_line
+    assert "indeterminate" in s.indeterminate_line
+
+
+def test_summarize_panel_no_indeterminate_line_when_none_fires():
+    null = list(range(101))
+    v = metric_verdict(50, null)
+    s = summarize_panel({"gross": v, "net": v}, band=0.90)
+    assert s.n_indeterminate == 0
+    assert s.indeterminate_line == ""
 
 
 def test_analyze_soak_degrades_without_internals():
@@ -1167,6 +1364,61 @@ def test_honesty_footer_frames_structural_conformance_not_edge():
     assert "structural-conformance" in text.lower()
 
 
+# --- spec 00061: render_report dual-null provenance, secondary column, indeterminate line --------------
+
+
+def test_render_report_states_null_mode_and_path_and_secondary_column():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="both")
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "ZERO out-of-time holdout" in text
+    assert "null mode: both" in low
+    assert "builder path: fast" in low
+    assert "secondary" in low  # the new column header
+
+
+def test_render_report_null_windows_states_mode_without_reconciliation():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="windows")
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="windows", path="verified")
+
+    assert "null mode: windows" in text.lower()
+    assert "builder path: verified" in text.lower()
+
+
+def test_render_report_shows_indeterminate_row_and_summary_line(monkeypatch):
+    monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
+    monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
+    rw = [{"BTC": 200.0}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="both")
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    assert "indeterminate (instrument-fragile)" in text
+    assert analysis.panel.indeterminate_line
+    assert analysis.panel.indeterminate_line in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
 def test_json_context_carries_reference_note_against_global_scalars():
     # Final review Fix 4 (D9 caveat): context.null_gov_rate/null_cap_rate are the null's GLOBAL
     # rates -- exactly what spec D9 warns must never be used as the comparison reference (the
@@ -1187,6 +1439,44 @@ def test_json_context_carries_reference_note_against_global_scalars():
     assert "global" in note
     assert "not" in note and "reference" in note
     assert "windowed" in note
+
+
+def test_json_payload_carries_null_mode_path_and_dual_verdicts():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="both")
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(
+        analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC), null_mode="both", path="fast"
+    )
+
+    assert payload["null_mode"] == "both"
+    assert payload["path"] == "fast"
+    dual = payload["gating_verdicts"]["gross"]["dual"]
+    assert dual is not None
+    assert dual["verdict"] == "consistent"
+    assert dual["primary"] == "consistent"
+    assert dual["secondary"] in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+
+
+def test_json_payload_dual_none_in_windows_only_mode():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="windows")
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(
+        analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC), null_mode="windows", path="fast"
+    )
+
+    assert payload["null_mode"] == "windows"
+    assert all(v["dual"] is None for v in payload["gating_verdicts"].values())
+    assert payload["pnl"]["pnl_verdict"]["dual"] is None
 
 
 # --- _verdict_payload (Fix 4: degraded verdict JSON, zero vs null) --------------------------------------
@@ -1211,6 +1501,21 @@ def test_verdict_payload_nulls_numerics_only_when_internals_unavailable():
     # internals-derived metrics can carry an unavailable-rebuild placeholder.
     d_other = soak._verdict_payload("gross", placeholder_na, internals_available=False)
     assert d_other["live"] == 0.0
+
+
+def test_verdict_payload_carries_dual_when_given():
+    v = metric_verdict(50, list(range(101)), band=0.90)
+    d_no_dual = soak._verdict_payload("gross", v, internals_available=True)
+    assert d_no_dual["dual"] is None
+
+    dual = reconcile_verdicts("consistent", "weakly-consistent")
+    d_with_dual = soak._verdict_payload("gross", v, internals_available=True, dual=dual)
+    assert d_with_dual["dual"] == {
+        "verdict": "consistent",
+        "primary": "consistent",
+        "secondary": "weakly-consistent",
+        "disclosure": dual.disclosure,
+    }
 
 
 # --- realized_internals --------------------------------------------------------------------------------

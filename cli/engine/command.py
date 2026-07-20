@@ -582,6 +582,19 @@ def soak_check(
         0.90, "--band", help="Two-sided outer band width used to judge each structural metric against its null distribution."
     ),
     floor: int = typer.Option(30, "--floor", help="Minimum scored realized bars required before any metric verdict is attempted."),
+    null_mode: str = typer.Option(
+        "both",
+        "--null",
+        help="Backtest null construction(s) to judge each metric against: 'windows' (overlapping-window "
+        "reference), 'block-bootstrap' (an independently resampled reference), or 'both' (judge under each "
+        "and reconcile the two verdicts, surfacing any disagreement between them).",
+    ),
+    path: str = typer.Option(
+        "fast",
+        "--path",
+        help="Builder path used to rebuild the backtest null and its identity self-check: 'fast' (default) or "
+        "'verified' (the much slower daily oracle spot replay, for re-reading a suspicious result without editing code).",
+    ),
     json_out: Optional[Path] = typer.Option(
         None, "--json", help="Write the full report payload as JSON to this path (atomic write)."
     ),
@@ -589,6 +602,11 @@ def soak_check(
     """Compare the realized shadow-engine journal against its backtest null and render a soak-check
     report -- read-only decision-support, never the concordance gate or a stand-alone validation
     exercise, and it consumes no holdout budget."""
+    if null_mode not in ("windows", "block-bootstrap", "both"):
+        raise _abort(f"--null must be 'windows', 'block-bootstrap', or 'both', got {null_mode!r}")
+    if path not in ("fast", "verified"):
+        raise _abort(f"--path must be 'fast' or 'verified', got {path!r}")
+
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
     store_root = store_dir if store_dir is not None else config.store_dir
@@ -602,6 +620,8 @@ def soak_check(
             fee=fee_per_side,
             band=band,
             floor=floor,
+            null_mode=null_mode,
+            path=path,
         )
     except EngineError as exc:
         raise _abort(str(exc)) from exc
