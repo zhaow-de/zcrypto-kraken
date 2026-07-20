@@ -75,13 +75,15 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `docker inspect <container>` reconciles them: .Config.Image is what compose asked for (the digest),
 # .Image is the local ID, and inspecting that ID lists RepoTags + RepoDigests.
 #
-# For THIS pin, the tag is the only thing that names the code: 91f2c80f carries just
-# org.opencontainers.image.source, because it was built from 11d2cb1b — BEFORE the same branch that
-# wrote this comment taught the build to stamp org.opencontainers.image.revision + polars-runtime
-# (.github/workflows/capture-image.yml). So the first self-describing pin will be the first image
-# built after that lands on develop; until then, decode the tag. Said plainly because the draft of
-# this very block claimed the label was already there — in the file whose whole job is to stop that.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:91f2c80f61be88328577f6b85ddcc5141b5342d4a89b9af45dbc5cbe984549f1
+# THE FIRST SELF-DESCRIBING PIN — the prediction the previous comment made has come true. This
+# digest carries `org.opencontainers.image.revision = a731e54b…` (the merge of PR #165) and
+# `de.zhaow.zcrypto.polars-runtime = compat`, both read back off the registry before pinning, so the
+# pin no longer relies on decoding a tag. Verify a future pin the same way rather than trusting the
+# tag: fetch the manifest's config blob and read those two labels. `-compat` is not optional — this
+# Atom Goldmont has no AVX, and the default build will not run on it.
+# Previous pin: 91f2c80f… (built from 11d2cb1b, 2026-07-17), which predates `gate-export --cache`
+# entirely — which is why enabling the flag REQUIRED this re-pin rather than being a script edit.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:dfb80f482b9d5a7590cb9394e9d5937e0f30637550ee4902d58400161b4fdaa8
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
 # trap class the committed pin kills.
 nas_alloy_image: grafana/alloy@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b

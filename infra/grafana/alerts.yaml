@@ -234,10 +234,11 @@ rules:
             # long before the evidence is meaningfully stale.
             - evaluator: {type: gt, params: [259200]}
     # OK, NOT Alerting -- deliberately unlike its zcrypto-gate siblings. gate-export emits this
-    # metric only when --cache is active and non-empty, and --cache is NOT deployed today (T0069's
-    # remaining attended step), so the series is simply absent. Alerting on no-data would page
-    # continuously for a feature that is not switched on. "The exporter vanished entirely" is
-    # already owned by zcrypto-gate-exporter-stale above, so nothing is lost by this choice.
+    # metric only when --cache is active and non-empty. It IS deployed on the NAS as of 2026-07-20,
+    # so the series normally exists there; OK still stands because the metric is legitimately absent
+    # whenever the cache is off (any other invocation, or the first run after a container recreate
+    # discards the ephemeral cache), and paging on those is noise. "The exporter vanished entirely"
+    # is already owned by zcrypto-gate-exporter-stale above, so nothing is lost by this choice.
     noDataState: OK
     execErrState: Alerting
     # 15m rather than the 5m its zcrypto-gate siblings use: the underlying value is monotonic and the

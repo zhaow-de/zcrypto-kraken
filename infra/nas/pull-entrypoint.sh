@@ -97,7 +97,18 @@ while true; do
 		# textfile-collector metric (spec 00042/Task 1's `zcrypto engine gate-export`);
 		# best-effort, same as the pulls above -- a failure here is logged but never exits the
 		# loop.
+		# --cache bounds the per-run cost to the journal's NEW cycles instead of replaying all of
+		# them (spec 00060): ~10 min -> ~1 min on this Atom, and FLAT as the journal grows rather
+		# than climbing. It is safe to enable only because spec 00062 added rotating
+		# re-verification -- each run still force-replays a ~1/24 slice, so every parquet is
+		# re-hashed about daily. Without that, a cache hit would skip the ONLY re-read of the
+		# journal's bytes (this pull uses --no-verify and delegates verification to the replay).
+		# The path is deliberately INSIDE the container, never under /archive: that share is
+		# reachable by both hosts, which run different polars runtimes that replay_fingerprint
+		# does not digest, so a shared cache file would be mutually poisonable (00062 D9). Cost of
+		# ephemerality: one cold rebuild after each container recreate.
 		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
+				--cache /tmp/gate-cache.json \
 				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
 			log ERROR "gate-export failed (dest=$JOURNAL_DEST), continuing"
 		fi
