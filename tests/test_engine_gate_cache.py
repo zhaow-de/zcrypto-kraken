@@ -194,9 +194,12 @@ def test_evidence_fingerprint_pins_pair_via_order_preserving_stale_hit(tmp_path)
     # exactly what fooled the first mutation audit into ruling pair/grid "equivalent mutants" (see
     # docs/research/14.phase6-gate-guarantee-mutation-audits.md G9-G10) -- one non-distinguishing
     # probe is not evidence an "equivalent mutant" ruling generalizes. "ETH" -> "FTH" is
-    # order-PRESERVING: FTH still sorts after "BTC" (the only other pair present) into the same slot
-    # "ETH" held, so only tampering `pair` itself -- never the reordering side-channel -- can move
-    # this test. `path` is deliberately left at its pristine "/snap/ETH/240.parquet" value
+    # order-PRESERVING: FTH still sorts after the UNTAMPERED "ETH"/1440 entry, into the same slot
+    # "ETH" held (canonical order stays [1, 0, 3, 2]), so only tampering `pair` itself -- never the
+    # reordering side-channel -- can move this test. NOT "sorts after BTC": ETH/1440 is also present,
+    # and a tamper chosen by that weaker rule (e.g. "CTH") reorders to [1, 0, 2, 3] and is MASKED --
+    # the digest would then move from the reordering alone, passing even with `pair` dropped entirely.
+    # `path` is deliberately left at its pristine "/snap/ETH/240.parquet" value
     # (dataclasses.replace, not _entry()) so this test isolates `pair` from finding 10's `path` pin
     # below.
     pristine = _record()
