@@ -21,12 +21,50 @@ The audit also named a pattern behind several of the findings (1 and 2 below; ot
 
 Full audit, committed as durable evidence: `docs/research/14.phase6-gate-guarantee-mutation-audits.md` (Audit A; 2026-07-20, Opus 4.8; 60 mutations, 44 detected, 16 undetected raw → **8 genuine gaps** after triaging equivalent and safe-direction mutants, each triaged individually via a written exploitability script rather than assumed).
 
-1. **(HIGH) The four original hashed modules are pinned by nothing.** `crossfreq_system.py`, `crossfreq.py`, `limits.py` and `concordance.py` can each be silently deleted from `_REPLAY_CODE_PATHS` with 22/22 still passing. The six modules *added at review* are pinned by an explicit membership assertion; the four that were there first are not. `concordance.py` holds `replay_cycle`, `compare_targets` and `evaluate_gate` — the entire verdict pipeline.
-2. **(HIGH) `first_ts` and `last_ts` are droppable from the evidence key**, and dropping either was confirmed empirically to yield a stale cache hit on a realistic tamper. They sit in the *same `or` clause of the same guard* (`concordance.py:118`) as `n_bars` — i.e. the identical tamper class to the review hole already fixed once, left unpinned for its siblings.
-3. **(MEDIUM) `SnapshotEntry.path` is droppable and exploitable** — repoint one entry at another pair's parquet and the stale entry is served.
-4. **(MEDIUM) A structurally-valid cache file with one malformed entry inside `entries[]` can serve its good entries** instead of invalidating wholesale. Every existing fail-open test corrupts the file *before* the entry loop, so this is the single path where "discard the file" and "skip the bad row" diverge — and it is untested.
+_(Audit A's original four, kept for the record and **superseded by the 19 below** — the re-audit found each of these still real, and twelve more. Two of Audit A's not-gap rulings were wrong.)_
 
-**Caveat on this audit's completeness — its numbers may UNDER-report.** The companion concordance audit later established that CPython validates a cached `.pyc` on `(source mtime-in-seconds, source size)`, so a same-size mutation rewritten inside one wall-clock second silently reuses the previous run's bytecode. This audit ran without that control, and several of its mutations are same-size (a dropped tuple entry, a swapped field name). The direction of the risk matters: a stale-bytecode run makes a mutant look **DETECTED** when the test never saw it, so the 8 gaps below are real (each was separately demonstrated by an exploitability script, which does not depend on the test outcome) but the 44 "detected" verdicts are not all trustworthy. **Re-run this audit with `PYTHONDONTWRITEBYTECODE=1` + cache purge + a baseline-green guard before treating its clean verdicts as coverage.**
+> 1. **(HIGH) The four original hashed modules are pinned by nothing.** `crossfreq_system.py`, `crossfreq.py`, `limits.py` and `concordance.py` can each be silently deleted from `_REPLAY_CODE_PATHS` with 22/22 still passing. The six modules *added at review* are pinned by an explicit membership assertion; the four that were there first are not. `concordance.py` holds `replay_cycle`, `compare_targets` and `evaluate_gate` — the entire verdict pipeline.
+> 2. **(HIGH) `first_ts` and `last_ts` are droppable from the evidence key**, and dropping either was confirmed empirically to yield a stale cache hit on a realistic tamper. They sit in the *same `or` clause of the same guard* (`concordance.py:118`) as `n_bars` — i.e. the identical tamper class to the review hole already fixed once, left unpinned for its siblings.
+> 3. **(MEDIUM) `SnapshotEntry.path` is droppable and exploitable** — repoint one entry at another pair's parquet and the stale entry is served.
+> 4. **(MEDIUM) A structurally-valid cache file with one malformed entry inside `entries[]` can serve its good entries** instead of invalidating wholesale. Every existing fail-open test corrupts the file *before* the entry loop, so this is the single path where "discard the file" and "skip the bad row" diverge — and it is untested.
+
+**RE-AUDITED 2026-07-20 under bytecode control — the scope is 19 gaps, not 8, and the reason is not what this topic predicted.**
+
+The caveat above expected stale bytecode to have inflated Audit A's "detected" count. **It had not: zero false detections.** Every Audit A mutation re-executed under `PYTHONDONTWRITEBYTECODE=1` came back detected, so its 44 clean verdicts stand. The premise was right that the count was understated; the mechanism was wrong.
+
+The real cause is **triage error**. Audit A dismissed `pair` and `grid` as equivalent mutants — "self-healing, the sort key masks the tamper" — which holds only for an *order-changing* tamper. An order-**preserving** rename (`ETH`→`FTH`, `1440`→`1441`) defeats the masking and yields a stale PASS end-to-end. Both are HIGH, and both were recorded here as not-gaps.
+
+*Why this module and not the concordance one:* Audit A's mutations were dominated by **line deletions**, which change source size and so invalidate the `.pyc` on the size validator regardless of mtime. Same-size in-place edits — the profile that bit the concordance audit — were rare here.
+
+**The methodological lesson, which generalises past this module: an equivalent-mutant ruling is a UNIVERSAL claim. One non-distinguishing input is not evidence for it.** Audit A tested one input per ruling and generalised; this run constructed a distinguishing input and two rulings collapsed.
+
+Re-audit: 80 mutations, 53 detected, 27 survivors, **19 genuine gaps** after triage — each proven by a written exploitability probe rather than a test outcome. Eight survivors are genuinely equivalent or safe-direction, including an independent reproduction of one Audit A ruling that does hold.
+
+**No live defect.** Every finding is coverage; the code behaves correctly today.
+
+### The 19 gaps
+
+1. **(HIGH)** `crossfreq_system.py` droppable from `_REPLAY_CODE_PATHS` — the fingerprint is unchanged after a real edit to it.
+2. **(HIGH)** `crossfreq.py` droppable — same.
+3. **(HIGH)** `limits.py` droppable — same.
+4. **(HIGH)** `concordance.py` droppable — the whole verdict pipeline; the cache survives edits to it.
+5. **(HIGH)** `first_ts` droppable from the evidence key — stale PASS proven end-to-end.
+6. **(HIGH)** `last_ts` droppable — stale PASS proven end-to-end.
+7. **(HIGH)** `pair` droppable — **stale PASS proven**; Audit A mis-triaged this as equivalent.
+8. **(HIGH)** `grid` droppable — **stale PASS proven**; same mis-triage.
+9. **(HIGH)** An unparseable `cycle-*.json` scored as a clean pass — **flips a 14-day journal from `gate_met=False` to `gate_met=True`** with `last_failure=None`. A corrupt journal file becoming a *pass* on the artifact that authorises real-money trading.
+10. **(MEDIUM)** `SnapshotEntry.path` droppable — stale PASS on a repointed parquet.
+11. **(MEDIUM)** One malformed row in an otherwise valid cache file serves the good rows instead of invalidating wholesale.
+12. **(MED-HIGH)** `mismatches` can stop counting compare failures — `zcrypto_gate_mismatch_total` reads 0 during a real mismatch.
+13. **(MEDIUM)** `replayed_ok` can count a failed cycle as OK.
+14. **(MEDIUM)** A **lower** `schema_version` cache is accepted, and the existing v1 test passes for the wrong reason — a `KeyError` fallback, not the schema gate.
+15. **(MEDIUM)** `load_cache` can be made to raise: D5's "never raises" is unpinned except for `OSError`.
+16. **(LOW-MED)** `save_cache` can be made to raise — the `TypeError` arm is reachable via `sorted()` on mixed keys.
+17. **(LOW-MED)** A vanished record's cache entry is retained forever, permanently poisoning `oldest_verification_age`.
+18. **(LOW-MED)** The fingerprint's coupling to `_EVALUATE_JOURNAL_REPLAY_PATH` is unpinned.
+19. **(LOW-MED)** `EngineJournalError` is misattributable as `mismatch` — `_replay_one`'s classifier is not covered by the attribution pattern Audit A called airtight.
+
+Full re-audit: `scratchpad/t75-reaudit.md` (to be committed with the fix, as `docs/research/` evidence).
 
 **Design-level question, flagged rather than decided** (it would change ratified spec `00060` D3, which fixes the list at ten modules): `cli/engine/command.py` (`_replay_one`'s exception→verdict mapping — the sole classifier — and `_snapshot_reader`) and `cli/ohlc/dataset.py` (`read_parquet`, which feeds both the content hash and the builder) determine a replay's verdict yet are **not** hashed. Same class as the two under-invalidation holes already found at review.
 
