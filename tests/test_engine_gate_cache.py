@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -425,18 +426,29 @@ def test_replay_code_paths_contains_every_previously_enumerated_module():
 
 
 def test_replay_code_paths_contains_the_re_export_layers():
-    # Test-list 3 / D5 -- the modules hand-enumeration MISSED, and the reason 00065 exists.
-    # cli/engine/concordance.py:24 does `from cli.portfolio import build_crossfreq_system_fast`, so
-    # every replay binds the fast builder THROUGH cli/portfolio/__init__.py; rebinding it there
-    # changed every verdict while leaving the pre-00065 fingerprint byte-identical. These four are
-    # reachable only by resolving `from cli.pkg import X` to the package __init__ as well as to
-    # cli/pkg/X.py -- drop that half of D5 and this test is what fails.
+    # Test-list 3 / D5+D10 -- specific modules hand-enumeration MISSED. NOT an exhaustive pin on
+    # the re-export layers: that job belongs to
+    # test_closure_covers_every_module_the_replay_roots_actually_execute, which enumerates nothing.
+    # This list is regression-anchoring for the two SEPARATE ways a package __init__ enters the
+    # closure, which fail independently:
+    #   - D5 (the first four): `from cli.pkg import X` resolving to the package __init__ as well as
+    #     to cli/pkg/X.py. cli/engine/concordance.py:24 binds the fast builder THROUGH
+    #     cli/portfolio/__init__.py; rebinding it there changed every verdict while leaving the
+    #     pre-00065 fingerprint byte-identical.
+    #   - D10 (the last two): ANCESTOR packages, which execute on import of any leaf beneath them
+    #     and which the first cut of the walk omitted entirely -- exploitable the same way, at a
+    #     byte-identical fingerprint, with the whole suite green.
+    # Both were added after a pin that named only the modules someone had already thought of.
     covered = set(gate_cache._replay_code_paths())
     for rel in (
         ("cli", "portfolio", "__init__.py"),
         ("cli", "risk", "__init__.py"),
         ("cli", "alpha", "__init__.py"),
         ("cli", "engine", "errors.py"),
+        # D10 ancestors -- on the same replay import path as the four above, and absent from both
+        # the closure and this test until the ancestor gap was found at review.
+        ("cli", "engine", "__init__.py"),
+        ("cli", "ohlc", "__init__.py"),
     ):
         assert gate_cache._REPO_ROOT.joinpath(*rel) in covered, f"{'/'.join(rel)} is not covered"
 
@@ -1015,3 +1027,44 @@ def test_oldest_verification_age():
     )
     age = oldest_verification_age(cache, now)
     assert age == (now - oldest_verified_at).total_seconds()
+
+
+def test_closure_covers_every_module_the_replay_roots_actually_execute():
+    """THE STRUCTURAL PIN (spec 00065 D10) -- the only test here that cannot go stale, because it
+    enumerates nothing. Every other coverage test names the modules it expects, so it can only ever
+    catch a gap someone already thought of; this one asks Python what actually executes and demands
+    the closure be a superset.
+
+    It exists because the first cut of the closure walk failed it. `_resolve_module` mapped a dotted
+    name to the leaf file only, but importing `cli.engine.command` EXECUTES `cli/__init__.py` and
+    `cli/engine/__init__.py` first. Six modules ran on every replay while unhashed, and it was
+    exploitable exactly like the hand-enumerated list before it: rebinding
+    `build_crossfreq_system_fast` in `cli/engine/__init__.py` made every replay run the VERIFIED
+    daily-oracle builder -- a different verdict -- at a byte-identical fingerprint, with all 64
+    tests in this file and its sibling passing. That is the THIRD round of the same
+    under-invalidation defect (hand list -> D9's two files -> ancestor packages), and enumerating
+    pins missed all three.
+
+    Sub-process, not this one: pytest has already imported far more of `cli` than a replay does, so
+    an in-process `sys.modules` read would silently pass by over-counting.
+
+    Over-inclusion in the other direction is fine and deliberately NOT asserted (D3/D5): covering a
+    module a given run happens not to execute costs one rebuild; missing one corrupts gate
+    evidence."""
+    probe = (
+        "import sys, json, pathlib\n"
+        "import cli.engine.concordance, cli.engine.command, cli.ohlc.dataset\n"
+        "print(json.dumps(sorted({str(pathlib.Path(m.__file__).resolve())\n"
+        "    for n, m in sys.modules.items()\n"
+        "    if n.split('.')[0] == 'cli' and getattr(m, '__file__', None)})))"
+    )
+    repo_root = gate_cache._REPO_ROOT
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, cwd=repo_root, check=True)
+    executed = {pathlib.Path(p) for p in json.loads(result.stdout)}
+    covered = {p.resolve() for p in gate_cache._replay_code_paths()}
+
+    missing = sorted(str(p.relative_to(repo_root)) for p in executed - covered)
+    assert not missing, (
+        "these modules execute on every replay but are NOT digested into replay_fingerprint, so "
+        f"editing one serves a stale cached verdict at an unchanged fingerprint: {missing}"
+    )

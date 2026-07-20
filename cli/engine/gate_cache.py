@@ -86,7 +86,19 @@ def _resolve_module(dotted: str, repo_root: Path) -> list[Path]:
     if parts[0] != "cli":
         return []
     base = repo_root.joinpath(*parts)
-    return [candidate for candidate in (base / "__init__.py", base.with_suffix(".py")) if candidate.is_file()]
+    found = [candidate for candidate in (base / "__init__.py", base.with_suffix(".py")) if candidate.is_file()]
+    # ANCESTOR PACKAGES (spec 00065 D10, added at review). Importing `cli.engine.command` EXECUTES
+    # `cli/__init__.py` and `cli/engine/__init__.py` first -- unconditionally, by Python's import
+    # machinery -- so their bytes determine a replay's result as surely as the leaf's do. Omitting
+    # them was the same under-invalidation hole this iteration exists to close, one package over,
+    # and it was exploitable: rebinding build_crossfreq_system_fast in `cli/engine/__init__.py`
+    # changed every verdict at a BYTE-IDENTICAL fingerprint with the whole suite green. These
+    # __init__ files are not inert -- `cli/engine/__init__.py` carries a live PEP 562 `__getattr__`.
+    for depth in range(1, len(parts)):
+        ancestor = repo_root.joinpath(*parts[:depth], "__init__.py")
+        if ancestor.is_file():
+            found.append(ancestor)
+    return found
 
 
 def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
@@ -96,8 +108,13 @@ def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
     imports" is survivable, swallowing it into "not covered" is the exact under-invalidation this
     walker exists to close. Traversal loss is bounded: a file that does not parse does not import.
 
-    Only ABSOLUTE `cli.*` imports are traversed. `cli/` contains no relative imports (verified: 0 of
-    54 modules in the closure), so this loses no edge today -- but a relative import added later
+    TRAVERSAL LIMITS, stated in full because presenting one of them as the only one is how the
+    ancestor-package gap stayed hidden: (1) only ABSOLUTE `cli.*` imports are traversed -- `cli/`
+    contains none of the relative kind (verified: 0 of 134 modules), so no edge is lost today;
+    (2) dynamic imports (`importlib`, `__import__`, a PEP 562 `__getattr__`) are invisible to a
+    static walk -- `cli/engine/__init__.py` has such a `__getattr__`, which is one reason the
+    superset test matters; (3) ancestor packages are handled explicitly in `_resolve_module`
+    rather than falling out of the walk. A relative import added later
     would not be followed."""
     try:
         tree = ast.parse(module_path.read_bytes())
@@ -123,10 +140,17 @@ def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
 
 def _replay_code_paths() -> tuple[Path, ...]:
     """The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the modules that
-    determine a replay's result, DERIVED rather than enumerated. Replaces the hand-maintained
-    twelve-path list, which covered 12 of these 54 modules (~22%) and was wrong three separate
-    times; the re-export layers it missed (`cli/portfolio/__init__.py` above all) are how every
-    replay binds `build_crossfreq_system_fast`.
+    modules that determine a replay's result, DERIVED rather than enumerated. Replaces the
+    hand-maintained twelve-path list, which covered 12 of these 61 modules (~20%) and was wrong
+    three separate times; the re-export layers it missed (`cli/portfolio/__init__.py` above all)
+    are how every replay binds `build_crossfreq_system_fast`.
+
+    Coverage is MEASURED, not asserted -- the same phrase ("the modules that determine a replay's
+    result") is what spec 00060 D3 claimed for the twelve-path list while it covered a fifth of
+    them, so it is worth nothing without a check. `test_closure_covers_every_module_the_replay_roots_actually_execute`
+    imports the roots in a clean subprocess and asserts this closure is a superset of what actually
+    ran: 61 covered, 60 executed, 0 executed-but-uncovered, 1 harmless over-inclusion
+    (`cli/engine/node.py`). That test is the claim; this docstring only reports it.
 
     A STATIC walk (D2), never `sys.modules`: a runtime view would make the fingerprint depend on
     which CLI subcommand is running, since a different entry point imports a different set --
@@ -165,9 +189,12 @@ def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), 
     nothing; `sys.version_info[:2]` is the digested value.
 
     Since spec 00065 the covered set is `_replay_code_paths()` -- the transitive `cli.*` import
-    closure of `_REPLAY_ROOTS`, not a hand-maintained list -- so an edit anywhere in any module
-    reachable from a replay entry point invalidates the cache, including parts of those modules
-    unrelated to replay. That cost is accepted, and is the same trade as before, only wider:
+    closure of `_REPLAY_ROOTS`, not a hand-maintained list -- so an edit to any module that
+    executes on a replay invalidates the cache, including parts of those modules unrelated to
+    replay. "Executes", not merely "is imported by": the first cut of this walk covered only leaf
+    modules, leaving the four ancestor `__init__.py` files running unhashed on every replay, and
+    that gap was exploitable at a byte-identical fingerprint. The superset test named above is what
+    makes this sentence checkable rather than aspirational. That cost is accepted, and is the same trade as before, only wider:
     over-invalidation costs one rebuild, under-invalidation silently corrupts gate evidence
     (T0074). Whole files are digested rather than the verdict-path code extracted, because moving
     code onto and off the verdict path is riskier than the cache efficiency that would buy."""

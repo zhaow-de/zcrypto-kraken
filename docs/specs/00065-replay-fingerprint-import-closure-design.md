@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace `_REPLAY_CODE_PATHS`' hand-enumerated module list with the **transitive `cli.*` import closure** of the replay entry points, so spec `00060` D3's invariant — *"the modules that determine a replay's result"* — becomes true by construction instead of by whoever last remembered to add a file.
+Replace `_REPLAY_CODE_PATHS`' hand-enumerated module list with the **transitive `cli.*` import closure** of the replay entry points, so spec `00060` D3's invariant — *"the modules that determine a replay's result"* — becomes **checkable** instead of resting on whoever last remembered to add a file. Not "true by construction": the first implementation of this very spec shipped a closure that missed six executed modules (D10). What makes the invariant hold is D11's superset test, which measures it every run; the closure is the implementation, the test is the guarantee.
 
 ## Why
 
@@ -15,7 +15,7 @@ D3 has claimed that coverage since it was written. It has never held. The list h
 | spec `00064` D9 | +2 (`command.py`, `dataset.py`) | mutation audit |
 | **still missing** | the re-export layers | adversarial verification of D9 |
 
-Measured: the current twelve-module list covers **12 of the 54 modules** that actually determine a replay — about 22%. Each round added the specific file someone noticed and re-asserted the invariant as true. That is the fix-the-instance defect [[T0075]] documents, one level up, and it is why nobody re-checked.
+Measured: the twelve-module list covers **12 of the 61 modules** that actually execute on a replay — about 20%. (The figure was 54/22% before D10's ancestor fix; the count itself has now gone stale three times, which is the argument for D11 in miniature.) Each round added the specific file someone noticed and re-asserted the invariant as true. That is the fix-the-instance defect [[T0075]] documents, one level up, and it is why nobody re-checked.
 
 **The residual hole is proven, not theoretical.** `cli/engine/concordance.py:24` imports `build_crossfreq_system_fast` *from `cli.portfolio`* — through the unhashed `__init__.py`. Rebinding it there:
 
@@ -43,6 +43,12 @@ Byte-identical, suite green, and every replay now runs the *verified* daily-orac
 
 - **D6 — a file that cannot be parsed is still DIGESTED; only its edges are lost.** `imports_of` swallowing a syntax error must not mean the file drops out of coverage. Digest bytes unconditionally; use the AST only to find further edges. The safe direction is: always hash, sometimes fail to traverse. (Traversal loss is bounded — a file that does not parse also does not import.)
 
+- **D10 — ancestor packages are resolved explicitly (ADDED AT REVIEW; the first cut shipped this bug).** Importing `cli.engine.command` *executes* `cli/__init__.py` and `cli/engine/__init__.py` first, unconditionally. The first implementation resolved a dotted name to its leaf file only, so six modules ran on every replay while unhashed — and it was exploitable exactly like the hand-list before it: rebinding `build_crossfreq_system_fast` in `cli/engine/__init__.py` made every replay run the verified daily-oracle builder at a **byte-identical** fingerprint with all 64 tests green. `_resolve_module` now emits every ancestor `__init__.py`. Measured after the fix: 61 covered, 60 executed, **0 executed-but-uncovered**.
+
+  This was the *third* round of one defect — hand list → `00064` D9's two files → ancestor packages — and enumerating pins missed all three. Which is D11's whole point.
+
+- **D11 — coverage is pinned STRUCTURALLY, by a test that enumerates nothing.** `test_closure_covers_every_module_the_replay_roots_actually_execute` imports the three roots in a clean subprocess, reads `sys.modules`, and asserts the closure is a superset of what actually ran. Every other coverage test names its expected modules and can therefore only catch a gap someone already thought of; this one asks Python. **It failed on the first implementation, which is precisely why it is the right pin.** A subprocess is required — pytest has already imported far more of `cli` than a replay does, so an in-process read would pass by over-counting. Over-inclusion in the other direction is deliberately not asserted: covering an unexecuted module costs one rebuild, missing an executed one corrupts gate evidence.
+
 - **D7 — the guarantee is pinned by the exploit, not by the list.** The old exact-tuple pin cannot survive: there is no tuple any more. Its replacement is three pins — (i) the closure **contains** each critical module (the twelve, plus the three re-export layers and `errors.py`); (ii) **the exploit**: rebinding the fast builder in `cli/portfolio/__init__.py` must move the fingerprint — this is the guarantee, the closure is merely today's implementation of it; (iii) **determinism**: the same tree yields the same digest across runs and process restarts. Losing (iii) silently disables the cache.
 
 - **D8 — never raises to the caller.** Spec `00060` D5 stands: a missing or unreadable module degrades this run to the no-cache path, logged, never aborting. Gate evidence outranks the cache.
@@ -53,7 +59,7 @@ Byte-identical, suite green, and every replay now runs the *verified* daily-orac
 
 - **Changing what a replay computes.** Test-and-fingerprint work only; `replay_cycle`, `compare_targets` and `evaluate_gate` are untouched.
 - **Hashing third-party code** — D3.
-- **Optimising the walk.** 58.6 ms measured (54 modules, walk 58.2 + digest 0.4) against a 55–627 s run: 0.1% of the cheapest case. Memoising it is a solution to a problem that does not exist.
+- **Optimising the walk.** ~59 ms measured (61 modules) against a 55–627 s run: 0.1% of the cheapest case. Memoising it is a solution to a problem that does not exist.
 - **Revisiting `00064`'s 19 pins.** They pin `evidence_fingerprint` and the fail-open paths, which this does not touch.
 
 ## Test list (TDD)

@@ -199,7 +199,7 @@ def _evaluate_journal(
 
     `cache_path is None` takes exactly the pre-`--cache` code path: neither `replay_fingerprint` nor
     `evidence_fingerprint` is ever called, so a bug in either (e.g. replay_fingerprint's unguarded
-    `read_bytes()` over twelve source files) can never reach a no-cache caller like `report` -- D1's
+    `read_bytes()` over the ~60-module import closure) can never reach a no-cache caller like `report` -- D1's
     byte-for-byte promise, structurally. When `cache_path` is set but `replay_fingerprint()` itself
     raises OSError, that's caught here and degrades THIS RUN to the same no-cache path (logged, never
     aborted) -- a cache is an optimization, gate evidence is not. Same principle per record for
