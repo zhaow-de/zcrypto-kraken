@@ -252,6 +252,67 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-alloy-docker-sd-wedged
+    title: "Alloy · docker service-discovery wedged"
+    ruleGroup: zcrypto-nas
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    # T0048 defect 1. discovery.docker can freeze PERMANENTLY: Prometheus's Docker SD attaches a
+    # request timeout only for http/https hosts, so a unix:// socket gets a bare client with no
+    # timeout at any layer, and the refresh loop has no per-call deadline. One stalled Docker API
+    # call then wedges discovery forever -- the target list stays frozen holding the DEAD container
+    # id and lacking the new one, and loki.source.docker faithfully tails what it was last told.
+    #
+    # THIS COUNTER IS THE ONLY POSITIVE SIGNAL. A hang is not an error, so nothing is logged, the
+    # component stays healthy, and every other metric keeps flowing. Before this rule the failure
+    # surfaced only when the logs dead-man fired ~3h later, if at all. A flat counter also converts
+    # defect 1 from hypothesis to fact, which no amount of reading the code can do.
+    #
+    # If this fires, ALSO read prometheus_sd_refresh_failures_total{mechanism="docker"} on the same
+    # host: climbing failures mean a persistently ERRORING refresh instead (identical symptom,
+    # different cause -- the refresh loop withholds updates on error by design). See T0048.
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 1800, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # 15m window: the default refresh interval is far shorter, so a healthy instance records
+          # many refreshes here and fewer than one is unambiguous. increase() handles the counter
+          # reset on an Alloy restart, so a restart does not fire this.
+          expr: increase(prometheus_sd_refresh_duration_seconds_count{mechanism="docker"}[15m])
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # OK, not Alerting. Absence does NOT mean wedged -- it means the series is not being shipped:
+    # either Alloy is not running at all (a different failure, and this rule must not double-page
+    # for it), or that host's keep-list change has not been deployed yet. The NAS was converged
+    # 2026-07-20; ops and both capture hosts are render-only and get it at their next attended
+    # deploy, so until then their series is legitimately absent. NOTE the gap this leaves: nothing
+    # currently alerts on an Alloy that has stopped shipping entirely.
+    noDataState: OK
+    execErrState: Alerting
+    # 10m on top of the 15m window: a wedge is permanent, so there is no value in firing fast and
+    # every reason not to fire on a scrape gap.
+    for: 10m
+    annotations:
+      summary: "Alloy's docker service-discovery has recorded no refresh for 15m on this host -- discovery is wedged (T0048 defect 1), so container recreations are invisible and the tailer is following a dead container id. Log shipping for recreated containers is silently stopped; only an Alloy restart recovers. Before restarting, capture prometheus_sd_refresh_duration_seconds_count and prometheus_sd_refresh_failures_total from port 12345 on the host — the restart destroys the evidence, and this is the only way to confirm the root cause."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas

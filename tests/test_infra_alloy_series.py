@@ -14,11 +14,19 @@ NAS_ALLOY = REPO / "infra/nas/config.alloy"
 # only ever searches a role's files/ dir. It lived in templates/ briefly and the copy task
 # could not find it; the real converge caught that, no syntax check could.
 OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
+CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 
 # The series each host must ship. NAS: Role A/B (gate) + its host metrics. OPS: the four timer
 # textfiles (written since OPS-3/OPS-4 but scraped by nothing until spec 00054 Task 1) plus the
 # overlay writer's series (moved to this host by spec 00054 Task 6/OPS-5).
+# T0048 defect 1: discovery.docker can wedge permanently and the ONLY positive signal is this
+# counter going flat -- a hang logs nothing, so without it the failure is silent for hours until the
+# dead-man fires. It is alerted on (zcrypto-alloy-docker-sd-wedged), so dropping it from a keep-list
+# would silently disarm that alert rather than merely lose a graph.
+_SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
+
 NAS_REQUIRED = [
+    _SD_SERIES,
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
@@ -38,6 +46,7 @@ NAS_LEGACY_ADMITTED = [
     "zcrypto_trade_backfill_exit_code",
 ]
 OPS_REQUIRED = [
+    _SD_SERIES,
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
@@ -68,8 +77,14 @@ def _keep_regex(path: Path) -> re.Pattern:
 
 @pytest.mark.parametrize(
     ("path", "required"),
-    [(NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED), (OPS_ALLOY, OPS_REQUIRED)],
-    ids=["nas", "ops"],
+    [
+        (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
+        (OPS_ALLOY, OPS_REQUIRED),
+        # capture has no full required-list here (pre-existing gap), but it runs discovery.docker on
+        # both hosts and so is covered by the same alert -- pin the series that alert depends on.
+        (CAPTURE_ALLOY, [_SD_SERIES]),
+    ],
+    ids=["nas", "ops", "capture"],
 )
 def test_keep_regex_admits_every_published_series(path, required):
     keep = _keep_regex(path)
