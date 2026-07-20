@@ -266,10 +266,11 @@ def test_replay_fingerprint_default_covers_the_real_files():
 
 
 def test_replay_code_paths_is_pinned_as_the_full_ordered_tuple():
-    # D1: pin the WHOLE tuple, not a six-entry membership subset -- a membership check only proves
-    # the six modules added at review are present; findings 1-4 showed the four originals were
-    # droppable from the tuple without failing any test. Exact tuple equality catches removing ANY
-    # of the ten entries, reordering them, or an eleventh entry added later going unpinned.
+    # D1: pin the WHOLE tuple, not a membership subset -- a membership check only proves the
+    # modules added at review are present; findings 1-4 showed the four originals were droppable
+    # from the tuple without failing any test. Exact tuple equality catches removing ANY of the
+    # twelve entries, reordering them, or a thirteenth entry added later going unpinned. The last
+    # two arrived with spec 00064 D9 and are pinned here for the same reason as the rest.
     assert gate_cache._REPLAY_CODE_PATHS == (
         gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
         gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
@@ -281,6 +282,8 @@ def test_replay_code_paths_is_pinned_as_the_full_ordered_tuple():
         gate_cache._REPO_ROOT / "cli" / "alpha" / "a2.py",
         gate_cache._REPO_ROOT / "cli" / "portfolio" / "builder.py",
         gate_cache._REPO_ROOT / "cli" / "benchmark" / "strategies.py",
+        gate_cache._REPO_ROOT / "cli" / "engine" / "command.py",
+        gate_cache._REPO_ROOT / "cli" / "ohlc" / "dataset.py",
     )
 
 
@@ -335,6 +338,28 @@ def test_replay_fingerprint_changes_when_an_original_module_changes(tmp_path, mo
         gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
         gate_cache._REPO_ROOT / "cli" / "risk" / "limits.py",
         gate_cache._REPO_ROOT / "cli" / "engine" / "concordance.py",
+    ):
+        stand_in = tmp_path / real_path.name
+        stand_in.write_bytes(real_path.read_bytes())
+        patched = tuple(stand_in if p == real_path else p for p in gate_cache._REPLAY_CODE_PATHS)
+        monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", patched)
+
+        fp_before = replay_fingerprint()
+        stand_in.write_bytes(stand_in.read_bytes() + b"\n# mutated\n")
+        fp_after = replay_fingerprint()
+        assert fp_after != fp_before, f"{real_path} is not covered by the fingerprint"
+
+
+def test_replay_fingerprint_changes_when_a_verdict_path_module_changes(tmp_path, monkeypatch):
+    # Spec 00064 D9: the two files D3's wording always claimed but never hashed. command.py holds
+    # `_snapshot_reader` -- the closure every replay reads price data through -- and `_replay_one`,
+    # the sole exception->verdict classifier; dataset.py holds `read_parquet`, feeding both that
+    # reader and the snapshot content hash. Before D9 a "close" -> "open" edit in _snapshot_reader
+    # changed every replay's verdict while leaving the fingerprint byte-identical. Same tmp-copy
+    # pattern as the two tests above (never mutate real repo source).
+    for real_path in (
+        gate_cache._REPO_ROOT / "cli" / "engine" / "command.py",
+        gate_cache._REPO_ROOT / "cli" / "ohlc" / "dataset.py",
     ):
         stand_in = tmp_path / real_path.name
         stand_in.write_bytes(real_path.read_bytes())

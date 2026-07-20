@@ -78,6 +78,21 @@ _REPLAY_CODE_PATHS: tuple[Path, ...] = (
     _REPO_ROOT / "cli" / "alpha" / "a2.py",
     _REPO_ROOT / "cli" / "portfolio" / "builder.py",
     _REPO_ROOT / "cli" / "benchmark" / "strategies.py",
+    # LIVE -- the two files D3's own wording ("the modules that determine a replay's result")
+    # already claimed, while hashing neither; spec 00064 D9 adds them so the stated invariant is
+    # true. command.py holds `_snapshot_reader`, the reader closure EVERY replay reads price data
+    # through (`frame["ts"].to_list(), frame["close"].to_list()`) -- swapping "close" for "open"
+    # runs every replay on a different series, a different verdict, and left the fingerprint
+    # BYTE-IDENTICAL before this entry existed (measured: 7a1e371f193be417 both ways). It also
+    # holds `_replay_one`, the sole exception->verdict classifier, so which exception maps to
+    # mismatch vs validation_failed is decided here too. dataset.py holds `read_parquet`, which
+    # feeds both that reader and the snapshot content hash -- a change to how bytes become a frame
+    # moves the replay's inputs. D9 deliberately hashes the whole files rather than extracting the
+    # verdict-path code: moving code on the verdict path is riskier than the cache efficiency it
+    # would buy, so the accepted cost is that unrelated CLI edits also invalidate the cache
+    # (over-invalidation is safe, under-invalidation silently corrupts gate evidence -- T0074).
+    _REPO_ROOT / "cli" / "engine" / "command.py",
+    _REPO_ROOT / "cli" / "ohlc" / "dataset.py",
 )
 
 
@@ -90,7 +105,11 @@ def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), 
     Deliberately over-sensitive: a comment-only edit to any covered module, a numpy version
     change, or a Python MINOR bump all invalidate the cache. A Python PATCH release deliberately
     does not -- patch releases do not change float arithmetic, so the full rebuild would buy
-    nothing; `sys.version_info[:2]` is the digested value."""
+    nothing; `sys.version_info[:2]` is the digested value. Since spec 00064 D9 the covered set
+    includes the two whole files carrying the reader closure and the exception classifier
+    (`cli/engine/command.py`) and the parquet reader (`cli/ohlc/dataset.py`), so edits anywhere in
+    those files -- including parts unrelated to replay -- also invalidate the cache; that cost is
+    accepted because under-invalidation silently corrupts gate evidence."""
     digest = hashlib.sha256()
     for module_path in _REPLAY_CODE_PATHS:
         digest.update(module_path.read_bytes())
