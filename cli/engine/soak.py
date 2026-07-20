@@ -284,7 +284,7 @@ def realized_series(
     )
 
 
-def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool]:
+def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool, list[float]]:
     """Recompute a crossfreq-system result's net P&L under the LIVE cost convention: cost charged
     on `final_targets = mult x capped` turnover instead of the builder's `governed_net` convention
     (cost on the capped book's own turnover). The gross legs are identical either way, so only the
@@ -294,16 +294,24 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
 
     `capped` is reconstructed from `result.sleeve_positions` (the 1/3-combined B/A1/A2 sleeves,
     position-capped) rather than read from `final_targets`/`multipliers` directly, since dividing
-    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar. Returns
-    (net_live over the n_periods completed bars, reconcile_ok), where reconcile_ok cross-checks
-    that mult[k]*capped[a][k] == final_targets[a][k] for every asset and row (including the
-    forming interval) -- proof the reconstruction faithfully matches the builder's internal capped
-    book.
+    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar. `combined` is
+    built with the builder's own `third = 1 / 3` three-multiply form (`crossfreq_system.py:633-634`),
+    not `/3.0`, so the cap-breach predicate below (threshold 1e-15) never disagrees with the
+    builder's own `cap_breach_bars` on a bit-level rounding difference. Returns (net_live over the
+    n_periods completed bars, reconcile_ok, cap_breach), where reconcile_ok cross-checks that
+    mult[k]*capped[a][k] == final_targets[a][k] for every asset and row (including the forming
+    interval) -- proof the reconstruction faithfully matches the builder's internal capped book --
+    and cap_breach[k] is 1.0 iff any asset's pre-cap `combined` book was clipped at bar k (over the
+    n_periods completed bars), using the same `> 1e-15` predicate as `crossfreq_system.py:636`.
     """
     n = result.n_periods
     assets = tuple(result.final_targets)
     sleeves = result.sleeve_positions
-    combined = {a: [(sleeves["B"][a][k] + sleeves["A1"][a][k] + sleeves["A2"][a][k]) / 3.0 for k in range(n + 1)] for a in assets}
+    third = 1 / 3
+    combined = {
+        a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n + 1)]
+        for a in assets
+    }
     capped = apply_position_caps(combined)
     mult = result.multipliers
     final_targets = result.final_targets
@@ -316,7 +324,9 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
         turn_final = sum(abs(final_targets[a][k] - (final_targets[a][k - 1] if k > 0 else 0.0)) for a in assets)
         net_live.append(result.governed_net[k] + mult[k] * fee_builder * turn_capped - fee * turn_final)
 
-    return net_live, reconcile_ok
+    cap_breach = [1.0 if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) else 0.0 for k in range(n)]
+
+    return net_live, reconcile_ok, cap_breach
 
 
 @dataclass(frozen=True)
@@ -333,6 +343,7 @@ class NullSystem:
     reconcile_ok: bool
     n_periods: int
     governed_net: list[float]  # n_periods
+    cap_breach: list[float]  # n_periods; 1.0 on a bar where the pre-cap book was clipped
     cap_breach_bars: int
 
 
@@ -359,7 +370,7 @@ def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSys
     daily_prices, daily_ts, h4_prices, h4_ts = _load_canonical(canonical_dir)
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
 
-    net_live, reconcile_ok = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
+    net_live, reconcile_ok, cap_breach = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
     assets = tuple(result.final_targets)
     n = result.n_periods
     weights = [{a: result.final_targets[a][k] for a in assets} for k in range(n)]
@@ -373,6 +384,7 @@ def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSys
         reconcile_ok=reconcile_ok,
         n_periods=n,
         governed_net=result.governed_net,
+        cap_breach=cap_breach,
         cap_breach_bars=result.cap_breach_bars,
     )
 

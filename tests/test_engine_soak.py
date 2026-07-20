@@ -243,11 +243,12 @@ def test_net_live_reconciles_and_equals_governed_when_mult_constant():
     # governed_net arbitrary (n rows) — reconcile is independent of it; net_live identity uses it directly
     gnet = [0.01, -0.02, 0.005]
     r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
-    net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is True
     # mult constant + equal fees → the recost cancels bar-by-bar → net_live == governed_net
     for k in range(n):
         assert math.isclose(net_live[k], gnet[k], abs_tol=1e-12)
+    assert cap_breach == [0.0] * n  # all combined values well inside the caps
 
 
 def test_net_live_differs_on_multiplier_transition():
@@ -256,8 +257,9 @@ def test_net_live_differs_on_multiplier_transition():
     mult = [1.0, 0.5, 0.5]  # transition at k=1 → D4 gap active
     gnet = [0.0, 0.0]
     r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
-    net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is True
+    assert cap_breach == [0.0, 0.0]  # 0.12 is well inside the 0.20/0.10 caps
     # capped: [0.12,0.12]; final_targets: [0.12, 0.06]. At k=1:
     #   turn_capped = |0.12-0.12| = 0.0 ; turn_final = |0.06-0.12| = 0.06
     #   net_live[1] = gnet[1] + 0.5*0.006*0.0 - 0.006*0.06 = -0.00036  (≠ gnet[1]=0)
@@ -272,8 +274,34 @@ def test_net_live_reconcile_false_on_inconsistent_result():
     mult = [1.0, 1.0, 1.0]
     r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0, 0.0])
     r.final_targets["BTC"][0] += 0.05  # break the identity
-    _net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    _net_live, ok, _cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is False
+
+
+def test_null_cap_breach_series_sums_to_cap_breach_bars():
+    # combined (B==A1==A2, so combined == the sleeve value) breaches on bars 0 and 2, not on 1/3.
+    n = 4
+    B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]  # 5 rows = n_periods+1; bar0 > +0.20, bar2 < -0.10
+    mult = [1.0] * (n + 1)
+    gnet = [0.0] * n
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
+    _net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    assert len(cap_breach) == n
+    assert cap_breach == [1.0, 0.0, 1.0, 0.0]
+    assert sum(cap_breach) == r.cap_breach_bars
+
+
+def test_null_cap_breach_zero_when_never_clipped():
+    n = 3
+    B = A1 = A2 = [0.05, 0.08, -0.02, 0.0]  # all well inside 0.20/0.10
+    mult = [1.0] * (n + 1)
+    gnet = [0.0] * n
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
+    _net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    assert cap_breach == [0.0, 0.0, 0.0]
+    assert r.cap_breach_bars == 0
 
 
 def test_windowed_null_basic():
@@ -299,6 +327,8 @@ def test_build_null_on_real_canonical():
     assert len(ns.weights) == ns.n_periods and set(ns.weights[0]) == set(ns.assets)
     assert len(ns.governed_net) == ns.n_periods
     assert ns.cap_breach_bars >= 0
+    assert len(ns.cap_breach) == ns.n_periods
+    assert sum(ns.cap_breach) == ns.cap_breach_bars
 
 
 def test_metric_verdict_consistent_inside_inner_band():
@@ -467,7 +497,7 @@ def _mk_realized(weights_per_bar, nets):
     )
 
 
-def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, governed_net=None):
+def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, cap_breach=None, governed_net=None):
     n = len(net_live)
     return NullSystem(
         weights=weights_per_bar,
@@ -478,6 +508,7 @@ def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, 
         reconcile_ok=True,
         n_periods=n,
         governed_net=governed_net if governed_net is not None else list(net_live),
+        cap_breach=cap_breach if cap_breach is not None else [0.0] * n,
         cap_breach_bars=cap_breach_bars,
     )
 
