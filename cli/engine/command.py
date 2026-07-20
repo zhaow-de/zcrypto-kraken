@@ -149,12 +149,15 @@ class CacheStats:
     invalidated: bool
 
 
+_EVALUATE_JOURNAL_REPLAY_PATH = "fast"  # threaded into replay_fingerprint() below (spec 00060 D3)
+
+
 def _replay_one(record: CycleRecord, reader) -> CycleOutcome:
     """Replay one journaled success record and classify the outcome -- factored out so a cache hit
     and a fresh replay build the exact same CycleOutcome shape; _evaluate_journal derives its
     counters from that outcome afterward, in one place, so neither path can silently undercount."""
     try:
-        replayed = replay_cycle(record, reader, path="fast")
+        replayed = replay_cycle(record, reader, path=_EVALUATE_JOURNAL_REPLAY_PATH)
     except HashMismatchError:
         return CycleOutcome(cycle_ts=record.cycle_ts, completed_at=record.completed_at, mismatch=True)
     except EngineJournalError:
@@ -178,7 +181,7 @@ def _evaluate_journal(
     place below, never from which branch produced it -- a cache hit must count exactly like a
     replay would have. The fourth element, CacheStats, is spec 00060 D8's observability tally."""
     reader = _snapshot_reader(journal_root)
-    replay_fp = replay_fingerprint()
+    replay_fp = replay_fingerprint(path=_EVALUATE_JOURNAL_REPLAY_PATH)
     cache = load_cache(cache_path, replay_fp)
 
     record_outcomes: list[CycleOutcome] = []

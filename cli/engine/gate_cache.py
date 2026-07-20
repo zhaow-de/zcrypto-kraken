@@ -4,12 +4,14 @@ re-replaying every journaled cycle. Pure and file-format only -- no journal/repl
 cli.engine.command for the `--cache` opt-in).
 
 Two fingerprints (D2/D3): `evidence_fingerprint` covers what a single cycle's replay verdict
-depends on from the journal side (its snapshots' content hashes, cycle_ts, completed_at,
+depends on from the journal side (every journaled SnapshotEntry IN FULL -- pair, grid, n_bars,
+first_ts, last_ts, content_hash, path, not just content_hash -- plus cycle_ts, completed_at,
 final_targets) -- a mismatch invalidates just that cycle's entry. `replay_fingerprint` covers the
-REPLAY CODE instead -- the source bytes of the modules that determine a replay's result plus the
-effective CrossfreqSystemConfig -- stored once per cache file; a mismatch invalidates the whole
-cache. Deliberately over-sensitive (a comment-only edit to a covered module costs one full
-rebuild): over-invalidation is safe, under-invalidation silently corrupts gate evidence.
+REPLAY CODE instead -- the source bytes of the modules that determine a replay's result on either
+the "fast" or "verified" route, the effective CrossfreqSystemConfig, and the replay path itself --
+stored once per cache file; a mismatch invalidates the whole cache. Deliberately over-sensitive (a
+comment-only edit to a covered module costs one full rebuild): over-invalidation is safe,
+under-invalidation silently corrupts gate evidence.
 
 D5 -- fail open, never fail trusting: `load_cache` never raises; any problem (absent/unreadable/
 truncated/unparseable file, wrong schema_version, or a replay_fp mismatch) degrades to an EMPTY
@@ -41,30 +43,56 @@ CACHE_SCHEMA_VERSION = 1
 # mutating this repo's real source on disk.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _REPLAY_CODE_PATHS: tuple[Path, ...] = (
+    # LIVE -- reachable on the "fast" route _evaluate_journal actually uses.
     _REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
     _REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
     _REPO_ROOT / "cli" / "risk" / "limits.py",
+    _REPO_ROOT / "cli" / "risk" / "governor.py",
     _REPO_ROOT / "cli" / "engine" / "concordance.py",
+    _REPO_ROOT / "cli" / "engine" / "journal.py",
+    # LATENT -- only reachable on the "verified" route; covered anyway per D3's
+    # over-invalidation-is-safe rationale even though no caller passes path="verified" today.
+    _REPO_ROOT / "cli" / "alpha" / "a1.py",
+    _REPO_ROOT / "cli" / "alpha" / "a2.py",
+    _REPO_ROOT / "cli" / "portfolio" / "builder.py",
+    _REPO_ROOT / "cli" / "benchmark" / "strategies.py",
 )
 
 
-def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig()) -> str:
-    """sha256 over the source bytes of the modules that determine a replay's result, plus the
-    effective config. Deliberately over-sensitive: a comment-only edit invalidates the cache."""
+def replay_fingerprint(config: CrossfreqSystemConfig = CrossfreqSystemConfig(), *, path: str = "fast") -> str:
+    """sha256 over the source bytes of the modules that determine a replay's result, the effective
+    config, and the replay path ("fast"/"verified" select different builders -- a route switch
+    must not serve the other route's cached verdicts). Deliberately over-sensitive: a comment-only
+    edit invalidates the cache."""
     digest = hashlib.sha256()
-    for path in _REPLAY_CODE_PATHS:
-        digest.update(path.read_bytes())
+    for module_path in _REPLAY_CODE_PATHS:
+        digest.update(module_path.read_bytes())
     digest.update(repr(config).encode())
+    digest.update(path.encode())
     return digest.hexdigest()
 
 
 def evidence_fingerprint(record: CycleRecord) -> str:
-    """sha256 over everything a replay verdict depends on from the journal side: every
-    SnapshotEntry.content_hash in canonical (pair, grid) order, cycle_ts, completed_at,
-    final_targets."""
+    """sha256 over everything a replay verdict depends on from the journal side: every journaled
+    SnapshotEntry in FULL (pair, grid, n_bars, first_ts, last_ts, content_hash, path) in canonical
+    (pair, grid) order, plus cycle_ts, completed_at, final_targets. The full entry, not just
+    content_hash, because replay_cycle also reconciles freshly read data against
+    n_bars/first_ts/last_ts and raises EngineJournalError on disagreement -- a content_hash-only
+    fingerprint would let a cached PASS survive a metadata tamper the real replay would reject."""
     ordered = sorted(record.snapshots, key=lambda s: (s.pair, s.grid))
     payload = {
-        "content_hashes": [s.content_hash for s in ordered],
+        "snapshots": [
+            {
+                "pair": s.pair,
+                "grid": s.grid,
+                "n_bars": s.n_bars,
+                "first_ts": s.first_ts.isoformat(),
+                "last_ts": s.last_ts.isoformat(),
+                "content_hash": s.content_hash,
+                "path": s.path,
+            }
+            for s in ordered
+        ],
         "cycle_ts": record.cycle_ts.isoformat(),
         "completed_at": record.completed_at.isoformat(),
         "final_targets": record.final_targets,
@@ -125,7 +153,7 @@ def load_cache(path: Path | None, replay_fp: str) -> GateCache:
             outcome = _outcome_from_dict(item)
             entries[outcome.cycle_ts] = (item["evidence_fp"], outcome)
         return GateCache(replay_fp=replay_fp, entries=entries)
-    except Exception as exc:
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         logger.warning("load_cache: failed reading %s (%s); falling back to a full replay", path, exc)
         return rejected
 
@@ -140,11 +168,12 @@ def save_cache(path: Path | None, cache: GateCache) -> None:
             "schema_version": CACHE_SCHEMA_VERSION,
             "replay_fp": cache.replay_fp,
             "entries": [
-                {"evidence_fp": evidence_fp, **_outcome_to_dict(outcome)} for evidence_fp, outcome in cache.entries.values()
+                {"evidence_fp": evidence_fp, **_outcome_to_dict(outcome)}
+                for _, (evidence_fp, outcome) in sorted(cache.entries.items())
             ],
         }
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, sort_keys=True))
         os.replace(tmp_path, path)
-    except Exception as exc:
+    except (OSError, TypeError) as exc:
         logger.warning("save_cache: failed writing %s (%s); continuing without an updated cache", path, exc)

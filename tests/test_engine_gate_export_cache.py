@@ -231,12 +231,12 @@ def test_replay_fingerprint_change_invalidates_everything(tmp_path, monkeypatch)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
 
-    monkeypatch.setattr(command, "replay_fingerprint", lambda: "fp-v1")
+    monkeypatch.setattr(command, "replay_fingerprint", lambda **_: "fp-v1")
     command._evaluate_journal(journal, cache_path=cache_path)  # populate the cache under fp-v1
 
     calls: list[datetime] = []
     _counted_replay_cycle(monkeypatch, calls)
-    monkeypatch.setattr(command, "replay_fingerprint", lambda: "fp-v2")
+    monkeypatch.setattr(command, "replay_fingerprint", lambda **_: "fp-v2")
 
     entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path)
 

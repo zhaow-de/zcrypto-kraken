@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import cli.engine.gate_cache as gate_cache
 from cli.engine import CycleOutcome, CycleRecord, SnapshotEntry
@@ -28,11 +27,13 @@ VALID_H4_LAST = datetime(2026, 7, 10, 4, 0)
 VALID_DAILY_LAST = datetime(2026, 7, 9, 0, 0)
 
 
-def _entry(pair: str, grid: str, first_ts: datetime, last_ts: datetime, content_hash: str = "a" * 64) -> SnapshotEntry:
+def _entry(
+    pair: str, grid: str, first_ts: datetime, last_ts: datetime, content_hash: str = "a" * 64, n_bars: int = 3
+) -> SnapshotEntry:
     return SnapshotEntry(
         pair=pair,
         grid=grid,
-        n_bars=3,
+        n_bars=n_bars,
         first_ts=first_ts,
         last_ts=last_ts,
         content_hash=content_hash,
@@ -104,6 +105,22 @@ def test_evidence_fingerprint_changes_with_each_input():
     assert evidence_fingerprint(_record()) == base
 
 
+def test_evidence_fingerprint_changes_when_n_bars_tampered_leaving_content_hash_untouched():
+    # replay_cycle reconciles the freshly read data against entry.n_bars/first_ts/last_ts and
+    # raises EngineJournalError on disagreement (see cli.engine.concordance.replay_cycle) -- an
+    # evidence fingerprint keyed on content_hash alone would keep serving a stale cached PASS for a
+    # record whose n_bars a real replay would reject. content_hash is deliberately left unchanged
+    # here to isolate the metadata-only tamper.
+    base = evidence_fingerprint(_record())
+    tampered_snapshots = (
+        _entry("BTC", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST, "a" * 64, n_bars=4),
+        _entry("BTC", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST, "b" * 64),
+        _entry("ETH", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST, "c" * 64),
+        _entry("ETH", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST, "d" * 64),
+    )
+    assert evidence_fingerprint(_record(snapshots=tampered_snapshots)) != base
+
+
 # --- replay_fingerprint (D3) --------------------------------------------------------------------
 
 
@@ -139,6 +156,55 @@ def test_replay_fingerprint_default_covers_the_real_files():
     assert isinstance(fp, str)
     assert len(fp) == 64
     assert fp == replay_fingerprint()  # stable/reproducible
+
+
+def test_replay_fingerprint_covers_the_live_and_latent_gap_modules():
+    # D3 was missing every module below -- a revised drawdown_governor ladder or a changed
+    # validate_record/snapshot_content_hash (both LIVE, reachable on the "fast" path
+    # _evaluate_journal actually uses) flips a replay's verdict with an unchanged fingerprint; the
+    # LATENT four are only reachable on the "verified" path but cost nothing to over-cover (D3).
+    # Membership check on the REAL, non-monkeypatched list -- must fail against the original
+    # four-file list (crossfreq_system.py/crossfreq.py/limits.py/concordance.py only).
+    covered = set(gate_cache._REPLAY_CODE_PATHS)
+    expected_new = {
+        gate_cache._REPO_ROOT / "cli" / "risk" / "governor.py",  # LIVE
+        gate_cache._REPO_ROOT / "cli" / "engine" / "journal.py",  # LIVE
+        gate_cache._REPO_ROOT / "cli" / "alpha" / "a1.py",  # LATENT
+        gate_cache._REPO_ROOT / "cli" / "alpha" / "a2.py",  # LATENT
+        gate_cache._REPO_ROOT / "cli" / "portfolio" / "builder.py",  # LATENT
+        gate_cache._REPO_ROOT / "cli" / "benchmark" / "strategies.py",  # LATENT
+    }
+    assert expected_new <= covered
+    for path in expected_new:
+        assert path.is_file(), f"{path} must exist -- a covered module must not silently hash nothing"
+
+
+def test_replay_fingerprint_changes_when_a_live_gap_module_changes(tmp_path, monkeypatch):
+    # The two LIVE gaps in particular: mutating either's bytes must change the fingerprint. Swaps
+    # in a mutable tmp copy of the real file's current bytes so the real repo source is never
+    # touched by the test.
+    for real_path in (
+        gate_cache._REPO_ROOT / "cli" / "risk" / "governor.py",
+        gate_cache._REPO_ROOT / "cli" / "engine" / "journal.py",
+    ):
+        stand_in = tmp_path / real_path.name
+        stand_in.write_bytes(real_path.read_bytes())
+        patched = tuple(stand_in if p == real_path else p for p in gate_cache._REPLAY_CODE_PATHS)
+        monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", patched)
+
+        fp_before = replay_fingerprint()
+        stand_in.write_bytes(stand_in.read_bytes() + b"\n# mutated\n")
+        fp_after = replay_fingerprint()
+        assert fp_after != fp_before, f"{real_path} is not covered by the fingerprint"
+
+
+def test_replay_fingerprint_covers_the_replay_path():
+    # D3: "fast" and "verified" select different builders (build_crossfreq_system_fast vs
+    # build_crossfreq_system); a fast->verified switch must not serve the other route's cached
+    # verdicts. Must fail if path is not folded into the digest.
+    assert replay_fingerprint(path="fast") != replay_fingerprint(path="verified")
+    # Defaulting to "fast" preserves every existing no-path call site's fingerprint.
+    assert replay_fingerprint() == replay_fingerprint(path="fast")
 
 
 # --- cache round-trip (D4/D8 of the spec test list) ----------------------------------------------
