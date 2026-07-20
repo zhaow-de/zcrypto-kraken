@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: one residual only — push the committed alert rule to the live Grafana instance with `infra/scripts/grafana-push.sh` (needs GRAFANA_SA_TOKEN from the vault, so attended). Ripe NOW; until it is pushed the staleness metric has no witness. Everything else in this topic is delivered or decided.
+status: resolved
 ---
 
 # Enabling `gate-export --cache` removes the only continuous integrity check on the gate's evidence
@@ -29,6 +28,19 @@ Two further points sharpen it:
 - **Spec `00060` D2 never modelled this axis.** It scoped the fingerprint to "everything a replay's verdict depends on **from the journal side**" — meaning the record's own fields. The design's governing asymmetry ("over-invalidation is safe, under-invalidation silently corrupts gate evidence") was therefore never argued over the parquet-bytes axis, which is the one that breaks.
 
 This reframes iter-109's original finding. That iteration characterised the per-cycle full rebuild as pure waste — *"each hourly run re-verifies the entire journal from scratch, redoing work the previous run already did."* It is not only waste: **it is also the continuous integrity monitor.** Any optimisation that removes the redundancy must replace the monitoring it was silently providing.
+
+## Resolution
+
+**Resolved 2026-07-20** (spec/plan `00062`, iter-112). All four parts are delivered:
+
+1. **The mechanism** — bounded rotating re-verification in `_evaluate_journal`, keyed on `sha256(cycle_ts) % 24` against `now.hour % 24`. The whole journal's parquet bytes are re-verified about daily even with the cache warm, so a cycle is never trusted indefinitely on the strength of a fingerprint computed from the metadata it was supposed to be checked against.
+2. **The witness** — `zcrypto_gate_cache_oldest_verification_age_seconds` plus the Grafana rule `zcrypto-gate-cache-reverify-stalled` (>3 days, `noDataState: OK` because the metric is absent until `--cache` is deployed). **Pushed live 2026-07-20**, read-back verified. A metric nobody alerts on would have left the failure mode exactly as invisible as before.
+3. **Cache-file siting** — spec `00062` D9: container-ephemeral, never on `/archive` or any shared path, because the NAS builds `POLARS_RUNTIME=compat` while ops uses the default runtime and `replay_fingerprint` digests neither.
+4. **The threat-model judgement** — the owner confirmed in-place alteration of an already-verified parquet is worth defending against (bit-rot, partial writes, group-write on the deliberately `0775`/`0664` share), so daily rotation stands as built at ~1.5% of the pull interval.
+
+**Verified on the real journal** (57 cycles) against the *modified* eligibility predicate — the iter-110 evidence covers the old one and does not carry over: no-cache 94.52 s / cold 93.70 s / warm 2.45 s, **gate metrics identical across all runs**, warm replaying 1 with 56 hits. A 24-hour sweep re-verified **57/57 cycles, each in exactly one slice**. The keystone test (a parquet altered on disk with its journal record's `content_hash` claim left intact, so the fingerprint still matches) fails if rotation is removed.
+
+**What this leaves for [[T0069]]:** its `--cache` sub-item is now unblocked — enabling the flag no longer trades away the integrity check — but remains an attended deploy.
 
 ## Findings so far
 
@@ -63,10 +75,10 @@ This reframes iter-109's original finding. That iteration characterised the per-
 
 **Known and deliberate:** a mismatch outcome is itself cached, so after repairing corrupted evidence the gate can stay red for up to one rotation. Fail-closed by design; the README documents deleting the cache file as the immediate remedy.
 
-- The **>3-day staleness alert rule** is committed (`infra/grafana/alerts.yaml`, uid `zcrypto-gate-cache-reverification-stalled`). It deliberately uses `noDataState: OK`, unlike its `zcrypto-gate` siblings: the metric is emitted only when `--cache` is active and non-empty, and `--cache` is not deployed, so the series is simply absent — alerting on no-data would page continuously for a feature that is switched off. "The exporter vanished entirely" is already owned by `zcrypto-gate-exporter-stale`, so the choice loses no coverage.
+- The **>3-day staleness alert rule** is committed (`infra/grafana/alerts.yaml`, uid `zcrypto-gate-cache-reverify-stalled`). It deliberately uses `noDataState: OK`, unlike its `zcrypto-gate` siblings: the metric is emitted only when `--cache` is active and non-empty, and `--cache` is not deployed, so the series is simply absent — alerting on no-data would page continuously for a feature that is switched off. "The exporter vanished entirely" is already owned by `zcrypto-gate-exporter-stale`, so the choice loses no coverage.
 
 ## Suggested next steps
 
-- **(Attended, small)** Push the alert rule to the live Grafana instance with `infra/scripts/grafana-push.sh` (needs `GRAFANA_SA_TOKEN` from the vault). The rule is **committed** but a repo rule is not a live rule; until it is pushed, the metric still has no witness.
+- ~~Push the alert rule live~~ — **done 2026-07-20.** Pushed via `infra/scripts/grafana-push.sh`; the script's read-back asserted every rule's datasource, and the prune step ran dry-run. The metric now has its witness.
 - ~~Site the cache file container-ephemeral~~ — **decided and recorded as spec `00062` D9.** Ephemeral, never on `/archive` or any share both hosts reach: the NAS builds `POLARS_RUNTIME=compat` (no AVX) while ops uses the default runtime, and `replay_fingerprint` digests neither, so a shared file would let two hosts compute identical fingerprints over different numeric runtimes and serve each other's entries. Nothing to do at deploy time beyond *not* pointing `--cache` at the share.
 - ~~Owner's threat-model judgement~~ — **answered 2026-07-20: yes, keep daily.** In-place alteration is judged worth defending against (bit-rot on the RAID, partial or interrupted writes, and anything holding group-write on the deliberately `0775`/`0664` share), and ~1.5% of the pull interval is an acceptable premium. `_ROTATION_SLICES = 24` stands as built — no change required. Recorded here because the alternative was to leave it an omission rather than a decision.

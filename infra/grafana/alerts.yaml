@@ -197,7 +197,7 @@ rules:
     notification_settings:
       receiver: metrics
 
-  - uid: zcrypto-gate-cache-reverification-stalled
+  - uid: zcrypto-gate-cache-reverify-stalled
     title: "Gate · cache re-verification stalled"
     ruleGroup: zcrypto-gate
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
@@ -240,6 +240,9 @@ rules:
     # already owned by zcrypto-gate-exporter-stale above, so nothing is lost by this choice.
     noDataState: OK
     execErrState: Alerting
+    # 15m rather than the 5m its zcrypto-gate siblings use: the underlying value is monotonic and the
+    # threshold is 3-day-scale, so a longer window costs no meaningful detection time while absorbing
+    # a restart or a skipped hour without a transient page.
     for: 15m
     annotations:
       summary: "The gate cache's oldest cycle has not been re-verified for over 3 days -- the rotating re-verification has stopped, so cached gate verdicts are being served against parquet bytes nobody has re-hashed. Check zcrypto_gate_cache_replayed (should be >0 every run) and the NAS disk."
