@@ -617,6 +617,10 @@ def summarize_panel(
 
 
 _SEVERITY = {"consistent": 0, "weakly-consistent": 1, "inconsistent": 2}
+# metric_verdict's closed output vocabulary. _SEVERITY orders the three comparable labels; "n/a"
+# is a valid verdict that sits OUTSIDE that order, so vocabulary membership and severity ordering
+# are two different questions and must be asked separately.
+_VERDICT_LABELS = frozenset(_SEVERITY) | {"n/a"}
 
 
 @dataclass(frozen=True)
@@ -643,17 +647,38 @@ def reconcile_verdicts(primary: str, secondary: str) -> DualVerdict:
     that label with no disclosure -- agreement never needs the severity order, so an unrecognized
     label used consistently by both nulls still reconciles cleanly. Exactly one `"n/a"` takes the
     other (discriminating) null's label, disclosing that only one construction had power here.
-    A label outside `_SEVERITY` that DIFFERS from the other side can't be placed on the severity
-    order at all -- and (Fix 3) can never be a legitimate real-world finding either: both labels come
-    from `metric_verdict`'s closed 4-label vocabulary (`"consistent"`/`"weakly-consistent"`/
-    `"inconsistent"`/`"n/a"`), so an unrecognized one is always an internal contract violation (a
-    typo, or a new label added without updating `_SEVERITY`) -- never real-world variety. Returning
-    the SAME `"indeterminate (instrument-fragile)"` label a legitimate opposite-extremes disagreement
-    produces would conflate a code defect with a data finding, indistinguishable to a reader scanning
-    the verdict column. Raises `SoakError` instead, naming the offending label(s) -- `soak_report`
-    already turns a `SoakError` into a VOID, the existing channel for "the instrument is lying"
-    rather than "something is absent".
+    Vocabulary validation is an UNCONDITIONAL PRECONDITION, checked before every early return.
+    Both labels come from `metric_verdict`'s closed 4-label vocabulary (`"consistent"`/
+    `"weakly-consistent"`/`"inconsistent"`/`"n/a"`), so an unrecognized one is always an internal
+    contract violation (a typo, or a new label added without updating `_SEVERITY`) -- never
+    real-world variety. Emitting it as a verdict, or reusing the `"indeterminate
+    (instrument-fragile)"` label a legitimate opposite-extremes disagreement produces, would both
+    conflate a code defect with a data finding, indistinguishable to a reader scanning the verdict
+    column. `SoakError` is raised instead, naming the offending label(s).
+
+    It is a precondition rather than a check further down because the first version of this guard
+    sat BELOW the equality and `"n/a"` short-circuits, so `("probably-fine", "n/a")` returned
+    `"probably-fine"` as the verdict and rendered it -- the guard was there, and the defect walked
+    around it. Validity of a label and its position on the severity order are separate questions
+    (`"n/a"` is valid but unordered); asking them in one place, first, is what makes the guard
+    independent of branch order.
+
+    Where that `SoakError` SURFACES (verified, not assumed): `soak_report` catches `SoakError` only
+    around `realized_series`; `analyze_soak` is called outside that guard, so this one propagates out
+    of `soak_report` to the CLI, whose `except EngineError` handler (`command.py`, `soak_check`)
+    turns it into a clean one-line abort -- a non-zero exit and an error message, NOT a VOID report
+    and never a traceback. That is the intended outcome: a void presents as a data finding ("the
+    instrument could not decide"), which is precisely the conflation this raise exists to prevent,
+    whereas a hard abort reads unambiguously as "this build is broken". It matches how a `SoakError`
+    from `realized_internals` already behaves (see `soak_report`'s docstring).
     """
+    if primary not in _VERDICT_LABELS or secondary not in _VERDICT_LABELS:
+        raise SoakError(
+            f"reconcile_verdicts: unrecognized verdict label (primary={primary!r}, secondary={secondary!r}) -- "
+            "metric_verdict's vocabulary is closed to 'consistent'/'weakly-consistent'/'inconsistent'/'n/a'; "
+            "an unrecognized label is an internal contract violation, not a real-world disagreement"
+        )
+
     if primary == secondary:
         return DualVerdict(verdict=primary, primary=primary, secondary=secondary, disclosure="")
 
@@ -664,13 +689,6 @@ def reconcile_verdicts(primary: str, secondary: str) -> DualVerdict:
             "the other's band had no power"
         )
         return DualVerdict(verdict=discriminating, primary=primary, secondary=secondary, disclosure=disclosure)
-
-    if primary not in _SEVERITY or secondary not in _SEVERITY:
-        raise SoakError(
-            f"reconcile_verdicts: unrecognized verdict label (primary={primary!r}, secondary={secondary!r}) -- "
-            "metric_verdict's vocabulary is closed to 'consistent'/'weakly-consistent'/'inconsistent'/'n/a'; "
-            "an unrecognized label is an internal contract violation, not a real-world disagreement"
-        )
 
     gap = abs(_SEVERITY[primary] - _SEVERITY[secondary])
     if gap == 1:
@@ -1343,6 +1361,11 @@ _FORBIDDEN = ("validated", "passed", "confirmed", "proven")
 # every column below (rather than relying on padding alone) is the second, independent guard.
 _VERDICT_COL_W = len("indeterminate (instrument-fragile)")  # 34; the reconciled column's longest label
 _SECONDARY_COL_W = len("weakly-consistent")  # 17; the longest raw single-null verdict label
+# The fingerprint table's rows, and its name column sized to the longest of them ("governor_engagement",
+# 19) rather than a hardcoded width -- same rule as the two verdict columns. Derived, not literal, so
+# adding a metric widens the column instead of silently shifting that row's numbers out of alignment.
+_METRIC_ROWS = ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach")
+_METRIC_COL_W = max(len(m) for m in _METRIC_ROWS)
 
 
 def _scrub(text: str) -> str:
@@ -1449,14 +1472,14 @@ def render_report(
     # verdict/secondary columns are additionally sized (`_VERDICT_COL_W`/`_SECONDARY_COL_W`) to the
     # longest label either can ever carry, so that overflow can never happen in the first place.
     lines.append(
-        f"  {'metric':<12} {'live':>10} {'median':>10} {'band [lo,hi]':>24} {'pctile':>9} {'eff-n':>9} {'width':>10} "
+        f"  {'metric':<{_METRIC_COL_W}} {'live':>10} {'median':>10} {'band [lo,hi]':>24} {'pctile':>9} {'eff-n':>9} {'width':>10} "
         f"{'verdict':<{_VERDICT_COL_W}} {'secondary':<{_SECONDARY_COL_W}}"
     )
-    for m in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
+    for m in _METRIC_ROWS:
         v = analysis.gating_verdicts[m]
         if m in ("governor_engagement", "cap_breach") and not analysis.internals_available:
             lines.append(
-                f"  {m:<12} {'n/a':>10} {'n/a':>10} {'n/a':>24} {'n/a':>9} {'n/a':>9} {'n/a':>10} "
+                f"  {m:<{_METRIC_COL_W}} {'n/a':>10} {'n/a':>10} {'n/a':>24} {'n/a':>9} {'n/a':>9} {'n/a':>10} "
                 f"{'n/a':<{_VERDICT_COL_W}} {'n/a':<{_SECONDARY_COL_W}}"
             )
             continue
@@ -1465,7 +1488,7 @@ def render_report(
         effective_verdict = dual.verdict if dual is not None else v.verdict
         secondary_label = dual.secondary if dual is not None else "-"
         lines.append(
-            f"  {m:<12} {v.live:>10.4f} {v.median:>10.4f} {band_str:>24} {v.percentile:>8.1f}% {v.effective_n:>9.2f} "
+            f"  {m:<{_METRIC_COL_W}} {v.live:>10.4f} {v.median:>10.4f} {band_str:>24} {v.percentile:>8.1f}% {v.effective_n:>9.2f} "
             f"{v.width:>10.4f} {effective_verdict:<{_VERDICT_COL_W}} {secondary_label:<{_SECONDARY_COL_W}}"
         )
     lines.append(f"  {analysis.panel.line}")

@@ -516,13 +516,30 @@ def test_reconcile_verdicts_unknown_label_raises_soak_error():
         reconcile_verdicts("bogus", "consistent")
 
 
-def test_reconcile_verdicts_equal_unrecognized_labels_still_short_circuits():
-    # The equal-but-unrecognized short-circuit is untouched by Fix 3 -- agreement never needs the
-    # severity order, so two nulls consistently emitting the same unrecognized label still
-    # reconciles cleanly instead of raising.
-    dv = reconcile_verdicts("bogus", "bogus")
-    assert dv.verdict == "bogus"
-    assert dv.disclosure == ""
+@pytest.mark.parametrize(
+    "primary,secondary",
+    [
+        ("bogus", "consistent"),  # differing, off-vocabulary primary
+        ("consistent", "bogus"),  # differing, off-vocabulary secondary
+        ("bogus", "n/a"),  # REGRESSION: paired with n/a
+        ("n/a", "bogus"),  # REGRESSION: paired with n/a, other ordering
+        ("bogus", "bogus"),  # REGRESSION: equal on both sides
+    ],
+)
+def test_reconcile_verdicts_rejects_off_vocabulary_labels_on_every_branch(primary, secondary):
+    # Vocabulary validation is a PRECONDITION, not a late check, and this parametrization is the
+    # reason. The first version of the guard sat below the equality and "n/a" short-circuits, so
+    # only the first two rows raised: ("bogus", "n/a") returned "bogus" as the discriminating
+    # label and ("bogus", "bogus") returned it by agreement -- both RENDERED an off-vocabulary
+    # string as a verdict, which is exactly the code-defect-as-data-finding conflation the raise
+    # exists to prevent. The guard was present and the defect walked around it.
+    #
+    # An earlier revision deliberately exempted the equal case ("agreement never needs the severity
+    # order"). That reasoning conflated two questions: whether a label is VALID, and where it sits
+    # on the severity ORDER. Agreement removes the need for the second, never the first -- two nulls
+    # agreeing on a typo is still a typo.
+    with pytest.raises(SoakError, match="bogus"):
+        reconcile_verdicts(primary, secondary)
 
 
 def test_instrument_expectations_reads_record_44():

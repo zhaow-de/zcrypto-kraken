@@ -4,6 +4,7 @@ gate (short window + canonical absent), the banner, and the atomic --json write,
 the heavy real canonical build (that's the data-gated regression coverage in test_engine_soak.py)."""
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -328,6 +329,69 @@ def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, mon
             registry_path=tmp_path / "fake-registry.jsonl",
             floor=1,
         )
+
+
+def test_unrecognized_verdict_label_aborts_cleanly_through_the_cli(tmp_path, monkeypatch):
+    # Fix 3 raises SoakError from reconcile_verdicts on a label outside metric_verdict's closed
+    # vocabulary (a code defect, never a data finding). This pins WHERE that raise lands, which was
+    # asserted rather than verified when the fix was designed: soak_report guards only
+    # realized_series, so the error propagates from analyze_soak to the CLI's `except EngineError`,
+    # which aborts with a one-line message. The point of the test is the NEGATIVE half -- a
+    # traceback, or a rendered report presenting a code defect as an instrument-fragility finding,
+    # would both defeat the fix.
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch)
+
+    real_metric_verdict = soak.metric_verdict
+    calls = {"n": 0}
+
+    def _poisoned(*args, **kwargs):
+        # Corrupt exactly one side of one metric's pair so primary != secondary and one label is
+        # off-vocabulary -- the precise condition reconcile_verdicts must refuse to place.
+        calls["n"] += 1
+        verdict = real_metric_verdict(*args, **kwargs)
+        if calls["n"] == 1:
+            return replace(verdict, verdict="probably-fine")
+        return verdict
+
+    monkeypatch.setattr(soak, "metric_verdict", _poisoned)
+
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {
+        d - timedelta(hours=4): 100.0,
+        d: 110.0,
+        d + timedelta(hours=4): 121.0,
+        d + timedelta(hours=8): 133.1,
+    }
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(tmp_path / "fake-canonical"),
+            "--registry",
+            str(tmp_path / "fake-registry.jsonl"),
+            "--floor",
+            "1",
+            "--null",
+            "both",
+        ],
+    )
+
+    out = result.output
+    assert result.exit_code != 0, out
+    assert "probably-fine" in out, out
+    assert "internal contract violation" in out, out
+    # A code defect must never be dressed up as a data finding, nor leak a traceback.
+    assert "instrument-fragile" not in out, out
+    assert "Traceback" not in out, out
 
 
 # --- spec 00061: --null / --path CLI wiring -------------------------------------------------------------
