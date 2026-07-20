@@ -397,7 +397,7 @@ def test_metric_verdict_na_on_zero_width_or_tiny_n():
 
 
 def test_metric_verdict_na_on_full_range_domain():
-    # Fix 1: the live run's actual finding -- a rate whose outer band covers the metric's entire
+    # The live run's actual finding -- a rate whose outer band covers the metric's entire
     # attainable [0,1] domain has ZERO discriminating power (nothing could ever fall outside it),
     # a failure of discrimination just like a zero-width band, only in the opposite direction.
     null = [0.0] * 5 + [1.0] * 5  # p5..p95 spans the full [0,1] domain
@@ -447,12 +447,18 @@ def test_reconcile_verdicts_one_na_primary_discriminates():
     dv = reconcile_verdicts("n/a", "consistent")
     assert dv.verdict == "consistent"  # the discriminating (secondary) null's label
     assert dv.disclosure != ""
+    # Positional, not membership: the disclosure must name EACH label against its own
+    # construction -- swapping `primary=`/`secondary=` in the f-string (leaving the reconciled
+    # verdict and the raw fields untouched) is invisible to `disclosure != ""` and left the
+    # suite 131/131 green.
+    assert "primary='n/a', secondary='consistent'" in dv.disclosure, dv.disclosure
 
 
 def test_reconcile_verdicts_one_na_secondary_discriminates():
     dv = reconcile_verdicts("inconsistent", "n/a")
     assert dv.verdict == "inconsistent"  # the discriminating (primary) null's label
     assert dv.disclosure != ""
+    assert "primary='inconsistent', secondary='n/a'" in dv.disclosure, dv.disclosure
 
 
 def test_reconcile_verdicts_identical_label():
@@ -466,10 +472,14 @@ def test_reconcile_verdicts_adjacent_consistent_and_weakly_consistent():
     dv = reconcile_verdicts("consistent", "weakly-consistent")
     assert dv.verdict == "consistent"
     assert dv.disclosure != ""
+    # Same attribution pin as the n/a branch: swapping `primary=`/`secondary=` in this
+    # branch's f-string left 131/131 green.
+    assert "primary='consistent', secondary='weakly-consistent'" in dv.disclosure, dv.disclosure
 
     dv2 = reconcile_verdicts("weakly-consistent", "consistent")
     assert dv2.verdict == "consistent"
     assert dv2.disclosure != ""
+    assert "primary='weakly-consistent', secondary='consistent'" in dv2.disclosure, dv2.disclosure
 
 
 def test_reconcile_verdicts_adjacent_weakly_consistent_and_inconsistent():
@@ -486,10 +496,14 @@ def test_reconcile_verdicts_opposite_extremes_both_orderings():
     dv = reconcile_verdicts("consistent", "inconsistent")
     assert dv.verdict == "indeterminate (instrument-fragile)"
     assert dv.disclosure != ""
+    # Same attribution pin as the other two disclosure branches -- swapping `primary=`/
+    # `secondary=` in this branch's f-string left 131/131 green.
+    assert "primary='consistent', secondary='inconsistent'" in dv.disclosure, dv.disclosure
 
     dv2 = reconcile_verdicts("inconsistent", "consistent")
     assert dv2.verdict == "indeterminate (instrument-fragile)"
     assert dv2.disclosure != ""
+    assert "primary='inconsistent', secondary='consistent'" in dv2.disclosure, dv2.disclosure
 
 
 def test_reconcile_verdicts_symmetric():
@@ -507,7 +521,7 @@ def test_reconcile_verdicts_symmetric():
 
 
 def test_reconcile_verdicts_unknown_label_raises_soak_error():
-    # Fix 3: a label outside metric_verdict's closed 4-label vocabulary is always an internal
+    # A label outside metric_verdict's closed 4-label vocabulary is always an internal
     # contract violation (a typo, or a new label added without updating _SEVERITY) -- never
     # real-world variety -- so it must not masquerade as the SAME "indeterminate
     # (instrument-fragile)" string a legitimate opposite-extremes disagreement produces. It raises
@@ -832,11 +846,12 @@ def test_governor_engagement_constant_series_still_gates():
 
 
 def test_governor_engagement_na_on_full_range_null_band():
-    # Fix 1's motivating live finding, reproduced synthetically: a SINGLE realized day (total_days
-    # == 1) judged against a null whose one-day windows (window=1) are literally the raw daily
-    # engagement flags -- some fully engaged (1.0), some not (0.0) -- so the band spans the metric's
-    # entire [0,1] domain. That must read "n/a" (no discriminating power), not a spurious real
-    # verdict, and must carry the disclosure naming which metric went vacuous.
+    # The full-range-domain n/a guard's motivating live finding, reproduced synthetically here
+    # against governor_engagement itself: a SINGLE realized day (total_days == 1) judged against a
+    # null whose one-day windows (window=1) are literally the raw daily engagement flags -- some
+    # fully engaged (1.0), some not (0.0) -- so the band spans the metric's entire [0,1] domain. That
+    # must read "n/a" (no discriminating power), not a spurious real verdict, and must carry the
+    # disclosure naming which metric went vacuous.
     day = datetime(2026, 7, 16, tzinfo=UTC)
     cycle_ts = [day + timedelta(hours=4 * k) for k in range(3)]  # single realized day
     weights = [{"BTC": 0.15, "ETH": 0.15}] * 3
@@ -862,12 +877,12 @@ def test_cap_breach_gates_against_null_series():
     weights = [{"BTC": 0.15, "ETH": 0.15}] * 6
     realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 6)
 
-    # Fix 5: a realistic 0/1 PER-BAR cap-breach series (how null.cap_breach actually looks), not a
+    # A realistic 0/1 PER-BAR cap-breach series (how null.cap_breach actually looks), not a
     # knife-edge float sequence hand-tuned to a specific window mean. Breach every 5th bar (gap=5,
     # rate=0.2): cap_breach is judged at BAR granularity (window=L=6), and since the breach gap (5)
     # is < the window length (6), every length-6 window contains 1 or 2 breaches -- never 0, never
     # 6 -- giving a non-degenerate band [1/6, 1/3] that neither edge touches the metric's [0,1]
-    # domain, so it stays discriminating under Fix 1's full-range n/a check too.
+    # domain, so it stays discriminating under the full-range-domain n/a check too.
     null_cap = [1.0 if k % 5 == 0 else 0.0 for k in range(200)]
     null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 200, [0.001] * 200, cap_breach=null_cap)
 
@@ -927,7 +942,7 @@ def test_analyze_soak_null_mode_windows_matches_both_modes_gating_verdicts():
 
 def test_analyze_soak_null_mode_block_bootstrap_uses_only_bootstrap(monkeypatch):
     # D4: a single null selected means no reconciliation -- dual_verdicts stays empty even though
-    # null_mode is not "windows". Fix 6: proves it structurally (windowed_null must not even be
+    # null_mode is not "windows". Proves it structurally (windowed_null must not even be
     # CALLED under "block-bootstrap") rather than the vacuous "verdict is one of the four labels"
     # check every MetricVerdict already satisfies by construction, and pins the actual (deterministic,
     # seed=0) verdict instead of merely asserting its type.
@@ -943,9 +958,10 @@ def test_analyze_soak_null_mode_block_bootstrap_uses_only_bootstrap(monkeypatch)
 
 
 def test_analyze_soak_null_mode_windows_never_calls_block_bootstrap(monkeypatch):
-    # Fix 6: the mirror image -- today the "windows" skip of block_bootstrap_null is proven only by
-    # code structure (`_judge_dual`'s `if null_mode == "windows": return ...` before the bootstrap is
-    # ever computed); this pins it with a monkeypatch that raises if block_bootstrap_null is called.
+    # The mirror image of the test above -- today the "windows" skip of block_bootstrap_null is
+    # proven only by code structure (`_judge_dual`'s `if null_mode == "windows": return ...` before
+    # the bootstrap is ever computed); this pins it with a monkeypatch that raises if
+    # block_bootstrap_null is called.
     def _boom(*a, **kw):
         raise AssertionError("block_bootstrap_null must not be called under null_mode='windows'")
 
@@ -1016,7 +1032,7 @@ def test_analyze_soak_null_mode_both_deterministic_across_runs():
 
 
 def test_analyze_soak_short_null_never_raises_under_any_null_mode():
-    # Fix 1 (MEDIUM): a 1-period NullSystem makes `null.net_live[1:]` (the pnl call site's null
+    # A 1-period NullSystem makes `null.net_live[1:]` (the pnl call site's null
     # series) empty. `windowed_null` already guards an empty/too-short series (window > len(series)
     # -> []), so "windows" mode degrades cleanly to a "n/a" pnl verdict -- but `block_bootstrap_null`
     # has no such guard and calls `rng.integers(0, len(series))`, which raises ValueError on an empty
@@ -1082,7 +1098,7 @@ def test_summarize_panel_no_indeterminate_line_when_none_fires():
 
 
 def test_summarize_panel_counts_reconciled_label_not_raw_windowed():
-    # Fix 2: the table renders the RECONCILED label for each row (`render_report`'s
+    # The table renders the RECONCILED label for each row (`render_report`'s
     # `effective_verdict = dual.verdict if dual is not None else v.verdict`), so the multiplicity
     # summary must count that SAME label -- never the raw windowed `v.verdict` -- or the two can
     # contradict each other. Here the windowed null's own verdict is "n/a" (a zero-width band), but
@@ -1120,7 +1136,7 @@ def test_analyze_soak_degrades_without_internals():
 
 
 def test_analyze_soak_guards_against_missing_internals_key():
-    # Fix 2: `internals.available=True` but its maps DIVERGE from `realized.cycle_ts` (missing the
+    # `internals.available=True` but its maps DIVERGE from `realized.cycle_ts` (missing the
     # last scored cycle) -- a bare `internals.mult_by_cycle[t]` index would crash with an
     # unhandled KeyError. Must instead degrade both gating metrics to "n/a" (the same D7 contract
     # as an outright-unavailable rebuild) with a reason naming the missing timestamp, never crash.
@@ -1179,9 +1195,9 @@ def test_disclosures_constant_and_redundant():
 
 
 def test_disclosures_anticorrelated_gross_net_uses_abs_and_names_the_condition():
-    # Fix 3a: a book with ONLY shorts makes net == -gross exactly every bar -> corr == -1.0, a
+    # A book with ONLY shorts makes net == -gross exactly every bar -> corr == -1.0, a
     # strongly ANTI-correlated pair that is just as redundant as a positively-correlated one --
-    # `abs(corr) >= 0.99` must catch it. Fix 3b: the book is NOT long-only (it's all short), so the
+    # `abs(corr) >= 0.99` must catch it. Also: the book is NOT long-only (it's all short), so the
     # disclosure wording must name the correlation condition, never the long-only one.
     rw = [{"ETH": -0.05}, {"ETH": -0.10}, {"ETH": -0.15}, {"ETH": -0.08}, {"ETH": -0.12}, {"ETH": -0.20}]
     realized = _mk_realized(rw, [0.001] * 6)
@@ -1194,7 +1210,7 @@ def test_disclosures_anticorrelated_gross_net_uses_abs_and_names_the_condition()
 
 
 def test_disclosures_empty_book_no_vacuous_long_only():
-    # Fix 3c: `long_only = all(...)` is vacuously True over an EMPTY weights sequence (no bars at
+    # `long_only = all(...)` is vacuously True over an EMPTY weights sequence (no bars at
     # all) -- an empty book must not be reported as "long-only" (there's no book to characterize),
     # so neither redundancy disclosure may fire.
     realized = _mk_realized([], [])
@@ -1207,7 +1223,7 @@ def test_disclosures_empty_book_no_vacuous_long_only():
 
 
 def test_disclosure_notes_day_granularity_is_exact():
-    # Final review Fix 1: the governor multiplier is constant WITHIN a day by construction
+    # The governor multiplier is constant WITHIN a day by construction
     # (daily_cadence_governor assigns one multiplier per day_index), so a partial realized day
     # carries the SAME engagement information as a full one -- there is no "fewer chances to
     # engage" downward bias. The disclosure must say so, and must NOT claim a downward bias.
@@ -1224,7 +1240,7 @@ def test_disclosure_notes_day_granularity_is_exact():
 
 
 def test_full_range_disclosure_consistent_with_reconciled_label(monkeypatch):
-    # Fix 3: `_full_range_disclosure` read the RAW windowed verdict, so on D1's one-"n/a" branch
+    # `_full_range_disclosure` read the RAW windowed verdict, so on D1's one-"n/a" branch
     # (windowed full-range -> "n/a", bootstrap discriminates) it could print "the test has no
     # discriminating power here" for active_frac on the same run whose table renders active_frac as
     # "inconsistent" -- the reconciled label the bootstrap actually promoted to (D1: exactly one
@@ -1365,7 +1381,7 @@ def test_render_report_degraded_internals_shows_na_and_reason():
 
 
 def test_render_report_internals_degraded_row_shows_dash_not_fabricated_na():
-    # Fix 5: render_report's docstring promises "-" for an internals-degraded governor_engagement/
+    # render_report's docstring promises "-" for an internals-degraded governor_engagement/
     # cap_breach row's primary/secondary cells; the code hardcoded "n/a" instead, asserting a
     # secondary-null result that -- since internals never ran -- was never computed under ANY
     # null_mode. "-" means "not computed"; "n/a" means "computed but undiscriminating" -- only a
@@ -1390,7 +1406,7 @@ def test_render_report_internals_degraded_row_shows_dash_not_fabricated_na():
 
 
 def test_render_report_scrubs_internals_reason_json_stays_raw():
-    # Fix 1: internals_reason carries str(exc) from an arbitrary EngineError/PortfolioError and is
+    # internals_reason carries str(exc) from an arbitrary EngineError/PortfolioError and is
     # interpolated into the vocabulary-locked report text -- the lock must be STRUCTURAL there, not
     # merely a convention that no current exception message happens to trip. The JSON payload is not
     # vocabulary-locked, so it must keep the raw, unscrubbed reason for the same analysis.
@@ -1425,7 +1441,7 @@ def test_render_report_scrubs_internals_reason_json_stays_raw():
 
 
 def test_render_report_scrubs_void_reasons_from_soak_error():
-    # Final review Fix 3: `soak_report` builds `void_reasons = [f"realized series: {exc}"]` from a
+    # `soak_report` builds `void_reasons = [f"realized series: {exc}"]` from a
     # SoakError when `realized_series` itself raises, and `render_report` interpolates
     # `void_reasons` verbatim into the NO-VERDICT line -- the SECOND free-form path into rendered
     # text alongside `internals_reason`. Must be scrubbed too, structurally, same as above.
@@ -1459,7 +1475,7 @@ def test_render_report_disclosures_block():
 
     # near-empty: genuine shorts (kills the specific gross/net redundancy disclosure) +
     # internals=None (kills constancy + day-granularity) -> only the UNCONDITIONAL weight-derived
-    # cluster note remains (final review Fix 2: it fires every time the fingerprint renders), so
+    # cluster note remains (it fires every time the fingerprint renders), so
     # DISCLOSURES still appears with exactly that one entry, no stray specific notes.
     rw_b = [
         {"BTC": 0.10, "ETH": -0.10},
@@ -1480,7 +1496,7 @@ def test_render_report_disclosures_block():
 
 
 def test_honesty_footer_frames_structural_conformance_not_edge():
-    # Final review Fix 2 (footer half): the footer must make explicit that the whole report is a
+    # The footer must make explicit that the whole report is a
     # structural-conformance check (does the live book look like the backtest book), not evidence
     # of edge -- vocabulary-lock clean, and the pre-existing overfit-band sentence stays verbatim.
     low = soak._HONESTY_FOOTER.lower()
@@ -1520,6 +1536,13 @@ def test_render_report_states_null_mode_and_path_and_secondary_column():
     assert "null mode: both" in low
     assert "builder path: fast" in low
     assert "secondary" in low  # the new column header
+    # Positional, not membership: the header must sit above the SAME columns the pinned row
+    # bodies occupy (`fields[-2:] == [primary, secondary]`, see the D1-branch test below) --
+    # bare membership over the whole lowercased report can't tell "primary"/"secondary" apart
+    # from their own swapped positions, so swapping just the two HEADINGS (leaving every row's
+    # computed body untouched) left the whole suite green.
+    header = next(line for line in text.splitlines() if line.strip().startswith("metric"))
+    assert header.split()[-3:] == ["verdict", "primary", "secondary"], header
 
 
 def test_render_report_null_windows_states_mode_without_reconciliation():
@@ -1556,7 +1579,7 @@ def test_render_report_shows_indeterminate_row_and_summary_line(monkeypatch):
 
 
 def test_render_report_indeterminate_label_does_not_merge_with_a_neighbouring_column(monkeypatch):
-    # Fix 4: a label that overflows its fixed-width column glues directly onto whichever neighbour
+    # A label that overflows its fixed-width column glues directly onto whichever neighbour
     # has no padding of its own to spare -- pre-fix this row rendered "...90.0000indeterminate
     # (instrument-fragile)      consistent": the PRECEDING (width) column's number runs straight
     # into "indeterminate" with zero separating whitespace, even though the trailing secondary
@@ -1591,12 +1614,12 @@ def _row_fields(text, metric):
 
 
 def test_render_report_table_shows_all_three_columns_for_every_d1_branch():
-    # Fix 1: the table rendered only `verdict` (reconciled) and `secondary` (bootstrap raw) -- on 3
-    # of D1's 5 reconciliation branches those two are the SAME string, so a disagreeing row looked
-    # identical to an agreeing one and the PRIMARY (windowed) null's raw label appeared nowhere.
-    # Worst case (the review's sharpest finding): primary='inconsistent', secondary='weakly-
+    # An earlier version of the table rendered only `verdict` (reconciled) and `secondary`
+    # (bootstrap raw) -- on 3 of D1's 5 reconciliation branches those two are the SAME string, so a
+    # disagreeing row looked identical to an agreeing one and the PRIMARY (windowed) null's raw
+    # label appeared nowhere. Worst case: primary='inconsistent', secondary='weakly-
     # consistent' rendered "weakly-consistent | weakly-consistent" -- 'inconsistent' invisible. The
-    # fix renders three explicit columns (verdict, primary, secondary); this test covers each of
+    # table renders three explicit columns (verdict, primary, secondary); this test covers each of
     # D1's five branches, one per gating metric row, and demands every one of the three labels is
     # recoverable as a WHOLE field (never merely a substring of a longer field -- "consistent" is a
     # literal substring of "inconsistent").
@@ -1708,16 +1731,23 @@ def test_render_report_single_null_mode_column_placement_for_normal_row():
             fields = _row_fields(text, m)
             assert fields[-2:] == expected, f"null_mode={null_mode} m={m}: primary/secondary wrong, fields={fields!r}"
 
+        # The P&L line reuses `_dual_columns` (same contract as the table above) rather than the
+        # parent's `pnl_dual is not None` conditional, which rendered NO parenthetical at all under
+        # a single-null mode. Reverting to that conditional leaves the table assertions above
+        # untouched (they don't read the P&L line) while silently dropping this attribution.
+        pnl_line = next(ln for ln in text.splitlines() if "pnl verdict" in ln)
+        assert f"(primary null: {expected[0]}, secondary null: {expected[1]})" in pnl_line, pnl_line
+
 
 def test_render_report_pnl_line_names_both_raw_nulls():
-    # The P&L (non-gating) line carried the SAME concealment shape Fix 1 removed from the table:
-    # it printed the reconciled verdict plus "(secondary null: X)" and never the primary. On the
-    # adjacent-disagreement branch the reconciled label EQUALS the milder side, so with
-    # primary='inconsistent', secondary='weakly-consistent' the line read
+    # The P&L (non-gating) line carried the SAME concealment shape the fingerprint-table columns
+    # test above guards against: it printed the reconciled verdict plus "(secondary null: X)" and
+    # never the primary. On the adjacent-disagreement branch the reconciled label EQUALS the milder
+    # side, so with primary='inconsistent', secondary='weakly-consistent' the line read
     #     "weakly-consistent (secondary null: weakly-consistent)"
     # -- indistinguishable from genuine agreement, with the 'inconsistent' primary suppressed. This
-    # is the same class as Fix 1 and is fixed the same way: name both raw nulls explicitly. Found by
-    # the fix subagent while out of its own scope, and pinned here rather than left as prose.
+    # is the same class of defect and is fixed the same way: name both raw nulls explicitly. Found
+    # by the fix subagent while out of its own scope, and pinned here rather than left as prose.
     dual = reconcile_verdicts("inconsistent", "weakly-consistent")
     assert dual.verdict == "weakly-consistent"  # the concealing branch: reconciled == secondary
 
@@ -1805,7 +1835,7 @@ def test_render_report_pnl_line_headline_is_the_reconciled_label():
 
 
 def test_fingerprint_table_columns_align_for_every_metric_row():
-    # Fix 6: `_METRIC_COL_W` must be DERIVED from the longest `_METRIC_ROWS` entry
+    # `_METRIC_COL_W` must be DERIVED from the longest `_METRIC_ROWS` entry
     # ("governor_engagement", 19 chars), never a hardcoded width -- a hardcoded 12 lets that one
     # row's name overflow its field with no padding, shifting every later column in THAT row out of
     # alignment with the header while every other row (and the pre-existing merge test, which only
@@ -1830,7 +1860,7 @@ def test_fingerprint_table_columns_align_for_every_metric_row():
 
 
 def test_render_report_lines_have_no_trailing_whitespace():
-    # Fix 7: the last table column is left-justified, so every fingerprint row (and the header) end
+    # The last table column is left-justified, so every fingerprint row (and the header) end
     # in trailing padding spaces once the label is shorter than its column's width. Strip trailing
     # whitespace per rendered line without disturbing internal alignment.
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
@@ -1847,7 +1877,7 @@ def test_render_report_lines_have_no_trailing_whitespace():
 
 
 def test_json_context_carries_reference_note_against_global_scalars():
-    # Final review Fix 4 (D9 caveat): context.null_gov_rate/null_cap_rate are the null's GLOBAL
+    # D9 caveat: context.null_gov_rate/null_cap_rate are the null's GLOBAL
     # rates -- exactly what spec D9 warns must never be used as the comparison reference (the
     # windowed distribution behind gating_verdicts is). JSON is not vocabulary-locked, so this note
     # can name the reference directly.
@@ -1877,8 +1907,8 @@ def test_json_context_carries_reference_note_against_global_scalars():
     ],
 )
 def test_json_context_note_is_mode_aware(null_mode, must_contain, must_not_contain):
-    # Fix 2: context.note unconditionally asserted "the windowed null distribution behind
-    # gating_verdicts is the reference" even when null_mode="block-bootstrap" -- a false claim about
+    # An earlier version of context.note unconditionally asserted "the windowed null distribution
+    # behind gating_verdicts is the reference" even when null_mode="block-bootstrap" -- a false claim about
     # which construction actually produced the reported numbers/verdict. The note must name only the
     # construction(s) null_mode actually ran, never a construction that never ran.
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
@@ -1921,7 +1951,7 @@ def test_json_payload_carries_null_mode_path_and_dual_verdicts():
 
 
 def test_json_payload_verdict_field_carries_reconciled_label_not_windowed(monkeypatch):
-    # Fix 5: the JSON's top-level "verdict" field must agree with the report text -- both show the
+    # The JSON's top-level "verdict" field must agree with the report text -- both show the
     # RECONCILED label, never the raw windowed one -- or a naive JSON consumer reading "verdict"
     # without also checking "dual" over-reads. Forces an opposite-extremes split so the windowed raw
     # verdict ("inconsistent") and the reconciled one ("indeterminate (instrument-fragile)") visibly
@@ -1961,11 +1991,11 @@ def test_json_payload_dual_none_in_windows_only_mode():
     assert payload["pnl"]["pnl_verdict"]["dual"] is None
 
 
-# --- _verdict_payload (Fix 4: degraded verdict JSON, zero vs null) --------------------------------------
+# --- _verdict_payload: degraded verdict JSON, zero vs null ---------------------------------------------
 
 
 def test_verdict_payload_nulls_numerics_only_when_internals_unavailable():
-    # A computed-but-vacuous "n/a" (Fix 1's full-range domain check) KEEPS its real numbers -- they
+    # A computed-but-vacuous "n/a" (the full-range-domain n/a check) KEEPS its real numbers -- they
     # are meaningful (e.g. live really did sit at the domain edge). Only an "n/a" that comes from
     # an internals rebuild that never ran gets its numeric fields nulled, since live=0.0 there is a
     # placeholder, not a computed value a JSON consumer could otherwise mistake for a genuine zero.
@@ -2006,7 +2036,7 @@ def test_verdict_payload_carries_dual_when_given():
 def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
     """A CycleRecord with a real 240 SnapshotEntry hash-verifying against (h4_ts, closes) -- the
     data `realized_internals` rebuilds on -- plus a minimal, independently-consistent 1440
-    SnapshotEntry so `validate_record` (called for real on `latest_record` since Fix 2) passes its
+    SnapshotEntry so `validate_record` (called for real on `latest_record`) passes its
     per-pair grid-completeness and snapshot-boundary checks; the 1440 entry's last_ts is derived
     with `validate_record`'s own formula, which is generally NOT h4_ts[-1]. Returns (record,
     reader): reader routes by entry.grid so both entries resolve against their own data."""

@@ -1438,11 +1438,12 @@ def _render_lines(lines: list[str]) -> str:
 
 
 def _dual_columns(v: MetricVerdict, dual: DualVerdict | None, null_mode: str) -> tuple[str, str, str]:
-    """The fingerprint table's three verdict columns for one gating-metric
-    row -- `(verdict, primary, secondary)`. Rendering only `verdict` (reconciled) and `secondary`
-    (bootstrap raw) -- as an earlier version of the table did -- lets those two collide on 3 of D1's
-    5 reconciliation branches, so a genuinely disagreeing row looks identical to an agreeing one and
-    the windowed null's own raw label appears nowhere in the table.
+    """Three verdict columns/fields for one row of `render_report` output --
+    `(verdict, primary, secondary)`. Shared by both callers: each gating metric's fingerprint-table
+    row, and the non-gating P&L headline (`analysis.pnl_verdict`/`dual_verdicts["pnl"]`). Rendering
+    only `verdict` (reconciled) and `secondary` (bootstrap raw) -- as an earlier version of the table
+    did -- lets those two collide on 3 of D1's 5 reconciliation branches, so a genuinely disagreeing
+    row looks identical to an agreeing one and the windowed null's own raw label appears nowhere.
 
     `verdict` is the RECONCILED label -- the same one `summarize_panel`/the JSON payload's top-level
     `"verdict"` count (`dual.verdict` when a reconciliation ran, else `v.verdict`). `primary`/
@@ -1454,7 +1455,8 @@ def _dual_columns(v: MetricVerdict, dual: DualVerdict | None, null_mode: str) ->
     fabricated `"n/a"` -- only a real `metric_verdict` call can produce "computed but
     undiscriminating"). The internals-degraded governor_engagement/cap_breach placeholder row (never
     calls `_judge_dual` at all, regardless of `null_mode`) is handled by its own branch in
-    `render_report`, before this function is called."""
+    `render_report`, before this function is called for the table's other rows; the P&L caller has no
+    such placeholder and always calls this function."""
     if dual is not None:
         return dual.verdict, dual.primary, dual.secondary
     if null_mode == "block-bootstrap":
