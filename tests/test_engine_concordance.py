@@ -51,6 +51,25 @@ def test_compare_targets_empty_both_pass():
     assert not result.structural_mismatch
 
 
+def test_compare_targets_tolerance_bracketed_both_sides():
+    """D3 (spec 00063): the pass/fail cases above sit at ~1e-7 and 1e-2 -- five orders of magnitude
+    away from tol's ratified default (1e-6, concordance.py:159), so a divergence 120x over budget
+    would still pass at tol=1e-3. Bracket both edges immediately around tol itself: the margins are
+    expressed as fractions of tol (not raw literals) so the test states the rule. tol itself has to
+    be a hardcoded anchor, not read back from the function -- reading the live default would just
+    track a drifted value and never fail (the same tautology PR #162 hit with the streak constant)."""
+    tol = 1e-6  # today's ratified default (concordance.py:159) -- the external anchor this pins
+
+    just_inside = tol - tol * 0.1
+    just_outside = tol + tol * 0.1
+
+    passing = compare_targets({"BTC": 0.1}, {"BTC": 0.1 + just_inside})
+    assert passing.passed
+
+    failing = compare_targets({"BTC": 0.1}, {"BTC": 0.1 + just_outside})
+    assert not failing.passed
+
+
 # --- evaluate_gate ---------------------------------------------------------------------------------
 
 CYCLE_HOURS = (0, 4, 8, 12, 16, 20)
@@ -156,6 +175,22 @@ def test_intra_day_evaluation_excludes_in_progress_day_without_breaking_streak()
     now = datetime(days[4].year, days[4].month, days[4].day, 9, 0)  # well before day 4's 20:30 cutoff
     status = evaluate_gate(entries, now=now)
     assert status.streak == 4
+    assert not status.gate_met
+    assert status.last_failure is None
+
+
+def test_day_cutoff_anchor_discriminates_alternate_boundaries():
+    """D3 (spec 00063): the intra-day test above uses now=09:00, which sits below every plausible
+    day-cutoff anchor (20:00 flat, 20:30 with the freshness window, next midnight, ...) so it can't
+    tell them apart. Position `now` just after the true 20:30 anchor (20:00 + the 30-minute
+    freshness window) -- under the correct anchor the final day is already due and clean, so it
+    counts too; a boundary shifted even one hour later would still exclude it, giving a different
+    streak."""
+    days = _days(START, 5)
+    entries = [e for d in days for e in _clean_day(d)]
+    now = datetime(days[4].year, days[4].month, days[4].day, 20, 35)  # 5 min past the 20:30 anchor
+    status = evaluate_gate(entries, now=now)
+    assert status.streak == 5  # day 4 is due (past 20:30) and clean, so it counts too
     assert not status.gate_met
     assert status.last_failure is None
 
