@@ -70,6 +70,18 @@ def test_compare_targets_tolerance_bracketed_both_sides():
     assert not failing.passed
 
 
+def test_compare_targets_structural_mismatch_equal_cardinality_different_keys():
+    """Equal-cardinality dicts with different keys must still fail structurally, not just the
+    differing-cardinality case above. Weakening `set(a) != set(b)` (concordance.py:161) to a length
+    check would let this pair fall through to the per-asset comparison, which today is unreached:
+    it would then KeyError on the first asset absent from the other side -- an unreached path, not
+    a silent-corruption one, so its severity should not be over-read from this test alone."""
+    result = compare_targets({"BTC": 0.1, "ETH": 0.0}, {"BTC": 0.1, "SOL": 0.0})
+    assert not result.passed
+    assert result.structural_mismatch
+    assert result.worst_asset is None
+
+
 # --- evaluate_gate ---------------------------------------------------------------------------------
 
 CYCLE_HOURS = (0, 4, 8, 12, 16, 20)
@@ -250,6 +262,30 @@ def test_evaluate_gate_duplicate_cycle_ts_raises():
     entries.append(CycleOutcome(cycle_ts=entries[0].cycle_ts, completed_at=entries[0].completed_at))  # duplicate cycle_ts
     with pytest.raises(EngineJournalError):
         evaluate_gate(entries, now=_past_cutoff(day0))
+
+
+def test_last_failure_reports_the_most_recent_of_multiple():
+    """D5 (spec 00063): every failure test above injects exactly one failure, so `last_failure`'s
+    'most recent' ordering is untestable as written -- a mutant that kept the FIRST failure instead
+    of the last would pass every one of them too. Inject two failures on different days and assert
+    the later one, not the earlier one, is reported."""
+    days = _days(START, 3)
+    entries = []
+    for d in days:
+        day_entries = _clean_day(d)
+        if d == days[0]:
+            for i, e in enumerate(day_entries):
+                if e.cycle_ts.hour == 4:
+                    day_entries[i] = CycleOutcome(cycle_ts=e.cycle_ts, completed_at=e.completed_at, mismatch=True)
+        if d == days[2]:
+            for i, e in enumerate(day_entries):
+                if e.cycle_ts.hour == 16:
+                    day_entries[i] = CycleOutcome(cycle_ts=e.cycle_ts, completed_at=e.completed_at, compare_passed=False)
+        entries.extend(day_entries)
+    status = evaluate_gate(entries, now=_past_cutoff(days[-1]))
+    assert status.streak == 0
+    assert status.last_failure.cycle_ts == datetime(days[2].year, days[2].month, days[2].day, 16)
+    assert status.last_failure.reason == "compare mismatch"
 
 
 # --- replay_cycle ------------------------------------------------------------------------------
@@ -522,3 +558,52 @@ def test_replay_cycle_first_ts_mismatch_alone_raises(monkeypatch):
     with pytest.raises(EngineJournalError):
         replay_cycle(record, shifting_reader, path="fast")
     assert calls == []
+
+
+def test_replay_cycle_multi_pair_calendar_mismatch_raises(monkeypatch):
+    """D4 (spec 00063): every replay_cycle test above uses exactly one pair, so the multi-pair
+    guard at _assemble's `ts != shared_ts` branch has never executed in this suite -- a guard that
+    never runs in CI is indistinguishable from one that was deleted, and production is multi-pair.
+    ETH's 4h snapshot ends on the same journaled boundary as BTC's (validate_record only checks the
+    LAST stamp against cycle_ts - 4h) but carries a different bar count/spacing before it, so the
+    two pairs' 4h calendars disagree once assembled."""
+    h4_btc, daily_btc = _snapshot_entries()
+
+    eth_h4_ts = [
+        datetime(2026, 7, 9, 16, 0),
+        datetime(2026, 7, 9, 20, 0),
+        datetime(2026, 7, 10, 0, 0),
+        datetime(2026, 7, 10, 4, 0),  # same last stamp as BTC's h4 grid (cycle_ts - 4h)
+    ]
+    eth_h4_closes = [9.0, 10.0, 11.0, 12.0]
+    eth_h4 = SnapshotEntry(
+        pair="ETH",
+        grid="240",
+        n_bars=len(eth_h4_ts),
+        first_ts=eth_h4_ts[0],
+        last_ts=eth_h4_ts[-1],
+        content_hash=snapshot_content_hash(eth_h4_ts, eth_h4_closes),
+        path="p240-eth",
+    )
+    eth_daily = SnapshotEntry(
+        pair="ETH",
+        grid="1440",
+        n_bars=daily_btc.n_bars,
+        first_ts=daily_btc.first_ts,
+        last_ts=daily_btc.last_ts,
+        content_hash=daily_btc.content_hash,
+        path="p1440-eth",
+    )
+    record = _valid_cycle_record(snapshots=(h4_btc, daily_btc, eth_h4, eth_daily))
+
+    def two_pair_reader(entry: SnapshotEntry):
+        if entry.pair == "ETH" and entry.grid == "240":
+            return list(eth_h4_ts), list(eth_h4_closes)
+        return _honest_reader(entry)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, two_pair_reader, path="fast")
+    assert calls == []  # the builder must never run once the pairs' calendars disagree
