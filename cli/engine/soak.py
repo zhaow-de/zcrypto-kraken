@@ -578,23 +578,27 @@ def summarize_panel(
     self-consistent with no special-casing: with 2 of 7 metrics `"n/a"`, the line reads "... of 5"
     automatically.
 
+    Fix 2: the count is taken from the RECONCILED label (`dual_verdicts[m].verdict` when a
+    reconciliation ran for `m`, else `v.verdict`) -- the same label `render_report`'s table actually
+    renders for that row -- never the raw windowed `v.verdict`. Counting the raw label would let the
+    table and this summary disagree: on D1's exactly-one-`n/a` branch the reconciled label can
+    discriminate (and even land `"inconsistent"`) while the raw windowed verdict was `"n/a"`, so
+    counting raw would silently drop that row from both `n_metrics` and `n_outside` while the table
+    still shows it as a real, `"inconsistent"` finding.
+
     `dual_verdicts` (spec 00061 D3, keyed like `verdicts`) names which metrics reconciled to
     `"indeterminate (instrument-fragile)"`: those metrics still count toward `n_metrics` (both nulls
-    DID discriminate -- they simply disagreed) but NEVER toward `n_outside`, even when the primary
-    null's own raw verdict happens to be `"inconsistent"` -- there is no agreed finding to count.
-    Omitted (the default `None`, or a metric absent from the dict) means no reconciliation ran for
-    that metric, matching today's behavior.
+    DID discriminate -- they simply disagreed) but NEVER toward `n_outside` -- there is no agreed
+    finding to count, and the reconciled label itself is never `"inconsistent"` for these metrics, so
+    no separate exclusion is needed (D3 unchanged). Omitted (the default `None`, or a metric absent
+    from the dict) means no reconciliation ran for that metric, matching today's behavior.
     """
     dual_verdicts = dual_verdicts or {}
-    discriminating = [(m, v) for m, v in verdicts.items() if v.verdict != "n/a"]
+    effective = {m: (dual_verdicts[m].verdict if dual_verdicts.get(m) is not None else v.verdict) for m, v in verdicts.items()}
+    discriminating = {m: eff for m, eff in effective.items() if eff != "n/a"}
     n_metrics = len(discriminating)
-    indeterminate = {
-        m
-        for m, _ in discriminating
-        if dual_verdicts.get(m) is not None and dual_verdicts[m].verdict == "indeterminate (instrument-fragile)"
-    }
-    n_indeterminate = len(indeterminate)
-    n_outside = sum(1 for m, v in discriminating if v.verdict == "inconsistent" and m not in indeterminate)
+    n_indeterminate = sum(1 for eff in discriminating.values() if eff == "indeterminate (instrument-fragile)")
+    n_outside = sum(1 for eff in discriminating.values() if eff == "inconsistent")
     expected_by_chance = n_metrics * (1.0 - band)
     line = f"{n_outside} of {n_metrics} outside band (~{expected_by_chance:.1f} expected by chance at {band * 100:.0f}%)"
     indeterminate_line = (
@@ -640,9 +644,15 @@ def reconcile_verdicts(primary: str, secondary: str) -> DualVerdict:
     label used consistently by both nulls still reconciles cleanly. Exactly one `"n/a"` takes the
     other (discriminating) null's label, disclosing that only one construction had power here.
     A label outside `_SEVERITY` that DIFFERS from the other side can't be placed on the severity
-    order at all -- rather than raise a bare `KeyError`, it is treated the same as an
-    opposite-extremes split (`"indeterminate (instrument-fragile)"`, disclosed by name): reconciling
-    something we don't understand would claim more confidence than we have.
+    order at all -- and (Fix 3) can never be a legitimate real-world finding either: both labels come
+    from `metric_verdict`'s closed 4-label vocabulary (`"consistent"`/`"weakly-consistent"`/
+    `"inconsistent"`/`"n/a"`), so an unrecognized one is always an internal contract violation (a
+    typo, or a new label added without updating `_SEVERITY`) -- never real-world variety. Returning
+    the SAME `"indeterminate (instrument-fragile)"` label a legitimate opposite-extremes disagreement
+    produces would conflate a code defect with a data finding, indistinguishable to a reader scanning
+    the verdict column. Raises `SoakError` instead, naming the offending label(s) -- `soak_report`
+    already turns a `SoakError` into a VOID, the existing channel for "the instrument is lying"
+    rather than "something is absent".
     """
     if primary == secondary:
         return DualVerdict(verdict=primary, primary=primary, secondary=secondary, disclosure="")
@@ -656,12 +666,10 @@ def reconcile_verdicts(primary: str, secondary: str) -> DualVerdict:
         return DualVerdict(verdict=discriminating, primary=primary, secondary=secondary, disclosure=disclosure)
 
     if primary not in _SEVERITY or secondary not in _SEVERITY:
-        disclosure = (
-            f"unrecognized verdict label (primary={primary!r}, secondary={secondary!r}) -- "
-            "cannot place it on the severity order, treating as instrument-fragile"
-        )
-        return DualVerdict(
-            verdict="indeterminate (instrument-fragile)", primary=primary, secondary=secondary, disclosure=disclosure
+        raise SoakError(
+            f"reconcile_verdicts: unrecognized verdict label (primary={primary!r}, secondary={secondary!r}) -- "
+            "metric_verdict's vocabulary is closed to 'consistent'/'weakly-consistent'/'inconsistent'/'n/a'; "
+            "an unrecognized label is an internal contract violation, not a real-world disagreement"
         )
 
     gap = abs(_SEVERITY[primary] - _SEVERITY[secondary])
@@ -1058,19 +1066,25 @@ def _judge_dual(
     null's) alongside the `DualVerdict` reconciliation. The second element is `None` whenever only one
     null was computed -- no reconciliation to report (D4: "there is no reconciliation").
 
-    `window <= 0` (e.g. an empty/degenerate realized window) skips `block_bootstrap_null` entirely
-    and judges against an empty null list instead, mirroring `windowed_null`'s own `window <= 0`
-    guard -- `block_bootstrap_null` has no such guard of its own (spec 00061: "no change to either
-    null primitive") and would divide by zero building a length-0 path.
+    `window <= 0` OR an empty `null_series` (e.g. an empty/degenerate realized window, or -- Fix 1 --
+    a 1-period `NullSystem` where a `[1:]` slice at a call site empties it, or an explicitly empty
+    `null.cap_breach`/governor-engagement series) skips `block_bootstrap_null` entirely and judges
+    against an empty null list instead, mirroring `windowed_null`'s own `window <= 0` OR `window >
+    len(series)` guard (an empty series always fails that second half). `block_bootstrap_null` has no
+    such guard of its own (spec 00061: "no change to either null primitive") and calls
+    `rng.integers(0, len(series))`, which raises `ValueError` on an empty series -- reachable only
+    under `"block-bootstrap"`/`"both"` before this guard, since `"windows"` alone never touches
+    `block_bootstrap_null`. Both degrade to `metric_verdict`'s own empty-input "n/a", never raise --
+    `soak_report`'s documented contract is it never raises on a short/void run.
     """
     if null_mode == "windows":
         return metric_verdict(live, windowed_null(null_series, window), band=band, effective_n=effective_n, domain=domain), None
     if null_mode == "block-bootstrap":
-        bootstrap_values = block_bootstrap_null(null_series, window) if window > 0 else []
+        bootstrap_values = block_bootstrap_null(null_series, window) if window > 0 and null_series else []
         return metric_verdict(live, bootstrap_values, band=band, effective_n=effective_n, domain=domain), None
 
     windowed_v = metric_verdict(live, windowed_null(null_series, window), band=band, effective_n=effective_n, domain=domain)
-    bootstrap_values = block_bootstrap_null(null_series, window) if window > 0 else []
+    bootstrap_values = block_bootstrap_null(null_series, window) if window > 0 and null_series else []
     bootstrap_v = metric_verdict(live, bootstrap_values, band=band, effective_n=effective_n, domain=domain)
     return windowed_v, reconcile_verdicts(windowed_v.verdict, bootstrap_v.verdict)
 
@@ -1321,6 +1335,15 @@ _HONESTY_FOOTER = (
 
 _FORBIDDEN = ("validated", "passed", "confirmed", "proven")
 
+# Fix 4: fingerprint-table column widths for the two free-text columns, sized for the LONGEST label
+# either can ever carry -- a right-justified fixed-width field only gets a gap from its OWN leading
+# padding, so a label that reaches or exceeds its column's width abuts its neighbour with zero
+# separator (observed: "...0.9000indeterminate (instrument-fragile)consistent"). Sizing the column to
+# the longest possible label makes that overflow structurally impossible; the explicit space joining
+# every column below (rather than relying on padding alone) is the second, independent guard.
+_VERDICT_COL_W = len("indeterminate (instrument-fragile)")  # 34; the reconciled column's longest label
+_SECONDARY_COL_W = len("weakly-consistent")  # 17; the longest raw single-null verdict label
+
 
 def _scrub(text: str) -> str:
     """Neutralize vocabulary-locked words in free-form text (exception messages) before it reaches
@@ -1420,22 +1443,30 @@ def render_report(
     assert analysis is not None  # not void => Part B always built one alongside a present canonical
 
     lines.append(f"STRUCTURAL FINGERPRINT (live realized vs backtest null, band={band:.0%})")
+    # Fix 4: every column is joined by an explicit space rather than relying on fixed-width padding
+    # alone -- a right-justified field only gets a gap from its OWN padding, so a label reaching or
+    # exceeding its column's width would otherwise abut its neighbour with no separator at all. The
+    # verdict/secondary columns are additionally sized (`_VERDICT_COL_W`/`_SECONDARY_COL_W`) to the
+    # longest label either can ever carry, so that overflow can never happen in the first place.
     lines.append(
-        f"  {'metric':<12}{'live':>10}{'median':>10}{'band [lo,hi]':>24}{'pctile':>9}{'eff-n':>9}{'width':>10}"
-        f"{'verdict':>18}{'secondary':>16}"
+        f"  {'metric':<12} {'live':>10} {'median':>10} {'band [lo,hi]':>24} {'pctile':>9} {'eff-n':>9} {'width':>10} "
+        f"{'verdict':<{_VERDICT_COL_W}} {'secondary':<{_SECONDARY_COL_W}}"
     )
     for m in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
         v = analysis.gating_verdicts[m]
         if m in ("governor_engagement", "cap_breach") and not analysis.internals_available:
-            lines.append(f"  {m:<12}{'n/a':>10}{'n/a':>10}{'n/a':>24}{'n/a':>9}{'n/a':>9}{'n/a':>10}{'n/a':>18}{'n/a':>16}")
+            lines.append(
+                f"  {m:<12} {'n/a':>10} {'n/a':>10} {'n/a':>24} {'n/a':>9} {'n/a':>9} {'n/a':>10} "
+                f"{'n/a':<{_VERDICT_COL_W}} {'n/a':<{_SECONDARY_COL_W}}"
+            )
             continue
         band_str = f"[{v.lo:.4f},{v.hi:.4f}]"
         dual = analysis.dual_verdicts.get(m)
         effective_verdict = dual.verdict if dual is not None else v.verdict
         secondary_label = dual.secondary if dual is not None else "-"
         lines.append(
-            f"  {m:<12}{v.live:>10.4f}{v.median:>10.4f}{band_str:>24}{v.percentile:>8.1f}%{v.effective_n:>9.2f}"
-            f"{v.width:>10.4f}{effective_verdict:>18}{secondary_label:>16}"
+            f"  {m:<12} {v.live:>10.4f} {v.median:>10.4f} {band_str:>24} {v.percentile:>8.1f}% {v.effective_n:>9.2f} "
+            f"{v.width:>10.4f} {effective_verdict:<{_VERDICT_COL_W}} {secondary_label:<{_SECONDARY_COL_W}}"
         )
     lines.append(f"  {analysis.panel.line}")
     if analysis.panel.indeterminate_line:
@@ -1483,12 +1514,21 @@ def _verdict_payload(name: str, verdict: MetricVerdict, *, internals_available: 
 
     `dual` (spec 00061) is the metric's `DualVerdict` reconciliation when one ran (`null_mode="both"`);
     added under a `"dual"` key, `None` when no reconciliation ran for this metric -- a stable key
-    present in every payload shape so a consumer never has to branch on `null_mode` to find it."""
+    present in every payload shape so a consumer never has to branch on `null_mode` to find it.
+
+    Fix 5: the top-level `"verdict"` field is overridden to `dual.verdict` (the RECONCILED label)
+    when `dual` is given -- `asdict(verdict)` alone would leave it at the windowed null's raw label,
+    while `render_report`'s table already renders the reconciled one for this row; a naive JSON
+    consumer reading `"verdict"` without also checking `"dual"` would otherwise over-read. The
+    windowed (primary) label remains available at `dual["primary"]`; the numeric fields above are
+    untouched (D2: they always stay the windowed null's own stats)."""
     d = asdict(verdict)
     if name in ("governor_engagement", "cap_breach") and not internals_available:
         for key in _VERDICT_NUMERIC_FIELDS:
             d[key] = None
     d["dual"] = asdict(dual) if dual is not None else None
+    if dual is not None:
+        d["verdict"] = dual.verdict
     return d
 
 

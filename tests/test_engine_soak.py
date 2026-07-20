@@ -506,13 +506,23 @@ def test_reconcile_verdicts_symmetric():
         assert reconcile_verdicts(a, b).verdict == reconcile_verdicts(b, a).verdict
 
 
-def test_reconcile_verdicts_unknown_label_is_defensive_not_a_keyerror():
-    # a label outside the known vocabulary can't be placed on the severity order; treated as
-    # instrument-fragile (can't safely reconcile something we don't understand) rather than
-    # raising a bare KeyError.
-    dv = reconcile_verdicts("bogus", "consistent")
-    assert dv.verdict == "indeterminate (instrument-fragile)"
-    assert dv.disclosure != ""
+def test_reconcile_verdicts_unknown_label_raises_soak_error():
+    # Fix 3: a label outside metric_verdict's closed 4-label vocabulary is always an internal
+    # contract violation (a typo, or a new label added without updating _SEVERITY) -- never
+    # real-world variety -- so it must not masquerade as the SAME "indeterminate
+    # (instrument-fragile)" string a legitimate opposite-extremes disagreement produces. It raises
+    # SoakError naming the offending label(s), never a bare KeyError.
+    with pytest.raises(SoakError, match="bogus"):
+        reconcile_verdicts("bogus", "consistent")
+
+
+def test_reconcile_verdicts_equal_unrecognized_labels_still_short_circuits():
+    # The equal-but-unrecognized short-circuit is untouched by Fix 3 -- agreement never needs the
+    # severity order, so two nulls consistently emitting the same unrecognized label still
+    # reconciles cleanly instead of raising.
+    dv = reconcile_verdicts("bogus", "bogus")
+    assert dv.verdict == "bogus"
+    assert dv.disclosure == ""
 
 
 def test_instrument_expectations_reads_record_44():
@@ -898,14 +908,36 @@ def test_analyze_soak_null_mode_windows_matches_both_modes_gating_verdicts():
     assert a_windows.dual_verdicts == {}
 
 
-def test_analyze_soak_null_mode_block_bootstrap_uses_only_bootstrap():
+def test_analyze_soak_null_mode_block_bootstrap_uses_only_bootstrap(monkeypatch):
     # D4: a single null selected means no reconciliation -- dual_verdicts stays empty even though
-    # null_mode is not "windows".
+    # null_mode is not "windows". Fix 6: proves it structurally (windowed_null must not even be
+    # CALLED under "block-bootstrap") rather than the vacuous "verdict is one of the four labels"
+    # check every MetricVerdict already satisfies by construction, and pins the actual (deterministic,
+    # seed=0) verdict instead of merely asserting its type.
+    def _boom(*a, **kw):
+        raise AssertionError("windowed_null must not be called under null_mode='block-bootstrap'")
+
+    monkeypatch.setattr(soak, "windowed_null", _boom)
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
     nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
     a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, null_mode="block-bootstrap")
     assert a.dual_verdicts == {}
-    assert a.gating_verdicts["gross"].verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+    assert a.gating_verdicts["gross"].verdict == "consistent"
+
+
+def test_analyze_soak_null_mode_windows_never_calls_block_bootstrap(monkeypatch):
+    # Fix 6: the mirror image -- today the "windows" skip of block_bootstrap_null is proven only by
+    # code structure (`_judge_dual`'s `if null_mode == "windows": return ...` before the bootstrap is
+    # ever computed); this pins it with a monkeypatch that raises if block_bootstrap_null is called.
+    def _boom(*a, **kw):
+        raise AssertionError("block_bootstrap_null must not be called under null_mode='windows'")
+
+    monkeypatch.setattr(soak, "block_bootstrap_null", _boom)
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, null_mode="windows")
+    assert a.dual_verdicts == {}
+    assert a.gating_verdicts["gross"].verdict == "consistent"
 
 
 def test_analyze_soak_invalid_null_mode_raises():
@@ -966,6 +998,23 @@ def test_analyze_soak_null_mode_both_deterministic_across_runs():
         assert a1.gating_verdicts[m] == a2.gating_verdicts[m]
 
 
+def test_analyze_soak_short_null_never_raises_under_any_null_mode():
+    # Fix 1 (MEDIUM): a 1-period NullSystem makes `null.net_live[1:]` (the pnl call site's null
+    # series) empty. `windowed_null` already guards an empty/too-short series (window > len(series)
+    # -> []), so "windows" mode degrades cleanly to a "n/a" pnl verdict -- but `block_bootstrap_null`
+    # has no such guard and calls `rng.integers(0, len(series))`, which raises ValueError on an empty
+    # series. Confirmed pre-fix: "windows" -> ok (pnl verdict "n/a"); "block-bootstrap"/"both" ->
+    # raises. That breaks soak_report's documented contract ("never raises on a short/void run --
+    # those are refusals, not failures"). Every null_mode must degrade to "n/a" here, never raise.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    one_period_null = _mk_null([{"BTC": 0.15, "ETH": 0.15}], [0.001])
+
+    for null_mode in ("windows", "block-bootstrap", "both"):
+        a = analyze_soak(realized, one_period_null, band=0.90, null_mode=null_mode)
+        assert a.pnl_verdict.verdict == "n/a"
+
+
 def test_summarize_panel_counts_only_discriminating():
     null = list(range(101))
     real_verdict = metric_verdict(50, null)  # consistent
@@ -1013,6 +1062,28 @@ def test_summarize_panel_no_indeterminate_line_when_none_fires():
     s = summarize_panel({"gross": v, "net": v}, band=0.90)
     assert s.n_indeterminate == 0
     assert s.indeterminate_line == ""
+
+
+def test_summarize_panel_counts_reconciled_label_not_raw_windowed():
+    # Fix 2: the table renders the RECONCILED label for each row (`render_report`'s
+    # `effective_verdict = dual.verdict if dual is not None else v.verdict`), so the multiplicity
+    # summary must count that SAME label -- never the raw windowed `v.verdict` -- or the two can
+    # contradict each other. Here the windowed null's own verdict is "n/a" (a zero-width band), but
+    # the bootstrap null discriminated, so reconcile_verdicts's exactly-one-"n/a" branch (D1) takes
+    # the bootstrap's "inconsistent" label -- that's the label the table actually shows for "gross".
+    # Pre-fix, summarize_panel filtered on the raw "n/a" and dropped this row from BOTH n_metrics and
+    # n_outside entirely, so the panel line could read "0 of 1 outside band" while the table's own
+    # "gross" row said "inconsistent" -- the report contradicting itself.
+    na_v = metric_verdict(1.0, [3.0] * 50)  # zero-width band -> raw windowed verdict is "n/a"
+    consistent_v = metric_verdict(50, list(range(101)))
+    verdicts = {"gross": na_v, "net": consistent_v}
+    dual = {"gross": reconcile_verdicts("n/a", "inconsistent")}
+    assert dual["gross"].verdict == "inconsistent"  # sanity: this is what the table row would show
+
+    s = summarize_panel(verdicts, band=0.90, dual_verdicts=dual)
+
+    assert s.n_metrics == 2  # gross now counts: the reconciled label DID discriminate
+    assert s.n_outside == 1  # ...and it's the "inconsistent" row the table actually renders
 
 
 def test_analyze_soak_degrades_without_internals():
@@ -1419,6 +1490,36 @@ def test_render_report_shows_indeterminate_row_and_summary_line(monkeypatch):
         assert w not in low
 
 
+def test_render_report_indeterminate_label_does_not_merge_with_a_neighbouring_column(monkeypatch):
+    # Fix 4: a label that overflows its fixed-width column glues directly onto whichever neighbour
+    # has no padding of its own to spare -- pre-fix this row rendered "...90.0000indeterminate
+    # (instrument-fragile)      consistent": the PRECEDING (width) column's number runs straight
+    # into "indeterminate" with zero separating whitespace, even though the trailing secondary
+    # column happened to still show a gap in this fixture (its own label was short enough to fit its
+    # old field width). A bare substring check ("indeterminate (instrument-fragile)" in text, as in
+    # the test above) still PASSES against that merged string, since the label is a literal prefix of
+    # it -- it is blind to the human-facing artifact being garbled. This test instead demands
+    # whitespace on BOTH sides of the label, so it fails on the current formatting regardless of
+    # which neighbour it merges with.
+    monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
+    monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
+    rw = [{"BTC": 200.0}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="both")
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    row = next(line for line in text.splitlines() if line.strip().startswith("gross") and "indeterminate" in line)
+    assert " indeterminate (instrument-fragile) " in row  # whitespace on both sides -- not glued to either neighbour
+    fields = row.split()
+    # "indeterminate (instrument-fragile)" whitespace-splits into two tokens; the secondary column's
+    # own label must be a THIRD, separate token right after -- never fused onto the second.
+    idx = fields.index("(instrument-fragile)")
+    assert fields[idx + 1] in ("consistent", "weakly-consistent", "inconsistent", "n/a", "-")
+
+
 def test_json_context_carries_reference_note_against_global_scalars():
     # Final review Fix 4 (D9 caveat): context.null_gov_rate/null_cap_rate are the null's GLOBAL
     # rates -- exactly what spec D9 warns must never be used as the comparison reference (the
@@ -1460,6 +1561,30 @@ def test_json_payload_carries_null_mode_path_and_dual_verdicts():
     assert dual["verdict"] == "consistent"
     assert dual["primary"] == "consistent"
     assert dual["secondary"] in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+
+
+def test_json_payload_verdict_field_carries_reconciled_label_not_windowed(monkeypatch):
+    # Fix 5: the JSON's top-level "verdict" field must agree with the report text -- both show the
+    # RECONCILED label, never the raw windowed one -- or a naive JSON consumer reading "verdict"
+    # without also checking "dual" over-reads. Forces an opposite-extremes split so the windowed raw
+    # verdict ("inconsistent") and the reconciled one ("indeterminate (instrument-fragile)") visibly
+    # differ; the windowed label stays discoverable at dual["primary"].
+    monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: list(range(101)))
+    monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: list(range(150, 251)))
+    rw = [{"BTC": 200.0}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode="both")
+    assert analysis.gating_verdicts["gross"].verdict == "inconsistent"  # D2: the windowed stats/verdict are untouched
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(
+        analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC), null_mode="both", path="fast"
+    )
+
+    gross = payload["gating_verdicts"]["gross"]
+    assert gross["verdict"] == "indeterminate (instrument-fragile)"  # the reconciled label
+    assert gross["dual"]["primary"] == "inconsistent"  # the windowed label, still available here
 
 
 def test_json_payload_dual_none_in_windows_only_mode():
