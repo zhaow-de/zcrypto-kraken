@@ -432,7 +432,7 @@ def test_no_cache_path_never_touches_the_fingerprint_layer(tmp_path, monkeypatch
 
 
 def test_broken_replay_fingerprint_degrades_not_aborts(tmp_path, monkeypatch):
-    """A cache is an optimization; gate evidence is not. `replay_fingerprint()` reads ten module
+    """A cache is an optimization; gate evidence is not. `replay_fingerprint()` reads twelve module
     files with no exception guard of its own -- an OSError there (an unreadable file, a bind-mount
     hiccup) must degrade this run to a full replay without a cache, never abort the whole gate-export
     run."""

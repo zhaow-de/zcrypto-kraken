@@ -79,12 +79,18 @@ _REPLAY_CODE_PATHS: tuple[Path, ...] = (
     _REPO_ROOT / "cli" / "portfolio" / "builder.py",
     _REPO_ROOT / "cli" / "benchmark" / "strategies.py",
     # LIVE -- the two files D3's own wording ("the modules that determine a replay's result")
-    # already claimed, while hashing neither; spec 00064 D9 adds them so the stated invariant is
+    # already claimed, while hashing neither; spec 00064 D9 adds them. This NARROWS the gap and does
+    # not close it: D3's invariant still does not hold, because the re-export layers the fast route
+    # binds through (cli/portfolio/__init__.py, cli/risk/__init__.py, cli/engine/errors.py) stay
+    # unhashed -- rebinding build_crossfreq_system_fast there moves every verdict with this
+    # fingerprint byte-identical. Tracked as T0080. Hand-enumeration cannot make the invariant
+    # true; only hashing the transitive import closure could. Do not restate it as complete. The
+    # discarded wording said the invariant is
     # true. command.py holds `_snapshot_reader`, the reader closure EVERY replay reads price data
     # through (`frame["ts"].to_list(), frame["close"].to_list()`) -- swapping "close" for "open"
     # runs every replay on a different series, a different verdict, and left the fingerprint
     # BYTE-IDENTICAL before this entry existed (measured: 7a1e371f193be417 both ways). It also
-    # holds `_replay_one`, the sole exception->verdict classifier, so which exception maps to
+    # holds `_replay_one`, the classifier for exceptions raised BY replay_cycle, so which maps to
     # mismatch vs validation_failed is decided here too. dataset.py holds `read_parquet`, which
     # feeds both that reader and the snapshot content hash -- a change to how bytes become a frame
     # moves the replay's inputs. D9 deliberately hashes the whole files rather than extracting the

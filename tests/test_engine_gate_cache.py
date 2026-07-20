@@ -291,7 +291,9 @@ def test_replay_fingerprint_covers_the_live_and_latent_gap_modules():
     # D3 was missing every module below -- a revised drawdown_governor ladder or a changed
     # validate_record/snapshot_content_hash (both LIVE, reachable on the "fast" path
     # _evaluate_journal actually uses) flips a replay's verdict with an unchanged fingerprint; the
-    # LATENT four are only reachable on the "verified" path but cost nothing to over-cover (D3).
+    # LATENT THREE (a2/builder/strategies) are only reachable on the "verified" path but cost nothing
+    # to over-cover (D3). a1.py is NOT among them -- it is live on the fast route via _asset_returns;
+    # see the label block in gate_cache.py, corrected in 1acb852.
     # Membership check on the REAL, non-monkeypatched list -- must fail against the original
     # four-file list (crossfreq_system.py/crossfreq.py/limits.py/concordance.py only).
     covered = set(gate_cache._REPLAY_CODE_PATHS)
@@ -353,7 +355,10 @@ def test_replay_fingerprint_changes_when_an_original_module_changes(tmp_path, mo
 def test_replay_fingerprint_changes_when_a_verdict_path_module_changes(tmp_path, monkeypatch):
     # Spec 00064 D9: the two files D3's wording always claimed but never hashed. command.py holds
     # `_snapshot_reader` -- the closure every replay reads price data through -- and `_replay_one`,
-    # the sole exception->verdict classifier; dataset.py holds `read_parquet`, feeding both that
+    # the classifier for exceptions raised by replay_cycle -- NOT the only verdict classifier in
+    # the file: command.py:240 maps an unparseable cycle-*.json straight to validation_failed
+    # without entering _replay_one, which is precisely what the D4 keystone test pins;
+    # dataset.py holds `read_parquet`, feeding both that
     # reader and the snapshot content hash. Before D9 a "close" -> "open" edit in _snapshot_reader
     # changed every replay's verdict while leaving the fingerprint byte-identical. Same tmp-copy
     # pattern as the two tests above (never mutate real repo source).
