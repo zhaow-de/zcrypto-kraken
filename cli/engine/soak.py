@@ -908,9 +908,9 @@ class SoakAnalysis:
     `"n/a"` with `internals_reason` naming why -- D7 degrade, not void) -- 7 keys total, the panel
     summary over the DISCRIMINATING subset (`summarize_panel` excludes `"n/a"`, spec D6), the D4
     governed-vs-live P&L gap, the NON-GATING realized-vs-null P&L verdict, and `disclosures`:
-    human-readable interpretation notes (constant realized multiplier/cap-breach, near-redundant
-    gross/net, governor day-granularity and its partial-day bias, a vacuous full-[0,1]-range band)
-    that change no verdict."""
+    human-readable interpretation notes (constant realized multiplier/cap-breach, the weight-derived
+    metric cluster's overstated independence, governor day-granularity exactness, a vacuous
+    full-[0,1]-range band) that change no verdict."""
 
     L: int  # scored realized bars
     gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi, governor_engagement, cap_breach
@@ -944,13 +944,16 @@ def analyze_soak(
     only DISCRIMINATING verdicts (spec D6), so a degraded run's multiplicity line reads "... of 5"
     with no special-casing. A constant realized multiplier/cap-breach series is a LEGITIMATE verdict
     -- never suppressed to "n/a" -- but is disclosed (`disclosures`) so a reader can interpret it,
-    alongside a near-redundant gross/net note (spec D6a, `abs(corr) >= 0.99` OR a non-empty
-    long-only book), the governor day-granularity caveat and its partial-day downward bias (a
-    realized day is engaged iff any SCORED bar has mult<1.0, but a null day considers all of its
-    bars, and the realized window's first/last days are typically partial -- fewer chances to
-    engage there than in a full null day), and a note naming any RATE metric (active_frac,
-    governor_engagement, cap_breach) whose band went "n/a" because it spans the metric's full
-    [0,1] domain (Fix 1: zero discriminating power, not a zero-width band).
+    alongside an UNCONDITIONAL cluster note (gross/net/active_frac/hhi are all deterministic
+    functions of the same weight vector and turnover is its first difference, so only cap_breach
+    probes a separate mechanism -- the panel's metric count overstates independent trials) plus a
+    more specific near-redundant gross/net note when it fires (spec D6a, `abs(corr) >= 0.99` OR a
+    non-empty long-only book), the governor day-granularity exactness note (the multiplier is
+    constant within a day by construction, so a partial realized day carries the same engagement
+    information as a full one -- day granularity loses nothing, it is not an approximation), and a
+    note naming any RATE metric (active_frac, governor_engagement, cap_breach) whose band went
+    "n/a" because it spans the metric's full [0,1] domain (Fix 1: zero discriminating power, not a
+    zero-width band).
     Also reports the D4 governed-vs-live gap and judges P&L (realized interior mean net vs null
     net_live windows) as a non-gating verdict. Turnover and P&L are prev-dependent, so both
     aggregate/compare INTERIOR bars (each series' first element dropped) on BOTH the live and null
@@ -1035,10 +1038,9 @@ def analyze_soak(
             disclosures.append(f"realized cap-breach was {flag} on all {len(breach_values)} scored cycles (no variance)")
         disclosures.append(f"governor-engagement is judged at day granularity over {total_days} realized days")
         disclosures.append(
-            "governor-engagement day granularity is conservative, not a bug: a day is engaged iff any SCORED "
-            "bar has mult<1.0, but a null day considers all 6 bars, while the realized window's first/last "
-            "days are typically partial and so get fewer chances to engage -- this biases the realized rate "
-            "DOWNWARD relative to the null"
+            "governor-engagement at day granularity is exact, not approximate: the multiplier is constant "
+            "within a day by construction (daily_cadence_governor assigns one multiplier per day_index), so "
+            "a partial realized day carries the same engagement information as a full one"
         )
     else:
         internals_available = False
@@ -1051,6 +1053,18 @@ def analyze_soak(
         gating_verdicts["cap_breach"] = na
         effective_n["governor_engagement"] = 0.0
         effective_n["cap_breach"] = 0.0
+
+    # Whole-cluster overstatement: gross/net/active_frac/hhi are all deterministic functions of the
+    # SAME weight vector and turnover is that vector's first difference -- only cap_breach probes a
+    # mechanism (the pre-cap combined position vs the per-asset cap) genuinely separate from the
+    # weights. Unconditional -- unlike the more specific long-only/correlation note below, this is
+    # true of every run, so it is appended every time the fingerprint renders (`disclosures` is
+    # non-empty on every path from here on, so the DISCLOSURES section always shows it).
+    disclosures.append(
+        "gross, net, active_frac and hhi are all deterministic functions of the same weight vector "
+        "and turnover is its first difference; only cap_breach probes a separate mechanism, so the "
+        "metric count overstates the number of independent trials"
+    )
 
     # Fix 3: `long_only` requires a NON-EMPTY book -- `all(...)` over an empty weights sequence is
     # vacuously True, which would wrongly fire the long-only wording on a book that never held any
@@ -1115,7 +1129,9 @@ BANNER = (
 
 _HONESTY_FOOTER = (
     "A 'consistent' row only means the realized behaviour sits inside the backtest's own range; an overfit "
-    "strategy lands in-band most of the time at L≈84, so this is not out-of-sample evidence."
+    "strategy lands in-band most of the time at L≈84, so this is not out-of-sample evidence.\n"
+    "These are structural-conformance checks -- does the live book look like the backtest book -- not "
+    "evidence of edge."
 )
 
 _FORBIDDEN = ("validated", "passed", "confirmed", "proven")
@@ -1153,9 +1169,12 @@ def render_report(
     the D4 gap, non-gating P&L, and an honesty footer. When `analysis.internals_available` is
     False, the governor_engagement/cap_breach rows render `n/a` across every column (D7 degrade,
     not void) and a line states `_scrub(analysis.internals_reason)` -- `internals_reason` carries
-    `str(exc)` from an arbitrary `EngineError`/`PortfolioError`, so it is run through `_scrub`
-    (structural vocabulary-lock enforcement) before interpolation, unlike the JSON payload's raw
-    copy of the same reason (JSON is not vocabulary-locked). Never `RealizedInternals`'
+    `str(exc)` from an arbitrary `EngineError`/`PortfolioError`. TWO free-form paths reach this
+    function's rendered text, and both are run through `_scrub` (structural vocabulary-lock
+    enforcement) before interpolation: `internals_reason` above, and the NO-VERDICT line's joined
+    `void_reasons` (which itself carries `str(exc)` from a `SoakError` when `soak_report`'s
+    `realized_series` call raised one, e.g. `f"realized series: {exc}"`). Both stay UNSCRUBBED in
+    the JSON payload's copies (JSON is not vocabulary-locked). Never `RealizedInternals`'
     `identity_detail`/`cap_detail`, which are diagnostic strings that may carry vocabulary-locked
     words and are never passed to this function. `analysis`/`null`/`self_test` are all `None` when
     the canonical dataset is absent (no null to judge against); `realized` is additionally `None`
@@ -1193,7 +1212,7 @@ def render_report(
     lines.append("")
 
     if void_reasons:
-        lines.append(f"NO VERDICT -- {'; '.join(void_reasons)}")
+        lines.append(f"NO VERDICT -- {_scrub('; '.join(void_reasons))}")
         if analysis is not None and analysis.is_degenerate:
             lines.append("INDETERMINATE -- DEGENERATE WINDOW")
         lines.append("")
@@ -1334,7 +1353,14 @@ def _json_payload(
             m: _verdict_payload(m, v, internals_available=analysis.internals_available) for m, v in analysis.gating_verdicts.items()
         }
         payload["panel"] = asdict(analysis.panel)
-        payload["context"] = {"null_gov_rate": analysis.null_gov_rate, "null_cap_rate": analysis.null_cap_rate}
+        payload["context"] = {
+            "null_gov_rate": analysis.null_gov_rate,
+            "null_cap_rate": analysis.null_cap_rate,
+            "note": (
+                "null_gov_rate/null_cap_rate are the null's GLOBAL rates (D9) -- do not use them as the "
+                "comparison reference; the windowed null distribution behind gating_verdicts is the reference"
+            ),
+        }
         payload["d4"] = {"d4_gap_bps": analysis.d4_gap_bps, "d4_active": analysis.d4_active}
         payload["pnl"] = {"pnl_mean": analysis.pnl_mean, "pnl_cum": analysis.pnl_cum, "pnl_verdict": asdict(analysis.pnl_verdict)}
         payload["is_degenerate"] = analysis.is_degenerate

@@ -840,10 +840,11 @@ def test_disclosures_empty_book_no_vacuous_long_only():
     assert not any("correlation" in d for d in a.disclosures)
 
 
-def test_disclosure_notes_partial_day_asymmetry():
-    # Fix 7: a realized day is engaged iff any SCORED bar has mult<1.0, but a null day considers
-    # ALL of that day's bars -- the realized window's first/last days are typically partial, biasing
-    # the realized rate DOWNWARD vs the null. This is conservative, not a bug -- disclosed, not fixed.
+def test_disclosure_notes_day_granularity_is_exact():
+    # Final review Fix 1: the governor multiplier is constant WITHIN a day by construction
+    # (daily_cadence_governor assigns one multiplier per day_index), so a partial realized day
+    # carries the SAME engagement information as a full one -- there is no "fewer chances to
+    # engage" downward bias. The disclosure must say so, and must NOT claim a downward bias.
     rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
     realized = _mk_realized(rw, [0.001] * 6)
     internals = _mk_internals(realized.cycle_ts)
@@ -851,7 +852,9 @@ def test_disclosure_notes_partial_day_asymmetry():
 
     a = analyze_soak(realized, null, band=0.90, internals=internals)
 
-    assert any("partial" in d.lower() and "downward" in d.lower() for d in a.disclosures)
+    assert any("exact" in d.lower() and "partial" in d.lower() for d in a.disclosures)
+    assert not any("downward" in d.lower() for d in a.disclosures)
+    assert not any("fewer chances" in d.lower() for d in a.disclosures)
 
 
 # --- render_report -----------------------------------------------------------------------------------
@@ -1007,6 +1010,22 @@ def test_render_report_scrubs_internals_reason_json_stays_raw():
     assert payload["internals"]["reason"] == internals.reason  # JSON keeps the RAW unscrubbed reason
 
 
+def test_render_report_scrubs_void_reasons_from_soak_error():
+    # Final review Fix 3: `soak_report` builds `void_reasons = [f"realized series: {exc}"]` from a
+    # SoakError when `realized_series` itself raises, and `render_report` interpolates
+    # `void_reasons` verbatim into the NO-VERDICT line -- the SECOND free-form path into rendered
+    # text alongside `internals_reason`. Must be scrubbed too, structurally, same as above.
+    exc = SoakError("rebuild passed through a stale universe and was PROVEN inconsistent")
+    void_reasons = [f"realized series: {exc}"]
+
+    text = render_report(None, None, None, None, void_reasons=void_reasons, band=0.90)
+
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "realized series" in text and "stale universe" in text  # message stays useful
+
+
 def test_render_report_disclosures_block():
     # non-empty: constant mult on a long-only book -> constancy + redundancy + day-granularity
     # disclosures, each rendered under a DISCLOSURES header.
@@ -1016,6 +1035,7 @@ def test_render_report_disclosures_block():
     null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
     analysis = analyze_soak(realized, null, band=0.90, internals=internals)
     assert analysis.disclosures  # sanity: this fixture actually produces disclosures
+    assert any("cap_breach probes a separate mechanism" in d for d in analysis.disclosures)
     self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
 
     text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
@@ -1023,8 +1043,10 @@ def test_render_report_disclosures_block():
     for d in analysis.disclosures:
         assert d in text
 
-    # empty: genuine shorts (kills the redundancy disclosure) + internals=None (kills the
-    # unconditional day-granularity disclosure) -> no disclosures at all, no stray header.
+    # near-empty: genuine shorts (kills the specific gross/net redundancy disclosure) +
+    # internals=None (kills constancy + day-granularity) -> only the UNCONDITIONAL weight-derived
+    # cluster note remains (final review Fix 2: it fires every time the fingerprint renders), so
+    # DISCLOSURES still appears with exactly that one entry, no stray specific notes.
     rw_b = [
         {"BTC": 0.10, "ETH": -0.10},
         {"BTC": 0.15, "ETH": -0.05},
@@ -1036,9 +1058,54 @@ def test_render_report_disclosures_block():
     realized_b = _mk_realized(rw_b, [0.001] * 6)
     null_b = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
     analysis_b = analyze_soak(realized_b, null_b, band=0.90, internals=None)
-    assert analysis_b.disclosures == ()
+    assert len(analysis_b.disclosures) == 1
+    assert "cap_breach probes a separate mechanism" in analysis_b.disclosures[0]
     text_b = render_report(analysis_b, realized_b, null_b, self_test, void_reasons=[], band=0.90)
-    assert "DISCLOSURES" not in text_b
+    assert "DISCLOSURES" in text_b
+    assert "near-identical" not in text_b
+
+
+def test_honesty_footer_frames_structural_conformance_not_edge():
+    # Final review Fix 2 (footer half): the footer must make explicit that the whole report is a
+    # structural-conformance check (does the live book look like the backtest book), not evidence
+    # of edge -- vocabulary-lock clean, and the pre-existing overfit-band sentence stays verbatim.
+    low = soak._HONESTY_FOOTER.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "structural-conformance" in low
+    assert "not evidence of edge" in low
+    assert "not out-of-sample evidence" in low  # the pre-existing sentence is kept, not replaced
+
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+    assert "structural-conformance" in text.lower()
+
+
+def test_json_context_carries_reference_note_against_global_scalars():
+    # Final review Fix 4 (D9 caveat): context.null_gov_rate/null_cap_rate are the null's GLOBAL
+    # rates -- exactly what spec D9 warns must never be used as the comparison reference (the
+    # windowed distribution behind gating_verdicts is). JSON is not vocabulary-locked, so this note
+    # can name the reference directly.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC))
+
+    assert payload["context"]["null_gov_rate"] == analysis.null_gov_rate
+    assert payload["context"]["null_cap_rate"] == analysis.null_cap_rate
+    note = payload["context"]["note"].lower()
+    assert "global" in note
+    assert "not" in note and "reference" in note
+    assert "windowed" in note
 
 
 # --- _verdict_payload (Fix 4: degraded verdict JSON, zero vs null) --------------------------------------
