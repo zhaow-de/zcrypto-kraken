@@ -1,5 +1,6 @@
 ---
 status: open
+ripe_when: worked in dedicated rounds, so per round — (a) REACH (ingest the Q2/Q3 OHLCVT dumps for the 2026-03-31 → 2026-07-08 hole, and build the live-trades→bars producer) is ripe NOW per the index, and is autonomous: both components already exist and are proven (`ticks_to_bars` at 100% vs OHLCVT; live trades captured + healed). It blocks every intraday/microstructure family and nothing in the deployed 1d/4h system; (b) EXECUTION-REPRODUCIBILITY (a committed backtest command + committed dataset-hash recipes) is likewise ripe now and autonomous — research currently runs from gitignored scratchpad scripts with literal paths, and record 1's `ba47e37e` is not reproducible from committed code + manifest alone; (c) VALIDATION is [[T0064]]'s round and stays human-gated
 ---
 
 # Data-pipeline maturity for strategy research — assessment + dedicated-round backlog
