@@ -513,10 +513,12 @@ def test_unparseable_module_is_still_digested(tmp_path, monkeypatch):
 
 
 def test_replay_code_paths_does_not_collapse(tmp_path):
-    # A floor, not a pin of the exact set: the closure measured 54 modules when 00065 landed, and
-    # every contains-test above would still pass if the walk collapsed to just the ~16 modules they
-    # name. This catches that collapse. It is deliberately loose -- adding or removing an import in
-    # cli/ legitimately moves the count, and this must not become a tripwire on ordinary edits.
+    # A floor, not a pin of the exact set: the closure measures 61 modules (54 before 00065 D10's
+    # ancestor fix), and every contains-test above would still pass if the walk collapsed to just
+    # the ~16 modules they name. This catches that collapse. It is deliberately loose -- adding or
+    # removing an import in cli/ legitimately moves the count, and this must not become a tripwire
+    # on ordinary edits; the exact-coverage guarantee is
+    # test_closure_covers_every_module_the_replay_roots_actually_execute's job, not this one's.
     assert len(gate_cache._replay_code_paths()) >= 40
 
 
@@ -1044,7 +1046,9 @@ def test_closure_covers_every_module_the_replay_roots_actually_execute():
 
     It exists because the first cut of the closure walk failed it. `_resolve_module` mapped a dotted
     name to the leaf file only, but importing `cli.engine.command` EXECUTES `cli/__init__.py` and
-    `cli/engine/__init__.py` first. Six modules ran on every replay while unhashed, and it was
+    `cli/engine/__init__.py` first. SEVEN modules ran on every replay while unhashed -- the four
+    ancestor `__init__.py` files, plus cli/ohlc/{ingest,qa,reconstruct}.py, which became traversable
+    only once cli/ohlc/__init__.py entered the closure -- and it was
     exploitable exactly like the hand-enumerated list before it: rebinding
     `build_crossfreq_system_fast` in `cli/engine/__init__.py` made every replay run the VERIFIED
     daily-oracle builder -- a different verdict -- at a byte-identical fingerprint, with all 64

@@ -12,7 +12,7 @@ effective CrossfreqSystemConfig, the replay path itself, and the execution envir
 numpy version, Python major.minor) -- stored once per cache file; a mismatch invalidates the whole
 cache. Since spec 00065 that module set is DERIVED, not enumerated: `_replay_code_paths()` walks
 the transitive `cli.*` import closure of `_REPLAY_ROOTS`. The hand-maintained list it replaced
-covered 12 of those 54 modules and was wrong three separate times -- most consequentially it never
+covered 12 of those 61 modules and was wrong three separate times -- most consequentially it never
 hashed `cli/portfolio/__init__.py`, the re-export layer every replay binds
 `build_crossfreq_system_fast` through, so rebinding the fast builder to the verified one changed
 every verdict while leaving the fingerprint byte-identical.
@@ -94,11 +94,19 @@ def _resolve_module(dotted: str, repo_root: Path) -> list[Path]:
     # and it was exploitable: rebinding build_crossfreq_system_fast in `cli/engine/__init__.py`
     # changed every verdict at a BYTE-IDENTICAL fingerprint with the whole suite green. These
     # __init__ files are not inert -- `cli/engine/__init__.py` carries a live PEP 562 `__getattr__`.
-    for depth in range(1, len(parts)):
-        ancestor = repo_root.joinpath(*parts[:depth], "__init__.py")
-        if ancestor.is_file():
-            found.append(ancestor)
+    found.extend(_ancestor_packages(base, repo_root))
     return found
+
+
+def _ancestor_packages(module_path: Path, repo_root: Path) -> list[Path]:
+    """Every `__init__.py` between `repo_root` and `module_path`, exclusive of the module itself.
+    Shared by `_resolve_module` (edges) and by the root seeding in `_replay_code_paths`, so the
+    D10 rule cannot hold for one and not the other."""
+    try:
+        parts = module_path.relative_to(repo_root).parts
+    except ValueError:
+        return []
+    return [ancestor for depth in range(1, len(parts)) if (ancestor := repo_root.joinpath(*parts[:depth], "__init__.py")).is_file()]
 
 
 def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
@@ -139,7 +147,7 @@ def _import_edges(module_path: Path, repo_root: Path) -> list[Path]:
 
 
 def _replay_code_paths() -> tuple[Path, ...]:
-    """The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the modules that
+    """The transitive `cli.*` import closure of `_REPLAY_ROOTS` (spec 00065) -- the
     modules that determine a replay's result, DERIVED rather than enumerated. Replaces the
     hand-maintained twelve-path list, which covered 12 of these 61 modules (~20%) and was wrong
     three separate times; the re-export layers it missed (`cli/portfolio/__init__.py` above all)
@@ -167,7 +175,14 @@ def _replay_code_paths() -> tuple[Path, ...]:
     without a cache (D8 / spec 00060 D5)."""
     repo_root = _REPO_ROOT
     seen: set[Path] = set()
+    # Seed with the roots AND their own ancestor packages. Without this the D10 ancestor rule
+    # applies to edges only, so a root two packages deep with no cli.* imports would yield a
+    # closure of just itself. Latent today -- every real ancestor arrives via 6-47 separate edges,
+    # and the superset test would catch a regression -- but an asymmetry inside the D10 fix itself
+    # is exactly the kind of "correct for the case we thought of" this iteration is about.
     pending = list(_REPLAY_ROOTS)
+    for root in _REPLAY_ROOTS:
+        pending.extend(_ancestor_packages(root, repo_root))
     while pending:
         module_path = pending.pop()
         if module_path in seen:

@@ -15,7 +15,7 @@
 - **Digest unconditionally; traverse best-effort (spec D6).** A module that fails to parse still contributes its bytes. Never let an AST failure silently drop a file from coverage — that is the under-invalidation this whole topic is about.
 - **Never raises to the caller (spec D8 / `00060` D5).** A missing or unreadable module degrades the run to the no-cache path, logged. Gate evidence outranks the cache.
 - **Every pin mutation-verified under bytecode control.** `PYTHONDONTWRITEBYTECODE=1`, purge `__pycache__`, `grep` the mutation on disk, observe the failure, restore, confirm `git diff -- cli/` clean. A test you did not watch fail is not evidence.
-- **The measured baseline is 54 modules / 58.6 ms** (walk 58.2, digest 0.4) from roots `concordance.py` + `command.py` + `dataset.py`. A large deviation means the walk is wrong — investigate before proceeding.
+- **The measured baseline is 61 modules / ~59 ms** from roots `concordance.py` + `command.py` + `dataset.py`. A large deviation means the walk is wrong — investigate before proceeding. *(Was 54 as first written; that figure predates D10's ancestor fix. Corrected at final review — an unchecked instruction to verify a stale number would have a later worker measure 61 and conclude the walk is broken.)*
 
 ______________________________________________________________________
 
@@ -52,7 +52,7 @@ ______________________________________________________________________
 ## Task 3 (orchestrator): verification + closeout
 
 - [ ] Re-run **at least the exploit mutation** independently rather than trusting the subagent report.
-- [ ] Confirm the closure is 54 modules / ~58 ms; a large deviation means the walk is wrong.
+- [x] Confirm the closure is **61** modules / ~59 ms; a large deviation means the walk is wrong. Verified: 61 covered, 60 executed, 0 executed-but-uncovered.
 - [ ] Full suite; confirm `00064`'s 19 pins are unaffected (test-list 10).
 - [ ] Amend ratified spec `00060` D3 — its wording is the origin of three rounds of this defect. It must now say the coverage is derived, not enumerated.
 - [ ] Final whole-branch review on the most capable model.
@@ -61,4 +61,4 @@ ______________________________________________________________________
 ## Self-Review
 
 - Spec coverage: D1→T1S5; D2→T1S2; D3→T1S1; D4→T2S2; D5→T1S2+T2S3; D6→T1S3; D7→T2S1-3; D8→T2S4; D9→T3 (PR note). Test-list 1→T1S5, 2→T2S1, 3+9→T1S1, 4+5→T2S2, 6→T2S3, 7→T1S3, 8→T2S4, 10→T3.
-- Grounded: `_REPLAY_CODE_PATHS` at `gate_cache.py:54` (twelve paths after `00064` D9), `replay_fingerprint`'s digest loop at :86, `concordance.py:24` importing the fast builder from `cli.portfolio` (the exploit's mechanism), and the measured 54-module / 58.6 ms baseline — all verified present.
+- Grounded: `_REPLAY_CODE_PATHS` at `gate_cache.py:54` (twelve paths after `00064` D9), `replay_fingerprint`'s digest loop at :86, `concordance.py:24` importing the fast builder from `cli.portfolio` (the exploit's mechanism), and the measured baseline (54 modules / 58.6 ms as first written; **61 / ~59 ms** after D10 corrected the ancestor gap) — all verified present.
