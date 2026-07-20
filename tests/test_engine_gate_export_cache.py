@@ -17,6 +17,7 @@ import polars as pl
 from typer.testing import CliRunner
 
 import cli.engine.command as command
+import cli.engine.gate_cache as gate_cache
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
 from cli.engine import concordance
@@ -454,6 +455,69 @@ def test_broken_replay_fingerprint_degrades_not_aborts(tmp_path, monkeypatch):
     assert stats.replayed == 1
     assert stats.from_cache == 0  # degraded to no-cache for this run
     assert not cache_path.exists()  # no cache read or written this run
+
+
+# Spec 00065 D8 -- the same degrade, driven through the REAL replay_fingerprint instead of a stub
+# that raises on demand. The test above proves _evaluate_journal handles an OSError; these two prove
+# the fingerprint layer actually PRODUCES one for the two breakages 00065 introduces the risk of --
+# the closure walk can now reach a module that the hand-written list never named. A walk that
+# swallowed the failure would compute a fingerprint over a SILENTLY SMALLER module set: the run
+# would look healthy, write a cache, and later serve verdicts keyed on a fingerprint that never saw
+# the unreadable module. Hence the assertion that no cache file is written, not merely that the run
+# survives.
+
+
+def _degrading_tree(monkeypatch, tmp_path: Path) -> None:
+    """Point gate_cache's closure at a synthetic tree (never this repo's real source) whose root
+    exists but whose one covered helper is unreadable."""
+    root = tmp_path / "fake-repo" / "cli" / "engine" / "root.py"
+    helper = tmp_path / "fake-repo" / "cli" / "pkg" / "helper.py"
+    for path, text in ((root, "from cli.pkg import helper\n"), (helper, "thing = 1\n")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    (tmp_path / "fake-repo" / "cli" / "pkg" / "__init__.py").write_text("")
+    helper.chmod(0o000)
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path / "fake-repo")
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (root,))
+
+
+def test_unreadable_covered_module_degrades_the_run_not_aborts(tmp_path, monkeypatch):
+    journal = tmp_path / "journal"
+    _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    cache_path = tmp_path / "gate-cache.json"
+    _degrading_tree(monkeypatch, tmp_path)
+
+    try:
+        entries, counts, newest_ts, stats = command._evaluate_journal(
+            journal, cache_path=cache_path, now=CYCLE_TS + timedelta(minutes=10)
+        )
+    finally:
+        (tmp_path / "fake-repo" / "cli" / "pkg" / "helper.py").chmod(0o644)
+
+    assert counts.replayed_ok == 1  # the gate still ran; evidence outranks the cache
+    assert stats.replayed == 1
+    assert stats.from_cache == 0
+    assert not cache_path.exists(), "a cache was written over a module set the fingerprint could not read"
+
+
+def test_missing_replay_root_degrades_the_run_not_aborts(tmp_path, monkeypatch):
+    journal = tmp_path / "journal"
+    _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    cache_path = tmp_path / "gate-cache.json"
+    missing = tmp_path / "fake-repo" / "cli" / "engine" / "gone.py"
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path / "fake-repo")
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (missing,))
+
+    entries, counts, newest_ts, stats = command._evaluate_journal(
+        journal, cache_path=cache_path, now=CYCLE_TS + timedelta(minutes=10)
+    )
+
+    assert counts.replayed_ok == 1
+    assert stats.replayed == 1
+    assert stats.from_cache == 0
+    assert not cache_path.exists(), "a cache was written although a replay root could not be read"
 
 
 # --- D8: gate-export emits the cache metrics -----------------------------------------------------------

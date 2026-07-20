@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import shutil
+import subprocess
+import sys
 from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -496,6 +499,144 @@ def test_replay_code_paths_does_not_collapse(tmp_path):
     # name. This catches that collapse. It is deliberately loose -- adding or removing an import in
     # cli/ legitimately moves the count, and this must not become a tripwire on ordinary edits.
     assert len(gate_cache._replay_code_paths()) >= 40
+
+
+# --- the guarantee: the exploit, determinism, D5 resolution, never-raises (spec 00065 D7/D8) -----
+
+
+def _clone_repo_cli(tmp_path, monkeypatch):
+    """A writable copy of this repo's real `cli/` tree, with `_REPO_ROOT`/`_REPLAY_ROOTS` pointed at
+    it. Tests that need to EDIT covered source work here: never mutate the real repo source in a
+    test -- a failure mid-test would leave the working tree dirty, and a covered-module edit that
+    escaped would change every other test's fingerprint."""
+    real_root, real_roots = gate_cache._REPO_ROOT, gate_cache._REPLAY_ROOTS
+    tree = tmp_path / "repo"
+    shutil.copytree(real_root / "cli", tree / "cli", ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tree)
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", tuple(tree / root.relative_to(real_root) for root in real_roots))
+    return tree
+
+
+def test_rebinding_the_fast_builder_in_the_portfolio_init_moves_the_fingerprint(tmp_path, monkeypatch):
+    # THE GUARANTEE (spec 00065 D7-ii, test-list 2). The closure walker is only today's
+    # IMPLEMENTATION of it; this test is the thing that must hold however coverage is computed. If
+    # it ever stops distinguishing, the cache can serve verdicts produced by different code.
+    #
+    # The exploit: cli/engine/concordance.py does `from cli.portfolio import
+    # build_crossfreq_system_fast`, so every replay binds the fast builder THROUGH
+    # cli/portfolio/__init__.py. Rebinding the name there to the VERIFIED daily-oracle builder makes
+    # every replay compute a different verdict, without touching either builder's own module.
+    #
+    # Measured against the pre-00065 twelve-path enumeration, this exact edit was BYTE-IDENTICAL:
+    # sha256 484ae6ea48d61739d95fdba9a23c48560082ddeb38a71b706177ab031f9fdb84 both before and after
+    # it, with all 31 tests in this file green -- cli/portfolio/__init__.py was simply not one of
+    # the twelve hashed paths.
+    tree = _clone_repo_cli(tmp_path, monkeypatch)
+    init = tree / "cli" / "portfolio" / "__init__.py"
+
+    # Preconditions -- these keep the test about the real exploit rather than about "editing some
+    # file in the closure moves a hash". If the code moves so that these no longer hold, this test
+    # must be re-aimed at wherever the fast builder is bound, not quietly relaxed.
+    concordance_src = (tree / "cli" / "engine" / "concordance.py").read_text()
+    assert "from cli.portfolio import" in concordance_src and "build_crossfreq_system_fast" in concordance_src, (
+        "concordance no longer binds the fast builder through cli.portfolio -- re-aim this test"
+    )
+    init_src = init.read_text()
+    assert "build_crossfreq_system_fast" in init_src and "build_crossfreq_system" in init_src, (
+        "cli/portfolio/__init__.py no longer re-exports the two builders -- re-aim this test"
+    )
+    assert init in set(gate_cache._replay_code_paths()), "the re-export layer is not covered"
+
+    fp_before = replay_fingerprint()
+    init.write_text(init_src + "\nbuild_crossfreq_system_fast = build_crossfreq_system\n")
+    assert "\nbuild_crossfreq_system_fast = build_crossfreq_system\n" in init.read_text()  # the edit landed
+
+    assert replay_fingerprint() != fp_before, (
+        "rebinding build_crossfreq_system_fast in cli/portfolio/__init__.py left the fingerprint "
+        "unchanged -- the cache would serve verdicts from a different builder"
+    )
+
+
+def test_replay_fingerprint_is_identical_in_a_fresh_process_from_a_different_cwd(tmp_path):
+    # Test-list 4/5, D4 + D7-iii. Determinism across PROCESSES and CWDs, not just across calls.
+    # Both halves are load-bearing and neither is implied by the in-process sorted-order pin above:
+    #   - fresh process: set iteration order depends on PYTHONHASHSEED, which is randomized per
+    #     process, so an unsorted walk agrees with itself all day inside one interpreter and
+    #     disagrees with the next one.
+    #   - different cwd: deriving the repo root from cwd instead of __file__ would digest a
+    #     different (or empty) file set depending on where the CLI was invoked from.
+    # Losing either silently disables the cache: every run's fingerprint mismatches the stored one,
+    # so every run rebuilds -- which looks exactly like a working cache while doing no work.
+    in_process = replay_fingerprint()
+    assert replay_fingerprint() == in_process  # stable across repeated calls
+
+    result = subprocess.run(
+        [sys.executable, "-c", "from cli.engine.gate_cache import replay_fingerprint; print(replay_fingerprint())"],
+        cwd=tmp_path,  # deliberately NOT the repo root
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == in_process, "the fingerprint is not reproducible across processes/cwds"
+
+
+def test_from_cli_pkg_import_x_resolves_to_both_the_package_and_the_submodule(tmp_path, monkeypatch):
+    # Test-list 6 / D5, on a synthetic tree carrying BOTH shapes a `from cli.pkg import X` can take:
+    #   - `submodule` -- a real cli/pkg/submodule.py; resolving only the package would miss it.
+    #   - `reexported_name` -- a name bound in cli/pkg/__init__.py with no file of its own; this is
+    #     the build_crossfreq_system_fast shape, and resolving only `cli/pkg/X.py` would miss the
+    #     __init__ that binds it. That miss is the entire pre-00065 hole.
+    # Static analysis cannot tell the two apart, so D5 resolves both and accepts the over-inclusion.
+    _write(tmp_path / "cli" / "engine" / "root.py", "from cli.pkg import submodule, reexported_name\n")
+    _write(tmp_path / "cli" / "pkg" / "__init__.py", "reexported_name = 1\n")
+    _write(tmp_path / "cli" / "pkg" / "submodule.py", "thing = 2\n")
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (tmp_path / "cli" / "engine" / "root.py",))
+
+    assert gate_cache._replay_code_paths() == (
+        tmp_path / "cli" / "engine" / "root.py",
+        tmp_path / "cli" / "pkg" / "__init__.py",
+        tmp_path / "cli" / "pkg" / "submodule.py",
+    )
+
+
+# D8, half one: the EXCEPTION TYPE is the contract. `_evaluate_journal` degrades to the no-cache
+# path by catching OSError specifically (command.py:224), so a broken module must surface as an
+# OSError and nothing else -- any other type propagates through that guard and aborts a gate-export
+# run over what is only a cache optimization. The walk itself never raises; it is the digest's
+# read_bytes that fails, BY DESIGN, so a module that cannot be read can never be silently skipped.
+# (Half two -- that the caller actually degrades -- is pinned end-to-end against these same two
+# breakages in tests/test_engine_gate_export_cache.py.)
+
+
+def test_replay_fingerprint_raises_oserror_when_a_root_is_missing(tmp_path, monkeypatch):
+    root = tmp_path / "cli" / "engine" / "root.py"
+    _write(tmp_path / "cli" / "engine" / "other.py", "# the tree exists; the root does not\n")
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (root,))
+
+    assert not root.exists()
+    assert root in gate_cache._replay_code_paths()  # a missing root stays IN the covered set...
+    with pytest.raises(OSError):  # ...so it fails loudly at digest time instead of vanishing
+        replay_fingerprint()
+
+
+def test_replay_fingerprint_raises_oserror_when_a_covered_module_is_unreadable(tmp_path, monkeypatch):
+    root = tmp_path / "cli" / "engine" / "root.py"
+    helper = tmp_path / "cli" / "pkg" / "helper.py"
+    _write(root, "from cli.pkg import helper\n")
+    _write(tmp_path / "cli" / "pkg" / "__init__.py", "")
+    _write(helper, "thing = 1\n")
+    helper.chmod(0o000)
+    monkeypatch.setattr(gate_cache, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (root,))
+
+    try:
+        assert helper in gate_cache._replay_code_paths()  # covered, and unreadable
+        with pytest.raises(OSError):
+            replay_fingerprint()
+    finally:
+        helper.chmod(0o644)  # restore so tmp_path cleanup never depends on the test's outcome
 
 
 # --- cache round-trip (D4/D8 of the spec test list) ----------------------------------------------
