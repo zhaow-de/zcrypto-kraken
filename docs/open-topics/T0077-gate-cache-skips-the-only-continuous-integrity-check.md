@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: ripe NOW, and it BLOCKS enabling `gate-export --cache` in any deployment — the mitigation is autonomous and must land before the flag is switched on anywhere
+status: partial
+ripe_when: the mitigation has landed, so what remains is (a) the >3-day staleness alert rule, ripe NOW and autonomous, (b) the cache-file siting decision, ripe when the `--cache` deployment is actually scheduled, and (c) the owner's threat-model judgement on in-place parquet alteration, which gates how much of (a)/(b) is warranted -- ask at the next attended session
 ---
 
 # Enabling `gate-export --cache` removes the only continuous integrity check on the gate's evidence
@@ -37,11 +37,34 @@ This reframes iter-109's original finding. That iteration characterised the per-
 - Related but distinct: [[T0075]] found 8 unpinned *guarantees* in the same module. Those are coverage gaps in the tests; this topic is a gap in the **design**, present regardless of test coverage.
 - The threat model is not primarily malice. The plausible vectors are bit-rot on a spinning-disk RAID, a partial or interrupted write, and any process holding group-write on the share (`--chmod=D0775,F0664` grants it deliberately, so members of group `zcrypto` can write into it).
 
+## Done so far
+
+**The mitigation landed** (spec/plan `00062`; PR into `develop`). `gate-export --cache` no longer trusts a cycle indefinitely: each run force-replays a deterministic rotating slice of otherwise cache-eligible cycles, so the whole journal's parquet bytes are re-verified about daily even with the cache warm.
+
+- **Keyed on the cycle, not the position** — `slice_of(cycle_ts) = sha256(cycle_ts.isoformat()) % 24`, so a cycle's slice is a fixed property of the cycle. An index-keyed slice would move as the journal grows, making coverage neither uniform nor provable. `sha256` rather than the builtin `hash()`, which is not guaranteed stable across processes.
+- **Stateless** — the current slice is `now.hour % 24`; no rotation cursor to persist, corrupt, or reset. A skipped hour costs a delayed slice and self-heals.
+- **A forced re-verification failure is a GATE failure**, not a cache event (D4): same `CycleOutcome(mismatch=True)` any replay produces, into `JournalCounts`/`evaluate_gate` unchanged, counted as `replayed` and never `from_cache`.
+- **Staleness is observable** — `verified_at` per entry, and `zcrypto_gate_cache_oldest_verification_age_seconds`, because a rotation that silently stops would otherwise look exactly like a healthy cache. `zcrypto_gate_export_duration_seconds` also lands, closing [[T0069]]'s "measure it rather than extrapolate" gap.
+
+**Verified on the real journal** (ops mirror, 57 cycles), against the *modified* eligibility predicate — the iter-110 evidence covers the old one and does not carry over:
+
+| run | wall | replayed | hits |
+|---|---|---|---|
+| no-cache | 94.52 s | 57 | 0 |
+| `--cache` cold | 93.70 s | 57 | 0 |
+| `--cache` warm | 2.45 s | **1** | 56 |
+| warm again | 2.48 s | **1** | 56 |
+
+**Gate metrics identical across all four** (`gate_status 0`, `streak_days 9`, `mismatch_total 0`). The `replayed 1 / hits 56` line is the load-bearing one: a fast warm run is exactly what a silently-disabled rotation would also produce, so the counters — not the runtime — are what prove the treatment engaged.
+
+**Coverage proven, not inferred:** a 24-hour sweep re-verified **57/57 cycles, each in exactly one slice** (21/24 slices populated, final age 84,540 s < 86,400). Worst hour = 5 replays ≈ 8.1 s here, ≈ 54 s on the NAS Atom — about 1.5% of the 3600 s pull interval, against ~510 s for today's full replay.
+
+**The guarantee was attacked, not just tested.** A reviewer confirmed eligibility depends only on `cycle_ts` and the run clock, reading nothing from the cache file — so an attacker with full control of that file can suppress the staleness metric but cannot suppress the rotation replay, and a failed `save_cache` cannot stop it either. Two latent traps were closed on the way: the emitted metrics' *values* were unpinned end-to-end (hardcoding them to `0.0` passed 72/72 until a test pinned the exact values), and `_ROTATION_SLICES > 24` would have left high slices permanently unreachable, silently — now an assert.
+
+**Known and deliberate:** a mismatch outcome is itself cached, so after repairing corrupted evidence the gate can stay red for up to one rotation. Fail-closed by design; the README documents deleting the cache file as the immediate remedy.
+
 ## Suggested next steps
 
-- **(Autonomous — the mitigation, and the precondition for ever enabling the flag)** Add **bounded rotating re-verification** to `_evaluate_journal`: each run, force a full `_replay_one` on a deterministic, stateless slice of otherwise cache-eligible cycles — e.g. re-replay cycle *i* when `i % 24 == (hour of run) % 24`. The whole journal is then re-verified about daily at roughly 1/24th of today's per-run cost. Deterministic and stateless so it needs no extra persisted state and behaves identically across restarts. Pin it with a test that a tampered parquet whose journal record is untouched is still caught within one full rotation.
-- **(Autonomous)** Emit `zcrypto_gate_cache_oldest_verification_age_seconds` and alert above ~3 days, so the rotation stopping is visible rather than silent. Without it, a rotation that silently stops looks exactly like a healthy cache. Note `save_cache` currently logs a warning and continues on write failure — on a full disk that presents as a working cache with `invalidated` reading 0.
-- **(Autonomous, do it in the same change)** Rename `zcrypto_gate_cache_replayed_total` / `_hits_total` off the `_total` suffix — they are per-run gauges, and enabling `--cache` drops `replayed` from N to ~1, which `rate()`/`increase()` reads as a counter reset. Cheap now, breaking later once someone is reading them.
-- **(Autonomous)** Re-run the three-way no-cache / cold / warm comparison on the ops journal mirror **against the modified code** and require identical gate metrics. The existing "gate metrics IDENTICAL" evidence covers the *unmodified* predicate on a failure-free 39-cycle journal; it does not carry over to a changed cache-eligibility rule.
+- **(Autonomous, ripe NOW — the metric ships, the RULE does not)** Add the Grafana alert on `zcrypto_gate_cache_oldest_verification_age_seconds` above ~3 days to `infra/grafana/alerts.yaml`. Emitting the number without alerting on it leaves the rotation's failure mode exactly as invisible as before: `save_cache` logs a warning and continues on write failure, so a full disk presents as a working cache with `invalidated` reading 0 and a quietly-ageing staleness number nobody is watching.
 - **(Decision, then autonomous)** Site the cache file **container-ephemeral, never on `/archive`**. The NAS runs `polars-runtime-compat` while ops runs stock polars, and `replay_fingerprint` digests neither — so a cache file on a share both hosts can reach is mutually poisonable.
 - **(For the owner, one judgement)** Confirm whether in-place alteration of an already-verified parquet is a threat worth defending against in this environment. If the answer is no, the rotating re-verification can be dropped to a weekly slice or dropped entirely with the reasoning recorded here — but that should be a decision, not an omission.
