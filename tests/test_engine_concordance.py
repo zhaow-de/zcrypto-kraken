@@ -207,6 +207,23 @@ def test_day_cutoff_anchor_discriminates_alternate_boundaries():
     assert status.last_failure is None
 
 
+def test_day_cutoff_requires_the_freshness_window_not_just_the_hour():
+    """The anchor test above uses now=20:35, which is past BOTH the true 20:30 cutoff and a
+    window-dropped 20:00 one, so it cannot tell them apart -- verified: deleting `+
+    _FRESHNESS_WINDOW` from the day cutoff left the whole suite green. Position `now` BETWEEN the
+    two: at 20:15 the correct cutoff (20:00 + 30m) has not passed, so the final day is still in
+    progress and must be excluded; drop the window and it is wrongly counted as complete, flipping
+    the gate 30 minutes early. The per-cycle freshness bound is separately pinned by
+    test_late_cycle_resets_streak -- this covers only the DAY cutoff, which was not."""
+    days = _days(START, 5)
+    entries = [e for d in days for e in _clean_day(d)]
+    now = datetime(days[4].year, days[4].month, days[4].day, 20, 15)  # inside 20:00-20:30
+    status = evaluate_gate(entries, now=now)
+    assert status.streak == 4, "day 4 is not due until 20:30 -- the freshness window is part of the cutoff"
+    assert not status.gate_met
+    assert status.last_failure is None
+
+
 def test_mid_day_start_excludes_partial_first_day_not_fails_it():
     days = _days(START, 4)
     day0 = days[0]
