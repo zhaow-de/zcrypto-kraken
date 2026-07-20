@@ -179,10 +179,31 @@ def _evaluate_journal(
     replay_cycle entirely for that cycle; sidecars and unparseable records are never cached (D7).
     JournalCounts is always derived from the resulting outcome (cached or freshly replayed) in one
     place below, never from which branch produced it -- a cache hit must count exactly like a
-    replay would have. The fourth element, CacheStats, is spec 00060 D8's observability tally."""
+    replay would have. The fourth element, CacheStats, is spec 00060 D8's observability tally.
+
+    `cache_path is None` takes exactly the pre-`--cache` code path: neither `replay_fingerprint` nor
+    `evidence_fingerprint` is ever called, so a bug in either (e.g. replay_fingerprint's unguarded
+    `read_bytes()` over ten source files) can never reach a no-cache caller like `report` -- D1's
+    byte-for-byte promise, structurally. When `cache_path` is set but `replay_fingerprint()` itself
+    raises OSError, that's caught here and degrades THIS RUN to the same no-cache path (logged, never
+    aborted) -- a cache is an optimization, gate evidence is not. Same principle per record for
+    `evidence_fingerprint`: a failure there means "replay this one cycle", never "abort the run"."""
     reader = _snapshot_reader(journal_root)
-    replay_fp = replay_fingerprint(path=_EVALUATE_JOURNAL_REPLAY_PATH)
-    cache = load_cache(cache_path, replay_fp)
+
+    cache_active = cache_path is not None
+    cache = GateCache(replay_fp="", entries={})
+    replay_fp = ""
+    if cache_active:
+        try:
+            replay_fp = replay_fingerprint(path=_EVALUATE_JOURNAL_REPLAY_PATH)
+        except OSError as exc:
+            logger.warning(
+                "gate-export cache: replay_fingerprint failed (%s); degrading this run to a full replay without a cache",
+                exc,
+            )
+            cache_active = False
+        else:
+            cache = load_cache(cache_path, replay_fp)
 
     record_outcomes: list[CycleOutcome] = []
     updated_entries: dict[datetime, tuple[str, CycleOutcome]] = {}
@@ -194,15 +215,25 @@ def _evaluate_journal(
             record_outcomes.append(CycleOutcome(cycle_ts=boundary, completed_at=boundary, validation_failed=True))
             continue
 
-        fp = evidence_fingerprint(record)
-        cached_entry = cache.entries.get(record.cycle_ts)
+        fp = None
+        if cache_active:
+            try:
+                fp = evidence_fingerprint(record)
+            except (OSError, TypeError, AttributeError) as exc:
+                logger.warning(
+                    "gate-export cache: evidence_fingerprint failed for %s (%s); replaying this cycle uncached",
+                    record.cycle_ts,
+                    exc,
+                )
+        cached_entry = cache.entries.get(record.cycle_ts) if fp is not None else None
         if cached_entry is not None and cached_entry[0] == fp:
             outcome = cached_entry[1]
             from_cache_count += 1
         else:
             outcome = _replay_one(record, reader)
             replayed_count += 1
-        updated_entries[record.cycle_ts] = (fp, outcome)
+        if fp is not None:
+            updated_entries[record.cycle_ts] = (fp, outcome)
         record_outcomes.append(outcome)
 
     # Counters derived from the resulting outcome, in one place -- see the docstring's THE TRAP note.
@@ -218,7 +249,8 @@ def _evaluate_journal(
         sidecar_count += 1
 
     newest_ts = max((entry.cycle_ts for entry in entries), default=None)
-    save_cache(cache_path, GateCache(replay_fp=replay_fp, entries=updated_entries))
+    if cache_active:
+        save_cache(cache_path, GateCache(replay_fp=replay_fp, entries=updated_entries))
     cache_stats = CacheStats(replayed=replayed_count, from_cache=from_cache_count, invalidated=cache.rejected)
     return entries, JournalCounts(replayed_ok, mismatches, validation_failures, sidecar_count), newest_ts, cache_stats
 

@@ -293,6 +293,55 @@ def test_no_cache_option_is_unchanged_behavior(tmp_path, monkeypatch):
     assert stats.invalidated is False
 
 
+# --- the fingerprint layer stays inert without --cache, and degrades rather than aborts ----------------
+
+
+def test_no_cache_path_never_touches_the_fingerprint_layer(tmp_path, monkeypatch):
+    """`cache_path=None` must take the pre-`--cache` code path structurally, not just by outcome --
+    neither fingerprint function may even be called. Pins D1: a bug in either fingerprint (e.g. the
+    unguarded `module_path.read_bytes()` in replay_fingerprint) must never be able to touch `report`
+    or any other no-cache caller."""
+    journal = tmp_path / "journal"
+    _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("fingerprint layer must not run when cache_path is None")
+
+    monkeypatch.setattr(command, "replay_fingerprint", _boom)
+    monkeypatch.setattr(command, "evidence_fingerprint", _boom)
+
+    entries, counts, newest_ts, stats = command._evaluate_journal(journal, cache_path=None)
+
+    assert counts.replayed_ok == 1
+    assert stats.replayed == 1
+    assert stats.from_cache == 0
+    assert stats.invalidated is False
+
+
+def test_broken_replay_fingerprint_degrades_not_aborts(tmp_path, monkeypatch):
+    """A cache is an optimization; gate evidence is not. `replay_fingerprint()` reads ten module
+    files with no exception guard of its own -- an OSError there (an unreadable file, a bind-mount
+    hiccup) must degrade this run to a full replay without a cache, never abort the whole gate-export
+    run."""
+    journal = tmp_path / "journal"
+    _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    cache_path = tmp_path / "gate-cache.json"
+
+    def _boom(**_kwargs):
+        raise OSError("simulated unreadable replay-code module")
+
+    monkeypatch.setattr(command, "replay_fingerprint", _boom)
+
+    entries, counts, newest_ts, stats = command._evaluate_journal(journal, cache_path=cache_path)
+
+    assert counts.replayed_ok == 1
+    assert stats.replayed == 1
+    assert stats.from_cache == 0  # degraded to no-cache for this run
+    assert not cache_path.exists()  # no cache read or written this run
+
+
 # --- D8: gate-export emits the cache metrics -----------------------------------------------------------
 
 
