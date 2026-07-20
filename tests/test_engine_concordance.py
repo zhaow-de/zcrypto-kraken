@@ -382,3 +382,108 @@ def test_replay_cycle_daily_peek_disagrees_with_metadata_raises_before_build(mon
     with pytest.raises(EngineJournalError):
         replay_cycle(record, peeking_reader, path="fast")
     assert calls == []  # the builder must never run on data that disagrees with its own metadata
+
+
+def test_same_length_peek_is_still_rejected(monkeypatch):
+    """THE KEYSTONE (spec D2). Today's peek fixture above trips n_bars AND last_ts together --
+    deleting either term alone still leaves the suite green. This one swaps the trailing settled
+    bar for the in-progress candle at EQUAL length: n_bars and first_ts both still agree with the
+    declared metadata, only last_ts differs. If the `ts[-1] != entry.last_ts` term were dropped
+    from line 118's disjunction, the builder would run on lookahead data and -- because n_bars and
+    first_ts still match -- nothing else here would catch it: the targets would simply come out
+    wrong, not loudly rejected. That silent-contamination failure mode is what makes this the
+    keystone, not just a third conjunct."""
+    in_progress_ts = datetime(2026, 7, 10, 0, 0)  # cycle's own midnight -- the in-progress candle
+    swapped_daily_ts = [DAILY_TS[0], DAILY_TS[1], in_progress_ts]  # same length, trailing bar swapped
+    swapped_daily_closes = [DAILY_CLOSES[0], DAILY_CLOSES[1], 53.0]
+
+    h4, honest_daily = _snapshot_entries()
+    same_length_daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=honest_daily.n_bars,  # 3 == len(swapped_daily_ts): matches
+        first_ts=honest_daily.first_ts,  # == swapped_daily_ts[0]: matches
+        last_ts=honest_daily.last_ts,  # declared honest boundary -- the actual last_ts differs
+        content_hash=snapshot_content_hash(swapped_daily_ts, swapped_daily_closes),  # hash over the REAL data
+        path=honest_daily.path,
+    )
+    record = _valid_cycle_record(snapshots=(h4, same_length_daily))
+
+    def swapping_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(H4_TS), list(H4_CLOSES)
+        return list(swapped_daily_ts), list(swapped_daily_closes)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, swapping_reader, path="fast")
+    assert calls == []  # the builder must never run on lookahead data
+
+
+def test_replay_cycle_n_bars_mismatch_alone_raises(monkeypatch):
+    """n_bars alone (spec D1). An extra bar inserted mid-series changes the count while both
+    endpoints -- ts[0] and ts[-1] -- still agree with the declared metadata. Isolates the
+    `len(ts) != entry.n_bars` conjunct: the other two terms in line 118's disjunction stay
+    satisfied, so only deleting this exact term can make this test pass again."""
+    extra_ts = datetime(2026, 7, 7, 12, 0)  # inserted between DAILY_TS[0] and DAILY_TS[1]
+    padded_daily_ts = [DAILY_TS[0], extra_ts, DAILY_TS[1], DAILY_TS[2]]
+    padded_daily_closes = [DAILY_CLOSES[0], 50.5, DAILY_CLOSES[1], DAILY_CLOSES[2]]
+
+    h4, honest_daily = _snapshot_entries()
+    padded_daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=honest_daily.n_bars,  # 3 != len(padded_daily_ts)=4: mismatches
+        first_ts=honest_daily.first_ts,  # == padded_daily_ts[0]: matches
+        last_ts=honest_daily.last_ts,  # == padded_daily_ts[-1]: matches
+        content_hash=snapshot_content_hash(padded_daily_ts, padded_daily_closes),
+        path=honest_daily.path,
+    )
+    record = _valid_cycle_record(snapshots=(h4, padded_daily))
+
+    def padding_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(H4_TS), list(H4_CLOSES)
+        return list(padded_daily_ts), list(padded_daily_closes)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, padding_reader, path="fast")
+    assert calls == []
+
+
+def test_replay_cycle_first_ts_mismatch_alone_raises(monkeypatch):
+    """first_ts alone (spec D1). The leading bar is swapped for an earlier date while the count
+    and the trailing bar stay put. Isolates the `ts[0] != entry.first_ts` conjunct: n_bars and
+    last_ts both still agree with the declared metadata."""
+    shifted_first_ts = datetime(2026, 7, 6, 0, 0)  # one day earlier than DAILY_TS[0]
+    shifted_daily_ts = [shifted_first_ts, DAILY_TS[1], DAILY_TS[2]]
+    shifted_daily_closes = [49.0, DAILY_CLOSES[1], DAILY_CLOSES[2]]
+
+    h4, honest_daily = _snapshot_entries()
+    shifted_daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=honest_daily.n_bars,  # 3 == len(shifted_daily_ts): matches
+        first_ts=honest_daily.first_ts,  # != shifted_daily_ts[0]: mismatches
+        last_ts=honest_daily.last_ts,  # == shifted_daily_ts[-1]: matches
+        content_hash=snapshot_content_hash(shifted_daily_ts, shifted_daily_closes),
+        path=honest_daily.path,
+    )
+    record = _valid_cycle_record(snapshots=(h4, shifted_daily))
+
+    def shifting_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(H4_TS), list(H4_CLOSES)
+        return list(shifted_daily_ts), list(shifted_daily_closes)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, shifting_reader, path="fast")
+    assert calls == []
