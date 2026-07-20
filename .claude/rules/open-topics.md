@@ -55,6 +55,7 @@ The list only works if it is actively drained, not just appended to. Three check
 `docs/open-topics/T<NNNN>-<slug>.md`:
 
 - `<NNNN>` is a 4-digit zero-padded counter. Next serial = one above the highest existing serial across **both** `docs/open-topics/` **and `docs/open-topics/archive/`** (the `README.md` is excluded from the count) — so an archived (resolved) topic's serial is never reused. The counter is **independent** of `docs/specs/` and `docs/plans/` — open topics have their own sequence starting at `0000`.
+- **A serial claimed by unmerged work on another branch is taken.** Check the branches, not just the two directories (`git log --all --diff-filter=A --name-only -- 'docs/open-topics/T*.md'`), and skip it — a gap is free, a collision at merge is not.
 - `<slug>` is the kebab-case topic title.
 
 ## Required file shape
@@ -89,7 +90,21 @@ A partially completed topic later closes the normal way (see below).
 
 ## Closing a topic
 
-A topic may be closed **only when it carries no live deferred sub-item** — a remaining "do X when Y" must first be split into its own topic (with its `ripe_when:`), because archived files are never reviewed and a deferral left inside one is lost. A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved` **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`). `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in its category's `### Resolved` subsection, with its link now pointing at the archived path (see Index sync).
+**"Resolve" means the underlying issue is SOLVED. It is never a status change.** Flipping `status: resolved` and moving the file to `archive/` is the bookkeeping that *records* a resolution — never the act of resolving one. Read every instruction to "resolve T\<NNNN\>" as *fix the thing, then archive it*. When the fix is out of scope, unwanted, or blocked, say so and leave the topic open: **never archive to shorten the list.** Archiving an unsolved topic destroys it — archived files are never reviewed again.
+
+A topic may be closed only when **all three** hold:
+
+- **Its issue is genuinely disposed of** — *fixed*, *shown to be a non-issue* (a measured refutation is a valid resolution), or *consciously dropped with the reason recorded in the file*;
+- **the file itself records HOW** — a `## Resolution` section (or the `## Done so far` a `partial` topic already carries) naming the commits / PR / spec / measurement that disposed of it, and trimming or explicitly labelling any `## Suggested next steps` that no longer apply; **and**
+- **it carries no live deferred sub-item** — a remaining "do X when Y" is first split into its own topic (with its `ripe_when:`), because a deferral left inside an archived file is lost.
+
+If only some sub-items are done the topic is `partial`, not resolved (see *Partially completing a topic*). If none are, it stays `open`.
+
+Write the evidence at close, while it is known: an archived topic whose work is done but **unrecorded** is indistinguishable on inspection from one whose work was never done.
+
+A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved`, **deleting its `ripe_when:` key**, **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`).
+
+Delete `ripe_when:` rather than leaving it discharged: `grep -l '^ripe_when:' docs/open-topics/archive/` must stay empty, so that a hit is *by construction* a stranded live deferral rather than something to read through and adjudicate. A closed topic has no trigger — if it still has one, it is not closed. `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in its category's `### Resolved` subsection, with its link now pointing at the archived path (see Index sync).
 
 ## Index sync (every change)
 

@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: n/a — resolved 2026-07-15 (Slack sole target; email removed after the proving call)
 ---
 
 # Slack incoming-webhook notifications for Grafana + healthchecks.io

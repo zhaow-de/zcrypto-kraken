@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: the soak-check gate produces populated verdicts (L >= floor) and the governor/cap fingerprint is wanted as a realized-vs-backtest comparison rather than backtest-only context
 ---
 
 # soak-check: realized governor-engagement + cap-breach as real comparisons (currently backtest context only)

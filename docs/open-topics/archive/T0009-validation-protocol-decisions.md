@@ -1,6 +1,5 @@
 ---
 status: resolved
-ripe_when: the next attended Phase-4/5 protocol review — all decision inputs are merged and ready as of 2026-07-09
 ---
 
 # Phase-4/5 validation-protocol decisions (human decision sheet)
