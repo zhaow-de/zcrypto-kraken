@@ -165,6 +165,25 @@ def test_replay_fingerprint_default_covers_the_real_files():
     assert fp == replay_fingerprint()  # stable/reproducible
 
 
+def test_replay_code_paths_is_pinned_as_the_full_ordered_tuple():
+    # D1: pin the WHOLE tuple, not a six-entry membership subset -- a membership check only proves
+    # the six modules added at review are present; findings 1-4 showed the four originals were
+    # droppable from the tuple without failing any test. Exact tuple equality catches removing ANY
+    # of the ten entries, reordering them, or an eleventh entry added later going unpinned.
+    assert gate_cache._REPLAY_CODE_PATHS == (
+        gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
+        gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
+        gate_cache._REPO_ROOT / "cli" / "risk" / "limits.py",
+        gate_cache._REPO_ROOT / "cli" / "risk" / "governor.py",
+        gate_cache._REPO_ROOT / "cli" / "engine" / "concordance.py",
+        gate_cache._REPO_ROOT / "cli" / "engine" / "journal.py",
+        gate_cache._REPO_ROOT / "cli" / "alpha" / "a1.py",
+        gate_cache._REPO_ROOT / "cli" / "alpha" / "a2.py",
+        gate_cache._REPO_ROOT / "cli" / "portfolio" / "builder.py",
+        gate_cache._REPO_ROOT / "cli" / "benchmark" / "strategies.py",
+    )
+
+
 def test_replay_fingerprint_covers_the_live_and_latent_gap_modules():
     # D3 was missing every module below -- a revised drawdown_governor ladder or a changed
     # validate_record/snapshot_content_hash (both LIVE, reachable on the "fast" path
@@ -193,6 +212,29 @@ def test_replay_fingerprint_changes_when_a_live_gap_module_changes(tmp_path, mon
     for real_path in (
         gate_cache._REPO_ROOT / "cli" / "risk" / "governor.py",
         gate_cache._REPO_ROOT / "cli" / "engine" / "journal.py",
+    ):
+        stand_in = tmp_path / real_path.name
+        stand_in.write_bytes(real_path.read_bytes())
+        patched = tuple(stand_in if p == real_path else p for p in gate_cache._REPLAY_CODE_PATHS)
+        monkeypatch.setattr(gate_cache, "_REPLAY_CODE_PATHS", patched)
+
+        fp_before = replay_fingerprint()
+        stand_in.write_bytes(stand_in.read_bytes() + b"\n# mutated\n")
+        fp_after = replay_fingerprint()
+        assert fp_after != fp_before, f"{real_path} is not covered by the fingerprint"
+
+
+def test_replay_fingerprint_changes_when_an_original_module_changes(tmp_path, monkeypatch):
+    # Findings 1-4: these four have been in _REPLAY_CODE_PATHS since before the T0075 audit, but no
+    # test asserted the fingerprint actually responds to their bytes -- they were droppable from
+    # the tuple without failing anything. Same tmp-copy pattern as
+    # test_replay_fingerprint_changes_when_a_live_gap_module_changes above (never mutate real repo
+    # source).
+    for real_path in (
+        gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq_system.py",
+        gate_cache._REPO_ROOT / "cli" / "portfolio" / "crossfreq.py",
+        gate_cache._REPO_ROOT / "cli" / "risk" / "limits.py",
+        gate_cache._REPO_ROOT / "cli" / "engine" / "concordance.py",
     ):
         stand_in = tmp_path / real_path.name
         stand_in.write_bytes(real_path.read_bytes())

@@ -59,8 +59,13 @@ _REPLAY_CODE_PATHS: tuple[Path, ...] = (
     _REPO_ROOT / "cli" / "risk" / "governor.py",
     _REPO_ROOT / "cli" / "engine" / "concordance.py",
     _REPO_ROOT / "cli" / "engine" / "journal.py",
-    # LATENT -- only reachable on the "verified" route; covered anyway per D3's
-    # over-invalidation-is-safe rationale even though no caller passes path="verified" today.
+    # NOT actually latent: crossfreq_system.py:53-56 imports all four of these at module scope
+    # (cli.alpha -> a1.py/a2.py; cli.benchmark.strategies; cli.portfolio.builder), so their bytes
+    # execute on every import of crossfreq_system.py -- live on the "fast" route too. Kept
+    # separate from the LIVE block above because only the "verified" route's
+    # build_crossfreq_system ever CALLS their functions, and no caller passes path="verified"
+    # today; covered anyway per D3's over-invalidation-is-safe rationale (spec 00064 D7 label
+    # correction).
     _REPO_ROOT / "cli" / "alpha" / "a1.py",
     _REPO_ROOT / "cli" / "alpha" / "a2.py",
     _REPO_ROOT / "cli" / "portfolio" / "builder.py",
