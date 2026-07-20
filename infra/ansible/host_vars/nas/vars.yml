@@ -69,21 +69,34 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 #                                                                   (workflow: `<github.sha><suffix>`);
 #                                                                   40 hex chars, so it LOOKS like a
 #                                                                   digest and is what a UI displays
-#   manifest digest  @sha256:91f2c80f…   what you PIN — this line, and the rendered .env
+#   manifest digest  @sha256:91f2c80f…   what you PIN — the nas_capture_image line below, and
+#                                       the rendered .env. NB the three values here are a frozen
+#                                       2026-07-17 worked EXAMPLE, kept because they came from one
+#                                       real image; they are not the current pin (three re-pins on)
+#                                       and are deliberately not updated per re-pin. Read the live
+#                                       value off nas_capture_image, never off this block.
 #   image ID         sha256:5c759cc4…    the local config-blob digest; the `docker images` ID column
 #
 # `docker inspect <container>` reconciles them: .Config.Image is what compose asked for (the digest),
 # .Image is the local ID, and inspecting that ID lists RepoTags + RepoDigests.
 #
-# THE FIRST SELF-DESCRIBING PIN — the prediction the previous comment made has come true. This
-# digest carries `org.opencontainers.image.revision = a731e54b…` (the merge of PR #165) and
-# `de.zhaow.zcrypto.polars-runtime = compat`, both read back off the registry before pinning, so the
-# pin no longer relies on decoding a tag. Verify a future pin the same way rather than trusting the
-# tag: fetch the manifest's config blob and read those two labels. `-compat` is not optional — this
-# Atom Goldmont has no AVX, and the default build will not run on it.
-# Previous pin: 91f2c80f… (built from 11d2cb1b, 2026-07-17), which predates `gate-export --cache`
-# entirely — which is why enabling the flag REQUIRED this re-pin rather than being a script edit.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:dfb80f482b9d5a7590cb9394e9d5937e0f30637550ee4902d58400161b4fdaa8
+# SELF-DESCRIBING PIN — verified by label before pinning, not by decoding a tag. This digest carries
+# `org.opencontainers.image.revision = ba86b6de…` (develop's tip: PR #168 + the websockets 16.1.1
+# bump) and `de.zhaow.zcrypto.polars-runtime = compat`. `-compat` is not optional — this Atom
+# Goldmont has no AVX, and the default build will not run on it; the same build publishes a
+# `default` digest that would fail here, so read the label, never pick by position.
+# Verified further by RUNNING the pulled image rather than trusting the labels: `_replay_code_paths()`
+# returns 61 modules from 3 roots, covering `cli/engine/__init__.py` and `cli/portfolio/__init__.py`,
+# and websockets reports 16.1.1.
+# Ships PR #168 — `replay_fingerprint` now derives its coverage from the transitive import closure
+# (spec 00065) instead of a hand-maintained list that covered 12 of 61 executing modules. The
+# fingerprint therefore CHANGES with this pin, which invalidates the whole cache; that costs one
+# cold `gate-export` (~627 s vs ~55 s warm) on the first pull. Expected, and not specific to this
+# pin: the cache lives at /tmp/gate-cache.json inside the container (00062 D9), so ANY re-pin
+# recreates it empty. What must NOT change across the transition is the gate itself —
+# zcrypto_gate_status / streak_days / mismatch_total identical before and after.
+# Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:4f2b83bd28e4caf743d58db1be21dc48d03aebe74ae0f6667f5c7b5f41c6ba19
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
 # trap class the committed pin kills.
 nas_alloy_image: grafana/alloy@sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b
