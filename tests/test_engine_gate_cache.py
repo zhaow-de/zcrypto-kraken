@@ -151,13 +151,20 @@ def _assert_stale_entry_is_rejected(tmp_path, pristine: CycleRecord, tampered: C
     """D2's pin shape, shared by every evidence-key field test below: a field is pinned by a stale
     cache HIT, never by field presence in the digest -- a test asserting "the field appears in the
     payload" passes against a fingerprint that ignores it entirely. Stores an entry keyed on the
-    PRISTINE record's evidence_fingerprint through a REAL save_cache/load_cache round trip (not a
-    bare fingerprint comparison), matching how `_evaluate_journal` actually consults the cache
-    (`cli/engine/command.py:255`, `cached_entry[0] == fp and not reverify`) -- then asserts that
-    condition is false once the record on disk is the TAMPERED one: the fingerprint must differ, AND
-    the round-tripped entry must not satisfy the production hit test against the tampered record's
-    fresh fingerprint. A stale HIT here is exactly the exploit the mutation audit proved end-to-end
-    for all five fields (docs/research/14.phase6-gate-guarantee-mutation-audits.md G5-G7, G9-G10)."""
+    PRISTINE record's evidence_fingerprint through a real save_cache/load_cache round trip, then
+    asserts the fingerprint differs once the record on disk is the TAMPERED one. A stale HIT here is
+    exactly the exploit the mutation audit proved end-to-end for all five fields
+    (docs/research/14.phase6-gate-guarantee-mutation-audits.md G5-G7, G9-G10).
+
+    SCOPE, stated precisely because an earlier version of this docstring overstated it: these five
+    RECONSTRUCT `_evaluate_journal`'s hit test (`command.py:255`, `cached_entry[0] == fp and not
+    reverify`); they do not OBSERVE it. `_evaluate_journal` is never called here, and the round trip
+    carries no discriminating power of its own -- every one of the five mutants is killed by the
+    first assertion, `fp_tampered != fp_pristine`. It earns its place by pinning evidence_fp
+    round-trip fidelity, not by proving the wiring. The end-to-end wiring is pinned separately by
+    `test_tampered_record_misses_cache` in tests/test_engine_gate_export_cache.py, which asserts
+    `calls == [CYCLE_TS]`. The two compose: that one proves the digest gates the cache, these five
+    prove each field is in the digest. Do not read them as end-to-end coverage."""
     fp_pristine = evidence_fingerprint(pristine)
     fp_tampered = evidence_fingerprint(tampered)
     assert fp_tampered != fp_pristine

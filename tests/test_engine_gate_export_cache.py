@@ -720,6 +720,13 @@ def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp
 
     assert entries[0].mismatch is True
     assert counts.mismatches == 1
+    # replayed_ok is asserted BESIDE mismatches, pinning the two tallies against each other: a
+    # hash-mismatch outcome carries compare_passed=True (the CycleOutcome default -- compare never
+    # ran), so dropping the `not o.mismatch` guard from replayed_ok at command.py:266 would count
+    # this very cycle as a clean replay. That mutant survived all 65 tests on this branch until
+    # this line: the sibling of finding 13, in the same expression finding 13 pinned, left behind
+    # because that pin named the guard it had been told about rather than the expression's shape.
+    assert counts.replayed_ok == 0
     assert stats.replayed == 1
     assert stats.from_cache == 0
 
