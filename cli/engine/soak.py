@@ -571,6 +571,68 @@ def summarize_panel(verdicts: dict[str, MetricVerdict], *, band: float = 0.90) -
     return PanelSummary(n_metrics=n_metrics, n_outside=n_outside, expected_by_chance=expected_by_chance, line=line)
 
 
+_SEVERITY = {"consistent": 0, "weakly-consistent": 1, "inconsistent": 2}
+
+
+@dataclass(frozen=True)
+class DualVerdict:
+    """The reconciliation of a metric's two independently-constructed null verdicts (spec 00061
+    D1): `primary` from the windowed null, `secondary` from the block-bootstrap null. Agreement
+    keeps the shared label; an adjacent disagreement (severity differs by 1) takes the MILDER
+    (lower-severity) label -- the reading less likely to claim a divergence; a `consistent` vs
+    `inconsistent` split (severity differs by 2) degrades to `"indeterminate
+    (instrument-fragile)"`, since asserting either label would claim more than the two
+    constructions agree on. `disclosure` is `""` exactly when `primary == secondary`."""
+
+    verdict: str  # reconciled label, or "indeterminate (instrument-fragile)"
+    primary: str  # the windowed null's label
+    secondary: str  # the bootstrap null's label
+    disclosure: str  # "" when the two agree
+
+
+def reconcile_verdicts(primary: str, secondary: str) -> DualVerdict:
+    """Reconcile two per-metric null verdicts under spec 00061 D1. Pure: no metric knowledge, no
+    I/O -- just the two label strings in, a `DualVerdict` out.
+
+    Equal labels (including both `"n/a"`, and two equal but UNRECOGNIZED labels) short-circuit to
+    that label with no disclosure -- agreement never needs the severity order, so an unrecognized
+    label used consistently by both nulls still reconciles cleanly. Exactly one `"n/a"` takes the
+    other (discriminating) null's label, disclosing that only one construction had power here.
+    A label outside `_SEVERITY` that DIFFERS from the other side can't be placed on the severity
+    order at all -- rather than raise a bare `KeyError`, it is treated the same as an
+    opposite-extremes split (`"indeterminate (instrument-fragile)"`, disclosed by name): reconciling
+    something we don't understand would claim more confidence than we have.
+    """
+    if primary == secondary:
+        return DualVerdict(verdict=primary, primary=primary, secondary=secondary, disclosure="")
+
+    if primary == "n/a" or secondary == "n/a":
+        discriminating = secondary if primary == "n/a" else primary
+        disclosure = (
+            f"only one null construction discriminated here (primary={primary!r}, secondary={secondary!r}) -- "
+            "the other's band had no power"
+        )
+        return DualVerdict(verdict=discriminating, primary=primary, secondary=secondary, disclosure=disclosure)
+
+    if primary not in _SEVERITY or secondary not in _SEVERITY:
+        disclosure = (
+            f"unrecognized verdict label (primary={primary!r}, secondary={secondary!r}) -- "
+            "cannot place it on the severity order, treating as instrument-fragile"
+        )
+        return DualVerdict(
+            verdict="indeterminate (instrument-fragile)", primary=primary, secondary=secondary, disclosure=disclosure
+        )
+
+    gap = abs(_SEVERITY[primary] - _SEVERITY[secondary])
+    if gap == 1:
+        milder = primary if _SEVERITY[primary] < _SEVERITY[secondary] else secondary
+        disclosure = f"the two null constructions disagree: primary={primary!r}, secondary={secondary!r} -- reporting the milder"
+        return DualVerdict(verdict=milder, primary=primary, secondary=secondary, disclosure=disclosure)
+
+    disclosure = f"the two null constructions give opposite verdicts: primary={primary!r}, secondary={secondary!r}"
+    return DualVerdict(verdict="indeterminate (instrument-fragile)", primary=primary, secondary=secondary, disclosure=disclosure)
+
+
 @dataclass(frozen=True)
 class SelfTestReport:
     """Before any verdict is read, the instrument must prove itself: `instrument_ok` reproduces a

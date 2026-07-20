@@ -10,6 +10,7 @@ import cli.engine.soak as soak
 from cli.engine.errors import EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
 from cli.engine.soak import (
+    DualVerdict,
     MetricVerdict,
     NullSystem,
     RealizedInternals,
@@ -29,6 +30,7 @@ from cli.engine.soak import (
     plausibility_checks,
     realized_internals,
     realized_series,
+    reconcile_verdicts,
     render_report,
     select_clean_segment,
     self_tests,
@@ -393,6 +395,85 @@ def test_summarize_panel_multiplicity_line():
     assert s.n_outside == 1 and s.n_metrics == 3
     assert abs(s.expected_by_chance - 3 * 0.10) < 1e-9
     assert "outside band" in s.line and "expected by chance" in s.line
+
+
+def test_reconcile_verdicts_both_na():
+    dv = reconcile_verdicts("n/a", "n/a")
+    assert isinstance(dv, DualVerdict)
+    assert dv.verdict == "n/a"
+    assert dv.disclosure == ""
+
+
+def test_reconcile_verdicts_one_na_primary_discriminates():
+    dv = reconcile_verdicts("n/a", "consistent")
+    assert dv.verdict == "consistent"  # the discriminating (secondary) null's label
+    assert dv.disclosure != ""
+
+
+def test_reconcile_verdicts_one_na_secondary_discriminates():
+    dv = reconcile_verdicts("inconsistent", "n/a")
+    assert dv.verdict == "inconsistent"  # the discriminating (primary) null's label
+    assert dv.disclosure != ""
+
+
+def test_reconcile_verdicts_identical_label():
+    dv = reconcile_verdicts("weakly-consistent", "weakly-consistent")
+    assert dv.verdict == "weakly-consistent"
+    assert dv.disclosure == ""
+
+
+def test_reconcile_verdicts_adjacent_consistent_and_weakly_consistent():
+    # milder (lower-severity) label wins, both orderings
+    dv = reconcile_verdicts("consistent", "weakly-consistent")
+    assert dv.verdict == "consistent"
+    assert dv.disclosure != ""
+
+    dv2 = reconcile_verdicts("weakly-consistent", "consistent")
+    assert dv2.verdict == "consistent"
+    assert dv2.disclosure != ""
+
+
+def test_reconcile_verdicts_adjacent_weakly_consistent_and_inconsistent():
+    dv = reconcile_verdicts("weakly-consistent", "inconsistent")
+    assert dv.verdict == "weakly-consistent"
+    assert dv.disclosure != ""
+
+    dv2 = reconcile_verdicts("inconsistent", "weakly-consistent")
+    assert dv2.verdict == "weakly-consistent"
+    assert dv2.disclosure != ""
+
+
+def test_reconcile_verdicts_opposite_extremes_both_orderings():
+    dv = reconcile_verdicts("consistent", "inconsistent")
+    assert dv.verdict == "indeterminate (instrument-fragile)"
+    assert dv.disclosure != ""
+
+    dv2 = reconcile_verdicts("inconsistent", "consistent")
+    assert dv2.verdict == "indeterminate (instrument-fragile)"
+    assert dv2.disclosure != ""
+
+
+def test_reconcile_verdicts_symmetric():
+    pairs = [
+        ("n/a", "n/a"),
+        ("n/a", "consistent"),
+        ("inconsistent", "n/a"),
+        ("consistent", "consistent"),
+        ("consistent", "weakly-consistent"),
+        ("weakly-consistent", "inconsistent"),
+        ("consistent", "inconsistent"),
+    ]
+    for a, b in pairs:
+        assert reconcile_verdicts(a, b).verdict == reconcile_verdicts(b, a).verdict
+
+
+def test_reconcile_verdicts_unknown_label_is_defensive_not_a_keyerror():
+    # a label outside the known vocabulary can't be placed on the severity order; treated as
+    # instrument-fragile (can't safely reconcile something we don't understand) rather than
+    # raising a bare KeyError.
+    dv = reconcile_verdicts("bogus", "consistent")
+    assert dv.verdict == "indeterminate (instrument-fragile)"
+    assert dv.disclosure != ""
 
 
 def test_instrument_expectations_reads_record_44():
