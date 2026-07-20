@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: ripe NOW — merged, gate-critical code, every sub-item autonomous. Do it BEFORE the Stage-6a gate is read for a go/no-go, since the two HIGH findings are precisely the arithmetic that decides when the gate opens
 ---
 
@@ -41,10 +41,20 @@ Full audit, committed as durable evidence: `docs/research/14.phase6-gate-guarant
 
 **What is already airtight, and should be copied rather than re-invented.** The catastrophic direction is genuinely well defended: all nine classification mutants, both classification swaps, and the `cycle_ts`-identity attribution mutant died immediately, because those tests assert *which* `cycle_ts` was processed rather than how many. The gaps are uniformly the opposite shape — **conjunctions pinned only through a fixture that trips several terms at once, and constants sampled far from both edges instead of bracketed.** That sentence is the whole finding list in one line.
 
+## Done so far
+
+**Findings 1 and 2 are closed** (PR #162, `test(cli): pin the gate streak threshold and the dead-engine reset`; test-only, no `cli/` change):
+
+- `test_gate_streak_threshold_pinned_both_directions` — pins the threshold from both sides, and fails under `_GATE_STREAK_DAYS 14 → 13` (`assert 13 == 14`).
+- `test_gate_dead_engine_after_5_days_silence_resets_streak_not_stale_streak` — fails under `upper_bound_day max( → min(` with exactly the dead-engine symptom, `GateStatus(streak=14, gate_met=True, last_failure=None)`.
+
+Both mutations were re-run independently by implementer and reviewer, each with `PYTHONDONTWRITEBYTECODE=1`, a `__pycache__` purge, and an on-disk confirmation that the mutation was present.
+
+**A design point settled there, applicable to any future constant pin.** "Assert against the constant, never a literal" — normally sound — is *mathematically incompatible* with catching a mutation of that same constant: with `N = _GATE_STREAK_DAYS`, `N >= N` being True and `N-1 >= N` being False holds for every value of N, so it pins the `>=` relationship and never the ratified value. An external anchor is required. The resolution is both layers — rule-based boundary tests that survive a deliberate threshold change, plus one explicit `assert _GATE_STREAK_DAYS == 14`. The cost, a required diff line if the threshold is ever changed on purpose, is the *point*: silent drift is the failure mode, and a loud reviewable diff is the fix.
+
 ## Suggested next steps
 
-- **(Autonomous)** Pin the gate threshold from both sides: `_GATE_STREAK_DAYS - 1` clean days must **not** meet the gate, and exactly `_GATE_STREAK_DAYS` must. Assert against the constant, not a literal `14`, so the test states the *rule* rather than re-encoding today's value.
-- **(Autonomous)** Pin the dead-engine reset directly — a frozen journal whose newest cycle is older than the boundary must reset the streak and report `gate_met=False`. Then re-check `test_gate_export_stale_journal_pings_fail`'s name and docstring, which currently imply a guarantee it does not provide.
+- **(Autonomous)** Re-check `test_gate_export_stale_journal_pings_fail`'s name and docstring: the reset itself is now pinned, but that test still *reads* as though it covers it while exercising a separate `--lag-fail-seconds` check.
 - **(Autonomous)** Bracket the compare tolerance from both sides: a diff just inside it must pass and one just outside must fail, asserted against the constant rather than a literal, so the band between the current 1e-7 and 1e-2 samples stops being free.
 - **(Autonomous, highest value of the set)** Pin the no-peek guarantee against a **same-length** peek — swap the trailing settled bar for the in-progress candle at equal length, so `n_bars` and `last_ts` are pinned as separate conjuncts rather than as a disjunction. This is the only finding here whose failure mode is silent lookahead contamination rather than a mis-set threshold.
 - **(Autonomous)** Add a multi-pair `replay_cycle` case so the cross-pair calendar guard executes at all; move the intra-day test's `now` above a candidate anchor so it discriminates between them; add a second failure so "most recent" in `last_failure` becomes testable.
