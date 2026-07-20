@@ -795,8 +795,12 @@ def test_engine_journal_error_attributed_to_its_own_cycle(tmp_path, monkeypatch)
     Also asserts `counts.replayed_ok` (review gap): `CycleOutcome.compare_passed` defaults True
     (cli/engine/concordance.py:59), so `replayed_ok`'s `not o.mismatch and o.compare_passed` alone
     is satisfied by a validation_failed outcome too -- only the `not o.validation_failed` guard
-    excludes it. This fixture is the only place in the suite with a validation_failed outcome
-    beside a clean one, so it is the only place a dropped guard is killable."""
+    excludes it. Also killed by the keystone above (83 clean cycles beside 1 validation_failed,
+    asserting replayed_ok == 83) -- two independent pins, deliberately. An earlier draft of this
+    docstring claimed this fixture was the SUITE'S ONLY killer of that mutant; that was true when
+    the claim was written and false by the time it was committed, since the keystone landed in the
+    same commit. Corrected rather than deleted because understating coverage is the same
+    false-artifact class this branch keeps finding, just in the harmless direction."""
     journal = tmp_path / "journal"
     tampered_path = _write_success_record(journal, CYCLE_TS)
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))

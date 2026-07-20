@@ -543,6 +543,12 @@ def test_higher_schema_version_is_also_rejected_wholesale(tmp_path):
     # (verified_at present, so nothing else could reject it) declaring a version NEWER than
     # CACHE_SCHEMA_VERSION exercises the other direction, which a `!=` -> `<` mutation (permissive
     # toward newer versions) would silently accept while still passing the v1 test above.
+    # NOT a coverage gap being filled: test_load_cache_degrades_never_raises already carries a
+    # CACHE_SCHEMA_VERSION + 1 case and already kills `<`. This is a dedicated, named pin for the
+    # guarantee, where that one is a single bullet inside a six-case omnibus named for a different
+    # guarantee -- and it uses a POPULATED entries list where the omnibus uses [], so a mutant that
+    # rejects the version but still serves rows cannot hide behind an empty file. Recorded so the
+    # next reader does not mistake this for coverage that was previously missing.
     replay_fp = "fixed-replay-fp"
     path = tmp_path / "gate-cache.json"
     v_next_payload = {
