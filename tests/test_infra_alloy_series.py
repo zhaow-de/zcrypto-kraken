@@ -24,9 +24,13 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 # dead-man fires. It is alerted on (zcrypto-alloy-docker-sd-wedged), so dropping it from a keep-list
 # would silently disarm that alert rather than merely lose a graph.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
+# The disambiguator: a CLIMBING failures counter means a persistently erroring refresh, not a
+# hang -- identical symptom, different cause. Shipping it is what makes the two separable.
+_SD_FAILURES = "prometheus_sd_refresh_failures_total"
 
 NAS_REQUIRED = [
     _SD_SERIES,
+    _SD_FAILURES,
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
@@ -47,6 +51,7 @@ NAS_LEGACY_ADMITTED = [
 ]
 OPS_REQUIRED = [
     _SD_SERIES,
+    _SD_FAILURES,
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
@@ -82,7 +87,7 @@ def _keep_regex(path: Path) -> re.Pattern:
         (OPS_ALLOY, OPS_REQUIRED),
         # capture has no full required-list here (pre-existing gap), but it runs discovery.docker on
         # both hosts and so is covered by the same alert -- pin the series that alert depends on.
-        (CAPTURE_ALLOY, [_SD_SERIES]),
+        (CAPTURE_ALLOY, [_SD_SERIES, _SD_FAILURES]),
     ],
     ids=["nas", "ops", "capture"],
 )
@@ -92,7 +97,7 @@ def test_keep_regex_admits_every_published_series(path, required):
     assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
 
 
-@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY], ids=["nas", "ops"])
+@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     """Defence in depth, and the ordering matters: the drop must precede the keep."""
     text = path.read_text()

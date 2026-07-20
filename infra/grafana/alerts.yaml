@@ -254,7 +254,9 @@ rules:
 
   - uid: zcrypto-alloy-docker-sd-wedged
     title: "Alloy · docker service-discovery wedged"
-    ruleGroup: zcrypto-nas
+    # zcrypto-fleet, not zcrypto-nas: all four Alloy instances emit this series, so the rule fires
+    # per-host for ops and both capture hosts too -- filing it under the NAS group would misfile it.
+    ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
