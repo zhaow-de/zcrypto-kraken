@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: ripe NOW — merged, gate-critical code, every sub-item autonomous. Do it BEFORE the Stage-6a gate is read for a go/no-go, since the two HIGH findings are precisely the arithmetic that decides when the gate opens
+status: resolved
 ---
 
 # The concordance gate's arithmetic is correct but its guarantees are unpinned — a one-character edit opens the gate a day early, silently
@@ -16,6 +15,22 @@ Companion to [[T0075]], which ran the same audit against the gate-evidence *cach
 `_GATE_STREAK_DAYS` is the number of consecutive clean days the shadow engine must post before the strategy may go live. **Nothing asserts that one day fewer fails.** Verified independently, not merely taken from the audit: setting `_GATE_STREAK_DAYS = 13` (with `__pycache__` purged and the mutation confirmed on disk before the run) leaves **20/20** `tests/test_engine_concordance.py` green. The constant appears in `cli/` only — it is referenced by **no test at all**.
 
 Two other findings are worse in subtler ways. A test that *looks* like it covers the dead-engine reset does not — `test_gate_export_stale_journal_pings_fail` exercises a separate command-level `--lag-fail-seconds` check and stays green while the reset is broken; a test that appears to cover a risk is more dangerous than a visibly missing one, because it stops anyone from looking. And the daily **no-peek** guarantee reopens on a same-length peek, where the failure mode is not a mis-set threshold but the builder silently running on lookahead data while the targets still compare equal.
+
+## Resolution
+
+**Resolved 2026-07-20** (spec/plan `00063`; the first two findings landed earlier in PR #162). All nine guarantees now fail when broken, each proven by mutation rather than by a passing test — every pin was verified by applying the mutation it targets, confirming the edit on disk, purging `__pycache__`, running under `PYTHONDONTWRITEBYTECODE=1`, and watching it fail.
+
+**Test-only:** `git diff -- cli/` is empty across the whole branch. The gate computed the right thing throughout; what was missing was anything that would notice it stopping.
+
+**The three metadata conjuncts are provably independent** — deleting `len(ts) != n_bars`, `ts[0] != first_ts`, or `ts[-1] != last_ts` from `concordance.py:118` each fails *exactly* its own test and leaves the other two green. That cross-check is what distinguishes three pins from one test written three ways.
+
+**The keystone** is the same-length peek: `n_bars` and `first_ts` match, only `last_ts` differs. Without that conjunct the builder runs on **lookahead data while targets still compare equal** — the one finding whose failure mode was silent contamination of the verdict rather than a mis-set threshold or a loud error. Review confirmed it must use the *daily* grid: on h4 the metadata-equality backstop masks the mutation.
+
+**Two findings decomposed further than their wording suggested**, and both were caught only because someone looked again after "done":
+- Finding 7 was "the day-cutoff anchor **and window**". The anchor landed first; deleting `+ _FRESHNESS_WINDOW` from the day cutoff still left all 30 tests green, because the anchor test's `now=20:35` sits past both the true 20:30 cutoff and a window-dropped 20:00 one. A `now` of 20:15 discriminates. Note the two `_FRESHNESS_WINDOW` usages are not both bare — the per-cycle bound at `:231` was already pinned by `test_late_cycle_resets_streak`; only the day cutoff was uncovered.
+- Finding 2's remainder was a *name*: `test_gate_export_stale_journal_pings_fail` read as though it covered the dead-engine reset while exercising only `--lag-fail-seconds`. It sat green beside an entirely unpinned reset. A name that implies a guarantee it does not provide is worse than a missing test, because it stops anyone looking.
+
+**Recorded because it generalises past this module:** every mutation that opened the gate EARLIER survived the audit; every one that opened it later was caught or errs harmlessly stricter. The tests were written by someone checking the gate was not too strict. Nobody checked it was not too loose.
 
 ## Findings so far
 
@@ -54,10 +69,10 @@ Both mutations were re-run independently by implementer and reviewer, each with 
 
 ## Suggested next steps
 
-- **(Autonomous)** Re-check `test_gate_export_stale_journal_pings_fail`'s name and docstring: the reset itself is now pinned, but that test still *reads* as though it covers it while exercising a separate `--lag-fail-seconds` check.
-- **(Autonomous)** Bracket the compare tolerance from both sides: a diff just inside it must pass and one just outside must fail, asserted against the constant rather than a literal, so the band between the current 1e-7 and 1e-2 samples stops being free.
-- **(Autonomous, highest value of the set)** Pin the no-peek guarantee against a **same-length** peek — swap the trailing settled bar for the in-progress candle at equal length, so `n_bars` and `last_ts` are pinned as separate conjuncts rather than as a disjunction. This is the only finding here whose failure mode is silent lookahead contamination rather than a mis-set threshold.
-- **(Autonomous)** Add a multi-pair `replay_cycle` case so the cross-pair calendar guard executes at all; move the intra-day test's `now` above a candidate anchor so it discriminates between them; add a second failure so "most recent" in `last_failure` becomes testable.
-- **(Autonomous)** Pin the `n_bars` / `first_ts` conjuncts individually, with a scenario that trips exactly one at a time.
+- ~~Re-check that test's name and docstring~~ — **DONE**: renamed to `test_gate_export_lag_beyond_lag_fail_seconds_pings_fail` with a docstring saying what it does and does not cover, and pointing at the test that pins the reset. Originally: the reset itself is now pinned, but that test still *reads* as though it covers it while exercising a separate `--lag-fail-seconds` check.
+- ~~Bracket the compare tolerance~~ — **DONE**: a diff just inside it must pass and one just outside must fail, asserted against the constant rather than a literal, so the band between the current 1e-7 and 1e-2 samples stops being free.
+- ~~Pin the no-peek guarantee against a same-length peek~~ — **DONE, and it was the highest value of the set**: — swap the trailing settled bar for the in-progress candle at equal length, so `n_bars` and `last_ts` are pinned as separate conjuncts rather than as a disjunction. This is the only finding here whose failure mode is silent lookahead contamination rather than a mis-set threshold.
+- ~~Add a multi-pair case, discriminate the day-cutoff anchor, and make `last_failure` ordering testable~~ — **DONE**: move the intra-day test's `now` above a candidate anchor so it discriminates between them; add a second failure so "most recent" in `last_failure` becomes testable.
+- ~~Pin the `n_bars` / `first_ts` conjuncts individually~~ — **DONE**: with a scenario that trips exactly one at a time.
 - **(Do NOT 'clean up')** The metadata-equality guard looks redundant and is a provably equivalent mutant — keep it; it is the backstop for finding 4 on the h4 grid.
 - **(Method)** For any future mutation audit here: `PYTHONDONTWRITEBYTECODE=1`, purge `__pycache__`, assert baseline-green, give each concurrent agent its own git worktree, and demonstrate every claimed gap pristine-vs-mutant. Two passes of this audit were discarded for skipping one of those.

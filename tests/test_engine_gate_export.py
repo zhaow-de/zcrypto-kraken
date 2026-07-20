@@ -368,7 +368,15 @@ def test_gate_export_recovered_gate_pings_clean_despite_historical_mismatch(tmp_
     assert pings == [("http://hc", True)]
 
 
-def test_gate_export_stale_journal_pings_fail(tmp_path, monkeypatch, clean_journal):
+def test_gate_export_lag_beyond_lag_fail_seconds_pings_fail(tmp_path, monkeypatch, clean_journal):
+    """Covers the COMMAND-level `--lag-fail-seconds` check only: the newest journaled cycle is older
+    than the threshold, so the dead-man is pinged /fail. It was previously named
+    `..._stale_journal_pings_fail`, which read as though it covered `evaluate_gate`'s dead-engine
+    streak reset -- it does not, and a T0076 audit found that reset entirely unpinned while this
+    test sat green beside it. A name that implies a guarantee it does not provide is worse than a
+    missing test, because it stops anyone looking. The reset itself is pinned by
+    `test_gate_dead_engine_after_5_days_silence_resets_streak_not_stale_streak` in
+    tests/test_engine_concordance.py."""
     out = tmp_path / "gate.prom"
     pings = []
     monkeypatch.setattr(command, "_gate_ping", lambda url, success: pings.append((url, success)))
