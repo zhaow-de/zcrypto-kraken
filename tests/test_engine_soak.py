@@ -1665,6 +1665,53 @@ def test_render_report_table_shows_all_three_columns_for_every_d1_branch():
     assert "inconsistent" in _row_fields(text, "turnover")
 
 
+def test_render_report_pnl_line_names_both_raw_nulls():
+    # The P&L (non-gating) line carried the SAME concealment shape Fix 1 removed from the table:
+    # it printed the reconciled verdict plus "(secondary null: X)" and never the primary. On the
+    # adjacent-disagreement branch the reconciled label EQUALS the milder side, so with
+    # primary='inconsistent', secondary='weakly-consistent' the line read
+    #     "weakly-consistent (secondary null: weakly-consistent)"
+    # -- indistinguishable from genuine agreement, with the 'inconsistent' primary suppressed. This
+    # is the same class as Fix 1 and is fixed the same way: name both raw nulls explicitly. Found by
+    # the fix subagent while out of its own scope, and pinned here rather than left as prose.
+    dual = reconcile_verdicts("inconsistent", "weakly-consistent")
+    assert dual.verdict == "weakly-consistent"  # the concealing branch: reconciled == secondary
+
+    na_verdict = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+    gating_verdicts = dict.fromkeys(soak._METRIC_ROWS, na_verdict)
+    analysis = soak.SoakAnalysis(
+        L=6,
+        gating_verdicts=gating_verdicts,
+        panel=summarize_panel(gating_verdicts, band=0.90, dual_verdicts={}),
+        null_gov_rate=0.0,
+        null_cap_rate=0.0,
+        d4_gap_bps=0.0,
+        d4_active=False,
+        pnl_mean=0.0,
+        pnl_cum=0.0,
+        pnl_verdict=MetricVerdict(
+            verdict="inconsistent", live=0.5, median=0.5, lo=0.1, hi=0.9, percentile=50.0, effective_n=50.0, width=0.8
+        ),
+        is_degenerate=False,
+        effective_n=dict.fromkeys((*soak._METRIC_ROWS, "pnl"), 50.0),
+        internals_available=False,
+        internals_reason="no internals rebuild provided",
+        disclosures=(),
+        dual_verdicts={"pnl": dual},
+    )
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    pnl_line = next(ln for ln in text.splitlines() if "pnl verdict" in ln)
+    # 'inconsistent' contains 'consistent' as a substring, so assert on the primary's own labelled
+    # slot rather than bare membership -- the sloppy assertion would pass on the pre-fix line.
+    assert "primary null: inconsistent" in pnl_line, pnl_line
+    assert "secondary null: weakly-consistent" in pnl_line, pnl_line
+
+
 def test_fingerprint_table_columns_align_for_every_metric_row():
     # Fix 6: `_METRIC_COL_W` must be DERIVED from the longest `_METRIC_ROWS` entry
     # ("governor_engagement", 19 chars), never a hardcoded width -- a hardcoded 12 lets that one

@@ -1605,7 +1605,13 @@ def render_report(
     lines.append(f"  realized mean net/cycle : {analysis.pnl_mean:+.6f}")
     pnl_dual = analysis.dual_verdicts.get("pnl")
     pnl_effective_verdict = pnl_dual.verdict if pnl_dual is not None else analysis.pnl_verdict.verdict
-    pnl_secondary_note = f" (secondary null: {pnl_dual.secondary})" if pnl_dual is not None else ""
+    # Both raw labels, for the same reason the table carries three columns (Fix 1): naming only the
+    # secondary beside the reconciled label hides the primary, and on the branches where the
+    # reconciled label EQUALS the secondary that reads as agreement when the two nulls in fact
+    # disagreed. A suppressed 'inconsistent' is the exact failure this line must not have.
+    pnl_secondary_note = (
+        f" (primary null: {pnl_dual.primary}, secondary null: {pnl_dual.secondary})" if pnl_dual is not None else ""
+    )
     lines.append(f"  pnl verdict (non-gating, near-vacuous at this L): {pnl_effective_verdict}{pnl_secondary_note}")
     lines.append("")
 
