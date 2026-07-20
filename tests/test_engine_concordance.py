@@ -51,6 +51,37 @@ def test_compare_targets_empty_both_pass():
     assert not result.structural_mismatch
 
 
+def test_compare_targets_tolerance_bracketed_both_sides():
+    """D3 (spec 00063): the pass/fail cases above sit at ~1e-7 and 1e-2 -- five orders of magnitude
+    away from tol's ratified default (1e-6, concordance.py:159), so a divergence 120x over budget
+    would still pass at tol=1e-3. Bracket both edges immediately around tol itself: the margins are
+    expressed as fractions of tol (not raw literals) so the test states the rule. tol itself has to
+    be a hardcoded anchor, not read back from the function -- reading the live default would just
+    track a drifted value and never fail (the same tautology PR #162 hit with the streak constant)."""
+    tol = 1e-6  # today's ratified default (concordance.py:159) -- the external anchor this pins
+
+    just_inside = tol - tol * 0.1
+    just_outside = tol + tol * 0.1
+
+    passing = compare_targets({"BTC": 0.1}, {"BTC": 0.1 + just_inside})
+    assert passing.passed
+
+    failing = compare_targets({"BTC": 0.1}, {"BTC": 0.1 + just_outside})
+    assert not failing.passed
+
+
+def test_compare_targets_structural_mismatch_equal_cardinality_different_keys():
+    """Equal-cardinality dicts with different keys must still fail structurally, not just the
+    differing-cardinality case above. Weakening `set(a) != set(b)` (concordance.py:161) to a length
+    check would let this pair fall through to the per-asset comparison, which today is unreached:
+    it would then KeyError on the first asset absent from the other side -- an unreached path, not
+    a silent-corruption one, so its severity should not be over-read from this test alone."""
+    result = compare_targets({"BTC": 0.1, "ETH": 0.0}, {"BTC": 0.1, "SOL": 0.0})
+    assert not result.passed
+    assert result.structural_mismatch
+    assert result.worst_asset is None
+
+
 # --- evaluate_gate ---------------------------------------------------------------------------------
 
 CYCLE_HOURS = (0, 4, 8, 12, 16, 20)
@@ -160,6 +191,39 @@ def test_intra_day_evaluation_excludes_in_progress_day_without_breaking_streak()
     assert status.last_failure is None
 
 
+def test_day_cutoff_anchor_discriminates_alternate_boundaries():
+    """D3 (spec 00063): the intra-day test above uses now=09:00, which sits below every plausible
+    day-cutoff anchor (20:00 flat, 20:30 with the freshness window, next midnight, ...) so it can't
+    tell them apart. Position `now` just after the true 20:30 anchor (20:00 + the 30-minute
+    freshness window) -- under the correct anchor the final day is already due and clean, so it
+    counts too; a boundary shifted even one hour later would still exclude it, giving a different
+    streak."""
+    days = _days(START, 5)
+    entries = [e for d in days for e in _clean_day(d)]
+    now = datetime(days[4].year, days[4].month, days[4].day, 20, 35)  # 5 min past the 20:30 anchor
+    status = evaluate_gate(entries, now=now)
+    assert status.streak == 5  # day 4 is due (past 20:30) and clean, so it counts too
+    assert not status.gate_met
+    assert status.last_failure is None
+
+
+def test_day_cutoff_requires_the_freshness_window_not_just_the_hour():
+    """The anchor test above uses now=20:35, which is past BOTH the true 20:30 cutoff and a
+    window-dropped 20:00 one, so it cannot tell them apart -- verified: deleting `+
+    _FRESHNESS_WINDOW` from the day cutoff left the whole suite green. Position `now` BETWEEN the
+    two: at 20:15 the correct cutoff (20:00 + 30m) has not passed, so the final day is still in
+    progress and must be excluded; drop the window and it is wrongly counted as complete, flipping
+    the gate 30 minutes early. The per-cycle freshness bound is separately pinned by
+    test_late_cycle_resets_streak -- this covers only the DAY cutoff, which was not."""
+    days = _days(START, 5)
+    entries = [e for d in days for e in _clean_day(d)]
+    now = datetime(days[4].year, days[4].month, days[4].day, 20, 15)  # inside 20:00-20:30
+    status = evaluate_gate(entries, now=now)
+    assert status.streak == 4, "day 4 is not due until 20:30 -- the freshness window is part of the cutoff"
+    assert not status.gate_met
+    assert status.last_failure is None
+
+
 def test_mid_day_start_excludes_partial_first_day_not_fails_it():
     days = _days(START, 4)
     day0 = days[0]
@@ -215,6 +279,30 @@ def test_evaluate_gate_duplicate_cycle_ts_raises():
     entries.append(CycleOutcome(cycle_ts=entries[0].cycle_ts, completed_at=entries[0].completed_at))  # duplicate cycle_ts
     with pytest.raises(EngineJournalError):
         evaluate_gate(entries, now=_past_cutoff(day0))
+
+
+def test_last_failure_reports_the_most_recent_of_multiple():
+    """D5 (spec 00063): every failure test above injects exactly one failure, so `last_failure`'s
+    'most recent' ordering is untestable as written -- a mutant that kept the FIRST failure instead
+    of the last would pass every one of them too. Inject two failures on different days and assert
+    the later one, not the earlier one, is reported."""
+    days = _days(START, 3)
+    entries = []
+    for d in days:
+        day_entries = _clean_day(d)
+        if d == days[0]:
+            for i, e in enumerate(day_entries):
+                if e.cycle_ts.hour == 4:
+                    day_entries[i] = CycleOutcome(cycle_ts=e.cycle_ts, completed_at=e.completed_at, mismatch=True)
+        if d == days[2]:
+            for i, e in enumerate(day_entries):
+                if e.cycle_ts.hour == 16:
+                    day_entries[i] = CycleOutcome(cycle_ts=e.cycle_ts, completed_at=e.completed_at, compare_passed=False)
+        entries.extend(day_entries)
+    status = evaluate_gate(entries, now=_past_cutoff(days[-1]))
+    assert status.streak == 0
+    assert status.last_failure.cycle_ts == datetime(days[2].year, days[2].month, days[2].day, 16)
+    assert status.last_failure.reason == "compare mismatch"
 
 
 # --- replay_cycle ------------------------------------------------------------------------------
@@ -382,3 +470,157 @@ def test_replay_cycle_daily_peek_disagrees_with_metadata_raises_before_build(mon
     with pytest.raises(EngineJournalError):
         replay_cycle(record, peeking_reader, path="fast")
     assert calls == []  # the builder must never run on data that disagrees with its own metadata
+
+
+def test_same_length_peek_is_still_rejected(monkeypatch):
+    """THE KEYSTONE (spec D2). Today's peek fixture above trips n_bars AND last_ts together --
+    deleting either term alone still leaves the suite green. This one swaps the trailing settled
+    bar for the in-progress candle at EQUAL length: n_bars and first_ts both still agree with the
+    declared metadata, only last_ts differs. If the `ts[-1] != entry.last_ts` term were dropped
+    from line 118's disjunction, the builder would run on lookahead data and -- because n_bars and
+    first_ts still match -- nothing else here would catch it: the targets would simply come out
+    wrong, not loudly rejected. That silent-contamination failure mode is what makes this the
+    keystone, not just a third conjunct."""
+    in_progress_ts = datetime(2026, 7, 10, 0, 0)  # cycle's own midnight -- the in-progress candle
+    swapped_daily_ts = [DAILY_TS[0], DAILY_TS[1], in_progress_ts]  # same length, trailing bar swapped
+    swapped_daily_closes = [DAILY_CLOSES[0], DAILY_CLOSES[1], 53.0]
+
+    h4, honest_daily = _snapshot_entries()
+    same_length_daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=honest_daily.n_bars,  # 3 == len(swapped_daily_ts): matches
+        first_ts=honest_daily.first_ts,  # == swapped_daily_ts[0]: matches
+        last_ts=honest_daily.last_ts,  # declared honest boundary -- the actual last_ts differs
+        content_hash=snapshot_content_hash(swapped_daily_ts, swapped_daily_closes),  # hash over the REAL data
+        path=honest_daily.path,
+    )
+    record = _valid_cycle_record(snapshots=(h4, same_length_daily))
+
+    def swapping_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(H4_TS), list(H4_CLOSES)
+        return list(swapped_daily_ts), list(swapped_daily_closes)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, swapping_reader, path="fast")
+    assert calls == []  # the builder must never run on lookahead data
+
+
+def test_replay_cycle_n_bars_mismatch_alone_raises(monkeypatch):
+    """n_bars alone (spec D1). An extra bar inserted mid-series changes the count while both
+    endpoints -- ts[0] and ts[-1] -- still agree with the declared metadata. Isolates the
+    `len(ts) != entry.n_bars` conjunct: the other two terms in line 118's disjunction stay
+    satisfied, so only deleting this exact term can make this test pass again."""
+    extra_ts = datetime(2026, 7, 7, 12, 0)  # inserted between DAILY_TS[0] and DAILY_TS[1]
+    padded_daily_ts = [DAILY_TS[0], extra_ts, DAILY_TS[1], DAILY_TS[2]]
+    padded_daily_closes = [DAILY_CLOSES[0], 50.5, DAILY_CLOSES[1], DAILY_CLOSES[2]]
+
+    h4, honest_daily = _snapshot_entries()
+    padded_daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=honest_daily.n_bars,  # 3 != len(padded_daily_ts)=4: mismatches
+        first_ts=honest_daily.first_ts,  # == padded_daily_ts[0]: matches
+        last_ts=honest_daily.last_ts,  # == padded_daily_ts[-1]: matches
+        content_hash=snapshot_content_hash(padded_daily_ts, padded_daily_closes),
+        path=honest_daily.path,
+    )
+    record = _valid_cycle_record(snapshots=(h4, padded_daily))
+
+    def padding_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(H4_TS), list(H4_CLOSES)
+        return list(padded_daily_ts), list(padded_daily_closes)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, padding_reader, path="fast")
+    assert calls == []
+
+
+def test_replay_cycle_first_ts_mismatch_alone_raises(monkeypatch):
+    """first_ts alone (spec D1). The leading bar is swapped for an earlier date while the count
+    and the trailing bar stay put. Isolates the `ts[0] != entry.first_ts` conjunct: n_bars and
+    last_ts both still agree with the declared metadata."""
+    shifted_first_ts = datetime(2026, 7, 6, 0, 0)  # one day earlier than DAILY_TS[0]
+    shifted_daily_ts = [shifted_first_ts, DAILY_TS[1], DAILY_TS[2]]
+    shifted_daily_closes = [49.0, DAILY_CLOSES[1], DAILY_CLOSES[2]]
+
+    h4, honest_daily = _snapshot_entries()
+    shifted_daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=honest_daily.n_bars,  # 3 == len(shifted_daily_ts): matches
+        first_ts=honest_daily.first_ts,  # != shifted_daily_ts[0]: mismatches
+        last_ts=honest_daily.last_ts,  # == shifted_daily_ts[-1]: matches
+        content_hash=snapshot_content_hash(shifted_daily_ts, shifted_daily_closes),
+        path=honest_daily.path,
+    )
+    record = _valid_cycle_record(snapshots=(h4, shifted_daily))
+
+    def shifting_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(H4_TS), list(H4_CLOSES)
+        return list(shifted_daily_ts), list(shifted_daily_closes)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, shifting_reader, path="fast")
+    assert calls == []
+
+
+def test_replay_cycle_multi_pair_calendar_mismatch_raises(monkeypatch):
+    """D4 (spec 00063): every replay_cycle test above uses exactly one pair, so the multi-pair
+    guard at _assemble's `ts != shared_ts` branch has never executed in this suite -- a guard that
+    never runs in CI is indistinguishable from one that was deleted, and production is multi-pair.
+    ETH's 4h snapshot ends on the same journaled boundary as BTC's (validate_record only checks the
+    LAST stamp against cycle_ts - 4h) but carries a different bar count/spacing before it, so the
+    two pairs' 4h calendars disagree once assembled."""
+    h4_btc, daily_btc = _snapshot_entries()
+
+    eth_h4_ts = [
+        datetime(2026, 7, 9, 16, 0),
+        datetime(2026, 7, 9, 20, 0),
+        datetime(2026, 7, 10, 0, 0),
+        datetime(2026, 7, 10, 4, 0),  # same last stamp as BTC's h4 grid (cycle_ts - 4h)
+    ]
+    eth_h4_closes = [9.0, 10.0, 11.0, 12.0]
+    eth_h4 = SnapshotEntry(
+        pair="ETH",
+        grid="240",
+        n_bars=len(eth_h4_ts),
+        first_ts=eth_h4_ts[0],
+        last_ts=eth_h4_ts[-1],
+        content_hash=snapshot_content_hash(eth_h4_ts, eth_h4_closes),
+        path="p240-eth",
+    )
+    eth_daily = SnapshotEntry(
+        pair="ETH",
+        grid="1440",
+        n_bars=daily_btc.n_bars,
+        first_ts=daily_btc.first_ts,
+        last_ts=daily_btc.last_ts,
+        content_hash=daily_btc.content_hash,
+        path="p1440-eth",
+    )
+    record = _valid_cycle_record(snapshots=(h4_btc, daily_btc, eth_h4, eth_daily))
+
+    def two_pair_reader(entry: SnapshotEntry):
+        if entry.pair == "ETH" and entry.grid == "240":
+            return list(eth_h4_ts), list(eth_h4_closes)
+        return _honest_reader(entry)
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({"BTC": [0.0]}, 0, calls))
+
+    with pytest.raises(EngineJournalError):
+        replay_cycle(record, two_pair_reader, path="fast")
+    assert calls == []  # the builder must never run once the pairs' calendars disagree
