@@ -5,9 +5,12 @@ no dataset access, no real replay."""
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections import Counter
 from datetime import datetime, timedelta
+
+import pytest
 
 import cli.engine.gate_cache as gate_cache
 from cli.engine import CycleOutcome, CycleRecord, SnapshotEntry
@@ -454,6 +457,29 @@ def test_due_for_reverification_matches_the_run_hour():
     for hour in range(24):
         now = datetime(2026, 7, 15, hour, 0)
         assert due_for_reverification(cycle_ts, now) == (expected_slice == hour % 24)
+
+
+def test_rotation_slices_guard_rejects_values_above_24():
+    """`slice_of` returns `[0, _ROTATION_SLICES)` but `due_for_reverification` selects the current
+    slice via `now.hour % _ROTATION_SLICES`, which can only ever produce `[0, 23]` -- any
+    `_ROTATION_SLICES > 24` would leave the high slices permanently unreachable, silently never
+    re-verified. The module-level guard immediately below the constant must actually fire for such
+    a value, not just exist as inert prose next to it -- extracts the real constant-plus-guard
+    lines from the module source (comment lines and blank lines around it drift-tolerant) and execs
+    them standalone with the constant patched to 25."""
+    lines = inspect.getsource(gate_cache).splitlines()
+    start = lines.index("_ROTATION_SLICES = 24")
+    end = start + 1
+    while end < len(lines) and (lines[end].startswith("#") or lines[end] == ""):
+        end += 1
+    assert lines[end].startswith("assert"), (
+        "expected a module-level guard (an `assert`) immediately below `_ROTATION_SLICES = 24` "
+        "(only comment/blank lines in between) -- none found"
+    )
+    snippet = "\n".join(lines[start : end + 1])
+    mutated = snippet.replace("_ROTATION_SLICES = 24", "_ROTATION_SLICES = 25", 1)
+    with pytest.raises(AssertionError):
+        exec(compile(mutated, "<gate_cache _ROTATION_SLICES guard, patched to 25>", "exec"), {})
 
 
 # --- oldest_verification_age (D5) -----------------------------------------------------------------

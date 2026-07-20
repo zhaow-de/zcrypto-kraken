@@ -345,7 +345,10 @@ def _write_prom_textfile(
             "actually-replayed cached cycle was last verified"
         )
         lines.append(f"zcrypto_gate_cache_oldest_verification_age_seconds {cache_stats.oldest_verification_age}")
-    lines.append("# HELP zcrypto_gate_export_duration_seconds wall time to evaluate the journal and write this textfile")
+    lines.append(
+        "# HELP zcrypto_gate_export_duration_seconds wall time to evaluate the journal "
+        "(excludes writing this textfile and the healthcheck ping)"
+    )
     lines.append(f"zcrypto_gate_export_duration_seconds {duration_seconds}")
     lines.append(f"zcrypto_gate_export_timestamp_seconds {now.timestamp()}")
     tmp_path = path.with_suffix(path.suffix + ".tmp")

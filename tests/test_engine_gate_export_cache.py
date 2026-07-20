@@ -601,12 +601,19 @@ def test_verified_at_carried_on_hit_stamped_on_replay(tmp_path, monkeypatch):
 def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
     """D7: no `_total`-suffixed cache gauge remains (`zcrypto_gate_cache_replayed`/`_hits` replace
     the old `_replayed_total`/`_hits_total`). D5/D8: `zcrypto_gate_cache_oldest_verification_age_seconds`
-    and `zcrypto_gate_export_duration_seconds` appear with plausible (non-negative) values."""
+    and `zcrypto_gate_export_duration_seconds` are pinned to their EXACT expected value against a
+    monkeypatched `_utc_now`/`time.monotonic`, not just asserted present/`>= 0.0` -- the whole wiring
+    from `oldest_verification_age()`/`time.monotonic()` through `CacheStats` to the textfile line can
+    otherwise be replaced by a hardcoded `0.0` with every other test still green (spec 00062 review
+    Finding 1)."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     journal = engine_cfg.journal_dir
     _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
-    monkeypatch.setattr(command, "_utc_now", lambda: CYCLE_TS + timedelta(minutes=10))
+
+    now0 = CYCLE_TS + timedelta(minutes=10)
+    monkeypatch.setattr(command, "_utc_now", lambda: now0)
+    monkeypatch.setattr(command.time, "monotonic", lambda values=iter([100.0, 102.5]): next(values))
 
     out = tmp_path / "gate.prom"
     cache_path = tmp_path / "gate-cache.json"
@@ -620,14 +627,24 @@ def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
     assert not any(key.startswith("zcrypto_gate_cache") and key.endswith("_total") for key in m)
     assert "zcrypto_gate_cache_replayed" in m
     assert "zcrypto_gate_cache_hits" in m
-    assert "zcrypto_gate_export_duration_seconds" in m
-    assert m["zcrypto_gate_export_duration_seconds"] >= 0.0
+    # Pinned to the exact delta between the two monkeypatched time.monotonic() calls -- a
+    # hardcoded 0.0, or an offset export_started, both fail this exact-value assertion.
+    assert m["zcrypto_gate_export_duration_seconds"] == 2.5
 
-    # A second (warm) run: the cache is now populated, so the staleness age metric must appear.
+    # A second (warm) run, clock advanced past the cycle's own rotation slice so this is a cache
+    # hit: verified_at carries forward from now0, pinning oldest_verification_age to the exact
+    # elapsed delta rather than merely `>= 0.0`.
+    own_slice = slice_of(CYCLE_TS)
+    hit_hour = (own_slice + 1) % 24
+    now1 = (CYCLE_TS + timedelta(days=1)).replace(hour=hit_hour, minute=10, second=0, microsecond=0)
+    monkeypatch.setattr(command, "_utc_now", lambda: now1)
+    monkeypatch.setattr(command.time, "monotonic", lambda values=iter([200.0, 201.25]): next(values))
+
     result2 = runner.invoke(
         app, ["engine", "gate-export", "--journal-dir", str(journal), "--textfile", str(out), "--cache", str(cache_path)]
     )
     assert result2.exit_code == 0, result2.output
     m2 = _prom(out.read_text())
-    assert "zcrypto_gate_cache_oldest_verification_age_seconds" in m2
-    assert m2["zcrypto_gate_cache_oldest_verification_age_seconds"] >= 0.0
+    expected_age = (now1 - now0).total_seconds()
+    assert m2["zcrypto_gate_cache_oldest_verification_age_seconds"] == expected_age
+    assert m2["zcrypto_gate_export_duration_seconds"] == 1.25

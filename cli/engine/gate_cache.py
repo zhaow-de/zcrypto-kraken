@@ -42,6 +42,10 @@ logger = get_logger("engine.gate_cache")
 
 CACHE_SCHEMA_VERSION = 2
 _ROTATION_SLICES = 24
+# due_for_reverification selects the current slice via `now.hour % _ROTATION_SLICES`, which can only
+# ever produce [0, 23] -- any value > 24 would leave slices 24.._ROTATION_SLICES-1 permanently
+# unreachable, silently never re-verified (the exact failure D2/D3 exist to prevent).
+assert _ROTATION_SLICES <= 24, "_ROTATION_SLICES > 24 would leave high slices unreachable via now.hour % _ROTATION_SLICES"
 
 # The modules that determine a replay's result (D3): source-bytes changes to any of these must
 # invalidate the whole cache. Monkeypatched by tests to point at synthetic files instead of
