@@ -972,6 +972,41 @@ def test_render_report_degraded_internals_shows_na_and_reason():
         assert v.verdict in text
 
 
+def test_render_report_scrubs_internals_reason_json_stays_raw():
+    # Fix 1: internals_reason carries str(exc) from an arbitrary EngineError/PortfolioError and is
+    # interpolated into the vocabulary-locked report text -- the lock must be STRUCTURAL there, not
+    # merely a convention that no current exception message happens to trip. The JSON payload is not
+    # vocabulary-locked, so it must keep the raw, unscrubbed reason for the same analysis.
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    internals = RealizedInternals(
+        available=False,
+        reason="rebuild passed through a stale universe and was PROVEN inconsistent",
+        mult_by_cycle={},
+        breach_by_cycle={},
+        identity_ok=False,
+        identity_detail="",
+        cap_consistent=False,
+        cap_detail="",
+    )
+    analysis = analyze_soak(realized, null, band=0.90, internals=internals)
+    assert analysis.internals_reason == internals.reason  # sanity: this is the string under test
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "rebuild" in text and "stale universe" in text  # message stays useful, only the terms are neutered
+
+    payload = soak._json_payload(
+        analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC), internals=internals
+    )
+    assert payload["internals"]["reason"] == internals.reason  # JSON keeps the RAW unscrubbed reason
+
+
 def test_render_report_disclosures_block():
     # non-empty: constant mult on a long-only book -> constancy + redundancy + day-granularity
     # disclosures, each rendered under a DISCLOSURES header.

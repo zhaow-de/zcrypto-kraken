@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -961,8 +962,8 @@ def analyze_soak(
 
     # RATE metrics are bounded to [0, 1] by construction -- an outer band spanning that entire
     # attainable range has zero discriminating power (Fix 1: no possible value could ever fall
-    # outside it). gross/net/turnover/hhi are unbounded above, so a finite `hi` always retains
-    # power and they pass no domain.
+    # outside it). gross/net/turnover are unbounded above; hhi is bounded in [1/n, 1] but its
+    # positive lower bound makes a full-[0,1] band unreachable, so none of them needs a domain.
     rate_domain = (0.0, 1.0)
 
     gating_verdicts: dict[str, MetricVerdict] = {}
@@ -980,10 +981,9 @@ def analyze_soak(
         effective_n[m] = eff_n
 
     disclosures: list[str] = []
-    for m in ("active_frac",):
-        note = _full_range_disclosure(m, gating_verdicts[m], rate_domain)
-        if note is not None:
-            disclosures.append(note)
+    note = _full_range_disclosure("active_frac", gating_verdicts["active_frac"], rate_domain)
+    if note is not None:
+        disclosures.append(note)
 
     # Fix 2: `mult_by_cycle`/`breach_by_cycle` are indexed below by every SCORED cycle_ts. If the
     # internals rebuild's key set ever diverges from `realized.cycle_ts` (it shouldn't, but a bare
@@ -1118,6 +1118,17 @@ _HONESTY_FOOTER = (
     "strategy lands in-band most of the time at L≈84, so this is not out-of-sample evidence."
 )
 
+_FORBIDDEN = ("validated", "passed", "confirmed", "proven")
+
+
+def _scrub(text: str) -> str:
+    """Neutralize vocabulary-locked words in free-form text (exception messages) before it reaches
+    the rendered report. The lock is a core honesty invariant, so it is enforced structurally here
+    rather than relying on upstream messages happening to be clean."""
+    for word in _FORBIDDEN:
+        text = re.sub(word, "<redacted-term>", text, flags=re.IGNORECASE)
+    return text
+
 
 def _fmt_flag(value: bool | None) -> str:
     if value is None:
@@ -1141,7 +1152,10 @@ def render_report(
     fingerprint table + multiplicity line, DISCLOSURES (when `analysis.disclosures` is non-empty),
     the D4 gap, non-gating P&L, and an honesty footer. When `analysis.internals_available` is
     False, the governor_engagement/cap_breach rows render `n/a` across every column (D7 degrade,
-    not void) and a line states `analysis.internals_reason` -- never `RealizedInternals`'
+    not void) and a line states `_scrub(analysis.internals_reason)` -- `internals_reason` carries
+    `str(exc)` from an arbitrary `EngineError`/`PortfolioError`, so it is run through `_scrub`
+    (structural vocabulary-lock enforcement) before interpolation, unlike the JSON payload's raw
+    copy of the same reason (JSON is not vocabulary-locked). Never `RealizedInternals`'
     `identity_detail`/`cap_detail`, which are diagnostic strings that may carry vocabulary-locked
     words and are never passed to this function. `analysis`/`null`/`self_test` are all `None` when
     the canonical dataset is absent (no null to judge against); `realized` is additionally `None`
@@ -1204,7 +1218,7 @@ def render_report(
         )
     lines.append(f"  {analysis.panel.line}")
     if not analysis.internals_available:
-        lines.append(f"  governor_engagement/cap_breach unavailable: {analysis.internals_reason}")
+        lines.append(f"  governor_engagement/cap_breach unavailable: {_scrub(analysis.internals_reason)}")
     lines.append("")
 
     if analysis.disclosures:

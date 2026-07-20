@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import cli.engine.command as command
@@ -294,3 +295,36 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
         assert payload["gating_verdicts"]["governor_engagement"][field] is None
         assert payload["gating_verdicts"]["cap_breach"][field] is None
     assert payload["gating_verdicts"]["gross"]["live"] is not None
+
+
+def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, monkeypatch):
+    # Fix 3: a SoakError from realized_internals (e.g. a scored cycle's T-4h missing from the
+    # rebuilt grid) signals a genuine inconsistency and must PROPAGATE out of soak_report rather
+    # than being caught into the D7 degrade path -- correct by construction today (the call sits
+    # outside any try in soak_report), but pin it so a future refactor that wraps it in a broad
+    # except is caught.
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch)
+
+    def _raise(scored_records, latest_record, reader):
+        raise soak.SoakError("cycle boom: T - 4h not found in the rebuilt h4 grid")
+
+    monkeypatch.setattr(soak, "realized_internals", _raise)
+
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {
+        d - timedelta(hours=4): 100.0,
+        d: 110.0,
+        d + timedelta(hours=4): 121.0,
+        d + timedelta(hours=8): 133.1,
+    }
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+
+    with pytest.raises(soak.SoakError):
+        soak.soak_report(
+            journal_dir=journal_dir,
+            store_dir=store_dir,
+            canonical_dir=tmp_path / "fake-canonical",
+            registry_path=tmp_path / "fake-registry.jsonl",
+            floor=1,
+        )
