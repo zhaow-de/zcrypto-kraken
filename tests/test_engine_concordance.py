@@ -172,6 +172,36 @@ def test_mid_day_start_excludes_partial_first_day_not_fails_it():
     assert status.last_failure is None
 
 
+def test_gate_streak_threshold_pinned_both_directions():
+    # Pins the ratified threshold's current value: gate_met is *defined* as streak >=
+    # _GATE_STREAK_DAYS, so building inputs from the constant and comparing against the same live
+    # constant is a tautology that holds for any value -- it can never fail if the constant itself
+    # silently moves. This explicit value check is what makes the boundary assertions below able to
+    # catch that. Update this line deliberately if the ratified rule (spec 00040) changes.
+    assert concordance._GATE_STREAK_DAYS == 14
+
+    days_at = _days(START, concordance._GATE_STREAK_DAYS)
+    entries_at = [e for d in days_at for e in _clean_day(d)]
+    status_at = evaluate_gate(entries_at, now=_past_cutoff(days_at[-1]))
+    assert status_at.streak == concordance._GATE_STREAK_DAYS
+    assert status_at.gate_met is True
+
+    days_below = _days(START, concordance._GATE_STREAK_DAYS - 1)
+    entries_below = [e for d in days_below for e in _clean_day(d)]
+    status_below = evaluate_gate(entries_below, now=_past_cutoff(days_below[-1]))
+    assert status_below.streak == concordance._GATE_STREAK_DAYS - 1
+    assert status_below.gate_met is False
+
+
+def test_gate_dead_engine_after_5_days_silence_resets_streak_not_stale_streak():
+    days = _days(START, concordance._GATE_STREAK_DAYS)
+    entries = [e for d in days for e in _clean_day(d)]
+    now = _past_cutoff(days[-1] + timedelta(days=5))
+    status = evaluate_gate(entries, now=now)
+    assert status.streak == 0
+    assert status.gate_met is False
+
+
 def test_evaluate_gate_empty_entries():
     status = evaluate_gate([], now=datetime(2026, 1, 1))
     assert status.streak == 0
