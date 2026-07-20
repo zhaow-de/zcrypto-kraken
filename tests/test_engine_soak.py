@@ -7,7 +7,8 @@ import polars as pl
 import pytest
 
 import cli.engine.soak as soak
-from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
+from cli.engine.errors import EngineJournalError
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
 from cli.engine.soak import (
     NullSystem,
     RealizedSeries,
@@ -24,6 +25,7 @@ from cli.engine.soak import (
     instrument_self_check,
     metric_verdict,
     plausibility_checks,
+    realized_internals,
     realized_series,
     render_report,
     select_clean_segment,
@@ -33,6 +35,7 @@ from cli.engine.soak import (
     windowed_null,
 )
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
+from cli.risk.limits import apply_position_caps
 
 
 def test_structural_metrics_basic():
@@ -206,18 +209,24 @@ def test_chain_consistent_detects_gap():
 
 
 def _fake_result(*, n_periods, sleeve_B, sleeve_A1, sleeve_A2, multipliers, governed_net):
-    """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'."""
+    """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
+    final_targets/cap_breach_bars mirror the real builder exactly (crossfreq_system.py ~line
+    636/655): capped = apply_position_caps(combined), final_targets = mult * capped -- caps clip
+    BEFORE the governor multiply, so a sleeve combo that breaches 0.20/0.10 still yields an
+    in-cap final_targets (existing callers keep the synthetic values inside the caps, where
+    capped == combined, so this is a no-op for them)."""
     assets = ("BTC",)
     combined = [(sleeve_B[k] + sleeve_A1[k] + sleeve_A2[k]) / 3.0 for k in range(n_periods + 1)]
-    # caps at 0.20/0.10 — keep the synthetic values inside the caps so capped == combined here
-    final_targets = {"BTC": [multipliers[k] * combined[k] for k in range(n_periods + 1)]}
+    capped = apply_position_caps({"BTC": combined})["BTC"]
+    final_targets = {"BTC": [multipliers[k] * capped[k] for k in range(n_periods + 1)]}
+    cap_breach_bars = sum(1 for k in range(n_periods) if abs(capped[k] - combined[k]) > 1e-15)
     return types.SimpleNamespace(
         final_targets=final_targets,
         governed_net=governed_net,
         ungoverned_net=governed_net,
         multipliers=multipliers,
         sleeve_positions={"B": {"BTC": sleeve_B}, "A1": {"BTC": sleeve_A1}, "A2": {"BTC": sleeve_A2}},
-        cap_breach_bars=0,
+        cap_breach_bars=cap_breach_bars,
         governor_engaged_bars=0,
         day_index=[0] * (n_periods + 1),
         n_periods=n_periods,
@@ -557,3 +566,182 @@ def test_render_report_handles_all_none_before_realized_series():
     assert "ZERO out-of-time holdout" in text
     assert "NO VERDICT" in text.upper()
     assert "no journaled cycles found" in text
+
+
+# --- realized_internals --------------------------------------------------------------------------------
+
+
+def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
+    """A CycleRecord whose lone 240 SnapshotEntry hash-verifies against (h4_ts, closes) -- the
+    `latest_record` realized_internals rebuilds on."""
+    entry = SnapshotEntry(
+        pair="BTC",
+        grid="240",
+        n_bars=len(h4_ts),
+        first_ts=h4_ts[0],
+        last_ts=h4_ts[-1],
+        content_hash=snapshot_content_hash(h4_ts, closes),
+        path="p240",
+    )
+    return CycleRecord(
+        schema_version=1,
+        cycle_ts=cycle_ts,
+        snapshots=(entry,),
+        final_targets={"BTC": 0.0},
+        started_at=cycle_ts,
+        completed_at=cycle_ts,
+        code_version="test",
+        builder_path="fast",
+    )
+
+
+def _mk_scored_record(cycle_ts, final_targets):
+    return CycleRecord(
+        schema_version=1,
+        cycle_ts=cycle_ts,
+        snapshots=(),
+        final_targets=final_targets,
+        started_at=cycle_ts,
+        completed_at=cycle_ts,
+        code_version="test",
+        builder_path="fast",
+    )
+
+
+def test_realized_internals_identity_holds(monkeypatch):
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4  # n_periods; h4_ts carries n+1 = 5 rows (k=0..4)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0 + k for k in range(n + 1)]
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.03, 0.0]
+    mult = [1.0, 1.0, 0.5, 1.0, 1.0]
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+
+    # scored cycle at row k has cycle_ts = h4_ts[k] + 4h -- the resolved-row identity under test.
+    scored = [
+        _mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][1]}),
+        _mk_scored_record(h4_ts[3] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][3]}),
+    ]
+
+    ri = realized_internals(scored, latest, reader)
+    assert ri.available is True and ri.reason == ""
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.mult_by_cycle[scored[0].cycle_ts] == mult[1]
+    assert ri.mult_by_cycle[scored[1].cycle_ts] == mult[3]
+    assert set(ri.breach_by_cycle) == {scored[0].cycle_ts, scored[1].cycle_ts}
+
+
+def test_realized_internals_shift_breaks_identity(monkeypatch):
+    """A guard that cannot bite is not a guard: make the fake result's final_targets correspond to
+    k+1 (a one-bar shift) while the scored cycle's own cycle_ts resolves to k -- identity_ok MUST
+    go False."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.15, 0.02]  # distinct consecutive values -> a shift is detectable
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+
+    k = 2
+    shifted = _mk_scored_record(h4_ts[k] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][k + 1]})
+
+    ri = realized_internals([shifted], latest, reader)
+    assert ri.identity_ok is False
+    assert ri.identity_detail  # non-empty, names the worst diff
+
+
+def test_realized_internals_missing_stamp_raises(monkeypatch):
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 3
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.0]
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+
+    off_grid = _mk_scored_record(base + timedelta(hours=999), {"BTC": 0.05})  # T - 4h absent from h4_ts
+    with pytest.raises(SoakError):
+        realized_internals([off_grid], latest, reader)
+
+
+def test_realized_internals_cap_breach_matches_builder(monkeypatch):
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 3  # n_periods; h4_ts carries 4 rows (k=0..3)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    # combined breaches the 0.20 long cap at k=0,1; stays within it at k=2,3.
+    B = A1 = A2 = [0.30, 0.25, 0.05, 0.05]
+    mult = [0.5, 1.0, 1.0, 1.0]  # governor shrinks k=0's final_targets well within cap despite the breach
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    reader = lambda entry: (h4_ts, closes)  # noqa: E731
+
+    scored = [_mk_scored_record(h4_ts[k] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][k]}) for k in range(n + 1)]
+
+    ri = realized_internals(scored, latest, reader)
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.breach_by_cycle[scored[0].cycle_ts] is True
+    assert ri.breach_by_cycle[scored[1].cycle_ts] is True
+    assert ri.breach_by_cycle[scored[2].cycle_ts] is False
+    assert ri.breach_by_cycle[scored[3].cycle_ts] is False
+    assert ri.cap_consistent is True, ri.cap_detail
+
+    # bar k=0: combined (0.30) > cap (0.20), but final_targets = mult*capped = 0.5*0.20 = 0.10 <= cap --
+    # the metric sees the breach the traded weights themselves cannot show.
+    assert fake.final_targets["BTC"][0] <= 0.20 + 1e-12
+    assert ri.breach_by_cycle[scored[0].cycle_ts] is True
+
+    fake.cap_breach_bars = 999  # disagree with the rebuild's own completed-bar breach count
+    ri2 = realized_internals(scored, latest, reader)
+    assert ri2.cap_consistent is False, ri2.cap_detail
+
+
+def test_realized_internals_unavailable_degrades():
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(3)]
+    closes = [100.0, 101.0, 102.0]
+    latest = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    def bad_reader(entry):
+        raise EngineJournalError("journaled snapshot missing on disk")
+
+    ri = realized_internals([], latest, bad_reader)
+    assert ri.available is False
+    assert ri.reason
+    assert ri.mult_by_cycle == {} and ri.breach_by_cycle == {}
+    assert ri.identity_ok is False and ri.cap_consistent is False
+
+
+@pytest.mark.skipif(not Path("/mnt/zhao-crypto/engine-journal").exists(), reason="ops journal mirror absent")
+def test_realized_internals_on_real_journal():
+    from cli.engine.command import _journal_artifacts, _snapshot_reader
+
+    journal_dir = Path("/mnt/zhao-crypto/engine-journal")
+    arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
+    records = sorted((from_json(p.read_text()) for _, p in arts), key=lambda r: r.cycle_ts)
+    latest = records[-1]
+    scored = records[-6:-1]  # a handful of earlier records, excluding latest
+    reader = _snapshot_reader(journal_dir)
+
+    ri = realized_internals(scored, latest, reader)
+    assert ri.available is True, ri.reason
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.cap_consistent is True, ri.cap_detail
+    for rec in scored:
+        assert rec.cycle_ts in ri.mult_by_cycle
+        assert 0.0 <= ri.mult_by_cycle[rec.cycle_ts] <= 1.0

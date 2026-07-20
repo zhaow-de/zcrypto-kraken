@@ -8,6 +8,14 @@ each cycle T, the position decided at T is held over [T, T+4h) and scored agains
 actual forward return, joined against the store BY TIMESTAMP -- see `realized_series` for the
 exact timing model and its off-by-one cross-check (`chain_ok`).
 
+Also recovers the strategy's per-bar INTERNALS (governor multiplier, cap-breach) at each scored
+cycle -- the journal only carries `final_targets`, not the pre-cap combined position or the
+multiplier the two gating metrics governor-engagement and cap-breach need. `realized_internals`
+rebuilds ONCE on the latest journaled cycle's own hash-verified snapshot history (long enough to
+reach every earlier scored cycle's decision row) and resolves each scored cycle's row BY
+TIMESTAMP from a `{ts: index}` dict, never by offset arithmetic -- see its docstring for the D2
+window-wide identity proof.
+
 Also builds the backtest NULL the realized series is judged against: `build_null` rebuilds the
 same strategy over the full frozen canonical history and derives its P&L under the LIVE cost
 convention (`_net_live_from_result`) -- the builder's `governed_net` charges cost on the capped
@@ -38,10 +46,10 @@ from pathlib import Path
 
 import numpy as np
 
-from cli.engine.concordance import replay_cycle
+from cli.engine.concordance import HashMismatchError, replay_cycle
 from cli.engine.cycle import _union_align
-from cli.engine.errors import EngineError
-from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
+from cli.engine.errors import EngineError, EngineJournalError
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, build_crossfreq_system_fast
 from cli.risk.limits import apply_position_caps
@@ -600,6 +608,163 @@ def identity_self_check(record, snapshot_reader, *, tol: float = 1e-6) -> tuple[
     if mismatches:
         return False, "identity mismatch: " + "; ".join(mismatches)
     return True, "identity check passed"
+
+
+@dataclass(frozen=True)
+class RealizedInternals:
+    """The strategy's per-bar internals (governor multiplier, cap-breach) at each SCORED cycle's
+    resolved row, recovered by rebuilding on the latest journaled cycle's own hash-verified
+    snapshot history (see `realized_internals`) -- the journal itself only carries
+    `final_targets`, not the pre-cap combined position or the multiplier the two new gating
+    metrics need. `available=False` DEGRADES the run (missing/corrupt snapshots, a builder
+    EngineError) rather than voiding it -- the caller decides what an unavailable rebuild means
+    for the overall soak verdict. `identity_ok`/`cap_consistent` are D2's window-wide proof that
+    each resolved row `k` really is that scored cycle's decision row -- see `realized_internals`."""
+
+    available: bool
+    reason: str  # why unavailable ("" when available)
+    mult_by_cycle: dict[datetime, float]
+    breach_by_cycle: dict[datetime, bool]
+    identity_ok: bool
+    identity_detail: str
+    cap_consistent: bool
+    cap_detail: str
+
+
+def _assemble_latest_grids(
+    record: CycleRecord, snapshot_reader
+) -> tuple[list[datetime] | None, dict[str, list[float | None]], list[datetime] | None, dict[str, list[float | None]]]:
+    """Mirror `concordance.replay_cycle`'s snapshot assembly for `record`'s own snapshots: read
+    each SnapshotEntry via `snapshot_reader`, hash-verify it against its declared content_hash
+    (HashMismatchError on mismatch -- corrupt evidence), reconcile the read data against the
+    entry's own len/first_ts/last_ts metadata (EngineJournalError on disagreement), then group by
+    grid ("1440"/"240") and assert every pair on a grid shares one calendar (EngineJournalError on
+    disagreement). A parallel implementation, not a shared import -- `replay_cycle` itself is
+    untouched and unaffected. Returns (daily_ts, daily_prices, h4_ts, h4_prices)."""
+    by_grid: dict[str, dict[str, tuple[list[datetime], list[float | None]]]] = {"1440": {}, "240": {}}
+    for entry in record.snapshots:
+        ts, closes = snapshot_reader(entry)
+        if snapshot_content_hash(ts, closes) != entry.content_hash:
+            raise HashMismatchError(f"content hash mismatch for pair={entry.pair!r} grid={entry.grid!r} -- corrupt evidence")
+        if len(ts) != entry.n_bars or ts[0] != entry.first_ts or ts[-1] != entry.last_ts:
+            raise EngineJournalError(
+                f"pair={entry.pair!r} grid={entry.grid!r}: read data disagrees with its own journaled metadata -- "
+                f"n_bars={len(ts)} vs {entry.n_bars!r}, first_ts={ts[0]!r} vs {entry.first_ts!r}, "
+                f"last_ts={ts[-1]!r} vs {entry.last_ts!r}"
+            )
+        by_grid[entry.grid][entry.pair] = (ts, closes)
+
+    def _assemble(grid: str) -> tuple[list[datetime] | None, dict[str, list[float | None]]]:
+        shared_ts: list[datetime] | None = None
+        prices: dict[str, list[float | None]] = {}
+        for pair, (ts, closes) in by_grid[grid].items():
+            if shared_ts is None:
+                shared_ts = ts
+            elif ts != shared_ts:
+                raise EngineJournalError(f"pair={pair!r} grid={grid!r} ts calendar disagrees with the grid's shared calendar")
+            prices[pair] = closes
+        return shared_ts, prices
+
+    daily_ts, daily_prices = _assemble("1440")
+    h4_ts, h4_prices = _assemble("240")
+    return daily_ts, daily_prices, h4_ts, h4_prices
+
+
+def realized_internals(
+    scored_records: list[CycleRecord],
+    latest_record: CycleRecord,
+    snapshot_reader,
+    *,
+    tol: float = 1e-6,
+) -> RealizedInternals:
+    """Recover each SCORED cycle's governor multiplier and cap-breach flag by rebuilding ONE
+    `build_crossfreq_system_fast` over `latest_record`'s own snapshots -- its 240 (4h) history
+    reaches `latest_record.cycle_ts - 4h`, i.e. every earlier scored cycle's decision row -- and
+    reading each scored cycle's row back out of that single rebuild.
+
+    THE KEYSTONE: the row for the decision made at cycle T is the index k where h4_ts[k] ==
+    T - 4h, resolved from a `{ts: index}` dict -- NEVER by offset arithmetic. If T - 4h is absent
+    from the rebuilt grid, raises SoakError naming T -- a genuine inconsistency, not a degrade.
+
+    D2 (the proof): at that same k, the rebuild's `final_targets[a][k]` must equal the journaled
+    cycle's `final_targets[a]` to `tol`, for every scored cycle and every asset -- `identity_ok` is
+    that window-wide check; any ±1 shift, grid misalignment, or wrong-record rebuild breaks it.
+    `identity_detail` names the worst |diff| and where it occurred.
+
+    Cap-breach mirrors `crossfreq_system.py`'s own `cap_breach_bars` formula exactly, over all
+    `len(h4_ts)` rows: `combined[a][k]` is the 1/3-mean of the B/A1/A2 sleeves (pre-cap, from
+    `result.sleeve_positions`), `capped = apply_position_caps(combined)`, and `breach[k]` is True
+    iff any asset's `|capped - combined| > 1e-15` at that row. This is computed from the
+    pre-multiplier sleeves rather than from `final_targets` because `final_targets = mult *
+    capped` is always in-cap by construction (capping happens before the governor multiply) and so
+    can never itself show a breach. `cap_consistent` cross-checks the completed-bar breach count
+    (`breach[:result.n_periods]`) against the rebuild's own `cap_breach_bars`.
+
+    Assembly + build (the snapshot read/hash-verify and the builder call) DEGRADE the run on any
+    `EngineError` (missing/corrupt snapshots, a grid-assembly disagreement): returns
+    `available=False` with `reason=str(exc)` and empty/void fields, never voiding the whole
+    soak-check outright -- that decision belongs to the caller. A `SoakError` from a missing T-4h
+    stamp is a genuine inconsistency in the per-cycle loop below and propagates instead.
+    """
+    try:
+        daily_ts, daily_prices, h4_ts, h4_prices = _assemble_latest_grids(latest_record, snapshot_reader)
+        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
+    except EngineError as exc:
+        return RealizedInternals(
+            available=False,
+            reason=str(exc),
+            mult_by_cycle={},
+            breach_by_cycle={},
+            identity_ok=False,
+            identity_detail="",
+            cap_consistent=False,
+            cap_detail="",
+        )
+
+    idx = {ts: k for k, ts in enumerate(h4_ts)}
+    assets = tuple(result.final_targets)
+    n_rows = len(h4_ts)
+    sleeves = result.sleeve_positions
+    combined = {a: [(sleeves["B"][a][k] + sleeves["A1"][a][k] + sleeves["A2"][a][k]) / 3.0 for k in range(n_rows)] for a in assets}
+    capped = apply_position_caps(combined)
+    breach = [any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) for k in range(n_rows)]
+
+    mult_by_cycle: dict[datetime, float] = {}
+    breach_by_cycle: dict[datetime, bool] = {}
+    identity_ok = True
+    worst_diff = 0.0
+    worst_detail = "n/a"
+    for rec in scored_records:
+        t = rec.cycle_ts
+        k = idx.get(t - timedelta(hours=4))
+        if k is None:
+            raise SoakError(f"cycle {t!r}: T - 4h not found in the rebuilt h4 grid")
+        mult_by_cycle[t] = result.multipliers[k]
+        breach_by_cycle[t] = breach[k]
+        for a, value in rec.final_targets.items():
+            diff = abs(result.final_targets[a][k] - value)
+            if diff > worst_diff:
+                worst_diff = diff
+                worst_detail = f"cycle={t!r} asset={a!r}"
+            if diff > tol:
+                identity_ok = False
+
+    identity_detail = f"worst |diff|={worst_diff!r} at {worst_detail}"
+
+    completed_breaches = sum(1 for b in breach[: result.n_periods] if b)
+    cap_consistent = completed_breaches == result.cap_breach_bars
+    cap_detail = f"completed-bar breach count={completed_breaches} vs result.cap_breach_bars={result.cap_breach_bars}"
+
+    return RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=mult_by_cycle,
+        breach_by_cycle=breach_by_cycle,
+        identity_ok=identity_ok,
+        identity_detail=identity_detail,
+        cap_consistent=cap_consistent,
+        cap_detail=cap_detail,
+    )
 
 
 def plausibility_checks(realized, null) -> list[str]:
