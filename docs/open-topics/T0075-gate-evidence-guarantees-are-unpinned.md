@@ -64,7 +64,7 @@ Re-audit: 80 mutations, 53 detected, 27 survivors, **19 genuine gaps** after tri
 18. **(LOW-MED)** The fingerprint's coupling to `_EVALUATE_JOURNAL_REPLAY_PATH` is unpinned.
 19. **(LOW-MED)** `EngineJournalError` is misattributable as `mismatch` — `_replay_one`'s classifier is not covered by the attribution pattern Audit A called airtight.
 
-Full re-audit: `scratchpad/t75-reaudit.md` (to be committed with the fix, as `docs/research/` evidence).
+Full re-audit, committed as durable evidence: `docs/research/14.phase6-gate-guarantee-mutation-audits.md` (Audit C).
 
 **Design-level question, flagged rather than decided** (it would change ratified spec `00060` D3, which fixes the list at ten modules): `cli/engine/command.py` (`_replay_one`'s exception→verdict mapping — the sole classifier — and `_snapshot_reader`) and `cli/ohlc/dataset.py` (`read_parquet`, which feeds both the content hash and the builder) determine a replay's verdict yet are **not** hashed. Same class as the two under-invalidation holes already found at review.
 
@@ -79,5 +79,5 @@ Full re-audit: `scratchpad/t75-reaudit.md` (to be committed with the fix, as `do
 - **(Autonomous)** Add the fail-open case that no existing test covers: a structurally-valid cache file with one malformed row inside `entries[]` must invalidate wholesale, not serve its good rows.
 - **(Autonomous)** Correct the LATENT/LIVE docstring labels in `_REPLAY_CODE_PATHS` to match the module-scope imports at `crossfreq_system.py:53-56`.
 - **(Autonomous research, then a human ruling)** Make the case for or against hashing `cli/engine/command.py` and `cli/ohlc/dataset.py`. The research is autonomous — trace whether a change in either can alter a replay verdict without altering any currently-hashed byte — but adopting it edits ratified spec `00060` D3, so present the finding and the recommendation rather than changing the spec unilaterally.
-- **(Autonomous, do this FIRST)** Re-run the audit itself with bytecode control (`PYTHONDONTWRITEBYTECODE=1`, purge `__pycache__`, assert baseline-green) in an isolated worktree, since the 44 "detected" verdicts may include false ones — see the caveat above. The 8 gaps already found stand regardless.
+- ~~**(Autonomous, do this FIRST)** Re-run the audit itself with bytecode control (`PYTHONDONTWRITEBYTECODE=1`, purge `__pycache__`, assert baseline-green) in an isolated worktree, since the 44 "detected" verdicts may include false ones — see the caveat above. The 8 gaps already found stand regardless.~~ **DONE** 2026-07-20 — Audit C above. Zero false detections; the scope grew to 19 via triage error instead.
 - **(Method, applies beyond this topic)** When pinning any of the above, pin the *general* guarantee, not the instance that prompted it — that is the defect this whole topic describes. And bracket constants from both sides rather than sampling far from either edge; the companion audit found every mutation loosening a threshold survived while every one tightening it was caught.
