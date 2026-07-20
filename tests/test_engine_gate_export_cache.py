@@ -648,3 +648,71 @@ def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
     expected_age = (now1 - now0).total_seconds()
     assert m2["zcrypto_gate_cache_oldest_verification_age_seconds"] == expected_age
     assert m2["zcrypto_gate_export_duration_seconds"] == 1.25
+
+
+# --- T0075 findings 12/13/19: gate-export counters and error attribution ---------------------------
+
+
+def test_mismatches_counts_a_real_compare_failure_and_replayed_ok_excludes_it(tmp_path, monkeypatch):
+    """Finding 12: `mismatches` must count a genuine compare_targets failure -- a recorded
+    final_targets that disagrees with a clean replay -- not only a hash mismatch. The mutant this
+    guards against drops `or not o.compare_passed` from the `mismatches` sum, so
+    zcrypto_gate_mismatch_total reads 0 while the gate is actually mismatching (MED-HIGH, not
+    MEDIUM, per the audit). Finding 13's flip side, pinned by the same fixture: `replayed_ok` must
+    exclude that same failed cycle -- the mutant there widens replayed_ok's condition so a failed
+    cycle is counted as replayed ok."""
+    journal = tmp_path / "journal"
+    record_path = _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    now = CYCLE_TS + timedelta(minutes=10)
+
+    # Corrupt the RECORDED final_targets after writing (not the parquet bytes, not content_hash) --
+    # the hash check and metadata reconciliation both pass; only compare_targets(final_targets,
+    # replayed) disagrees, so this is a genuine compare failure, never a HashMismatchError.
+    payload = json.loads(record_path.read_text())
+    payload["final_targets"] = {"BTC": 0.9, "ETH": 0.05}
+    record_path.write_text(json.dumps(payload))
+
+    entries, counts, _, _ = command._evaluate_journal(journal, cache_path=None, now=now)
+
+    assert entries[0].mismatch is False  # not a hash mismatch
+    assert entries[0].compare_passed is False  # a genuine compare failure
+    assert counts.mismatches == 1
+    assert counts.replayed_ok == 0
+
+
+def test_engine_journal_error_attributed_to_its_own_cycle(tmp_path, monkeypatch):
+    """Finding 19: `_replay_one`'s `except EngineJournalError` branch is not covered by the
+    which-cycle-produced-which-outcome attribution pattern the audit called airtight elsewhere
+    (see `_counted_replay_cycle`). Two journaled cycles, one tampered so replay_cycle's post-hash
+    metadata reconciliation disagrees (EngineJournalError, never HashMismatchError) -- pinned by
+    identity, not count: the TAMPERED cycle_ts must carry validation_failed=True and the CLEAN
+    cycle_ts must be unaffected, keyed by cycle_ts, not merely 'exactly one validation_failed
+    exists' -- a swapped classification for the wrong cycle would still pass a count-only check."""
+    journal = tmp_path / "journal"
+    tampered_path = _write_success_record(journal, CYCLE_TS)
+    _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    now = CYCLE_TS + timedelta(hours=4, minutes=10)
+
+    # Tamper the RECORDED first_ts of one snapshot entry (not the parquet bytes, not
+    # content_hash) -- the hash check passes, but replay_cycle's `ts[0] != entry.first_ts`
+    # metadata reconciliation then raises EngineJournalError, never HashMismatchError.
+    payload = json.loads(tampered_path.read_text())
+    tampered_first_ts = datetime.fromisoformat(payload["snapshots"][0]["first_ts"]) - timedelta(days=1)
+    payload["snapshots"][0]["first_ts"] = tampered_first_ts.isoformat()
+    tampered_path.write_text(json.dumps(payload))
+
+    calls: list[datetime] = []
+    _counted_replay_cycle(monkeypatch, calls)
+
+    entries, counts, _, _ = command._evaluate_journal(journal, cache_path=None, now=now)
+    assert calls == [CYCLE_TS, CYCLE_TS + timedelta(hours=4)]  # both cycles actually replayed
+
+    by_cycle = {e.cycle_ts: e for e in entries}
+    assert by_cycle[CYCLE_TS].validation_failed is True
+    assert by_cycle[CYCLE_TS].mismatch is False
+    assert by_cycle[CYCLE_TS + timedelta(hours=4)].validation_failed is False
+    assert by_cycle[CYCLE_TS + timedelta(hours=4)].mismatch is False
+    assert counts.validation_failures == 1
+    assert counts.mismatches == 0
