@@ -59,14 +59,22 @@ _REPLAY_CODE_PATHS: tuple[Path, ...] = (
     _REPO_ROOT / "cli" / "risk" / "governor.py",
     _REPO_ROOT / "cli" / "engine" / "concordance.py",
     _REPO_ROOT / "cli" / "engine" / "journal.py",
-    # NOT actually latent: crossfreq_system.py:53-56 imports all four of these at module scope
-    # (cli.alpha -> a1.py/a2.py; cli.benchmark.strategies; cli.portfolio.builder), so their bytes
-    # execute on every import of crossfreq_system.py -- live on the "fast" route too. Kept
-    # separate from the LIVE block above because only the "verified" route's
-    # build_crossfreq_system ever CALLS their functions, and no caller passes path="verified"
-    # today; covered anyway per D3's over-invalidation-is-safe rationale (spec 00064 D7 label
-    # correction).
+    # a1.py is LIVE: build_crossfreq_system_fast calls _asset_returns (defined a1.py:176) at
+    # crossfreq_system.py:617, and the fast helpers _b_daily_positions_fast /
+    # _a1_asset_positions_fast / _a2_arm_asset_positions_fast call it at :475/:505/:537. A change
+    # to _asset_returns' body moves the fast route's replay verdict, so it belongs with the block
+    # above on merit, not on the over-invalidation rationale.
     _REPO_ROOT / "cli" / "alpha" / "a1.py",
+    # LATENT -- only the "verified" route's build_crossfreq_system calls into these three
+    # (a2_book_returns / sma_gate / vol_target / dynamic_inverse_vol_basket / build_combined_system,
+    # all at crossfreq_system.py:215-276); the fast helpers at :469+ re-implement that arithmetic
+    # locally and bit-identically, and no caller passes path="verified" today. Covered anyway per
+    # D3's over-invalidation-is-safe rationale. NOTE: they are imported at module scope
+    # (crossfreq_system.py:53-56), but that alone would NOT justify hashing them -- import-time
+    # execution binds defs, it does not make a function body determine a replay's result. The
+    # justification is D3, not the import. (Spec 00064 D7, corrected at review: the label this
+    # replaced claimed all four were live on the strength of the module-scope import, which
+    # understated a1.py and mis-justified the other three.)
     _REPO_ROOT / "cli" / "alpha" / "a2.py",
     _REPO_ROOT / "cli" / "portfolio" / "builder.py",
     _REPO_ROOT / "cli" / "benchmark" / "strategies.py",
