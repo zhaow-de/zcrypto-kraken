@@ -8,6 +8,10 @@ memo.local.md
 **/.claude/settings.local.json
 **/.claude/*.lock
 .claude/CLAUDE.local.md
+# Agent worktrees: `isolation: "worktree"` subagents get a throwaway checkout of this repo so
+# concurrent mutation audits cannot revert each other's in-flight edits in a shared tree. Git
+# sees each as an embedded repository, so `git add -A` would otherwise stage one as a gitlink.
+.claude/worktrees/
 
 # Python-generated files
 __pycache__/
