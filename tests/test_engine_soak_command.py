@@ -287,3 +287,10 @@ def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
     assert payload["internals"]["reason"] == "mocked internals rebuild degrade"
     assert payload["gating_verdicts"]["governor_engagement"]["verdict"] == "n/a"
     assert payload["gating_verdicts"]["cap_breach"]["verdict"] == "n/a"
+    # Fix 4: an unavailable-internals "n/a" nulls its numeric fields (live=0.0 would otherwise be
+    # indistinguishable from a genuinely-zero value to a JSON consumer) -- gross stays real, it
+    # never degrades.
+    for field in ("live", "median", "lo", "hi", "percentile", "effective_n", "width"):
+        assert payload["gating_verdicts"]["governor_engagement"][field] is None
+        assert payload["gating_verdicts"]["cap_breach"][field] is None
+    assert payload["gating_verdicts"]["gross"]["live"] is not None

@@ -10,6 +10,7 @@ import cli.engine.soak as soak
 from cli.engine.errors import EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
 from cli.engine.soak import (
+    MetricVerdict,
     NullSystem,
     RealizedInternals,
     RealizedSeries,
@@ -354,6 +355,28 @@ def test_metric_verdict_na_on_zero_width_or_tiny_n():
     assert metric_verdict(50, list(range(101)), band=0.90, effective_n=2).verdict == "n/a"  # tiny effective_n
 
 
+def test_metric_verdict_na_on_full_range_domain():
+    # Fix 1: the live run's actual finding -- a rate whose outer band covers the metric's entire
+    # attainable [0,1] domain has ZERO discriminating power (nothing could ever fall outside it),
+    # a failure of discrimination just like a zero-width band, only in the opposite direction.
+    null = [0.0] * 5 + [1.0] * 5  # p5..p95 spans the full [0,1] domain
+    v = metric_verdict(1.0, null, band=0.90, effective_n=50, domain=(0.0, 1.0))
+    assert v.verdict == "n/a"
+    assert v.width > 0.0  # computed stats are KEPT (not zeroed) so the row still renders its numbers
+    assert v.live == 1.0
+    assert v.lo == 0.0 and v.hi == 1.0
+
+
+def test_metric_verdict_domain_one_sided_touch_stays_discriminating():
+    # Mirrors active_frac's real live band [0.0074, 1.0000]: only the UPPER edge touches the
+    # domain's bound; lo stays > 0 -- only a band that covers BOTH ends goes n/a, so this must
+    # remain a real, discriminating verdict.
+    null = [0.1] * 90 + [1.0] * 10  # p5=0.1 (lo>0), p95=1.0 (hi touches the domain's upper edge)
+    v = metric_verdict(0.5, null, band=0.90, effective_n=50, domain=(0.0, 1.0))
+    assert v.verdict != "n/a"
+    assert v.lo > 0.0 and v.hi == 1.0
+
+
 def test_degenerate_flags_zero_exposure():
     assert degenerate([0.0, 1e-9, 0.0]) is True
     assert degenerate([0.30, 0.25, 0.28]) is False
@@ -608,7 +631,7 @@ def test_governor_engagement_gates_and_day_aggregates():
     a = analyze_soak(realized, null, band=0.90, internals=internals)
     v = a.gating_verdicts["governor_engagement"]
     assert math.isclose(v.live, 0.5, abs_tol=1e-9)  # 1 of 2 realized days engaged
-    assert v.verdict != "n/a"
+    assert v.verdict == "consistent"  # deterministic given this fixture; live sits at the band's own edge (hi=0.5)
 
 
 def test_governor_engagement_constant_series_still_gates():
@@ -633,22 +656,55 @@ def test_governor_engagement_constant_series_still_gates():
     assert v.verdict == "inconsistent"
 
 
+def test_governor_engagement_na_on_full_range_null_band():
+    # Fix 1's motivating live finding, reproduced synthetically: a SINGLE realized day (total_days
+    # == 1) judged against a null whose one-day windows (window=1) are literally the raw daily
+    # engagement flags -- some fully engaged (1.0), some not (0.0) -- so the band spans the metric's
+    # entire [0,1] domain. That must read "n/a" (no discriminating power), not a spurious real
+    # verdict, and must carry the disclosure naming which metric went vacuous.
+    day = datetime(2026, 7, 16, tzinfo=UTC)
+    cycle_ts = [day + timedelta(hours=4 * k) for k in range(3)]  # single realized day
+    weights = [{"BTC": 0.15, "ETH": 0.15}] * 3
+    realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 3)
+    internals = _mk_internals(cycle_ts, mult_by_cycle=dict.fromkeys(cycle_ts, 0.5))  # engaged -> live=1.0
+
+    n_days = 500
+    engaged = [1.0 if d % 2 == 0 else 0.0 for d in range(n_days)]  # half engaged, half not
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * n_days, [0.001] * n_days, multipliers=[0.5 if e else 1.0 for e in engaged])
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)
+    v = a.gating_verdicts["governor_engagement"]
+    assert v.verdict == "n/a"
+    assert v.live == 1.0  # numbers kept: this n/a is a vacuous band, not an unavailable rebuild
+    assert v.width == 1.0
+    assert any("governor_engagement" in d and "full [0,1] range" in d and "no discriminating power" in d for d in a.disclosures)
+    # the vacuous metric no longer inflates the multiplicity denominator (spec D6/Task 3)
+    assert "governor_engagement" not in {m for m, verdict in a.gating_verdicts.items() if verdict.verdict != "n/a"}
+
+
 def test_cap_breach_gates_against_null_series():
     cycle_ts = [datetime(2026, 7, 16, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(6)]
     weights = [{"BTC": 0.15, "ETH": 0.15}] * 6
     realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 6)
 
-    base_rate = 1.0 / 6.0
-    null_cap = [base_rate + 1e-4 * ((k % 5) - 2) for k in range(200)]  # tiny jitter, non-degenerate
+    # Fix 5: a realistic 0/1 PER-BAR cap-breach series (how null.cap_breach actually looks), not a
+    # knife-edge float sequence hand-tuned to a specific window mean. Breach every 5th bar (gap=5,
+    # rate=0.2): cap_breach is judged at BAR granularity (window=L=6), and since the breach gap (5)
+    # is < the window length (6), every length-6 window contains 1 or 2 breaches -- never 0, never
+    # 6 -- giving a non-degenerate band [1/6, 1/3] that neither edge touches the metric's [0,1]
+    # domain, so it stays discriminating under Fix 1's full-range n/a check too.
+    null_cap = [1.0 if k % 5 == 0 else 0.0 for k in range(200)]
     null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 200, [0.001] * 200, cap_breach=null_cap)
 
-    # planted-consistent: exactly 1 of 6 scored cycles breached -> live == base_rate
+    # planted-consistent: exactly 1 of 6 scored cycles breached -> live == 1/6, matching the null's
+    # dominant (80% of windows) rate.
     consistent_breach = dict.fromkeys(cycle_ts, False)
     consistent_breach[cycle_ts[0]] = True
     a = analyze_soak(realized, null, band=0.90, internals=_mk_internals(cycle_ts, breach_by_cycle=consistent_breach))
     assert a.gating_verdicts["cap_breach"].verdict == "consistent"
 
-    # planted-inconsistent: every scored cycle breached -> live == 1.0, far outside the tight band
+    # planted-inconsistent: every scored cycle breached -> live == 1.0, far outside the null's own
+    # [1/6, 1/3] outer band.
     inconsistent_breach = dict.fromkeys(cycle_ts, True)
     b = analyze_soak(realized, null, band=0.90, internals=_mk_internals(cycle_ts, breach_by_cycle=inconsistent_breach))
     assert b.gating_verdicts["cap_breach"].verdict == "inconsistent"
@@ -697,6 +753,36 @@ def test_analyze_soak_degrades_without_internals():
     assert a.panel.n_metrics == 5
 
 
+def test_analyze_soak_guards_against_missing_internals_key():
+    # Fix 2: `internals.available=True` but its maps DIVERGE from `realized.cycle_ts` (missing the
+    # last scored cycle) -- a bare `internals.mult_by_cycle[t]` index would crash with an
+    # unhandled KeyError. Must instead degrade both gating metrics to "n/a" (the same D7 contract
+    # as an outright-unavailable rebuild) with a reason naming the missing timestamp, never crash.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    missing = realized.cycle_ts[-1]
+    partial_mult = dict.fromkeys(realized.cycle_ts[:-1], 1.0)
+    partial_breach = dict.fromkeys(realized.cycle_ts[:-1], False)
+    internals = RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=partial_mult,
+        breach_by_cycle=partial_breach,
+        identity_ok=True,
+        identity_detail="",
+        cap_consistent=True,
+        cap_detail="",
+    )
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)  # must not raise KeyError
+
+    assert a.internals_available is False
+    assert a.gating_verdicts["governor_engagement"].verdict == "n/a"
+    assert a.gating_verdicts["cap_breach"].verdict == "n/a"
+    assert repr(missing) in a.internals_reason
+
+
 def test_disclosures_constant_and_redundant():
     # constant mult on a long-only book -> a constancy disclosure AND the redundancy disclosure
     rw_a = [{"BTC": 0.15, "ETH": 0.15}] * 6
@@ -724,6 +810,48 @@ def test_disclosures_constant_and_redundant():
     b = analyze_soak(realized_b, null_b, band=0.90, internals=internals_b)
     assert not any("no variance" in d for d in b.disclosures)
     assert not any("near-identical" in d for d in b.disclosures)
+
+
+def test_disclosures_anticorrelated_gross_net_uses_abs_and_names_the_condition():
+    # Fix 3a: a book with ONLY shorts makes net == -gross exactly every bar -> corr == -1.0, a
+    # strongly ANTI-correlated pair that is just as redundant as a positively-correlated one --
+    # `abs(corr) >= 0.99` must catch it. Fix 3b: the book is NOT long-only (it's all short), so the
+    # disclosure wording must name the correlation condition, never the long-only one.
+    rw = [{"ETH": -0.05}, {"ETH": -0.10}, {"ETH": -0.15}, {"ETH": -0.08}, {"ETH": -0.12}, {"ETH": -0.20}]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=None)
+
+    assert any("correlation" in d and "near-identical" in d for d in a.disclosures)
+    assert not any("long-only" in d for d in a.disclosures)
+
+
+def test_disclosures_empty_book_no_vacuous_long_only():
+    # Fix 3c: `long_only = all(...)` is vacuously True over an EMPTY weights sequence (no bars at
+    # all) -- an empty book must not be reported as "long-only" (there's no book to characterize),
+    # so neither redundancy disclosure may fire.
+    realized = _mk_realized([], [])
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=None)
+
+    assert not any("long-only" in d for d in a.disclosures)
+    assert not any("correlation" in d for d in a.disclosures)
+
+
+def test_disclosure_notes_partial_day_asymmetry():
+    # Fix 7: a realized day is engaged iff any SCORED bar has mult<1.0, but a null day considers
+    # ALL of that day's bars -- the realized window's first/last days are typically partial, biasing
+    # the realized rate DOWNWARD vs the null. This is conservative, not a bug -- disclosed, not fixed.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    internals = _mk_internals(realized.cycle_ts)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)
+
+    assert any("partial" in d.lower() and "downward" in d.lower() for d in a.disclosures)
 
 
 # --- render_report -----------------------------------------------------------------------------------
@@ -876,6 +1004,30 @@ def test_render_report_disclosures_block():
     assert analysis_b.disclosures == ()
     text_b = render_report(analysis_b, realized_b, null_b, self_test, void_reasons=[], band=0.90)
     assert "DISCLOSURES" not in text_b
+
+
+# --- _verdict_payload (Fix 4: degraded verdict JSON, zero vs null) --------------------------------------
+
+
+def test_verdict_payload_nulls_numerics_only_when_internals_unavailable():
+    # A computed-but-vacuous "n/a" (Fix 1's full-range domain check) KEEPS its real numbers -- they
+    # are meaningful (e.g. live really did sit at the domain edge). Only an "n/a" that comes from
+    # an internals rebuild that never ran gets its numeric fields nulled, since live=0.0 there is a
+    # placeholder, not a computed value a JSON consumer could otherwise mistake for a genuine zero.
+    computed_na = metric_verdict(1.0, [0.0] * 5 + [1.0] * 5, band=0.90, effective_n=50, domain=(0.0, 1.0))
+    assert computed_na.verdict == "n/a"
+    d_real = soak._verdict_payload("governor_engagement", computed_na, internals_available=True)
+    assert d_real["live"] == 1.0 and d_real["lo"] == 0.0 and d_real["hi"] == 1.0
+
+    placeholder_na = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+    d_placeholder = soak._verdict_payload("governor_engagement", placeholder_na, internals_available=False)
+    assert all(d_placeholder[k] is None for k in ("live", "median", "lo", "hi", "percentile", "effective_n", "width"))
+    assert d_placeholder["verdict"] == "n/a"  # the verdict string itself is never nulled
+
+    # gross/net/etc. are never nulled regardless of internals_available -- only the two
+    # internals-derived metrics can carry an unavailable-rebuild placeholder.
+    d_other = soak._verdict_payload("gross", placeholder_na, internals_available=False)
+    assert d_other["live"] == 0.0
 
 
 # --- realized_internals --------------------------------------------------------------------------------

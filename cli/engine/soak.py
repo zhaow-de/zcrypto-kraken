@@ -30,10 +30,12 @@ length: the former enumerates every overlapping window, the latter draws a stati
 Also judges a live metric value against its null distribution: `metric_verdict` applies a
 two-sided band (inner band consistent, edge zones weakly-consistent, outside the outer band
 inconsistent on EITHER side -- too-low is a bug tell too, not just too-high) with an "n/a" escape
-for a degenerate discriminator (zero-width band or a tiny `effective_n`); `degenerate` flags a
-near-zero-exposure window that can't be judged at all; `summarize_panel` rolls a panel of verdicts
-into a multiplicity-aware summary line, since judging N metrics at a 90% band will show ~N*0.10
-outside it by chance alone.
+for a degenerate discriminator (zero-width band, a tiny `effective_n`, or -- given an optional
+`domain` -- a band spanning the metric's ENTIRE attainable range, e.g. [0,1] for a rate: nothing
+could ever fall outside it, zero discriminating power in the opposite direction from a zero-width
+band); `degenerate` flags a near-zero-exposure window that can't be judged at all; `summarize_panel`
+rolls a panel of verdicts into a multiplicity-aware summary line, since judging N metrics at a 90%
+band will show ~N*0.10 outside it by chance alone.
 """
 
 from __future__ import annotations
@@ -464,6 +466,7 @@ def metric_verdict(
     *,
     band: float = 0.90,
     effective_n: float = float("inf"),
+    domain: tuple[float, float] | None = None,
 ) -> MetricVerdict:
     """Judge `live` against the null distribution `null_values` using a two-sided band.
 
@@ -473,6 +476,12 @@ def metric_verdict(
     bounds "consistent"; the two edge zones between inner and outer bound "weakly-consistent".
     A degenerate discriminator -- zero-width outer band or `effective_n < 3` -- is "n/a"
     regardless of where `live` falls. Empty/singleton `null_values` is also "n/a" (width 0).
+
+    `domain`, when given, is the metric's attainable range (e.g. `(0.0, 1.0)` for a rate). If the
+    computed outer band covers the FULL domain -- `lo <= domain[0] + eps` AND `hi >= domain[1] -
+    eps` -- no possible value could ever fall outside it, so the band has zero discriminating
+    power just as surely as a zero-width one: also "n/a" (computed stats are kept so the row still
+    renders its numbers).
     """
     if len(null_values) < 2:
         return MetricVerdict(
@@ -492,7 +501,10 @@ def metric_verdict(
     width = hi - lo
     percentile = (sum(1 for v in null_values if v <= live) / len(null_values)) * 100.0
 
-    if width == 0.0 or effective_n < 3:
+    eps = 1e-12
+    full_range = domain is not None and lo <= domain[0] + eps and hi >= domain[1] - eps
+
+    if width == 0.0 or effective_n < 3 or full_range:
         verdict = "n/a"
     elif inner_lo <= live <= inner_hi:
         verdict = "consistent"
@@ -503,6 +515,19 @@ def metric_verdict(
 
     return MetricVerdict(
         verdict=verdict, live=live, median=median, lo=lo, hi=hi, percentile=percentile, effective_n=effective_n, width=width
+    )
+
+
+def _full_range_disclosure(name: str, verdict: MetricVerdict, domain: tuple[float, float] | None) -> str | None:
+    """If `verdict` is "n/a" because its outer band spans the FULL `domain` (Fix 1 in
+    `metric_verdict`) rather than being zero-width or having a tiny `effective_n`, return the
+    disclosure line naming it -- `width > 0` and `effective_n >= 3` rule out `metric_verdict`'s
+    other two "n/a" triggers, isolating this one."""
+    if domain is None or verdict.verdict != "n/a" or verdict.width <= 0.0 or verdict.effective_n < 3:
+        return None
+    return (
+        f"{name}: the null band spans the full [{domain[0]:g},{domain[1]:g}] range at this window "
+        "length -- the test has no discriminating power here"
     )
 
 
@@ -883,7 +908,8 @@ class SoakAnalysis:
     summary over the DISCRIMINATING subset (`summarize_panel` excludes `"n/a"`, spec D6), the D4
     governed-vs-live P&L gap, the NON-GATING realized-vs-null P&L verdict, and `disclosures`:
     human-readable interpretation notes (constant realized multiplier/cap-breach, near-redundant
-    gross/net, governor day-granularity) that change no verdict."""
+    gross/net, governor day-granularity and its partial-day bias, a vacuous full-[0,1]-range band)
+    that change no verdict."""
 
     L: int  # scored realized bars
     gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi, governor_engagement, cap_breach
@@ -917,7 +943,13 @@ def analyze_soak(
     only DISCRIMINATING verdicts (spec D6), so a degraded run's multiplicity line reads "... of 5"
     with no special-casing. A constant realized multiplier/cap-breach series is a LEGITIMATE verdict
     -- never suppressed to "n/a" -- but is disclosed (`disclosures`) so a reader can interpret it,
-    alongside a near-redundant gross/net note (spec D6a) and the governor day-granularity caveat.
+    alongside a near-redundant gross/net note (spec D6a, `abs(corr) >= 0.99` OR a non-empty
+    long-only book), the governor day-granularity caveat and its partial-day downward bias (a
+    realized day is engaged iff any SCORED bar has mult<1.0, but a null day considers all of its
+    bars, and the realized window's first/last days are typically partial -- fewer chances to
+    engage there than in a full null day), and a note naming any RATE metric (active_frac,
+    governor_engagement, cap_breach) whose band went "n/a" because it spans the metric's full
+    [0,1] domain (Fix 1: zero discriminating power, not a zero-width band).
     Also reports the D4 governed-vs-live gap and judges P&L (realized interior mean net vs null
     net_live windows) as a non-gating verdict. Turnover and P&L are prev-dependent, so both
     aggregate/compare INTERIOR bars (each series' first element dropped) on BOTH the live and null
@@ -927,6 +959,12 @@ def analyze_soak(
     rm = structural_metrics(realized.weights)
     nm = structural_metrics(null.weights)
 
+    # RATE metrics are bounded to [0, 1] by construction -- an outer band spanning that entire
+    # attainable range has zero discriminating power (Fix 1: no possible value could ever fall
+    # outside it). gross/net/turnover/hhi are unbounded above, so a finite `hi` always retains
+    # power and they pass no domain.
+    rate_domain = (0.0, 1.0)
+
     gating_verdicts: dict[str, MetricVerdict] = {}
     effective_n: dict[str, float] = {}
     for m in ("gross", "net", "active_frac", "turnover", "hhi"):
@@ -935,12 +973,30 @@ def analyze_soak(
         else:
             live_series, null_series, window = rm[m], nm[m], L
         eff_n = len(null_series) / window if window > 0 else 0.0
-        gating_verdicts[m] = metric_verdict(_mean(live_series), windowed_null(null_series, window), band=band, effective_n=eff_n)
+        domain = rate_domain if m == "active_frac" else None
+        gating_verdicts[m] = metric_verdict(
+            _mean(live_series), windowed_null(null_series, window), band=band, effective_n=eff_n, domain=domain
+        )
         effective_n[m] = eff_n
 
     disclosures: list[str] = []
+    for m in ("active_frac",):
+        note = _full_range_disclosure(m, gating_verdicts[m], rate_domain)
+        if note is not None:
+            disclosures.append(note)
 
+    # Fix 2: `mult_by_cycle`/`breach_by_cycle` are indexed below by every SCORED cycle_ts. If the
+    # internals rebuild's key set ever diverges from `realized.cycle_ts` (it shouldn't, but a bare
+    # KeyError escaping here would crash the whole run -- the opposite of the degrade-don't-void
+    # contract `realized_internals` itself deliberately upholds via its own named errors), treat
+    # the internals as unavailable rather than indexing blind.
+    missing_ts = None
     if internals is not None and internals.available:
+        missing_ts = next(
+            (t for t in realized.cycle_ts if t not in internals.mult_by_cycle or t not in internals.breach_by_cycle), None
+        )
+
+    if internals is not None and internals.available and missing_ts is None:
         internals_available = True
         internals_reason = ""
 
@@ -956,16 +1012,21 @@ def analyze_soak(
         gov_null = governor_engaged_daily(null.multipliers, null.day_index)
         gov_eff_n = len(gov_null) / total_days if total_days > 0 else 0.0
         gating_verdicts["governor_engagement"] = metric_verdict(
-            gov_live, windowed_null(gov_null, total_days), band=band, effective_n=gov_eff_n
+            gov_live, windowed_null(gov_null, total_days), band=band, effective_n=gov_eff_n, domain=rate_domain
         )
         effective_n["governor_engagement"] = gov_eff_n
 
         cap_live = _mean([1.0 if b else 0.0 for b in breach_values])
         cap_eff_n = len(null.cap_breach) / L if L > 0 else 0.0
         gating_verdicts["cap_breach"] = metric_verdict(
-            cap_live, windowed_null(null.cap_breach, L), band=band, effective_n=cap_eff_n
+            cap_live, windowed_null(null.cap_breach, L), band=band, effective_n=cap_eff_n, domain=rate_domain
         )
         effective_n["cap_breach"] = cap_eff_n
+
+        for m in ("governor_engagement", "cap_breach"):
+            note = _full_range_disclosure(m, gating_verdicts[m], rate_domain)
+            if note is not None:
+                disclosures.append(note)
 
         if mult_values and min(mult_values) == max(mult_values):
             disclosures.append(f"realized multiplier was {mult_values[0]:g} on all {len(mult_values)} scored cycles (no variance)")
@@ -973,23 +1034,43 @@ def analyze_soak(
             flag = "1" if breach_values[0] else "0"
             disclosures.append(f"realized cap-breach was {flag} on all {len(breach_values)} scored cycles (no variance)")
         disclosures.append(f"governor-engagement is judged at day granularity over {total_days} realized days")
+        disclosures.append(
+            "governor-engagement day granularity is conservative, not a bug: a day is engaged iff any SCORED "
+            "bar has mult<1.0, but a null day considers all 6 bars, while the realized window's first/last "
+            "days are typically partial and so get fewer chances to engage -- this biases the realized rate "
+            "DOWNWARD relative to the null"
+        )
     else:
         internals_available = False
-        internals_reason = internals.reason if internals is not None else "no internals rebuild provided"
+        if missing_ts is not None:
+            internals_reason = f"internals rebuild missing scored cycle_ts={missing_ts!r} in mult_by_cycle/breach_by_cycle"
+        else:
+            internals_reason = internals.reason if internals is not None else "no internals rebuild provided"
         na = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
         gating_verdicts["governor_engagement"] = na
         gating_verdicts["cap_breach"] = na
         effective_n["governor_engagement"] = 0.0
         effective_n["cap_breach"] = 0.0
 
-    long_only = all(w >= -1e-12 for bar in realized.weights for w in bar.values())
-    near_redundant = long_only
-    if not near_redundant and len(rm["gross"]) >= 2:
+    # Fix 3: `long_only` requires a NON-EMPTY book -- `all(...)` over an empty weights sequence is
+    # vacuously True, which would wrongly fire the long-only wording on a book that never held any
+    # position. The correlation check uses `abs(corr)`, since a strongly ANTI-correlated gross/net
+    # is equally redundant (one is derivable from the other) as a positively-correlated pair; the
+    # wording names whichever condition actually fired, since the correlation branch can trigger on
+    # a book WITH shorts (long_only False) too.
+    all_weights = [w for bar in realized.weights for w in bar.values()]
+    long_only = bool(all_weights) and all(w >= -1e-12 for w in all_weights)
+    near_redundant_corr = False
+    if not long_only and len(rm["gross"]) >= 2:
         g_arr, n_arr = np.array(rm["gross"]), np.array(rm["net"])
         if g_arr.std() > 0 and n_arr.std() > 0:
-            near_redundant = float(np.corrcoef(g_arr, n_arr)[0, 1]) >= 0.99
-    if near_redundant:
+            near_redundant_corr = abs(float(np.corrcoef(g_arr, n_arr)[0, 1])) >= 0.99
+    if long_only:
         disclosures.append("gross and net are near-identical on a long-only book — the metric count overstates independent trials")
+    elif near_redundant_corr:
+        disclosures.append(
+            "gross and net are near-identical (|correlation| >= 0.99) — the metric count overstates independent trials"
+        )
 
     panel = summarize_panel(gating_verdicts, band=band)
 
@@ -1148,6 +1229,24 @@ def render_report(
     return "\n".join(lines)
 
 
+_VERDICT_NUMERIC_FIELDS = ("live", "median", "lo", "hi", "percentile", "effective_n", "width")
+
+
+def _verdict_payload(name: str, verdict: MetricVerdict, *, internals_available: bool) -> dict:
+    """`asdict(verdict)`, except (Fix 4): a `governor_engagement`/`cap_breach` verdict whose
+    `"n/a"` comes from an internals rebuild that never ran (`internals_available=False`) reports
+    `None` (JSON `null`) for every numeric field, since `live=0.0` there is a placeholder, not a
+    computed value -- a JSON consumer otherwise cannot tell "unavailable" from "genuinely 0.0".
+    An `"n/a"` that instead arose from a computed-but-undiscriminating band (Fix 1's full-range
+    domain check, or a zero-width band, or a tiny `effective_n`) keeps its real numbers -- those
+    are meaningful (e.g. a full-[0,1]-range band still reports where `live` actually sat)."""
+    d = asdict(verdict)
+    if name in ("governor_engagement", "cap_breach") and not internals_available:
+        for key in _VERDICT_NUMERIC_FIELDS:
+            d[key] = None
+    return d
+
+
 def _json_payload(
     analysis: SoakAnalysis | None,
     realized: RealizedSeries | None,
@@ -1217,7 +1316,9 @@ def _json_payload(
         payload["effective_n"] = None
         payload["disclosures"] = None
     else:
-        payload["gating_verdicts"] = {m: asdict(v) for m, v in analysis.gating_verdicts.items()}
+        payload["gating_verdicts"] = {
+            m: _verdict_payload(m, v, internals_available=analysis.internals_available) for m, v in analysis.gating_verdicts.items()
+        }
         payload["panel"] = asdict(analysis.panel)
         payload["context"] = {"null_gov_rate": analysis.null_gov_rate, "null_cap_rate": analysis.null_cap_rate}
         payload["d4"] = {"d4_gap_bps": analysis.d4_gap_bps, "d4_active": analysis.d4_active}
