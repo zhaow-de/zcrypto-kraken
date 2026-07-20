@@ -7,9 +7,12 @@ import polars as pl
 import pytest
 
 import cli.engine.soak as soak
-from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
+from cli.engine.errors import EngineJournalError
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
 from cli.engine.soak import (
+    MetricVerdict,
     NullSystem,
+    RealizedInternals,
     RealizedSeries,
     SelfTestReport,
     SoakError,
@@ -24,6 +27,7 @@ from cli.engine.soak import (
     instrument_self_check,
     metric_verdict,
     plausibility_checks,
+    realized_internals,
     realized_series,
     render_report,
     select_clean_segment,
@@ -33,6 +37,7 @@ from cli.engine.soak import (
     windowed_null,
 )
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
+from cli.risk.limits import apply_position_caps
 
 
 def test_structural_metrics_basic():
@@ -206,18 +211,24 @@ def test_chain_consistent_detects_gap():
 
 
 def _fake_result(*, n_periods, sleeve_B, sleeve_A1, sleeve_A2, multipliers, governed_net):
-    """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'."""
+    """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
+    final_targets/cap_breach_bars mirror the real builder exactly (crossfreq_system.py ~line
+    636/655): capped = apply_position_caps(combined), final_targets = mult * capped -- caps clip
+    BEFORE the governor multiply, so a sleeve combo that breaches 0.20/0.10 still yields an
+    in-cap final_targets (existing callers keep the synthetic values inside the caps, where
+    capped == combined, so this is a no-op for them)."""
     assets = ("BTC",)
     combined = [(sleeve_B[k] + sleeve_A1[k] + sleeve_A2[k]) / 3.0 for k in range(n_periods + 1)]
-    # caps at 0.20/0.10 — keep the synthetic values inside the caps so capped == combined here
-    final_targets = {"BTC": [multipliers[k] * combined[k] for k in range(n_periods + 1)]}
+    capped = apply_position_caps({"BTC": combined})["BTC"]
+    final_targets = {"BTC": [multipliers[k] * capped[k] for k in range(n_periods + 1)]}
+    cap_breach_bars = sum(1 for k in range(n_periods) if abs(capped[k] - combined[k]) > 1e-15)
     return types.SimpleNamespace(
         final_targets=final_targets,
         governed_net=governed_net,
         ungoverned_net=governed_net,
         multipliers=multipliers,
         sleeve_positions={"B": {"BTC": sleeve_B}, "A1": {"BTC": sleeve_A1}, "A2": {"BTC": sleeve_A2}},
-        cap_breach_bars=0,
+        cap_breach_bars=cap_breach_bars,
         governor_engaged_bars=0,
         day_index=[0] * (n_periods + 1),
         n_periods=n_periods,
@@ -234,11 +245,12 @@ def test_net_live_reconciles_and_equals_governed_when_mult_constant():
     # governed_net arbitrary (n rows) — reconcile is independent of it; net_live identity uses it directly
     gnet = [0.01, -0.02, 0.005]
     r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
-    net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is True
     # mult constant + equal fees → the recost cancels bar-by-bar → net_live == governed_net
     for k in range(n):
         assert math.isclose(net_live[k], gnet[k], abs_tol=1e-12)
+    assert cap_breach == [0.0] * n  # all combined values well inside the caps
 
 
 def test_net_live_differs_on_multiplier_transition():
@@ -247,8 +259,9 @@ def test_net_live_differs_on_multiplier_transition():
     mult = [1.0, 0.5, 0.5]  # transition at k=1 → D4 gap active
     gnet = [0.0, 0.0]
     r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
-    net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is True
+    assert cap_breach == [0.0, 0.0]  # 0.12 is well inside the 0.20/0.10 caps
     # capped: [0.12,0.12]; final_targets: [0.12, 0.06]. At k=1:
     #   turn_capped = |0.12-0.12| = 0.0 ; turn_final = |0.06-0.12| = 0.06
     #   net_live[1] = gnet[1] + 0.5*0.006*0.0 - 0.006*0.06 = -0.00036  (≠ gnet[1]=0)
@@ -263,8 +276,34 @@ def test_net_live_reconcile_false_on_inconsistent_result():
     mult = [1.0, 1.0, 1.0]
     r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0, 0.0])
     r.final_targets["BTC"][0] += 0.05  # break the identity
-    _net_live, ok = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    _net_live, ok, _cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is False
+
+
+def test_null_cap_breach_series_sums_to_cap_breach_bars():
+    # combined (B==A1==A2, so combined == the sleeve value) breaches on bars 0 and 2, not on 1/3.
+    n = 4
+    B = A1 = A2 = [0.30, 0.10, -0.50, 0.05, 0.0]  # 5 rows = n_periods+1; bar0 > +0.20, bar2 < -0.10
+    mult = [1.0] * (n + 1)
+    gnet = [0.0] * n
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
+    _net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    assert len(cap_breach) == n
+    assert cap_breach == [1.0, 0.0, 1.0, 0.0]
+    assert sum(cap_breach) == r.cap_breach_bars
+
+
+def test_null_cap_breach_zero_when_never_clipped():
+    n = 3
+    B = A1 = A2 = [0.05, 0.08, -0.02, 0.0]  # all well inside 0.20/0.10
+    mult = [1.0] * (n + 1)
+    gnet = [0.0] * n
+    r = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=gnet)
+    _net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    assert cap_breach == [0.0, 0.0, 0.0]
+    assert r.cap_breach_bars == 0
 
 
 def test_windowed_null_basic():
@@ -290,6 +329,8 @@ def test_build_null_on_real_canonical():
     assert len(ns.weights) == ns.n_periods and set(ns.weights[0]) == set(ns.assets)
     assert len(ns.governed_net) == ns.n_periods
     assert ns.cap_breach_bars >= 0
+    assert len(ns.cap_breach) == ns.n_periods
+    assert sum(ns.cap_breach) == ns.cap_breach_bars
 
 
 def test_metric_verdict_consistent_inside_inner_band():
@@ -312,6 +353,28 @@ def test_metric_verdict_inconsistent_both_sides():
 def test_metric_verdict_na_on_zero_width_or_tiny_n():
     assert metric_verdict(1.0, [3.0] * 50, band=0.90).verdict == "n/a"  # zero-width band
     assert metric_verdict(50, list(range(101)), band=0.90, effective_n=2).verdict == "n/a"  # tiny effective_n
+
+
+def test_metric_verdict_na_on_full_range_domain():
+    # Fix 1: the live run's actual finding -- a rate whose outer band covers the metric's entire
+    # attainable [0,1] domain has ZERO discriminating power (nothing could ever fall outside it),
+    # a failure of discrimination just like a zero-width band, only in the opposite direction.
+    null = [0.0] * 5 + [1.0] * 5  # p5..p95 spans the full [0,1] domain
+    v = metric_verdict(1.0, null, band=0.90, effective_n=50, domain=(0.0, 1.0))
+    assert v.verdict == "n/a"
+    assert v.width > 0.0  # computed stats are KEPT (not zeroed) so the row still renders its numbers
+    assert v.live == 1.0
+    assert v.lo == 0.0 and v.hi == 1.0
+
+
+def test_metric_verdict_domain_one_sided_touch_stays_discriminating():
+    # Mirrors active_frac's real live band [0.0074, 1.0000]: only the UPPER edge touches the
+    # domain's bound; lo stays > 0 -- only a band that covers BOTH ends goes n/a, so this must
+    # remain a real, discriminating verdict.
+    null = [0.1] * 90 + [1.0] * 10  # p5=0.1 (lo>0), p95=1.0 (hi touches the domain's upper edge)
+    v = metric_verdict(0.5, null, band=0.90, effective_n=50, domain=(0.0, 1.0))
+    assert v.verdict != "n/a"
+    assert v.lo > 0.0 and v.hi == 1.0
 
 
 def test_degenerate_flags_zero_exposure():
@@ -458,7 +521,23 @@ def _mk_realized(weights_per_bar, nets):
     )
 
 
-def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, governed_net=None):
+def _mk_realized_ts(cycle_ts, weights_per_bar, nets):
+    """Like `_mk_realized` but with caller-supplied `cycle_ts` -- needed whenever a test cares about
+    which UTC day each scored cycle falls on (governor-engagement's day grouping)."""
+    return RealizedSeries(
+        cycle_ts=cycle_ts,
+        weights=weights_per_bar,
+        gross=[sum(abs(v) for v in w.values()) for w in weights_per_bar],
+        turnover=[0.0] * len(nets),
+        net=nets,
+        dropped_tail=0,
+        assets=("BTC", "ETH"),
+        chain_ok=True,
+        implausible=False,
+    )
+
+
+def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, cap_breach=None, governed_net=None):
     n = len(net_live)
     return NullSystem(
         weights=weights_per_bar,
@@ -469,6 +548,7 @@ def _mk_null(weights_per_bar, net_live, *, multipliers=None, cap_breach_bars=0, 
         reconcile_ok=True,
         n_periods=n,
         governed_net=governed_net if governed_net is not None else list(net_live),
+        cap_breach=cap_breach if cap_breach is not None else [0.0] * n,
         cap_breach_bars=cap_breach_bars,
     )
 
@@ -480,7 +560,8 @@ def test_analyze_soak_planted_consistent():
     nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
     a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90)
     assert a.L == 6
-    assert set(a.gating_verdicts) == {"gross", "net", "active_frac", "turnover", "hhi"}
+    # internals=None here -> governor_engagement/cap_breach are still present but "n/a" (D7 degrade)
+    assert set(a.gating_verdicts) == {"gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"}
     assert a.gating_verdicts["gross"].verdict == "consistent"
 
 
@@ -506,6 +587,274 @@ def test_analyze_soak_context_and_d4():
     assert math.isclose(a.null_cap_rate, 10 / 100)
     assert a.d4_active is True  # mult drops to 0.5
     assert a.pnl_verdict.verdict in ("consistent", "weakly-consistent", "inconsistent", "n/a")
+
+
+def _mk_internals(cycle_ts, mult_by_cycle=None, breach_by_cycle=None):
+    return RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=mult_by_cycle if mult_by_cycle is not None else dict.fromkeys(cycle_ts, 1.0),
+        breach_by_cycle=breach_by_cycle if breach_by_cycle is not None else dict.fromkeys(cycle_ts, False),
+        identity_ok=True,
+        identity_detail="",
+        cap_consistent=True,
+        cap_detail="",
+    )
+
+
+def _daily_pattern(n_days, *, positions=(0, 3, 7), period=11):
+    """A deterministic ~27% (3/11) daily engagement pattern where no two engaged days are adjacent
+    (min gap 3): windowed daily rates vary (non-degenerate) but a window can never contain more than
+    3 engaged days out of any 9 (verified: consecutive engaged-day gaps are 3, 4, 4, so a 9-day
+    window spans at most one full gap-cycle), giving a hard, reasoned upper bound well below a live
+    rate of 1.0 -- used as `null.multipliers`/`day_index` input (1 bar/day) in the governor-engagement
+    tests below."""
+    return [1.0 if (d % period) in positions else 0.0 for d in range(n_days)]
+
+
+def test_governor_engagement_gates_and_day_aggregates():
+    # scored cycles spanning 2 UTC days; one day has a single mult<1.0 bar -> that whole day engaged.
+    # live rate == 1/2; judged against a jittered non-degenerate daily null -> a real verdict (not n/a).
+    day1 = datetime(2026, 7, 16, tzinfo=UTC)
+    day2 = datetime(2026, 7, 17, tzinfo=UTC)
+    cycle_ts = [day1 + timedelta(hours=4 * k) for k in range(3)] + [day2 + timedelta(hours=4 * k) for k in range(3)]
+    weights = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 6)
+
+    mult_by_cycle = dict.fromkeys(cycle_ts, 1.0)
+    mult_by_cycle[day2 + timedelta(hours=4)] = 0.5  # single sub-1.0 bar on day2 -> that whole day engaged
+    internals = _mk_internals(cycle_ts, mult_by_cycle=mult_by_cycle)
+
+    engaged = _daily_pattern(120)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 120, [0.001] * 120, multipliers=[0.5 if e else 1.0 for e in engaged])
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)
+    v = a.gating_verdicts["governor_engagement"]
+    assert math.isclose(v.live, 0.5, abs_tol=1e-9)  # 1 of 2 realized days engaged
+    assert v.verdict == "consistent"  # deterministic given this fixture; live sits at the band's own edge (hi=0.5)
+
+
+def test_governor_engagement_constant_series_still_gates():
+    # mult == 0.5 on EVERY scored cycle -> live rate 1.0. Against a null whose windowed daily rates
+    # cluster near 0.27 (max ~3/9 per 9-day window -- see _daily_pattern) -> verdict MUST be
+    # "inconsistent" (NOT "n/a"). This pins the decision that a constant realized series is a
+    # legitimate verdict, never suppressed to "n/a": constancy of the underlying per-bar series is
+    # irrelevant to whether the window statistic falls inside the null band.
+    base = datetime(2026, 7, 16, tzinfo=UTC)
+    cycle_ts = [base + timedelta(days=d) for d in range(9)]  # 9 distinct UTC days, 1 scored cycle/day
+    weights = [{"BTC": 0.15, "ETH": 0.15}] * 9
+    realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 9)
+
+    internals = _mk_internals(cycle_ts, mult_by_cycle=dict.fromkeys(cycle_ts, 0.5))  # constant on every scored cycle
+
+    engaged = _daily_pattern(120)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 120, [0.001] * 120, multipliers=[0.5 if e else 1.0 for e in engaged])
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)
+    v = a.gating_verdicts["governor_engagement"]
+    assert math.isclose(v.live, 1.0, abs_tol=1e-9)
+    assert v.verdict == "inconsistent"
+
+
+def test_governor_engagement_na_on_full_range_null_band():
+    # Fix 1's motivating live finding, reproduced synthetically: a SINGLE realized day (total_days
+    # == 1) judged against a null whose one-day windows (window=1) are literally the raw daily
+    # engagement flags -- some fully engaged (1.0), some not (0.0) -- so the band spans the metric's
+    # entire [0,1] domain. That must read "n/a" (no discriminating power), not a spurious real
+    # verdict, and must carry the disclosure naming which metric went vacuous.
+    day = datetime(2026, 7, 16, tzinfo=UTC)
+    cycle_ts = [day + timedelta(hours=4 * k) for k in range(3)]  # single realized day
+    weights = [{"BTC": 0.15, "ETH": 0.15}] * 3
+    realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 3)
+    internals = _mk_internals(cycle_ts, mult_by_cycle=dict.fromkeys(cycle_ts, 0.5))  # engaged -> live=1.0
+
+    n_days = 500
+    engaged = [1.0 if d % 2 == 0 else 0.0 for d in range(n_days)]  # half engaged, half not
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * n_days, [0.001] * n_days, multipliers=[0.5 if e else 1.0 for e in engaged])
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)
+    v = a.gating_verdicts["governor_engagement"]
+    assert v.verdict == "n/a"
+    assert v.live == 1.0  # numbers kept: this n/a is a vacuous band, not an unavailable rebuild
+    assert v.width == 1.0
+    assert any("governor_engagement" in d and "full [0,1] range" in d and "no discriminating power" in d for d in a.disclosures)
+    # the vacuous metric no longer inflates the multiplicity denominator (spec D6/Task 3)
+    assert "governor_engagement" not in {m for m, verdict in a.gating_verdicts.items() if verdict.verdict != "n/a"}
+
+
+def test_cap_breach_gates_against_null_series():
+    cycle_ts = [datetime(2026, 7, 16, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(6)]
+    weights = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized_ts(cycle_ts, weights, [0.001] * 6)
+
+    # Fix 5: a realistic 0/1 PER-BAR cap-breach series (how null.cap_breach actually looks), not a
+    # knife-edge float sequence hand-tuned to a specific window mean. Breach every 5th bar (gap=5,
+    # rate=0.2): cap_breach is judged at BAR granularity (window=L=6), and since the breach gap (5)
+    # is < the window length (6), every length-6 window contains 1 or 2 breaches -- never 0, never
+    # 6 -- giving a non-degenerate band [1/6, 1/3] that neither edge touches the metric's [0,1]
+    # domain, so it stays discriminating under Fix 1's full-range n/a check too.
+    null_cap = [1.0 if k % 5 == 0 else 0.0 for k in range(200)]
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 200, [0.001] * 200, cap_breach=null_cap)
+
+    # planted-consistent: exactly 1 of 6 scored cycles breached -> live == 1/6, matching the null's
+    # dominant (80% of windows) rate.
+    consistent_breach = dict.fromkeys(cycle_ts, False)
+    consistent_breach[cycle_ts[0]] = True
+    a = analyze_soak(realized, null, band=0.90, internals=_mk_internals(cycle_ts, breach_by_cycle=consistent_breach))
+    assert a.gating_verdicts["cap_breach"].verdict == "consistent"
+
+    # planted-inconsistent: every scored cycle breached -> live == 1.0, far outside the null's own
+    # [1/6, 1/3] outer band.
+    inconsistent_breach = dict.fromkeys(cycle_ts, True)
+    b = analyze_soak(realized, null, band=0.90, internals=_mk_internals(cycle_ts, breach_by_cycle=inconsistent_breach))
+    assert b.gating_verdicts["cap_breach"].verdict == "inconsistent"
+
+
+def test_analyze_soak_seven_gating_keys():
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 100
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 100)
+    a = analyze_soak(realized, null, band=0.90, internals=_mk_internals(realized.cycle_ts))
+    assert set(a.gating_verdicts) == {"gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"}
+
+
+def test_summarize_panel_counts_only_discriminating():
+    null = list(range(101))
+    real_verdict = metric_verdict(50, null)  # consistent
+    na_verdict = metric_verdict(1.0, [3.0] * 50)  # zero-width band -> n/a
+    verdicts = {
+        "gross": real_verdict,
+        "net": real_verdict,
+        "active_frac": real_verdict,
+        "turnover": real_verdict,
+        "hhi": real_verdict,
+        "governor_engagement": na_verdict,
+        "cap_breach": na_verdict,
+    }
+    s = summarize_panel(verdicts, band=0.90)
+    assert s.n_metrics == 5
+    assert math.isclose(s.expected_by_chance, 5 * 0.10)
+
+
+def test_analyze_soak_degrades_without_internals():
+    # a jittered, non-degenerate null on every one of the 5 weight-only metrics, so this test proves
+    # they still produce real verdicts (not "n/a") even though the two internals-derived ones do.
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    a = analyze_soak(_mk_realized(rw, [0.001] * 6), _mk_null(nw, [0.001] * 200), band=0.90, internals=None)
+
+    assert a.gating_verdicts["governor_engagement"].verdict == "n/a"
+    assert a.gating_verdicts["cap_breach"].verdict == "n/a"
+    assert a.internals_available is False
+    assert a.internals_reason  # non-empty
+    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+        assert a.gating_verdicts[m].verdict != "n/a"
+    assert a.panel.n_metrics == 5
+
+
+def test_analyze_soak_guards_against_missing_internals_key():
+    # Fix 2: `internals.available=True` but its maps DIVERGE from `realized.cycle_ts` (missing the
+    # last scored cycle) -- a bare `internals.mult_by_cycle[t]` index would crash with an
+    # unhandled KeyError. Must instead degrade both gating metrics to "n/a" (the same D7 contract
+    # as an outright-unavailable rebuild) with a reason naming the missing timestamp, never crash.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    missing = realized.cycle_ts[-1]
+    partial_mult = dict.fromkeys(realized.cycle_ts[:-1], 1.0)
+    partial_breach = dict.fromkeys(realized.cycle_ts[:-1], False)
+    internals = RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=partial_mult,
+        breach_by_cycle=partial_breach,
+        identity_ok=True,
+        identity_detail="",
+        cap_consistent=True,
+        cap_detail="",
+    )
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)  # must not raise KeyError
+
+    assert a.internals_available is False
+    assert a.gating_verdicts["governor_engagement"].verdict == "n/a"
+    assert a.gating_verdicts["cap_breach"].verdict == "n/a"
+    assert repr(missing) in a.internals_reason
+
+
+def test_disclosures_constant_and_redundant():
+    # constant mult on a long-only book -> a constancy disclosure AND the redundancy disclosure
+    rw_a = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized_a = _mk_realized(rw_a, [0.001] * 6)
+    internals_a = _mk_internals(realized_a.cycle_ts, mult_by_cycle=dict.fromkeys(realized_a.cycle_ts, 0.5))
+    null_a = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    a = analyze_soak(realized_a, null_a, band=0.90, internals=internals_a)
+    assert any("multiplier" in d and "no variance" in d for d in a.disclosures)
+    assert any("near-identical" in d for d in a.disclosures)
+
+    # genuine shorts (gross != net, ETH negative) + varying mult -> neither disclosure fires
+    rw_b = [
+        {"BTC": 0.10, "ETH": -0.10},
+        {"BTC": 0.15, "ETH": -0.05},
+        {"BTC": 0.05, "ETH": -0.15},
+        {"BTC": 0.20, "ETH": -0.02},
+        {"BTC": 0.02, "ETH": -0.20},
+        {"BTC": 0.12, "ETH": -0.08},
+    ]
+    realized_b = _mk_realized(rw_b, [0.001] * 6)
+    mult_b = dict(zip(realized_b.cycle_ts, [1.0, 0.8, 0.6, 1.0, 0.9, 0.7]))
+    breach_b = dict(zip(realized_b.cycle_ts, [False, True, False, False, True, False]))  # varying -> no constancy disclosure
+    internals_b = _mk_internals(realized_b.cycle_ts, mult_by_cycle=mult_b, breach_by_cycle=breach_b)
+    null_b = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    b = analyze_soak(realized_b, null_b, band=0.90, internals=internals_b)
+    assert not any("no variance" in d for d in b.disclosures)
+    assert not any("near-identical" in d for d in b.disclosures)
+
+
+def test_disclosures_anticorrelated_gross_net_uses_abs_and_names_the_condition():
+    # Fix 3a: a book with ONLY shorts makes net == -gross exactly every bar -> corr == -1.0, a
+    # strongly ANTI-correlated pair that is just as redundant as a positively-correlated one --
+    # `abs(corr) >= 0.99` must catch it. Fix 3b: the book is NOT long-only (it's all short), so the
+    # disclosure wording must name the correlation condition, never the long-only one.
+    rw = [{"ETH": -0.05}, {"ETH": -0.10}, {"ETH": -0.15}, {"ETH": -0.08}, {"ETH": -0.12}, {"ETH": -0.20}]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=None)
+
+    assert any("correlation" in d and "near-identical" in d for d in a.disclosures)
+    assert not any("long-only" in d for d in a.disclosures)
+
+
+def test_disclosures_empty_book_no_vacuous_long_only():
+    # Fix 3c: `long_only = all(...)` is vacuously True over an EMPTY weights sequence (no bars at
+    # all) -- an empty book must not be reported as "long-only" (there's no book to characterize),
+    # so neither redundancy disclosure may fire.
+    realized = _mk_realized([], [])
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=None)
+
+    assert not any("long-only" in d for d in a.disclosures)
+    assert not any("correlation" in d for d in a.disclosures)
+
+
+def test_disclosure_notes_day_granularity_is_exact():
+    # Final review Fix 1: the governor multiplier is constant WITHIN a day by construction
+    # (daily_cadence_governor assigns one multiplier per day_index), so a partial realized day
+    # carries the SAME engagement information as a full one -- there is no "fewer chances to
+    # engage" downward bias. The disclosure must say so, and must NOT claim a downward bias.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    internals = _mk_internals(realized.cycle_ts)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, internals=internals)
+
+    assert any("exact" in d.lower() and "partial" in d.lower() for d in a.disclosures)
+    assert not any("downward" in d.lower() for d in a.disclosures)
+    assert not any("fewer chances" in d.lower() for d in a.disclosures)
 
 
 # --- render_report -----------------------------------------------------------------------------------
@@ -557,3 +906,464 @@ def test_render_report_handles_all_none_before_realized_series():
     assert "ZERO out-of-time holdout" in text
     assert "NO VERDICT" in text.upper()
     assert "no journaled cycles found" in text
+
+
+def test_render_report_shows_seven_metric_rows():
+    # a non-void analysis with internals available -> all 7 gating verdicts real rows, and the
+    # deleted "GOVERNOR / CAP CONTEXT -- backtest context" block must be gone.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=_mk_internals(realized.cycle_ts))
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    for m in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
+        assert m in text
+    assert "backtest context" not in text.lower()
+
+
+def test_render_report_vocabulary_lock_and_banner_hold():
+    # plant "passed" inside RealizedInternals.identity_detail/cap_detail -- analyze_soak discards
+    # both (SoakAnalysis never carries them), so render_report has no way to leak them regardless
+    # of how the two new rows are formatted; this pins that structural guarantee.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    internals = RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=dict.fromkeys(realized.cycle_ts, 1.0),
+        breach_by_cycle=dict.fromkeys(realized.cycle_ts, False),
+        identity_ok=True,
+        identity_detail="identity check passed at cycle=2026-07-16T00:00:00+00:00",
+        cap_consistent=True,
+        cap_detail="cap check passed: completed-bar breach count matches",
+    )
+    analysis = analyze_soak(realized, null, band=0.90, internals=internals)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert "ZERO out-of-time holdout" in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
+def test_render_report_degraded_internals_shows_na_and_reason():
+    # internals=None -> D7 degrade: governor_engagement/cap_breach render "n/a" across every
+    # column and a line states the reason, while the other 5 metrics still gate for real.
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=None)
+    assert analysis.internals_available is False
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert analysis.internals_reason in text
+    assert "n/a" in text
+    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+        v = analysis.gating_verdicts[m]
+        assert v.verdict != "n/a"
+        assert v.verdict in text
+
+
+def test_render_report_scrubs_internals_reason_json_stays_raw():
+    # Fix 1: internals_reason carries str(exc) from an arbitrary EngineError/PortfolioError and is
+    # interpolated into the vocabulary-locked report text -- the lock must be STRUCTURAL there, not
+    # merely a convention that no current exception message happens to trip. The JSON payload is not
+    # vocabulary-locked, so it must keep the raw, unscrubbed reason for the same analysis.
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    internals = RealizedInternals(
+        available=False,
+        reason="rebuild passed through a stale universe and was PROVEN inconsistent",
+        mult_by_cycle={},
+        breach_by_cycle={},
+        identity_ok=False,
+        identity_detail="",
+        cap_consistent=False,
+        cap_detail="",
+    )
+    analysis = analyze_soak(realized, null, band=0.90, internals=internals)
+    assert analysis.internals_reason == internals.reason  # sanity: this is the string under test
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "rebuild" in text and "stale universe" in text  # message stays useful, only the terms are neutered
+
+    payload = soak._json_payload(
+        analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC), internals=internals
+    )
+    assert payload["internals"]["reason"] == internals.reason  # JSON keeps the RAW unscrubbed reason
+
+
+def test_render_report_scrubs_void_reasons_from_soak_error():
+    # Final review Fix 3: `soak_report` builds `void_reasons = [f"realized series: {exc}"]` from a
+    # SoakError when `realized_series` itself raises, and `render_report` interpolates
+    # `void_reasons` verbatim into the NO-VERDICT line -- the SECOND free-form path into rendered
+    # text alongside `internals_reason`. Must be scrubbed too, structurally, same as above.
+    exc = SoakError("rebuild passed through a stale universe and was PROVEN inconsistent")
+    void_reasons = [f"realized series: {exc}"]
+
+    text = render_report(None, None, None, None, void_reasons=void_reasons, band=0.90)
+
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "realized series" in text and "stale universe" in text  # message stays useful
+
+
+def test_render_report_disclosures_block():
+    # non-empty: constant mult on a long-only book -> constancy + redundancy + day-granularity
+    # disclosures, each rendered under a DISCLOSURES header.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    internals = _mk_internals(realized.cycle_ts, mult_by_cycle=dict.fromkeys(realized.cycle_ts, 0.5))
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis = analyze_soak(realized, null, band=0.90, internals=internals)
+    assert analysis.disclosures  # sanity: this fixture actually produces disclosures
+    assert any("cap_breach probes a separate mechanism" in d for d in analysis.disclosures)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+    assert "DISCLOSURES" in text
+    for d in analysis.disclosures:
+        assert d in text
+
+    # near-empty: genuine shorts (kills the specific gross/net redundancy disclosure) +
+    # internals=None (kills constancy + day-granularity) -> only the UNCONDITIONAL weight-derived
+    # cluster note remains (final review Fix 2: it fires every time the fingerprint renders), so
+    # DISCLOSURES still appears with exactly that one entry, no stray specific notes.
+    rw_b = [
+        {"BTC": 0.10, "ETH": -0.10},
+        {"BTC": 0.15, "ETH": -0.05},
+        {"BTC": 0.05, "ETH": -0.15},
+        {"BTC": 0.20, "ETH": -0.02},
+        {"BTC": 0.02, "ETH": -0.20},
+        {"BTC": 0.12, "ETH": -0.08},
+    ]
+    realized_b = _mk_realized(rw_b, [0.001] * 6)
+    null_b = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    analysis_b = analyze_soak(realized_b, null_b, band=0.90, internals=None)
+    assert len(analysis_b.disclosures) == 1
+    assert "cap_breach probes a separate mechanism" in analysis_b.disclosures[0]
+    text_b = render_report(analysis_b, realized_b, null_b, self_test, void_reasons=[], band=0.90)
+    assert "DISCLOSURES" in text_b
+    assert "near-identical" not in text_b
+
+
+def test_honesty_footer_frames_structural_conformance_not_edge():
+    # Final review Fix 2 (footer half): the footer must make explicit that the whole report is a
+    # structural-conformance check (does the live book look like the backtest book), not evidence
+    # of edge -- vocabulary-lock clean, and the pre-existing overfit-band sentence stays verbatim.
+    low = soak._HONESTY_FOOTER.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert "structural-conformance" in low
+    assert "not evidence of edge" in low
+    assert "not out-of-sample evidence" in low  # the pre-existing sentence is kept, not replaced
+
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+    assert "structural-conformance" in text.lower()
+
+
+def test_json_context_carries_reference_note_against_global_scalars():
+    # Final review Fix 4 (D9 caveat): context.null_gov_rate/null_cap_rate are the null's GLOBAL
+    # rates -- exactly what spec D9 warns must never be used as the comparison reference (the
+    # windowed distribution behind gating_verdicts is). JSON is not vocabulary-locked, so this note
+    # can name the reference directly.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC))
+
+    assert payload["context"]["null_gov_rate"] == analysis.null_gov_rate
+    assert payload["context"]["null_cap_rate"] == analysis.null_cap_rate
+    note = payload["context"]["note"].lower()
+    assert "global" in note
+    assert "not" in note and "reference" in note
+    assert "windowed" in note
+
+
+# --- _verdict_payload (Fix 4: degraded verdict JSON, zero vs null) --------------------------------------
+
+
+def test_verdict_payload_nulls_numerics_only_when_internals_unavailable():
+    # A computed-but-vacuous "n/a" (Fix 1's full-range domain check) KEEPS its real numbers -- they
+    # are meaningful (e.g. live really did sit at the domain edge). Only an "n/a" that comes from
+    # an internals rebuild that never ran gets its numeric fields nulled, since live=0.0 there is a
+    # placeholder, not a computed value a JSON consumer could otherwise mistake for a genuine zero.
+    computed_na = metric_verdict(1.0, [0.0] * 5 + [1.0] * 5, band=0.90, effective_n=50, domain=(0.0, 1.0))
+    assert computed_na.verdict == "n/a"
+    d_real = soak._verdict_payload("governor_engagement", computed_na, internals_available=True)
+    assert d_real["live"] == 1.0 and d_real["lo"] == 0.0 and d_real["hi"] == 1.0
+
+    placeholder_na = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+    d_placeholder = soak._verdict_payload("governor_engagement", placeholder_na, internals_available=False)
+    assert all(d_placeholder[k] is None for k in ("live", "median", "lo", "hi", "percentile", "effective_n", "width"))
+    assert d_placeholder["verdict"] == "n/a"  # the verdict string itself is never nulled
+
+    # gross/net/etc. are never nulled regardless of internals_available -- only the two
+    # internals-derived metrics can carry an unavailable-rebuild placeholder.
+    d_other = soak._verdict_payload("gross", placeholder_na, internals_available=False)
+    assert d_other["live"] == 0.0
+
+
+# --- realized_internals --------------------------------------------------------------------------------
+
+
+def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
+    """A CycleRecord with a real 240 SnapshotEntry hash-verifying against (h4_ts, closes) -- the
+    data `realized_internals` rebuilds on -- plus a minimal, independently-consistent 1440
+    SnapshotEntry so `validate_record` (called for real on `latest_record` since Fix 2) passes its
+    per-pair grid-completeness and snapshot-boundary checks; the 1440 entry's last_ts is derived
+    with `validate_record`'s own formula, which is generally NOT h4_ts[-1]. Returns (record,
+    reader): reader routes by entry.grid so both entries resolve against their own data."""
+    midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_last = midnight - timedelta(days=1)
+    daily_ts = [daily_last - timedelta(days=1), daily_last]
+    daily_closes = [100.0, 100.0]
+
+    h4_entry = SnapshotEntry(
+        pair="BTC",
+        grid="240",
+        n_bars=len(h4_ts),
+        first_ts=h4_ts[0],
+        last_ts=h4_ts[-1],
+        content_hash=snapshot_content_hash(h4_ts, closes),
+        path="p240",
+    )
+    daily_entry = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=len(daily_ts),
+        first_ts=daily_ts[0],
+        last_ts=daily_ts[-1],
+        content_hash=snapshot_content_hash(daily_ts, daily_closes),
+        path="p1440",
+    )
+    record = CycleRecord(
+        schema_version=1,
+        cycle_ts=cycle_ts,
+        snapshots=(h4_entry, daily_entry),
+        final_targets={"BTC": 0.0},
+        started_at=cycle_ts,
+        completed_at=cycle_ts,
+        code_version="test",
+        builder_path="fast",
+    )
+
+    def reader(entry):
+        return (daily_ts, daily_closes) if entry.grid == "1440" else (h4_ts, closes)
+
+    return record, reader
+
+
+def _mk_scored_record(cycle_ts, final_targets):
+    return CycleRecord(
+        schema_version=1,
+        cycle_ts=cycle_ts,
+        snapshots=(),
+        final_targets=final_targets,
+        started_at=cycle_ts,
+        completed_at=cycle_ts,
+        code_version="test",
+        builder_path="fast",
+    )
+
+
+def test_realized_internals_identity_holds(monkeypatch):
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4  # n_periods; h4_ts carries n+1 = 5 rows (k=0..4)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0 + k for k in range(n + 1)]
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.03, 0.0]
+    mult = [1.0, 1.0, 0.5, 1.0, 1.0]
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    # scored cycle at row k has cycle_ts = h4_ts[k] + 4h -- the resolved-row identity under test.
+    scored = [
+        _mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][1]}),
+        _mk_scored_record(h4_ts[3] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][3]}),
+    ]
+
+    ri = realized_internals(scored, latest, reader)
+    assert ri.available is True and ri.reason == ""
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.mult_by_cycle[scored[0].cycle_ts] == mult[1]
+    assert ri.mult_by_cycle[scored[1].cycle_ts] == mult[3]
+    assert set(ri.breach_by_cycle) == {scored[0].cycle_ts, scored[1].cycle_ts}
+
+
+def test_realized_internals_shift_breaks_identity(monkeypatch):
+    """A guard that cannot bite is not a guard: make the fake result's final_targets correspond to
+    k+1 (a one-bar shift) while the scored cycle's own cycle_ts resolves to k -- identity_ok MUST
+    go False."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.15, 0.02]  # distinct consecutive values -> a shift is detectable
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    k = 2
+    shifted = _mk_scored_record(h4_ts[k] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][k + 1]})
+
+    ri = realized_internals([shifted], latest, reader)
+    assert ri.identity_ok is False
+    assert ri.identity_detail  # non-empty, names the worst diff
+
+
+def test_realized_internals_missing_stamp_raises(monkeypatch):
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 3
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.0]
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    off_grid = _mk_scored_record(base + timedelta(hours=999), {"BTC": 0.05})  # T - 4h absent from h4_ts
+    with pytest.raises(SoakError):
+        realized_internals([off_grid], latest, reader)
+
+
+def test_realized_internals_cap_breach_matches_builder(monkeypatch):
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 3  # n_periods; h4_ts carries 4 rows (k=0..3)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    # combined breaches the 0.20 long cap at k=0,1; stays within it at k=2,3.
+    B = A1 = A2 = [0.30, 0.25, 0.05, 0.05]
+    mult = [0.5, 1.0, 1.0, 1.0]  # governor shrinks k=0's final_targets well within cap despite the breach
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    scored = [_mk_scored_record(h4_ts[k] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][k]}) for k in range(n + 1)]
+
+    ri = realized_internals(scored, latest, reader)
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.breach_by_cycle[scored[0].cycle_ts] is True
+    assert ri.breach_by_cycle[scored[1].cycle_ts] is True
+    assert ri.breach_by_cycle[scored[2].cycle_ts] is False
+    assert ri.breach_by_cycle[scored[3].cycle_ts] is False
+    assert ri.cap_consistent is True, ri.cap_detail
+
+    # bar k=0: combined (0.30) > cap (0.20), but final_targets = mult*capped = 0.5*0.20 = 0.10 <= cap --
+    # the metric sees the breach the traded weights themselves cannot show.
+    assert fake.final_targets["BTC"][0] <= 0.20 + 1e-12
+    assert ri.breach_by_cycle[scored[0].cycle_ts] is True
+
+    fake.cap_breach_bars = 999  # disagree with the rebuild's own completed-bar breach count
+    ri2 = realized_internals(scored, latest, reader)
+    assert ri2.cap_consistent is False, ri2.cap_detail
+
+
+def test_realized_internals_unavailable_degrades():
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(3)]
+    closes = [100.0, 101.0, 102.0]
+    latest, _ = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    def bad_reader(entry):
+        raise EngineJournalError("journaled snapshot missing on disk")
+
+    ri = realized_internals([], latest, bad_reader)
+    assert ri.available is False
+    assert ri.reason
+    assert ri.mult_by_cycle == {} and ri.breach_by_cycle == {}
+    assert ri.identity_ok is False and ri.cap_consistent is False
+
+
+def test_realized_internals_degrades_on_builder_portfolio_error():
+    """A single-pair (BTC-only) snapshot satisfies validate_record and _assemble_latest_grids, but
+    the REAL builder's default 10-asset universe doesn't match -- _validate_grid raises
+    PortfolioError, not an EngineError. D7 requires the degrade net to catch it too: available is
+    False with a non-empty reason, and (the point of this test) no exception escapes the call."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(3)]
+    closes = [100.0, 101.0, 102.0]
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    ri = realized_internals([], latest, reader)  # build_crossfreq_system_fast NOT mocked here
+    assert ri.available is False
+    assert ri.reason
+    assert ri.identity_ok is False and ri.cap_consistent is False
+
+
+def test_realized_internals_asset_outside_universe_raises(monkeypatch):
+    """A scored cycle whose final_targets names an asset outside the rebuilt universe (plausible
+    across a universe change) must raise a typed SoakError naming the asset and cycle, not a bare
+    KeyError."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 2
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0] * (n + 1)
+    B = A1 = A2 = [0.09, 0.06, 0.0]
+    mult = [1.0] * (n + 1)
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=mult, governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+
+    drifted = _mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][1], "ETH": 0.05})
+
+    with pytest.raises(SoakError) as exc_info:
+        realized_internals([drifted], latest, reader)
+    assert "ETH" in str(exc_info.value)
+
+
+@pytest.mark.skipif(not Path("/mnt/zhao-crypto/engine-journal").exists(), reason="ops journal mirror absent")
+def test_realized_internals_on_real_journal():
+    from cli.engine.command import _journal_artifacts, _snapshot_reader
+
+    journal_dir = Path("/mnt/zhao-crypto/engine-journal")
+    arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
+    records = sorted((from_json(p.read_text()) for _, p in arts), key=lambda r: r.cycle_ts)
+    latest = records[-1]
+    scored = records[:-1]  # every scored cycle in the window, excluding latest -- D2 is window-wide
+    reader = _snapshot_reader(journal_dir)
+
+    ri = realized_internals(scored, latest, reader)
+    assert ri.available is True, ri.reason
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.cap_consistent is True, ri.cap_detail
+    assert len(ri.mult_by_cycle) == len(records) - 1
+    for rec in scored:
+        assert rec.cycle_ts in ri.mult_by_cycle
+        assert 0.0 <= ri.mult_by_cycle[rec.cycle_ts] <= 1.0

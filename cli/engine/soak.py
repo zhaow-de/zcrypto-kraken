@@ -8,6 +8,14 @@ each cycle T, the position decided at T is held over [T, T+4h) and scored agains
 actual forward return, joined against the store BY TIMESTAMP -- see `realized_series` for the
 exact timing model and its off-by-one cross-check (`chain_ok`).
 
+Also recovers the strategy's per-bar INTERNALS (governor multiplier, cap-breach) at each scored
+cycle -- the journal only carries `final_targets`, not the pre-cap combined position or the
+multiplier the two gating metrics governor-engagement and cap-breach need. `realized_internals`
+rebuilds ONCE on the latest journaled cycle's own hash-verified snapshot history (long enough to
+reach every earlier scored cycle's decision row) and resolves each scored cycle's row BY
+TIMESTAMP from a `{ts: index}` dict, never by offset arithmetic -- see its docstring for the D2
+window-wide identity proof.
+
 Also builds the backtest NULL the realized series is judged against: `build_null` rebuilds the
 same strategy over the full frozen canonical history and derives its P&L under the LIVE cost
 convention (`_net_live_from_result`) -- the builder's `governed_net` charges cost on the capped
@@ -22,28 +30,31 @@ length: the former enumerates every overlapping window, the latter draws a stati
 Also judges a live metric value against its null distribution: `metric_verdict` applies a
 two-sided band (inner band consistent, edge zones weakly-consistent, outside the outer band
 inconsistent on EITHER side -- too-low is a bug tell too, not just too-high) with an "n/a" escape
-for a degenerate discriminator (zero-width band or a tiny `effective_n`); `degenerate` flags a
-near-zero-exposure window that can't be judged at all; `summarize_panel` rolls a panel of verdicts
-into a multiplicity-aware summary line, since judging N metrics at a 90% band will show ~N*0.10
-outside it by chance alone.
+for a degenerate discriminator (zero-width band, a tiny `effective_n`, or -- given an optional
+`domain` -- a band spanning the metric's ENTIRE attainable range, e.g. [0,1] for a rate: nothing
+could ever fall outside it, zero discriminating power in the opposite direction from a zero-width
+band); `degenerate` flags a near-zero-exposure window that can't be judged at all; `summarize_panel`
+rolls a panel of verdicts into a multiplicity-aware summary line, since judging N metrics at a 90%
+band will show ~N*0.10 outside it by chance alone.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 
-from cli.engine.concordance import replay_cycle
+from cli.engine.concordance import HashMismatchError, replay_cycle
 from cli.engine.cycle import _union_align
-from cli.engine.errors import EngineError
-from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
+from cli.engine.errors import EngineError, EngineJournalError
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
-from cli.portfolio import CrossfreqSystemConfig, build_crossfreq_system_fast
+from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system_fast
 from cli.risk.limits import apply_position_caps
 
 
@@ -276,7 +287,7 @@ def realized_series(
     )
 
 
-def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool]:
+def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool, list[float]]:
     """Recompute a crossfreq-system result's net P&L under the LIVE cost convention: cost charged
     on `final_targets = mult x capped` turnover instead of the builder's `governed_net` convention
     (cost on the capped book's own turnover). The gross legs are identical either way, so only the
@@ -286,16 +297,24 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
 
     `capped` is reconstructed from `result.sleeve_positions` (the 1/3-combined B/A1/A2 sleeves,
     position-capped) rather than read from `final_targets`/`multipliers` directly, since dividing
-    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar. Returns
-    (net_live over the n_periods completed bars, reconcile_ok), where reconcile_ok cross-checks
-    that mult[k]*capped[a][k] == final_targets[a][k] for every asset and row (including the
-    forming interval) -- proof the reconstruction faithfully matches the builder's internal capped
-    book.
+    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar. `combined` is
+    built with the builder's own `third = 1 / 3` three-multiply form (`crossfreq_system.py:633-634`),
+    not `/3.0`, so the cap-breach predicate below (threshold 1e-15) never disagrees with the
+    builder's own `cap_breach_bars` on a bit-level rounding difference. Returns (net_live over the
+    n_periods completed bars, reconcile_ok, cap_breach), where reconcile_ok cross-checks that
+    mult[k]*capped[a][k] == final_targets[a][k] for every asset and row (including the forming
+    interval) -- proof the reconstruction faithfully matches the builder's internal capped book --
+    and cap_breach[k] is 1.0 iff any asset's pre-cap `combined` book was clipped at bar k (over the
+    n_periods completed bars), using the same `> 1e-15` predicate as `crossfreq_system.py:636`.
     """
     n = result.n_periods
     assets = tuple(result.final_targets)
     sleeves = result.sleeve_positions
-    combined = {a: [(sleeves["B"][a][k] + sleeves["A1"][a][k] + sleeves["A2"][a][k]) / 3.0 for k in range(n + 1)] for a in assets}
+    third = 1 / 3
+    combined = {
+        a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n + 1)]
+        for a in assets
+    }
     capped = apply_position_caps(combined)
     mult = result.multipliers
     final_targets = result.final_targets
@@ -308,7 +327,9 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
         turn_final = sum(abs(final_targets[a][k] - (final_targets[a][k - 1] if k > 0 else 0.0)) for a in assets)
         net_live.append(result.governed_net[k] + mult[k] * fee_builder * turn_capped - fee * turn_final)
 
-    return net_live, reconcile_ok
+    cap_breach = [1.0 if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) else 0.0 for k in range(n)]
+
+    return net_live, reconcile_ok, cap_breach
 
 
 @dataclass(frozen=True)
@@ -325,6 +346,7 @@ class NullSystem:
     reconcile_ok: bool
     n_periods: int
     governed_net: list[float]  # n_periods
+    cap_breach: list[float]  # n_periods; 1.0 on a bar where the pre-cap book was clipped
     cap_breach_bars: int
 
 
@@ -351,7 +373,7 @@ def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSys
     daily_prices, daily_ts, h4_prices, h4_ts = _load_canonical(canonical_dir)
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=config)
 
-    net_live, reconcile_ok = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
+    net_live, reconcile_ok, cap_breach = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
     assets = tuple(result.final_targets)
     n = result.n_periods
     weights = [{a: result.final_targets[a][k] for a in assets} for k in range(n)]
@@ -365,6 +387,7 @@ def build_null(canonical_dir: Path, config: CrossfreqSystemConfig = CrossfreqSys
         reconcile_ok=reconcile_ok,
         n_periods=n,
         governed_net=result.governed_net,
+        cap_breach=cap_breach,
         cap_breach_bars=result.cap_breach_bars,
     )
 
@@ -444,6 +467,7 @@ def metric_verdict(
     *,
     band: float = 0.90,
     effective_n: float = float("inf"),
+    domain: tuple[float, float] | None = None,
 ) -> MetricVerdict:
     """Judge `live` against the null distribution `null_values` using a two-sided band.
 
@@ -453,6 +477,12 @@ def metric_verdict(
     bounds "consistent"; the two edge zones between inner and outer bound "weakly-consistent".
     A degenerate discriminator -- zero-width outer band or `effective_n < 3` -- is "n/a"
     regardless of where `live` falls. Empty/singleton `null_values` is also "n/a" (width 0).
+
+    `domain`, when given, is the metric's attainable range (e.g. `(0.0, 1.0)` for a rate). If the
+    computed outer band covers the FULL domain -- `lo <= domain[0] + eps` AND `hi >= domain[1] -
+    eps` -- no possible value could ever fall outside it, so the band has zero discriminating
+    power just as surely as a zero-width one: also "n/a" (computed stats are kept so the row still
+    renders its numbers).
     """
     if len(null_values) < 2:
         return MetricVerdict(
@@ -472,7 +502,10 @@ def metric_verdict(
     width = hi - lo
     percentile = (sum(1 for v in null_values if v <= live) / len(null_values)) * 100.0
 
-    if width == 0.0 or effective_n < 3:
+    eps = 1e-12
+    full_range = domain is not None and lo <= domain[0] + eps and hi >= domain[1] - eps
+
+    if width == 0.0 or effective_n < 3 or full_range:
         verdict = "n/a"
     elif inner_lo <= live <= inner_hi:
         verdict = "consistent"
@@ -483,6 +516,19 @@ def metric_verdict(
 
     return MetricVerdict(
         verdict=verdict, live=live, median=median, lo=lo, hi=hi, percentile=percentile, effective_n=effective_n, width=width
+    )
+
+
+def _full_range_disclosure(name: str, verdict: MetricVerdict, domain: tuple[float, float] | None) -> str | None:
+    """If `verdict` is "n/a" because its outer band spans the FULL `domain` (Fix 1 in
+    `metric_verdict`) rather than being zero-width or having a tiny `effective_n`, return the
+    disclosure line naming it -- `width > 0` and `effective_n >= 3` rule out `metric_verdict`'s
+    other two "n/a" triggers, isolating this one."""
+    if domain is None or verdict.verdict != "n/a" or verdict.width <= 0.0 or verdict.effective_n < 3:
+        return None
+    return (
+        f"{name}: the null band spans the full [{domain[0]:g},{domain[1]:g}] range at this window "
+        "length -- the test has no discriminating power here"
     )
 
 
@@ -507,12 +553,19 @@ class PanelSummary:
 
 
 def summarize_panel(verdicts: dict[str, MetricVerdict], *, band: float = 0.90) -> PanelSummary:
-    """Summarize a panel of per-metric verdicts, resisting multiplicity: judging N metrics at
-    `band` will show ~N*(1-band) outside the band by chance alone, so the summary reports the
-    observed count against that expectation rather than alarming on any single worst-of-N metric.
+    """Summarize a panel of per-metric verdicts, resisting multiplicity: judging N DISCRIMINATING
+    metrics at `band` will show ~N*(1-band) outside the band by chance alone, so the summary reports
+    the observed count against that expectation rather than alarming on any single worst-of-N metric.
+
+    `n_metrics` counts only verdicts that actually discriminate (`verdict != "n/a"`, spec D6) -- a
+    degenerate band or an unavailable internals rebuild can't contribute a false positive, so
+    counting it would overstate the expected-by-chance baseline. This also makes a degraded run
+    self-consistent with no special-casing: with 2 of 7 metrics `"n/a"`, the line reads "... of 5"
+    automatically.
     """
-    n_metrics = len(verdicts)
-    n_outside = sum(1 for v in verdicts.values() if v.verdict == "inconsistent")
+    discriminating = [v for v in verdicts.values() if v.verdict != "n/a"]
+    n_metrics = len(discriminating)
+    n_outside = sum(1 for v in discriminating if v.verdict == "inconsistent")
     expected_by_chance = n_metrics * (1.0 - band)
     line = f"{n_outside} of {n_metrics} outside band (~{expected_by_chance:.1f} expected by chance at {band * 100:.0f}%)"
     return PanelSummary(n_metrics=n_metrics, n_outside=n_outside, expected_by_chance=expected_by_chance, line=line)
@@ -602,6 +655,177 @@ def identity_self_check(record, snapshot_reader, *, tol: float = 1e-6) -> tuple[
     return True, "identity check passed"
 
 
+@dataclass(frozen=True)
+class RealizedInternals:
+    """The strategy's per-bar internals (governor multiplier, cap-breach) at each SCORED cycle's
+    resolved row, recovered by rebuilding on the latest journaled cycle's own hash-verified
+    snapshot history (see `realized_internals`) -- the journal itself only carries
+    `final_targets`, not the pre-cap combined position or the multiplier the two new gating
+    metrics need. `available=False` DEGRADES the run (missing/corrupt snapshots, an invalid record,
+    a builder EngineError/PortfolioError) rather than voiding it -- the caller decides what an
+    unavailable rebuild means for the overall soak verdict. `identity_ok`/`cap_consistent` are D2's
+    window-wide proof that each resolved row `k` really is that scored cycle's decision row -- see
+    `realized_internals`."""
+
+    available: bool
+    reason: str  # why unavailable ("" when available)
+    mult_by_cycle: dict[datetime, float]
+    breach_by_cycle: dict[datetime, bool]
+    identity_ok: bool
+    identity_detail: str
+    cap_consistent: bool
+    cap_detail: str
+
+
+def _assemble_latest_grids(
+    record: CycleRecord, snapshot_reader
+) -> tuple[list[datetime] | None, dict[str, list[float | None]], list[datetime] | None, dict[str, list[float | None]]]:
+    """Mirror `concordance.replay_cycle`'s snapshot assembly for `record`'s own snapshots: read
+    each SnapshotEntry via `snapshot_reader`, hash-verify it against its declared content_hash
+    (HashMismatchError on mismatch -- corrupt evidence), reconcile the read data against the
+    entry's own len/first_ts/last_ts metadata (EngineJournalError on disagreement), then group by
+    grid ("1440"/"240") and assert every pair on a grid shares one calendar (EngineJournalError on
+    disagreement). A parallel implementation, not a shared import -- `replay_cycle` itself is
+    untouched and unaffected. Returns (daily_ts, daily_prices, h4_ts, h4_prices)."""
+    by_grid: dict[str, dict[str, tuple[list[datetime], list[float | None]]]] = {"1440": {}, "240": {}}
+    for entry in record.snapshots:
+        ts, closes = snapshot_reader(entry)
+        if snapshot_content_hash(ts, closes) != entry.content_hash:
+            raise HashMismatchError(f"content hash mismatch for pair={entry.pair!r} grid={entry.grid!r} -- corrupt evidence")
+        if len(ts) != entry.n_bars or ts[0] != entry.first_ts or ts[-1] != entry.last_ts:
+            raise EngineJournalError(
+                f"pair={entry.pair!r} grid={entry.grid!r}: read data disagrees with its own journaled metadata -- "
+                f"n_bars={len(ts)} vs {entry.n_bars!r}, first_ts={ts[0]!r} vs {entry.first_ts!r}, "
+                f"last_ts={ts[-1]!r} vs {entry.last_ts!r}"
+            )
+        by_grid[entry.grid][entry.pair] = (ts, closes)
+
+    def _assemble(grid: str) -> tuple[list[datetime] | None, dict[str, list[float | None]]]:
+        shared_ts: list[datetime] | None = None
+        prices: dict[str, list[float | None]] = {}
+        for pair, (ts, closes) in by_grid[grid].items():
+            if shared_ts is None:
+                shared_ts = ts
+            elif ts != shared_ts:
+                raise EngineJournalError(f"pair={pair!r} grid={grid!r} ts calendar disagrees with the grid's shared calendar")
+            prices[pair] = closes
+        return shared_ts, prices
+
+    daily_ts, daily_prices = _assemble("1440")
+    h4_ts, h4_prices = _assemble("240")
+    return daily_ts, daily_prices, h4_ts, h4_prices
+
+
+def realized_internals(
+    scored_records: list[CycleRecord],
+    latest_record: CycleRecord,
+    snapshot_reader,
+    *,
+    tol: float = 1e-6,
+) -> RealizedInternals:
+    """Recover each SCORED cycle's governor multiplier and cap-breach flag by rebuilding ONE
+    `build_crossfreq_system_fast` over `latest_record`'s own snapshots -- its 240 (4h) history
+    reaches `latest_record.cycle_ts - 4h`, i.e. every earlier scored cycle's decision row -- and
+    reading each scored cycle's row back out of that single rebuild.
+
+    THE KEYSTONE: the row for the decision made at cycle T is the index k where h4_ts[k] ==
+    T - 4h, resolved from a `{ts: index}` dict -- NEVER by offset arithmetic. If T - 4h is absent
+    from the rebuilt grid, raises SoakError naming T -- a genuine inconsistency, not a degrade.
+    Likewise, if a scored cycle's final_targets names an asset outside the rebuilt universe
+    (plausible across a universe change), raises SoakError naming the asset and cycle rather than
+    letting a bare KeyError escape.
+
+    D2 (the proof): at that same k, the rebuild's `final_targets[a][k]` must equal the journaled
+    cycle's `final_targets[a]` to `tol`, for every scored cycle and every asset -- `identity_ok` is
+    that window-wide check; any ±1 shift, grid misalignment, or wrong-record rebuild breaks it.
+    `identity_detail` names the worst |diff| and where it occurred.
+
+    Cap-breach mirrors `crossfreq_system.py`'s own `cap_breach_bars` formula exactly, over all
+    `len(h4_ts)` rows: `combined[a][k]` is the 1/3-mean of the B/A1/A2 sleeves (pre-cap, from
+    `result.sleeve_positions`), `capped = apply_position_caps(combined)`, and `breach[k]` is True
+    iff any asset's `|capped - combined| > 1e-15` at that row. This is computed from the
+    pre-multiplier sleeves rather than from `final_targets` because `final_targets = mult *
+    capped` is always in-cap by construction (capping happens before the governor multiply) and so
+    can never itself show a breach. `cap_consistent` cross-checks the completed-bar breach count
+    (`breach[:result.n_periods]`) against the rebuild's own `cap_breach_bars`.
+
+    Record validation (`validate_record`), assembly, and build (the snapshot read/hash-verify and
+    the builder call) DEGRADE the run on any `EngineError` (missing/corrupt snapshots, a
+    grid-assembly disagreement, a schema/boundary violation) or `PortfolioError` (e.g. the
+    rebuilt grid's asset set disagreeing with the builder's universe): returns `available=False`
+    with `reason=str(exc)` and empty/void fields, never voiding the whole soak-check outright --
+    that decision belongs to the caller. A `SoakError` from a missing T-4h stamp or an asset
+    outside the rebuilt universe is a genuine inconsistency in the per-cycle loop below and
+    propagates instead.
+    """
+    try:
+        validate_record(latest_record)
+        daily_ts, daily_prices, h4_ts, h4_prices = _assemble_latest_grids(latest_record, snapshot_reader)
+        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
+    except (EngineError, PortfolioError) as exc:
+        return RealizedInternals(
+            available=False,
+            reason=str(exc),
+            mult_by_cycle={},
+            breach_by_cycle={},
+            identity_ok=False,
+            identity_detail="",
+            cap_consistent=False,
+            cap_detail="",
+        )
+
+    idx = {ts: k for k, ts in enumerate(h4_ts)}
+    assets = tuple(result.final_targets)
+    n_rows = len(h4_ts)
+    sleeves = result.sleeve_positions
+    third = 1 / 3
+    combined = {
+        a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n_rows)]
+        for a in assets
+    }
+    capped = apply_position_caps(combined)
+    breach = [any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) for k in range(n_rows)]
+
+    mult_by_cycle: dict[datetime, float] = {}
+    breach_by_cycle: dict[datetime, bool] = {}
+    identity_ok = True
+    worst_diff = 0.0
+    worst_detail = "n/a"
+    for rec in scored_records:
+        t = rec.cycle_ts
+        k = idx.get(t - timedelta(hours=4))
+        if k is None:
+            raise SoakError(f"cycle {t!r}: T - 4h not found in the rebuilt h4 grid")
+        mult_by_cycle[t] = result.multipliers[k]
+        breach_by_cycle[t] = breach[k]
+        for a, value in rec.final_targets.items():
+            if a not in result.final_targets:
+                raise SoakError(f"cycle {t!r}: asset {a!r} not in the rebuilt universe {sorted(result.final_targets)}")
+            diff = abs(result.final_targets[a][k] - value)
+            if diff >= worst_diff:
+                worst_diff = diff
+                worst_detail = f"cycle={t!r} asset={a!r}"
+            if diff > tol:
+                identity_ok = False
+
+    identity_detail = f"worst |diff|={worst_diff!r} at {worst_detail}"
+
+    completed_breaches = sum(1 for b in breach[: result.n_periods] if b)
+    cap_consistent = completed_breaches == result.cap_breach_bars
+    cap_detail = f"completed-bar breach count={completed_breaches} vs result.cap_breach_bars={result.cap_breach_bars}"
+
+    return RealizedInternals(
+        available=True,
+        reason="",
+        mult_by_cycle=mult_by_cycle,
+        breach_by_cycle=breach_by_cycle,
+        identity_ok=identity_ok,
+        identity_detail=identity_detail,
+        cap_consistent=cap_consistent,
+        cap_detail=cap_detail,
+    )
+
+
 def plausibility_checks(realized, null) -> list[str]:
     """Scan `realized`/`null` for out-of-bounds diagnostics; returns one message per violation
     found (empty = all in bounds). Bounds: `realized.implausible` (already flags any |r_fwd| > 0.5
@@ -679,15 +903,18 @@ def _mean(values: list[float]) -> float:
 @dataclass(frozen=True)
 class SoakAnalysis:
     """The full soak-check analysis tying the realized series to its backtest null: a verdict per
-    GATING metric (gross/net/active_frac/turnover/hhi -- the 5 of the 7 spec metrics computable
-    from the journaled weights), the panel summary over those 5, the governor/cap-breach rates as
-    NULL-side backtest CONTEXT (`cap_breach`/`governor_engagement` need strategy internals the
-    journal doesn't carry, so they're never judged as a realized-vs-null verdict), the D4
-    governed-vs-live P&L gap, and the NON-GATING realized-vs-null P&L verdict."""
+    GATING metric -- gross/net/active_frac/turnover/hhi (computable from the journaled weights
+    alone) plus governor_engagement/cap_breach (computed from `internals` when available, else
+    `"n/a"` with `internals_reason` naming why -- D7 degrade, not void) -- 7 keys total, the panel
+    summary over the DISCRIMINATING subset (`summarize_panel` excludes `"n/a"`, spec D6), the D4
+    governed-vs-live P&L gap, the NON-GATING realized-vs-null P&L verdict, and `disclosures`:
+    human-readable interpretation notes (constant realized multiplier/cap-breach, the weight-derived
+    metric cluster's overstated independence, governor day-granularity exactness, a vacuous
+    full-[0,1]-range band) that change no verdict."""
 
     L: int  # scored realized bars
-    gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi
-    panel: PanelSummary  # summarize_panel over the 5 gating verdicts
+    gating_verdicts: dict[str, MetricVerdict]  # keys: gross, net, active_frac, turnover, hhi, governor_engagement, cap_breach
+    panel: PanelSummary  # summarize_panel over the discriminating (non-"n/a") gating verdicts
     null_gov_rate: float  # backtest CONTEXT: fraction of null days governor-engaged
     null_cap_rate: float  # backtest CONTEXT: cap_breach_bars / n_periods
     d4_gap_bps: float  # mean(governed_net - net_live) over frozen history, in bps (x1e4)
@@ -696,21 +923,51 @@ class SoakAnalysis:
     pnl_cum: float  # realized compounded cumulative net over ALL bars: prod(1+net)-1
     pnl_verdict: MetricVerdict  # NON-GATING: realized interior mean net vs null net_live windows
     is_degenerate: bool  # degenerate(structural_metrics(realized.weights)["gross"]) -- exposure, not P&L
-    effective_n: dict[str, float]  # per gating metric + "pnl"
+    effective_n: dict[str, float]  # per gating metric (7) + "pnl"
+    internals_available: bool  # False -> governor_engagement/cap_breach degraded to "n/a" (D7)
+    internals_reason: str  # why internals is unavailable ("" when available)
+    disclosures: tuple[str, ...]  # human-readable interpretation notes; never changes a verdict
 
 
-def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.90) -> SoakAnalysis:
+def analyze_soak(
+    realized: RealizedSeries, null: NullSystem, *, band: float = 0.90, internals: RealizedInternals | None = None
+) -> SoakAnalysis:
     """Judge the realized series against its backtest null and roll the result into a `SoakAnalysis`.
 
-    Gates on 5 structural metrics (gross/net/active_frac/turnover/hhi); reports governor engagement
-    and cap-breach rate as backtest context only (never gated); reports the D4 governed-vs-live gap;
-    and judges P&L (realized interior mean net vs null net_live windows) as a non-gating verdict.
-    Turnover and P&L are prev-dependent, so both aggregate/compare INTERIOR bars (each series' first
-    element dropped) on BOTH the live and null sides -- the other 4 gating metrics use all L bars.
+    Gates on 7 structural metrics: gross/net/active_frac/turnover/hhi (from the journaled weights
+    alone) plus governor_engagement/cap_breach, recovered from `internals` (see `realized_internals`).
+    governor_engagement is judged at DAY granularity (a day is engaged iff any of its scored bars has
+    mult < 1.0; window = the realized day count); cap_breach at BAR granularity (window = L). When
+    `internals` is `None` or `internals.available` is `False`, both verdicts degrade to `"n/a"` with
+    the reason carried in `internals_reason` (D7) -- the other 5 metrics still gate normally, a
+    missing rebuild degrades the fingerprint, it does not invalidate it. `summarize_panel` counts
+    only DISCRIMINATING verdicts (spec D6), so a degraded run's multiplicity line reads "... of 5"
+    with no special-casing. A constant realized multiplier/cap-breach series is a LEGITIMATE verdict
+    -- never suppressed to "n/a" -- but is disclosed (`disclosures`) so a reader can interpret it,
+    alongside an UNCONDITIONAL cluster note (gross/net/active_frac/hhi are all deterministic
+    functions of the same weight vector and turnover is its first difference, so only cap_breach
+    probes a separate mechanism -- the panel's metric count overstates independent trials) plus a
+    more specific near-redundant gross/net note when it fires (spec D6a, `abs(corr) >= 0.99` OR a
+    non-empty long-only book), the governor day-granularity exactness note (the multiplier is
+    constant within a day by construction, so a partial realized day carries the same engagement
+    information as a full one -- day granularity loses nothing, it is not an approximation), and a
+    note naming any RATE metric (active_frac, governor_engagement, cap_breach) whose band went
+    "n/a" because it spans the metric's full [0,1] domain (Fix 1: zero discriminating power, not a
+    zero-width band).
+    Also reports the D4 governed-vs-live gap and judges P&L (realized interior mean net vs null
+    net_live windows) as a non-gating verdict. Turnover and P&L are prev-dependent, so both
+    aggregate/compare INTERIOR bars (each series' first element dropped) on BOTH the live and null
+    sides -- the other gating metrics use all L bars.
     """
     L = len(realized.net)
     rm = structural_metrics(realized.weights)
     nm = structural_metrics(null.weights)
+
+    # RATE metrics are bounded to [0, 1] by construction -- an outer band spanning that entire
+    # attainable range has zero discriminating power (Fix 1: no possible value could ever fall
+    # outside it). gross/net/turnover are unbounded above; hhi is bounded in [1/n, 1] but its
+    # positive lower bound makes a full-[0,1] band unreachable, so none of them needs a domain.
+    rate_domain = (0.0, 1.0)
 
     gating_verdicts: dict[str, MetricVerdict] = {}
     effective_n: dict[str, float] = {}
@@ -720,8 +977,114 @@ def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.
         else:
             live_series, null_series, window = rm[m], nm[m], L
         eff_n = len(null_series) / window if window > 0 else 0.0
-        gating_verdicts[m] = metric_verdict(_mean(live_series), windowed_null(null_series, window), band=band, effective_n=eff_n)
+        domain = rate_domain if m == "active_frac" else None
+        gating_verdicts[m] = metric_verdict(
+            _mean(live_series), windowed_null(null_series, window), band=band, effective_n=eff_n, domain=domain
+        )
         effective_n[m] = eff_n
+
+    disclosures: list[str] = []
+    note = _full_range_disclosure("active_frac", gating_verdicts["active_frac"], rate_domain)
+    if note is not None:
+        disclosures.append(note)
+
+    # Fix 2: `mult_by_cycle`/`breach_by_cycle` are indexed below by every SCORED cycle_ts. If the
+    # internals rebuild's key set ever diverges from `realized.cycle_ts` (it shouldn't, but a bare
+    # KeyError escaping here would crash the whole run -- the opposite of the degrade-don't-void
+    # contract `realized_internals` itself deliberately upholds via its own named errors), treat
+    # the internals as unavailable rather than indexing blind.
+    missing_ts = None
+    if internals is not None and internals.available:
+        missing_ts = next(
+            (t for t in realized.cycle_ts if t not in internals.mult_by_cycle or t not in internals.breach_by_cycle), None
+        )
+
+    if internals is not None and internals.available and missing_ts is None:
+        internals_available = True
+        internals_reason = ""
+
+        mult_values = [internals.mult_by_cycle[t] for t in realized.cycle_ts]
+        breach_values = [internals.breach_by_cycle[t] for t in realized.cycle_ts]
+
+        engaged_by_day: dict[object, bool] = {}
+        for t, m in zip(realized.cycle_ts, mult_values):
+            day = t.date()
+            engaged_by_day[day] = engaged_by_day.get(day, False) or m < 1.0
+        total_days = len(engaged_by_day)
+        gov_live = sum(1 for engaged in engaged_by_day.values() if engaged) / total_days if total_days else 0.0
+        gov_null = governor_engaged_daily(null.multipliers, null.day_index)
+        gov_eff_n = len(gov_null) / total_days if total_days > 0 else 0.0
+        gating_verdicts["governor_engagement"] = metric_verdict(
+            gov_live, windowed_null(gov_null, total_days), band=band, effective_n=gov_eff_n, domain=rate_domain
+        )
+        effective_n["governor_engagement"] = gov_eff_n
+
+        cap_live = _mean([1.0 if b else 0.0 for b in breach_values])
+        cap_eff_n = len(null.cap_breach) / L if L > 0 else 0.0
+        gating_verdicts["cap_breach"] = metric_verdict(
+            cap_live, windowed_null(null.cap_breach, L), band=band, effective_n=cap_eff_n, domain=rate_domain
+        )
+        effective_n["cap_breach"] = cap_eff_n
+
+        for m in ("governor_engagement", "cap_breach"):
+            note = _full_range_disclosure(m, gating_verdicts[m], rate_domain)
+            if note is not None:
+                disclosures.append(note)
+
+        if mult_values and min(mult_values) == max(mult_values):
+            disclosures.append(f"realized multiplier was {mult_values[0]:g} on all {len(mult_values)} scored cycles (no variance)")
+        if breach_values and len(set(breach_values)) == 1:
+            flag = "1" if breach_values[0] else "0"
+            disclosures.append(f"realized cap-breach was {flag} on all {len(breach_values)} scored cycles (no variance)")
+        disclosures.append(f"governor-engagement is judged at day granularity over {total_days} realized days")
+        disclosures.append(
+            "governor-engagement at day granularity is exact, not approximate: the multiplier is constant "
+            "within a day by construction (daily_cadence_governor assigns one multiplier per day_index), so "
+            "a partial realized day carries the same engagement information as a full one"
+        )
+    else:
+        internals_available = False
+        if missing_ts is not None:
+            internals_reason = f"internals rebuild missing scored cycle_ts={missing_ts!r} in mult_by_cycle/breach_by_cycle"
+        else:
+            internals_reason = internals.reason if internals is not None else "no internals rebuild provided"
+        na = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+        gating_verdicts["governor_engagement"] = na
+        gating_verdicts["cap_breach"] = na
+        effective_n["governor_engagement"] = 0.0
+        effective_n["cap_breach"] = 0.0
+
+    # Whole-cluster overstatement: gross/net/active_frac/hhi are all deterministic functions of the
+    # SAME weight vector and turnover is that vector's first difference -- only cap_breach probes a
+    # mechanism (the pre-cap combined position vs the per-asset cap) genuinely separate from the
+    # weights. Unconditional -- unlike the more specific long-only/correlation note below, this is
+    # true of every run, so it is appended every time the fingerprint renders (`disclosures` is
+    # non-empty on every path from here on, so the DISCLOSURES section always shows it).
+    disclosures.append(
+        "gross, net, active_frac and hhi are all deterministic functions of the same weight vector "
+        "and turnover is its first difference; only cap_breach probes a separate mechanism, so the "
+        "metric count overstates the number of independent trials"
+    )
+
+    # Fix 3: `long_only` requires a NON-EMPTY book -- `all(...)` over an empty weights sequence is
+    # vacuously True, which would wrongly fire the long-only wording on a book that never held any
+    # position. The correlation check uses `abs(corr)`, since a strongly ANTI-correlated gross/net
+    # is equally redundant (one is derivable from the other) as a positively-correlated pair; the
+    # wording names whichever condition actually fired, since the correlation branch can trigger on
+    # a book WITH shorts (long_only False) too.
+    all_weights = [w for bar in realized.weights for w in bar.values()]
+    long_only = bool(all_weights) and all(w >= -1e-12 for w in all_weights)
+    near_redundant_corr = False
+    if not long_only and len(rm["gross"]) >= 2:
+        g_arr, n_arr = np.array(rm["gross"]), np.array(rm["net"])
+        if g_arr.std() > 0 and n_arr.std() > 0:
+            near_redundant_corr = abs(float(np.corrcoef(g_arr, n_arr)[0, 1])) >= 0.99
+    if long_only:
+        disclosures.append("gross and net are near-identical on a long-only book — the metric count overstates independent trials")
+    elif near_redundant_corr:
+        disclosures.append(
+            "gross and net are near-identical (|correlation| >= 0.99) — the metric count overstates independent trials"
+        )
 
     panel = summarize_panel(gating_verdicts, band=band)
 
@@ -752,6 +1115,9 @@ def analyze_soak(realized: RealizedSeries, null: NullSystem, *, band: float = 0.
         pnl_verdict=pnl_verdict,
         is_degenerate=degenerate(rm["gross"]),
         effective_n=effective_n,
+        internals_available=internals_available,
+        internals_reason=internals_reason,
+        disclosures=tuple(disclosures),
     )
 
 
@@ -763,8 +1129,21 @@ BANNER = (
 
 _HONESTY_FOOTER = (
     "A 'consistent' row only means the realized behaviour sits inside the backtest's own range; an overfit "
-    "strategy lands in-band most of the time at L≈84, so this is not out-of-sample evidence."
+    "strategy lands in-band most of the time at L≈84, so this is not out-of-sample evidence.\n"
+    "These are structural-conformance checks -- does the live book look like the backtest book -- not "
+    "evidence of edge."
 )
+
+_FORBIDDEN = ("validated", "passed", "confirmed", "proven")
+
+
+def _scrub(text: str) -> str:
+    """Neutralize vocabulary-locked words in free-form text (exception messages) before it reaches
+    the rendered report. The lock is a core honesty invariant, so it is enforced structurally here
+    rather than relying on upstream messages happening to be clean."""
+    for word in _FORBIDDEN:
+        text = re.sub(word, "<redacted-term>", text, flags=re.IGNORECASE)
+    return text
 
 
 def _fmt_flag(value: bool | None) -> str:
@@ -784,13 +1163,23 @@ def render_report(
 ) -> str:
     """Render a soak-check analysis to a text report. Section order: BANNER (verbatim, every run),
     provenance, self-tests, the NO-VERDICT gate (suppresses every downstream section -- the
-    structural fingerprint table, governor/cap context, D4 gap, P&L -- the moment `void_reasons`
-    is non-empty, so a short/untrustworthy run never prints a per-metric conclusion), then the
-    fingerprint table + multiplicity line, governor/cap CONTEXT, the D4 gap, non-gating P&L, and an
-    honesty footer. `analysis`/`null`/`self_test` are all `None` when the canonical dataset is
-    absent (no null to judge against); `realized` is additionally `None` when the journal is empty
-    or `realized_series` itself raised `SoakError` -- both render a banner-and-void-reasons-only
-    report via this same function.
+    structural fingerprint table, disclosures, D4 gap, P&L -- the moment `void_reasons` is
+    non-empty, so a short/untrustworthy run never prints a per-metric conclusion), then the 7-row
+    fingerprint table + multiplicity line, DISCLOSURES (when `analysis.disclosures` is non-empty),
+    the D4 gap, non-gating P&L, and an honesty footer. When `analysis.internals_available` is
+    False, the governor_engagement/cap_breach rows render `n/a` across every column (D7 degrade,
+    not void) and a line states `_scrub(analysis.internals_reason)` -- `internals_reason` carries
+    `str(exc)` from an arbitrary `EngineError`/`PortfolioError`. TWO free-form paths reach this
+    function's rendered text, and both are run through `_scrub` (structural vocabulary-lock
+    enforcement) before interpolation: `internals_reason` above, and the NO-VERDICT line's joined
+    `void_reasons` (which itself carries `str(exc)` from a `SoakError` when `soak_report`'s
+    `realized_series` call raised one, e.g. `f"realized series: {exc}"`). Both stay UNSCRUBBED in
+    the JSON payload's copies (JSON is not vocabulary-locked). Never `RealizedInternals`'
+    `identity_detail`/`cap_detail`, which are diagnostic strings that may carry vocabulary-locked
+    words and are never passed to this function. `analysis`/`null`/`self_test` are all `None` when
+    the canonical dataset is absent (no null to judge against); `realized` is additionally `None`
+    when the journal is empty or `realized_series` itself raised `SoakError` -- both render a
+    banner-and-void-reasons-only report via this same function.
     """
     lines: list[str] = [BANNER, ""]
 
@@ -823,7 +1212,7 @@ def render_report(
     lines.append("")
 
     if void_reasons:
-        lines.append(f"NO VERDICT -- {'; '.join(void_reasons)}")
+        lines.append(f"NO VERDICT -- {_scrub('; '.join(void_reasons))}")
         if analysis is not None and analysis.is_degenerate:
             lines.append("INDETERMINATE -- DEGENERATE WINDOW")
         lines.append("")
@@ -836,21 +1225,26 @@ def render_report(
     lines.append(
         f"  {'metric':<12}{'live':>10}{'median':>10}{'band [lo,hi]':>24}{'pctile':>9}{'eff-n':>9}{'width':>10}{'verdict':>18}"
     )
-    for m in ("gross", "net", "active_frac", "turnover", "hhi"):
+    for m in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
         v = analysis.gating_verdicts[m]
+        if m in ("governor_engagement", "cap_breach") and not analysis.internals_available:
+            lines.append(f"  {m:<12}{'n/a':>10}{'n/a':>10}{'n/a':>24}{'n/a':>9}{'n/a':>9}{'n/a':>10}{'n/a':>18}")
+            continue
         band_str = f"[{v.lo:.4f},{v.hi:.4f}]"
         lines.append(
             f"  {m:<12}{v.live:>10.4f}{v.median:>10.4f}{band_str:>24}{v.percentile:>8.1f}%{v.effective_n:>9.2f}"
             f"{v.width:>10.4f}{v.verdict:>18}"
         )
     lines.append(f"  {analysis.panel.line}")
+    if not analysis.internals_available:
+        lines.append(f"  governor_engagement/cap_breach unavailable: {_scrub(analysis.internals_reason)}")
     lines.append("")
 
-    lines.append("GOVERNOR / CAP CONTEXT -- backtest context (not a realized comparison)")
-    lines.append(f"  null governor-engagement rate: {analysis.null_gov_rate:.3f}")
-    lines.append(f"  null cap-breach rate         : {analysis.null_cap_rate:.3f}")
-    lines.append("  the realized governor/cap state is not observable from the journal (registered follow-up)")
-    lines.append("")
+    if analysis.disclosures:
+        lines.append("DISCLOSURES")
+        for d in analysis.disclosures:
+            lines.append(f"  {d}")
+        lines.append("")
 
     lines.append("D4 GAP (governed vs live-cost null)")
     bias = "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
@@ -868,6 +1262,24 @@ def render_report(
     return "\n".join(lines)
 
 
+_VERDICT_NUMERIC_FIELDS = ("live", "median", "lo", "hi", "percentile", "effective_n", "width")
+
+
+def _verdict_payload(name: str, verdict: MetricVerdict, *, internals_available: bool) -> dict:
+    """`asdict(verdict)`, except (Fix 4): a `governor_engagement`/`cap_breach` verdict whose
+    `"n/a"` comes from an internals rebuild that never ran (`internals_available=False`) reports
+    `None` (JSON `null`) for every numeric field, since `live=0.0` there is a placeholder, not a
+    computed value -- a JSON consumer otherwise cannot tell "unavailable" from "genuinely 0.0".
+    An `"n/a"` that instead arose from a computed-but-undiscriminating band (Fix 1's full-range
+    domain check, or a zero-width band, or a tiny `effective_n`) keeps its real numbers -- those
+    are meaningful (e.g. a full-[0,1]-range band still reports where `live` actually sat)."""
+    d = asdict(verdict)
+    if name in ("governor_engagement", "cap_breach") and not internals_available:
+        for key in _VERDICT_NUMERIC_FIELDS:
+            d[key] = None
+    return d
+
+
 def _json_payload(
     analysis: SoakAnalysis | None,
     realized: RealizedSeries | None,
@@ -877,13 +1289,31 @@ def _json_payload(
     void_reasons: list[str],
     band: float,
     now: datetime,
+    internals: RealizedInternals | None = None,
 ) -> dict:
     """Every number the report renders, as a `json.dumps`-able dict -- the machine-readable twin
-    of `render_report`'s text. `null` is accepted (mirroring `render_report`'s signature) but
-    carries nothing of its own in the payload; every null-derived number already lives in
-    `analysis` (gating verdicts, context, D4, P&L)."""
+    of `render_report`'s text, plus fields the (vocabulary-locked) text never carries: `internals`
+    (raw `RealizedInternals` diagnostics -- `identity_detail`/`cap_detail` included, since the JSON
+    is not vocabulary-locked) and `disclosures`. `null` is accepted (mirroring `render_report`'s
+    signature) but carries nothing of its own in the payload; every null-derived number already
+    lives in `analysis` (gating verdicts, context, D4, P&L). `internals` is `None` exactly when
+    `analysis` is (the canonical was absent, so `soak_report` never built either)."""
     del null
     payload: dict = {"generated_at": now.isoformat(), "band": band, "void_reasons": list(void_reasons)}
+
+    payload["internals"] = (
+        None
+        if internals is None
+        else {
+            "available": internals.available,
+            "reason": internals.reason,
+            "identity_ok": internals.identity_ok,
+            "identity_detail": internals.identity_detail,
+            "cap_consistent": internals.cap_consistent,
+            "cap_detail": internals.cap_detail,
+            "n_scored_cycles": len(internals.mult_by_cycle),
+        }
+    )
 
     if realized is not None and realized.cycle_ts:
         payload["provenance"] = {
@@ -917,14 +1347,25 @@ def _json_payload(
         payload["pnl"] = None
         payload["is_degenerate"] = None
         payload["effective_n"] = None
+        payload["disclosures"] = None
     else:
-        payload["gating_verdicts"] = {m: asdict(v) for m, v in analysis.gating_verdicts.items()}
+        payload["gating_verdicts"] = {
+            m: _verdict_payload(m, v, internals_available=analysis.internals_available) for m, v in analysis.gating_verdicts.items()
+        }
         payload["panel"] = asdict(analysis.panel)
-        payload["context"] = {"null_gov_rate": analysis.null_gov_rate, "null_cap_rate": analysis.null_cap_rate}
+        payload["context"] = {
+            "null_gov_rate": analysis.null_gov_rate,
+            "null_cap_rate": analysis.null_cap_rate,
+            "note": (
+                "null_gov_rate/null_cap_rate are the null's GLOBAL rates (D9) -- do not use them as the "
+                "comparison reference; the windowed null distribution behind gating_verdicts is the reference"
+            ),
+        }
         payload["d4"] = {"d4_gap_bps": analysis.d4_gap_bps, "d4_active": analysis.d4_active}
         payload["pnl"] = {"pnl_mean": analysis.pnl_mean, "pnl_cum": analysis.pnl_cum, "pnl_verdict": asdict(analysis.pnl_verdict)}
         payload["is_degenerate"] = analysis.is_degenerate
         payload["effective_n"] = dict(analysis.effective_n)
+        payload["disclosures"] = list(analysis.disclosures)
 
     return payload
 
@@ -941,11 +1382,17 @@ def soak_report(
     now: datetime | None = None,
 ) -> tuple[str, dict]:
     """Orchestrate the full soak-check: load the journal, build the realized series, gate it
-    (self-tests, plausibility, `L < floor`, degeneracy) against a backtest null rebuilt from the
-    frozen canonical dataset (skipped -- and gated void -- when the canonical is absent), and
-    render both the text report and its JSON twin. Never raises on a short/void/absent-canonical
-    run -- those are refusals, not failures; only an unreadable journal record or a genuine
-    `EngineError` from a downstream builder propagates to the caller.
+    (self-tests, plausibility, `L < floor`, degeneracy, and -- when the internals rebuild succeeded
+    -- its own `identity_ok`/`cap_consistent` window-wide proofs) against a backtest null rebuilt
+    from the frozen canonical dataset (skipped -- and gated void -- when the canonical is absent),
+    and render both the text report and its JSON twin. The internals rebuild itself
+    (`realized_internals`) is built from the scored cycles' own journal records and the newest
+    record's snapshots, once per call; its `available=False` DEGRADES governor_engagement/cap_breach
+    to "n/a" (D7) rather than voiding the run, but `available=True` with `identity_ok=False` or
+    `cap_consistent=False` DOES void -- the instrument would be lying about alignment. Never raises
+    on a short/void/absent-canonical run -- those are refusals, not failures; only an unreadable
+    journal record or a genuine `EngineError` (including a `SoakError` from `realized_internals`,
+    e.g. a missing T-4h stamp) propagates to the caller.
     """
     now = now or datetime.now(UTC)
     # Local import: cli.engine.command imports `soak_report` from this module, so a module-level
@@ -976,6 +1423,12 @@ def soak_report(
     if _canonical_present(canonical_dir):
         null = build_null(canonical_dir, fee=fee)
         reader = _snapshot_reader(journal_dir)
+
+        by_ts = {r.cycle_ts: r for r in records}
+        scored_records = [by_ts[t] for t in realized.cycle_ts]
+        latest_record = max(records, key=lambda r: r.cycle_ts)
+        internals = realized_internals(scored_records, latest_record, reader)
+
         self_test = self_tests(
             records,
             null,
@@ -992,15 +1445,20 @@ def soak_report(
             if self_test.reconcile_ok is False:
                 void_reasons.append("self-test VOID: reconcile_ok=False")
         void_reasons += plausibility_checks(realized, null)
-        analysis = analyze_soak(realized, null, band=band)
+        if internals.available and not internals.identity_ok:
+            void_reasons.append("realized-internals identity mismatch")
+        if internals.available and not internals.cap_consistent:
+            void_reasons.append("cap-breach inconsistent")
+        analysis = analyze_soak(realized, null, band=band, internals=internals)
         if analysis.is_degenerate:
             void_reasons.append("degenerate window")
     else:
         null = None
         analysis = None
         self_test = None
+        internals = None
         void_reasons.append("canonical absent — null unavailable")
 
     text = render_report(analysis, realized, null, self_test, void_reasons=void_reasons, band=band)
-    payload = _json_payload(analysis, realized, null, self_test, void_reasons=void_reasons, band=band, now=now)
+    payload = _json_payload(analysis, realized, null, self_test, void_reasons=void_reasons, band=band, now=now, internals=internals)
     return text, payload
