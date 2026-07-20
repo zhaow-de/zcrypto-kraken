@@ -1223,6 +1223,29 @@ def test_disclosure_notes_day_granularity_is_exact():
     assert not any("fewer chances" in d.lower() for d in a.disclosures)
 
 
+def test_full_range_disclosure_consistent_with_reconciled_label(monkeypatch):
+    # Fix 3: `_full_range_disclosure` read the RAW windowed verdict, so on D1's one-"n/a" branch
+    # (windowed full-range -> "n/a", bootstrap discriminates) it could print "the test has no
+    # discriminating power here" for active_frac on the same run whose table renders active_frac as
+    # "inconsistent" -- the reconciled label the bootstrap actually promoted to (D1: exactly one
+    # "n/a" -> take the discriminating null's label). The disclosure must track the RECONCILED
+    # label, not the raw windowed one, or it contradicts the very row it's annotating.
+    monkeypatch.setattr(soak, "windowed_null", lambda *a, **kw: [0.0] * 10 + [0.3] * 80 + [1.0] * 10)
+    monkeypatch.setattr(soak, "block_bootstrap_null", lambda *a, **kw: [0.28, 0.29, 0.30, 0.31, 0.32] * 20)
+    rw = [{"BTC": 0.5, "ETH": 0.5}] * 6  # every asset active on every bar -> live active_frac == 1.0
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+
+    a = analyze_soak(realized, null, band=0.90, null_mode="both")
+
+    # sanity: this fixture really does reproduce the one-"n/a" branch on active_frac.
+    assert a.gating_verdicts["active_frac"].verdict == "n/a"  # D2: the raw windowed stats/verdict are untouched
+    assert a.dual_verdicts["active_frac"].verdict == "inconsistent"  # the reconciled, table-rendered label
+    assert not any("active_frac" in d and "no discriminating power" in d for d in a.disclosures), (
+        f"contradicts the rendered 'inconsistent' verdict: {a.disclosures!r}"
+    )
+
+
 # --- render_report -----------------------------------------------------------------------------------
 
 FORBIDDEN = ("validated", "passed", "confirmed", "proven")
@@ -1339,6 +1362,31 @@ def test_render_report_degraded_internals_shows_na_and_reason():
         v = analysis.gating_verdicts[m]
         assert v.verdict != "n/a"
         assert v.verdict in text
+
+
+def test_render_report_internals_degraded_row_shows_dash_not_fabricated_na():
+    # Fix 5: render_report's docstring promises "-" for an internals-degraded governor_engagement/
+    # cap_breach row's primary/secondary cells; the code hardcoded "n/a" instead, asserting a
+    # secondary-null result that -- since internals never ran -- was never computed under ANY
+    # null_mode. "-" means "not computed"; "n/a" means "computed but undiscriminating" -- only a
+    # real metric_verdict call can produce the latter. This holds regardless of null_mode: it is
+    # internals availability, not null_mode, that gates whether these two metrics are judged at all.
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.0 if k % 7 == 0 else 0.15} for k in range(200)]
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    for null_mode in ("windows", "block-bootstrap", "both"):
+        analysis = analyze_soak(realized, null, band=0.90, internals=None, null_mode=null_mode)
+        assert analysis.internals_available is False
+        text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode=null_mode, path="fast")
+
+        for m in ("governor_engagement", "cap_breach"):
+            row = next(line for line in text.splitlines() if line.strip().startswith(m + " "))
+            fields = row.split()
+            assert fields[-3] == "n/a", f"null_mode={null_mode}: verdict column, row={row!r}"  # no verdict reached
+            assert fields[-2:] == ["-", "-"], f"null_mode={null_mode}: primary/secondary, row={row!r}"  # never computed
 
 
 def test_render_report_scrubs_internals_reason_json_stays_raw():
@@ -1537,6 +1585,128 @@ def test_render_report_indeterminate_label_does_not_merge_with_a_neighbouring_co
     assert fields[idx + 1] in ("consistent", "weakly-consistent", "inconsistent", "n/a", "-")
 
 
+def _row_fields(text, metric):
+    row = next(line for line in text.splitlines() if line.strip().startswith(metric + " "))
+    return row.split()
+
+
+def test_render_report_table_shows_all_three_columns_for_every_d1_branch():
+    # Fix 1: the table rendered only `verdict` (reconciled) and `secondary` (bootstrap raw) -- on 3
+    # of D1's 5 reconciliation branches those two are the SAME string, so a disagreeing row looked
+    # identical to an agreeing one and the PRIMARY (windowed) null's raw label appeared nowhere.
+    # Worst case (the review's sharpest finding): primary='inconsistent', secondary='weakly-
+    # consistent' rendered "weakly-consistent | weakly-consistent" -- 'inconsistent' invisible. The
+    # fix renders three explicit columns (verdict, primary, secondary); this test covers each of
+    # D1's five branches, one per gating metric row, and demands every one of the three labels is
+    # recoverable as a WHOLE field (never merely a substring of a longer field -- "consistent" is a
+    # literal substring of "inconsistent").
+    branches = {
+        "gross": ("n/a", "n/a"),  # both n/a -> n/a
+        "net": ("n/a", "inconsistent"),  # exactly one n/a -> the discriminating label
+        "active_frac": ("consistent", "consistent"),  # identical -> that label
+        "turnover": ("inconsistent", "weakly-consistent"),  # adjacent -> milder (weakly-consistent)
+        "hhi": ("consistent", "inconsistent"),  # opposite extremes -> indeterminate
+    }
+    na_verdict = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+    gating_verdicts: dict = {}
+    dual_verdicts: dict = {}
+    for m, (primary, secondary) in branches.items():
+        dual_verdicts[m] = reconcile_verdicts(primary, secondary)
+        # D2: the row's numeric stats stay the windowed (primary) null's -- analyze_soak always
+        # threads the windowed MetricVerdict's own .verdict == the dual's .primary.
+        gating_verdicts[m] = MetricVerdict(
+            verdict=primary, live=0.5, median=0.5, lo=0.1, hi=0.9, percentile=50.0, effective_n=50.0, width=0.8
+        )
+    gating_verdicts["governor_engagement"] = na_verdict
+    gating_verdicts["cap_breach"] = na_verdict
+
+    analysis = soak.SoakAnalysis(
+        L=6,
+        gating_verdicts=gating_verdicts,
+        panel=summarize_panel(gating_verdicts, band=0.90, dual_verdicts=dual_verdicts),
+        null_gov_rate=0.0,
+        null_cap_rate=0.0,
+        d4_gap_bps=0.0,
+        d4_active=False,
+        pnl_mean=0.0,
+        pnl_cum=0.0,
+        pnl_verdict=na_verdict,
+        is_degenerate=False,
+        effective_n=dict.fromkeys((*branches, "governor_engagement", "cap_breach", "pnl"), 50.0),
+        internals_available=False,
+        internals_reason="no internals rebuild provided",
+        disclosures=(),
+        dual_verdicts=dual_verdicts,
+    )
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    for m, (primary, secondary) in branches.items():
+        fields = _row_fields(text, m)
+        dual = dual_verdicts[m]
+        # the reconciled verdict may be the two-word "indeterminate (instrument-fragile)" label --
+        # every one of its whitespace-split tokens must appear as its own field(s), in order.
+        verdict_tokens = dual.verdict.split()
+        n = len(verdict_tokens)
+        assert any(fields[i : i + n] == verdict_tokens for i in range(len(fields) - n + 1)), (
+            f"{m}: reconciled verdict {dual.verdict!r} not found as whole field(s) in {fields!r}"
+        )
+        assert primary in fields, f"{m}: primary raw label {primary!r} missing from row fields {fields!r}"
+        assert secondary in fields, f"{m}: secondary raw label {secondary!r} missing from row fields {fields!r}"
+
+    # the review's sharpest case, called out explicitly: turnover's primary='inconsistent' must
+    # survive into the rendered row even though the reconciled verdict ('weakly-consistent', the
+    # milder of the two) differs from it, and 'weakly-consistent' is a different, non-overlapping
+    # token from 'inconsistent'.
+    assert "inconsistent" in _row_fields(text, "turnover")
+
+
+def test_fingerprint_table_columns_align_for_every_metric_row():
+    # Fix 6: `_METRIC_COL_W` must be DERIVED from the longest `_METRIC_ROWS` entry
+    # ("governor_engagement", 19 chars), never a hardcoded width -- a hardcoded 12 lets that one
+    # row's name overflow its field with no padding, shifting every later column in THAT row out of
+    # alignment with the header while every other row (and the pre-existing merge test, which only
+    # inspects the "gross" row) stays blind to it. This generalizes to all seven rows: the character
+    # immediately after every row's metric-name field must be the SAME joining space as the
+    # header's, i.e. the field width actually reserved was wide enough to hold the name.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=_mk_internals(realized.cycle_ts))
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    header = next(line for line in text.splitlines() if line.strip().startswith("metric"))
+    boundary = 2 + soak._METRIC_COL_W  # "  " prefix + the metric-name field's reserved width
+    assert header[boundary] == " ", header
+    for m in soak._METRIC_ROWS:
+        row = next(line for line in text.splitlines() if line.strip().startswith(m + " "))
+        assert row[boundary] == " ", f"{m}: field boundary misaligned, row={row!r}"
+
+
+def test_render_report_lines_have_no_trailing_whitespace():
+    # Fix 7: the last table column is left-justified, so every fingerprint row (and the header) end
+    # in trailing padding spaces once the label is shorter than its column's width. Strip trailing
+    # whitespace per rendered line without disturbing internal alignment.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=_mk_internals(realized.cycle_ts))
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    for line in text.splitlines():
+        assert line == line.rstrip(), f"line has trailing whitespace: {line!r}"
+
+
 def test_json_context_carries_reference_note_against_global_scalars():
     # Final review Fix 4 (D9 caveat): context.null_gov_rate/null_cap_rate are the null's GLOBAL
     # rates -- exactly what spec D9 warns must never be used as the comparison reference (the
@@ -1557,6 +1727,37 @@ def test_json_context_carries_reference_note_against_global_scalars():
     assert "global" in note
     assert "not" in note and "reference" in note
     assert "windowed" in note
+
+
+@pytest.mark.parametrize(
+    "null_mode,must_contain,must_not_contain",
+    [
+        ("windows", ("windowed",), ("block-bootstrap",)),
+        ("block-bootstrap", ("block-bootstrap",), ("windowed",)),
+        ("both", ("windowed", "block-bootstrap"), ()),
+    ],
+)
+def test_json_context_note_is_mode_aware(null_mode, must_contain, must_not_contain):
+    # Fix 2: context.note unconditionally asserted "the windowed null distribution behind
+    # gating_verdicts is the reference" even when null_mode="block-bootstrap" -- a false claim about
+    # which construction actually produced the reported numbers/verdict. The note must name only the
+    # construction(s) null_mode actually ran, never a construction that never ran.
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, null_mode=null_mode)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(
+        analysis, realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC), null_mode=null_mode
+    )
+
+    note = payload["context"]["note"].lower()
+    for word in must_contain:
+        assert word in note, f"null_mode={null_mode}: expected {word!r} in note {note!r}"
+    for word in must_not_contain:
+        assert word not in note, f"null_mode={null_mode}: unexpected {word!r} in note {note!r}"
 
 
 def test_json_payload_carries_null_mode_path_and_dual_verdicts():
