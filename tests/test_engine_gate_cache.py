@@ -8,6 +8,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -126,6 +127,102 @@ def test_evidence_fingerprint_changes_when_n_bars_tampered_leaving_content_hash_
         _entry("ETH", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST, "d" * 64),
     )
     assert evidence_fingerprint(_record(snapshots=tampered_snapshots)) != base
+
+
+# --- evidence_fingerprint: each evidence-key field pinned by a stale HIT, not by presence (D2/D3) --
+
+
+def _tamper_entry(index: int, **field) -> tuple[SnapshotEntry, ...]:
+    """`_record()`'s default snapshots with exactly one field of `entries[index]` replaced, via
+    `dataclasses.replace` rather than rebuilding through `_entry()` -- `_entry()`'s default `path`
+    embeds `{pair}`/`{grid}` into the string, so reconstructing a pair/grid tamper through `_entry()`
+    would ALSO change `path`, contaminating each field's pin with another field's coverage and
+    breaking the Step 4 mutation cross-check (each mutation must fail exactly its own test)."""
+    entries = list(_record().snapshots)
+    entries[index] = replace(entries[index], **field)
+    return tuple(entries)
+
+
+def _assert_stale_entry_is_rejected(tmp_path, pristine: CycleRecord, tampered: CycleRecord) -> None:
+    """D2's pin shape, shared by every evidence-key field test below: a field is pinned by a stale
+    cache HIT, never by field presence in the digest -- a test asserting "the field appears in the
+    payload" passes against a fingerprint that ignores it entirely. Stores an entry keyed on the
+    PRISTINE record's evidence_fingerprint through a REAL save_cache/load_cache round trip (not a
+    bare fingerprint comparison), matching how `_evaluate_journal` actually consults the cache
+    (`cli/engine/command.py:255`, `cached_entry[0] == fp and not reverify`) -- then asserts that
+    condition is false once the record on disk is the TAMPERED one: the fingerprint must differ, AND
+    the round-tripped entry must not satisfy the production hit test against the tampered record's
+    fresh fingerprint. A stale HIT here is exactly the exploit the mutation audit proved end-to-end
+    for all five fields (docs/research/14.phase6-gate-guarantee-mutation-audits.md G5-G7, G9-G10)."""
+    fp_pristine = evidence_fingerprint(pristine)
+    fp_tampered = evidence_fingerprint(tampered)
+    assert fp_tampered != fp_pristine
+
+    path = tmp_path / "gate-cache.json"
+    replay_fp = "fixed-replay-fp"
+    outcome = _outcome(cycle_ts=pristine.cycle_ts, completed_at=pristine.completed_at)
+    cache = GateCache(replay_fp=replay_fp, entries={pristine.cycle_ts: (fp_pristine, outcome, CYCLE_TS)})
+    save_cache(path, cache)
+    loaded = load_cache(path, replay_fp)
+
+    cached_entry = loaded.entries[pristine.cycle_ts]
+    assert cached_entry[0] != fp_tampered, "stale HIT: the tampered record's fingerprint still matches the cached entry"
+
+
+def test_evidence_fingerprint_pins_first_ts_via_stale_hit(tmp_path):
+    # Finding 5/G5-G6: replay_cycle reconciles freshly-read data against entry.first_ts and raises
+    # EngineJournalError on disagreement -- a fingerprint blind to first_ts would let a cached PASS
+    # survive a tamper a real replay would reject outright (the audit's B04 exploit, re-confirmed
+    # end-to-end through _evaluate_journal).
+    pristine = _record()
+    tampered = _record(snapshots=_tamper_entry(0, first_ts=pristine.snapshots[0].first_ts + timedelta(hours=1)))
+    _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
+
+
+def test_evidence_fingerprint_pins_last_ts_via_stale_hit(tmp_path):
+    # Finding 6/G5-G6: same tamper class as first_ts (the audit's B05 exploit) -- the other half of
+    # the replay_cycle reconciliation window.
+    pristine = _record()
+    tampered = _record(snapshots=_tamper_entry(0, last_ts=pristine.snapshots[0].last_ts + timedelta(hours=1)))
+    _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
+
+
+def test_evidence_fingerprint_pins_pair_via_order_preserving_stale_hit(tmp_path):
+    # Findings 7/G9-G10 (spec D3): evidence_fingerprint sorts entries by (pair, grid) before
+    # digesting them, so an order-CHANGING pair tamper is masked -- the digest would change from the
+    # reordering alone even if `pair` were dropped from the payload entirely. That masking is
+    # exactly what fooled the first mutation audit into ruling pair/grid "equivalent mutants" (see
+    # docs/research/14.phase6-gate-guarantee-mutation-audits.md G9-G10) -- one non-distinguishing
+    # probe is not evidence an "equivalent mutant" ruling generalizes. "ETH" -> "FTH" is
+    # order-PRESERVING: FTH still sorts after "BTC" (the only other pair present) into the same slot
+    # "ETH" held, so only tampering `pair` itself -- never the reordering side-channel -- can move
+    # this test. `path` is deliberately left at its pristine "/snap/ETH/240.parquet" value
+    # (dataclasses.replace, not _entry()) so this test isolates `pair` from finding 10's `path` pin
+    # below.
+    pristine = _record()
+    tampered = _record(snapshots=_tamper_entry(2, pair="FTH"))
+    _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
+
+
+def test_evidence_fingerprint_pins_grid_via_order_preserving_stale_hit(tmp_path):
+    # Finding 8/G9-G10 (spec D3): same order-preservation requirement as pair, and the same reason
+    # (see the comment above). Entries sort by (pair, grid) and grid compares as a STRING, so "1440"
+    # < "240" lexicographically (leading "1" < "2") -- "1441" < "240" too, so renaming the BTC daily
+    # grid "1440" -> "1441" keeps it in the same sorted slot within the BTC group. Only tampering
+    # `grid` itself can move this test.
+    pristine = _record()
+    tampered = _record(snapshots=_tamper_entry(1, grid="1441"))
+    _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
+
+
+def test_evidence_fingerprint_pins_path_via_stale_hit(tmp_path):
+    # Finding 10/G7: `path` is the file a real replay actually reads content from. Repointing one
+    # entry's path at ANOTHER pair's parquet -- via dataclasses.replace, so pair/grid/content_hash/
+    # n_bars/first_ts/last_ts on that entry stay byte-identical -- isolates `path` specifically (the
+    # audit's B07 exploit: same stale-HIT shape as every field above).
+    pristine = _record()
+    tampered = _record(snapshots=_tamper_entry(0, path=pristine.snapshots[2].path))  # BTC/240 repointed at ETH/240's file
+    _assert_stale_entry_is_rejected(tmp_path, pristine, tampered)
 
 
 # --- replay_fingerprint (D3) --------------------------------------------------------------------
