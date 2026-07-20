@@ -532,12 +532,12 @@ def metric_verdict(
 def _full_range_disclosure(
     name: str, verdict: MetricVerdict, domain: tuple[float, float] | None, *, effective_verdict: str | None = None
 ) -> str | None:
-    """If `verdict` is "n/a" because its outer band spans the FULL `domain` (Fix 1 in
-    `metric_verdict`) rather than being zero-width or having a tiny `effective_n`, return the
-    disclosure line naming it -- `width > 0` and `effective_n >= 3` rule out `metric_verdict`'s
+    """If `verdict` is "n/a" because its outer band spans the FULL `domain` (the full-range-band
+    check in `metric_verdict`) rather than being zero-width or having a tiny `effective_n`, return
+    the disclosure line naming it -- `width > 0` and `effective_n >= 3` rule out `metric_verdict`'s
     other two "n/a" triggers, isolating this one.
 
-    Fix 3 (spec 00061): `effective_verdict` -- the label actually rendered for this metric (the
+    `effective_verdict` (spec 00061 D1) -- the label actually rendered for this metric (the
     RECONCILED label under `null_mode="both"` when a reconciliation ran, else omitted/`None`, which
     defaults to `verdict.verdict`) -- must ALSO be "n/a" for the disclosure to fire. On D1's
     exactly-one-"n/a" branch, a full-range windowed band can coexist with a discriminating bootstrap
@@ -591,7 +591,7 @@ def summarize_panel(
     self-consistent with no special-casing: with 2 of 7 metrics `"n/a"`, the line reads "... of 5"
     automatically.
 
-    Fix 2: the count is taken from the RECONCILED label (`dual_verdicts[m].verdict` when a
+    The count is taken from the RECONCILED label (`dual_verdicts[m].verdict` when a
     reconciliation ran for `m`, else `v.verdict`) -- the same label `render_report`'s table actually
     renders for that row -- never the raw windowed `v.verdict`. Counting the raw label would let the
     table and this summary disagree: on D1's exactly-one-`n/a` branch the reconciled label can
@@ -1078,9 +1078,9 @@ class SoakAnalysis:
 
 _NULL_MODES = ("windows", "block-bootstrap", "both")
 
-# Fix 2 (final review): `_json_payload`'s context.note names which null construction(s) actually
-# produced `gating_verdicts` under each `null_mode` -- naming a construction that never ran would be
-# the exact "JSON disagrees with what was computed" class this branch exists to prevent.
+# Mode-aware `context.note` text: `_json_payload`'s context.note names which null construction(s)
+# actually produced `gating_verdicts` under each `null_mode` -- naming a construction that never ran
+# would be the exact "JSON disagrees with what was computed" class this branch exists to prevent.
 _CONTEXT_NOTE_REFERENCE_BY_MODE = {
     "windows": "the windowed null distribution behind gating_verdicts is the reference",
     "block-bootstrap": "the block-bootstrap null distribution behind gating_verdicts is the reference",
@@ -1109,8 +1109,8 @@ def _judge_dual(
     null's) alongside the `DualVerdict` reconciliation. The second element is `None` whenever only one
     null was computed -- no reconciliation to report (D4: "there is no reconciliation").
 
-    `window <= 0` OR an empty `null_series` (e.g. an empty/degenerate realized window, or -- Fix 1 --
-    a 1-period `NullSystem` where a `[1:]` slice at a call site empties it, or an explicitly empty
+    `window <= 0` OR an empty `null_series` (e.g. an empty/degenerate realized window, a 1-period
+    `NullSystem` where a `[1:]` slice at a call site empties it, or an explicitly empty
     `null.cap_breach`/governor-engagement series) skips `block_bootstrap_null` entirely and judges
     against an empty null list instead, mirroring `windowed_null`'s own `window <= 0` OR `window >
     len(series)` guard (an empty series always fails that second half). `block_bootstrap_null` has no
@@ -1168,7 +1168,7 @@ def analyze_soak(
     constant within a day by construction, so a partial realized day carries the same engagement
     information as a full one -- day granularity loses nothing, it is not an approximation), and a
     note naming any RATE metric (active_frac, governor_engagement, cap_breach) whose band went
-    "n/a" because it spans the metric's full [0,1] domain (Fix 1: zero discriminating power, not a
+    "n/a" because it spans the metric's full [0,1] domain (zero discriminating power, not a
     zero-width band).
     Also reports the D4 governed-vs-live gap and judges P&L (realized interior mean net vs null
     net_live windows) as a non-gating verdict. Turnover and P&L are prev-dependent, so both
@@ -1191,7 +1191,7 @@ def analyze_soak(
     nm = structural_metrics(null.weights)
 
     # RATE metrics are bounded to [0, 1] by construction -- an outer band spanning that entire
-    # attainable range has zero discriminating power (Fix 1: no possible value could ever fall
+    # attainable range has zero discriminating power (no possible value could ever fall
     # outside it). gross/net/turnover are unbounded above; hhi is bounded in [1/n, 1] but its
     # positive lower bound makes a full-[0,1] band unreachable, so none of them needs a domain.
     rate_domain = (0.0, 1.0)
@@ -1227,7 +1227,7 @@ def analyze_soak(
     if note is not None:
         disclosures.append(note)
 
-    # Fix 2: `mult_by_cycle`/`breach_by_cycle` are indexed below by every SCORED cycle_ts. If the
+    # `mult_by_cycle`/`breach_by_cycle` are indexed below by every SCORED cycle_ts. If the
     # internals rebuild's key set ever diverges from `realized.cycle_ts` (it shouldn't, but a bare
     # KeyError escaping here would crash the whole run -- the opposite of the degrade-don't-void
     # contract `realized_internals` itself deliberately upholds via its own named errors), treat
@@ -1318,7 +1318,7 @@ def analyze_soak(
         "metric count overstates the number of independent trials"
     )
 
-    # Fix 3: `long_only` requires a NON-EMPTY book -- `all(...)` over an empty weights sequence is
+    # `long_only` requires a NON-EMPTY book -- `all(...)` over an empty weights sequence is
     # vacuously True, which would wrongly fire the long-only wording on a book that never held any
     # position. The correlation check uses `abs(corr)`, since a strongly ANTI-correlated gross/net
     # is equally redundant (one is derivable from the other) as a positively-correlated pair; the
@@ -1395,14 +1395,14 @@ _HONESTY_FOOTER = (
 
 _FORBIDDEN = ("validated", "passed", "confirmed", "proven")
 
-# Fix 4: fingerprint-table column widths for the three free-text columns, sized for the LONGEST label
+# Fingerprint-table column widths for the three free-text columns, sized for the LONGEST label
 # each can ever carry -- a right-justified fixed-width field only gets a gap from its OWN leading
 # padding, so a label that reaches or exceeds its column's width abuts its neighbour with zero
 # separator (observed: "...0.9000indeterminate (instrument-fragile)consistent"). Sizing the column to
 # the longest possible label makes that overflow structurally impossible; the explicit space joining
 # every column below (rather than relying on padding alone) is the second, independent guard.
 _VERDICT_COL_W = len("indeterminate (instrument-fragile)")  # 34; the reconciled column's longest label
-# Fix 1 (final review): `primary`/`secondary` each hold a RAW single-null label (never the reconciled
+# `primary`/`secondary` each hold a RAW single-null label (never the reconciled
 # "indeterminate (instrument-fragile)"), so both share this one width -- the longest of the four.
 _RAW_VERDICT_COL_W = len("weakly-consistent")  # 17
 # The fingerprint table's rows, and its name column sized to the longest of them ("governor_engagement",
@@ -1428,7 +1428,7 @@ def _fmt_flag(value: bool | None) -> str:
 
 
 def _render_lines(lines: list[str]) -> str:
-    """Fix 7 (final review): join `lines` and strip EACH rendered line's trailing whitespace --
+    """Join `lines` and strip EACH rendered line's trailing whitespace --
     the fingerprint table's last column is left-justified, so a label shorter than its column's
     width leaves trailing padding spaces on every row (and the header). Splits on "\\n" rather than
     stripping each `lines` entry directly, since a couple of entries (`BANNER`, `_HONESTY_FOOTER`)
@@ -1438,11 +1438,11 @@ def _render_lines(lines: list[str]) -> str:
 
 
 def _dual_columns(v: MetricVerdict, dual: DualVerdict | None, null_mode: str) -> tuple[str, str, str]:
-    """Fix 1 (final review): the fingerprint table's three verdict columns for one gating-metric
-    row -- `(verdict, primary, secondary)`. Pre-fix the table rendered only `verdict` (reconciled)
-    and `secondary` (bootstrap raw); on 3 of D1's 5 reconciliation branches those two are the SAME
-    string, so a genuinely disagreeing row looked identical to an agreeing one and the windowed
-    null's own raw label appeared nowhere in the table.
+    """The fingerprint table's three verdict columns for one gating-metric
+    row -- `(verdict, primary, secondary)`. Rendering only `verdict` (reconciled) and `secondary`
+    (bootstrap raw) -- as an earlier version of the table did -- lets those two collide on 3 of D1's
+    5 reconciliation branches, so a genuinely disagreeing row looks identical to an agreeing one and
+    the windowed null's own raw label appears nowhere in the table.
 
     `verdict` is the RECONCILED label -- the same one `summarize_panel`/the JSON payload's top-level
     `"verdict"` count (`dual.verdict` when a reconciliation ran, else `v.verdict`). `primary`/
@@ -1450,7 +1450,7 @@ def _dual_columns(v: MetricVerdict, dual: DualVerdict | None, null_mode: str) ->
     from `dual` when a reconciliation ran (`null_mode="both"`) -- `v.verdict` always equals
     `dual.primary` there (D2: the windowed `MetricVerdict` is what `analyze_soak` threads through).
     Under a single-null mode there is no `dual`: the one construction that ran carries `v.verdict` in
-    its own column, and the other construction's column is `"-"` (Fix 5: "not computed", never a
+    its own column, and the other construction's column is `"-"` ("not computed", never a
     fabricated `"n/a"` -- only a real `metric_verdict` call can produce "computed but
     undiscriminating"). The internals-degraded governor_engagement/cap_breach placeholder row (never
     calls `_judge_dual` at all, regardless of `null_mode`) is handled by its own branch in
@@ -1496,7 +1496,7 @@ def render_report(
     `null_mode`/`path` (spec 00061 D4/D5) are the caller's own choice of construction(s) and builder
     path -- stated up front regardless of void status, since even a void/no-verdict run reflects a
     specific choice a re-run might want to reproduce. The fingerprint table renders THREE verdict
-    columns (Fix 1, final review): folding the windowed null's raw label out of the table let a
+    columns: folding the windowed null's raw label out of the table would let a
     genuine disagreement print as two IDENTICAL strings on 3 of D1's 5 reconciliation branches, with
     the primary's own raw label appearing nowhere. `verdict` is the RECONCILED label (the same one
     `summarize_panel`/the JSON payload count -- `analysis.dual_verdicts[m].verdict` when a
@@ -1505,7 +1505,7 @@ def render_report(
     own raw label (see `_dual_columns`). Under `"both"`, all three come from `analysis.dual_verdicts`.
     Under a single-null mode there is no reconciliation: `verdict` and whichever construction actually
     ran carry the SAME label in their own column, and the OTHER construction's column renders `"-"`
-    -- never a fabricated `"n/a"` (Fix 5: `"-"` means "not computed", `"n/a"` means "computed but
+    -- never a fabricated `"n/a"` (`"-"` means "not computed", `"n/a"` means "computed but
     undiscriminating" -- only a real `metric_verdict` call can produce the latter). The same
     `"-"`-means-not-computed convention applies to an internals-degraded governor_engagement/
     cap_breach row: neither null was ever queried for that metric regardless of `null_mode` (there is
@@ -1554,7 +1554,7 @@ def render_report(
     assert analysis is not None  # not void => Part B always built one alongside a present canonical
 
     lines.append(f"STRUCTURAL FINGERPRINT (live realized vs backtest null, band={band:.0%})")
-    # Fix 4: every column is joined by an explicit space rather than relying on fixed-width padding
+    # Every column is joined by an explicit space rather than relying on fixed-width padding
     # alone -- a right-justified field only gets a gap from its OWN padding, so a label reaching or
     # exceeding its column's width would otherwise abut its neighbour with no separator at all. The
     # verdict/primary/secondary columns are additionally sized (`_VERDICT_COL_W`/`_RAW_VERDICT_COL_W`)
@@ -1566,7 +1566,7 @@ def render_report(
     for m in _METRIC_ROWS:
         v = analysis.gating_verdicts[m]
         if m in ("governor_engagement", "cap_breach") and not analysis.internals_available:
-            # Fix 5: neither null was ever queried for this metric -- "-" ("not computed"), never a
+            # Neither null was ever queried for this metric -- "-" ("not computed"), never a
             # fabricated "n/a" ("computed but undiscriminating"), for primary/secondary.
             lines.append(
                 f"  {m:<{_METRIC_COL_W}} {'n/a':>10} {'n/a':>10} {'n/a':>24} {'n/a':>9} {'n/a':>9} {'n/a':>10} "
@@ -1604,14 +1604,15 @@ def render_report(
     lines.append(f"  realized cumulative net : {analysis.pnl_cum:+.4%}")
     lines.append(f"  realized mean net/cycle : {analysis.pnl_mean:+.6f}")
     pnl_dual = analysis.dual_verdicts.get("pnl")
-    pnl_effective_verdict = pnl_dual.verdict if pnl_dual is not None else analysis.pnl_verdict.verdict
-    # Both raw labels, for the same reason the table carries three columns (Fix 1): naming only the
-    # secondary beside the reconciled label hides the primary, and on the branches where the
-    # reconciled label EQUALS the secondary that reads as agreement when the two nulls in fact
-    # disagreed. A suppressed 'inconsistent' is the exact failure this line must not have.
-    pnl_secondary_note = (
-        f" (primary null: {pnl_dual.primary}, secondary null: {pnl_dual.secondary})" if pnl_dual is not None else ""
-    )
+    pnl_effective_verdict, pnl_primary_label, pnl_secondary_label = _dual_columns(analysis.pnl_verdict, pnl_dual, null_mode)
+    # Both raw labels, in every null_mode -- the same contract the table's primary/secondary columns
+    # carry per row (see `_dual_columns`): naming only one construction beside the reconciled label
+    # hides the other, and on the branches where the reconciled label EQUALS one raw label that reads
+    # as agreement when the two nulls in fact disagreed. A suppressed 'inconsistent' is the exact
+    # failure this line must not have. Under a single-null mode there is no reconciliation, so this
+    # mirrors the table's single-null convention too: the construction that ran carries its own
+    # label, the other renders "-" ("not computed").
+    pnl_secondary_note = f" (primary null: {pnl_primary_label}, secondary null: {pnl_secondary_label})"
     lines.append(f"  pnl verdict (non-gating, near-vacuous at this L): {pnl_effective_verdict}{pnl_secondary_note}")
     lines.append("")
 
@@ -1623,11 +1624,11 @@ _VERDICT_NUMERIC_FIELDS = ("live", "median", "lo", "hi", "percentile", "effectiv
 
 
 def _verdict_payload(name: str, verdict: MetricVerdict, *, internals_available: bool, dual: DualVerdict | None = None) -> dict:
-    """`asdict(verdict)`, except (Fix 4): a `governor_engagement`/`cap_breach` verdict whose
+    """`asdict(verdict)`, except: a `governor_engagement`/`cap_breach` verdict whose
     `"n/a"` comes from an internals rebuild that never ran (`internals_available=False`) reports
     `None` (JSON `null`) for every numeric field, since `live=0.0` there is a placeholder, not a
     computed value -- a JSON consumer otherwise cannot tell "unavailable" from "genuinely 0.0".
-    An `"n/a"` that instead arose from a computed-but-undiscriminating band (Fix 1's full-range
+    An `"n/a"` that instead arose from a computed-but-undiscriminating band (the full-range
     domain check, or a zero-width band, or a tiny `effective_n`) keeps its real numbers -- those
     are meaningful (e.g. a full-[0,1]-range band still reports where `live` actually sat).
 
@@ -1635,7 +1636,7 @@ def _verdict_payload(name: str, verdict: MetricVerdict, *, internals_available: 
     added under a `"dual"` key, `None` when no reconciliation ran for this metric -- a stable key
     present in every payload shape so a consumer never has to branch on `null_mode` to find it.
 
-    Fix 5: the top-level `"verdict"` field is overridden to `dual.verdict` (the RECONCILED label)
+    The top-level `"verdict"` field is overridden to `dual.verdict` (the RECONCILED label)
     when `dual` is given -- `asdict(verdict)` alone would leave it at the windowed null's raw label,
     while `render_report`'s table already renders the reconciled one for this row; a naive JSON
     consumer reading `"verdict"` without also checking `"dual"` would otherwise over-read. The
@@ -1789,8 +1790,10 @@ def soak_report(
 
     `null_mode` (spec 00061 D4) threads to `analyze_soak`. `path` (D5) threads to `build_null` (the
     null build) and `self_tests` (the identity self-check) -- both are the caller's responsibility to
-    validate against the accepted vocabulary (the CLI does so before calling in); an invalid value
-    surfaces as a `SoakError` from whichever of those two first rejects it.
+    validate against the accepted vocabulary (the CLI does so before calling in); when the canonical
+    is present, an invalid value surfaces as a `SoakError` from whichever of those two first rejects
+    it. With the canonical absent, neither is called -- the value is only echoed in the provenance
+    line, never validated here.
     """
     now = now or datetime.now(UTC)
     # Local import: cli.engine.command imports `soak_report` from this module, so a module-level

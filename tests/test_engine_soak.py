@@ -1655,14 +1655,58 @@ def test_render_report_table_shows_all_three_columns_for_every_d1_branch():
         assert any(fields[i : i + n] == verdict_tokens for i in range(len(fields) - n + 1)), (
             f"{m}: reconciled verdict {dual.verdict!r} not found as whole field(s) in {fields!r}"
         )
-        assert primary in fields, f"{m}: primary raw label {primary!r} missing from row fields {fields!r}"
-        assert secondary in fields, f"{m}: secondary raw label {secondary!r} missing from row fields {fields!r}"
+        # Positional, not membership: fields[-2:] are the primary/secondary columns in that exact
+        # order, so an attribution swap (primary<->secondary) fails here even on the branches where
+        # both labels are equal or membership alone can't tell the columns apart (re-review wave 3
+        # finding 1 -- `assert primary in fields` stayed green with the two columns swapped).
+        assert fields[-2:] == [primary, secondary], f"{m}: primary/secondary columns wrong or swapped, fields={fields!r}"
 
     # the review's sharpest case, called out explicitly: turnover's primary='inconsistent' must
     # survive into the rendered row even though the reconciled verdict ('weakly-consistent', the
     # milder of the two) differs from it, and 'weakly-consistent' is a different, non-overlapping
     # token from 'inconsistent'.
     assert "inconsistent" in _row_fields(text, "turnover")
+
+
+def test_render_report_single_null_mode_column_placement_for_normal_row():
+    # Re-review wave 3, finding 2: the same attribution gap as finding 1, one level down -- swapping
+    # _dual_columns' `windows`/`block-bootstrap` branches leaves 128/128 green because no test covers
+    # a NORMAL (non-degraded) metric row's "-" placement per mode; only the internals-degraded
+    # governor_engagement/cap_breach row (always "-"/"-" regardless of mode) was covered. Swapped,
+    # `--null windows` would print the windowed label in the SECONDARY column and "-" in primary --
+    # attributing the verdict to the bootstrap, which never ran, while claiming the windowed null,
+    # which DID run, was never computed.
+    verdict = MetricVerdict(
+        verdict="consistent", live=0.5, median=0.5, lo=0.1, hi=0.9, percentile=50.0, effective_n=50.0, width=0.8
+    )
+    gating_verdicts = dict.fromkeys(soak._METRIC_ROWS, verdict)
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    for null_mode, expected in (("windows", ["consistent", "-"]), ("block-bootstrap", ["-", "consistent"])):
+        analysis = soak.SoakAnalysis(
+            L=6,
+            gating_verdicts=gating_verdicts,
+            panel=summarize_panel(gating_verdicts, band=0.90, dual_verdicts={}),
+            null_gov_rate=0.0,
+            null_cap_rate=0.0,
+            d4_gap_bps=0.0,
+            d4_active=False,
+            pnl_mean=0.0,
+            pnl_cum=0.0,
+            pnl_verdict=verdict,
+            is_degenerate=False,
+            effective_n=dict.fromkeys((*soak._METRIC_ROWS, "pnl"), 50.0),
+            internals_available=True,
+            internals_reason="",
+            disclosures=(),
+            dual_verdicts={},
+        )
+        text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode=null_mode, path="fast")
+        for m in soak._METRIC_ROWS:
+            fields = _row_fields(text, m)
+            assert fields[-2:] == expected, f"null_mode={null_mode} m={m}: primary/secondary wrong, fields={fields!r}"
 
 
 def test_render_report_pnl_line_names_both_raw_nulls():
@@ -1710,6 +1754,54 @@ def test_render_report_pnl_line_names_both_raw_nulls():
     # slot rather than bare membership -- the sloppy assertion would pass on the pre-fix line.
     assert "primary null: inconsistent" in pnl_line, pnl_line
     assert "secondary null: weakly-consistent" in pnl_line, pnl_line
+
+
+def test_render_report_pnl_line_headline_is_the_reconciled_label():
+    # Re-review wave 3, finding 3: the P&L headline's use of the RECONCILED label was unpinned --
+    # `pnl_dual.verdict` -> `pnl_dual.primary` left 128/128 green, printing a bare reassuring label
+    # where D1 requires "indeterminate (instrument-fragile)". The sibling test above pins only the
+    # parenthetical (both its assertions are on the "primary null: ..."/"secondary null: ..." slots)
+    # and uses the adjacent branch, where the mutation is least visible (reconciled == secondary).
+    # This uses the opposite-extremes branch instead, where the reconciled label differs from BOTH
+    # raw labels, so a mutation to either .verdict or .primary/.secondary is caught.
+    dual = reconcile_verdicts("consistent", "inconsistent")
+    assert dual.verdict == "indeterminate (instrument-fragile)"  # sanity: reconciled != either raw label
+
+    na_verdict = MetricVerdict(verdict="n/a", live=0.0, median=0.0, lo=0.0, hi=0.0, percentile=0.0, effective_n=0.0, width=0.0)
+    gating_verdicts = dict.fromkeys(soak._METRIC_ROWS, na_verdict)
+    analysis = soak.SoakAnalysis(
+        L=6,
+        gating_verdicts=gating_verdicts,
+        panel=summarize_panel(gating_verdicts, band=0.90, dual_verdicts={}),
+        null_gov_rate=0.0,
+        null_cap_rate=0.0,
+        d4_gap_bps=0.0,
+        d4_active=False,
+        pnl_mean=0.0,
+        pnl_cum=0.0,
+        pnl_verdict=MetricVerdict(
+            verdict="consistent", live=0.5, median=0.5, lo=0.1, hi=0.9, percentile=50.0, effective_n=50.0, width=0.8
+        ),
+        is_degenerate=False,
+        effective_n=dict.fromkeys((*soak._METRIC_ROWS, "pnl"), 50.0),
+        internals_available=False,
+        internals_reason="no internals rebuild provided",
+        disclosures=(),
+        dual_verdicts={"pnl": dual},
+    )
+    realized = _mk_realized([{"BTC": 0.15, "ETH": 0.15}] * 6, [0.001] * 6)
+    null = _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.001] * 100)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90, null_mode="both", path="fast")
+
+    pnl_line = next(ln for ln in text.splitlines() if "pnl verdict" in ln)
+    # The headline is everything between the fixed "at this L): " prefix and the " (primary null:"
+    # parenthetical -- positional, not membership, so a swap to .primary ("consistent", which IS a
+    # substring of "inconsistent" and of nothing here, but coincidentally also a valid whole-field
+    # match elsewhere) cannot slip past a bare "in pnl_line" check.
+    headline = pnl_line.split("at this L): ", 1)[1].split(" (primary null:")[0]
+    assert headline == "indeterminate (instrument-fragile)", pnl_line
 
 
 def test_fingerprint_table_columns_align_for_every_metric_row():
