@@ -1,4 +1,4 @@
-# research-loop case log
+# zcrypto-auto-exec case log (né research-loop)
 
 Why the loop's rules exist — the incidents that minted them. Read this when a rule's rationale matters to a live judgment call; the rules themselves live in `SKILL.md`.
 

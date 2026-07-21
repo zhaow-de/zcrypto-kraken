@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: a concrete definition exists for what the report's "regime context" section should contain -- i.e. which regime variable (realized vol, trend state, funding, or a dated market-structure event) is worth conditioning a soak verdict on, and what a reader would DO differently on seeing it
+ripe_when: 6b's realized window reaches a length where a regime split leaves usable sub-samples (≈30+ days of realized cycles), or a dated market-structure event lands inside the soak window — re-pointed 2026-07-21 from "a concrete definition exists for regime context", which was circular: that trigger waited on nobody, since only deliberate design work could ever fire it, and conditioning a ≤14-day soak on regime has no discriminating power anyway
 ---
 
 # soak-check: wire the secondary block-bootstrap null + `--null`/`--path` options + regime context

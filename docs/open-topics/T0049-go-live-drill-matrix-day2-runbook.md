@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the final go-live preparation — before the Stage-6b executor session places real orders (drills deliberately break production paths, so they need attended maintenance windows per capture-deploys.md)
+ripe_when: anytime before the final go-live — picked up manually by the human, never auto-triggered (drills deliberately break production paths, so execution still needs attended maintenance windows per capture-deploys.md); flipped from "the final go-live preparation" at the 2026-07-21 grooming
 ---
 
 # Go-live drill matrix and day-2 operations runbook
@@ -27,4 +27,5 @@ The drill's starting inventory:
 - Enumerate the scenario matrix (draft — extend at execution): capture daemon stopped (each host) → dead-man fires, Slack lands; disk-watermark breach → withheld ping pages; engine cycle failure → `/fail` ping routes; NAS pull stall → Loki alert (re-verify post-[[T0048]]-fix); Alloy itself down → what pages, and how fast; secondary host loss → primary unaffected, loss still visible; Grafana Cloud unreachable → the healthchecks.io independent failure domain still pages; ops-node timer failure → its dead-man; reboot-window overlap sanity (primary 21:25 / secondary 22:25 UTC); a compose-level "container never created" failure (docker-path logs never exist and the owning unit's journal is filtered on the capture hosts — the one log class no Alloy pipeline sees; registered 2026-07-19 from the iter-105 config.alloy review) → confirm the healthchecks dead-man is the catcher and time it.
 - Run each scenario in an attended maintenance window, per `capture-deploys.md` discipline (never induce a failure on live capture outside a window); record per scenario: time-to-alert, channel(s) that fired, and the operator action taken.
 - Write `docs/reference/day2-operations-runbook.md`: one section per alert/dead-man — what it means, first checks, remediation, escalation — folding in the existing fragments (ledger correction, Alloy restart, canary rule) so the runbook is the single entry point.
+- **(direction, 2026-07-21 grooming)** Evolve this from a one-shot drill matrix into a human-triggered **healthcheck skill**: root-cause fixes keep producing tests as today, and *additionally* each incident adds a check script/instruction here, so the skill verifies all systems/components/datasets are present and consistent (fold in [[T0039]]'s findings). The skill also fetches and analyzes historical logs + alerts — aiming, eventually, at autonomous operation.
 - Human item: during the drill window, on the phone's Slack app confirm a mobile push actually arrives for one `metrics`-receiver alert and one `logs`-receiver alert (not just the desktop client); record delivery latency for both in the drill log.
