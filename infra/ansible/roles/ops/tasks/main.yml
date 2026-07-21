@@ -305,12 +305,17 @@
         mode: "0644"
       loop: [service, timer]
 
+    # ignore_errors under check mode only: a `--check` preview never writes the unit files, so on
+    # a host where the timer was never installed this enable cannot resolve the unit and would
+    # abort the whole preview (observed 2026-07-21 — the fatal masked every later task's diff).
+    # A real converge writes the units first and enables for real.
     - name: enable + start the grafana-watchdog timer
       ansible.builtin.systemd_service:
         name: zcrypto-grafana-watchdog.timer
         daemon_reload: true
         enabled: true
         state: started
+      ignore_errors: "{{ ansible_check_mode }}"
 
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
