@@ -10,55 +10,25 @@ allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Bash(git log:*), 
 
 ## What this is
 
-`docs/memo.local.md` is the user's personal working memo — **gitignored, hand-edited between sessions, and not version-controlled**: nothing deleted from it is recoverable. Its canonical sections:
-
-| Section | Role |
-|---|---|
-| `NEW IDEAS` | idea inbox, ~one paragraph per idea (loosely — points↔paragraphs are usually 1:1 but can be m:n) |
-| `WORK-ITEMS QUEUE` | the intermediate backlog; each `###` heading is a user-curated **milestone** |
-| `DONE ITEMS` | staging for finished items awaiting verified purge |
-| `ABANDONED ITEMS` | ideas decided against, each with its decision date |
-
-Each `##` section carries a one-sentence description directly under its heading — standing text for both readers; preserve it through every edit.
+`docs/memo.local.md` is the user's personal working memo. Its data model, tooling discipline, and the mechanical ad-hoc procedures live in **`references/memo-protocol.md`** — the single source of truth, also loaded by `/zcrypto-auto-exec`. Read it before touching the file.
 
 Grooming is a **joint conversation**: this skill structures it, the user decides. Nothing in the memo is disposed of unilaterally — the memo is the user's memory, and an item silently mis-filed is worse than one left untouched.
 
 ## Invariants — every invocation, both modes
 
-- **Re-read the file first.** It is gitignored and changes outside Claude sessions; any copy already in context is stale by definition.
-- **The memo is not version-controlled, so deletion is licensed only at the purge gate.** There is no git history to recover from. The one sanctioned destruction is Step 2's purge of `DONE ITEMS` after the user's batch confirmation — that confirmation is precisely the license. Outside that gate, condense or relocate prose, never destroy it.
-- **Anchored edits only — never rewrite the file wholesale, and only through the Edit/Write tools, never shell heredocs.** A wholesale `Write` silently drops whatever the rewrite forgot, and there is no history to recover it from; a shell write bypasses the read-guard hook (`.claude/hooks/memo-guard.sh`), which enforces fresh-read-before-write and read-back-after on exactly these tools. The memo is the user's private journal: never paste its content into a subagent prompt, never run a subagent on this file in any role.
-- **Memo text never lands verbatim in git-tracked files.** A new or revised T-topic paraphrases the idea. Keep `WP<N>` labels out of git-tracked files — the user's instruction, codified only here; one historical exception exists (spec `00058`'s title carries "WP7") — don't add more, and don't "fix" this skill against that precedent.
+- **The protocol governs every touch of the file** — `references/memo-protocol.md`: re-read first, Edit/Write tools only under the read-guard, anchored edits, deletion only at the purge gate, privacy, formats.
 - **The user's explicit agreement closes each item; undecided is the default state, not a failure.** A point nobody has ruled on simply stays in `NEW IDEAS` — under time pressure, for lack of consensus, or for any reason at all. Deciding solo is never the shortcut.
-- **Git-tracked files grooming produces** (new/revised topics, the `docs/open-topics/README.md` index) land through the repo's normal conventions — gate, review, branch/PR — never committed as a side effect of the conversation.
-- If the live headings differ from the canonical four above, surface the mismatch and agree the mapping (or a one-time restructure) with the user before editing anything. Non-section scaffolding — the file title, horizontal rules, anything outside the four sections — is preserved untouched.
-
-## How references resolve
-
-| Reference | Resolves to |
-|---|---|
-| `T0028` | `docs/open-topics/T0028-*.md` — or `docs/open-topics/archive/T0028-*.md` once resolved; the `docs/open-topics/README.md` index links whichever is current |
-| `spec 00060` / bare `00060` | `docs/specs/00060-*-design.md` (its plan: `docs/plans/00060-*.md`) |
-| `iter-082` | the `## <date> — iter-082: <title>` section of `docs/iterations-history-phase<N>.md` — **N is the iteration's subject-matter phase, not the milestone's**: an item worked for the Phase-6a milestone may be logged in `iterations-history-phase1.md` (entries route by subject per `.claude/rules/iterations-history.md`), so locate with `grep -l "iter-082" docs/iterations-history-phase*.md`, never by assuming the milestone's phase |
-| `PR #143` | `gh pr view 143` |
 
 ## With an argument — single-item update, nothing else
 
-These ad-hoc procedures are also the bookkeeping interface of a human-launched `/zcrypto-auto-exec` run — that launch is the human trigger, so applying them from inside the loop is sanctioned. The FULL flow (the three steps below: NEW IDEAS dispositions, the purge gate, milestone re-grooming) remains exclusively a live conversation with the user; an auto-exec run never drains `NEW IDEAS` and never purges `DONE ITEMS`.
+The four argument forms — each defined, with its exact scope, in `references/memo-protocol.md` § *Ad-hoc procedures*; the definitions there govern:
 
-`/zcrypto-grooming T0199 is done`
-→ Find the `WORK-ITEMS QUEUE` item(s) referencing that topic. Mark done citing the evidence (iter-N / T-topic / commits / PRs — whichever apply) with a timestamp, then **move** the whole item to `DONE ITEMS`.
+- `/zcrypto-grooming T0199 is done`
+- `/zcrypto-grooming T0199 is partially done`
+- `/zcrypto-grooming T0199 registered — insert into queue`
+- `/zcrypto-grooming iter-290 (PR #1332) has been merged` (work-shaped — resolve to topics first)
 
-`/zcrypto-grooming T0199 is partially done`
-→ Append one short cited, timestamped note to the item, **in place**. When the partial resolution changed the item's *shape* — scope shrank, effort resized, prerequisites moved — also update its **subject**, **Size**, and **DependsOn** sub-bullets to describe only the remainder, then **re-order the milestone list** so it stays a dependency-true suggested sequence (nothing above what it depends on; the next work item on top).
-
-`/zcrypto-grooming T0199 registered — insert into queue`
-→ For a topic newly registered (typically mid-auto-exec): add a queue item in the standard sub-bullet shape — subject condensed from the `docs/open-topics/README.md` bullet, `Who` / `Size` / `Why` / `DependsOn` — at its **dependency- and priority-correct position** in the milestone list. Touch nothing else.
-
-`/zcrypto-grooming iter-290 (PR #1332) has been merged`
-→ The argument may name **delivered work** instead of a topic. Resolve it first — read the iteration's `docs/iterations-history-phase<N>.md` entry (and/or the PR) for the T-topic(s) it addressed — then apply the done / partially-done handling above to each matching queue item, citing the iter/PR as the evidence. Ambiguous resolution (several topics, different completion states) → ask, never guess.
-
-Both forms: touch nothing else. No discovery, no purge, no NEW IDEAS, no frontmatter timestamp — those live in the full flow, behind its confirmations. No matching item → say so and stop.
+All are mechanical and single-item — scope limits per the protocol's **All forms** rule. They may also be applied from within a human-launched `/zcrypto-auto-exec` run; the full flow below remains a live conversation with the user.
 
 ## Bare invocation — the full flow, three steps in order
 
@@ -93,15 +63,13 @@ A drop the user gives without a reason is recorded as decision + dates only — 
 Per `###` milestone under `WORK-ITEMS QUEUE`, in order:
 
 1. **Ask the goal question — "what do we have to do to achieve this?"** The milestone's items plus their referenced T-topics are the **full picture**: all drained ⇒ milestone reached.
-2. **Completeness sweep.** Walk the open topics (`docs/open-topics/README.md`'s `### Open` / `### Partially done` subsections, every `ripe_when`): anything relevant to the milestone and not on its list is added — jointly. This is where follow-ups hiding inside already-purged done work resurface (e.g. a tool shipped and purged whose *at-the-gate run* is still open). An added item **condenses** its index entry, never pastes it: the subject keeps the index's title wording; `Why` compresses to the one or two clauses that matter *for this milestone*; everything else stays in the topic file, reachable through the `T<NNNN>` reference. The sweep reads Open / Partially-done only — resolved topics stay done; if the user asks to queue one anyway, surface its resolved status first and confirm: the right shape is usually a NEW topic referencing the archived one, not a revival.
-3. **Format follows length:**
-   - **Short list** — no grouping. One entry per item, each a single T-topic: a bold subject line (the `docs/open-topics/README.md` index's wording is fine), then **sub-bullets** — `Who: … — Size: S/M/L`, `Why: …`, `DependsOn: …` (prerequisites — items, T-topics, or a named trigger/date; "—" when free). Sub-bullets, not inline fields: the memo is read by human and AI alike, and scanning beats parsing.
-   - **Long list** (rule of thumb: ~8+ active items, or natural clusters) — group into work packages: a level-4 header `#### WP<N>: <name>` with the same sub-bullet fields at package level, then its items — one T-topic each.
-4. **The list IS the schedule: order it as the suggested execution sequence, so the next work item is always the top one.** Nothing may sit above something it depends on. Settle sizes, `DependsOn` edges, and the sequence jointly. `/zcrypto-auto-exec` updates these items during autonomous runs via the ad-hoc procedures above — expect and preserve its annotations.
+2. **Completeness sweep.** Walk the open topics (`docs/open-topics/README.md`'s `### Open` / `### Partially done` subsections, every `ripe_when`): anything relevant to the milestone and not on its list is added — jointly. This is where follow-ups hiding inside already-purged done work resurface (e.g. a tool shipped and purged whose *at-the-gate run* is still open). An added item **condenses, never pastes** (rule + shape per the protocol § *Item shape and sequencing*). The sweep reads Open / Partially-done only — resolved topics stay done; if the user asks to queue one anyway, surface its resolved status first and confirm: the right shape is usually a NEW topic referencing the archived one, not a revival.
+3. **Formats per the protocol**: short list → per-topic sub-bullet entries; ~8+ active items → `#### WP<N>:` groups.
+4. Settle sizes, `DependsOn` edges, and the sequence jointly — the list is the schedule (protocol § *Item shape and sequencing*). `/zcrypto-auto-exec` updates these items during autonomous runs via the ad-hoc procedures above — expect and preserve its annotations.
 
 ### Close — full runs only
 
-Set `last-grooming-section-at:` to now (UTC, ISO-8601). Ad-hoc invocations never touch it, so the next full Step 2 re-scans a window covering them — harmless, since matching is idempotent.
+Set `last-grooming-section-at:` to now (UTC, ISO-8601) — full runs only; semantics per the protocol § *The file*.
 
 ## Common mistakes
 
