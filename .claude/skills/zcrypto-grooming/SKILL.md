@@ -27,7 +27,7 @@ Grooming is a **joint conversation**: this skill structures it, the user decides
 
 - **Re-read the file first.** It is gitignored and changes outside Claude sessions; any copy already in context is stale by definition.
 - **The memo is not version-controlled, so deletion is licensed only at the purge gate.** There is no git history to recover from. The one sanctioned destruction is Step 2's purge of `DONE ITEMS` after the user's batch confirmation — that confirmation is precisely the license. Outside that gate, condense or relocate prose, never destroy it.
-- **Anchored edits only — never rewrite the file wholesale.** A wholesale `Write` silently drops whatever the rewrite forgot, and there is no history to recover it from. The memo is the user's private journal: never paste its content into a subagent prompt, never run a subagent on this file in any role.
+- **Anchored edits only — never rewrite the file wholesale, and only through the Edit/Write tools, never shell heredocs.** A wholesale `Write` silently drops whatever the rewrite forgot, and there is no history to recover it from; a shell write bypasses the read-guard hook (`.claude/hooks/memo-guard.sh`), which enforces fresh-read-before-write and read-back-after on exactly these tools. The memo is the user's private journal: never paste its content into a subagent prompt, never run a subagent on this file in any role.
 - **Memo text never lands verbatim in git-tracked files.** A new or revised T-topic paraphrases the idea. Keep `WP<N>` labels out of git-tracked files — the user's instruction, codified only here; one historical exception exists (spec `00058`'s title carries "WP7") — don't add more, and don't "fix" this skill against that precedent.
 - **The user's explicit agreement closes each item; undecided is the default state, not a failure.** A point nobody has ruled on simply stays in `NEW IDEAS` — under time pressure, for lack of consensus, or for any reason at all. Deciding solo is never the shortcut.
 - **Git-tracked files grooming produces** (new/revised topics, the `docs/open-topics/README.md` index) land through the repo's normal conventions — gate, review, branch/PR — never committed as a side effect of the conversation.
@@ -44,11 +44,16 @@ Grooming is a **joint conversation**: this skill structures it, the user decides
 
 ## With an argument — single-item update, nothing else
 
+These ad-hoc procedures are also the bookkeeping interface of a human-launched `/zcrypto-auto-exec` run — that launch is the human trigger, so applying them from inside the loop is sanctioned. The FULL flow (the three steps below: NEW IDEAS dispositions, the purge gate, milestone re-grooming) remains exclusively a live conversation with the user; an auto-exec run never drains `NEW IDEAS` and never purges `DONE ITEMS`.
+
 `/zcrypto-grooming T0199 is done`
 → Find the `WORK-ITEMS QUEUE` item(s) referencing that topic. Mark done citing the evidence (iter-N / T-topic / commits / PRs — whichever apply) with a timestamp, then **move** the whole item to `DONE ITEMS`.
 
 `/zcrypto-grooming T0199 is partially done`
-→ Append one short cited, timestamped note to the item, **in place**.
+→ Append one short cited, timestamped note to the item, **in place**. When the partial resolution changed the item's *shape* — scope shrank, effort resized, prerequisites moved — also update its **subject**, **Size**, and **DependsOn** sub-bullets to describe only the remainder, then **re-order the milestone list** so it stays a dependency-true suggested sequence (nothing above what it depends on; the next work item on top).
+
+`/zcrypto-grooming T0199 registered — insert into queue`
+→ For a topic newly registered (typically mid-auto-exec): add a queue item in the standard sub-bullet shape — subject condensed from the `docs/open-topics/README.md` bullet, `Who` / `Size` / `Why` / `DependsOn` — at its **dependency- and priority-correct position** in the milestone list. Touch nothing else.
 
 `/zcrypto-grooming iter-290 (PR #1332) has been merged`
 → The argument may name **delivered work** instead of a topic. Resolve it first — read the iteration's `docs/iterations-history-phase<N>.md` entry (and/or the PR) for the T-topic(s) it addressed — then apply the done / partially-done handling above to each matching queue item, citing the iter/PR as the evidence. Ambiguous resolution (several topics, different completion states) → ask, never guess.
@@ -92,7 +97,7 @@ Per `###` milestone under `WORK-ITEMS QUEUE`, in order:
 3. **Format follows length:**
    - **Short list** — no grouping. One entry per item, each a single T-topic: a bold subject line (the `docs/open-topics/README.md` index's wording is fine), then **sub-bullets** — `Who: … — Size: S/M/L`, `Why: …`, `DependsOn: …` (prerequisites — items, T-topics, or a named trigger/date; "—" when free). Sub-bullets, not inline fields: the memo is read by human and AI alike, and scanning beats parsing.
    - **Long list** (rule of thumb: ~8+ active items, or natural clusters) — group into work packages: a level-4 header `#### WP<N>: <name>` with the same sub-bullet fields at package level, then its items — one T-topic each.
-4. **The list IS the schedule: order it as the suggested execution sequence, so the next work item is always the top one.** Nothing may sit above something it depends on. Settle sizes, `DependsOn` edges, and the sequence jointly. `/research-loop` may also update these items during autonomous runs — expect and preserve its annotations.
+4. **The list IS the schedule: order it as the suggested execution sequence, so the next work item is always the top one.** Nothing may sit above something it depends on. Settle sizes, `DependsOn` edges, and the sequence jointly. `/zcrypto-auto-exec` updates these items during autonomous runs via the ad-hoc procedures above — expect and preserve its annotations.
 
 ### Close — full runs only
 

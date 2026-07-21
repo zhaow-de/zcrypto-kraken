@@ -85,7 +85,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0081 — /zcrypto-bump-alloy skill](T0081-zcrypto-bump-alloy-skill.md) — wrap the fleet Alloy version bump into a manual-only skill: compare pin vs newest release, roll out canary-order (NAS/ops → capture secondary → primary) with restart-after-recreate baked in; no inter-capture bake window needed, telemetry-only (ripe when: a newer Alloy release than the fleet pin exists — human-checked, human-run).
 
-- [T0082 — spec 00050/00048 parked-items review](T0082-spec-00050-00048-parked-items-review.md) — one-shot revival review of 00050's non-goals + 00048's open-questions: revive only items with a live trigger today, explicitly drop the rest; closes itself in the same pass (ripe when: anytime — a research-loop filler or attended docs session).
+- [T0082 — spec 00050/00048 parked-items review](T0082-spec-00050-00048-parked-items-review.md) — one-shot revival review of 00050's non-goals + 00048's open-questions: revive only items with a live trigger today, explicitly drop the rest; closes itself in the same pass (ripe when: anytime — a /zcrypto-auto-exec filler or attended docs session).
 
 - [T0083 — healthchecks retag + mutual watchdog](T0083-healthchecks-retag-and-mutual-watchdog.md) — migration into Grafana rejected 2026-07-21 (independent failure domain is load-bearing); instead retag every check by node + application, and add the cross-watchdog: an hc.io check pinged only while zcrypto2026.grafana.net is up, and a Grafana rule over the hc.io status API — either side's outage pages via the survivor (ripe when: an attended observability window — pairs with T0079's alert push).
 

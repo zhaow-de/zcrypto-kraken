@@ -4,7 +4,7 @@ One git-tracked decision log **per phase**, `docs/research/<serial>.phase<N>-dec
 
 ## The gate — when to log
 
-Log **iff both** hold: (1) it's about the **subject matter** — research direction, choice of variants, scope, the R&D approach/hypothesis, the feature/model/label/universe/knob to try; and (2) you're in a **live research iteration** (an unattended `research-loop` iteration, or an interactive session actively designing/running one). **Skip** when either fails — not in a live iteration, or about permission/approval, engineering/tooling/infrastructure, process, or formatting. Reversible tooling/process choices are still *decided* (autonomously) — just not logged.
+Log **iff both** hold: (1) it's about the **subject matter** — research direction, choice of variants, scope, the R&D approach/hypothesis, the feature/model/label/universe/knob to try; and (2) you're in a **live research iteration** (an unattended `zcrypto-auto-exec` iteration, or an interactive session actively designing/running one). **Skip** when either fails — not in a live iteration, or about permission/approval, engineering/tooling/infrastructure, process, or formatting. Reversible tooling/process choices are still *decided* (autonomously) — just not logged.
 
 ## What to log
 

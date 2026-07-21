@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: anytime — an autonomous research-loop filler or an attended docs session; the YAGNI bar below governs
+ripe_when: anytime — an autonomous /zcrypto-auto-exec filler or an attended docs session; the YAGNI bar below governs
 ---
 
 # One-shot revival review of spec 00050's non-goals and spec 00048's open questions
