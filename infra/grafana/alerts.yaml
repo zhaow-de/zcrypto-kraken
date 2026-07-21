@@ -1805,3 +1805,52 @@ rules:
       severity: critical
     notification_settings:
       receiver: metrics
+
+  # T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
+  # check is DOWN -- a dead-man fired, and hc.io's own notification channel may itself be the
+  # broken part, so Grafana pages too (the deliberate double-page is the cross-watchdog); (b) the
+  # hc.io scrape is DARK (endpoint unreachable, read-only key revoked, Alloy scrape broken) -- the
+  # or-on()-vector(999) fallback makes silence read as 999, far over the threshold, so
+  # green-when-blind is impossible; a value of 999 in the page means "the watchdog's own eyes went
+  # dark", not "a check is down". The reverse direction (Grafana down -> hc.io pages) is the ops
+  # grafana-watchdog pinger, NOT this rule.
+  - uid: zcrypto-hcio-watchdog
+    title: "Fleet · healthchecks.io watchdog (check down, or hc.io dark)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # hc_checks_down_total is the endpoint's real aggregate name (read live 2026-07-21);
+          # there is no bare hc_checks_down.
+          expr: >-
+            max(hc_checks_down_total) or on() vector(999)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # 5m rides out a single scrape blip; hc.io's own grace periods already buffer check lateness,
+    # so a `down` state here is post-grace and real.
+    for: 5m
+    annotations:
+      summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule (T0083)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics

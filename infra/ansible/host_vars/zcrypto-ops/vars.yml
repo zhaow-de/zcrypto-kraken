@@ -31,6 +31,7 @@ ops_verify_replay_healthcheck_url: "{{ verify_replay_healthcheck_url }}"
 ops_verified_replay_healthcheck_url: "{{ verified_replay_healthcheck_url }}"
 ops_archive_pull_healthcheck_url: "{{ archive_pull_healthcheck_url }}"
 ops_panel_healthcheck_url: "{{ panel_healthcheck_url }}"
+ops_grafana_watchdog_healthcheck_url: "{{ grafana_watchdog_healthcheck_url }}"
 
 # The operator's fleet-wide deploy pubkey, loaded from the same file group_vars/capture_host reads
 # (single source: infra/ansible/files/ -- a key rotation edits the .pub file once). The bootstrap

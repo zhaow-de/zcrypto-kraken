@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-grafana-watchdog — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-watchdog.sh.j2 instead.
+#
+# T0083 mutual watchdog, healthchecks.io half: probes the Grafana Cloud stack and pings the
+# zcrypto-grafana-watchdog check ONLY on success. A FAILED probe pings <url>/fail instead, so
+# healthchecks.io pages immediately rather than waiting out timeout+grace; if this host or the
+# timer dies, the ping simply stops and healthchecks.io still pages by staleness — both failure
+# paths of this pinger are covered by construction. The reverse direction (healthchecks.io status
+# into Grafana) is the ops Alloy's hc.io scrape + the zcrypto-hcio-watchdog alert rule.
+set -euo pipefail
+
+URL="{{ ops_grafana_watchdog_healthcheck_url }}"
+# Empty URL skips the ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
+[ -n "$URL" ] || exit 0
+
+if curl -fsS -m 20 --retry 2 --retry-delay 5 -o /dev/null "{{ ops_grafana_watchdog_probe_url }}"; then
+  curl -fsS -m 10 -o /dev/null "$URL" || true
+else
+  curl -fsS -m 10 -o /dev/null "$URL/fail" || true
+fi

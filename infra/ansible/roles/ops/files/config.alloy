@@ -98,6 +98,23 @@ prometheus.scrape "host" {
   scrape_interval = "60s"
 }
 
+// T0083 mutual watchdog, Grafana half: scrape healthchecks.io's native Prometheus endpoint for
+// this project (hc_check_up per check + the hc_checks_down_total aggregate -- names read from the
+// live endpoint 2026-07-21, NOT guessed: there is no bare hc_checks_down), so the
+// zcrypto-hcio-watchdog alert rule can page via Grafana when a dead-man check is down or the
+// hc.io side is unreachable -- the cross-direction of the ops grafana-watchdog pinger. The
+// endpoint path (/projects/<code>/metrics/<read-only-key>) embeds the project's READ-ONLY key,
+// so it lives in alloy-secrets.env (HC_METRICS_PATH), never in this file.
+prometheus.scrape "healthchecks" {
+  targets = [{
+    "__address__" = "healthchecks.io",
+  }]
+  scheme          = "https"
+  metrics_path    = sys.env("HC_METRICS_PATH")
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
 prometheus.remote_write "grafana" {
   // `host="ops"` on every metric this component ships -- without it, no metric on this host
   // carries a `host` label at all (the `host` label the logs pipeline attaches below, in
@@ -150,7 +167,7 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|prometheus_sd_refresh_duration_seconds_count|prometheus_sd_refresh_failures_total"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|prometheus_sd_refresh_duration_seconds_count|prometheus_sd_refresh_failures_total|hc_check_up|hc_checks_down_total"
       action        = "keep"
     }
   }

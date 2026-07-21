@@ -70,6 +70,14 @@ OPS_REQUIRED = [
     "zcrypto_reconcile_source_lag_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
+    # T0083: the hc.io watchdog scrape's series. zcrypto-hcio-watchdog alerts on
+    # hc_checks_down_total — dropping THAT silently disarms the Grafana half of the mutual
+    # watchdog (same failure class as `up` above); hc_check_up is the per-check triage detail
+    # the page's responder reads. Names read from the live hc.io Prometheus endpoint
+    # 2026-07-21 — the endpoint exposes hc_checks_down_total, NOT the bare hc_checks_down a
+    # reasonable guess produces.
+    "hc_check_up",
+    "hc_checks_down_total",
 ]
 
 

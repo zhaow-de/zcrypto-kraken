@@ -1,0 +1,14 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-grafana-watchdog.timer — do
+# not hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-watchdog.timer.j2
+# instead.
+[Unit]
+Description=Every-5-minutes Grafana Cloud probe for the T0083 mutual watchdog
+
+[Timer]
+# Every 5 minutes, off the minute boundary (the check's 600 s timeout + 600 s grace tolerate one
+# missed slot before paging). No Persistent=: a missed slot during downtime is exactly the signal.
+OnCalendar=*:0/5:41
+Unit=zcrypto-grafana-watchdog.service
+
+[Install]
+WantedBy=timers.target
