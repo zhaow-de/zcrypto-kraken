@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: ripe NOW — a ~5-line fix plus a README correction, fully specified below; it is registered rather than fixed inline only to keep the archive-audit PR focused, so take it as the next small change rather than carrying it
+status: resolved
 ---
 
 # The trade-backfill run summary omits fetch failures, and the README promises it cannot
@@ -29,6 +28,18 @@ Found by the 2026-07-20 archived-topic audit. The history shows this was **known
 - `3c6ec30` archived the topic with this accounting finding still sitting in its `## Findings so far` — never promoted to next steps, never handed to a successor.
 
 [[T0053]] itself stays archived: its headline concern is genuinely fixed, and this is a distinct residual rather than a reopening.
+
+## Resolution
+
+**Resolved 2026-07-21** — commit `8a7a436` (+ its review fixes) on `fix/t0078-backfill-summary-fetch-failures`, PR into `develop`. All three prescribed steps landed:
+
+- run-level `fetch_failed` accumulator + `BackfillResult.trades_fetch_failed`;
+- the bucket threaded into **both** summary sites — `backfill.py`'s `logger.info` line **and** the CLI's own `typer.echo` in `cli/archive/command.py`. The topic named only the first; the second was found because the command test silences the logger at `--log-level ERROR` and so pins the echo independently;
+- `README.md`'s "every outcome bucket / can never read as clean by omitting one" sentence corrected in the same change, so document and behaviour never disagreed.
+
+Both pins were watched failing first and mutation-verified under `PYTHONDONTWRITEBYTECODE=1`; no double-count (fetch-failed ids stay out of `unrecoverable`, since the fetch never answered), D9's arithmetic unchanged, `--detect-only` still reports `0`.
+
+**Two things the execution added to the record.** The review caught that the *logger* site — the one this topic's own acceptance criterion named — was pinned by no test (deleting `fetch_failed=%d` left all 20 green); a `caplog` assertion now pins it, mutation-verified. And a **second residual of the same class** surfaced and was split out rather than absorbed: rows fetched for an hour whose *mint* fails land in no bucket either — [[T0087]], deliberately its own topic because it carries a design question (whether the new counter participates in D9's residual arithmetic; recommended no) and because burying it here would repeat the mis-filing this topic exists to catch.
 
 ## Suggested next steps
 

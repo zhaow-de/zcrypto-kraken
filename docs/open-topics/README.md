@@ -31,9 +31,9 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0071 — capture-era data-hygiene map](T0071-capture-era-data-hygiene-map.md) — consumer-side keep/flag/excise verdicts for the early-capture bug-era windows (07-08→07-13 phantom-depth desyncs et al.): the trades stream is REST-proven dense, but the book/panel side's pre-depth-prune hours feed the spread/depth calibration — map before research reads them; excision itself is the owner's call (ripe when: before the T0014/T0024 calibration ≈2026-07-22, and before the T0065 reach round).
 
-- [T0078 — the trade-backfill run summary omits fetch failures](T0078-trade-backfill-summary-omits-fetch-failures.md) — `pair_fetch_error_missing` is a per-pair local that never reaches `BackfillResult` or the run summary, surfacing only inside the D9 invariant-violation message once the invariant has ALREADY failed — while `README.md:209` asserts the summary lists "every outcome bucket" and that "a run can never read as clean by omitting one", which is false today. Low severity (the per-gap warnings make it manually derivable, and D9 subtracts the bucket) but it is the operator's first diagnostic on a daily step whose retry was deliberately deleted. Found by the archived-topic audit; known and dropped rather than out of scope (ripe when: NOW — ~5 lines + a README correction, fully specified).
-
 - [T0086 — workspace-transport script](T0086-workspace-transport-script.md) — a ZSH script (infra/scripts/) moving the full working environment workstation↔ops: git-state check + branch alignment (bundle for unpushed refs), memo scp, Claude project/scratch/.superpowers rsync, plus the audited gap list — ~/.claude config+plugins, ~/.claude.json MCP servers, out-of-repo auth verify-present, data/ regen steps, quiet-point discipline (ripe when: NOW — fully specified; a small standalone change, or at latest before the next machine switch).
+
+- [T0087 — mint-failed rows land in no summary bucket](T0087-mint-failed-rows-land-in-no-summary-bucket.md) — the sibling T0078's fix did not cover: an hour whose MINT fails `continue`s past the `recovered` accumulator, so rows that were successfully fetched are counted in no bucket. Weaker than T0078 — D9 always trips (`unaccounted=N` with `errors>=1`), so no run reads clean; the number is visible only inside the violation message. Carries one design question: the counter should NOT join D9's residual arithmetic, or a genuine post-mint gap would stop tripping the invariant (ripe when: NOW as a small change, but decide the D9 question first — take it with the next cli/trades touch or when a mint failure is observed).
 
 ### Partially done<a name="partially-done"></a>
 
@@ -50,20 +50,36 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 ### Resolved<a name="resolved"></a>
 
 - [T0002 — universe liquidity-floor calibration & quote-currency volume](archive/T0002-universe-liquidity-floor-calibration.md) — resolved in iter-007: EUR floor lowered €1M→€150k (footprint-based) + `quote_volume_in_eur` FX-normalizes the BTC-quoted legs → the full 12-name basket, `escalate=False`; findings recorded in master-plan §3.
+
 - [T0001 — full-history OHLCVT backfill](archive/T0001-ohlcvt-full-history-backfill.md) — resolved in iter-008: built `cli/backfill/` (1-minute dumps → canonical 1h/4h/1d, base-authoritative merge); the full-history dataset (12 pairs, BTC 2013→2026) reconstructs OHLC bit-identical to the v0 REST (100% match).
+
 - [T0006 — harness numeric-param type guards](archive/T0006-validation-numeric-param-type-guards.md) — resolved in iter-021: `isinstance(int|float)` guards on `cli/validation/` float params → `ValidationError` (not `TypeError`) on a non-numeric type; closed per defined scope (dsr `n_trials`/`n_obs` deliberately isfinite-only).
+
 - [T0004 — full tick history + tick-derived bar reconciliation](archive/T0004-tick-history-reconciliation.md) — resolved in iter-044 (human-confirmed exit-bar): `cli/tick/` reconciles the full universe + full history at 100% coverage, 99.4–100% within 1% (the early-illiquid residual accepted), plus the true tick-weighted VWAP; 15m/tick-storage folded into the Bucket-B queue.
+
 - [T0007 — dynamic-composition inverse-vol basket (full-history B2 variant)](archive/T0007-dynamic-composition-basket.md) — resolved in iter-044: built the look-ahead-free `dynamic_inverse_vol_basket` (2→10 majors over the full 2013→2026 union calendar) and answered finding-1 — the full-history basket is statistically indistinguishable from single-asset BTC (Sharpe ~1.1 both), so the fixed-window "basket loses" was a window artifact; a co-equal viable base for A1.
+
 - [T0010 — full-history dynamic benchmark B3/B4](archive/T0010-dynamic-benchmark-b3-b4.md) — resolved in iter-055: self-gated dynamic B3/B4 built with full QA; B3+vt point-beats gated-B1 net-of-cost (1.245/1.278 vs 1.047/1.074, n.s., higher drawdown) → the deployable-bar choice escalated to T0009; the Phase-3 basket-cost carry-forward reconciled.
+
 - [T0013 — trial-registry variant field](archive/T0013-registry-variant-field.md) — resolved in iter-056: schema_version 3 adds an optional first-class `variant` (hash-covered, omit-when-None); v2+v3 files co-load with the chain intact; budget counter untouched; adversarial review APPROVED (forge/torn-tail/concurrency probes).
+
 - [T0015 — registry per-schema-version key-set validation](archive/T0015-registry-key-set-validation.md) — resolved in iter-062: exact key-set per schema version (15 base keys, v3 ± `variant`); surplus or missing key = corruption; the chain-consistent "variannt" forge now fails on this check alone; adversarial review PASS.
+
 - [T0009 — Phase-4/5 validation-protocol decisions](archive/T0009-validation-protocol-decisions.md) — resolved in iter-072 (attended review, 2026-07-09): all six legs decided — benchmark-relative + stub-excluded worst-slice, k≥230 decisive window, net-of-cost SPA, DSR 0.95, A1-lf weekly v0.12 admitted (trial 34), A-family resumption; folded into `a1_kill_bar`.
+
 - [T0017 — holdout window ratification](archive/T0017-holdout-window-ratification.md) — resolved in iter-073 (attended): window ratified (out-of-time 2026-04-01 → freeze), the look executed same night (degenerate gate-off window, reading **EQUALS**), ledger created, budget → 0.
+
 - [T0011 — A2 refinements](archive/T0011-a2-refinements.md) — resolved in iter-080: the 2026 probe, the 4h arms (three adopts), the cadence sweep (family closed 40/40), and finally the cross-frequency P1 trial — **trial 43 ADOPT** (governed 1.5366, all ratified legs) — the combination supersedes record 33 as the deployable candidate (Phase-6 scope → T0018).
+
 - [T0019 — P1 fixed-weight combination variant](archive/T0019-p1-fixed-weight-variant.md) — resolved in iter-081 (same session): the pre-registered fixed-⅓ trial — **trial 44 ADOPT** (1.5609, SPA grid max p 0.0060, all legs) — supersedes trial 43 as the deployable candidate and deletes the adaptive-weight mechanism from the Phase-6 engine's scope.
+
 - [T0012 — 15m bars + tick storage for Bucket-B](archive/T0012-15m-tick-storage-bucket-b.md) — resolved in iter-085: `data/ohlc-15m/` built from the 1m dumps via `cli/backfill` (basket 0fed24a6…), tick-reconciled bit-exact + count-proven seam; tick catalog explicitly dropped (re-opens under C2/C1).
+
 - [T0063 — deployable docs name the superseded record 33, not trial 44](archive/T0063-deployable-docs-name-superseded-record-33.md) — resolved 2026-07-19: dated inline supersession pointers at every stale site (Phase-5 closeout ×2, spec 00039 ×2, the runbook body's `ba47e37e` pin) plus a one-lookup "Current deployable" line atop the runbook (record 44 · `build_crossfreq_system_fast` · `dataset_hash 45275ebe`); historical narratives marked in place, never rewritten — the registry stays the source of truth.
+
 - [T0066 — the panel's monotone watermark can permanently capture an un-healed hour](archive/T0066-panel-remint-race-monotone-watermark.md) — resolved 2026-07-19: `cli/panel/materialize.py` gained an explicit book-settle watermark (option a) — an hour is deferred until `now - hour >= 7h` (the reconciler's H+6h max mint + a pull buffer), counting it `hours_unsettled` and holding the monotone watermark off the un-healed primary (`--settle-hours`; spec 00052 D6 corrected in place). One-time ops-side audit found **0** existing un-healed panel hours (all 10 drill mints were healed-derived by a ~10-min margin); the trade-bar materializer's settle-binding moved to T0065's reach round.
+
+- [T0078 — the trade-backfill run summary omits fetch failures](archive/T0078-trade-backfill-summary-omits-fetch-failures.md) — **resolved 2026-07-21** (commit `8a7a436` + review fixes): a run-level `trades_fetch_failed` bucket now totals the ids in gaps whose fetch raised, threaded into BOTH summary sites (the logger line and the CLI's own echo — the topic named only the first), with README's "every outcome bucket" guarantee corrected in the same change. Both pins mutation-verified; the review caught that the logger site itself was initially unpinned. A second residual of the same class — rows fetched for an hour whose MINT fails — was split out as T0087 rather than absorbed.
 
 ## Live trading preparation<a name="live-trading-preparation"></a>
 

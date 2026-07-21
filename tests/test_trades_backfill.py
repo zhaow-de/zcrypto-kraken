@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 
 import polars as pl
 import pytest
@@ -277,7 +278,7 @@ def test_cross_hour_duplicate_is_reported_not_silently_collapsed(tmp_path):
     assert res.hours_minted == 0  # neither hour alone has an intra-hour duplicate to collapse
 
 
-def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path):
+def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path, caplog):
     """T0078: a gap whose fetch RAISES must surface its missing ids in the run-level
     `trades_fetch_failed` bucket — before this, they landed in no printed bucket at all
     (the per-gap `continue` skipped even the unrecoverable accounting), so README's
@@ -289,9 +290,16 @@ def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path):
     def boom(*a, **k):
         raise TradeBackfillError("kraken down")
 
-    res = backfill(primary, overlay, now=NOW, fetch=boom)
+    with caplog.at_level(logging.INFO, logger="zcrypto.trades.backfill"):
+        res = backfill(primary, overlay, now=NOW, fetch=boom)
     assert res.trades_missing == 4  # the detector FOUND them
     assert res.trades_fetch_failed == 4  # ...and the failure is totalled, not dropped
     assert res.trades_recovered == 0
     assert res.trades_unrecoverable == 0  # no double-count: fetch never answered
     assert len(res.errors) == 1
+    # The RESULT carrying the bucket is not enough: T0078's acceptance criterion is the printed
+    # summary, and there are two printers. This pins the logger line; the CLI's own typer.echo is
+    # pinned separately in test_trades_command.py. Caught at review — without this, deleting
+    # `fetch_failed=%d` from the format string left all 20 tests green.
+    summary = next(r.message for r in caplog.records if "trade backfill complete" in r.message)
+    assert "fetch_failed=4" in summary
