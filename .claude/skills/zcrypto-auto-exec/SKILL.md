@@ -24,6 +24,8 @@ Two goals, by work type:
 
 **The queue item's `Who:` field is a hint; the boundary governs per sub-item.** An item marked `me` can still contain an attended sub-step — decompose, do the reversible parts, park exactly the attended step. Run an autonomous sub-item now iff it **feeds** the parked human decision or is **independent** of it — never if it **waits on** the decision.
 
+**The landing rule — never a PR for a component the loop cannot complete.** The open-and-merge license covers only items the loop completes; a component includes its attended tail (an alert rule not pushed is not delivered). Prep for a parked attended step lands as a committed, reviewed, **pushed branch with no PR**, registered durably — the branch named in the topic file and in the memo item's `DependsOn:`, stating it EXISTS — and the attended session finishes the component on that branch and opens the single PR. Prep may be its own PR only when it passes the PR gate as a complete component **without mentioning the attended remainder** — then it is ordinary decomposition, not fragmentation.
+
 ## The Iron Rule
 
 **Never stop to ask, never wait, never defer a reversible choice to the human.** On any reversible fork: 2–3 options with tradeoffs → pick the most beneficial → log it if it is a subject-matter research decision (`.claude/rules/decisions-log.md`) → continue. The loop ends exactly two ways: the **time-gate** (default 08:00 Berlin; the invocation may override), or a **genuinely unrecoverable blocker** (stop-note at the end of the active decisions log). Everything else — empty queue (manufacture work), failed iteration (record the verdict), mid-execution error (fix it), reversible ambiguity (decide it), an irreversible step inside an idea (park that step) — continues. Approval gates are pre-satisfied by the invocation: brainstorming's HARD-GATE → recorded decisions + spec self-review; the PR → **merge it yourself** via `merge-pr` when green.
@@ -35,7 +37,7 @@ Two goals, by work type:
 3. **Execute the item by draining its T-topic's sub-items** (decomposition rule above). Ceremony scales per `.claude/rules/spec-plan-locations.md`: substantive → full spec/plan/SDD flow; trivial → branch + TDD + mandatory review, no committed spec. Research-type items follow the full §12 iteration flow. All repo conventions hold — every commit reviewed, PRs into `develop`, merged via `merge-pr` when green.
 4. **Bookkeep through the protocol's ad-hoc procedures** (the launch is the human trigger that sanctions them; the human-gated operations — `NEW IDEAS` dispositions, the `DONE ITEMS` purge, milestone re-grooming — attach to the operations themselves and stay with the user). The dispatch map, definitions in the protocol:
    - **Topic resolved** → `resolved` + archived per `.claude/rules/open-topics.md` → the *done* procedure moves the queue item to `DONE ITEMS` with citations. **Re-read the memo, pick the next item.**
-   - **Topic partially resolved** → `partial` per `open-topics.md` → the *partially done* procedure: append the short cited, timestamped note — and when the shape changed, also update the item's **subject / Size / DependsOn** to describe only the remainder and **re-order the list** so it stays a dependency-true sequence.
+   - **Topic partially resolved** → `partial` per `open-topics.md` → the *partially done* procedure: append the short cited, timestamped note — and when the shape changed, also update the item's **subject / Size / DependsOn** to describe only the remainder and **re-order the list** so it stays a dependency-true sequence. When the remainder is the attended tail, the landing rule applies: the branch stays PR-less and its name goes into `DependsOn:`.
    - **New topic surfaced mid-execution** → register it per `open-topics.md` (file + index, serials checked across `archive/` and branches) **and** insert it into the queue at its dependency- and priority-correct position via the *insert* procedure. A registered-but-unqueued topic is invisible at pick time.
 5. **Closeout per item**: decisions-log routing for subject-matter decisions; the deferral sweep — every "later / follow-up / once X" exits as a topic with `ripe_when:`, or an explicit drop. Prose is not registration.
 6. **Time-gate** → next item, or stop with the summary: what landed, what parked and why, the queue as reshaped.
@@ -59,7 +61,7 @@ The project's worst conclusions were measurement bugs producing plausible number
 ## Constraints
 
 - **The memo protocol is narrow by design**: the loop picks from the top, applies grooming's ad-hoc procedures, and touches nothing else — it **never drains `NEW IDEAS`** (dispositions are joint) and **never purges `DONE ITEMS`** (the purge gate is the human's deletion license).
-- **Merge settled findings, not drafts**: run the first-order robustness check on the same branch; keep commits local through the iteration; push once at PR-open. Doc-only micro-fixes ride the next substantive PR.
+- **Merge settled findings, not drafts**: run the first-order robustness check on the same branch; keep commits local through the iteration; push once, at PR-open — or at the landing-rule handoff for a parked attended tail. Doc-only micro-fixes ride the next substantive PR.
 - **Registered deferrals only** — reports, PR bodies, and docstrings are write-only at pick time.
 - **Phase close-out**: sweep the open topics first — a current-phase topic gets a **dedicated iteration** before the phase closes; future-phase topics stay parked — and grep the phase's reports + history entries for unregistered deferral language, registering or explicitly dropping each hit. **Never cross a phase boundary without the close-out report.**
 - **No spending; upstream issues are drafted, never filed; canonical data immutable; slow tasks run in background** (harness-tracked completions re-invoke you — never a watcher shell).
@@ -70,6 +72,7 @@ The project's worst conclusions were measurement bugs producing plausible number
 |---|---|
 | Ask / wait on a reversible choice | Decide → log → continue. The logs are the human's involvement. |
 | "`Who: me` on the item, so its attended sub-step is fine too" | The boundary governs per sub-item. Park the attended step, do the rest. |
+| Merge the autonomous half of an attended item ("the rules are green; park just the push") | The component includes its deploy tail. Land it branch-ready with no PR; the attended session opens the one PR. |
 | Drain NEW IDEAS or purge DONE ITEMS "while I'm in the memo anyway" | Human-only gates. The loop's memo surface is exactly the ad-hoc procedures. |
 | Resolve the topic, move on without the grooming bookkeeping | The item isn't done until the queue reflects it and the memo was re-read. |
 | Edit the memo via a shell heredoc | Bypasses the read-guard. Edit/Write tools only. |
