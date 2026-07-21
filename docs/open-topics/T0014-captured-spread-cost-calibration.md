@@ -25,6 +25,8 @@ Phase-4/5 verdicts currently charge Tier-1 maker fees + margin carry but assume 
 
 ## Suggested next steps
 
+- **Read `docs/reference/capture-era-data-hygiene-map.md` FIRST** (T0071, built 2026-07-21). Its verdict: **read the full capture window** (from 2026-07-08 13:00) for both the spread and depth legs — the old "post-07-13 only (~9 days)" fallback is superseded; the desync-era archive was never contaminated (in-memory bug only; the panel replays through the fixed book). Honor the two standing caveats: completeness questions go to `continuity.py` / the panel's gap accounting, **never manifests** (T0036 truncation is hash-invisible); and if depth-beyond-rank-10 values are load-bearing, state the protocol-congruence caveat once (those ranks are venue-unverified in every era).
 - From the synced captures: per-pair median/percentile top-of-book spread (and depth at our footprint), per session-time bucket.
 - Add the spread term + a combined spot+margin+spread cost helper to `cli/costs/` (TDD).
 - Robustness re-analysis (no new trials): re-read the A-family net-of-cost head-to-heads with spread included — does any conclusion move?
+- **(optional falsification probe, cheap — run alongside the calibration if desired)** The map predicts **no** discontinuity in a depth-sensitive metric (`fill_bps` at a size whose fill walk passes rank 10) across matched clock-hours straddling 2026-07-14 04:00 UTC; finding one would contradict the map's soundness conclusion and reopen T0071.
