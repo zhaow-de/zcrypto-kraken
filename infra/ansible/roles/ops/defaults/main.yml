@@ -51,6 +51,11 @@ ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 ops_verify_replay_healthcheck_url: ""
 ops_verified_replay_healthcheck_url: ""
 
+# T0083 mutual watchdog: the zcrypto-grafana-watchdog check's ping URL (vaulted per host) and the
+# Grafana health endpoint the pinger probes. Empty URL skips the ping, same semantics as above.
+ops_grafana_watchdog_healthcheck_url: ""
+ops_grafana_watchdog_probe_url: "https://zcrypto2026.grafana.net/api/health"
+
 # The liquidations poller's dead-man ping URL (LIQUIDATIONS_HEALTHCHECK_URL in the rendered
 # compose). Empty means the recorder simply skips liveness pings, same as the capture daemon.
 ops_liquidations_healthcheck_url: ""

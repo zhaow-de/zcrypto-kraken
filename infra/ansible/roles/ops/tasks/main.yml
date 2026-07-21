@@ -279,6 +279,39 @@
         enabled: true
         state: started
 
+# --- T0083: the Grafana-availability pinger gating the zcrypto-grafana-watchdog dead-man --------
+# No image digest needed (the runner is curl-only), so this block is unconditional: the script and
+# its units install on every converge. The check itself tolerates a missing pinger by staleness
+# (that IS the dead-man), but a timer without its runner script would fail every slot — install
+# script before units, same discipline as the archive-pull block above.
+- name: install the grafana-watchdog pinger (T0083 mutual watchdog, hc.io half)
+  block:
+    - name: install the grafana-watchdog runner script
+      ansible.builtin.template:
+        src: grafana-watchdog.sh.j2
+        dest: /usr/local/sbin/zcrypto-grafana-watchdog
+        owner: root
+        group: root
+        mode: "0755"
+      no_log: true
+      diff: false
+
+    - name: render the grafana-watchdog systemd service + timer
+      ansible.builtin.template:
+        src: "grafana-watchdog.{{ item }}.j2"
+        dest: "/etc/systemd/system/zcrypto-grafana-watchdog.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+
+    - name: enable + start the grafana-watchdog timer
+      ansible.builtin.systemd_service:
+        name: zcrypto-grafana-watchdog.timer
+        daemon_reload: true
+        enabled: true
+        state: started
+
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
 # continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
 # only when the pinned image digest is supplied (-e ops_image_digest=sha256:<...>): a converge
