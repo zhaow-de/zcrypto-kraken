@@ -104,30 +104,27 @@
     mode: "0750"
   when: inventory_hostname in groups['capture_host']  # capture-only, same reason as the user above
 
-- name: single folder for the rotated capture console logs
+# T0089: the `/var/log/zcrypto-capture` directory task that stood here existed solely as the
+# removed policy's `olddir` and had no other consumer, so it goes with it. The archives already
+# written there are deliberately left in place (spec 00043: historical data; cleaning them, if
+# ever, is an attended call) — `state: directory` only ensured existence, so dropping the task
+# touches nothing on disk.
+#
+# T0089: this used to install a daily `copytruncate` logrotate policy over
+# /var/lib/docker/containers/*/*-json.log. `copytruncate` truncates a file dockerd holds open,
+# which leaves its json-file reader unable to serve that container's logs -- the container then
+# ships nothing to Loki and `docker logs` hangs. Measured 2026-07-21: six long-lived containers
+# wedged across all three base-role hosts. Docker already rotates these itself, by RENAME, which
+# readers follow safely, and every long-lived container sets its own caps (50m/5 capture + engine,
+# 10m/3 the Alloys and the liquidations poller; 50m/3 daemon-wide for anything else) -- so the
+# policy was redundant as well as harmful. Spec 00043 §Logs called for exactly this removal and
+# named this exact risk; it never landed because it was assigned to an `obs` role that was never
+# built. Never logrotate a live docker json log.
+#
+# `state: absent` rather than a plain deletion: the file persists on every host that already has
+# it, and a deleted task would leave it there rotating forever. Drop this task once every host has
+# converged past it (check: /etc/logrotate.d/zcrypto-capture-docker absent fleet-wide).
+- name: remove the docker json-log logrotate policy (T0089 — copytruncate wedges dockerd's readers)
   ansible.builtin.file:
-    path: /var/log/zcrypto-capture
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: logrotate policy for the docker container console log (json-file driver)
-  ansible.builtin.copy:
-    dest: /etc/logrotate.d/zcrypto-capture-docker
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      /var/lib/docker/containers/*/*-json.log {
-        daily
-        rotate 90
-        compress
-        delaycompress
-        copytruncate
-        missingok
-        notifempty
-        dateext
-        olddir /var/log/zcrypto-capture
-        createolddir 0755 root root
-      }
+    path: /etc/logrotate.d/zcrypto-capture-docker
+    state: absent
