@@ -32,6 +32,7 @@ The single source of truth for the memo's data model, tooling discipline, and me
 - **Queue item** (short lists — no grouping): a bold `T<NNNN> — subject` line, then **sub-bullets** — `Who: … — Size: S/M/L`, `Why: …`, `DependsOn: …` (prerequisites — items, T-topics, or a named trigger/date; "—" when free). Sub-bullets, not inline fields: the memo is read by human and AI alike, and scanning beats parsing.
 - **Long lists** (rule of thumb: ~8+ active items, or natural clusters): group into work packages — a level-4 header `#### WP<N>: <name>` with the same sub-bullet fields at package level, then its items, one T-topic each.
 - **The list IS the schedule**: ordered as the suggested execution sequence, the next work item always on top, and nothing above something it depends on.
+- **Milestones sequence like items.** A `###` milestone may carry one `DependsOn:` line directly under its heading (another milestone, or a named trigger/date); milestones appear in dependency-true order, and an item is eligible for pickup only when its own **and** its milestone's `DependsOn:` are satisfied.
 - An added item **condenses** its `docs/open-topics/README.md` entry, never pastes it: the subject keeps the index's title wording; `Why` compresses to the clauses that matter for this milestone; detail stays in the topic file, reachable through the `T<NNNN>` reference.
 
 ## How references resolve

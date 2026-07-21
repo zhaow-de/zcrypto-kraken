@@ -65,7 +65,7 @@ Per `###` milestone under `WORK-ITEMS QUEUE`, in order:
 1. **Ask the goal question — "what do we have to do to achieve this?"** The milestone's items plus their referenced T-topics are the **full picture**: all drained ⇒ milestone reached.
 2. **Completeness sweep.** Walk the open topics (`docs/open-topics/README.md`'s `### Open` / `### Partially done` subsections, every `ripe_when`): anything relevant to the milestone and not on its list is added — jointly. This is where follow-ups hiding inside already-purged done work resurface (e.g. a tool shipped and purged whose *at-the-gate run* is still open). An added item **condenses, never pastes** (rule + shape per the protocol § *Item shape and sequencing*). The sweep reads Open / Partially-done only — resolved topics stay done; if the user asks to queue one anyway, surface its resolved status first and confirm: the right shape is usually a NEW topic referencing the archived one, not a revival.
 3. **Formats per the protocol**: short list → per-topic sub-bullet entries; ~8+ active items → `#### WP<N>:` groups.
-4. Settle sizes, `DependsOn` edges, and the sequence jointly — the list is the schedule (protocol § *Item shape and sequencing*). `/zcrypto-auto-exec` updates these items during autonomous runs via the ad-hoc procedures above — expect and preserve its annotations.
+4. Settle sizes, `DependsOn` edges, and the sequence jointly — the list is the schedule, and milestones themselves order dependency-true with their own `DependsOn:` lines (protocol § *Item shape and sequencing*). `/zcrypto-auto-exec` updates these items during autonomous runs via the ad-hoc procedures above — expect and preserve its annotations.
 
 ### Close — full runs only
 
