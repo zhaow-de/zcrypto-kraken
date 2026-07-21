@@ -1,6 +1,6 @@
 ---
 name: zcrypto-grooming
-description: Drain and groom docs/memo.local.md together with the user — triage NEW IDEAS into agreed dispositions, reconcile WORK-ITEMS QUEUE against what actually merged, verify-and-purge DONE ITEMS, and size the milestone backlogs. Invoked manually — bare /zcrypto-grooming for the full three-step flow, or with an argument ("T0199 is done", "T0199 is partially done") for a single-item queue update. Never self-invoke.
+description: Drain and groom docs/memo.local.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T0199 is done", "T0199 is partially done", "T0199 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure. Never self-invoke.
 disable-model-invocation: true
 model: claude-fable-5
 allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)

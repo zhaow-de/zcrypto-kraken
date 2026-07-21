@@ -1,6 +1,6 @@
 ---
 name: merge-pr
-description: Use when a reviewed GitHub pull request is ready to merge and the local clone needs cleanup afterward — e.g. "merge PR #60 and clean up", landing an approved Claude-authored PR into develop. Merge-commit only (never squash or rebase); Dependabot PRs are handled by the dependabot skill instead. For gh/GitHub repos with a develop integration branch.
+description: Use when a reviewed pull request is ready to merge and the local clone needs cleanup afterward — e.g. "merge PR #60 and clean up". Merge-commit only (never squash or rebase); Dependabot PRs are handled by the dependabot skill instead.
 disable-model-invocation: false
 allowed-tools: Bash(git status:*), Bash(git checkout:*), Bash(git pull:*), Bash(git branch:*), Bash(git ls-remote:*), Bash(git push:*), Bash(git fetch:*), Bash(gh pr:*), Bash(python3:*)
 ---

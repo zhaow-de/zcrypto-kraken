@@ -1,6 +1,6 @@
 ---
 name: zcrypto-auto-exec
-description: Use when the user asks to run the unattended / autonomous execution loop (e.g. invokes /zcrypto-auto-exec, "run autonomously while I'm away", "work the queue overnight") — the standing procedure for autonomously executing ANY open work item from the memo's WORK-ITEMS QUEUE and the open T-topics, research and non-research alike, with zero human interaction; irreversible, attended, and high-stakes steps park. Renamed from research-loop 2026-07-21 — historical docs keep the old name.
+description: Use when the user asks to run the unattended autonomous execution loop — /zcrypto-auto-exec, "run autonomously while I'm away", "work the queue overnight". Executes open work items from the memo's WORK-ITEMS QUEUE and the open T-topics with zero human interaction; irreversible, attended, and high-stakes steps park.
 disable-model-invocation: true
 ---
 
