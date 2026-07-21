@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: ripe NOW — it is a single alert rule, and the gap is live on all four hosts today. Take it with the next alerts.yaml change rather than on its own, since pushing alert rules is an attended step (vaulted `GRAFANA_SA_TOKEN`)
+status: partial
+ripe_when: the attended alerts.yaml push window (vaulted `GRAFANA_SA_TOKEN`) — the rules are authored, reviewed, and branch-ready on `feat/t0079-alloy-dark-rules`; T0083 rides the same window
 ---
 
 # Nothing alerts on an Alloy that has stopped shipping entirely
@@ -30,12 +30,16 @@ This also interacts with [[T0048]]: three separate defects there are remediated 
 - The two exporter-stale rules use `time() - <last_success_timestamp> > threshold` with `noDataState: Alerting`, so they *do* fire when their own series vanishes — which is why a dead Alloy is partially covered today, and why this is a gap rather than a hole.
 - `zcrypto-alloy-docker-sd-wedged` (added 2026-07-20) explicitly does **not** own this case, and says so inline, to avoid double-paging and to keep its own semantics clean.
 
+## Done so far
+
+Authored 2026-07-21 by /zcrypto-auto-exec on branch `feat/t0079-alloy-dark-rules` — **branch-ready, deliberately NOT PR'd**: the component includes its push tail, so the single PR opens after the attended push (the loop's landing rule). What landed on the branch:
+
+- Four per-host rules `zcrypto-alloy-dark-{nas,ops,capture-primary,capture-secondary}` in group `zcrypto-fleet` (`infra/grafana/alerts.yaml`). Shape: `count(up{host=...}) or on() vector(0)` below 1, instant, `for: 10m`, `noDataState/execErrState: Alerting` — the repo's fires-on-silence dead-man idiom rather than a bare `absent()`, which would need `noDataState: OK` and could park green. `count()` not `sum()`: presence of the series is the "shipping" signal; `up`'s value 0 is still shipped telemetry.
+- The per-host selector question resolved from repo state alone: ops = `host="ops"`, capture = `host="zcrypto"` / `host="zcrypto-red"` (each sets `external_labels`), the NAS = **`{host=""}`** — the empty-value "label absent" matcher, because the NAS deliberately ships no host label (adding one changes series identity under the reconciler's `increase()` → false permanent-loss page risk); same idiom `NAS · load high` already uses.
+- Severity: uniform `critical`/`metrics` for all four — the responder's action is identical on every host; what differs is only what accumulates unseen, which each summary states. (Reversible call made by the loop; overrule at the push if wanted.)
+- The T0048-incident check: these rules would **not** have fired 2026-07-15/16 (Alloy alive, only discovery wedged — `up` kept shipping); the SD-wedged rule owns that case. Stated in the block comment.
+- The keep-list pin: `up` added to the capture required-list in `tests/test_infra_alloy_series.py` (NAS/ops already pinned it); mutation-verified — deleting `up` from the capture keep-regex fails the test.
+
 ## Suggested next steps
 
-- **(Autonomous, one rule — but the design choice is the whole task)** Add a rule that fires when a host stops shipping. The two shapes, and the tradeoff:
-  - `up == 0` — fires when the scrape target is reachable but failing. Does **not** fire when the series disappears entirely, which is the common case for a dead agent, so on its own it is close to useless here.
-  - `absent(up{...})` per host, or a `time() - timestamp(...)`-style staleness check — fires on disappearance, which is what is wanted. Needs a per-host instantiation (or a rule per host label) because `absent()` over a multi-host selector goes quiet as long as *any* host reports.
-  The second is right; the work is choosing the per-host selector and confirming the label set Grafana Cloud actually receives, since the hosts' `instance`/`job` labels are set by the remote_write pipeline rather than by us.
-- **(Decide with it)** Severity and routing. The exporter-stale precedents are `critical`/`metrics`. A dead capture-host Alloy is arguably more serious than a dead ops one — the capture hosts hold unbackfillable data and the primary holds the live trade key — so a single severity for all four may be wrong.
-- **(Check while implementing)** Whether this rule would have fired during the 2026-07-15/16 [[T0048]] incident. It would **not** have — Alloy was alive and shipping, only its docker discovery was wedged — which is a useful reminder that this rule and `zcrypto-alloy-docker-sd-wedged` cover genuinely different failures and neither subsumes the other.
-- **(Cheap, do it in the same change)** `tests/test_infra_alert_rules.py` holds generic structural checks rather than per-rule pins, so the new rule is covered by those automatically; what needs an explicit pin is `up` staying in all three keep-lists, via `tests/test_infra_alloy_series.py` — a keep-list edit dropping `up` would silently disarm this rule, the same failure shape [[T0048]]'s mitigation had to guard against.
+- **(Attended — the remainder)** In the alerts.yaml push window: review the four rules (severity overrule is cheap here), run `grafana-push.sh`, verify in Grafana Cloud that all four evaluate OK against live data (especially the NAS `{host=""}` selector resolving to exactly the NAS series), then flip this topic `resolved` + archive on the same branch and open the single PR. [[T0083]] rides the same window.
