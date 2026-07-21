@@ -17,8 +17,8 @@ An Alloy bump is a four-host deploy on infrastructure carrying unbackfillable ca
 
 ## Findings so far
 
-- All four deployments are digest-pinned via Ansible-rendered `.env` files (`nas_alloy_image` in `infra/ansible/host_vars/nas/vars.yml`; ops/capture role equivalents).
-- Only the NAS role automates restart-after-recreate; ops and the capture hosts are render-only, so the skill must bake the post-recreate restart in ([[T0048]] residual — building this skill discharges it).
+- Pinning differs by host, and the skill must handle both shapes: the **NAS** pin is repo-resident (`nas_alloy_image` in `infra/ansible/host_vars/nas/vars.yml`, rendered into `.env`); **ops and both capture hosts** run bare `grafana/alloy` images whose digests arrive as per-converge extra-vars with **no repo-recorded default** — so on those hosts the skill's first job is to ADD a repo-resident pin (or durably record the digest it deploys), else the next bump has nothing to compare against. *(Corrected 2026-07-21 at the whole-branch review — the original bullet claimed all four were `.env`-pinned with role equivalents, false for three of four hosts.)*
+- Only the NAS role automates restart-after-recreate; ops and the capture hosts are render-only, so the skill must bake the post-recreate restart in. This discharges [[T0048]]'s residual for **Alloy's own recreations only** — the render-only-host residual for app-container recreations remains its own item.
 - Canary order for a telemetry-only change: NAS/ops first, then capture secondary, then capture primary.
 
 ## Suggested next steps
