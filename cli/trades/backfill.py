@@ -48,6 +48,7 @@ class BackfillResult:
     trades_recovered: int
     trades_unrecoverable: int
     trades_deferred: int
+    trades_fetch_failed: int  # ids in gaps whose fetch itself raised (T0078) -- totalled, never dropped
     duplicates_collapsed: int
     duplicates_cross_hour: int
     hours_minted: int
@@ -110,7 +111,7 @@ def backfill(
             continue
         hours[p].append((hour, path))
 
-    gaps_found = recovered = unrecoverable = deferred = 0
+    gaps_found = recovered = unrecoverable = deferred = fetch_failed = 0
     duplicates_collapsed = duplicates_cross_hour = minted = 0
     trades_missing = duplicate_rows_found = 0
     errors: list[tuple[str, str]] = []
@@ -165,6 +166,7 @@ def backfill(
             pair_unrecoverable += g.missing - inside.height  # never fabricated: absent ids stay absent
             got = pl.concat([got, inside]) if got.height else inside
         unrecoverable += pair_unrecoverable
+        fetch_failed += pair_fetch_error_missing
 
         # Group recovered rows by hour, INCLUDING hours with no existing canonical file at all —
         # a wholly-missing hour is exactly a capture outage's primary scenario, and its rows must
@@ -238,7 +240,7 @@ def backfill(
 
     logger.info(
         "trade backfill complete pairs=%d gaps=%d trades_missing=%d duplicate_rows_found=%d "
-        "recovered=%d unrecoverable=%d deferred=%d "
+        "recovered=%d unrecoverable=%d deferred=%d fetch_failed=%d "
         "duplicates_collapsed=%d duplicates_cross_hour=%d hours_minted=%d errors=%d",
         len(hours),
         gaps_found,
@@ -247,6 +249,7 @@ def backfill(
         recovered,
         unrecoverable,
         deferred,
+        fetch_failed,
         duplicates_collapsed,
         duplicates_cross_hour,
         minted,
@@ -260,6 +263,7 @@ def backfill(
         recovered,
         unrecoverable,
         deferred,
+        fetch_failed,
         duplicates_collapsed,
         duplicates_cross_hour,
         minted,

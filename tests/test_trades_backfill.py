@@ -275,3 +275,23 @@ def test_cross_hour_duplicate_is_reported_not_silently_collapsed(tmp_path):
     assert res.duplicates_collapsed == 0  # union_trades never even saw a per-hour duplicate
     assert res.duplicates_cross_hour == 1
     assert res.hours_minted == 0  # neither hour alone has an intra-hour duplicate to collapse
+
+
+def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path):
+    """T0078: a gap whose fetch RAISES must surface its missing ids in the run-level
+    `trades_fetch_failed` bucket — before this, they landed in no printed bucket at all
+    (the per-gap `continue` skipped even the unrecoverable accounting), so README's
+    "a run can never read as clean by omitting one" was false for exactly this class.
+    The ids must appear in fetch_failed ONLY — not double-counted into unrecoverable."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 16])  # ids 12..15 missing -> 4 ids in one gap
+
+    def boom(*a, **k):
+        raise TradeBackfillError("kraken down")
+
+    res = backfill(primary, overlay, now=NOW, fetch=boom)
+    assert res.trades_missing == 4  # the detector FOUND them
+    assert res.trades_fetch_failed == 4  # ...and the failure is totalled, not dropped
+    assert res.trades_recovered == 0
+    assert res.trades_unrecoverable == 0  # no double-count: fetch never answered
+    assert len(res.errors) == 1

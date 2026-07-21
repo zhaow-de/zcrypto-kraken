@@ -79,6 +79,7 @@ def test_clean_sweep_echoes_every_counter_and_exits_zero(tmp_path):
     assert "recovered=0" in out
     assert "unrecoverable=0" in out
     assert "deferred=0" in out
+    assert "fetch_failed=0" in out  # T0078: the bucket exists even when empty
     assert "duplicates_collapsed=0" in out
     assert "duplicates_cross_hour=0" in out
     assert "hours_minted=0" in out

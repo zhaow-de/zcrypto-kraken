@@ -733,6 +733,7 @@ def backfill_trades(
         f"trades_missing={res.trades_missing} duplicate_rows_found={res.duplicate_rows_found} "
         f"recovered={res.trades_recovered} "
         f"unrecoverable={res.trades_unrecoverable} deferred={res.trades_deferred} "
+        f"fetch_failed={res.trades_fetch_failed} "
         f"duplicates_collapsed={res.duplicates_collapsed} duplicates_cross_hour={res.duplicates_cross_hour} "
         f"hours_minted={res.hours_minted} errors={len(res.errors)}"
     )
