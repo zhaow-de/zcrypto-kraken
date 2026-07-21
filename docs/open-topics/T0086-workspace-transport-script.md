@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: NOW — fully specified below; take as a small standalone change, or at latest before the next workstation↔ops switch
+status: partial
+ripe_when: the next real workstation↔ops switch — run `infra/scripts/workspace-transport.sh` for the first time and verify the continue-where-left-off outcome; that run closes this topic
 ---
 
 # `infra/scripts/` workspace-transport script — move the working environment between workstation and ops
@@ -30,6 +30,12 @@ What the spec above does **not** yet cover for a seamless continue:
 6. **Machine-local caches**: `.venv` → `uv sync` post-step; `~/.cache/pre-commit` regenerates (first gate run is slower).
 7. **Quiet-point discipline**: transfer only with no background agents/workflows mid-flight (running processes do not transfer; their on-disk task state does), and immediately before switching — `/tmp` does not survive a reboot, so the scratchpad copy is only as durable as the destination's uptime.
 
+## Done so far
+
+**Implemented 2026-07-21 (/zcrypto-auto-exec): `infra/scripts/workspace-transport.sh`** — the spec plus all seven gap items under the owner's rulings: both-repos-clean abort gate (uncommitted + stashes, both machines), `git bundle --branches` transport with destination detach→fetch→checkout alignment and a warn-never-delete report for destination-only branches (item 1); `~/.claude/` rsync'd whole minus machine-local runtime/caches — and minus `.credentials.json`, keeping auth material out of the transfer per the item-4 ruling — with the plugins set+versions included (item 2); `~/.claude.json` (item 3); memo scp; scratchpad + `.superpowers` rsync; printed `uv sync` / `data fetch` / `engine seed` post-steps, each verified to exist in the current CLI (items 5–6); the quiet-point + `/tmp`-durability discipline in the header (item 7). `zsh -n` clean. The exclude list was designed from the machine's actual `~/.claude/` layout — and the pre-push review still caught a nested hole the top-level inspection missed: an unanchored `cache/` exclude also matched `plugins/cache/`, the pinned plugin *payloads*, which would have shipped plugin metadata pointing at absent installs — item 2's exact failure. Excludes are now anchored to the top level; two more review catches (a detached-HEAD abort, a reboot-empty scratchpad guard) are in.
+
+**Deliberately not executed**: a real transfer `--delete`-overwrites the destination's session state, and only the owner knows which machine is currently newer — running it blind from the loop risked exactly the clobber this script exists to prevent.
+
 ## Suggested next steps
 
-- **(Autonomous)** Implement the script per the spec plus the gap items, with the owner's 2026-07-21 ruling applied — **rsync is enough** (the environments differ little in practice; switches happen several times a week): extend the rsync set with `~/.claude/` (minus cache dirs) and `~/.claude.json` (items 2–3), use a `git bundle` for unpushed refs (item 1), print the `data fetch` / `engine seed` / `uv sync` post-steps (items 5–6), and note the quiet-point/`/tmp` caveat (item 7) in the script's header. No verify-present machinery — item 4's auth material is already aligned on both machines.
+- **(First real switch — closes the topic)** Run `infra/scripts/workspace-transport.sh` on the source machine at a quiet point, follow the printed post-steps on the destination, and confirm the continue-where-left-off outcome (session resumes, memo intact, unpushed branches present, plugins aligned). Fix-forward anything the first run surfaces.
