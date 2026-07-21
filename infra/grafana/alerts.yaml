@@ -1598,3 +1598,210 @@ rules:
       severity: critical
     notification_settings:
       receiver: logs
+
+  # Fleet · Alloy dark (T0079) -- four rules, one per host, all `critical`.
+  # Uniform severity is deliberate: the responder's action is identical on every host (SSH, check the
+  # container, restart), so a differentiated severity would imply a differentiated response that does
+  # not exist. What differs is only what accumulates unseen meanwhile, which the per-host summary
+  # states. These own "not shipping"; `zcrypto-alloy-docker-sd-wedged` owns "shipping but wedged" and
+  # says so inline -- neither subsumes the other, and the T0048 incident (Alloy alive, discovery
+  # frozen) would have fired the SD rule, not these.
+
+  - uid: zcrypto-alloy-dark-nas
+    title: "Fleet · Alloy dark — NAS"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # `{host=""}` is deliberate and load-bearing -- do NOT "fix" it to `{host="nas"}`.
+          # ops and both capture hosts set `external_labels = { host = ... }` on their
+          # prometheus.remote_write; the NAS's config.alloy deliberately does not (adding a label to
+          # an already-live series changes its identity, which can read as a value jump under the
+          # reconciler's `increase()` rule -- i.e. a FALSE permanent-data-loss page). An empty-value
+          # matcher is documented PromQL for "label absent", so this selects the NAS's copy only --
+          # the same idiom `NAS · load high` already uses for the same reason.
+          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
+          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
+          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
+          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
+          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
+          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
+          # so it would need noDataState: OK and would then park green if the datasource itself went
+          # away.
+          expr: >-
+            count(up{host=""}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # 10m tolerates a deploy restart (Alloy is down for seconds, but the series can gap a minute or
+    # two) while still beating the ~3h the logs dead-man took to notice the 2026-07-15/16 T0048
+    # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
+    for: 10m
+    annotations:
+      summary: "The NAS's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the gate metrics the Stage-6a soak verdict is read from and the NAS archive-pull's log stream (the reconciler is unaffected: its series publish from ops since 2026-07-16). Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-alloy-dark-ops
+    title: "Fleet · Alloy dark — ops"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
+          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
+          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
+          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
+          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
+          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
+          # so it would need noDataState: OK and would then park green if the datasource itself went
+          # away.
+          expr: >-
+            count(up{host="ops"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # 10m tolerates a deploy restart (Alloy is down for seconds, but the series can gap a minute or
+    # two) while still beating the ~3h the logs dead-man took to notice the 2026-07-15/16 T0048
+    # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
+    for: 10m
+    annotations:
+      summary: "The ops node's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the panel/verify timer series, the liquidations poller signals, and the reconcile/trade-backfill exporter families — expect their exporter-stale rules to double-page alongside this one. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-alloy-dark-capture-primary
+    title: "Fleet · Alloy dark — capture primary (zcrypto)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
+          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
+          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
+          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
+          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
+          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
+          # so it would need noDataState: OK and would then park green if the datasource itself went
+          # away.
+          expr: >-
+            count(up{host="zcrypto"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # 10m tolerates a deploy restart (Alloy is down for seconds, but the series can gap a minute or
+    # two) while still beating the ~3h the logs dead-man took to notice the 2026-07-15/16 T0048
+    # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
+    for: 10m
+    annotations:
+      summary: "The capture PRIMARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the unbackfillable L2 capture signals on the host that also runs the engine and holds the live trade key. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-alloy-dark-capture-secondary
+    title: "Fleet · Alloy dark — capture secondary (zcrypto-red)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
+          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
+          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
+          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
+          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
+          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
+          # so it would need noDataState: OK and would then park green if the datasource itself went
+          # away.
+          expr: >-
+            count(up{host="zcrypto-red"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # 10m tolerates a deploy restart (Alloy is down for seconds, but the series can gap a minute or
+    # two) while still beating the ~3h the logs dead-man took to notice the 2026-07-15/16 T0048
+    # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
+    for: 10m
+    annotations:
+      summary: "The capture SECONDARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the redundant unbackfillable L2 capture signals. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics

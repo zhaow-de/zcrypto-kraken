@@ -27,6 +27,11 @@ _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
 # The disambiguator: a CLIMBING failures counter means a persistently erroring refresh, not a
 # hang -- identical symptom, different cause. Shipping it is what makes the two separable.
 _SD_FAILURES = "prometheus_sd_refresh_failures_total"
+# T0079: `up` is alert-bearing on EVERY host -- the four `Fleet · Alloy dark` rules fire on its
+# silence (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave
+# that host's rule permanently unable to fire while still provisioned: green-when-blind, the same
+# failure class the log-dead canaries exist to close. So it is pinned for all three configs, not
+# just the two that happened to list it already.
 
 NAS_REQUIRED = [
     _SD_SERIES,
@@ -85,9 +90,10 @@ def _keep_regex(path: Path) -> re.Pattern:
     [
         (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
         (OPS_ALLOY, OPS_REQUIRED),
-        # capture has no full required-list here (pre-existing gap), but it runs discovery.docker on
-        # both hosts and so is covered by the same alert -- pin the series that alert depends on.
-        (CAPTURE_ALLOY, [_SD_SERIES, _SD_FAILURES]),
+        # capture still has no FULL required-list (pre-existing gap), but every series an alert
+        # depends on is pinned: the SD pair for zcrypto-alloy-docker-sd-wedged, and `up` for the
+        # two Fleet · Alloy dark rules scoped to host="zcrypto" / host="zcrypto-red" (T0079).
+        (CAPTURE_ALLOY, [_SD_SERIES, _SD_FAILURES, "up"]),
     ],
     ids=["nas", "ops", "capture"],
 )
