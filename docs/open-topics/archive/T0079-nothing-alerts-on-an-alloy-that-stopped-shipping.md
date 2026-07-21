@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the attended alerts.yaml push window (vaulted `GRAFANA_SA_TOKEN`) — the rules are authored, reviewed, and branch-ready on `feat/t0079-alloy-dark-rules`; T0083 rides the same window
+status: resolved
 ---
 
 # Nothing alerts on an Alloy that has stopped shipping entirely
@@ -40,6 +39,6 @@ Authored 2026-07-21 by /zcrypto-auto-exec on branch `feat/t0079-alloy-dark-rules
 - The T0048-incident check: these rules would **not** have fired 2026-07-15/16 (Alloy alive, only discovery wedged — `up` kept shipping); the SD-wedged rule owns that case. Stated in the block comment.
 - The keep-list pin: `up` added to the capture required-list in `tests/test_infra_alloy_series.py` (NAS/ops already pinned it); mutation-verified — deleting `up` from the capture keep-regex fails the test.
 
-## Suggested next steps
+## Resolution (2026-07-21, attended push window)
 
-- **(Attended — the remainder)** In the alerts.yaml push window: review the four rules (severity overrule is cheap here), run `grafana-push.sh`, verify in Grafana Cloud that all four evaluate OK against live data (especially the NAS `{host=""}` selector resolving to exactly the NAS series), then flip this topic `resolved` + archive on the same branch and open the single PR. [[T0083]] rides the same window.
+**Pushed and live-verified.** `grafana-push.sh` ran with the vaulted SA token (dashboards + all rules upserted, the T0034 datasource read-back clean, no orphans); one evaluation cycle later all four rules read `state=inactive, health=ok` (eval 19:35:40Z). Normal state is itself the selector proof: a non-resolving selector — the NAS `{host=""}` above all — would go through the `or on() vector(0)` fallback into pending/firing, so four Normals mean every host's `up` resolves against live data. Severity stood as authored (uniform `critical`; the owner did not overrule at the push). The single PR from `feat/t0079-alloy-dark-rules` delivers the component whole: rules + keep-list pin + this resolution.
