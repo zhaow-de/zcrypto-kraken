@@ -43,10 +43,12 @@ prometheus.exporter.unix "host" {
 // discards process_* (00069 T7): that family moved to the keep-list below, admitted explicitly --
 // the same six names the app daemons' own endpoints publish elsewhere on the fleet (spec D4/D5),
 // widened uniformly to every host rather than trimmed per-job. Alloy's own `client_golang`
-// ProcessCollector was not re-verified against a live self-scrape at desk time and may publish a
-// different subset, so the keep-list admits the superset rather than risk silently dropping
-// whatever it does ship. This target's surviving contribution is therefore its own `up` plus
-// whichever of those six process_* names its self-scrape actually produces.
+// ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also publishes at least
+// `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate SUBSET FILTER on
+// Alloy's own self-scrape: all six Python names exist in client_golang too (no
+// admitted-but-unpublishable gap), and the extras it drops (e.g. `process_virtual_memory_max_bytes`)
+// are unwanted here. This target's surviving contribution is therefore its own `up` plus those six
+// process_* names, nothing more.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -78,13 +80,13 @@ prometheus.remote_write "grafana" {
     }
 
     // Series minimization is a design principle, not an afterthought (00043): drop Alloy's own
-    // self-metrics first (defense in depth -- nothing scraped above is Alloy's own /metrics
-    // endpoint, so this is normally a no-op), then keep-only the host/container/gate/process series
-    // this stack actually wants. Target: comfortably under 1k active series. This list is
-    // provisional -- confirm the actual active-series count at the NAS deploy shakedown and
-    // trim/extend here. The six ProcessCollector families (00069 T7) are Alloy's own -- no daemon
-    // runs on the NAS, so there is no app or logship series to admit here, unlike the capture/ops
-    // hosts.
+    // `go_*`/`alloy_*` self-metrics first -- this is NOT a no-op: `prometheus.exporter.self "alloy"`
+    // above feeds the `host` scrape, and this rule is what keeps its internals out of remote_write.
+    // Then keep-only the host/container/gate/process series this stack actually wants. Target:
+    // comfortably under 1k active series. This list is provisional -- confirm the actual
+    // active-series count at the NAS deploy shakedown and trim/extend here. The six ProcessCollector
+    // families (00069 T7) are Alloy's own -- no daemon runs on the NAS, so there is no app or
+    // logship series to admit here, unlike the capture/ops hosts.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"

@@ -128,7 +128,24 @@ OPS_REQUIRED = [
     *LOGSHIP_SERIES,
     *PROCESS_FAMILIES,
 ]
-CAPTURE_REQUIRED = ["up", *CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LOGSHIP_SERIES, *PROCESS_FAMILIES]
+# The capture host's own alert-bearing families (cold-review Important 2): `Capture · spool disk
+# low` (alerts.yaml:1442-1443) reads node_filesystem_avail_bytes/node_filesystem_size_bytes, and
+# `Capture · node load high` (alerts.yaml:1486-1488) reads node_load1/node_cpu_seconds_total --
+# all four already pass today's keep-regex, but the CAPTURE_REQUIRED list that used to carry only
+# `up` (with a comment admitting capture had no FULL required-list) read as authoritative once it
+# grew long, while these four alert-bearing names stayed unpinned. Pinned now so a future keep-list
+# edit that drops one fails here instead of silently disarming that alert.
+CAPTURE_REQUIRED = [
+    "up",
+    "node_load1",
+    "node_cpu_seconds_total",
+    "node_filesystem_avail_bytes",
+    "node_filesystem_size_bytes",
+    *CAPTURE_APP_SERIES,
+    *ENGINE_APP_SERIES,
+    *LOGSHIP_SERIES,
+    *PROCESS_FAMILIES,
+]
 
 
 def _keep_regex(path: Path) -> re.Pattern:
@@ -139,6 +156,18 @@ def _keep_regex(path: Path) -> re.Pattern:
     assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
     m = re.search(r'regex\s*=\s*"([^"]+)"', keeps[0])
     assert m, f"{path}: keep block has no regex"
+    # Prometheus relabel regexes are fully anchored.
+    return re.compile(r"\A(?:" + m.group(1) + r")\Z")
+
+
+def _drop_regex(path: Path) -> re.Pattern:
+    """Extract the `drop` write_relabel_config's regex from an Alloy config."""
+    text = path.read_text()
+    blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL)
+    drops = [b for b in blocks if "action" in b and '"drop"' in b]
+    assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
+    m = re.search(r'regex\s*=\s*"([^"]+)"', drops[0])
+    assert m, f"{path}: drop block has no regex"
     # Prometheus relabel regexes are fully anchored.
     return re.compile(r"\A(?:" + m.group(1) + r")\Z")
 
@@ -156,6 +185,27 @@ def test_keep_regex_admits_every_published_series(path, required):
     keep = _keep_regex(path)
     missing = [s for s in required if not keep.match(s)]
     assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
+
+
+@pytest.mark.parametrize(
+    ("path", "required"),
+    [
+        (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
+        (OPS_ALLOY, OPS_REQUIRED),
+        (CAPTURE_ALLOY, CAPTURE_REQUIRED),
+    ],
+    ids=["nas", "ops", "capture"],
+)
+def test_drop_regex_does_not_shadow_the_keep_list(path, required):
+    """The D4 mechanism this task exists to implement (00069 T6/T7): the drop rule used to discard
+    `process_.*` fleet-wide before the keep stage ever saw it. `test_keep_regex_admits_every_
+    published_series` above only checks the keep-regex in isolation, so reverting the drop rule to
+    re-admit `process_.*` (undoing D4 entirely) left that test -- and the whole suite -- green: the
+    keep-regex still matches `process_cpu_seconds_total` on its own, it just never gets the chance
+    to see it. This test runs both stages in order, the way remote_write actually does."""
+    drop = _drop_regex(path)
+    shadowed = [s for s in required if drop.match(s)]
+    assert not shadowed, f"{path}: the drop rule eats {shadowed} before the keep stage sees them"
 
 
 @pytest.mark.parametrize(

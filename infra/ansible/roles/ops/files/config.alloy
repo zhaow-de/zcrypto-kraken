@@ -104,10 +104,12 @@ prometheus.scrape "liquidations_app" {
 // keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
 // discards process_* (00069 T6): that family moved to the keep-list below, admitted explicitly
 // alongside the poller endpoint's own six process_* names (spec D4/D5) -- Alloy's own
-// `client_golang` ProcessCollector was not re-verified against a live self-scrape at desk time and
-// may publish a different subset, so the keep-list admits the superset rather than risk silently
-// dropping whatever it does ship. This target's surviving contribution is therefore its own `up`
-// plus whichever of those six process_* names its self-scrape actually produces.
+// `client_golang` ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also
+// publishes at least `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate
+// SUBSET FILTER on Alloy's own self-scrape: all six Python names exist in client_golang too (no
+// admitted-but-unpublishable gap), and the extras it drops (e.g.
+// `process_virtual_memory_max_bytes`) are unwanted here. This target's surviving contribution is
+// therefore its own `up` plus those six process_* names, nothing more.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -171,18 +173,20 @@ prometheus.remote_write "grafana" {
       password = sys.env("GRAFANA_PROM_PASSWORD")
     }
 
-    // Series minimization (00043): drop Alloy's own self-metrics first (defense in depth --
-    // nothing scraped above is Alloy's own /metrics endpoint, so this is normally a no-op), then
-    // keep-only the host + textfile + app series this stack actually wants. T0051 (spec 00054): a
-    // `keep` action drops everything it does not list, so a series missing here does not merely go
-    // undashboarded -- it does not exist. The reconcile/trade-backfill families
-    // (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*) do not exist on this host yet -- they arrive
-    // with Task 6's writer move -- but are listed NOW so that move does not also require reopening
-    // this file. tests/test_infra_alloy_series.py pins this list against every series the stack
-    // (present + Task 6's future) actually publishes. The liquidations poller's own series, the
-    // logship-handler series it shares with every other daemon on the fleet, and the six
-    // ProcessCollector families (both the poller's own and, per the `exporter.self "alloy"`
-    // comment above, whatever subset of them Alloy itself ships) arrive with 00069 T6.
+    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics first -- this is
+    // NOT a no-op: `prometheus.exporter.self "alloy"` above feeds the `host` scrape, and this rule
+    // is what keeps its internals out of remote_write. Then keep-only the host + textfile + app
+    // series this stack actually wants. T0051 (spec 00054): a `keep` action drops everything it
+    // does not list, so a series missing here does not merely go undashboarded -- it does not
+    // exist. The reconcile/trade-backfill families (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*)
+    // DO publish here since 00054's cutover -- this paragraph used to frame them as "Task 6's
+    // future"; that move landed: the overlay writer moved to this host at spec 00054 D2, and the
+    // NAS's stale copy of those families was deleted at the 2026-07-16 cutover. OPS_REQUIRED in
+    // tests/test_infra_alloy_series.py pins both families as required-published, not merely
+    // admitted. The liquidations poller's own series, the logship-handler series it shares with
+    // every other daemon on the fleet, and the six ProcessCollector families (both the poller's own
+    // and, per the `exporter.self "alloy"` comment above, Alloy's own self-scrape too) arrive with
+    // 00069 T6.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"

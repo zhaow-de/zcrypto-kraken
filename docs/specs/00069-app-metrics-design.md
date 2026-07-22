@@ -57,7 +57,17 @@ Extends 00068 D7 **with two named amendments** (cold-review M3 — "in place, sa
 
 ## D9 — Series budget
 
-Estimate: engine ~15 (per-asset gauges dominate at 10 names) + capture ~27 ×2 hosts (six unlabeled families + gap and desynced at 10 pairs each + bytes) + poller ~7 + logship ~3 ×4 daemons + ProcessCollector ~6 ×4 daemons + the Alloy process pair ×4 hosts = **~120 nominal; budgeted ≤150** with headroom for label variants. The 405-series base is the 2026-07-16 measurement and predates the capture-host Alloys — **re-measured at rollout Step 0**, not assumed. Comfortably inside spec 00043's <1k target; measured at each rollout window, recorded in the closeout.
+The earlier estimate counted "the Alloy process pair ×4 hosts" (8 series) where the ratified decision (D4/D5) admits the full six ProcessCollector names ×4 hosts (24), and it omitted the five new per-job `up` series (`capture_app`, `engine_app` ×2 hosts, `liquidations_app`) — both corrected in the reviewer's measured recount:
+
+| Host | New series |
+| --- | --- |
+| primary (zcrypto) | 68 |
+| secondary (zcrypto-red) | 44 |
+| ops | 20 |
+| nas | 6 |
+| **Total** | **~138** |
+
+~138 measured against the **≤150 budget** — ~8% headroom, not the ~20% the old "~120 nominal" implied. The 405-series base is the 2026-07-16 measurement and predates the capture-host Alloys — **re-measured at rollout Step 0**, not assumed. Comfortably inside spec 00043's <1k target; measured at each rollout window, recorded in the closeout.
 
 ## D10 — Testing (TDD)
 

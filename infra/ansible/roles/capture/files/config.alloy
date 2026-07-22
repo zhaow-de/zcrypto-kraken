@@ -78,10 +78,12 @@ prometheus.scrape "engine_app" {
 // keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
 // discards process_* (00069 T6): that family moved to the keep-list below, admitted explicitly
 // alongside the app endpoints' own six process_* names (spec D4/D5) -- Alloy's own
-// `client_golang` ProcessCollector was not re-verified against a live self-scrape at desk time and
-// may publish a different subset, so the keep-list admits the superset rather than risk silently
-// dropping whatever it does ship. This target's surviving contribution is therefore its own `up`
-// plus whichever of those six process_* names its self-scrape actually produces.
+// `client_golang` ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also
+// publishes at least `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate
+// SUBSET FILTER on Alloy's own self-scrape: all six Python names exist in client_golang too (no
+// admitted-but-unpublishable gap), and the extras it drops (e.g.
+// `process_virtual_memory_max_bytes`) are unwanted here. This target's surviving contribution is
+// therefore its own `up` plus those six process_* names, nothing more.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -108,16 +110,17 @@ prometheus.remote_write "grafana" {
       password = sys.env("GRAFANA_PROM_PASSWORD")
     }
 
-    // Series minimization (00043): drop Alloy's own self-metrics first (defense in depth -- nothing
-    // scraped above is Alloy's own /metrics endpoint, so this is normally a no-op), then keep-only
-    // the series this stack wants. A `keep` action drops everything it does not list, so a
-    // series missing here does not merely go undashboarded -- it does not exist (T0051). This host
-    // publishes the unix-exporter host metrics (no textfile series -- no collector -- no
-    // ops_*/reconcile/trade-backfill families, those are the ops node's), PLUS -- since 00069 T6 --
-    // the capture app series, the engine app series (primary only; see the `engine_app` scrape's
-    // own comment), the logship-handler series the two daemons share with every other daemon on the
-    // fleet, and the six ProcessCollector families (both the app endpoints' own and, per the
-    // `exporter.self "alloy"` comment above, whatever subset of them Alloy itself ships).
+    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics first -- this is
+    // NOT a no-op: `prometheus.exporter.self "alloy"` above feeds the `host` scrape, and this rule
+    // is what keeps its internals out of remote_write. Then keep-only the series this stack wants.
+    // A `keep` action drops everything it does not list, so a series missing here does not merely
+    // go undashboarded -- it does not exist (T0051). This host publishes the unix-exporter host
+    // metrics (no textfile series -- no collector -- no ops_*/reconcile/trade-backfill families,
+    // those are the ops node's), PLUS -- since 00069 T6 -- the capture app series, the engine app
+    // series (primary only; see the `engine_app` scrape's own comment), the logship-handler series
+    // the two daemons share with every other daemon on the fleet, and the six ProcessCollector
+    // families (both the app endpoints' own and, per the `exporter.self "alloy"` comment above,
+    // Alloy's own self-scrape too).
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"
