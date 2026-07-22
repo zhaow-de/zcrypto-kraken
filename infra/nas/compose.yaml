@@ -99,14 +99,14 @@ services:
       - ./keys:/keys:ro
       - ./zcrypto.toml:/app/zcrypto.toml:ro
       - /volume1/docker/zcrypto-archive/textfile:/textfile
+    # journald, not json-file (00068 D6/T8): this container's stdout now reaches Grafana Cloud
+    # through the host journal + `loki.source.journal` (config.alloy), alongside Alloy's own
+    # stream -- so its stdout has no json.log to rotate any more.
     logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      driver: journald
 
-  # NAS telemetry stack (spec 00049 Role B, Task 3) — Grafana Alloy ships host metrics and the
-  # container logs to the already-provisioned Grafana Cloud instance. Adapted from
+  # NAS telemetry stack (spec 00049 Role B, Task 3) — Grafana Alloy ships host metrics and both
+  # containers' logs to the already-provisioned Grafana Cloud instance. Adapted from
   # docs/specs/00043-observability-design.md (the VPS counterpart) for plain `docker compose` under
   # Container Manager -- no ansible/systemd here. See infra/nas/config.alloy for the Alloy pipeline
   # and infra/nas/README.md for the deploy steps + secrets file + resource-budget rationale.
@@ -118,9 +118,12 @@ services:
   # inclusive `since=<second>`, and Docker re-sent the last line -- so on a quiet container the SAME
   # line was re-ingested every 10 minutes forever (measured: 2 lines in Docker, 5 entries in Loki).
   # Upstream had already special-cased /events with `timeout server 0` and simply missed the logs
-  # endpoint. Accepted residual: Alloy now holds root-equivalent Docker access (the API can create a
-  # privileged container regardless of the `:ro` on the socket mount), so a compromised Alloy could
-  # reach the rrsync keys that pull from the capture VPS. See T0042 -- revisit before go-live.
+  # endpoint. The direct-socket fix that replaced the proxy is ITSELF now retired (00068 D6/T8):
+  # `discovery.docker`/`loki.source.docker` are gone, the socket mount below is deleted, and both
+  # containers' logs instead reach Alloy via the host journal (journald logging driver on both
+  # services + `loki.source.journal` in config.alloy) -- so the socket-proxy's re-ingest failure
+  # mode is moot either way now, and T0042's docker-socket residual on the NAS CLOSES: nothing here
+  # holds Docker API access any more.
   alloy:
     # The digest pin arrives via the ansible-rendered .env (ALLOY_IMAGE — nas_alloy_image in
     # host_vars/nas/vars.yml). Same `:?` refuse-to-start trap as CAPTURE_IMAGE above: the previous
@@ -141,13 +144,6 @@ services:
     # protection rests on the keys being 0600 -- owner-only, group has no read (verified live) -- not
     # on group isolation; keep the keys 0600. See infra/nas/README.md.
     user: "1031:1000"
-    # /var/run/docker.sock is root:root 0660, so a non-root Alloy cannot open it without a
-    # supplementary group. Add gid 0 rather than running Alloy AS root: uid stays 1031, so the
-    # /host/root:ro mount below still cannot read the 0600 rrsync keys (owner uid 1000, group has no
-    # read) -- T0030's protection survives. This is defence in depth only: anything holding the Docker
-    # API is root-equivalent by definition, which is the residual T0042 records.
-    group_add:
-      - "0"
     network_mode: host
     environment:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
@@ -169,9 +165,6 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-      # Docker API, for discovery.docker + loki.source.docker. `:ro` is cosmetic -- it makes the
-      # socket FILE read-only, not the API -- see the residual noted at the top of this service.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # No `/var/lib/docker` mount: on Synology DSM the Docker root is /volume1/@docker (root-only),
       # unreadable by the non-root Alloy -- and cadvisor (the only component that would use it) is not
       # run here at all (see config.alloy: it SIGSEGVs on DSM's cgroup-less kernel). Host metrics (the
@@ -182,14 +175,24 @@ services:
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
       - ./alloy-data:/var/lib/alloy
+      # The host's VOLATILE journal (00068 D6/T8) -- measured: /var/log/journal (the persistent
+      # path capture/ops read) is EMPTY on DSM, so /run/log/journal is the only path that actually
+      # carries entries here. First-time journal pipeline on this host (config.alloy's
+      # loki.source.journal): both containers' logs -- archive-pull's own lines and Alloy's own,
+      # via the journald logging driver on both services above -- arrive through this mount now
+      # that the docker socket is gone.
+      - /run/log/journal:/host/journal:ro
+      # Journal readers resolve the CURRENT boot's files via the host's machine id
+      # (/var/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
+      - /etc/machine-id:/etc/machine-id:ro
     deploy:
       resources:
         limits:
           # No `cpus:`/`cpu_shares:` -- the Synology DSM kernel has no CPU cgroup (see the
           # socket-proxy service); `GOMEMLIMIT` above bounds Alloy's Go heap regardless.
           memory: 512m
+    # journald, not json-file (00068 D6/T8): Alloy's own logs now reach Grafana Cloud through the
+    # same journal + `loki.source.journal` pipeline (config.alloy) that carries archive-pull's
+    # lines too -- so its stdout has no json.log to rotate any more.
     logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      driver: journald

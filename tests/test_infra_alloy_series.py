@@ -19,15 +19,12 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 # The series each host must ship. NAS: Role A/B (gate) + its host metrics. OPS: the four timer
 # textfiles (written since OPS-3/OPS-4 but scraped by nothing until spec 00054 Task 1) plus the
 # overlay writer's series (moved to this host by spec 00054 Task 6/OPS-5).
-# T0048 defect 1: discovery.docker can wedge permanently, and the ONLY positive signal is this
-# counter going flat -- a hang logs nothing, so without it the failure is silent for hours until the
-# dead-man fires. NAS still runs discovery.docker (unlike capture/ops, retired by 00068 D6/T5/T6),
-# so this is still genuinely published there -- dropping it from the NAS keep-list would silently
-# regress a series that exists (T0051), even though the alert that used to watch it fleet-wide
-# (zcrypto-alloy-docker-sd-wedged) retired alongside capture's and ops's copies (00068 D8).
+# T0048 defect 1: discovery.docker used to wedge permanently, and the ONLY positive signal was this
+# counter going flat. `discovery.docker` is retired fleet-wide now (00068 D6/D8: capture T5, ops
+# T6, NAS T8), so neither series exists on any host any more, and the alert that used to watch them
+# (zcrypto-alloy-docker-sd-wedged) is gone too. Kept as named constants only so the
+# excludes-the-retired-pair test below can reference them.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
-# The disambiguator: a CLIMBING failures counter means a persistently erroring refresh, not a
-# hang -- identical symptom, different cause. Shipping it is what makes the two separable.
 _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # T0079: `up` is alert-bearing on EVERY host -- the four `Fleet · Alloy dark` rules fire on its
 # silence (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave
@@ -36,8 +33,6 @@ _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # just the two that happened to list it already.
 
 NAS_REQUIRED = [
-    _SD_SERIES,
-    _SD_FAILURES,
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
@@ -100,10 +95,7 @@ def _keep_regex(path: Path) -> re.Pattern:
         (OPS_ALLOY, OPS_REQUIRED),
         # capture still has no FULL required-list (pre-existing gap), but every series an alert
         # depends on is pinned: `up`, for the two Fleet · Alloy dark rules scoped to
-        # host="zcrypto" / host="zcrypto-red" (T0079). The SD pair is deliberately NOT required
-        # here any more (00068 D6): `discovery.docker` -- their only producer -- is retired on
-        # this host, so admitting them would be a keep-list entry for a series that cannot exist
-        # (the T0051 trap).
+        # host="zcrypto" / host="zcrypto-red" (T0079).
         (CAPTURE_ALLOY, ["up"]),
     ],
     ids=["nas", "ops", "capture"],
@@ -114,10 +106,10 @@ def test_keep_regex_admits_every_published_series(path, required):
     assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
 
 
-@pytest.mark.parametrize("path", [CAPTURE_ALLOY, OPS_ALLOY], ids=["capture", "ops"])
+@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])
 def test_keep_regex_excludes_the_retired_sd_pair(path):
-    """00068 D6: discovery.docker is gone on capture and ops, so admitting its series is the
-    T0051 admitted-but-unpublished trap. Generalizes to nas once Task 8 lands."""
+    """00068 D6/D8: discovery.docker is gone fleet-wide (capture T5, ops T6, NAS T8), so admitting
+    its series anywhere is the T0051 admitted-but-unpublished trap."""
     keep = _keep_regex(path)
     assert not keep.match(_SD_SERIES) and not keep.match(_SD_FAILURES)
 
