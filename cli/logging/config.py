@@ -46,7 +46,10 @@ def configure(path: Path | None, level: str, ship: ShipConfig | None = None) -> 
                 lg.removeHandler(h)
                 try:
                     h.close()
-                except OSError:
+                except Exception:
+                    # A prior handler's close() may join a worker thread and write to stdout
+                    # (LokiShipHandler), not just close a file -- widen beyond OSError so a
+                    # failure there can't abort reconfigure() with zero handlers attached.
                     pass
         for h in handlers:
             lg.addHandler(h)

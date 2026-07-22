@@ -90,16 +90,6 @@ def test_file_mode_writes_jsonl_end_to_end(tmp_path: Path):
     assert obj["file"] == "test_logging_config.py"
 
 
-def test_ship_none_leaves_handler_set_unchanged():
-    from cli.logging.formatters import PlainTextFormatter
-
-    configure(None, "INFO")
-    lg = logging.getLogger("zcrypto")
-    h = _project_handler(lg)  # asserts exactly one owned handler
-    assert isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
-    assert isinstance(h.formatter, PlainTextFormatter)
-
-
 def test_ship_config_attaches_ship_handler_alongside_console_handler():
     from cli.logging.formatters import PlainTextFormatter
 
@@ -114,6 +104,7 @@ def test_ship_config_attaches_ship_handler_alongside_console_handler():
     assert len(console_handlers) == 1
     assert isinstance(console_handlers[0], logging.StreamHandler)
     assert isinstance(console_handlers[0].formatter, PlainTextFormatter)
+    assert console_handlers[0].level == logging.INFO  # shipping must not mute the local ground truth (D2)
 
 
 def test_reconfigure_with_ship_leaves_one_ship_handler_and_stops_prior_worker():

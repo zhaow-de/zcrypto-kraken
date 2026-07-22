@@ -78,7 +78,7 @@ def main(
     ship_logs: bool = typer.Option(
         False,
         "--ship-logs",
-        help=(f"Also ship logs to Grafana Cloud Loki, in addition to stdout/file. Requires {', '.join(_LOKI_ENV_NAMES)}."),
+        help=f"Also ship logs to Grafana Cloud Loki, in addition to stdout/file. Requires {', '.join(_LOKI_ENV_NAMES)}.",
     ),
 ) -> None:
     ship: Optional[ShipConfig] = None

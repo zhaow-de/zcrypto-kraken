@@ -5,7 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.logging.ship import LokiShipHandler
+from cli.logging.ship import LokiShipHandler, ShipConfig
 
 runner = CliRunner()
 
@@ -92,6 +92,25 @@ def test_ship_logs_on_with_full_env_attaches_ship_handler_alongside_console(monk
     assert len(console) == 1
     assert isinstance(console[0], logging.StreamHandler)
     assert isinstance(console[0].formatter, PlainTextFormatter)
+    assert console[0].level == logging.INFO  # shipping must not mute the local ground truth (D2)
+
+    assert ship[0]._cfg == ShipConfig(
+        url=_LOKI_ENV["ZCRYPTO_LOKI_URL"],
+        username=_LOKI_ENV["ZCRYPTO_LOKI_USERNAME"],
+        password=_LOKI_ENV["ZCRYPTO_LOKI_PASSWORD"],
+        host=_LOKI_ENV["ZCRYPTO_LOG_HOST"],
+        service=_LOKI_ENV["ZCRYPTO_LOG_SERVICE"],
+    )
+
+
+def test_ship_logs_treats_an_empty_env_var_as_missing(monkeypatch):
+    for name, value in _LOKI_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("ZCRYPTO_LOKI_URL", "")
+
+    result = runner.invoke(app, ["--ship-logs"])
+    assert result.exit_code == 2, result.output
+    assert "ZCRYPTO_LOKI_URL" in result.output
 
 
 def test_ship_logs_missing_one_env_var_errors_naming_it(monkeypatch):
