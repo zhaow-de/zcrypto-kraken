@@ -255,11 +255,16 @@ async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, in
 
 class CaptureCollector:
     """Exposes capture's live objects as scrape-time series (spec 00069 D5, T3): registered once,
-    inside `_run()`, after every object below already exists. Every read here is either a plain
-    attribute (an int/bool/dict-of-fixed-keys that nothing but this daemon's single asyncio
-    consumer task ever mutates) or a pure computation (`GapMonitor.gap_seconds`) -- so a scrape
-    racing that consumer task sees only a stale-but-consistent snapshot, never a torn one, and
-    can never raise into it."""
+    inside `_run()`, after every object below already exists. These attributes have THREE mutators,
+    not one -- `_consume`'s task, `_disk_watermark_loop`'s SEPARATE task (`watermark.check()`,
+    `monitor.start_watermark_gap`/`end_watermark_gap`), and `writer.close()` on the main task at
+    shutdown -- but every one of them runs on the SAME single event-loop thread, while a scrape
+    runs on prometheus_client's own HTTP server thread and only ever reads. That single-writer-
+    thread property is what makes a race here safe, not an absence of concurrent mutation: reads
+    are consistent enough for counter semantics (`increase()` over these series, not a bare
+    point-in-time read, is the intended consumption) even though `GapMonitor.end_watermark_gap`
+    itself has a microsecond torn-read window across its own two fields -- do not restate "never a
+    torn read"."""
 
     def __init__(
         self,
@@ -313,7 +318,7 @@ class CaptureCollector:
         now = datetime.now(UTC)
         gap = CounterMetricFamily(
             "zcrypto_capture_gap_seconds_total",
-            "Restart-safe cumulative gap time per pair (the T0003 exit-bar quantity).",
+            "Cumulative gap seconds since process start, per pair -- use `increase()` (restart-safe).",
             labels=["pair"],
         )
         for pair in self._pairs:
@@ -324,8 +329,7 @@ class CaptureCollector:
             "zcrypto_capture_book_desynced", "1 if the pair's book is currently checksum-desynced, else 0.", labels=["pair"]
         )
         for pair in self._pairs:
-            book = self._books.get(pair)
-            desynced.add_metric([pair], 1.0 if book is not None and book.desynced else 0.0)
+            desynced.add_metric([pair], 1.0 if self._books[pair].desynced else 0.0)
         yield desynced
 
         yield GaugeMetricFamily(

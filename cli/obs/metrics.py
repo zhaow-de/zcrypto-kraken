@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterator
 
-from prometheus_client import CollectorRegistry, ProcessCollector, start_http_server
+from prometheus_client import CollectorRegistry, ProcessCollector, disable_created_metrics, start_http_server
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metric
 
 from cli.logging import get_logger
@@ -13,15 +14,38 @@ logger = get_logger("obs.metrics")
 
 METRICS_PORT_ENV_VAR = "ZCRYPTO_METRICS_PORT"
 
+# A published-but-unadmitted series is a trap in as many words (spec 00069 D2): `Counter`'s
+# default OpenMetrics `_created` series (one per Counter, e.g. `zcrypto_engine_orders_created`)
+# is exposed today but is not in any daemon's keep-list, so it would scrape as unregistered noise.
+# `_use_created` is a process-global flag `prometheus_client` reads at render time, not at
+# `Counter.__init__` time -- disabling it once here (module import) suppresses `_created` for
+# every Counter in the process regardless of when it was constructed.
+disable_created_metrics()
+
+
+def find_ship_handler() -> LokiShipHandler | None:
+    """The live --ship-logs handler (cli/logging/config.py marks it `_zcrypto_owned`), or `None`
+    when this daemon wasn't started with `--ship-logs`. The root Typer callback (`cli/__main__.py`)
+    runs `configure(...)` before any subcommand body, so the handler already exists by the time a
+    subcommand calls `build_registry()`."""
+    for h in logging.getLogger("zcrypto").handlers:
+        if isinstance(h, LokiShipHandler) and getattr(h, "_zcrypto_owned", False):
+            return h
+    return None
+
 
 def build_registry() -> CollectorRegistry:
-    """A fresh, isolated `CollectorRegistry` carrying ONLY the `ProcessCollector` families
+    """A fresh, isolated `CollectorRegistry` carrying the `ProcessCollector` families
     (`process_cpu_seconds_total`, `process_max_fds`, `process_open_fds`,
     `process_resident_memory_bytes`, `process_start_time_seconds`, `process_virtual_memory_bytes`)
-    -- never `prometheus_client`'s global default registry, whose `python_gc_*`/`python_info`
-    collectors are unpublished noise here (spec 00069 D2)."""
+    plus a `LogshipCollector` bound to whatever `--ship-logs` handler (if any) is live on this
+    process -- never `prometheus_client`'s global default registry, whose `python_gc_*`/`python_info`
+    collectors are unpublished noise here (spec 00069 D2). All four daemons share this one call
+    site, so registering the logship tap here (rather than per daemon) is what makes it actually
+    live everywhere `--ship-logs` runs."""
     registry = CollectorRegistry()
     ProcessCollector(registry=registry)
+    registry.register(LogshipCollector(find_ship_handler()))
     return registry
 
 

@@ -57,7 +57,7 @@ Extends 00068 D7 **with two named amendments** (cold-review M3 — "in place, sa
 
 ## D9 — Series budget
 
-Estimate: engine ~15 (per-asset gauges dominate at 12 names) + capture ~27 ×2 hosts (six unlabeled families + gap and desynced at 10 pairs each + bytes) + poller ~7 + logship ~3 ×4 daemons + ProcessCollector ~6 ×4 daemons + the Alloy process pair ×4 hosts = **~120 nominal; budgeted ≤150** with headroom for label variants. The 405-series base is the 2026-07-16 measurement and predates the capture-host Alloys — **re-measured at rollout Step 0**, not assumed. Comfortably inside spec 00043's <1k target; measured at each rollout window, recorded in the closeout.
+Estimate: engine ~15 (per-asset gauges dominate at 10 names) + capture ~27 ×2 hosts (six unlabeled families + gap and desynced at 10 pairs each + bytes) + poller ~7 + logship ~3 ×4 daemons + ProcessCollector ~6 ×4 daemons + the Alloy process pair ×4 hosts = **~120 nominal; budgeted ≤150** with headroom for label variants. The 405-series base is the 2026-07-16 measurement and predates the capture-host Alloys — **re-measured at rollout Step 0**, not assumed. Comfortably inside spec 00043's <1k target; measured at each rollout window, recorded in the closeout.
 
 ## D10 — Testing (TDD)
 

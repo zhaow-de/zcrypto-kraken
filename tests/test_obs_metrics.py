@@ -8,7 +8,7 @@ import time
 import urllib.request
 
 import pytest
-from prometheus_client import CollectorRegistry, generate_latest
+from prometheus_client import CollectorRegistry, Counter, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
 import cli.obs.metrics as metrics
@@ -93,6 +93,33 @@ class TestBuildRegistry:
             "process_start_time_seconds",
             "process_virtual_memory_bytes",
         }
+
+    def test_registers_the_live_ship_handler_so_its_families_appear(self, fake_loki):
+        # Important 1 (spec 00069 D5's "all four daemons"): build_registry() is the one call site
+        # every daemon shares, so registering LogshipCollector against the live --ship-logs handler
+        # here -- rather than per daemon -- is what makes the logship tap actually appear wherever
+        # --ship-logs runs. Without a handler attached, test_contains_process_families_and_nothing_else
+        # above already proves the families stay absent.
+        url, _requests = fake_loki
+        handler = _make_handler(url)
+        handler._zcrypto_owned = True
+        logging.getLogger("zcrypto").addHandler(handler)
+        try:
+            handler.emit(_make_record("hello"))
+            assert _wait_until(lambda: handler.shipped_lines_total >= 1)
+            text = _render(build_registry())
+            assert "zcrypto_logship_shipped_lines_total 1.0" in text
+        finally:
+            logging.getLogger("zcrypto").removeHandler(handler)
+            handler.close()
+
+    def test_disables_created_metrics_for_every_counter(self):
+        # Important 2: a published-but-unadmitted `_created` series is a trap in as many words
+        # (spec 00069 D2) -- Task 6's keep-list assertions must never have to exclude one.
+        registry = build_registry()
+        Counter("zcrypto_test_probe_total", "test probe", registry=registry).inc()
+        text = _render(registry)
+        assert "_created" not in text
 
 
 class TestMetricsPortFromEnv:

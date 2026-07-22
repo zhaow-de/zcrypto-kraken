@@ -119,7 +119,11 @@ def _env(tmp_path, monkeypatch, *, rows_by: dict | None = None) -> EngineConfig:
 
 
 def test_sink_is_a_noop_by_default(tmp_path, monkeypatch):
-    # No set_metrics_sink call in this test -- the workstation soak's exact path.
+    # No set_metrics_sink call in this test -- the workstation soak's exact path. Assert the sink
+    # itself is None (not just that run_cycle succeeds): _update_metrics's guard swallows even a
+    # RAISING default sink, so a bare success assertion here can't tell "no sink installed" from
+    # "a sink is installed and just didn't blow up" (Minor 3, spec 00069 T4 review).
+    assert cycle._metrics_sink is None
     config = _env(tmp_path, monkeypatch)
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(_store_rows()), clock=_clock())
     assert result.status == "success"
@@ -443,3 +447,36 @@ def test_run_metrics_port_set_serves_process_and_engine_series_seeded_at_startup
         "zcrypto_engine_cycle_duration_seconds",
     ):
         assert name in body, f"{name} missing from /metrics: {body}"
+
+
+def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path, monkeypatch, caplog):
+    # THE Critical (spec 00069 T3/T4 review): _seed_completed_at reads arbitrary on-disk journal
+    # artifacts (from_json / _sidecar_fields); an unreadable cycle-*.json (bad mode/ownership on
+    # the bind mount) raises PermissionError, which the pre-fix code caught only EngineJournalError
+    # around -- crash-looping the engine daemon at startup, on the trade-key host, before
+    # build_shadow_node is ever reached. Metrics setup must degrade (logged), never abort `run()`.
+    journal_dir = tmp_path / "journal"
+    _write_success_record(
+        journal_dir, datetime(2026, 7, 9, 12, 0, tzinfo=UTC), completed_at=datetime(2026, 7, 9, 12, 3, tzinfo=UTC)
+    )
+    bad_path = journal_dir / "2026-07-09" / "cycle-12.json"
+    bad_path.chmod(0o000)
+
+    port = _free_port()
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(port))
+    _run_env(monkeypatch, tmp_path)
+    node_started = []
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: (node_started.append(True), _fake_node())[1])
+
+    try:
+        with caplog.at_level("ERROR"):
+            result = runner.invoke(app, ["engine", "run"])
+    finally:
+        bad_path.chmod(0o644)  # restore so tmp_path cleanup never depends on the test's outcome
+
+    assert result.exit_code == 0, result.output
+    assert node_started == [True]  # build_shadow_node/node.run() was still reached
+    assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2.0) as resp:
+        body = resp.read().decode()
+    assert "process_resident_memory_bytes" in body  # process metrics still serve

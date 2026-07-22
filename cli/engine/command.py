@@ -425,7 +425,11 @@ class _CycleGauges:
         )
         # A Gauge, not a Counter: the pinned name (spec 00069 D5, "names verbatim") carries no
         # `_total` suffix, and `Counter` would silently ADD one to the exposed series name --
-        # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative.
+        # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative. Caveat:
+        # unlike its sibling `orders_total` (a real Counter), this Gauge only carries counter
+        # SEMANTICS via `.inc()` -- `rate()`/`increase()` are undefined over it, and a process
+        # restart drops it back to 0 with no reset detection (a real Counter's reset IS detectable
+        # via its own `_created` timestamp jumping).
         self.order_notional_eur = Gauge(
             "zcrypto_engine_order_notional_eur", "Intended order notional (EUR), summed across every cycle.", registry=registry
         )
@@ -499,9 +503,18 @@ def run() -> None:
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()
-        gauges = _CycleGauges(registry)
-        gauges.cycle_completed_at.set(_seed_completed_at(config.journal_dir).timestamp())
-        set_metrics_sink(gauges.update)
+        # Startup seeding reads arbitrary on-disk journal artifacts (_seed_completed_at ->
+        # from_json/_sidecar_fields): an unreadable cycle-*.json (bad mode/ownership on the bind
+        # mount) or a record with a tz-naive completed_at can raise OUTSIDE EngineJournalError
+        # (PermissionError, TypeError from an aware/naive comparison) -- telemetry may never kill
+        # the engine daemon (spec 00069 D5's isolation invariant; mirrors capture's
+        # CaptureCollector registration guard below). Serve process metrics regardless.
+        try:
+            gauges = _CycleGauges(registry)
+            gauges.cycle_completed_at.set(_seed_completed_at(config.journal_dir).timestamp())
+            set_metrics_sink(gauges.update)
+        except Exception:
+            logger.exception("engine metrics setup failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
 
     # Lazy: cli.engine.node imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.

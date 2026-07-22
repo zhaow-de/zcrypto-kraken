@@ -151,7 +151,13 @@ def test_collector_sums_across_every_writer_book_and_trade():
     book_writer, trade_writer = _FakeWriter(), _FakeWriter()
     book_writer.segments_written, trade_writer.segments_written = 2, 3
     collector = CaptureCollector(
-        ["BTC/EUR"], client, {}, {"BTC/EUR": book_writer}, {"BTC/EUR": trade_writer}, GapMonitor(), DiskWatermark(Path("/tmp"))
+        ["BTC/EUR"],
+        client,
+        {"BTC/EUR": OrderBook("BTC/EUR", 100)},
+        {"BTC/EUR": book_writer},
+        {"BTC/EUR": trade_writer},
+        GapMonitor(),
+        DiskWatermark(Path("/tmp")),
     )
     assert _families(collector)["zcrypto_capture_segments_written_total"].samples[0].value == 5
 
@@ -159,7 +165,8 @@ def test_collector_sums_across_every_writer_book_and_trade():
 def test_gap_seconds_family_carries_one_labeled_series_per_pair():
     client = CaptureClient(["BTC/EUR"], 100)
     monitor = GapMonitor()
-    collector = CaptureCollector(["BTC/EUR", "ETH/EUR"], client, {}, {}, {}, monitor, DiskWatermark(Path("/tmp")))
+    books = {"BTC/EUR": OrderBook("BTC/EUR", 100), "ETH/EUR": OrderBook("ETH/EUR", 100)}
+    collector = CaptureCollector(["BTC/EUR", "ETH/EUR"], client, books, {}, {}, monitor, DiskWatermark(Path("/tmp")))
     family = _families(collector)["zcrypto_capture_gap_seconds_total"]
     labeled_pairs = {sample.labels["pair"] for sample in family.samples}
     assert labeled_pairs == {"BTC/EUR", "ETH/EUR"}
@@ -183,7 +190,7 @@ def test_watermark_gauge_flips_from_0_to_1_on_breach():
     watermark = DiskWatermark(Path("/tmp"), min_free_bytes=1024, usage_fn=lambda p: _FakeUsage(free=state["free"]))
     watermark.check()  # healthy
     client = CaptureClient(["BTC/EUR"], 100)
-    collector = CaptureCollector(["BTC/EUR"], client, {}, {}, {}, GapMonitor(), watermark)
+    collector = CaptureCollector(["BTC/EUR"], client, {"BTC/EUR": OrderBook("BTC/EUR", 100)}, {}, {}, GapMonitor(), watermark)
     assert _families(collector)["zcrypto_capture_disk_watermark_breached"].samples[0].value == 0.0
 
     state["free"] = 10  # below min_free_bytes
@@ -198,7 +205,15 @@ def test_collector_collect_stays_safe_when_a_writer_mutates_between_yields():
     # each not-yet-yielded family reads whatever is current when its own turn comes.
     client = CaptureClient(["BTC/EUR"], 100)
     writer = _FakeWriter()
-    collector = CaptureCollector(["BTC/EUR"], client, {}, {"BTC/EUR": writer}, {}, GapMonitor(), DiskWatermark(Path("/tmp")))
+    collector = CaptureCollector(
+        ["BTC/EUR"],
+        client,
+        {"BTC/EUR": OrderBook("BTC/EUR", 100)},
+        {"BTC/EUR": writer},
+        {},
+        GapMonitor(),
+        DiskWatermark(Path("/tmp")),
+    )
     gen = collector.collect()
     next(gen)  # reconnects_total, already yielded
     writer.segments_written += 5  # mutate the live object mid-scrape
