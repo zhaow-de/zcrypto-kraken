@@ -82,6 +82,7 @@ The project's worst conclusions were measurement bugs producing plausible number
 | Peek at the holdout / expand a budget / touch production "just this once" | Named park triggers. Park and continue. |
 | Record a verdict from a suspicious run (bit-identical arms, NaN, zero trades, too-good Sharpe) | Instrument bug-hunt first — plausible numbers from broken instruments steered this project wrong twice. |
 | Loosen a failing assert so the run finishes | Guardrails are the product; a red check is a finding. |
+| "Correct" a doc by appending the retraction below the old text | The retracted claim still reads first, and more confidently. Rewrite the narrative — the durable file must read correctly cold (`agent-ops.md`). |
 
 ## Notes
 
