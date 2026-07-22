@@ -98,9 +98,10 @@ else
     #
     # T0060: every ephemeral `docker run --rm` here carries a stable `--name` -- unnamed runs got a
     # fresh engine-random name each time, and each name minted a brand-new Loki stream, forever, on
-    # a backend that bills per stream. Since the journal cutover the name's log role is the PRECISE
-    # DROP: config.alloy's docker path drops the `zcrypto-*` ephemerals by name (their stdout ships
-    # via this unit's journal instead -- these runs are attached, not -d). A leftover container
+    # a backend that bills per stream. That log-shipping rationale is gone now (00068 D6/D8): there
+    # is no docker path left to drop anything by name -- discovery.docker retired fleet-wide -- so
+    # these runs' stdout ships via the unit's own journal stream regardless of name (attached, not
+    # -d). What the stable name still buys, and the only reason it stays: a leftover container
     # after a dockerd crash makes the NEXT run fail loudly on a name conflict; how loudly differs:
     #   * reconcile: the conflict sets rc=1 below (unit rc!=0 -> the ops archive-pull exit alert).
     #   * trade-backfill: the conflict does NOT flip the unit rc -- its loud path is the

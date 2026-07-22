@@ -1684,8 +1684,9 @@ rules:
   # not exist. What differs is only what accumulates unseen meanwhile, which the per-host summary
   # states. These own "not shipping" only -- a rule for "shipping but wedged" (`zcrypto-alloy-docker-
   # sd-wedged`, T0048 defect 1: the T0048 incident was Alloy alive, discovery frozen) used to cover
-  # the other case, but it is *being* retired with `discovery.docker` (D6/D8; capture done, ops/NAS
-  # follow in the same iteration) -- once the rollout completes, nothing re-detects that failure mode.
+  # the other case, but it is *removed from this file*, retired on all four hosts once D7's
+  # converges run (spec 00068 D6/D8/D7) -- once that rollout completes, nothing re-detects that
+  # failure mode.
 
   - uid: zcrypto-alloy-dark-nas
     title: "Fleet · Alloy dark — NAS"

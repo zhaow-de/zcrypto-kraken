@@ -137,13 +137,13 @@ while [[ ! "$day" > "$YESTERDAY" ]]; do
 
     # T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each
     # run, and each name minted a brand-new Loki stream, forever, on a backend that bills per
-    # stream. Since the journal cutover the name's log role is the PRECISE DROP: config.alloy's
-    # docker path drops the `zcrypto-*` ephemerals by name (their stdout ships via this unit's
-    # journal instead -- this run is attached, not -d), which no regex could target while the names
-    # were random. The catch-up loop's runs are sequential, so the reused name never conflicts with
-    # itself; a leftover container after a dockerd crash makes the NEXT run fail loudly on a name
-    # conflict (unit rc!=0 -> the exit-code alert) -- acceptable and self-describing; `--rm` cleans
-    # up in every normal path.
+    # stream. That log-shipping rationale is gone now (00068 D6/D8): there is no docker path left
+    # to drop anything by name -- discovery.docker retired fleet-wide -- so this run's stdout ships
+    # via the unit's own journal stream regardless of its name (attached, not -d). The catch-up
+    # loop's runs are sequential, so the reused name never conflicts with itself; a leftover
+    # container after a dockerd crash makes the NEXT run fail loudly on a name conflict (unit rc!=0
+    # -> the exit-code alert) -- acceptable and self-describing; `--rm` cleans up in every normal
+    # path.
     docker run --rm --pull never \
         --name zcrypto-verified-replay \
         --user "{{ ops_uid }}:{{ ops_gid }}" \

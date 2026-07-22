@@ -34,8 +34,10 @@ The `zcrypto liquidations-poll` daemon runs as the single service in `{{ ops_com
 | `ZCRYPTO_LIQUIDATIONS_DATA_DIR` | Segment output base inside the container: `/data/liquidations` (= `{{ ops_data_dir }}/liquidations` on the host). | fixed in `compose.yaml.j2` (matches the `{{ ops_data_dir }}:/data` mount) |
 | `LIQUIDATIONS_HEALTHCHECK_URL` | healthchecks.io dead-man ping URL; pinged after each fully-successful poll cycle (~300 s cadence) while disk-healthy. Empty → pings skipped. | role var `ops_liquidations_healthcheck_url` ← vaulted `liquidations_healthcheck_url` |
 | `COINALYZE_POLL_SECONDS` | Poll cadence (default 300; one 10-symbol call per cycle ≈ 2 of Coinalyze's 40/min per-symbol budget). | compose default; override for testing only |
+| `ZCRYPTO_LOG_HOST` | Direct-ship label (spec 00068 D3/D5): the literal `ops`. Only rendered when the poller ships logs (below). | fixed in `compose.yaml.j2`, guarded by `logship_loki_token is defined` |
+| `ZCRYPTO_LOG_SERVICE` | Direct-ship label: the literal `liquidations`. | fixed in `compose.yaml.j2`, same guard |
 
-The service runs digest-pinned (`{{ ops_image }}@{{ ops_image_digest }}`), as the `zcrypto-data` uid:gid (spec 00057 — the m2m user, not the sudo admin), `restart: unless-stopped`, `json-file` logging capped 10m×3. The shelved WS recorder shares the same data dir and `single_instance_lock`, so the two can never run concurrently.
+The service runs digest-pinned (`{{ ops_image }}@{{ ops_image_digest }}`), as the `zcrypto-data` uid:gid (spec 00057 — the m2m user, not the sudo admin), `restart: unless-stopped`. **Two log paths, not one** (spec 00068 D3/D5): `json-file` logging capped 10m×3 keeps the container's stdout locally as always, but that is no longer the whole story — when `logship_loki_token` is vaulted, the exec-form entrypoint bakes in `--ship-logs` and the poller **direct-ships** its own lines straight to Grafana Cloud Loki, reading its creds from a role-rendered `{{ ops_compose_dir }}/logship-secrets.env` (owner `zcrypto-deploy`, mode `0600`, `env_file` long-form `required: false` so a missing file never blocks `docker compose up`; see the Alloy section below for the full render detail). The shelved WS recorder shares the same data dir and `single_instance_lock`, so the two can never run concurrently.
 
 ### The `sync_liquidations` replication channel (the NAS pulls this node)
 
@@ -195,9 +197,10 @@ Grafana Alloy runs as its own compose project at `{{ ops_alloy_dir }}` (default
 `/etc/zcrypto-ops/alloy`), rendered by the `ops` role only when the pinned Alloy digest is supplied
 (`-e ops_alloy_digest=sha256:<...>`; no default, matching `ops_image_digest`'s pattern). It ships
 host metrics (load, memory, free disk space, network IO), the four OPS-3/OPS-4 timers' textfile
-series, and every container's logs to Grafana Cloud — mirroring `infra/nas/config.alloy`'s pipeline
-(see `infra/ansible/roles/ops/files/config.alloy` for the three deliberate divergences: no
-cadvisor, dedicated non-admin uid + rootfs mount, compose-service-first log labelling).
+series, and its own logs plus those four units' logs to Grafana Cloud (**not** "every container's
+logs" — the liquidations poller direct-ships its own instead; see the paragraph below), mirroring
+`infra/nas/config.alloy`'s pipeline (see `infra/ansible/roles/ops/files/config.alloy` for the two
+deliberate divergences: no cadvisor, dedicated non-admin uid + rootfs mount).
 
 Ops log streams reach Grafana Cloud two ways (00068 D3/D6, superseding the docker-path scheme
 T0060 introduced — that path is retired fleet-wide): the liquidations poller **direct-ships** its
