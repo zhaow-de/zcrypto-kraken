@@ -125,6 +125,22 @@ def test_the_rendered_cap_section_states_the_cap_and_the_unscreened_count():
     assert "EUR-quoted only" not in md
 
 
+def test_the_cap_section_says_so_when_every_symbol_was_screened():
+    """The zero-null branch is unreachable today but becomes live the day the calibration covers
+    every pair -- which is exactly why it is pinned. Shipping it untested would repeat this
+    function's own earlier defect: a render branch no producer could reach, shipped uncovered."""
+    file = build_universe_file(
+        _sel([_entry("BTC/EUR", spread_bps=0.428)]),
+        as_of="2026-07-22",
+        params={},
+        provenance={},
+        spread_cap=dict(CAP, unevaluated_count=0),
+    )
+    md = render_markdown(file)
+    assert "was screened against the cap" in md
+    assert "spread_bps: null" not in md.split("## Spread cap")[1]
+
+
 def test_the_placeholder_still_renders_without_the_structured_keys():
     """The legacy path must not require the four keys the structured record carries."""
     file = build_universe_file(_sel([_entry("BTC/EUR", spread_bps=None)]), as_of="2026-07-22", params={}, provenance={})
