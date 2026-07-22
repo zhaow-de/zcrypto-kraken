@@ -5,8 +5,19 @@ import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
+from cli.logging.ship import LokiShipHandler
 
 runner = CliRunner()
+
+# RFC 5737 TEST-NET-1: guaranteed non-routable. Also moot here -- no subcommand emits a log
+# record in these tests, so the ring stays empty and the worker never attempts a post.
+_LOKI_ENV = {
+    "ZCRYPTO_LOKI_URL": "http://192.0.2.1:1/loki/api/v1/push",
+    "ZCRYPTO_LOKI_USERNAME": "u",
+    "ZCRYPTO_LOKI_PASSWORD": "p",
+    "ZCRYPTO_LOG_HOST": "test-host",
+    "ZCRYPTO_LOG_SERVICE": "test-service",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -50,3 +61,58 @@ def test_log_flag_routes_logging_to_a_jsonl_file_handler(tmp_path: Path):
 def test_invalid_log_level_errors():
     result = runner.invoke(app, ["--log-level", "TRACE", "--version"])
     assert result.exit_code != 0
+
+
+def test_ship_logs_off_leaves_handler_set_unchanged():
+    from cli.logging.formatters import PlainTextFormatter
+
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0, result.output
+
+    own = [h for h in logging.getLogger("zcrypto").handlers if getattr(h, "_zcrypto_owned", False)]
+    assert len(own) == 1
+    assert isinstance(own[0], logging.StreamHandler) and not isinstance(own[0], logging.FileHandler)
+    assert isinstance(own[0].formatter, PlainTextFormatter)
+
+
+def test_ship_logs_on_with_full_env_attaches_ship_handler_alongside_console(monkeypatch):
+    from cli.logging.formatters import PlainTextFormatter
+
+    for name, value in _LOKI_ENV.items():
+        monkeypatch.setenv(name, value)
+
+    result = runner.invoke(app, ["--ship-logs"])
+    assert result.exit_code == 0, result.output
+
+    own = [h for h in logging.getLogger("zcrypto").handlers if getattr(h, "_zcrypto_owned", False)]
+    assert len(own) == 2
+    ship = [h for h in own if isinstance(h, LokiShipHandler)]
+    console = [h for h in own if h not in ship]
+    assert len(ship) == 1
+    assert len(console) == 1
+    assert isinstance(console[0], logging.StreamHandler)
+    assert isinstance(console[0].formatter, PlainTextFormatter)
+
+
+def test_ship_logs_missing_one_env_var_errors_naming_it(monkeypatch):
+    for name, value in _LOKI_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("ZCRYPTO_LOKI_URL", raising=False)
+
+    result = runner.invoke(app, ["--ship-logs"])
+    assert result.exit_code == 2, result.output
+    assert "ZCRYPTO_LOKI_URL" in result.output
+
+
+def test_ship_logs_missing_two_env_vars_errors_naming_both(monkeypatch):
+    # A fix-one-rerun-find-another loop is a bad deploy experience -- every missing var
+    # must be named in the one error, not just the first found.
+    for name, value in _LOKI_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("ZCRYPTO_LOKI_URL", raising=False)
+    monkeypatch.delenv("ZCRYPTO_LOG_SERVICE", raising=False)
+
+    result = runner.invoke(app, ["--ship-logs"])
+    assert result.exit_code == 2, result.output
+    assert "ZCRYPTO_LOKI_URL" in result.output
+    assert "ZCRYPTO_LOG_SERVICE" in result.output

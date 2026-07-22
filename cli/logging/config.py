@@ -5,12 +5,17 @@ import sys
 from pathlib import Path
 
 from cli.logging.formatters import JsonLineFormatter, PlainTextFormatter
+from cli.logging.ship import LokiShipHandler, ShipConfig
 
 _TARGET_LOGGERS = ("zcrypto",)
 
 
-def configure(path: Path | None, level: str) -> None:
-    """Configure the project ``zcrypto`` logger. Idempotent across repeated calls."""
+def configure(path: Path | None, level: str, ship: ShipConfig | None = None) -> None:
+    """Configure the project ``zcrypto`` logger. Idempotent across repeated calls.
+
+    When `ship` is given, a `LokiShipHandler` is attached IN ADDITION to the console/file
+    handler -- never replacing it (log shipping is additive to stdout/file, spec 00068 T3).
+    """
     numeric = logging.getLevelNamesMapping().get(level)
     if numeric is None:
         raise ValueError(f"invalid log level: {level!r}")
@@ -27,6 +32,13 @@ def configure(path: Path | None, level: str) -> None:
     handler.setLevel(numeric)
     handler._zcrypto_owned = True  # type: ignore[attr-defined]
 
+    handlers = [handler]
+    if ship is not None:
+        ship_handler = LokiShipHandler(ship)
+        ship_handler.setLevel(numeric)
+        ship_handler._zcrypto_owned = True  # type: ignore[attr-defined]
+        handlers.append(ship_handler)
+
     for name in _TARGET_LOGGERS:
         lg = logging.getLogger(name)
         for h in list(lg.handlers):
@@ -36,6 +48,7 @@ def configure(path: Path | None, level: str) -> None:
                     h.close()
                 except OSError:
                     pass
-        lg.addHandler(handler)
+        for h in handlers:
+            lg.addHandler(h)
         lg.setLevel(numeric)
         lg.propagate = False

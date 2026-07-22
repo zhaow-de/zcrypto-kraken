@@ -1,3 +1,4 @@
+import os
 from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
@@ -10,7 +11,7 @@ from cli.data.command import data_app
 from cli.engine.command import engine_app
 from cli.liquidations.coinalyze import liquidations_poll
 from cli.liquidations.command import liquidations
-from cli.logging import configure, get_logger
+from cli.logging import ShipConfig, configure, get_logger
 from cli.panel.command import panel_app
 
 app = typer.Typer(
@@ -26,6 +27,13 @@ app.add_typer(data_app, name="data")
 app.add_typer(panel_app, name="panel")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+_LOKI_ENV_NAMES = (
+    "ZCRYPTO_LOKI_URL",
+    "ZCRYPTO_LOKI_USERNAME",
+    "ZCRYPTO_LOKI_PASSWORD",
+    "ZCRYPTO_LOG_HOST",
+    "ZCRYPTO_LOG_SERVICE",
+)
 
 
 def _version_callback(value: bool) -> None:
@@ -67,8 +75,26 @@ def main(
         case_sensitive=False,
         help="Log threshold. One of DEBUG, INFO, WARNING, ERROR.",
     ),
+    ship_logs: bool = typer.Option(
+        False,
+        "--ship-logs",
+        help=(f"Also ship logs to Grafana Cloud Loki, in addition to stdout/file. Requires {', '.join(_LOKI_ENV_NAMES)}."),
+    ),
 ) -> None:
-    configure(log, log_level)
+    ship: Optional[ShipConfig] = None
+    if ship_logs:
+        missing = [n for n in _LOKI_ENV_NAMES if not os.environ.get(n)]
+        if missing:
+            raise typer.BadParameter(f"--ship-logs requires env vars: {', '.join(missing)}")
+        ship = ShipConfig(
+            url=os.environ["ZCRYPTO_LOKI_URL"],
+            username=os.environ["ZCRYPTO_LOKI_USERNAME"],
+            password=os.environ["ZCRYPTO_LOKI_PASSWORD"],
+            host=os.environ["ZCRYPTO_LOG_HOST"],
+            service=os.environ["ZCRYPTO_LOG_SERVICE"],
+        )
+
+    configure(log, log_level, ship)
 
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
