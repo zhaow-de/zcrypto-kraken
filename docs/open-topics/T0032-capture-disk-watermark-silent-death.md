@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: (1) ~2026-07-22/23 — verify the FIRST real prune deletion pass on both hosts (oldest 2026-07-08 finals cross the 14-day retention; timers verified live 2026-07-19); (2) the next capture-image rollout — it carries the not-yet-deployed measurable-probe fix 3e03aac
+ripe_when: (1) **2026-07-23 03:17 UTC (primary) / 2026-07-29 03:17 UTC (secondary)** — verify the FIRST real prune deletion pass; these dates are DERIVED from each host's measured oldest final, replacing the earlier estimate "~2026-07-22/23 on both hosts", which was a full week early for the secondary (the primary's derived date happens to fall inside that range); see the 2026-07-22 entry under Done so far; (2) the next capture-image rollout — it carries the not-yet-deployed measurable-probe fix 3e03aac
 ---
 
 # Capture stops silently when the disk watermark breaches — and the dead-man still reports healthy
@@ -100,9 +100,40 @@ timers (a ~14-day ring once the first deletion pass verifies).\]*
 - **(b) 00048's eviction rationale corrected** — the body §Non-goals now carries an inline `[Superseded — …]` marker flagging that the "~12× margin makes delete-after-verified unnecessary" claim rests on the 20×-wrong fill figure, and that eviction is in fact *not* implemented (disk fills ≈2026-11-23).
 - **(c) probe-outage blind spot closed** — `DiskWatermark` now tracks `measurable`; a probe that raises sets it False, and the dead-man ping is gated on `not breached AND measurable`, so "cannot measure" no longer pings green on a frozen `breached` (the healthcheck grace absorbs a transient blip; a sustained failure pages).
 
+- **Partial verification 2026-07-22 (read-only, both hosts).** Recorded on the pushed branch `chore/t0032-prune-first-pass-partial-verification`, which **EXISTS** and has no PR; the 07-23 verification folds into it. Tonight's run executed on both hosts and correctly deleted nothing:
+
+  ```
+  zcrypto      ExecMainStartTimestamp=Wed 2026-07-22 03:17:02 UTC
+  2026-07-22T03:17:02+00:00 zcrypto-capture-prune: deleted=0 retention_days=14 cutoff="2026-07-08 03:17:02 UTC"
+  zcrypto-red  ExecMainStartTimestamp=Wed 2026-07-22 03:17:04 UTC
+  2026-07-22T03:17:04+00:00 zcrypto-capture-prune: deleted=0 retention_days=14 cutoff="2026-07-08 03:17:04 UTC"
+  ```
+
+  `deleted=0` is the correct output here, and **non-trivially so on the primary**: its oldest final preceded the cutoff by only 10 h 30 m, so a retention one day too aggressive would have deleted ~14 hourly slots × 20 streams. `set -euo pipefail` plus `ExecMainStatus=0` also excludes a silently-failing `find`.
+
+  **What this does NOT establish.** `deleted=0` is byte-identical to the output of a prune whose delete path cannot work at all: `-delete` under the unit's `ProtectSystem=strict` + `ReadWritePaths` has **never been exercised on either host**, and a sandbox misconfiguration surfaces only on the first run that actually tries to unlink. That — not the glob logic, which `tests/test_capture_prune.py` already covers offline — is what 07-23 uniquely tests.
+
+- **The trigger date was estimated, not derived, and was a full week early for the secondary.** The cutoff is `now - 14d` evaluated at 03:17, so a final is eligible only once its mtime precedes that instant (`! -newermt`, i.e. mtime ≤ cutoff). Measured oldest finals:
+
+  | host | oldest final (mtime) | first eligible run | why |
+  |---|---|---|---|
+  | `zcrypto` | 2026-07-08 13:47:32 | **2026-07-23** 03:17 UTC | tonight's cutoff (07-08 03:17) fell before it; 07-23's cutoff is 07-09 03:17 |
+  | `zcrypto-red` | 2026-07-14 19:16:00 | **2026-07-29** 03:17 UTC | its oldest final is 6 days later than the primary's |
+
+  The old estimate "~2026-07-22/23" happens to contain the primary's derived date; it was the **secondary** it got wrong, by a week. `Persistent=true` on the timer means a host down at 03:17 prunes at next boot, so these are first-*eligible* dates, i.e. floors.
+
+  Both mtimes are corroborated independently by the finals counts: primary 6,516 finals over 325.55 h = **20.02** streams, secondary 3,520 over 176.07 h = **19.99** — two measurements agreeing on 20 concurrent final-producing streams.
+
+- **Class counts at 03:20 UTC**: primary 6,516 finals / 117 `.part` / **0** `.held` / **0** `.corrupt`; secondary 3,520 / 117 / **0** / **0**. Note the consequence for the acceptance criterion: with zero `.held` and zero `.corrupt` on either host, the 07-23 pass **cannot** demonstrate that those classes are spared — only that finals + `.sha256` are deleted and the 117 `.part` files survive. Sparing of `.held`/`.corrupt` is covered by `tests/test_capture_prune.py`, not by this pass.
+
+- **Disk is NOT yet flat, and cannot be before the first deletion** — the ring has not started. Primary `df Use%` 28 % (21 G used, 54 G avail of 79 G), secondary 20 % (9.1 G of 49 G). Against this topic's 2026-07-13 reading of 10 G used, that is +11 G in 9 days ≈ 1.2 GB/day, which looks like ~2.5× the 0.48 GB/day capture model — but the growth is **attributed, and capture is on-model**: `du` gives `/var/lib/zcrypto-capture` = **6.3 G** over 13.6 days = **0.46 GB/day**. The remainder is not capture (`/var/lib/docker` 5.1 G, `/var/log` 196 M). Flattening of the *capture* directory is what 07-23 should show.
+
+- Method note: `journalctl --since "today 03:00"` returned empty on both hosts under a non-interactive `sudo` shell while the unfiltered `-n 3` query showed the lines above. The likely cause is quote handling through that shell, leaving `03:00` parsed as a separate argument rather than part of `--since` — **not diagnosed further**. The point that matters: an empty *filtered* query is absence-of-evidence, while `ExecMainStartTimestamp` and the dated journal lines are affirmative traces. Do not read an empty journal window as an absent run.
+
+
 ## Suggested next steps
 
 - ~~(process, at the re-pin) schedule the T+24 h canary reminder~~ **(done as standing process, 2026-07-15):** codified in `.claude/rules/capture-deploys.md` — the reminder is scheduled via the Slack MCP at every secondary re-pin, no longer this topic's item.
-- **Retention: designed, config-implemented AND deployed (verified 2026-07-19).** Spec `00050` D8's `zcrypto-capture-prune` timer is **live on both hosts** (`systemctl list-timers`: secondary ran 2026-07-19 03:17, primary enabled at the iter-105 converge, next run 2026-07-20 03:17; 14-day retention, finals + `.sha256` only, never `.part`/`.held`/`.corrupt`). **The only open sub-item: verify the FIRST real deletion pass** (~2026-07-22/23, when the oldest finals — 2026-07-08 — cross 14 days): read-only check on both hosts that the expected oldest day vanished, `.part`/`.held` untouched, and disk-used flattens. That verification **dissolves the ≈2026-11-23 disk-fill deadline** into a steady ~14-day ring. **Recorded stance (explicit, 2026-07-19): the NAS custody mirror is deliberately never pruned** — it is the keep-forever archive (spec `00048` Role A); only the capture-host working copies ring-buffer.
+- **Retention: designed, config-implemented AND deployed (verified 2026-07-19).** Spec `00050` D8's `zcrypto-capture-prune` timer is **live on both hosts** (`systemctl list-timers`: secondary ran 2026-07-19 03:17, primary enabled at the iter-105 converge, next run 2026-07-20 03:17; 14-day retention, finals + `.sha256` only, never `.part`/`.held`/`.corrupt`). **The remaining sub-item: verify the FIRST real deletion pass** — **2026-07-23 (primary) / 2026-07-29 (secondary)**, derived above from each host's measured oldest final; the "~2026-07-22/23, oldest finals 2026-07-08" reading here was right only for the primary. Read-only check on each host that the expected oldest day vanished, that the `.part` files survive, and that the sandboxed `-delete` works at all. That verification **dissolves the ≈2026-11-23 disk-fill deadline** into a steady ~14-day ring. **Recorded stance (explicit, 2026-07-19): the NAS custody mirror is deliberately never pruned** — it is the keep-forever archive (spec `00048` Role A); only the capture-host working copies ring-buffer.
 - **(verification of the breach-withhold: DONE 2026-07-19)** — the running image (`sha256:63708539…`) contains the `watermark.breached` ping-gate (checked inside the image). The **(c) measurable-probe fix (`3e03aac`) is NOT in that image** (committed 2026-07-14 23:51 UTC, ~20 h after the image build) — it deploys with the next capture-image rollout, whose canary/bake steps this sub-item now rides.
 - **(residual, noted)** Compound fault: if the disk actually FILLS *during* an unmeasurable-probe window, `_write_part`'s `ENOSPC` is caught, logged, and the buffer dropped -- a real, un-booked loss, because `breached` is frozen at its last (green) value so no watermark gap is booked. Narrow (needs a disk that fills exactly while the probe is also down), and it still pages within ~20 min via the withheld ping, but the exit-bar gap accounting under-counts that window. A full fix would treat an unmeasurable window as a provisional gap and reconcile once the probe recovers.
