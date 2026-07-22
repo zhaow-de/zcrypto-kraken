@@ -182,9 +182,10 @@ def test_a_mandatory_pair_breaching_the_cap_is_kept_but_flagged():
     assert any("spread" in r for r in entry["reasons"])
 
 
-def test_the_cap_rejects_only_on_spread_leaving_other_criteria_intact():
+def test_a_pair_failing_volume_and_spread_reports_both_reasons():
     """A pair failing BOTH volume and spread reports both, not just the first."""
     sel = finalize_universe([_pair("THIN/EUR")], {"THIN/EUR": 1.0}, spreads={"THIN/EUR": 50.0}, max_spread_bps=10.0)
     reasons = sel.entries[0]["reasons"]
+    assert sel.entries[0]["selected"] is False
     assert any("volume" in r for r in reasons)
     assert any("spread" in r for r in reasons)

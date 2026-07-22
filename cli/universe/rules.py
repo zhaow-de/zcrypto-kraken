@@ -65,12 +65,13 @@ def finalize_universe(
     `reasons` only when it would otherwise have failed.
 
     `spreads` maps symbol -> effective spread in bps per side at `SPREAD_REFERENCE_NOTIONAL_EUR`
-    (T0024, spec 00067). It is OPT-IN: omit it and no spread criterion applies, byte-identically to
-    before. A symbol ABSENT from the map is recorded `spread_bps: None` and is **not** rejected --
-    the capture daemon subscribes to EUR-quoted pairs only, so the BTC-quoted universe legs have no
-    L2 at all, and absence of evidence is not evidence of a wide spread. The null is deliberate: it
-    makes the unscreened symbols visible in the artifact instead of letting a reader assume all
-    twelve were checked.
+    (T0024, spec 00067). It is OPT-IN: omit it and no spread criterion applies -- the selection
+    OUTCOME (`selected`, `escalate`, every `reasons` list) is unchanged, though the output is NOT
+    byte-identical: every entry gains a `spread_bps` key, null on that path. A symbol ABSENT from
+    the map is recorded `spread_bps: None` and is **not** rejected -- the capture daemon subscribes
+    to EUR-quoted pairs only, so the BTC-quoted universe legs have no L2 at all, and absence of
+    evidence is not evidence of a wide spread. The null is deliberate: it makes the unscreened
+    symbols visible in the artifact instead of letting a reader assume all twelve were screened.
     """
     entries = []
     for pair in pairs:

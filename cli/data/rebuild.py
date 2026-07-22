@@ -98,8 +98,9 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         volumes[symbol] = quote_volume_in_eur(daily, fx_daily=None if quote == "EUR" else btc_eur)
 
     # Spread cap (T0024, spec 00067): priced from the committed calibration at the same max-size
-    # position the volume floor uses. Only EUR-quoted pairs have L2 capture, so the BTC-quoted legs
-    # are absent from this map by construction -- finalize_universe records them `spread_bps: None`
+    # position the volume floor uses. The map covers EUR-quoted pairs with a calibrated base;
+    # everything else (today: the BTC-quoted legs, which have no L2 capture) is absent by
+    # construction -- finalize_universe records them `spread_bps: None`
     # and does NOT reject them (absence of evidence is not evidence of a wide spread; T0092).
     spreads = {
         symbol: round(effective_spread_bps(symbol.split("/")[0], SPREAD_REFERENCE_NOTIONAL_EUR), 3)

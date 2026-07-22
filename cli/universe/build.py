@@ -73,6 +73,7 @@ def render_markdown(file: dict) -> str:
     for key, value in file["params"].items():
         lines.append(f"| {key} | {value} |")
 
+    unscreened_symbols = ", ".join(e["symbol"] for e in file["entries"] if e.get("spread_bps") is None)
     lines += ["", "## Spread cap", ""]
     if isinstance(cap, str):
         lines += [f"`spread_cap`: {cap}"]
@@ -84,9 +85,14 @@ def render_markdown(file: dict) -> str:
             "",
             f"Source: {cap['source']}.",
             "",
+            # Name the symbols, never the cause: a generated artifact that hardcodes "because the
+            # legs are BTC-quoted" would assert it of any future EUR pair missing from the
+            # calibration table too. The reader can see which symbols they are (T0024 review).
             f"**{cap['unevaluated_count']} of {len(file['entries'])} symbols carry `spread_bps: null`** "
-            "— no calibrated spread at the reference notional, so the cap did not screen them "
-            "(today that is the BTC-quoted legs: L2 capture is EUR-quoted only).",
+            f"— no calibrated spread at the reference notional, so the cap did not screen them: "
+            f"{unscreened_symbols}."
+            if unscreened_symbols
+            else f"**Every one of the {len(file['entries'])} symbols was screened against the cap.**",
         ]
 
     lines += ["", "## Provenance", "", "| Key | Value |", "|---|---|"]

@@ -118,6 +118,11 @@ def test_the_rendered_cap_section_states_the_cap_and_the_unscreened_count():
     md = render_markdown(file)
     assert "10.0" in md and "1,400" in md
     assert "1 of 2 symbols" in md
+    # The unscreened symbols are NAMED, not explained: hardcoding "because they are BTC-quoted"
+    # would assert it of any future EUR pair missing from the calibration table (T0024 review).
+    cap_section = md.split("## Spread cap")[1].split("## Provenance")[0]
+    assert "ETH/BTC" in cap_section
+    assert "EUR-quoted only" not in md
 
 
 def test_the_placeholder_still_renders_without_the_structured_keys():
