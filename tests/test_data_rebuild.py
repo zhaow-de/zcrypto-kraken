@@ -7,8 +7,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from cli.costs.spread import effective_spread_bps
 from cli.data import rebuild
 from cli.data.errors import DataSyncError
+from cli.universe.rules import DEFAULT_MAX_SPREAD_BPS, SPREAD_REFERENCE_NOTIONAL_EUR
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _ASSETPAIRS = json.loads((_FIXTURES / "kraken_assetpairs.json").read_text())
@@ -119,6 +121,36 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     assert payload["selected"] == ["BTC/EUR", "ETH/BTC"]
     assert payload["provenance"]["ohlc_dataset_hash"] == "deadbeef"
     assert len(payload["provenance"]["snapshot_sha256"]) == 64
+
+
+def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch):
+    # The production path is the whole point of the criterion: wiring it in `_refresh_universe` is
+    # what makes the cap real, so reverting that call to `finalize_universe(pairs, volumes)` must
+    # turn this test red. Asserting only the `spread_cap` record would NOT -- that record is built
+    # separately from the map that does the screening, so the two can drift silently (T0024 review).
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    rebuild._refresh_universe(ctx, out_root)
+
+    payload = json.loads((out_root / "point-in-time-universe.json").read_text())
+    entries = {e["symbol"]: e["spread_bps"] for e in payload["entries"]}
+    # The EUR leg carries the calibrated number at the reference notional -- not None, not 0.0.
+    expected = round(effective_spread_bps("BTC", SPREAD_REFERENCE_NOTIONAL_EUR), 3)
+    assert entries["BTC/EUR"] == expected
+    # The BTC-quoted leg has no capture, so it is recorded unevaluated rather than auto-failed (D3).
+    assert entries["ETH/BTC"] is None
+    assert payload["spread_cap"]["max_spread_bps"] == DEFAULT_MAX_SPREAD_BPS
+    assert payload["spread_cap"]["reference_notional_eur"] == SPREAD_REFERENCE_NOTIONAL_EUR
+    assert payload["spread_cap"]["unevaluated_count"] == 1
 
 
 def test_refresh_universe_requires_live_ohlc_full(tmp_path, monkeypatch):
