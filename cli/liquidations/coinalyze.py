@@ -32,12 +32,14 @@ from typing import Optional
 
 import polars as pl
 import typer
+from prometheus_client import Counter, Gauge
 
 from cli.capture.command import single_instance_lock
 from cli.capture.gap_monitor import DiskWatermark, ping_healthcheck
 from cli.capture.segment_writer import LIQ_AGG_SCHEMA, SegmentWriter
 from cli.liquidations.errors import LiquidationsError
 from cli.logging import get_logger
+from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 
 logger = get_logger("liquidations.coinalyze")
 
@@ -215,8 +217,46 @@ def poll_cycle(
     return written
 
 
+class _PollMetrics:
+    """The poller's counters/gauge (spec 00069 D5, T5): `_run()` builds one of these only when
+    ZCRYPTO_METRICS_PORT is set and threads it through every `_poll_once` call."""
+
+    def __init__(self, registry) -> None:
+        self.polls_total = Counter("zcrypto_liquidations_polls_total", "Poll cycles by outcome.", ["outcome"], registry=registry)
+        self.api_errors_total = Counter(
+            "zcrypto_liquidations_api_errors_total", "Coinalyze API/transport failures.", registry=registry
+        )
+        self.last_success = Gauge(
+            "zcrypto_liquidations_last_success_timestamp_seconds",
+            "Unix timestamp of the last successful poll cycle.",
+            registry=registry,
+        )
+
+
+def _record_outcome(metrics: _PollMetrics | None, *, ok: bool, api_error: bool = False) -> None:
+    """Isolation invariant (spec 00069 D5): by the time this runs, `_poll_once`'s real work --
+    the fetch, every `writer.append`, and the finalize sweep -- has already completed (or, on a
+    failure, been correctly abandoned); a raising metrics update must never abort the poll cycle
+    or affect its return value. Mirrors `ping_healthcheck`'s wrap-and-log. `metrics` is None
+    whenever ZCRYPTO_METRICS_PORT is unset, making every call here a no-op."""
+    if metrics is None:
+        return
+    try:
+        metrics.polls_total.labels(outcome="ok" if ok else "error").inc()
+        if api_error:
+            metrics.api_errors_total.inc()
+        if ok:
+            metrics.last_success.set(time.time())
+    except Exception:
+        logger.exception("metrics update failed for poll cycle -- continuing")
+
+
 def _poll_once(
-    api_key: str, writers: dict[str, SegmentWriter], watermark: DiskWatermark, bucket_watermarks: dict[str, int]
+    api_key: str,
+    writers: dict[str, SegmentWriter],
+    watermark: DiskWatermark,
+    bucket_watermarks: dict[str, int],
+    metrics: _PollMetrics | None = None,
 ) -> bool:
     """Run one cycle's watermark check + fetch/write; returns whether it fully succeeded (the
     dead-man ping's gate). A watermark probe that raises, a breach, or a `LiquidationsError` from
@@ -226,14 +266,17 @@ def _poll_once(
         watermark.check()
     except Exception:
         logger.exception("disk watermark check failed -- treating this poll cycle as failed")
+        _record_outcome(metrics, ok=False)
         return False
     if watermark.breached:
         logger.warning("disk watermark breached -- skipping poll cycle")
+        _record_outcome(metrics, ok=False)
         return False
     try:
         poll_cycle(api_key, COINS, writers, watermarks=bucket_watermarks)
     except LiquidationsError as exc:
         logger.warning("Coinalyze poll cycle failed: %s", exc)
+        _record_outcome(metrics, ok=False, api_error=True)
         return False
     except Exception:
         # A malformed bucket (null l/s, missing t, non-dict entry) raises TypeError/KeyError/
@@ -242,12 +285,14 @@ def _poll_once(
         # retried next cycle", so ANY per-cycle failure is caught here (writers flush via close()'s
         # finally regardless; the fetch is all-or-nothing so no partial state was written).
         logger.exception("Coinalyze poll cycle failed on unexpected data -- retrying next cycle")
+        _record_outcome(metrics, ok=False)
         return False
     # T0046: close any hour old enough that nothing recoverable can still arrive for it (see
     # _FINALIZE_LAG_SECONDS) -- the sparse-symbol writers that a genuine event never rotates.
     finalize_cutoff = datetime.now(UTC) - timedelta(seconds=_FINALIZE_LAG_SECONDS)
     for writer in writers.values():
         writer.finalize_completed_hours(finalize_cutoff)
+    _record_outcome(metrics, ok=True)
     return True
 
 
@@ -257,6 +302,15 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
     watermark = DiskWatermark(data_dir)
     bucket_watermarks = prime_bucket_watermarks(data_dir, COINS)
     logger.info("primed bucket watermarks for %d/%d coin(s)", len(bucket_watermarks), len(COINS))
+
+    # Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server and no metrics
+    # object at all -- every _poll_once call below then passes metrics=None, a no-op.
+    metrics = None
+    port = metrics_port_from_env()
+    if port is not None:
+        registry = build_registry()
+        metrics = _PollMetrics(registry)
+        start_metrics_server(port, registry)
 
     # SIGTERM is pointed at the same handler Python installs for SIGINT by default
     # (`signal.default_int_handler`, which raises KeyboardInterrupt). There is no asyncio event
@@ -269,7 +323,7 @@ def _run(data_dir: Path, api_key: str, poll_seconds: int, healthcheck_url: str |
     started = time.monotonic()
     try:
         while True:
-            ok = _poll_once(api_key, writers, watermark, bucket_watermarks)
+            ok = _poll_once(api_key, writers, watermark, bucket_watermarks, metrics)
             if ok and not watermark.breached and watermark.measurable:
                 ping_healthcheck(healthcheck_url)
             if duration is not None and time.monotonic() - started >= duration:
