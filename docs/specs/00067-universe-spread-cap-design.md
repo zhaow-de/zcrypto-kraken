@@ -42,6 +42,14 @@ The gap itself is registered as [[T0092]] — the capture set would have to grow
 
 ## Out of scope
 
-- **Re-running the live universe build.** `_refresh_universe` calls `fetch_public("AssetPairs")`; a rebuild is a network operation against Kraken and a canonical-dataset write. The selection outcome is instead determined offline from the stored refdata snapshot and reported here.
+- **Re-running the live universe build.** `_refresh_universe` is now *wired* for the criterion (it builds the spread map and passes the cap record), but calling it is a network operation against Kraken plus a canonical-dataset write — outside this run's boundary. The artifact carries `"pending-capture"` until that rebuild.
 - Any change to the volume floor, the mandatory-pair rule, or the min/max name bounds.
 - The BTC-quoted legs' spreads (D3) — they need capture, not analysis.
+
+## How the "selection unchanged" result was obtained, and what it does not prove
+
+Determined offline by replaying the stored `data/universe/point-in-time-universe.json` entries back through `finalize_universe`, once without the criterion and once with it.
+
+**The replay is faithful, and that was checked rather than assumed**: without the criterion it reproduces the live file's `selected` tuple, its `escalate` flag **and every entry's `reasons` list** exactly. So the spread cap is the only variable between the two runs, which is what makes the comparison meaningful.
+
+**The residual limit, stated plainly:** `max_leverage` and `median_quote_volume` are read *from* that output file, so this re-derives the same decision from the same inputs. It establishes that **adding the criterion changes nothing given those inputs** — the question T0024 asked. It does **not** establish that a fresh rebuild against today's Kraken refdata and updated volumes would select the same twelve; only a real `_refresh_universe` run shows that.

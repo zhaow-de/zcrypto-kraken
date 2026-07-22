@@ -46,16 +46,21 @@ def render_markdown(file: dict) -> str:
         "",
         "## Per-symbol criteria",
         "",
-        "| Symbol | Selected | Margin | Max leverage | Median quote volume | Reasons |",
-        "|---|---|---|---|---|---|",
+        "| Symbol | Selected | Margin | Max leverage | Median quote volume | Spread (bps/side) | Reasons |",
+        "|---|---|---|---|---|---|---|",
     ]
     for entry in file["entries"]:
         selected = "yes" if entry["selected"] else "no"
         margin = "yes" if entry["margin_enabled"] else "no"
         reasons = "; ".join(entry["reasons"]) if entry["reasons"] else "-"
+        # The column is the point of the null, not decoration: a symbol with no L2 capture reads
+        # "not captured" here rather than silently blank, so a filter covering 10 of 12 cannot be
+        # mistaken for a universe-wide one (spec 00067 D3).
+        spread = entry.get("spread_bps")
+        spread_cell = "not captured" if spread is None else f"{spread:.3f}"
         lines.append(
             f"| {entry['symbol']} | {selected} | {margin} | {entry['max_leverage']} "
-            f"| {entry['median_quote_volume']:,.2f} | {reasons} |"
+            f"| {entry['median_quote_volume']:,.2f} | {spread_cell} | {reasons} |"
         )
 
     lines += ["", "## Parameters", "", "| Parameter | Value |", "|---|---|"]

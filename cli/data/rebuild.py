@@ -13,6 +13,7 @@ from pathlib import Path
 
 from cli.backfill.backfill import backfill_basket
 from cli.backfill.substrate15m import build_15m_substrate
+from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
 from cli.data.errors import DataSyncError
 from cli.derivatives.funding import build_funding_substrate
 from cli.ohlc.dataset import read_parquet
@@ -20,7 +21,14 @@ from cli.snapshot import CANDIDATE_SYMBOLS, derive_universe
 from cli.snapshot.fetch import fetch_public
 from cli.snapshot.register import build_snapshot
 from cli.universe.build import build_universe_file
-from cli.universe.rules import DEFAULT_MIN_LEVERAGE, DEFAULT_MIN_MEDIAN_QUOTE_VOLUME, MANDATORY, finalize_universe
+from cli.universe.rules import (
+    DEFAULT_MAX_SPREAD_BPS,
+    DEFAULT_MIN_LEVERAGE,
+    DEFAULT_MIN_MEDIAN_QUOTE_VOLUME,
+    MANDATORY,
+    SPREAD_REFERENCE_NOTIONAL_EUR,
+    finalize_universe,
+)
 from cli.universe.volume import quote_volume_in_eur
 
 _OHLC_INTERVALS = ["1440", "240", "60"]
@@ -89,17 +97,38 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         daily = read_parquet(ohlc_root / base / quote / "1440.parquet")
         volumes[symbol] = quote_volume_in_eur(daily, fx_daily=None if quote == "EUR" else btc_eur)
 
-    selection = finalize_universe(pairs, volumes)
+    # Spread cap (T0024, spec 00067): priced from the committed calibration at the same max-size
+    # position the volume floor uses. Only EUR-quoted pairs have L2 capture, so the BTC-quoted legs
+    # are absent from this map by construction -- finalize_universe records them `spread_bps: None`
+    # and does NOT reject them (absence of evidence is not evidence of a wide spread; T0092).
+    spreads = {
+        symbol: round(effective_spread_bps(symbol.split("/")[0], SPREAD_REFERENCE_NOTIONAL_EUR), 3)
+        for symbol in symbols
+        if symbol.split("/")[1] == "EUR" and symbol.split("/")[0] in SPREAD_CALIBRATION
+    }
+    selection = finalize_universe(pairs, volumes, spreads=spreads, max_spread_bps=DEFAULT_MAX_SPREAD_BPS)
     params = {
         "min_leverage": DEFAULT_MIN_LEVERAGE,
         "min_median_quote_volume": DEFAULT_MIN_MEDIAN_QUOTE_VOLUME,
         "median_quote_volume_window_days": 30,
         "mandatory": list(MANDATORY),
     }
+    spread_cap = {
+        "max_spread_bps": DEFAULT_MAX_SPREAD_BPS,
+        "reference_notional_eur": SPREAD_REFERENCE_NOTIONAL_EUR,
+        "source": "cli/costs/spread.py (T0014, spec 00066) — mean effective spread at size",
+        "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
+    }
     manifest_path = ohlc_root / "manifest.json"
     ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"] if manifest_path.exists() else ""
     provenance = {"snapshot_sha256": snapshot["raw_sha256"], "ohlc_dataset_hash": ohlc_dataset_hash}
-    file = build_universe_file(selection, as_of=datetime.now(UTC).strftime("%Y-%m-%d"), params=params, provenance=provenance)
+    file = build_universe_file(
+        selection,
+        as_of=datetime.now(UTC).strftime("%Y-%m-%d"),
+        params=params,
+        provenance=provenance,
+        spread_cap=spread_cap,
+    )
     (out_root / "point-in-time-universe.json").write_text(json.dumps(file, sort_keys=True))
 
 
