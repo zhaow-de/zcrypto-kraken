@@ -21,7 +21,10 @@ class CombinedSystemConfig:
     vol_lookback: int = 30
     max_leverage: float = 1.0
     periods_per_year: int = 365
-    spot_fee_per_side: float = 0.006      # tier-1 maker x1.5 convention; T0014 recalibrates
+    spot_fee_per_side: float = 0.006      # tier-1 maker x1.5 = 40bps fee + 20bps headroom;
+                                          # T0014 (2026-07-22) measured the spread at 2-4bps, so the
+                                          # headroom is 5-10x it -- but maker-vs-taker is unsettled
+                                          # and dominates; see T0090 before changing this.
     long_cap: float = 0.20
     short_cap: float = 0.10
     governor: GovernorConfig = GovernorConfig()
