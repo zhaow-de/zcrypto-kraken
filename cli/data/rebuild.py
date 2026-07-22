@@ -32,6 +32,14 @@ from cli.universe.rules import (
 from cli.universe.volume import quote_volume_in_eur
 
 _OHLC_INTERVALS = ["1440", "240", "60"]
+_UNIVERSE_VOLUME_WINDOW_DAYS = 30
+# Days the universe rebuild tolerates between a symbol's newest daily bar and the rebuild stamp.
+# A chosen convention, not a derivation: daily bars lag ~a day by construction, and a week leaves
+# operational slack while staying far tighter than the 30-day window it protects. NOTE this budget
+# is deliberately unsatisfiable by the QUARTERLY OHLCVT dumps alone -- freshly ingesting a just-
+# closed quarter still leaves the frontier weeks old -- so a universe rebuild needs a live-tailed
+# source, not merely an up-to-date dump ingest (T0093).
+UNIVERSE_MAX_OHLC_STALENESS_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -70,6 +78,37 @@ def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
     (out_root / f"kraken-refdata-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}.json").write_text(json.dumps(snapshot, sort_keys=True))
 
 
+def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> None:
+    """Refuse to build a universe from an OHLC set that does not reach the present (T0093).
+
+    The volume criterion is a TRAILING 30-day median, so it only describes current tradeability if
+    the dataset's newest bar is recent. Left unguarded, this path computes a "30-day median" over a
+    months-old window and drops names for what reads as a liquidity move (measured 2026-07-22:
+    AVAX/EUR at 132,274.82 vs the 150,000 floor, selecting 11 -- and `escalate` stays False because
+    11 >= MIN_NAMES, so nothing flags it).
+
+    Checked PER SYMBOL, on the stalest, rather than on the basket's newest bar: each symbol's median
+    is computed from its own frame, so a basket-wide `max` would let one fresh symbol vouch for
+    stale ones. That is not hypothetical -- the live-trades->bars materializer planned in T0065's
+    REACH round feeds EUR pairs only (capture is EUR-quoted; T0092), which would leave the
+    BTC-quoted legs behind while a `max` check signed off. The cost of this strictness: a
+    legitimately delisted symbol fails the whole rebuild. That is the intended direction -- a
+    delisting is a corporate action wanting human attention (T0025), not something to select around
+    on a stale window -- and the error names the offender.
+    """
+    as_of = datetime.strptime(ctx.stamp, "%Y%m%d").replace(tzinfo=UTC)
+    symbol, last_bar = min(last_bars.items(), key=lambda kv: kv[1])
+    staleness_days = (as_of - last_bar).days
+    if staleness_days > UNIVERSE_MAX_OHLC_STALENESS_DAYS:
+        raise DataSyncError(
+            f"data rebuild: universe needs an ohlc-full set reaching the present -- {symbol}'s newest "
+            f"daily bar is {last_bar.date().isoformat()}, {staleness_days} days before the rebuild "
+            f"stamp {as_of.date().isoformat()} (budget {UNIVERSE_MAX_OHLC_STALENESS_DAYS} days). A "
+            f"trailing {_UNIVERSE_VOLUME_WINDOW_DAYS}-day median over that window measures past "
+            f"liquidity, not current (T0093)."
+        )
+
+
 def _require_ohlc_full(ctx: RebuildContext) -> Path:
     ohlc_root = ctx.data_root / "ohlc-full"
     if not ohlc_root.exists():
@@ -91,11 +130,20 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
 
     ohlc_root = _require_ohlc_full(ctx)
     btc_eur = read_parquet(ohlc_root / "BTC" / "EUR" / "1440.parquet")
-    volumes = {}
-    for symbol in symbols:
-        base, quote = symbol.split("/")
-        daily = read_parquet(ohlc_root / base / quote / "1440.parquet")
-        volumes[symbol] = quote_volume_in_eur(daily, fx_daily=None if quote == "EUR" else btc_eur)
+    dailies = {s: read_parquet(ohlc_root / s.split("/")[0] / s.split("/")[1] / "1440.parquet") for s in symbols}
+    # Freshness BEFORE the medians: `quote_volume_in_eur` raises on a short frame, so a stale set
+    # that is also short would report a row count and never diagnose the staleness (T0093 review).
+    last_bars = {symbol: daily["ts"][-1] for symbol, daily in dailies.items() if daily.height}
+    if last_bars:
+        _require_fresh_ohlc(last_bars, ctx)
+    volumes = {
+        symbol: quote_volume_in_eur(
+            daily,
+            fx_daily=None if symbol.split("/")[1] == "EUR" else btc_eur,
+            window=_UNIVERSE_VOLUME_WINDOW_DAYS,
+        )
+        for symbol, daily in dailies.items()
+    }
 
     # Spread cap (T0024, spec 00067): priced from the committed calibration at the same max-size
     # position the volume floor uses. The map covers EUR-quoted pairs with a calibrated base;
@@ -111,7 +159,7 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     params = {
         "min_leverage": DEFAULT_MIN_LEVERAGE,
         "min_median_quote_volume": DEFAULT_MIN_MEDIAN_QUOTE_VOLUME,
-        "median_quote_volume_window_days": 30,
+        "median_quote_volume_window_days": _UNIVERSE_VOLUME_WINDOW_DAYS,
         "mandatory": list(MANDATORY),
     }
     spread_cap = {

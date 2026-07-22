@@ -2,6 +2,7 @@
 builders are monkeypatched into `rebuild.REBUILDABLE` so these tests stay hermetic."""
 
 import json
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -21,10 +22,12 @@ def _fake_fetch_public(endpoint: str) -> dict:
     return _ASSETPAIRS if endpoint == "AssetPairs" else _ASSETS
 
 
-def _write_daily(path: Path, *, vwap: float, volume: float, n: int = 30) -> None:
+def _write_daily(path: Path, *, vwap: float, volume: float, n: int = 30, last: date = date(2026, 7, 18)) -> None:
+    # Real UTC daily timestamps ending at `last`, not range(n): the freshness guard reads the
+    # dataset's newest bar, and an integer ts cannot express staleness at all (T0093).
     frame = pl.DataFrame(
         {
-            "ts": list(range(n)),
+            "ts": [datetime.combine(last - timedelta(days=n - 1 - i), time(), tzinfo=UTC) for i in range(n)],
             "open": [vwap] * n,
             "high": [vwap] * n,
             "low": [vwap] * n,
@@ -119,6 +122,12 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     payload = json.loads((out_root / "point-in-time-universe.json").read_text())
     assert set(payload) == {"as_of", "entries", "escalate", "params", "provenance", "selected", "spread_cap"}
     assert payload["selected"] == ["BTC/EUR", "ETH/BTC"]
+    # Pins that the artifact's DECLARED window is the module constant, so the two cannot drift
+    # apart in the payload. It does NOT pin the constant->computation wiring: both sides of this
+    # assertion move together, so removing `window=` from the quote_volume_in_eur call would still
+    # pass. That wiring is correct at HEAD; pinning it needs a fixture whose last 30 rows differ
+    # from its last 20 (T0093 review).
+    assert payload["params"]["median_quote_volume_window_days"] == rebuild._UNIVERSE_VOLUME_WINDOW_DAYS
     assert payload["provenance"]["ohlc_dataset_hash"] == "deadbeef"
     assert len(payload["provenance"]["snapshot_sha256"]) == 64
 
@@ -151,6 +160,84 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
     assert payload["spread_cap"]["max_spread_bps"] == DEFAULT_MAX_SPREAD_BPS
     assert payload["spread_cap"]["reference_notional_eur"] == SPREAD_REFERENCE_NOTIONAL_EUR
     assert payload["spread_cap"]["unevaluated_count"] == 1
+
+
+def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
+    """T0093: the volume floor is a TRAILING 30-day median, so it is only meaningful if the dataset
+    reaches the present. `ohlc-full` stops where the OHLCVT dumps stop (2026-03-31 in the live set)
+    while the v0 REST set it replaced was live-fetched -- so this path can compute a "30-day median"
+    over a window months in the past and shrink the universe for what looks like a liquidity move.
+    Measured on the live data: AVAX/EUR reads 132,274.82 against the 150,000 floor and drops out,
+    with `escalate` staying False because 11 >= MIN_NAMES. Fail closed instead of selecting quietly.
+    """
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    # Newest bar 2026-03-31, rebuild stamped 2026-07-18 -- the live situation exactly.
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 3, 31))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="2026-03-31"):
+        rebuild._refresh_universe(ctx, out_root)
+    assert not (out_root / "point-in-time-universe.json").exists(), "must not write a stale universe"
+
+
+def test_refresh_universe_refuses_a_basket_where_only_some_symbols_are_fresh(tmp_path, monkeypatch):
+    """The guard is per-symbol, not on the basket's newest bar: each symbol's median comes from its
+    own frame, so one fresh symbol must not vouch for a stale one. This is the shape T0065's REACH
+    round would produce -- a live-trades->bars tail feeds EUR pairs only (capture is EUR-quoted,
+    T0092), leaving the BTC-quoted legs at the dump extent. A `max` check passes this basket."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 18))
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, last=date(2026, 3, 31))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="ETH/BTC"):
+        rebuild._refresh_universe(ctx, out_root)
+
+
+def test_refresh_universe_diagnoses_staleness_before_the_row_count(tmp_path, monkeypatch):
+    """A stale set that is ALSO too short must report the staleness, not the row count: the medians
+    raise UniverseError on a short frame, which would mask the real diagnosis (T0093 review)."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, n=10, last=date(2026, 3, 31))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="2026-03-31"):
+        rebuild._refresh_universe(ctx, out_root)
+
+
+def test_refresh_universe_accepts_an_ohlc_set_inside_the_staleness_budget(tmp_path, monkeypatch):
+    """The guard must not block an ordinary rebuild: daily bars lag by a day or so by construction."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 16))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    rebuild._refresh_universe(ctx, out_root)  # 2 days stale, inside the budget
+
+    assert (out_root / "point-in-time-universe.json").exists()
 
 
 def test_refresh_universe_requires_live_ohlc_full(tmp_path, monkeypatch):
