@@ -18,6 +18,9 @@
 - Env names exactly: `ZCRYPTO_LOKI_URL` (the **full** push URL), `ZCRYPTO_LOKI_USERNAME`, `ZCRYPTO_LOKI_PASSWORD`, `ZCRYPTO_LOG_HOST`, `ZCRYPTO_LOG_SERVICE`. Flag `--ship-logs` with any missing ⇒ hard startup error naming the missing vars.
 - Console/stdout behavior byte-identical to today in every mode; the ship sink is additive.
 - Recovery after drops emits ONE WARNING (to console and shipped): `log shipping recovered; N lines dropped while unreachable`.
+- Retry policy: transport errors, 5xx and 429 retry with the capped backoff; **any other 4xx drops the held batch** (counted, announced on next success) — the poisoned-batch wedge is spec D3's named failure case.
+- `ZCRYPTO_LOG_HOST` renders **today's exact label values**: `{{ base_hostname }}` on capture hosts, literal `ops` and `nas` on those hosts (spec D5 — the ops rules hardcode `host="ops"`).
+- Every compose reference to the logship secrets (`env_file`, `ZCRYPTO_SHIP_LOGS`) is wrapped in the SAME `logship_loki_url is defined` conditional as the render task (spec D5) — a pre-vault converge must leave every container restartable.
 - No new dependencies anywhere. README `## Usage` updated in the same change as the flag (readme-usage rule).
 - Existing suites stay green throughout: `uv run pytest` (incl. `tests/test_infra_alloy_series.py`, `tests/test_infra_alert_rules.py`).
 
@@ -98,7 +101,8 @@ def _build_opener() -> urllib.request.OpenerDirector:
 - [ ] **Step 1: failing tests**, tightened timings (`flush_interval_s=0.02`, `timeout_s=0.3`, `backoff_min_s=0.05`, `backoff_max_s=0.2`, `exit_deadline_s=0.5`):
   - `emit` appends; a batch arrives at the fake Loki within the flush cadence; line is `JsonLineFormatter` output; ts is `str(int(record.created * 1e9))`.
   - ring at capacity: oldest evicted, `dropped_total` exact (fill capacity+K, assert K dropped and the survivors are the newest).
-  - endpoint returns 500: the SAME batch is retried (fake records identical bodies), one in-flight batch only, attempt gaps follow ~[0.05, 0.1, 0.2, 0.2] (assert monotone-doubling-then-capped with generous windows).
+  - endpoint returns 500: the SAME batch is retried (fake records identical bodies), one in-flight batch only; assert the recorded attempt gaps are monotone-doubling-then-capped (the property, not absolute values — flake-proof). Same for 429.
+  - endpoint returns 400: the batch is **dropped, not retried** (fake sees it exactly once), `dropped_total` grows by the batch size, the NEXT batch ships, and the recovery WARNING carries the count — the poisoned-batch case.
   - recovery: fail once with ring overflow, then let the fake succeed — exactly one WARNING record `log shipping recovered; N lines dropped while unreachable` arrives at the console handler AND in a shipped batch, with N exact.
   - **emit latency bounded (the structural guarantee):** point at `SilentServer`, emit 2,000 records, assert total wall for the emits < 0.5 s.
   - **accept-then-silent unblocks:** worker POSTing to `SilentServer` returns to backoff within `timeout_s + slack` (batch retained, no hang).
@@ -146,16 +150,21 @@ class LokiShipHandler(logging.Handler):
         with self._ring_lock:
             return [self._ring.popleft() for _ in range(min(len(self._ring), self._batch_max))]
 
-    def _post(self, entries) -> bool:
+    def _post(self, entries) -> str:
+        """'ok' | 'retry' | 'drop' -- a non-429 4xx is permanently rejected (e.g. entries older
+        than Loki's out-of-order window after a long outage); retrying it forever would wedge
+        shipping silently (spec D3)."""
         req = urllib.request.Request(self._cfg.url, data=build_payload(entries, self._cfg),
                                      headers={"Content-Type": "application/json",
                                               "Authorization": self._auth}, method="POST")
         try:
             with self._opener.open(req, timeout=self._timeout_s):
                 pass
-            return True
+            return "ok"
+        except urllib.error.HTTPError as e:
+            return "retry" if (e.code >= 500 or e.code == 429) else "drop"
         except (urllib.error.URLError, OSError, TimeoutError):
-            return False
+            return "retry"
 
     def _run(self):
         backoff = self._backoff_min_s
@@ -166,16 +175,22 @@ class LokiShipHandler(logging.Handler):
                 self._held = self._drain()
             if not self._held:
                 continue
-            if self._post(self._held):
+            outcome = self._post(self._held)
+            if outcome == "ok":
                 self._held, backoff = [], self._backoff_min_s
                 self._announce_recovery()
+            elif outcome == "drop":
+                with self._ring_lock:
+                    self.dropped_total += len(self._held)
+                    self._dropped_unannounced += len(self._held)
+                self._held, backoff = [], self._backoff_min_s
             else:
                 self._stop.wait(backoff)             # interruptible: close() never waits on this
                 backoff = min(backoff * 2, self._backoff_max_s)
         while True:                                   # final best-effort flush; no retry loop
             if not self._held:
                 self._held = self._drain()
-            if not self._held or not self._post(self._held):
+            if not self._held or self._post(self._held) != "ok":
                 break
             self._held = []
 
@@ -206,7 +221,7 @@ class LokiShipHandler(logging.Handler):
 - Modify: `cli/logging/__init__.py` (export `ShipConfig`)
 - Modify: `cli/__main__.py` (flag + env validation; build `ShipConfig`; pass to `configure`)
 - Modify: `README.md` `## Usage` (the flag + the five env names + one sentence on semantics)
-- Test: `tests/test_logging_config.py` (extend), `tests/test_cli_main.py` (or the existing CLI-callback test module — locate by `grep -l "log-level" tests/`)
+- Test: `tests/test_logging_config.py` (extend), `tests/test_logging_cli.py` (the existing CLI-callback test module)
 
 **Steps:**
 
@@ -250,7 +265,7 @@ if ship_logs:
 
 **Exact edits:**
 
-- [ ] **Step 1 — `config.alloy`:** delete the blocks `discovery.docker "containers"`, `discovery.relabel "container_logs"`, `loki.source.docker "containers"`, and the zcrypto `stage.match` (selector `{container=~"capture|zcrypto-.*"}`) inside `loki.process "parse"`. Replace the alloy logfmt `stage.regex` with `stage.logfmt { mapping = { "level" = "", "msg" = "" } }` + the existing level template + `stage.output { source = "msg" }`. Widen the journal keep to admit the alloy container's journald stream — the two-source OR pattern:
+- [ ] **Step 1 — `config.alloy`:** delete the blocks `discovery.docker "containers"`, `discovery.relabel "container_logs"`, `loki.source.docker "containers"`, and the zcrypto `stage.match` (selector `{container=~"capture|zcrypto-.*"}`) inside `loki.process "parse"` — on the capture hosts the journal carries only prune bash lines and Alloy logfmt, so nothing feeds it (spec D6; on ops/NAS the stage STAYS). Rework the alloy stage: selector plain `{container="alloy"}` (delete the `|~ "^ts=…"` line-match regex), `stage.logfmt { mapping = { "level" = "" } }` + the existing warn→WARNING/fatal→CRITICAL template + `stage.labels` — and **no `stage.output`**: the line ships unmodified (attributes kept; non-logfmt lines pass through unleveled). Remove `prometheus_sd_refresh_duration_seconds_count|prometheus_sd_refresh_failures_total` from the metrics keep-regex (their producer dies with `discovery.docker`) and update the `_SD_` pins in `tests/test_infra_alloy_series.py`. Widen the journal keep to admit the alloy container's journald stream — the two-source OR pattern:
 
 ```river
 rule {
@@ -270,30 +285,30 @@ rule {
 (keep the existing unit-name → `container` rule for the prune unit; order the container-name rule after it).
 
 - [ ] **Step 2 — `alloy-compose.yaml.j2`:** delete the `- /var/run/docker.sock:/var/run/docker.sock:ro` volume and the docker-group `group_add` entry (the `systemd-journal` group entry **stays** — journal reads need it); add to the alloy service: `logging: { driver: journald }`.
-- [ ] **Step 3 — `compose.yaml.j2` (capture service):** add `ZCRYPTO_SHIP_LOGS: "1"`, `ZCRYPTO_LOG_HOST: "{{ base_hostname }}"`, `ZCRYPTO_LOG_SERVICE: capture` to `environment:` and `env_file: ["{{ capture_dir }}/logship-secrets.env"]` (match the role's actual dir var — read the template header).
+- [ ] **Step 3 — `compose.yaml.j2` (capture service):** inside a `{% if logship_loki_url is defined %}` guard (spec D5 — a pre-vault converge must leave capture restartable): `ZCRYPTO_SHIP_LOGS: "1"`, `ZCRYPTO_LOG_HOST: "{{ base_hostname }}"`, `ZCRYPTO_LOG_SERVICE: capture` in `environment:`, and `env_file: ["/opt/zcrypto-capture/logship-secrets.env"]` (the compose dest dir is hardcoded `/opt/zcrypto-capture` in `tasks/main.yml:53` — there is no `capture_dir` var).
 - [ ] **Step 4 — `logship-secrets.env.j2`:** three lines `ZCRYPTO_LOKI_URL={{ logship_loki_url }}` etc.; **Step 5 — `tasks/main.yml`:** render task (root-owned 0600) mirroring the alloy-secrets render task; vars `logship_loki_url/username/password` come from the vault (the vault edit itself is an attended rollout step — the task is gated `when: logship_loki_url is defined` so converges stay green until then).
-- [ ] **Step 6:** `uv run pytest tests/test_infra_alloy_series.py tests/test_infra_alert_rules.py -q` — fix any assertion the deletions break (the metrics keep-list is untouched, so expected green). **Step 7: commit** `feat(infra): capture hosts — docker.sock retired, alloy self-ships via journald (00068 T5)`
+- [ ] **Step 6:** delete the `zcrypto-alloy-docker-sd-wedged` rule from `infra/grafana/alerts.yaml` — its `prometheus_sd_*` series die with `discovery.docker` fleet-wide, leaving it permanently NoData (spec D8; the provisioning PUSH is attended, this is the repo edit). **Step 7:** `uv run pytest tests/test_infra_alloy_series.py tests/test_infra_alert_rules.py -q` — fix what the deletions break (the `_SD_` pins WILL break; that is Step 1's update, verify it landed). **Step 8: commit** `feat(infra): capture hosts — docker.sock retired, alloy self-ships via journald (00068 T5)`
 
 ### Task 6: ops role — same treatment + poller flag
 
 **Files:** `infra/ansible/roles/ops/files/config.alloy`, `templates/alloy-compose.yaml.j2`, `templates/compose.yaml.j2`, `templates/logship-secrets.env.j2` (create), `tasks/main.yml`
 
-- [ ] **Step 1:** `config.alloy`: delete the docker path (`discovery.docker` at ~line 182, its relabel with the ephemeral drop rule, `loki.source.docker`) and the zcrypto regex stage; widen the journal keep regex from `zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\.service` with the same two-source OR + container-name rule as Task 5.
+- [ ] **Step 1:** `config.alloy`: delete the docker path ONLY (`discovery.docker` at ~line 182, its relabel with the ephemeral drop rule, `loki.source.docker`). **The zcrypto parse stage STAYS** — the ops oneshot units ship Python-format lines through the journal, and deleting it strips their `level` forever (spec D6, cold-review C2). Apply the same alloy-stage rework as Task 5 (equality selector, `stage.logfmt`, no output rewrite); remove the two `prometheus_sd_*` entries from the keep-regex; widen the journal keep regex from `zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\.service` with the same two-source OR + container-name rule as Task 5.
 - [ ] **Step 2:** `alloy-compose.yaml.j2`: socket volume + docker group_add out; `logging: { driver: journald }` in.
-- [ ] **Step 3:** `compose.yaml.j2` liquidations service: `entrypoint: ["zcrypto", "--ship-logs", "liquidations-poll"]`, env `ZCRYPTO_LOG_HOST: "{{ base_hostname }}"`, `ZCRYPTO_LOG_SERVICE: liquidations`, env_file the rendered secrets. **Step 4:** secrets template + gated render task. **Step 5:** infra tests green. **Step 6: commit** `feat(infra): ops — docker.sock retired, poller direct-ships (00068 T6)`
+- [ ] **Step 3:** `compose.yaml.j2` liquidations service, inside the `{% if logship_loki_url is defined %}` guard: `entrypoint: ["zcrypto", "--ship-logs", "liquidations-poll"]` (the un-gated branch keeps today's entrypoint), env `ZCRYPTO_LOG_HOST: ops` (**literal — NOT base_hostname, which is `zcrypto-ops`**; the alert rules hardcode `host="ops"`, spec D5/cold-review C1), `ZCRYPTO_LOG_SERVICE: liquidations`, env_file the rendered secrets. **Step 4:** secrets template + gated render task. **Step 5:** infra tests green. **Step 6: commit** `feat(infra): ops — docker.sock retired, poller direct-ships (00068 T6)`
 
 ### Task 7: engine role — flag staged, inert until the post-gate converge
 
 **Files:** `infra/ansible/roles/engine/templates/compose.yaml.j2` (+ the engine env/task files as needed)
 
-- [ ] **Step 1:** `entrypoint: ["zcrypto", "--ship-logs", "engine", "run"]`; env `ZCRYPTO_LOG_HOST`/`ZCRYPTO_LOG_SERVICE: engine`; env_file addition (reuse the capture host's rendered logship-secrets — same host). **The repo change is inert until an attended engine converge, which is gated post-Stage-6a-gate (spec D7 step 5) — state this in the template comment.** **Step 2:** infra tests. **Step 3: commit** `feat(infra): engine compose stages --ship-logs for the post-gate converge (00068 T7)`
+- [ ] **Step 1:** inside the same `{% if logship_loki_url is defined %}` guard: `entrypoint: ["zcrypto", "--ship-logs", "engine", "run"]` (un-gated branch keeps today's), env `ZCRYPTO_LOG_HOST: "{{ base_hostname }}"` (renders `zcrypto` — matches today's engine stream label), `ZCRYPTO_LOG_SERVICE: engine`; env_file `/opt/zcrypto-capture/logship-secrets.env` (reuse the capture host's rendered file — same host). **The repo change is inert until an attended engine converge, which is gated post-Stage-6a-gate (spec D7 step 5) — state this in the template comment.** **Step 2:** infra tests. **Step 3: commit** `feat(infra): engine compose stages --ship-logs for the post-gate converge (00068 T7)`
 
 ### Task 8: NAS — socket retired, first-time journal pipeline
 
 **Files:** `infra/nas/compose.yaml`, `infra/nas/config.alloy`
 
-- [ ] **Step 1:** `compose.yaml`: `logging: { driver: journald }` on BOTH `zcrypto-archive-pull` and `grafana-alloy`; delete the socket volume from the alloy service; add journal mounts to alloy: `/run/log/journal:/host/journal:ro` (**the volatile path — measured: `/var/log/journal` is empty on DSM**) + `/etc/machine-id:/etc/machine-id:ro`.
-- [ ] **Step 2:** `config.alloy`: delete `discovery.docker`/relabel/`loki.source.docker` and the zcrypto regex stage; add a first-time journal pipeline (`loki.source.journal` at `/host/journal`, `max_age = "48h"`) with keep on `__journal_container_name` regex `grafana-alloy|zcrypto-archive-pull`, container-label mapping (`grafana-alloy`→`alloy`, `zcrypto-archive-pull`→`archive-pull` — preserve today's label values by checking the current relabel first), `host` label from `constants.hostname`.
+- [ ] **Step 1:** `compose.yaml`: `logging: { driver: journald }` on BOTH `zcrypto-archive-pull` and `grafana-alloy`; delete the socket volume AND the `group_add: ["0"]` entry from the alloy service (root gid, present solely for the socket — spec D6/cold-review I3); add journal mounts to alloy: `/run/log/journal:/host/journal:ro` (**the volatile path — measured: `/var/log/journal` is empty on DSM**) + `/etc/machine-id:/etc/machine-id:ro`.
+- [ ] **Step 2:** `config.alloy`: delete `discovery.docker`/relabel/`loki.source.docker` ONLY — **the zcrypto parse stage (`{container="archive-pull"}`) STAYS**: the pull wrapper's shell lines deliberately mimic the Python line shape so they still get leveled (spec D6, cold-review C2). Add a first-time journal pipeline (`loki.source.journal` at `/host/journal`, `max_age = "48h"`) with keep on `__journal_container_name` regex `grafana-alloy|zcrypto-archive-pull`, container-label mapping (`grafana-alloy`→`alloy`, `zcrypto-archive-pull`→`archive-pull` — preserve today's label values by checking the current relabel first), and `host` as the **static literal `nas`** (today's streams carry it via a static relabel; `constants.hostname` would return the DSM machine name — cold-review I2). Apply the same alloy-stage rework as Task 5; remove the two `prometheus_sd_*` keep-regex entries here too.
 - [ ] **Step 3:** infra tests; **Step 4: commit** `feat(infra): nas — docker.sock retired, journald pipeline (00068 T8)`
 
 ### Task 9: closeout — full suite, gate, iterations-history entry
