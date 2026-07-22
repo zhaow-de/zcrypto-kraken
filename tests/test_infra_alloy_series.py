@@ -32,10 +32,12 @@ _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # failure class the log-dead canaries exist to close. So it is pinned for all three configs, not
 # just the two that happened to list it already.
 
-# 00069 T6: the capture/engine/poller app daemons' own `/metrics` series, admitted per host below.
-# The six ProcessCollector families are shared by every app endpoint (spec 00069 D4/D5) -- a
-# keep-list admitting four while the app publishes six is the T0051 admitted-but-unpublished trap
-# in the other direction.
+# 00069 T6/T7: the app daemons' own `/metrics` series, admitted per host below. The six
+# ProcessCollector families are shared by every app endpoint AND (per each config.alloy's own
+# `exporter.self "alloy"` comment) admitted uniformly for Alloy's own self-scrape too -- the plan's
+# earlier "shave Alloy down to a process pair" idea was dropped as machinery for nothing, so all
+# three hosts admit the same six names (spec 00069 D5, cold-review -- a keep-list admitting four
+# while the app publishes six is the T0051 admitted-but-unpublished trap in the other direction).
 PROCESS_FAMILIES = [
     "process_cpu_seconds_total",
     "process_max_fds",
@@ -85,6 +87,7 @@ NAS_REQUIRED = [
     "node_load1",
     "node_filesystem_avail_bytes",
     "zcrypto_gate_streak_days",
+    *PROCESS_FAMILIES,
 ]
 # ADMITTED by the NAS keep-regex but NOT published there any more: the overlay writer moved to the
 # ops node (spec 00054 D2) and the NAS's stale reconcile/trade-backfill textfiles were deleted at
@@ -158,17 +161,19 @@ def test_keep_regex_admits_every_published_series(path, required):
 @pytest.mark.parametrize(
     ("path", "excluded"),
     [
+        # No daemon runs on the NAS at all (00069 T7) -- none of the app/logship families exist there.
+        (NAS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
         # The poller runs on ops, not capture or engine.
         (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES]),
         # Capture/engine run on the capture hosts, not the poller.
         (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
     ],
-    ids=["ops", "capture"],
+    ids=["nas", "ops", "capture"],
 )
 def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
-    """T0051, the other direction (00069 T6): admitting a family this host never publishes is not
-    merely wasted machinery -- it is silent go-ahead for a future daemon addition to ship there
-    unreviewed."""
+    """T0051, the other direction (00069 T6/T7): admitting a family this host never publishes is
+    not merely wasted machinery -- it is silent go-ahead for a future daemon addition to ship
+    there unreviewed."""
     keep = _keep_regex(path)
     admitted = [s for s in excluded if keep.match(s)]
     assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
