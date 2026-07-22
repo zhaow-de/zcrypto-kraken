@@ -1,9 +1,9 @@
 ---
 status: partial
-ripe_when: before the pre-live universe refresh ([[T0025]]) — that refresh is the operation this breaks. The silent-shrink path is now closed by a fail-closed guard (landed 2026-07-22), so the remainder is the DATA gap: ripe when [[T0065]]'s REACH round ingests the Q2/Q3 dumps and `ohlc-full` reaches the present. Also ripe if any decision starts leaning on the committed universe's `median_quote_volume` figures as current
+ripe_when: before the pre-live universe refresh ([[T0025]]) — that refresh is the operation this breaks. The silent-shrink path is closed by a fail-closed guard (landed 2026-07-22); the remainder is the DATA gap, and it is NOT dischargeable by ingesting dumps — the OHLCVT dumps are quarterly, so even a freshly-ingested just-closed quarter leaves the frontier weeks stale and the guard still fires. Ripe when a LIVE-TAILED volume source exists for the rebuild: either [[T0065]]'s live-trades→bars materializer or a REST volume pull in the rebuild path. Also ripe if any decision starts leaning on the committed universe's `median_quote_volume` figures as current
 ---
 
-# The universe rebuild computes its volume floor over a months-stale window
+# The universe rebuild reads an OHLC set that stops months short, so its volume floor measures the past
 
 ## Context — what
 
@@ -41,10 +41,20 @@ Every recomputed figure differs from the committed one, in both directions, so t
 - `data/ohlc/` absent; `data/ohlc-full/` present with 4,581 BTC/EUR daily bars ending 2026-03-31.
 - Not a defect of [[T0024]]'s spread cap: the cap is applied *after* the volume filter and does not reject AVAX (AVAX = 3.33 bps/side, well inside the 10 bps cap). The spec `00067` "12 → 12" result is a replay of the committed entries and is correct **as scoped**; it says nothing about a rebuild.
 - Resolved: `data/ohlc` was deliberately deleted (iter-103, spec `00056` D4), documented in `data-catalog.md`. The manifests differ because they are different datasets — a REST seed vs a dump reconstruction — not the same bytes under two names.
+- **The recency gap was not overlooked — it was assessed and misjudged.** `docs/universe/point-in-time-universe.md` carried, from 2026-07-11 until this topic corrected it, a bullet declaring the question *"resolved / dropped"* because *"the volume signal uses a 30-day median window whose recent data is identical in the REST and full-history datasets"*. The two windows share zero rows. That sentence is why nothing re-ran the build.
+- **"Bit-identical" was measured on PRICES, not on what this criterion reads.** `02.phase1-ohlcvt-backfill-reconciliation.md` reports `OHLC match rate 1.0000` but `Volume rel diff max` up to **0.068363** (ETH/EUR/1440). The floor computes `volume × vwap`, so even inside the overlap the two sets disagree by up to ~7 % on the worst daily bar — the stale window is the dominant term in the 12→11 change, but not the only one.
 - **Guard landed 2026-07-22**: `_refresh_universe` now fails closed when the OHLC set's newest daily bar is more than `UNIVERSE_MAX_OHLC_STALENESS_DAYS` (7) before the rebuild stamp. Verified against the live set: it raises with *"newest daily bar is 2026-03-31, 113 days before the rebuild stamp 2026-07-22"*. The silent-shrink path is closed; the underlying data gap is not.
+
+## Done so far
+
+**Guard landed 2026-07-22** (branch `fix/t0093-universe-rebuild-stale-ohlc-guard`). `_refresh_universe` now refuses to build when any symbol's newest daily bar is more than `UNIVERSE_MAX_OHLC_STALENESS_DAYS` (7) before the rebuild stamp, checked **per symbol** on the stalest rather than on the basket's newest bar — one fresh symbol must not vouch for stale ones. Verified against the live set, not only fixtures: it raises *"BTC/EUR's newest daily bar is 2026-03-31, 113 days before the rebuild stamp 2026-07-22"*. The freshness check runs **before** the medians, so a set that is both stale and short reports the staleness rather than a row count.
+
+Also corrected in the same change: `docs/universe/point-in-time-universe.md`'s "Full-history volume — resolved / dropped" bullet, which had declared this very question closed on a false premise since 2026-07-11.
+
+**This closes the silent-shrink path, not the data gap** — a rebuild now fails loudly instead of quietly selecting eleven. The gap itself is the remainder below.
 
 ## Suggested next steps
 
-- **(The remaining blocker — precondition for [[T0025]])** Ingest the Q2/Q3 OHLCVT dumps so `ohlc-full` reaches the present ([[T0065]]'s REACH round, already ripe and autonomous). Until then the guard makes a universe rebuild **fail** rather than silently shrink — correct, but it means T0025's refresh is blocked on REACH, which was not previously stated as a dependency between them.
-- **(Cheap, independent)** Decide whether a universe rebuild should read a *live* REST pull for volumes rather than the dump-derived set, as the 2026-07-07 build effectively did. That would decouple selection from the dump cadence entirely; it also reintroduces a network dependency in the rebuild path, so it is a real trade rather than an obvious fix.
+- **(The remaining blocker — and dump ingestion does NOT discharge it)** The OHLCVT dumps are **quarterly** (`Kraken_OHLCVT_Q<N>_<YYYY>.zip`; newest on the NAS is Q1 2026, with Q2 still absent 22 days after the quarter closed). A dump-derived frontier is therefore always a quarter boundary: ingesting Q2 today gives 2026-06-30, still 22 days stale against a 7-day budget, so the guard fires anyway. **A universe rebuild needs a live-tailed volume source, not a fresher dump.**
+- **(The real options, one of which T0025 must pick)** (a) a REST volume pull in the rebuild path, which is what the 2026-07-07 build effectively did — decouples selection from the dump cadence, but reintroduces a network dependency; (b) [[T0065]]'s live-trades→bars materializer, which per [[T0092]] feeds **EUR pairs only**, so the two BTC-quoted legs would still need a source; (c) widen the staleness budget, which is the option that quietly reintroduces the defect and is recorded here to be rejected explicitly rather than drifted into.
 - **(Cheap, independent)** Record the resolved dataset path + hash in the universe provenance from the same handle the builder actually read, so the artifact cannot cite a set the code does not use.

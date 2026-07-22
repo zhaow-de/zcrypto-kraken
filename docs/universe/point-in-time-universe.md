@@ -86,9 +86,16 @@ own merits.
 
 - **Spread-cap criterion** — needs the L2 capture daemon (VPS-gated). Registered as **T0024**
   (`docs/open-topics/T0024-universe-spread-cap-criterion.md`); shares T0014/T0003's captured-L2 dependency.
-- **Full-history volume** — **resolved / dropped**: T0001's OHLCVT backfill landed (iter-008, full history
-  2013→2026), but the volume signal uses a 30-day median window whose recent data is identical in the REST and
-  full-history datasets, so the selection is unchanged and no re-run is needed. (Regenerating the file against the
-  canonical `data/ohlc-full` is a provenance nicety, not a pending decision.)
+- **Full-history volume** — **REOPENED 2026-07-22; the earlier "resolved / dropped" was measurably wrong**
+  (→ `docs/open-topics/T0093-universe-rebuild-reads-a-stale-ohlc-set.md`). It read: *"the volume signal uses a
+  30-day median window whose recent data is identical in the REST and full-history datasets, so the selection is
+  unchanged and no re-run is needed."* Both halves are false. This file's volumes were computed from the v0 REST
+  set, whose 30-day window ended at its 2026-07-07 fetch; `data/ohlc-full` ends **2026-03-31** (the OHLCVT dumps'
+  extent), so the two windows share **zero** rows — "recent data is identical" compares windows that do not
+  overlap. And the selection is **not** unchanged: recomputing every entry from `ohlc-full` selects **eleven**,
+  dropping AVAX/EUR at 132,274.82 EUR/day against the 150,000 floor (this file records 272,540.96), with
+  `escalate` staying `false` because 11 ≥ `MIN_NAMES`. Regenerating is therefore **not** a provenance nicety; it
+  is blocked until an OHLC source reaches the present, and `_refresh_universe` now fails closed rather than
+  rebuilding over a stale window.
 - **Full symbol & corporate-action ledger** (redenominations, quote-book migrations, delistings) beyond iter-002's
   alias ledger (XBT=BTC, XDG=DOGE) — registered as **T0025** (`docs/open-topics/T0025-full-corporate-action-ledger.md`).

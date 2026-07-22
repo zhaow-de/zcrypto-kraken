@@ -180,6 +180,43 @@ def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
     assert not (out_root / "point-in-time-universe.json").exists(), "must not write a stale universe"
 
 
+def test_refresh_universe_refuses_a_basket_where_only_some_symbols_are_fresh(tmp_path, monkeypatch):
+    """The guard is per-symbol, not on the basket's newest bar: each symbol's median comes from its
+    own frame, so one fresh symbol must not vouch for a stale one. This is the shape T0065's REACH
+    round would produce -- a live-trades->bars tail feeds EUR pairs only (capture is EUR-quoted,
+    T0092), leaving the BTC-quoted legs at the dump extent. A `max` check passes this basket."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 18))
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, last=date(2026, 3, 31))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="ETH/BTC"):
+        rebuild._refresh_universe(ctx, out_root)
+
+
+def test_refresh_universe_diagnoses_staleness_before_the_row_count(tmp_path, monkeypatch):
+    """A stale set that is ALSO too short must report the staleness, not the row count: the medians
+    raise UniverseError on a short frame, which would mask the real diagnosis (T0093 review)."""
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, n=10, last=date(2026, 3, 31))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="2026-03-31"):
+        rebuild._refresh_universe(ctx, out_root)
+
+
 def test_refresh_universe_accepts_an_ohlc_set_inside_the_staleness_budget(tmp_path, monkeypatch):
     """The guard must not block an ordinary rebuild: daily bars lag by a day or so by construction."""
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR",))
