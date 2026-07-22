@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a universe pair undergoes a redenomination / quote-book migration / delisting, or before a live-trading universe refresh. NOTE the universe-refresh leg is BLOCKED by [[T0093]]: `_refresh_universe` now fails closed because `ohlc-full` ends 2026-03-31, and a rebuild against it selects eleven names instead of twelve (AVAX/EUR below the volume floor on a stale window). A live-tailed volume source must exist first — quarterly dump ingestion cannot satisfy the staleness budget
+ripe_when: a universe pair undergoes a redenomination / quote-book migration / delisting, or before a live-trading universe refresh. NOTE the universe-refresh leg is BLOCKED by [[T0093]]: `_refresh_universe` fails closed because `ohlc-full` ends 2026-03-31 — a rebuild against it *would* select eleven names instead of twelve (AVAX/EUR below the volume floor on a stale window), which is why the guard exists. A live-tailed volume source must exist first — quarterly dump ingestion cannot satisfy the staleness budget
 ---
 
 # Full symbol & corporate-action ledger
