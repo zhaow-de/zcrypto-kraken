@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,17 +13,25 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 def handler_factory(status_code: int = 200, location: str | None = None) -> type[BaseHTTPRequestHandler]:
     """Build a fresh request-handler class: records each POST/GET's `(path, headers, body)` on
-    its own `.requests` list and replies with the given status (+ `Location`, for redirect
-    tests). A fresh class per call keeps `.requests` isolated between servers/tests."""
+    its own `.requests` list (with a parallel `.request_times` of `time.monotonic()` stamps, so
+    callers can measure retry/backoff gaps) and replies with `.status_code` (+ `Location`, for
+    redirect tests). `.status_code` is a mutable class attribute -- flip it mid-test
+    (`handler_cls.status_code = 200`) to script a server that fails then recovers; capturing
+    `status_code` in a closure instead would freeze the reply for the server's whole lifetime.
+    A fresh class per call keeps `.requests` isolated between servers/tests."""
+    initial_status = status_code
 
     class _RecordingHandler(BaseHTTPRequestHandler):
         requests: list[tuple[str, dict, bytes]] = []
+        request_times: list[float] = []
+        status_code = initial_status
 
         def _record_and_respond(self) -> None:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
+            _RecordingHandler.request_times.append(time.monotonic())
             _RecordingHandler.requests.append((self.path, dict(self.headers), body))
-            self.send_response(status_code)
+            self.send_response(_RecordingHandler.status_code)
             if location is not None:
                 self.send_header("Location", location)
             self.end_headers()
