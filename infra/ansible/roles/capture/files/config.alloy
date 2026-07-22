@@ -122,8 +122,10 @@ loki.relabel "journal_units" {
     action        = "keep"
   }
 
-  // Unit name minus ".service" -> the `container` label, for the prune unit's stream (Alloy's own
-  // journald entries carry no systemd-unit field, so this rule is a no-op for it).
+  // Unit name minus ".service" -> the `container` label. For the prune unit that yields
+  // "zcrypto-capture-prune". Alloy's journald-driver entries carry _SYSTEMD_UNIT=docker.service
+  // (journald stamps the SENDING process's unit -- dockerd), so this rule sets container="docker"
+  // for them, which the next rule overwrites. That is why the order below is load-bearing.
   rule {
     source_labels = ["__journal__systemd_unit"]
     regex         = "(.+)\\.service"

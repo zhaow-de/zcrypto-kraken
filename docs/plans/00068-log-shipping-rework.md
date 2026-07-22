@@ -306,7 +306,7 @@ rule {
 
 **Files:** `infra/ansible/roles/engine/templates/compose.yaml.j2` (+ the engine env/task files as needed)
 
-- [ ] **Step 1:** inside the same `{% if logship_loki_token is defined %}` guard: `entrypoint: ["zcrypto", "--ship-logs", "engine", "run"]` (un-gated branch keeps today's), env `ZCRYPTO_LOG_HOST: "{{ base_hostname }}"` (renders `zcrypto` — matches today's engine stream label), `ZCRYPTO_LOG_SERVICE: engine`; env_file `/opt/zcrypto-capture/logship-secrets.env` (reuse the capture host's rendered file — same host). **The repo change is inert until an attended engine converge, which is gated post-Stage-6a-gate (spec D7 step 5) — state this in the template comment.** **Step 2:** infra tests. **Step 3: commit** `feat(infra): engine compose stages --ship-logs for the post-gate converge (00068 T7)`
+- [ ] **Step 1:** inside the same `{% if logship_loki_token is defined %}` guard: `entrypoint: ["zcrypto", "--ship-logs", "engine", "run"]` (un-gated branch keeps today's), env `ZCRYPTO_LOG_HOST: "{{ base_hostname }}"` (renders `zcrypto` — matches today's engine stream label), `ZCRYPTO_LOG_SERVICE: engine`; env_file `/opt/zcrypto-capture/logship-secrets.env` (reuse the capture host's rendered file — same host). **The repo change is inert until an attended engine converge, which is gated post-Stage-6a-gate (spec D7 step 6) — state this in the template comment.** **Step 2:** infra tests. **Step 3: commit** `feat(infra): engine compose stages --ship-logs for the post-gate converge (00068 T7)`
 
 ### Task 8: NAS — socket retired, first-time journal pipeline
 
@@ -321,6 +321,7 @@ rule {
 - [ ] **Step 1:** `uv run pytest` full; `uv run pre-commit run -a` to clean.
 - [ ] **Step 2:** append the iter-116 entry to `docs/iterations-history-phase6.md` per the `iteration-closeout` skill (subject-matter phase 6 — execution/live-prep infra); include: what landed, the flag + env names, the fleet table from spec D6, and the explicit statement that **rollout has NOT happened** — spec D7's attended steps and the cross-topic records (T0089/T0042/T0020) land at rollout, not here.
 - [ ] **Step 3: commit** `docs(closeout): iter-116 history entry (00068 T9)`
+- [ ] **Deferred (Minor-5, 00068 T4/T5 review; executes at the alert push, spec D7 step 3 -- not in this PR):** once `infra/scripts/grafana-push.sh` runs with pruning and `zcrypto-alloy-docker-sd-wedged` is confirmed gone from Grafana, rewrite `docs/open-topics/T0048-alloy-docker-tailer-dies-on-container-recreate.md`'s mitigation section IN PLACE (never append a retraction — `.claude/rules/agent-ops.md`) to reflect that the pinning/alert it describes no longer exists.
 
 ## Explicitly NOT in this plan (attended, spec D7)
 

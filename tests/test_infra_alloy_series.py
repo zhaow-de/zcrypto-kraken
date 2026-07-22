@@ -117,6 +117,13 @@ def test_keep_regex_admits_every_published_series(path, required):
     assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
 
 
+def test_capture_keep_regex_excludes_the_retired_sd_pair():
+    """00068 D6/D8: discovery.docker is gone on capture, so admitting its series is the T0051
+    admitted-but-unpublished trap. Generalizes to nas/ops once Tasks 6/8 land."""
+    keep = _keep_regex(CAPTURE_ALLOY)
+    assert not keep.match(_SD_SERIES) and not keep.match(_SD_FAILURES)
+
+
 @pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     """Defence in depth, and the ordering matters: the drop must precede the keep."""

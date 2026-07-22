@@ -56,6 +56,9 @@
 # fleet-wide (2026-07-22), so this renders on every `observed` host from the next converge; a
 # converge landing before that vault change existed would simply skip this task, matching the same
 # guard on the compose file's env_file/environment additions below that reference this file.
+# Deliberately does NOT `notify: restart capture service` (Minor-3, 00068 T4/T5 review): a
+# credential rotation must never restart live capture -- a token rotation takes effect at the next
+# attended recreate, not by this render alone.
 - name: render the logship secrets env file
   ansible.builtin.template:
     src: logship-secrets.env.j2

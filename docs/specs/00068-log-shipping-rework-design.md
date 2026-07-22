@@ -77,9 +77,10 @@ Ordered steps, each verified by a **positive line arriving in Loki** (the T0089 
 
 1. **ops** — poller (new image + flag) and Alloy (journald driver) recreated. First live verification of both new paths; clears the poller's wedge.
 2. **NAS** — journald-driver probe with a throwaway container first; then Alloy + `zcrypto-archive-pull` to journald driver, recreated.
-3. **Secondary capture** — new image + flag; **24 h bake per the canary rule** (`capture-deploys.md`); clears its wedge.
-4. **Primary capture** — after the bake, `-e converge_primary=true`; clears the last capture wedge.
-5. **Engine** — flag added only **after the Stage-6a gate** (earliest ~2026-07-25); a mid-soak restart remains forbidden.
+3. **Alert-push gate** — do not run `infra/scripts/grafana-push.sh` with pruning enabled (`GRAFANA_PRUNE=1`) until ops and NAS (steps 1-2) have converged and their `discovery.docker` is actually gone. The script's orphan-prune is scoped to the alert folder, and `zcrypto-alloy-docker-sd-wedged` is already absent from `alerts.yaml` (D8) — a pruning push run any earlier, for any unrelated rule change, deletes it fleet-wide while ops/NAS still run `discovery.docker`, leaving nothing to detect that wedge there. Until ops/NAS converge, the live rule staying in Grafana on all four hosts costs nothing; a push needed sooner for an unrelated rule is a conscious, bounded acceptance.
+4. **Secondary capture** — new image + flag; **24 h bake per the canary rule** (`capture-deploys.md`); clears its wedge.
+5. **Primary capture** — after the bake, `-e converge_primary=true`; clears the last capture wedge.
+6. **Engine** — flag added only **after the Stage-6a gate** (earliest ~2026-07-25); a mid-soak restart remains forbidden.
 
 Deploying the new capture image recreates the capture containers, which is the only demonstrated fix for the existing T0089 wedges — this rollout is that topic's recovery vehicle, and its per-step positive-trace verification is T0089's own closure criterion.
 

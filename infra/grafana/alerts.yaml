@@ -1377,13 +1377,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Loki, level LABEL not a text grep (config.alloy's parse stages strip level out of the message
-      # line -- a grep would be silently blind). The capture daemon's logs get a level label via the
-      # `{container=~"capture|zcrypto-.*"}` parse selector (verified live: INFO/WARNING present, ZERO
-      # ERROR/CRITICAL in 7d -- a clean baseline). Scoped to container="capture": the daemon on both
-      # hosts, whose errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal.
-      # (Out of scope here: Alloy self-errors -- a separate instrument-health concern; and the engine's
-      # logs, which get no level label on the capture-host parse and are the T0042 egress question.)
+      # Loki, level LABEL not a text grep -- no regex anywhere in this path (D4). The capture daemon's
+      # logs get their level label from its OWN direct-ship handler (cli/logging/ship.py, spec 00068
+      # D3/D4: `level` = `record.levelname` at the source, pushed straight to Grafana Cloud Loki --
+      # Alloy is not in this path at all any more) (verified live pre-rework: INFO/WARNING present,
+      # ZERO ERROR/CRITICAL in 7d -- a clean baseline; the label VALUES are unchanged by the rework, so
+      # this selector still holds). Scoped to container="capture": the daemon on both hosts, whose
+      # errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal. (Out of scope
+      # here: Alloy self-errors -- a separate instrument-health concern; and the engine's logs, which
+      # ship no level label until its own --ship-logs lands post-gate (D7) -- the T0042 egress question.)
       # `sum by (host)` names the firing host; `or on() vector(0)` keeps a clean window an explicit 0.
       - refId: A
         queryType: instant
@@ -1426,18 +1428,21 @@ rules:
       receiver: logs
 
   # Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
-  # The ERROR rule selects on the `level` label, which exists ONLY because config.alloy's parse stages
-  # attach it -- so if the capture container's parse chain regresses (the T0060 class: the label scheme,
-  # a selector, or the zcrypto line format drifting), its lines ship level=- again, `level=~"ERROR|CRITICAL"`
-  # selects nothing, and the ERROR rule reads 0 = healthy FOREVER. These fire on the absence of ANY
-  # parsed capture line (level matching anything). Scoped to container="capture" -- NOT host-wide -- on
-  # purpose: a capture-parse regression leaves Alloy's OWN leveled lines flowing, so a host-wide canary
-  # would stay green in exactly the blind state this exists to page on. The capture daemon emits ~35
-  # parsed lines/hr (evidence: 342/341 INFO + 499/497 WARNING per 24h), so <1 in 6h means the capture
-  # log plane is dead (parse regression, Alloy death, or the container gone), not a quiet daemon. One
-  # rule per host: Loki cannot synthesize a per-host zero (an absent stream is no series, not a 0 series),
-  # so `or on() vector(0)` only injects a 0 for a SINGLE-host query -- a `sum by(host)` would fire only
-  # when BOTH hosts go dark and miss a single host's Alloy death.
+  # The ERROR rule selects on the `level` label, which exists ONLY because the capture daemon's OWN
+  # direct-ship handler attaches it at the source (cli/logging/ship.py, spec 00068 D3/D4: `level` =
+  # `record.levelname`, no regex anywhere in this path -- Alloy is not involved) -- so if the daemon's
+  # ship path regresses (the T0060 class: the label scheme drifting, or the handler/formatter itself
+  # breaking), its lines stop arriving with a usable level and the ERROR rule reads 0 = healthy FOREVER.
+  # These fire on the absence of ANY parsed capture line (level matching anything). Scoped to
+  # container="capture" -- NOT host-wide -- on purpose: a capture-side regression leaves Alloy's OWN
+  # leveled lines (its journald-driver stream) flowing, so a host-wide canary would stay green in
+  # exactly the blind state this exists to page on. The capture daemon emits ~35 parsed lines/hr
+  # (evidence: 342/341 INFO + 499/497 WARNING per 24h, pre-rework baseline), so <1 in 6h means the
+  # capture log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the
+  # container gone), not a quiet daemon. One rule per host: Loki cannot synthesize a per-host zero (an
+  # absent stream is no series, not a 0 series), so `or on() vector(0)` only injects a 0 for a
+  # SINGLE-host query -- a `sum by(host)` would fire only when BOTH hosts go dark and miss a single
+  # host's outage.
   - uid: zcrypto-capture-log-dead-primary
     title: "Capture · log pipeline dead — primary (zcrypto)"
     ruleGroup: zcrypto-capture
@@ -1483,7 +1488,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (parse regression -> level=- (T0060), Alloy death, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
     labels:
       severity: critical
     notification_settings:
@@ -1530,7 +1535,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (parse regression -> level=- (T0060), Alloy death, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
     labels:
       severity: critical
     notification_settings:
@@ -1542,8 +1547,8 @@ rules:
   # not exist. What differs is only what accumulates unseen meanwhile, which the per-host summary
   # states. These own "not shipping" only -- a rule for "shipping but wedged" (`zcrypto-alloy-docker-
   # sd-wedged`, T0048 defect 1: the T0048 incident was Alloy alive, discovery frozen) used to cover
-  # the other case, but it retired with `discovery.docker` fleet-wide (spec 00068 D8): nothing
-  # currently re-detects that specific failure mode.
+  # the other case, but it is *being* retired with `discovery.docker` (D6/D8; capture done, ops/NAS
+  # follow in the same iteration) -- once the rollout completes, nothing re-detects that failure mode.
 
   - uid: zcrypto-alloy-dark-nas
     title: "Fleet · Alloy dark — NAS"
