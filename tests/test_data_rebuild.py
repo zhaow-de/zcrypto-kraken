@@ -109,8 +109,12 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
     ohlc_root = tmp_path / "ohlc-full"
-    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
-    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    # Deliberately DIFFERENT frontiers, both inside the 7-day budget, so the published bar pins the
+    # min/max choice: with equal `last=` the two statistics coincide and the assertion proves nothing.
+    # BTC/EUR runs 34 bars so the inner ts-join with the earlier-ending ETH/BTC still yields the 30
+    # aligned rows the median needs (intersection 2026-06-15..07-14).
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, n=34, last=date(2026, 7, 18))
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0, last=date(2026, 7, 14))
     (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
 
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
@@ -130,6 +134,13 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     assert payload["params"]["median_quote_volume_window_days"] == rebuild._UNIVERSE_VOLUME_WINDOW_DAYS
     assert payload["provenance"]["ohlc_dataset_hash"] == "deadbeef"
     assert len(payload["provenance"]["snapshot_sha256"]) == 64
+    # T0093: the artifact must name the set it was ACTUALLY built from, and how fresh that set was.
+    # The 2026-07-07 artifact cited `data/ohlc` by hash alone; when that directory was retired the
+    # citation became unresolvable, and nothing in the file said which window the volumes covered.
+    assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-full"
+    # The STALEST bar (ETH/BTC's 07-14), not the basket's newest (BTC/EUR's 07-18): only the stalest
+    # supports "every symbol's window ends at or after this". Publishing max would fail here.
+    assert payload["provenance"]["ohlc_stalest_daily_bar"] == "2026-07-14"
 
 
 def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch):
