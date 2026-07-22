@@ -53,6 +53,7 @@ Extends 00068 D7 **in place** (that spec's step list stays the single execution 
 - **The T0069 `--cache` rider on the NAS step.** The NAS `archive-pull` recreation (already in the rollout for the journald driver) is exactly the maintenance window T0069's cache enablement was parked for: add `--cache <path>` + a writable cache dir to `pull-entrypoint.sh`'s gate-export call, and re-pin the `-compat` image (the current pin predates PR #157, merged 2026-07-20 — no capture-image rollout has happened since). Verification is spec 00060's own D4 property: the first warm cycle's `gate.prom` equal field-for-field to a fresh replay, cycle time collapsing from ~8 min to seconds. **The relocation-to-ops does NOT ride** — different work shape (moves a Role-B deliverable across hosts with healthcheck + textfile rewiring); it stays parked in T0069, whose own analysis calls incremental scoring the structural fix.
 - The engine's flag flip (both `--ship-logs` and `ZCRYPTO_METRICS_PORT`) remains the post-Stage-6a-gate step; the `grafana-push.sh` prune remains last, after every converge.
 - The NAS label re-key (D7) rides the NAS window; its verification is the three re-keyed rules evaluating against live series.
+- **The PR gate (owner's ruling, 2026-07-22): the PR opens after the implementation review but MERGES only after the full rollout** — every D7 step including the post-gate engine flip and the final prune. The component includes its deploy tail; a green CI is not the finish line. Consequences, stated: the branch lives ~a week (spanning the 24 h canary bake and Stage-6a gate day ~07-25); the deploy image is built from the pushed branch head, which the merge then lands unchanged (digest pins reference the image, not the branch); and the closeout — history entry and topic updates — is written AFTER the rollout, from measured facts.
 
 ## D9 — Series budget
 
@@ -71,10 +72,11 @@ Estimate: engine ~15 (per-asset gauges dominate at 12 names) + capture ~10 ×2 h
 - T0069's relocation-to-ops (stays parked; D8).
 - Grafana Cloud retention/usage tuning.
 
-## Cross-topic records (closeout obligations)
+## Cross-topic records — updated at THIS iteration's closeout (owner's ruling: the closeout follows the rollout, so every update records measured facts)
 
-- [[T0020]] — this executes its remaining core; the untriaged "retry NAS cadvisor" item closes as an explicit posture rejection; the dashboards package stays queued for the owner.
-- [[T0032]] — the watermark gauge is the live signal its alerting sub-item needs; the alert itself lands in the alerting iteration.
-- [[T0069]] — the cache-enablement sub-item flips at the NAS window; relocation stays parked.
-- [[T0089]] / [[T0042]] — unchanged obligations, discharged by the same rollout (00068 D7).
+- [[T0020]] — the remaining core is executed AND deployed; the untriaged "retry NAS cadvisor" item closes as an explicit posture rejection; per-host series counts recorded; the dashboards package stays queued for the owner.
+- [[T0032]] — the watermark gauge is live and scrape-verified; the alert itself still lands in the alerting iteration; the prune-verification sub-item is unrelated calendar work and unaffected.
+- [[T0069]] — the cache-enablement sub-item flips with the measured warm-cycle time and the field-for-field gate.prom equality; relocation stays parked.
+- [[T0089]] — inherited from 00068 and discharged by this same rollout: all six wedged containers recreated, each confirmed by a post-recreation line in Loki — the topic's own closure criterion, so it should reach `resolved` here.
+- [[T0042]] — the socket residual closes, verified by `docker inspect` (no socket mount) at every window; the engine-egress note updates.
 - Spec `00043` — fully discharged (D6); its remaining unbuilt pieces are either built here or explicitly superseded.
