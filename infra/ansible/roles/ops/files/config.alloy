@@ -4,14 +4,15 @@
 // infra/ansible/roles/ops/files/config.alloy instead -- files/, NOT templates/: `copy:` only ever
 // searches a role's files/ dir, so an edit made to a templates/ copy silently never deploys
 // (tests/test_infra_alloy_series.py records the lesson; a converge proved it, no syntax check
-// could). Structurally this mirrors
-// infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
-// remote_write / docker-logs pipeline -- with three deliberate divergences, each called out in
-// the comments below. Grafana Cloud credentials are NOT in this file: they arrive as environment
-// variables from a rendered, 0600, never-committed secrets file (alloy-secrets.env.j2, see
-// infra/ops/README.md), read here via the `sys.env(...)` stdlib function -- the NAS's Alloy reads
-// the same six names from its own alloy-secrets.env, rendered the same way by the `nas` role from
-// the same vault group (group_vars/observed) since T0056; no hand-placed copy exists anywhere.
+// could). Structurally this mirrors infra/ansible/roles/capture/files/config.alloy (spec 00068 D6)
+// and infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
+// remote_write / journal-logs pipeline, the docker-socket path retired fleet-wide -- with two
+// deliberate divergences, each called out in the comments below. Grafana Cloud credentials are NOT
+// in this file: they arrive as environment variables from a rendered, 0600, never-committed
+// secrets file (alloy-secrets.env.j2, see infra/ops/README.md), read here via the `sys.env(...)`
+// stdlib function -- the NAS's Alloy reads the same six names from its own alloy-secrets.env,
+// rendered the same way by the `nas` role from the same vault group (group_vars/observed) since
+// T0056; no hand-placed copy exists anywhere.
 //
 // Plain `copy:`, not `template:` (review finding 2) -- this file is 100% static: every value below
 // (the keep-regex, the textfile path, the host label) is a literal, identical on every converge,
@@ -45,17 +46,16 @@
 // material.) Alloy here instead runs as the dedicated `zcrypto-alloy` system user (nologin,
 // created by the role, uid/gid looked up via `getent` -- alloy-compose.yaml.j2's `user:`), which
 // owns nothing under /home/deploy/.ssh -- this MIRRORS the NAS's uid-1031 choice, not merely
-// resembles it. `group_add` grants Docker-socket access via the host's real numeric docker gid
-// (derived at converge time via `getent`, alloy-compose.yaml.j2/tasks/main.yml), NOT a named
-// "docker" entry -- Docker resolves a NAMED group_add entry against the CONTAINER's own
-// /etc/group, not the host's, and the upstream grafana/alloy image ships only `alloy:x:473:`, so a
-// literal "docker" would never resolve and the container would fail to start; the numeric gid is
-// exactly why the NAS passes `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN
-// DEPTH ONLY: membership in the `docker` group is root-equivalent by definition (holding the
-// Docker API lets you create a privileged container regardless of a `:ro` socket mount), so the
-// escalation path remains -- exactly the residual the NAS's comments record for T0042. The point of
-// the dedicated uid is narrower and real: it closes the DIRECT, no-escalation read of
-// `sync_nas_archive` through the /host/root mount.
+// resembles it. `group_add` (alloy-compose.yaml.j2) is the host's real numeric systemd-journal
+// gid, derived at converge time via `getent` (tasks/main.yml), NOT a named entry: Docker resolves
+// a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's, and the upstream
+// grafana/alloy image ships only `alloy:x:473:` -- no `systemd-journal` entry -- so a literal name
+// here would never resolve and the container would fail to start. This grants read of the WHOLE
+// system journal, read-only -- broader than the units the pipeline keeps (below), but strictly
+// telemetry-class data. (The docker-socket group_add this used to sit alongside is gone: the
+// socket mount + `discovery.docker` retired with the docker log path, spec 00068 D6 -- the
+// liquidations poller now ships its own logs directly, and Alloy's own container logs reach
+// Grafana Cloud through this same journal mount instead.)
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
 
@@ -84,12 +84,12 @@ prometheus.exporter.unix "host" {
 // future task can add it deliberately if a container-level gate ever needs it.
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
-// T0048 defect 1: discovery.docker can wedge permanently, and the ONLY positive signal is
-// prometheus_sd_refresh_duration_seconds_count going flat. Those counters live on Alloy's OWN
-// /metrics endpoint, which nothing here scraped -- so admitting them to the keep-list below was a
-// no-op and the alert built on them could never fire. This exporter is what actually puts them in
-// the pipeline. The drop rule below still discards go_/process_/alloy_, so the added cardinality is
-// only the two prometheus_sd_ series the keep-list names.
+// T0048 defect 1's SD-wedge detection RETIRED with `discovery.docker` (00068 D6/D8): the alert it
+// fed (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
+// _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
+// on this host, neither series exists any more, and both are gone from the keep-regex below too (a
+// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below still
+// discards go_/process_/alloy_, so this target's only surviving contribution is its own `up`.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -118,7 +118,7 @@ prometheus.scrape "healthchecks" {
 prometheus.remote_write "grafana" {
   // `host="ops"` on every metric this component ships -- without it, no metric on this host
   // carries a `host` label at all (the `host` label the logs pipeline attaches below, in
-  // discovery.relabel "container_logs", is Loki-only and never reaches Prometheus), so
+  // loki.relabel "journal_units", is Loki-only and never reaches Prometheus), so
   // `infra/grafana/alerts.yaml`'s "Ops · node load high" rule
   // (`node_load1{host="ops"}`) selects nothing and can never fire. `external_labels` is applied
   // component-wide, before the write_relabel_config blocks below run -- so it does not touch the
@@ -167,126 +167,55 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|prometheus_sd_refresh_duration_seconds_count|prometheus_sd_refresh_failures_total|hc_check_up|hc_checks_down_total"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|hc_check_up|hc_checks_down_total"
       action        = "keep"
     }
   }
 }
 
-// ---- Logs: long-lived containers, via the docker API ----------------------------------------
-// Discover and ship the containers on this host, host-wide rather than per-compose-project, same
-// rationale as the NAS -- with ONE deliberate drop (first rule below): the systemd-launched
-// ephemeral `zcrypto-*` jobs, whose logs the journal pipeline further down owns. Any OTHER
-// container this role adds later is still not silently invisible to the logs dashboard.
-discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
-}
-
-discovery.relabel "container_logs" {
-  targets = discovery.docker.containers.targets
-
-  // T0060 (journal cutover): DROP the ephemeral `docker run --rm --name zcrypto-*` jobs from the
-  // docker path -- their stdout arrives via the unit journal (loki.source.journal below) instead.
-  // The docker tail is structurally lossy for them: discovery is POLLING, and `--rm` deletes the
-  // container (and its json log file) at exit, so a job living less than a discovery interval
-  // ships NOTHING, and one discovered mid-life ships a truncated head and loses its tail at
-  // removal -- and whatever slice DID land would double-ingest what the journal already carries in
-  // full. The stable `--name` flags (archive-pull.sh.j2 etc., T0060) are what make this drop
-  // precise -- the old engine-random names offered no regex to target. The long-lived containers
-  // (liquidations, alloy) STAY on this path: they are compose-managed, not systemd-launched, so
-  // the journal carries nothing for them.
-  rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/?zcrypto-(reconcile|trade-backfill|verify-replay|verified-replay|panel-materialize).*"
-    action        = "drop"
-  }
-
-  // DIVERGENCE 3 (host label + container labelling scheme): the first cut of this file derived
-  // `container` from the docker NAME, NAS-style -- on ops that yielded `zcrypto-ops-liquidations`
-  // and `alloy-alloy` (compose project prefixes the NAS's single-project strip never anticipated),
-  // so NEITHER parse selector below matched and every ops stream shipped level=- (T0060).
-
-  // Compose-managed containers: the compose SERVICE name is authoritative — it is stable across
-  // restarts and unaffected by the explicit container_name (spec 00057: zcrypto-ops-liquidations ->
-  // liquidations, grafana-alloy -> alloy). The NAS now uses this same scheme (was docker-name-derived),
-  // so the fleet's container-labelling is uniform.
-  rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "(.+)"
-    target_label  = "container"
-  }
-
-  // Name fallback for FUTURE non-compose containers -- today it matches nothing: the only
-  // non-compose containers on this host are the five systemd-launched `docker run --name
-  // zcrypto-*` jobs, and the T0060 drop rule above removes exactly those from the docker path
-  // before this rule ever sees them (their SOLE transport is the journal pipeline below -- there
-  // is no redundant docker-path route for them). This rule exists for the section header's "not
-  // silently invisible" promise: any later non-compose container this role adds ships with its
-  // docker name as the label instead of vanishing unlabelled. The join with the (possibly empty)
-  // container label makes it match ONLY when the compose rule above did not set it: relabel
-  // regexes are fully anchored, so a joined value that does not START with ";" (i.e. container
-  // already set) cannot match "^;...".
-  rule {
-    source_labels = ["container", "__meta_docker_container_name"]
-    separator     = ";"
-    regex         = ";/?(.*?)(?:-[0-9]+)?"
-    target_label  = "container"
-    replacement   = "$1"
-  }
-
-  // `host="ops"`, not "nas" -- this is the ops node. Static for the same reason the NAS's is
-  // static: one Alloy instance per host today.
-  rule {
-    target_label = "host"
-    replacement  = "ops"
-  }
-}
-
-loki.source.docker "containers" {
-  host       = "unix:///var/run/docker.sock"
-  targets    = discovery.relabel.container_logs.output
-  forward_to = [loki.process.parse.receiver]
-}
-
-// ---- Logs: the systemd-launched zcrypto jobs, via the host journal --------------------------
-// The docker path above is structurally the WRONG transport for the four zcrypto-*.service units
-// (archive-pull half-hourly since T0058, panel-materialize hourly, verify-replay +
-// verified-replay daily), for two reasons (T0060):
-//   1. The orchestration scripts' OWN lines -- including the load-bearing gate warning "writer
-//      cycle SKIPPED (fail-closed gate): ..." (archive-pull.sh.j2) -- are host-side echoes
-//      into journald. They exist in NO container log, so the docker path can never ship them. (On
-//      the NAS the equivalent loop runs INSIDE a container, which is why its lines ship; spec
-//      00054 moved ops orchestration into host scripts and silently lost that channel.)
-//   2. Alloy discovers containers by POLLING, and `--rm` deletes the container at exit -- see the
-//      drop rule above; the ephemerals are dropped there precisely because this pipeline is their
-//      lossless replacement.
-// The journal is the native, lossless transport for systemd-launched work: `docker run` without
-// -d runs ATTACHED, so all container stdout/stderr flows through the script into the unit's
-// journal, alongside the script's own lines -- one complete, ordered record per run. "Lossless"
-// is bounded upstream by journald's own per-service rate limit (Debian default
+// ---- Logs: the host journal -- the zcrypto systemd jobs AND Alloy's own container -------------
+// Two unrelated sources share this one journal reader (00068 D6, the docker-socket residual
+// retired): the four zcrypto-*.service units (archive-pull half-hourly since T0058,
+// panel-materialize hourly, verify-replay + verified-replay daily) run their work as an ephemeral
+// `docker run --rm` ATTACHED to the unit (T0060) -- so all container stdout/stderr flows through
+// the script into the unit's journal, alongside the orchestration script's OWN lines (including
+// the load-bearing gate warning "writer cycle SKIPPED (fail-closed gate): ...",
+// archive-pull.sh.j2), which are host-side echoes that exist in NO container log and so have no
+// other transport; and Alloy's OWN container logs, via the journald logging driver
+// (alloy-compose.yaml.j2) -- there is no docker-socket path left on this host to carry them
+// instead, so the journal is their only transport too now. "Lossless" for the attached-container
+// case is bounded upstream by journald's own per-service rate limit (Debian default
 // RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
 // them -- our four units emit orders of magnitude less than that, but the claim ends there. The
 // host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
 // /host/journal by alloy-compose.yaml.j2.
+//
+// The liquidations poller (compose service `liquidations`) is deliberately NOT kept here: it now
+// ships its OWN logs straight to Grafana Cloud (--ship-logs, spec 00068 D3/T6) rather than through
+// Alloy at all, so it needs no transport on this host's telemetry stack any more.
 loki.relabel "journal_units" {
   // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
   // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
   forward_to = []
 
-  // KEEP only our four units: the journal carries every unit on the host, and this pipeline's
-  // contract is the zcrypto jobs only -- sshd, cron, dockerd and the rest stay local.
+  // KEEP the four zcrypto units' journal lines (source 1: __journal__systemd_unit) OR Alloy's own
+  // journald-driver stream (source 2: __journal_container_name = grafana-alloy, the container_name
+  // the alloy compose service sets) -- everything else on the host journal (sshd, cron, dockerd,
+  // ...) stays local.
   rule {
-    source_labels = ["__journal__systemd_unit"]
-    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\\.service"
+    source_labels = ["__journal__systemd_unit", "__journal_container_name"]
+    separator     = ";"
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 
-  // Unit name minus ".service" -> the `container` label. These are journal streams WEARING the
-  // container label for selector uniformity: loki.process "parse" below scopes its zcrypto stage
-  // by {container=~"liquidations|zcrypto-.*"}, and mapping the unit name in means these streams
-  // get parsed (level label, app timestamp) with NO selector change. The label is honest in
-  // substance: the unit IS the meaningful log source here -- its docker children run attached, so
-  // their output is inside it.
+  // Unit name minus ".service" -> the `container` label. For the four zcrypto units this yields
+  // e.g. "zcrypto-archive-pull" -- the label loki.process "parse" below's
+  // `{container=~"zcrypto-.*"}` selector keys on, so these streams get parsed (level label, app
+  // timestamp) with no selector change. Alloy's journald-driver entries carry
+  // _SYSTEMD_UNIT=docker.service (journald stamps the SENDING process's unit -- dockerd), so this
+  // rule sets container="docker" for them, which the next rule overwrites -- that is why the
+  // order below is load-bearing.
   rule {
     source_labels = ["__journal__systemd_unit"]
     regex         = "(.+)\\.service"
@@ -294,13 +223,22 @@ loki.relabel "journal_units" {
     replacement   = "$1"
   }
 
-  // `host="ops"`, exactly like the docker path's discovery.relabel above -- one label scheme
-  // across both transports. KNOWN, BENIGN divergence from that scheme: loki.source.journal below
-  // unconditionally injects job="loki.source.journal.zcrypto_units" into its streams, while the
-  // docker-path streams carry no `job` label at all. Deliberately NOT worked around here --
-  // whether relabel rules can strip a component-injected label is unverified, and every selector
-  // and alert today keys only on host/container/level, so nothing reads `job`. Unifying the
-  // fleet's label scheme is T0020's dashboards/labelling pass.
+  // Alloy's own stream -> container="alloy" (the parse stage below's `{container="alloy"}`
+  // selector keys on this). MUST come after the unit-name rule above -- relabel rules apply in
+  // order, each seeing the previous rule's output, and the unit-name rule must run first wherever
+  // both fields could ever be populated on the same stream.
+  rule {
+    source_labels = ["__journal_container_name"]
+    regex         = "grafana-alloy"
+    target_label  = "container"
+    replacement   = "alloy"
+  }
+
+  // `host="ops"`, exactly like the metrics path's external_labels above -- one label scheme
+  // across both. KNOWN, BENIGN divergence from that scheme: loki.source.journal below
+  // unconditionally injects job="loki.source.journal.zcrypto_units" into its streams, while
+  // nothing reads `job` today (every selector and alert keys only on host/container/level).
+  // Unifying the fleet's label scheme is T0020's dashboards/labelling pass.
   rule {
     target_label = "host"
     replacement  = "ops"
@@ -317,14 +255,16 @@ loki.source.journal "zcrypto_units" {
 
   // Bound on "lossless": after an Alloy outage this component resumes from its saved cursor, but
   // never reads further back than max_age -- UNSET it defaults to 7h, so an outage longer than
-  // that would permanently skip the window between the cursor and now-7h. 48h is cheap for these
-  // four low-volume half-hourly/hourly/daily units, so the honest claim is: lossless up to a 48h
-  // Alloy outage; beyond that the skipped window survives only in the host journal, never in Loki.
+  // that would permanently skip the window between the cursor and now-7h. 48h was sized for the
+  // four zcrypto units alone (low-volume half-hourly/hourly/daily); this reader now also carries
+  // Alloy's own journald-driver stream (00068 D6), so a restart after an outage backfills up to
+  // 48h of that too -- still a bounded, one-time replay, not a steady-state cost, so the same
+  // ceiling stands.
   max_age       = "48h"
 }
 
-// Parse ONCE, here at ingest -- never at query time. Same two stages as the NAS's pipeline: our
-// Python services' own timestamped log line, and Alloy's own logfmt output.
+// Parse ONCE, here at ingest -- never at query time. Two stages: our Python services' own
+// timestamped log line (the four zcrypto-*.service units), and Alloy's own logfmt output.
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
 
@@ -332,11 +272,14 @@ loki.process "parse" {
   // Scoped by container, so a container with a different format can never be mangled by this regex.
   // NOT `{container="archive-pull"}` -- that is the NAS's container; ops's archive-pull is a
   // systemd unit, not a container, so that selector matched NOTHING here and this whole stage was
-  // dead: no `level` label on any ops stream, no ERROR-logs alert possible (T0060). The
-  // liquidations poller and every named `zcrypto-*` job all emit the same zcrypto Python-logging
-  // line shape this stage's regex parses.
+  // dead: no `level` label on any ops stream, no ERROR-logs alert possible (T0060). Every named
+  // `zcrypto-*` job emits the same zcrypto Python-logging line shape this stage's regex parses.
+  // The liquidations poller used to feed this stage too (its docker-path container label was
+  // "liquidations"), but it now ships its own logs directly to Grafana Cloud (--ship-logs, spec
+  // 00068 D3/T6) rather than through Alloy at all, so `liquidations` is dropped from the selector
+  // below -- keeping a dead alternative that can never match would be the T0051 trap one level up.
   stage.match {
-    selector = "{container=~\"liquidations|zcrypto-.*\"}"
+    selector = "{container=~\"zcrypto-.*\"}"
 
     stage.regex {
       expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
@@ -373,15 +316,14 @@ loki.process "parse" {
     }
   }
 
-  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`.
-  // `{container="alloy"}` genuinely matches here now: the compose-service rule above labels this
-  // stack's own container "alloy" (compose project `alloy`, service `alloy`) -- the old name-derived
-  // label was "alloy-alloy", so this stage too was dead until T0060's fix.
+  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`, arriving via the
+  // journald logging driver (00068 D6). `{container="alloy"}` matches because the journal_units
+  // container-name rule above relabels CONTAINER_NAME=grafana-alloy to container="alloy".
   stage.match {
-    selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
+    selector = "{container=\"alloy\"}"
 
-    stage.regex {
-      expression = "^ts=\\S+ level=(?P<level>\\w+) msg=(?:\"(?P<msg>(?:[^\"\\\\]|\\\\.)*)\"|(?P<msg_bare>\\S+))\\s*(?P<rest>.*)$"
+    stage.logfmt {
+      mapping = { "level" = "" }
     }
 
     stage.template {
@@ -393,14 +335,10 @@ loki.process "parse" {
       values = { level = "level" }
     }
 
-    stage.template {
-      source   = "line"
-      template = "{{ if .msg }}{{ .msg }}{{ if .rest }} {{ .rest }}{{ end }}{{ else if .msg_bare }}{{ .msg_bare }}{{ if .rest }} {{ .rest }}{{ end }}{{ else }}{{ .Entry }}{{ end }}"
-    }
-
-    stage.output {
-      source = "line"
-    }
+    // No stage.output: the line ships UNMODIFIED. Unlike the old regex-and-reassemble approach,
+    // this keeps every logfmt attribute in the body (msg= plus whatever k=v pairs followed), and a
+    // non-logfmt line (a panic, a bare traceback) simply passes through with no `level` label rather
+    // than being mangled by a stage that assumed logfmt shape.
   }
 }
 

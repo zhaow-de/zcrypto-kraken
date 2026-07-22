@@ -20,6 +20,28 @@
     group: zcrypto-deploy
     mode: "0755"
 
+# The zcrypto CLI's own Loki push creds for the ops-node LIQUIDATIONS container (spec 00068 D5/T6)
+# -- distinct from the alloy secrets rendered further below, and NOT gated on `ops_image_digest`:
+# this render is unrelated to whether the liquidations poller is deployed at all. Owned by
+# zcrypto-deploy, not root: unlike capture (whose `docker compose up` runs as root via a systemd
+# unit), nothing on this host starts the liquidations poller as root -- OPS-2 below is a manual,
+# attended `docker compose up -d` by the zcrypto-deploy operator, the same account that already
+# owns compose.yaml.j2 itself. `logship_loki_token is defined` is the structural safety net -- the
+# vault already carries it fleet-wide (2026-07-22), so this renders on every `observed` host from
+# the next converge; a converge landing before that vault change existed would simply skip this
+# task, matching the same guard on the compose file's entrypoint/environment/env_file additions
+# that reference this file.
+- name: render the logship secrets env file
+  ansible.builtin.template:
+    src: logship-secrets.env.j2
+    dest: "{{ ops_compose_dir }}/logship-secrets.env"
+    owner: zcrypto-deploy
+    group: zcrypto-deploy
+    mode: "0600"
+  when: logship_loki_token is defined
+  no_log: true
+  diff: false
+
 # rsync STAYS after T0058 retired the ops-side pull loop: it ships /usr/bin/rrsync, which the
 # NAS-initiated pull channels (liquidations, panel, reconciled overlay) force-command into — the
 # write-back direction is unchanged, the NAS still pulls FROM this host. nfs-common is the client

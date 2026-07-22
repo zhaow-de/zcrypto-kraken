@@ -9,11 +9,11 @@
 # archive-pull/alloy services, here taken one step further into separate compose projects since
 # ops runs several independent services, not two in one file).
 #
-# Modeled on infra/nas/compose.yaml's `alloy` service; see config.alloy for the three
-# deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs, host label). Deliberately
-# NOT started here -- first start is an attended step (plan Task 3), same rationale as the
-# liquidations poller in compose.yaml.j2: this task's job is to make the render correct, not to
-# restart anything as a converge side effect.
+# Modeled on infra/nas/compose.yaml's `alloy` service; see config.alloy for the two
+# deliberate divergences from the NAS's pipeline (cadvisor, user/rootfs). Deliberately NOT started
+# here -- first start is an attended step (plan Task 3), same rationale as the liquidations poller
+# in compose.yaml.j2: this task's job is to make the render correct, not to restart anything as a
+# converge side effect.
 services:
   alloy:
     # Pin this to a digest at deploy time (plan Task 3) -- ops_alloy_digest has NO default
@@ -28,24 +28,18 @@ services:
     # directly through the /host/root:ro mount below, with no escalation needed at all -- defeating
     # the protection this stack claims to replicate from the NAS (T0030, uid 1031 there). This
     # mirrors the NAS's dedicated-uid choice rather than merely resembling it (review finding 1).
-    # `group_add` is the host's real numeric docker gid (derived at converge time via `getent` --
-    # tasks/main.yml -- never hardcoded, since it is a per-host accident), NOT a named "docker"
-    # entry: Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the
-    # host's, and the upstream grafana/alloy image ships only `alloy:x:473:` -- no `docker` entry --
-    # so a literal "docker" here would fail to resolve and the container would refuse to start. This
-    # is exactly why the NAS passes its numeric `group_add: ["0"]` rather than a name. Socket access
-    # this way is defence in depth only (see config.alloy's header comment for the residual).
     user: "{{ ops_alloy_uid }}:{{ ops_alloy_gid }}"
     group_add:
-      - "{{ ops_docker_gid }}"
       # Journal files are root:systemd-journal 0640 and the container runs as the non-root
       # zcrypto-alloy user above, so reading the /host/journal mount below needs the host's
       # systemd-journal gid -- NUMERIC, derived at converge time via `getent` (tasks/main.yml),
-      # never hardcoded, for exactly the reason the docker gid above is numeric (a NAMED group_add
-      # entry resolves against the CONTAINER's /etc/group, where no such group exists). The
-      # residual, honestly: this grants read of the WHOLE system journal, read-only -- broader than
-      # the four zcrypto units the pipeline keeps, but strictly telemetry-class data, and far
-      # narrower than the docker-socket residual (T0042) already accepted on this host.
+      # never hardcoded (it is a per-host accident): Docker resolves a NAMED group_add entry
+      # against the CONTAINER's own /etc/group, not the host's, and the upstream grafana/alloy
+      # image ships only `alloy:x:473:` -- no `systemd-journal` entry -- so a literal name would
+      # never resolve. This grants read of the WHOLE system journal, read-only -- broader than the
+      # units the pipeline keeps, but strictly telemetry-class data. The docker-socket group_add
+      # this used to sit alongside is gone: the socket mount below it retired with
+      # `discovery.docker` (00068 D6), so this is Alloy's only remaining group grant.
       - "{{ ops_journal_gid }}"
     network_mode: host
     environment:
@@ -68,15 +62,12 @@ services:
       # Alternate-path RO mounts (mounting over Alloy's own container /proc//sys is impossible) --
       # config.alloy points procfs_path/sysfs_path/rootfs_path at these. Ops DOES hold a live
       # private key today (`sync_nas_archive`, deploy:deploy 0600, under /home/deploy/.ssh, the
-      # NAS-pull channel, pre-dating this task) -- so this mount is exactly the T0030/T0042 residual
-      # the NAS carries, not a smaller one; the `user:` override above (zcrypto-alloy, not `deploy`)
-      # is what keeps it from reading that key directly.
+      # NAS-pull channel, pre-dating this task) -- so this mount is exactly the T0030 residual the
+      # NAS carries; the `user:` override above (zcrypto-alloy, not `deploy`) is what keeps it from
+      # reading that key directly.
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-      # Docker API, for discovery.docker + loki.source.docker. `:ro` is cosmetic -- it makes the
-      # socket FILE read-only, not the API -- same residual as the NAS's (T0042).
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config.alloy:/etc/alloy/config.alloy:ro
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
@@ -84,10 +75,10 @@ services:
       # The four timers' textfiles (OPS-3/OPS-4), read-only -- Alloy only ever reads them.
       - "{{ ops_textfile_dir }}:/textfile:ro"
       # The host's persistent journal, for loki.source.journal (config.alloy): the four
-      # zcrypto-*.service units' logs -- including the orchestration scripts' host-side lines,
-      # which exist in NO container log and so can never arrive via the docker socket above
-      # (T0060; the config's journal section carries the full why). The `group_add` gid above is
-      # what makes the 0640 root:systemd-journal files readable.
+      # zcrypto-*.service units' logs (including the orchestration scripts' host-side lines, which
+      # exist in NO container log) AND Alloy's own journald-driver stream (00068 D6) -- there is no
+      # docker-socket path left on this host to carry either. The `group_add` gid above is what
+      # makes the 0640 root:systemd-journal files readable.
       - /var/log/journal:/host/journal:ro
       # Journal readers resolve the CURRENT boot's files via the host's machine id
       # (/var/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
@@ -101,8 +92,9 @@ services:
           # (plan Task 6/7), and Alloy must never contend with it for CPU. 2.0 of the box's 24
           # threads is ample for a metrics/logs shipper.
           cpus: "2.0"
+    # journald, not json-file (00068 D6): Alloy's own logs now reach Grafana Cloud through the
+    # same journal + `loki.source.journal` pipeline (config.alloy) that already carries the four
+    # zcrypto-*.service units' lines -- so its stdout has no json.log to rotate any more, and
+    # rotation is the host journal's job instead.
     logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      driver: journald
