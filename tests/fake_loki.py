@@ -11,14 +11,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 def handler_factory(status_code: int = 200, location: str | None = None) -> type[BaseHTTPRequestHandler]:
-    """Build a fresh request-handler class: records each POST's `(path, headers, body)` on its
-    own `.requests` list and replies with the given status (+ `Location`, for redirect tests).
-    A fresh class per call keeps `.requests` isolated between servers/tests."""
+    """Build a fresh request-handler class: records each POST/GET's `(path, headers, body)` on
+    its own `.requests` list and replies with the given status (+ `Location`, for redirect
+    tests). A fresh class per call keeps `.requests` isolated between servers/tests."""
 
     class _RecordingHandler(BaseHTTPRequestHandler):
         requests: list[tuple[str, dict, bytes]] = []
 
-        def do_POST(self) -> None:
+        def _record_and_respond(self) -> None:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
             _RecordingHandler.requests.append((self.path, dict(self.headers), body))
@@ -26,6 +26,14 @@ def handler_factory(status_code: int = 200, location: str | None = None) -> type
             if location is not None:
                 self.send_header("Location", location)
             self.end_headers()
+
+        def do_POST(self) -> None:
+            self._record_and_respond()
+
+        def do_GET(self) -> None:
+            # A followed 302/303 redirect rewrites POST->GET; without this the follow would
+            # 501 unrecorded, making "the second server saw nothing" a weak assertion.
+            self._record_and_respond()
 
         def log_message(self, format: str, *args) -> None:
             pass  # silence the default per-request stderr line; tests assert on .requests instead

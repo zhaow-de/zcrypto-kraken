@@ -4,8 +4,7 @@ import json
 import urllib.request
 from dataclasses import dataclass
 
-# Bounded ring/batch/backoff tuning (spec 00068 D3) -- exact values, not defaults to be
-# tuned later. Tests override them via LokiShipHandler kwargs; production always uses these.
+# Bounded ring/batch/backoff tuning (spec 00068 D3) -- exact values, not defaults to be tuned later.
 RING_CAPACITY = 4096
 BATCH_MAX = 500
 FLUSH_INTERVAL_S = 1.0

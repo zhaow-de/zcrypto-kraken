@@ -60,8 +60,13 @@ def test_proxy_env_is_ignored(fake_loki, monkeypatch):
     monkeypatch.setenv("https_proxy", "http://127.0.0.1:9")
     # a POST via _build_opener() still reaches fake_loki directly
 
-def test_redirects_are_refused(fake_loki_redirecting):
-    # fake returns 308 with Location; opener must raise HTTPError, never follow
+def test_redirects_are_refused(code, handler_factory):
+    # parametrize over [302, 303, 307, 308]; 302/303 are the credential-leaking cases --
+    # the stdlib's stock HTTPRedirectHandler FOLLOWS them and forwards Authorization
+    # (307/308 are already refused by the stdlib itself for POST, so those alone prove
+    # nothing about our hardening). Point Location at a SECOND live FakeLoki and assert
+    # BOTH: HTTPError raised with the original code, AND the second server received
+    # nothing -- an observable, non-vacuous follow check.
 
 def test_module_constants_are_the_spec_values():
     assert (RING_CAPACITY, BATCH_MAX, FLUSH_INTERVAL_S, TIMEOUT_S,
