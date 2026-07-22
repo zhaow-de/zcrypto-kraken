@@ -32,6 +32,12 @@ from cli.universe.rules import (
 from cli.universe.volume import quote_volume_in_eur
 
 _OHLC_INTERVALS = ["1440", "240", "60"]
+_UNIVERSE_VOLUME_WINDOW_DAYS = 30
+# Days the universe rebuild tolerates between the OHLC set's newest daily bar and the rebuild
+# stamp. Daily bars lag by a day or so by construction, and a rebuild need not run the same day
+# the dumps land, so the budget is a week -- generous for operational slack, far tighter than
+# the 30-day window it protects, and nowhere near the 3.5-month gap that motivated it (T0093).
+UNIVERSE_MAX_OHLC_STALENESS_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,29 @@ def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
     (out_root / f"kraken-refdata-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}.json").write_text(json.dumps(snapshot, sort_keys=True))
 
 
+def _require_fresh_ohlc(frontier: datetime, ctx: RebuildContext) -> None:
+    """Refuse to build a universe from an OHLC set that does not reach the present (T0093).
+
+    The volume criterion is a TRAILING 30-day median, so it only describes current tradeability if
+    the dataset's newest bar is recent. `ohlc-full` is reconstructed from the OHLCVT dumps and stops
+    where they stop; the v0 REST set it superseded in iter-103 was live-fetched, and the
+    supersession was verified bit-identical on the OVERLAP -- not in the recency direction. Left
+    unguarded, this path computes a "30-day median" over a months-old window and drops names for
+    what reads as a liquidity move (measured 2026-07-22: AVAX/EUR at 132,274.82 vs the 150,000
+    floor, selecting 11 -- and `escalate` stays False because 11 >= MIN_NAMES, so nothing flags it).
+    """
+    as_of = datetime.strptime(ctx.stamp, "%Y%m%d").replace(tzinfo=UTC)
+    staleness_days = (as_of - frontier).days
+    if staleness_days > UNIVERSE_MAX_OHLC_STALENESS_DAYS:
+        raise DataSyncError(
+            f"data rebuild: universe needs an ohlc-full set reaching the present -- its newest daily "
+            f"bar is {frontier.date().isoformat()}, {staleness_days} days before the rebuild stamp "
+            f"{as_of.date().isoformat()} (budget {UNIVERSE_MAX_OHLC_STALENESS_DAYS} days). A trailing "
+            f"{_UNIVERSE_VOLUME_WINDOW_DAYS}-day median over that window measures past liquidity, not "
+            f"current (T0093)."
+        )
+
+
 def _require_ohlc_full(ctx: RebuildContext) -> Path:
     ohlc_root = ctx.data_root / "ohlc-full"
     if not ohlc_root.exists():
@@ -92,10 +121,16 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     ohlc_root = _require_ohlc_full(ctx)
     btc_eur = read_parquet(ohlc_root / "BTC" / "EUR" / "1440.parquet")
     volumes = {}
+    frontier = None  # the dataset's newest daily bar across the basket -- see _require_fresh_ohlc
     for symbol in symbols:
         base, quote = symbol.split("/")
         daily = read_parquet(ohlc_root / base / quote / "1440.parquet")
+        if daily.height:
+            last_ts = daily["ts"][-1]
+            frontier = last_ts if frontier is None else max(frontier, last_ts)
         volumes[symbol] = quote_volume_in_eur(daily, fx_daily=None if quote == "EUR" else btc_eur)
+    if frontier is not None:
+        _require_fresh_ohlc(frontier, ctx)
 
     # Spread cap (T0024, spec 00067): priced from the committed calibration at the same max-size
     # position the volume floor uses. The map covers EUR-quoted pairs with a calibrated base;
@@ -111,7 +146,7 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     params = {
         "min_leverage": DEFAULT_MIN_LEVERAGE,
         "min_median_quote_volume": DEFAULT_MIN_MEDIAN_QUOTE_VOLUME,
-        "median_quote_volume_window_days": 30,
+        "median_quote_volume_window_days": _UNIVERSE_VOLUME_WINDOW_DAYS,
         "mandatory": list(MANDATORY),
     }
     spread_cap = {
