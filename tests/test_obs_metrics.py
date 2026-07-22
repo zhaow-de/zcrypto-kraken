@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import threading
 import time
@@ -8,7 +9,9 @@ import urllib.request
 
 import pytest
 from prometheus_client import CollectorRegistry, generate_latest
+from prometheus_client.parser import text_string_to_metric_families
 
+import cli.obs.metrics as metrics
 from cli.logging.ship import LokiShipHandler, ShipConfig
 from cli.obs.metrics import (
     METRICS_PORT_ENV_VAR,
@@ -81,15 +84,15 @@ def _render(registry: CollectorRegistry) -> str:
 class TestBuildRegistry:
     def test_contains_process_families_and_nothing_else(self):
         text = _render(build_registry())
-        for family in (
+        names = set(re.findall(r"^# TYPE (\S+) ", text, re.M))
+        assert names == {
             "process_cpu_seconds_total",
-            "process_resident_memory_bytes",
+            "process_max_fds",
             "process_open_fds",
+            "process_resident_memory_bytes",
             "process_start_time_seconds",
-        ):
-            assert family in text
-        assert "python_gc_" not in text  # default-registry noise (spec 00069 D2) -- must not appear
-        assert "python_info" not in text
+            "process_virtual_memory_bytes",
+        }
 
 
 class TestMetricsPortFromEnv:
@@ -123,7 +126,8 @@ class TestStartMetricsServer:
         registry = build_registry()
         assert start_metrics_server(port, registry) is True
         body = _get(f"http://127.0.0.1:{port}/metrics")
-        assert "process_resident_memory_bytes" in body
+        families = {family.name for family in text_string_to_metric_families(body)}
+        assert "process_resident_memory_bytes" in families
 
     def test_port_already_taken_returns_false_logs_once_never_raises(self, caplog):
         # A plain socket occupies the port BEFORE start_metrics_server ever touches it, so a
@@ -136,11 +140,30 @@ class TestStartMetricsServer:
         try:
             with caplog.at_level(logging.ERROR):
                 result = start_metrics_server(port, build_registry())
-            assert result is False  # no server object is ever handed back -- nothing to leak
+            assert (
+                result is False
+            )  # start_http_server binds before spawning its thread (metrics.py) -- a bind failure here never leaves one running
             errors = [r for r in caplog.records if r.levelno == logging.ERROR]
             assert len(errors) == 1
         finally:
             blocker.close()
+
+    def test_binds_all_interfaces_inside_the_container(self, monkeypatch):
+        """0.0.0.0 is REQUIRED (cold-review C1): bridge-network published-port traffic arrives at
+        the container's eth0, never its loopback -- a 'hardening' edit back to 127.0.0.1 would
+        silently return up=0 fleet-wide. Pin the argument so the edit cannot land silently."""
+        seen = {}
+
+        def fake(port, addr=None, registry=None):
+            seen.update(port=port, addr=addr, registry=registry)
+            return (None, None)
+
+        monkeypatch.setattr(metrics, "start_http_server", fake)
+        registry = build_registry()
+        assert start_metrics_server(9101, registry) is True
+        assert seen["addr"] == "0.0.0.0"
+        assert seen["port"] == 9101
+        assert seen["registry"] is registry
 
 
 class TestLogshipCollector:
@@ -155,7 +178,7 @@ class TestLogshipCollector:
         assert "zcrypto_logship_last_success_timestamp_seconds" not in text
 
     def test_renders_all_three_families_from_a_live_handler(self, fake_loki):
-        url, requests = fake_loki
+        url, _requests = fake_loki
         handler = _make_handler(url)
         try:
             handler.emit(_make_record("hello"))
@@ -191,7 +214,7 @@ class TestLogshipCollector:
         thread holds `_ring_lock` (standing in for the worker mid-update), a concurrent
         collect() must block rather than read a partial snapshot -- proving it takes the same
         lock, not merely a copy made without one."""
-        url, requests = fake_loki
+        url, _requests = fake_loki
         handler = _make_handler(url)
         try:
             handler.emit(_make_record("hello"))

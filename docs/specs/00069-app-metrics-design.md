@@ -22,7 +22,7 @@ Static scrape targets — capture `127.0.0.1:9101`, engine `:9102`, poller `:910
 
 ## D4 — Container-level CPU/memory: process self-metrics; cadvisor rejected on posture
 
-Every app container on this fleet runs exactly one Python process, so container CPU/mem ≈ process CPU/mem. Each daemon's endpoint includes its own `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_open_fds`, `process_start_time_seconds` (`prometheus_client`'s ProcessCollector) — ~4 series per daemon, zero new containers, zero sockets, zero privileged.
+Every app container on this fleet runs exactly one Python process, so container CPU/mem ≈ process CPU/mem. Each daemon's endpoint includes its own `process_cpu_seconds_total`, `process_max_fds`, `process_open_fds`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_virtual_memory_bytes` (`prometheus_client`'s ProcessCollector) — ~6 series per daemon, zero new containers, zero sockets, zero privileged.
 
 **cadvisor is rejected everywhere, on posture, regardless of its crash behavior.** Embedded or standalone, cadvisor needs the docker API to resolve container names (without it, containers are anonymous cgroup hex ids) — re-adding a socket consumer one iteration after 00068's headline removed them all. The `.tmp/cadvisor-at-synology.md` tips were evaluated as the owner asked: the three fixes (drop `/dev/disk` mounts, inotify bump, pin v0.49.1) are credible against the DSM SIGSEGV class, and standalone isolation would stop it taking Alloy down — but the prescription is `privileged: true` plus a **read-write** `/var/run` mount on the custody host, a strictly worse posture than the one 00068 retired. Verdict: technically credible, disqualified on posture. This closes [[T0020]]'s untriaged "retry NAS cadvisor" item as an explicit rejection.
 
@@ -57,7 +57,7 @@ Extends 00068 D7 **with two named amendments** (cold-review M3 — "in place, sa
 
 ## D9 — Series budget
 
-Estimate: engine ~15 (per-asset gauges dominate at 12 names) + capture ~27 ×2 hosts (six unlabeled families + gap and desynced at 10 pairs each + bytes) + poller ~7 + logship ~3 ×4 daemons + ProcessCollector ~4 ×4 daemons + the Alloy process pair ×4 hosts = **~112 nominal; budgeted ≤150** with headroom for label variants. The 405-series base is the 2026-07-16 measurement and predates the capture-host Alloys — **re-measured at rollout Step 0**, not assumed. Comfortably inside spec 00043's <1k target; measured at each rollout window, recorded in the closeout.
+Estimate: engine ~15 (per-asset gauges dominate at 12 names) + capture ~27 ×2 hosts (six unlabeled families + gap and desynced at 10 pairs each + bytes) + poller ~7 + logship ~3 ×4 daemons + ProcessCollector ~6 ×4 daemons + the Alloy process pair ×4 hosts = **~120 nominal; budgeted ≤150** with headroom for label variants. The 405-series base is the 2026-07-16 measurement and predates the capture-host Alloys — **re-measured at rollout Step 0**, not assumed. Comfortably inside spec 00043's <1k target; measured at each rollout window, recorded in the closeout.
 
 ## D10 — Testing (TDD)
 

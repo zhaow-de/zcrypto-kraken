@@ -16,9 +16,10 @@ METRICS_PORT_ENV_VAR = "ZCRYPTO_METRICS_PORT"
 
 def build_registry() -> CollectorRegistry:
     """A fresh, isolated `CollectorRegistry` carrying ONLY the `ProcessCollector` families
-    (`process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_open_fds`,
-    `process_start_time_seconds`) -- never `prometheus_client`'s global default registry,
-    whose `python_gc_*`/`python_info` collectors are unpublished noise here (spec 00069 D2)."""
+    (`process_cpu_seconds_total`, `process_max_fds`, `process_open_fds`,
+    `process_resident_memory_bytes`, `process_start_time_seconds`, `process_virtual_memory_bytes`)
+    -- never `prometheus_client`'s global default registry, whose `python_gc_*`/`python_info`
+    collectors are unpublished noise here (spec 00069 D2)."""
     registry = CollectorRegistry()
     ProcessCollector(registry=registry)
     return registry

@@ -89,7 +89,9 @@ class LokiShipHandler(logging.Handler):
         self._ring_lock = threading.Lock()
         self.dropped_total = 0
         self.shipped_lines_total = 0
-        self.last_ship_success_at: float | None = None  # unix ts of the last "ok" outcome; None until the first
+        self.last_ship_success_at: float | None = (
+            None  # unix ts of the last "ok" from the main loop; the exit flush (see _run) does not update it
+        )
         self._dropped_unannounced = 0
         self._held: list[tuple[str, str, str]] = []  # the one in-flight batch (part of the memory bound)
         self._auth = "Basic " + base64.b64encode(f"{cfg.username}:{cfg.password}".encode()).decode()
