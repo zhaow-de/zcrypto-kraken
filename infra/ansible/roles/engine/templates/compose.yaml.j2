@@ -31,8 +31,14 @@ services:
 {% else %}
     entrypoint: ["zcrypto", "engine", "run"]
 {% endif %}
-{% if logship_loki_token is defined %}
     environment:
+      # Spec 00069 D6: UNGUARDED, unlike the logship additions below -- no embargo flag, because
+      # env+port without the new image are inert (unknown env var, unpublished port) and the new
+      # image without this env is exporter-off. Port 9102 is 00043's pinned value; it is scraped
+      # by the `engine_app` job in roles/capture/files/config.alloy (the engine shares the
+      # PRIMARY capture host, so one config file serves both apps -- see that file's own comment).
+      ZCRYPTO_METRICS_PORT: "9102"
+{% if logship_loki_token is defined %}
       # Literal "zcrypto", NOT a `base_hostname` reference (review finding, 00068 T6/T7/T8 review
       # Critical 1): the engine only ever runs on the primary, and role defaults are PLAY-SCOPED --
       # site.yml's engine_host play applies `roles: [engine]` only, with no `base` role and no
@@ -45,6 +51,12 @@ services:
       ZCRYPTO_LOG_HOST: zcrypto
       ZCRYPTO_LOG_SERVICE: engine
 {% endif %}
+    # `127.0.0.1:9102:9102` (spec 00069 D3): the security boundary is this HOST-side publish, not
+    # an in-container bind -- the exporter binds 0.0.0.0 inside the container (bridge-networked;
+    # Docker delivers published-port traffic to eth0, never loopback), so loopback-only here is
+    # what keeps `/metrics` off the internet on the trade-key host. nftables untouched.
+    ports:
+      - "127.0.0.1:9102:9102"
     env_file:
       - /opt/zcrypto-engine/engine.env
 {% if logship_loki_token is defined %}

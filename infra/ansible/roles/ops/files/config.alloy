@@ -83,13 +83,31 @@ prometheus.exporter.unix "host" {
 // cadvisor's series would eat into the active-series budget the spec flags as an open risk. A
 // future task can add it deliberately if a container-level gate ever needs it.
 
+// ---- App metrics: the liquidations poller's own /metrics endpoint ----------------------------
+// Static scrape target, not discovery (spec 00069 D3): the poller container publishes `/metrics`
+// on a host-loopback port (compose.yaml.j2's `127.0.0.1:9103:9103`), so there is nothing to
+// discover -- a fixed target is simpler and carries no docker-socket dependency. `job_name` is set
+// EXPLICITLY (cold-review M6): Alloy otherwise defaults `job` to the component's own path, and the
+// rollout's `up{job="liquidations_app"}` check would then query a label value that does not exist.
+prometheus.scrape "liquidations_app" {
+  targets         = [{"__address__" = "127.0.0.1:9103"}]
+  job_name        = "liquidations_app"
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
 // ---- Scrape -> remote_write ------------------------------------------------------------------
 // T0048 defect 1's SD-wedge detection RETIRED with `discovery.docker` (00068 D6/D8): the alert it
 // fed (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
 // _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
 // on this host, neither series exists any more, and both are gone from the keep-regex below too (a
-// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below still
-// discards go_/process_/alloy_, so this target's only surviving contribution is its own `up`.
+// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
+// discards process_* (00069 T6): that family moved to the keep-list below, admitted explicitly
+// alongside the poller endpoint's own six process_* names (spec D4/D5) -- Alloy's own
+// `client_golang` ProcessCollector was not re-verified against a live self-scrape at desk time and
+// may publish a different subset, so the keep-list admits the superset rather than risk silently
+// dropping whatever it does ship. This target's surviving contribution is therefore its own `up`
+// plus whichever of those six process_* names its self-scrape actually produces.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -125,19 +143,22 @@ prometheus.remote_write "grafana" {
   // drop/keep pair (both match on `__name__` only) and does not change the number of relabel
   // blocks.
   //
-  // The NAS's config.alloy deliberately does NOT get the mirror-image `host="nas"` label, even
-  // though that would look more symmetric: adding a label to an EXISTING, already-live series
-  // changes that series' identity in Prometheus (the old series ends, a new one begins), and the
-  // NAS ships `zcrypto_reconcile_residual_gap_seconds_total`, which
+  // UPDATE (spec 00069 D7): the NAS's config.alloy now ALSO sets `host="nas"` -- this paragraph
+  // used to explain why it deliberately did not, and that reasoning is recorded here for the
+  // history, but it no longer describes what either file does. The original worry: adding a label
+  // to an EXISTING, already-live series changes that series' identity in Prometheus (the old
+  // series ends, a new one begins), and the NAS used to ship
+  // `zcrypto_reconcile_residual_gap_seconds_total`, which
   // `infra/grafana/alerts.yaml`'s "Reconciler · residual gap increased (permanent loss)" rule
-  // watches through `increase(...[1h]) > 0 and resets(...[1h]) == 0`. A series-identity change
+  // watches through `increase(...[1h]) > 0 and resets(...[1h]) == 0` -- a series-identity change
   // underneath `increase()` can read as a value jump with no corresponding `resets()`, i.e. a
-  // FALSE permanent-data-loss page -- not worth it for a symmetry nobody needs today.
-  //
-  // This is also useful, not merely tolerable: once the overlay writer moves to ops, ops's copy of
-  // zcrypto_reconcile_* carries `host="ops"` while the NAS's carries no host label at all, making
-  // the two hosts' series distinguishable -- exactly what a later task needs to prove the NAS's
-  // stale copy is gone. Deliberate asymmetry, not an oversight.
+  // FALSE permanent-data-loss page. That risk is now moot: the overlay writer moved to ops (spec
+  // 00054 D2) and the NAS's own copy of that family was deleted at the 2026-07-16 cutover (ops's
+  // copy alone carries `host="ops"`, distinguishing the two hosts' series exactly as this comment
+  // used to promise), so no currently-published NAS series sits under an `increase()`/`resets()`
+  // rule. Spec D7's owner accepted the remaining, smaller seam -- `node_load1`/`up`/etc. changing
+  // identity at the labeling moment -- as a known cost at an attended window where a false page is
+  // cheap to dismiss.
   external_labels = {
     host = "ops",
   }
@@ -152,22 +173,25 @@ prometheus.remote_write "grafana" {
 
     // Series minimization (00043): drop Alloy's own self-metrics first (defense in depth --
     // nothing scraped above is Alloy's own /metrics endpoint, so this is normally a no-op), then
-    // keep-only the host + textfile series this stack actually wants. T0051 (spec 00054): a `keep`
-    // action drops everything it does not list, so a series missing here does not merely go
-    // undashboarded -- it does not exist. The last two families
+    // keep-only the host + textfile + app series this stack actually wants. T0051 (spec 00054): a
+    // `keep` action drops everything it does not list, so a series missing here does not merely go
+    // undashboarded -- it does not exist. The reconcile/trade-backfill families
     // (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*) do not exist on this host yet -- they arrive
     // with Task 6's writer move -- but are listed NOW so that move does not also require reopening
     // this file. tests/test_infra_alloy_series.py pins this list against every series the stack
-    // (present + Task 6's future) actually publishes.
+    // (present + Task 6's future) actually publishes. The liquidations poller's own series, the
+    // logship-handler series it shares with every other daemon on the fleet, and the six
+    // ProcessCollector families (both the poller's own and, per the `exporter.self "alloy"`
+    // comment above, whatever subset of them Alloy itself ships) arrive with 00069 T6.
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "go_.*|process_.*|alloy_.*"
+      regex         = "go_.*|alloy_.*"
       action        = "drop"
     }
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|hc_check_up|hc_checks_down_total"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes"
       action        = "keep"
     }
   }

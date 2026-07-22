@@ -32,6 +32,54 @@ _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # failure class the log-dead canaries exist to close. So it is pinned for all three configs, not
 # just the two that happened to list it already.
 
+# 00069 T6: the capture/engine/poller app daemons' own `/metrics` series, admitted per host below.
+# The six ProcessCollector families are shared by every app endpoint (spec 00069 D4/D5) -- a
+# keep-list admitting four while the app publishes six is the T0051 admitted-but-unpublished trap
+# in the other direction.
+PROCESS_FAMILIES = [
+    "process_cpu_seconds_total",
+    "process_max_fds",
+    "process_open_fds",
+    "process_resident_memory_bytes",
+    "process_start_time_seconds",
+    "process_virtual_memory_bytes",
+]
+# The 00068 ship-handler internals, shared by every daemon that runs with `--ship-logs` (capture
+# x2, engine, the liquidations poller) -- NOT the NAS, which runs no `--ship-logs`/`/metrics`
+# daemon at all (its pull loop is shell).
+LOGSHIP_SERIES = [
+    "zcrypto_logship_dropped_lines_total",
+    "zcrypto_logship_shipped_lines_total",
+    "zcrypto_logship_last_success_timestamp_seconds",
+]
+CAPTURE_APP_SERIES = [
+    "zcrypto_capture_reconnects_total",
+    "zcrypto_capture_resubscribes_total",
+    "zcrypto_capture_segments_written_total",
+    "zcrypto_capture_segment_bytes_total",
+    "zcrypto_capture_rows_held_total",
+    "zcrypto_capture_rows_quarantined_total",
+    "zcrypto_capture_gap_seconds_total",
+    "zcrypto_capture_book_desynced",
+    "zcrypto_capture_disk_watermark_breached",
+]
+# Scraped from the capture role's config.alloy on BOTH capture hosts (one file serves both,
+# `engine_app` included on the secondary too even though nothing listens there -- see that file's
+# own `engine_app` scrape comment).
+ENGINE_APP_SERIES = [
+    "zcrypto_engine_target_weight",
+    "zcrypto_engine_orders_total",
+    "zcrypto_engine_order_notional_eur",
+    "zcrypto_engine_cycle_success",
+    "zcrypto_engine_cycle_completed_at_seconds",
+    "zcrypto_engine_cycle_duration_seconds",
+]
+LIQUIDATIONS_APP_SERIES = [
+    "zcrypto_liquidations_polls_total",
+    "zcrypto_liquidations_api_errors_total",
+    "zcrypto_liquidations_last_success_timestamp_seconds",
+]
+
 NAS_REQUIRED = [
     "up",
     "node_load1",
@@ -73,7 +121,11 @@ OPS_REQUIRED = [
     # reasonable guess produces.
     "hc_check_up",
     "hc_checks_down_total",
+    *LIQUIDATIONS_APP_SERIES,
+    *LOGSHIP_SERIES,
+    *PROCESS_FAMILIES,
 ]
+CAPTURE_REQUIRED = ["up", *CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LOGSHIP_SERIES, *PROCESS_FAMILIES]
 
 
 def _keep_regex(path: Path) -> re.Pattern:
@@ -93,10 +145,7 @@ def _keep_regex(path: Path) -> re.Pattern:
     [
         (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
         (OPS_ALLOY, OPS_REQUIRED),
-        # capture still has no FULL required-list (pre-existing gap), but every series an alert
-        # depends on is pinned: `up`, for the two Fleet · Alloy dark rules scoped to
-        # host="zcrypto" / host="zcrypto-red" (T0079).
-        (CAPTURE_ALLOY, ["up"]),
+        (CAPTURE_ALLOY, CAPTURE_REQUIRED),
     ],
     ids=["nas", "ops", "capture"],
 )
@@ -104,6 +153,25 @@ def test_keep_regex_admits_every_published_series(path, required):
     keep = _keep_regex(path)
     missing = [s for s in required if not keep.match(s)]
     assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
+
+
+@pytest.mark.parametrize(
+    ("path", "excluded"),
+    [
+        # The poller runs on ops, not capture or engine.
+        (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES]),
+        # Capture/engine run on the capture hosts, not the poller.
+        (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
+    ],
+    ids=["ops", "capture"],
+)
+def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
+    """T0051, the other direction (00069 T6): admitting a family this host never publishes is not
+    merely wasted machinery -- it is silent go-ahead for a future daemon addition to ship there
+    unreviewed."""
+    keep = _keep_regex(path)
+    admitted = [s for s in excluded if keep.match(s)]
+    assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
 
 
 @pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])
