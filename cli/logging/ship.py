@@ -116,20 +116,25 @@ class LokiShipHandler(logging.Handler):
     def _post(self, entries: list[tuple[str, str, str]]) -> str:
         """'ok' | 'retry' | 'drop' -- a non-429 4xx is permanently rejected (e.g. entries older
         than Loki's out-of-order window after a long outage); retrying it forever would wedge
-        shipping silently (spec 00068 D3)."""
-        req = urllib.request.Request(
-            self._cfg.url,
-            data=build_payload(entries, self._cfg),
-            headers={"Content-Type": "application/json", "Authorization": self._auth},
-            method="POST",
-        )
+        shipping silently (spec 00068 D3). Any other unexpected exception (e.g. a malformed
+        `url` from a config typo) is also 'retry', never left to escape -- an unguarded raise
+        here kills the worker thread permanently and silently, defeating D3's no-silent-
+        dark-window guarantee."""
         try:
+            req = urllib.request.Request(
+                self._cfg.url,
+                data=build_payload(entries, self._cfg),
+                headers={"Content-Type": "application/json", "Authorization": self._auth},
+                method="POST",
+            )
             with self._opener.open(req, timeout=self._timeout_s):
                 pass
             return "ok"
         except urllib.error.HTTPError as e:
             return "retry" if (e.code >= 500 or e.code == 429) else "drop"
         except urllib.error.URLError, OSError, TimeoutError:
+            return "retry"
+        except Exception:
             return "retry"
 
     def _run(self) -> None:
