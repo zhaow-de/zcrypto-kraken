@@ -2,11 +2,59 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
+import time
 import urllib.request
 
+import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
-from cli.obs.metrics import METRICS_PORT_ENV_VAR, build_registry, metrics_port_from_env, start_metrics_server
+from cli.logging.ship import LokiShipHandler, ShipConfig
+from cli.obs.metrics import (
+    METRICS_PORT_ENV_VAR,
+    LogshipCollector,
+    build_registry,
+    metrics_port_from_env,
+    start_metrics_server,
+)
+from tests.fake_loki import FakeLoki
+from tests.fake_loki import handler_factory as _handler_factory
+
+# Tight worker timings so ship-handler-backed tests stay fast; mirrors tests/test_logging_ship_handler.py.
+_TIGHT = {"flush_interval_s": 0.02, "timeout_s": 0.3, "backoff_min_s": 0.05, "backoff_max_s": 0.2, "exit_deadline_s": 0.5}
+
+
+@pytest.fixture
+def handler_factory():
+    return _handler_factory
+
+
+@pytest.fixture
+def fake_loki(handler_factory):
+    handler_cls = handler_factory()
+    with FakeLoki(handler_cls) as url:
+        yield url, handler_cls.requests
+
+
+def _cfg(url: str) -> ShipConfig:
+    return ShipConfig(url=f"{url}/loki/api/v1/push", username="alice", password="secret", host="h1", service="svc1")
+
+
+def _make_handler(url: str, **overrides) -> LokiShipHandler:
+    return LokiShipHandler(_cfg(url), **{**_TIGHT, **overrides})
+
+
+def _make_record(msg: str) -> logging.LogRecord:
+    return logging.LogRecord(name="test", level=logging.INFO, pathname="test.py", lineno=1, msg=msg, args=(), exc_info=None)
+
+
+def _wait_until(predicate, timeout: float = 1.0, interval: float = 0.005) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
 
 
 def _free_port() -> int:
@@ -93,3 +141,72 @@ class TestStartMetricsServer:
             assert len(errors) == 1
         finally:
             blocker.close()
+
+
+class TestLogshipCollector:
+    def test_absent_families_when_no_handler_is_configured(self):
+        """absence is honest, zero is a claim: with ship_handler=None (no --ship-logs on this
+        daemon), the collector must publish NOTHING for these families, not zeros."""
+        registry = CollectorRegistry()
+        registry.register(LogshipCollector(None))
+        text = _render(registry)
+        assert "zcrypto_logship_dropped_lines_total" not in text
+        assert "zcrypto_logship_shipped_lines_total" not in text
+        assert "zcrypto_logship_last_success_timestamp_seconds" not in text
+
+    def test_renders_all_three_families_from_a_live_handler(self, fake_loki):
+        url, requests = fake_loki
+        handler = _make_handler(url)
+        try:
+            handler.emit(_make_record("hello"))
+            assert _wait_until(lambda: handler.shipped_lines_total >= 1)
+
+            registry = CollectorRegistry()
+            registry.register(LogshipCollector(handler))
+            text = _render(registry)
+            assert "zcrypto_logship_dropped_lines_total 0.0" in text
+            assert "zcrypto_logship_shipped_lines_total 1.0" in text
+            assert "zcrypto_logship_last_success_timestamp_seconds" in text
+        finally:
+            handler.close()
+
+    def test_last_success_family_absent_before_any_successful_ship(self, handler_factory):
+        handler_cls = handler_factory(status_code=500)
+        with FakeLoki(handler_cls) as url:
+            handler = _make_handler(url, batch_max=1, ring_capacity=8)
+            try:
+                handler.emit(_make_record("still-retrying"))
+                assert _wait_until(lambda: len(handler_cls.requests) >= 1)  # a failed attempt happened
+
+                registry = CollectorRegistry()
+                registry.register(LogshipCollector(handler))
+                text = _render(registry)
+                assert "zcrypto_logship_shipped_lines_total 0.0" in text
+                assert "zcrypto_logship_last_success_timestamp_seconds" not in text  # no success has ever happened
+            finally:
+                handler.close()
+
+    def test_collect_snapshots_under_the_same_lock_the_worker_mutates_under(self, fake_loki):
+        """The 'tolerates a handler mid-mutation' property, exercised directly: while the test
+        thread holds `_ring_lock` (standing in for the worker mid-update), a concurrent
+        collect() must block rather than read a partial snapshot -- proving it takes the same
+        lock, not merely a copy made without one."""
+        url, requests = fake_loki
+        handler = _make_handler(url)
+        try:
+            handler.emit(_make_record("hello"))
+            assert _wait_until(lambda: handler.shipped_lines_total >= 1)  # so all three families are due
+
+            collector = LogshipCollector(handler)
+            done = threading.Event()
+            families: list = []
+            with handler._ring_lock:
+                t = threading.Thread(target=lambda: (families.extend(collector.collect()), done.set()))
+                t.start()
+                time.sleep(0.05)
+                assert not done.is_set()  # blocked behind the held lock
+            t.join(timeout=1.0)
+            assert done.is_set()
+            assert len(families) == 3
+        finally:
+            handler.close()

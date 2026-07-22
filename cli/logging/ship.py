@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections import deque
@@ -87,6 +88,8 @@ class LokiShipHandler(logging.Handler):
         self._ring: deque[tuple[str, str, str]] = deque(maxlen=ring_capacity)
         self._ring_lock = threading.Lock()
         self.dropped_total = 0
+        self.shipped_lines_total = 0
+        self.last_ship_success_at: float | None = None  # unix ts of the last "ok" outcome; None until the first
         self._dropped_unannounced = 0
         self._held: list[tuple[str, str, str]] = []  # the one in-flight batch (part of the memory bound)
         self._auth = "Basic " + base64.b64encode(f"{cfg.username}:{cfg.password}".encode()).decode()
@@ -148,6 +151,9 @@ class LokiShipHandler(logging.Handler):
                 continue
             outcome = self._post(self._held)
             if outcome == "ok":
+                with self._ring_lock:
+                    self.shipped_lines_total += len(self._held)
+                    self.last_ship_success_at = time.time()
                 self._held, backoff = [], self._backoff_min_s
                 self._announce_recovery()
             elif outcome == "drop":

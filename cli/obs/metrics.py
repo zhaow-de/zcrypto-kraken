@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 from prometheus_client import CollectorRegistry, ProcessCollector, start_http_server
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metric
 
 from cli.logging import get_logger
+from cli.logging.ship import LokiShipHandler
 
 logger = get_logger("obs.metrics")
 
@@ -55,3 +58,35 @@ def start_metrics_server(port: int, registry: CollectorRegistry) -> bool:
     except Exception:
         logger.error("failed to start the metrics server on port %d -- continuing without it", port, exc_info=True)
         return False
+
+
+class LogshipCollector:
+    """Exposes a live `LokiShipHandler`'s counters as scrape-time series: `handler` may be
+    `None` (this daemon wasn't started with `--ship-logs`) -- `collect()` then yields NOTHING.
+    An absent family is honest (log shipping isn't running here); a published zero would
+    falsely claim it is (spec 00069 D5)."""
+
+    def __init__(self, handler: LokiShipHandler | None) -> None:
+        self._handler = handler
+
+    def collect(self) -> Iterator[Metric]:
+        handler = self._handler
+        if handler is None:
+            return
+        # Same lock the worker mutates dropped_total/shipped_lines_total/last_ship_success_at
+        # under (cli/logging/ship.py) -- a scrape racing the worker sees one consistent
+        # snapshot, never a partially-updated mix of old and new values.
+        with handler._ring_lock:
+            dropped = handler.dropped_total
+            shipped = handler.shipped_lines_total
+            last_success = handler.last_ship_success_at
+        yield CounterMetricFamily(
+            "zcrypto_logship_dropped_lines_total", "Log lines dropped by the Loki ship handler.", value=dropped
+        )
+        yield CounterMetricFamily("zcrypto_logship_shipped_lines_total", "Log lines successfully shipped to Loki.", value=shipped)
+        if last_success is not None:  # absent until the first success -- see the class docstring
+            yield GaugeMetricFamily(
+                "zcrypto_logship_last_success_timestamp_seconds",
+                "Unix timestamp of the last successful Loki ship.",
+                value=last_success,
+            )
