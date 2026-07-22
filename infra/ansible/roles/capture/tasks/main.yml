@@ -47,6 +47,26 @@
     group: root
     mode: "0755"
 
+# The zcrypto CLI's own Loki push creds for the CAPTURE container (spec 00068 D5) -- distinct
+# from the alloy secrets rendered further below, and NOT gated on `capture_alloy_digest`: this
+# render is unrelated to whether Alloy is deployed at all. Root-owned (unlike alloy-secrets.env,
+# which the dedicated zcrypto-alloy user must own to read): `docker compose up` for this service
+# runs as root (the zcrypto-capture.service systemd unit, ExecStart), never as a key-owning user.
+# `logship_loki_token is defined` is the structural safety net -- the vault already carries it
+# fleet-wide (2026-07-22), so this renders on every `observed` host from the next converge; a
+# converge landing before that vault change existed would simply skip this task, matching the same
+# guard on the compose file's env_file/environment additions below that reference this file.
+- name: render the logship secrets env file
+  ansible.builtin.template:
+    src: logship-secrets.env.j2
+    dest: /opt/zcrypto-capture/logship-secrets.env
+    owner: root
+    group: root
+    mode: "0600"
+  when: logship_loki_token is defined
+  no_log: true
+  diff: false
+
 - name: render the capture compose file
   ansible.builtin.template:
     src: compose.yaml.j2
@@ -145,9 +165,9 @@
     # the exact protection the NAS replicates with its dedicated uid-1031 (T0030). The capture hosts
     # hold no private key today, but running Alloy as a key-owning user would still be the wrong
     # default, so `zcrypto-alloy` is a dedicated, non-login system user that owns nothing key-adjacent
-    # — the direct-read path stays closed by construction. Socket access (group_add below) is
-    # root-equivalent and remains a known, accepted residual; the dedicated uid closes only the
-    # narrower DIRECT, no-escalation read.
+    # — the direct-read path stays closed by construction. (The docker-socket residual this used to
+    # sit alongside is gone — the socket mount and its group_add retired with `discovery.docker`,
+    # spec 00068 D6.)
     - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
       ansible.builtin.user:
         name: zcrypto-alloy
@@ -166,27 +186,12 @@
         capture_alloy_uid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][1] }}"
         capture_alloy_gid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][2] }}"
 
-    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
-    # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
-    # never resolve and the container would fail to start. The fix is the host's real numeric docker
-    # gid, derived here (never hardcoded — it is a per-host accident). Safe to look up: the `docker`
-    # role runs before this one in the capture play (site.yml), creating the `docker` group as a side
-    # effect of the docker-ce install. `getent group` rows are `name:passwd:gid:members`, so index 1
-    # is the gid (NOT passwd's index-2 gid).
-    - name: look up the docker group (created by the docker role; Alloy's group_add needs its numeric gid)
-      ansible.builtin.getent:
-        database: group
-        key: docker
-
-    - name: derive the docker group's numeric gid for the alloy container's group_add
-      ansible.builtin.set_fact:
-        capture_docker_gid: "{{ ansible_facts['getent_group']['docker'][1] }}"
-
-    # Same numeric-gid derivation, same reason: the host's persistent journal files are
-    # root:systemd-journal 0640, and Alloy (running as the non-root zcrypto-alloy user) reads them
-    # through the /var/log/journal:/host/journal:ro mount for the capture-prune unit's host-side lines
-    # (which exist in no container log). The `systemd-journal` group is created by the systemd package
-    # itself, so it exists on any Debian host.
+    # The host's persistent journal files are root:systemd-journal 0640, and Alloy (running as the
+    # non-root zcrypto-alloy user) reads them through the /var/log/journal:/host/journal:ro mount
+    # for the capture-prune unit's host-side lines AND its own journald-driver stream (D6) — neither
+    # exists in any container json.log. NUMERIC gid, derived here (never hardcoded — it is a
+    # per-host accident). The `systemd-journal` group is created by the systemd package itself, so
+    # it exists on any Debian host.
     - name: look up the systemd-journal group (Alloy's journal-read group_add needs its numeric gid)
       ansible.builtin.getent:
         database: group

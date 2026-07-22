@@ -21,8 +21,10 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 # overlay writer's series (moved to this host by spec 00054 Task 6/OPS-5).
 # T0048 defect 1: discovery.docker can wedge permanently and the ONLY positive signal is this
 # counter going flat -- a hang logs nothing, so without it the failure is silent for hours until the
-# dead-man fires. It is alerted on (zcrypto-alloy-docker-sd-wedged), so dropping it from a keep-list
-# would silently disarm that alert rather than merely lose a graph.
+# dead-man fires. NAS and ops still run discovery.docker (unlike capture, retired by 00068 D6), so
+# this is still genuinely published there -- dropping it from either keep-list would silently
+# regress a series that exists (T0051), even though the alert that used to watch it fleet-wide
+# (zcrypto-alloy-docker-sd-wedged) retired alongside capture's copy (00068 D8).
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
 # The disambiguator: a CLIMBING failures counter means a persistently erroring refresh, not a
 # hang -- identical symptom, different cause. Shipping it is what makes the two separable.
@@ -99,9 +101,13 @@ def _keep_regex(path: Path) -> re.Pattern:
         (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
         (OPS_ALLOY, OPS_REQUIRED),
         # capture still has no FULL required-list (pre-existing gap), but every series an alert
-        # depends on is pinned: the SD pair for zcrypto-alloy-docker-sd-wedged, and `up` for the
-        # two Fleet · Alloy dark rules scoped to host="zcrypto" / host="zcrypto-red" (T0079).
-        (CAPTURE_ALLOY, [_SD_SERIES, _SD_FAILURES, "up"]),
+        # depends on is pinned: `up`, for the two Fleet · Alloy dark rules scoped to
+        # host="zcrypto" / host="zcrypto-red" (T0079). The SD pair is deliberately NOT required
+        # here any more (00068 D6/D8): `discovery.docker` -- their only producer -- is retired on
+        # this host, so admitting them would be a keep-list entry for a series that cannot exist
+        # (the T0051 trap), and the alert that watched them (zcrypto-alloy-docker-sd-wedged) is
+        # gone too.
+        (CAPTURE_ALLOY, ["up"]),
     ],
     ids=["nas", "ops", "capture"],
 )

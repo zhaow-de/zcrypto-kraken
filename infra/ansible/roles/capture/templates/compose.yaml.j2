@@ -13,8 +13,22 @@ services:
       CAPTURE_DEPTH: "{{ capture_depth }}"
       CAPTURE_PAIRS: "{{ capture_pairs | join(',') }}"
       HEALTHCHECK_URL: "{{ capture_healthcheck_url }}"
+{% if logship_loki_token is defined %}
+      ZCRYPTO_SHIP_LOGS: "1"
+      ZCRYPTO_LOG_HOST: "{{ base_hostname }}"
+      ZCRYPTO_LOG_SERVICE: capture
+{% endif %}
     volumes:
       - "{{ capture_data_dir }}:{{ capture_data_dir }}"
+{% if logship_loki_token is defined %}
+    # The zcrypto CLI's own Loki push creds (ZCRYPTO_LOKI_URL/USERNAME/PASSWORD), rendered by
+    # tasks/main.yml alongside this compose file -- spec 00068 D5. Guarded by the SAME
+    # `logship_loki_token is defined` condition as the environment additions above (cold-review
+    # I4): a converge landing before the vault carries the token must still leave this container
+    # fully restartable, never a latent can't-start state on this unbackfillable host.
+    env_file:
+      - /opt/zcrypto-capture/logship-secrets.env
+{% endif %}
     deploy:
       resources:
         limits:
