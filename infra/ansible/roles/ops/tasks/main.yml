@@ -401,17 +401,18 @@
     # admin (`zcrypto-deploy`) nor the m2m (`zcrypto-data`) home holds any private key (only public
     # authorized_keys). Running Alloy as a key-owning user would still be the wrong default, so
     # `zcrypto-alloy` is a dedicated, non-login system user that owns nothing under any such home -- the
-    # direct-read path stays closed by construction, mirroring the NAS's uid-1031 choice. `group_add` (alloy-compose.yaml.j2) grants Docker socket access via
-    # the host's real numeric docker gid, derived below via `getent` -- NOT a named "docker" entry:
-    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
-    # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
-    # never resolve and the container would fail to start -- the same reason the NAS passes the
-    # numeric `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN DEPTH ONLY:
-    # membership in the `docker` group is root-equivalent by definition (anything holding the Docker
-    # API can create a privileged container regardless of a `:ro` socket mount) -- the escalation
-    # path remains and is a known, accepted residual, exactly as the NAS's comments record for
-    # T0042. The point of the dedicated uid is narrower and real: it closes the DIRECT, no-escalation
-    # read.
+    # direct-read path stays closed by construction, mirroring the NAS's uid-1031 choice.
+    #
+    # The Docker-socket grant this comment used to describe is GONE (spec 00068 D6): Alloy no longer
+    # mounts /var/run/docker.sock nor carries the docker gid in `group_add`, because it no longer
+    # reads container logs -- the CLI ships its own, and Alloy's remaining log job is the journal.
+    # So the root-equivalent escalation residual that T0042 recorded for this host is CLOSED, not
+    # merely mitigated by the dedicated uid. What `group_add` still carries is the systemd-journal
+    # gid (alloy-compose.yaml.j2), derived below via `getent` -- numeric, NOT a named entry, because
+    # Docker resolves a NAMED group_add against the CONTAINER's own /etc/group and the upstream
+    # grafana/alloy image ships only `alloy:x:473:`, so a name would never resolve and the container
+    # would fail to start. Journal-group membership confers log READ only; it is not an escalation
+    # path.
     - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
       ansible.builtin.user:
         name: zcrypto-alloy
