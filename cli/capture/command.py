@@ -361,6 +361,14 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # collector -- registered here, late, because every object the collector reads must already
     # exist. A registration failure must not stop capture from running (or from serving at least
     # the process-self-metrics ProcessCollector already carries): log and still start the server.
+    # The guard wraps `.register()` itself, not just `CaptureCollector(...)`'s construction
+    # (cold-review M2): `CollectorRegistry.register()` calls the collector's OWN `.collect()`
+    # synchronously, right here, whenever the collector has no `describe()` -- CaptureCollector
+    # doesn't define one -- so capture evaluates these live objects at REGISTRATION time, not
+    # lazily at the next scrape, and this is the one place that read can raise. (The engine's and
+    # poller's own instruments are stock `Counter`/`Gauge`, which DO implement `describe()`, so
+    # `.register()` never evaluates them eagerly the way it does here -- see the poller's own
+    # comment for why its construction needs no equivalent guard.)
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()

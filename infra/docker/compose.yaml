@@ -29,12 +29,12 @@ services:
       ZCRYPTO_LOKI_USERNAME: "${ZCRYPTO_LOKI_USERNAME:-}"
       ZCRYPTO_LOKI_PASSWORD: "${ZCRYPTO_LOKI_PASSWORD:-}"
       # Mirrors the capture role's UNGUARDED metrics-port additions (compose.yaml.j2, spec 00069
-      # D6): unlike the ship-logs vars above, this one is not opt-in-by-emptiness in the real
-      # deploy -- it is the pinned literal `9101` there, so it is hardcoded here too rather than
-      # given a variable default.
-      ZCRYPTO_METRICS_PORT: "9101"
+      # D6): the real deploy pins the literal `9101` (nothing there needs an override), but this
+      # reference file follows the same `${VAR:-default}` pattern as every sibling var above so a
+      # local run can point the exporter at a different port without hand-editing this file.
+      ZCRYPTO_METRICS_PORT: "${ZCRYPTO_METRICS_PORT:-9101}"
     ports:
-      - "127.0.0.1:9101:9101"
+      - "127.0.0.1:${ZCRYPTO_METRICS_PORT:-9101}:${ZCRYPTO_METRICS_PORT:-9101}"
     volumes:
       - /var/lib/zcrypto-capture:/var/lib/zcrypto-capture
     deploy:

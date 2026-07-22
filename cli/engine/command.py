@@ -414,9 +414,12 @@ def _start_watchdog(node) -> threading.Timer:
 class _CycleGauges:
     """The engine's cumulative gauge/counter state (spec 00069 D5, engine's pinned instrument
     set): `run()` builds one of these on the SAME registry the exporter serves, then installs
-    `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure."""
+    `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure.
+    `cycle_success` is registered LAZILY (`seed_cycle_success`), not here -- see that method
+    (cold-review I4)."""
 
     def __init__(self, registry) -> None:
+        self._registry = registry
         self.target_weight = Gauge(
             "zcrypto_engine_target_weight", "Latest per-asset target portfolio weight.", ["asset"], registry=registry
         )
@@ -428,14 +431,13 @@ class _CycleGauges:
         # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative. Caveat:
         # unlike its sibling `orders_total` (a real Counter), this Gauge only carries counter
         # SEMANTICS via `.inc()` -- `rate()`/`increase()` are undefined over it, and a process
-        # restart drops it back to 0 with no reset detection (a real Counter's reset IS detectable
-        # via its own `_created` timestamp jumping).
+        # restart drops it back to 0 with no built-in reset marker: `disable_created_metrics()`
+        # (cli/obs/metrics.py) suppresses even a real Counter's own `_created` sample fleet-wide,
+        # so that escape hatch isn't available here either.
         self.order_notional_eur = Gauge(
             "zcrypto_engine_order_notional_eur", "Intended order notional (EUR), summed across every cycle.", registry=registry
         )
-        self.cycle_success = Gauge(
-            "zcrypto_engine_cycle_success", "1 if the most recent cycle succeeded, else 0.", registry=registry
-        )
+        self.cycle_success: Gauge | None = None  # lazy -- see seed_cycle_success (cold-review I4)
         self.cycle_completed_at = Gauge(
             "zcrypto_engine_cycle_completed_at_seconds", "Unix timestamp the most recent cycle completed at.", registry=registry
         )
@@ -443,8 +445,22 @@ class _CycleGauges:
             "zcrypto_engine_cycle_duration_seconds", "Wall time the most recent cycle took, in seconds.", registry=registry
         )
 
+    def seed_cycle_success(self, success: bool) -> None:
+        """Register (if not already) and set `zcrypto_engine_cycle_success` (spec 00069 D5,
+        cold-review I4): called both at startup -- when the newest journal artifact tells us the
+        last known outcome -- and from `update()` after every real cycle. Left UNREGISTERED, no
+        series at all, until a value is actually known: a freshly built `Gauge` defaults to 0.0,
+        and publishing that before any cycle has run (or completed since a restart) would read as
+        "the last cycle failed" for up to the 4h until the next one -- false. An absent series is
+        honest; a published 0 is a claim."""
+        if self.cycle_success is None:
+            self.cycle_success = Gauge(
+                "zcrypto_engine_cycle_success", "1 if the most recent cycle succeeded, else 0.", registry=self._registry
+            )
+        self.cycle_success.set(1.0 if success else 0.0)
+
     def update(self, result: CycleResult, completed_at: datetime, duration_seconds: float) -> None:
-        self.cycle_success.set(1.0 if result.status == "success" else 0.0)
+        self.seed_cycle_success(result.status == "success")
         self.cycle_completed_at.set(completed_at.timestamp())
         self.cycle_duration.set(duration_seconds)
         if result.targets is not None:
@@ -455,27 +471,36 @@ class _CycleGauges:
             self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
 
 
-def _seed_completed_at(journal_dir: Path) -> datetime:
-    """The startup value for `zcrypto_engine_cycle_completed_at_seconds` (spec 00069 D5): the
-    newest journal artifact's own `completed_at` wall-clock time -- a success record's field or a
-    failed-cycle sidecar's, whichever is newer -- so a routine restart never leaves the series
-    absent and false-firing the staleness alert. Falls back to process start (`_utc_now()`) when
-    the journal holds nothing yet (a brand-new deployment). Reuses this module's own
-    `_journal_artifacts` glob (the same day-dir layout `node.py`'s `startup_action` walks, though
-    that one does not glob)."""
-    newest: datetime | None = None
+def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:
+    """The startup seed for BOTH `zcrypto_engine_cycle_completed_at_seconds` and
+    `zcrypto_engine_cycle_success` (spec 00069 D5; the latter cold-review I4): the newest journal
+    artifact's own `completed_at` wall-clock time and outcome -- a success record scores
+    `(completed_at, True)`, a failed-cycle sidecar scores `(completed_at, False)`, whichever
+    artifact is actually newer wins -- so a routine restart never leaves either series
+    false-firing (missing and stale, or a false "last cycle failed"). The completed_at half falls
+    back to process start (`_utc_now()`) when the journal holds nothing yet (a brand-new
+    deployment); the success half then has no honest answer at all, so it comes back `None` -- the
+    caller must leave `zcrypto_engine_cycle_success` UNREGISTERED rather than publish a false 0.
+    Reuses this module's own `_journal_artifacts` glob (the same day-dir layout `node.py`'s
+    `startup_action` walks, though that one does not glob)."""
+    newest: tuple[datetime, bool] | None = None
     for _, path in _journal_artifacts(journal_dir, "*", "cycle-*.json"):
         try:
             record = from_json(path.read_text())
         except EngineJournalError:
             continue
-        if newest is None or record.completed_at > newest:
-            newest = record.completed_at
+        if newest is None or record.completed_at > newest[0]:
+            newest = (record.completed_at, True)
     for boundary, path in _journal_artifacts(journal_dir, "*", "failed-cycle-*.json"):
         _, completed_at, _ = _sidecar_fields(boundary, path)
-        if newest is None or completed_at > newest:
-            newest = completed_at
-    return newest if newest is not None else _utc_now()
+        if newest is None or completed_at > newest[0]:
+            newest = (completed_at, False)
+    return newest if newest is not None else (_utc_now(), None)
+
+
+def _seed_completed_at(journal_dir: Path) -> datetime:
+    """`_seed_cycle_state`'s completed_at half alone."""
+    return _seed_cycle_state(journal_dir)[0]
 
 
 @engine_app.command()
@@ -503,7 +528,7 @@ def run() -> None:
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()
-        # Startup seeding reads arbitrary on-disk journal artifacts (_seed_completed_at ->
+        # Startup seeding reads arbitrary on-disk journal artifacts (_seed_cycle_state ->
         # from_json/_sidecar_fields): an unreadable cycle-*.json (bad mode/ownership on the bind
         # mount) or a record with a tz-naive completed_at can raise OUTSIDE EngineJournalError
         # (PermissionError, TypeError from an aware/naive comparison) -- telemetry may never kill
@@ -511,7 +536,10 @@ def run() -> None:
         # CaptureCollector registration guard below). Serve process metrics regardless.
         try:
             gauges = _CycleGauges(registry)
-            gauges.cycle_completed_at.set(_seed_completed_at(config.journal_dir).timestamp())
+            completed_at, success = _seed_cycle_state(config.journal_dir)
+            gauges.cycle_completed_at.set(completed_at.timestamp())
+            if success is not None:  # None => empty/unreadable journal -- leave cycle_success absent
+                gauges.seed_cycle_success(success)
             set_metrics_sink(gauges.update)
         except Exception:
             logger.exception("engine metrics setup failed -- continuing with process metrics only")

@@ -369,6 +369,39 @@ def test_seed_completed_at_considers_sidecars_too(tmp_path):
     assert _seed_completed_at(journal_dir) == newer_sidecar
 
 
+# --- _seed_cycle_state: the outcome half (cold-review I4) -------------------------------------------
+
+
+def test_seed_cycle_state_scores_a_newest_success_record_true(tmp_path):
+    journal_dir = tmp_path / "journal"
+    older = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
+    newer = datetime(2026, 7, 10, 12, 3, tzinfo=UTC)
+    _write_success_record(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), completed_at=older)
+    _write_success_record(journal_dir, datetime(2026, 7, 10, 12, 0, tzinfo=UTC), completed_at=newer)
+    completed_at, success = command._seed_cycle_state(journal_dir)
+    assert completed_at == newer
+    assert success is True
+
+
+def test_seed_cycle_state_scores_a_newest_sidecar_false(tmp_path):
+    journal_dir = tmp_path / "journal"
+    older = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
+    newer_sidecar = datetime(2026, 7, 10, 12, 2, tzinfo=UTC)
+    _write_success_record(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), completed_at=older)
+    _write_sidecar(journal_dir, datetime(2026, 7, 10, 12, 0, tzinfo=UTC), completed_at=newer_sidecar)
+    completed_at, success = command._seed_cycle_state(journal_dir)
+    assert completed_at == newer_sidecar
+    assert success is False
+
+
+def test_seed_cycle_state_returns_none_success_when_the_journal_is_empty(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(command, "_utc_now", lambda: fixed_now)
+    completed_at, success = command._seed_cycle_state(tmp_path / "journal")
+    assert completed_at == fixed_now
+    assert success is None
+
+
 # --- run(): opt-in wiring ---------------------------------------------------------------------------
 
 
@@ -447,6 +480,24 @@ def test_run_metrics_port_set_serves_process_and_engine_series_seeded_at_startup
         "zcrypto_engine_cycle_duration_seconds",
     ):
         assert name in body, f"{name} missing from /metrics: {body}"
+
+
+def test_run_with_an_empty_journal_leaves_cycle_success_unpublished(tmp_path, monkeypatch):
+    # THE I4 regression (cold-review, 00069 final review): a brand-new deployment (empty journal,
+    # never populated by `_run_env`) must not publish zcrypto_engine_cycle_success at all before
+    # the first real cycle completes -- a freshly-registered Gauge defaults to 0.0, which would
+    # read as "the last cycle failed" for up to 4h. Absence is honest; a published 0 is a claim.
+    port = _free_port()
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(port))
+    _run_env(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["engine", "run"])
+    assert result.exit_code == 0, result.output
+
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2.0) as resp:
+        body = resp.read().decode()
+    assert "process_resident_memory_bytes" in body  # process metrics still serve
+    assert "zcrypto_engine_cycle_success" not in body
 
 
 def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path, monkeypatch, caplog):
