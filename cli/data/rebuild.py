@@ -170,7 +170,21 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     }
     manifest_path = ohlc_root / "manifest.json"
     ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"] if manifest_path.exists() else ""
-    provenance = {"snapshot_sha256": snapshot["raw_sha256"], "ohlc_dataset_hash": ohlc_dataset_hash}
+    # Name the set this build actually READ, and how fresh it was (T0093). A hash alone is not a
+    # citation: the 2026-07-07 artifact cited `data/ohlc`'s hash, that directory was later retired,
+    # and the reference became unresolvable -- with nothing in the file saying which window the
+    # volumes covered.
+    #
+    # The published bar is the STALEST symbol's newest bar -- the value `_require_fresh_ohlc` tests,
+    # and the only one that supports a statement about the basket: every symbol's trailing window
+    # ends at or after it. The basket's `max` would support no such inference (one fresh symbol says
+    # nothing about the other eleven), which is the same reason the guard rejects `max`.
+    provenance = {
+        "snapshot_sha256": snapshot["raw_sha256"],
+        "ohlc_dataset_hash": ohlc_dataset_hash,
+        "ohlc_dataset_dir": ohlc_root.name,
+        "ohlc_stalest_daily_bar": min(last_bars.values()).date().isoformat(),
+    }
     file = build_universe_file(
         selection,
         as_of=datetime.now(UTC).strftime("%Y-%m-%d"),
