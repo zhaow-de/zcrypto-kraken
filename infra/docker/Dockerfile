@@ -47,5 +47,7 @@ USER capture
 # CAPTURE_DATA_DIR / CAPTURE_DEPTH / CAPTURE_PAIRS (comma-separated) map to `zcrypto capture`'s
 # --data-dir / --depth / --pairs flags; HEALTHCHECK_URL passes straight through as an env var
 # since the daemon itself reads that one directly. Unset CAPTURE_PAIRS omits --pairs so the
-# CLI falls back to its own universe-derived default.
-ENTRYPOINT ["/bin/sh", "-c", "set -eu; set -- --data-dir \"${CAPTURE_DATA_DIR:-/var/lib/zcrypto-capture}\" --depth \"${CAPTURE_DEPTH:-100}\"; if [ -n \"${CAPTURE_PAIRS:-}\" ]; then IFS=','; for p in $CAPTURE_PAIRS; do set -- \"$@\" --pairs \"$p\"; done; unset IFS; fi; exec zcrypto capture \"$@\""]
+# CLI falls back to its own universe-derived default. ZCRYPTO_SHIP_LOGS unset/empty omits
+# --ship-logs (the CLI's own global flag, read before `capture`); set it non-empty to ship logs
+# to Grafana Cloud Loki too (needs ZCRYPTO_LOKI_*/ZCRYPTO_LOG_* env vars -- cli/__main__.py).
+ENTRYPOINT ["/bin/sh", "-c", "set -eu; set -- --data-dir \"${CAPTURE_DATA_DIR:-/var/lib/zcrypto-capture}\" --depth \"${CAPTURE_DEPTH:-100}\"; if [ -n \"${CAPTURE_PAIRS:-}\" ]; then IFS=','; for p in $CAPTURE_PAIRS; do set -- \"$@\" --pairs \"$p\"; done; unset IFS; fi; exec zcrypto ${ZCRYPTO_SHIP_LOGS:+--ship-logs} capture \"$@\""]
