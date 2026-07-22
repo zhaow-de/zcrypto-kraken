@@ -252,69 +252,6 @@ rules:
     notification_settings:
       receiver: metrics
 
-  - uid: zcrypto-alloy-docker-sd-wedged
-    title: "Alloy · docker service-discovery wedged"
-    # zcrypto-fleet, not zcrypto-nas: all four Alloy instances emit this series, so the rule fires
-    # per-host for ops and both capture hosts too -- filing it under the NAS group would misfile it.
-    ruleGroup: zcrypto-fleet
-    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
-    orgId: 1
-    condition: C
-    # T0048 defect 1. discovery.docker can freeze PERMANENTLY: Prometheus's Docker SD attaches a
-    # request timeout only for http/https hosts, so a unix:// socket gets a bare client with no
-    # timeout at any layer, and the refresh loop has no per-call deadline. One stalled Docker API
-    # call then wedges discovery forever -- the target list stays frozen holding the DEAD container
-    # id and lacking the new one, and loki.source.docker faithfully tails what it was last told.
-    #
-    # THIS COUNTER IS THE ONLY POSITIVE SIGNAL. A hang is not an error, so nothing is logged, the
-    # component stays healthy, and every other metric keeps flowing. Before this rule the failure
-    # surfaced only when the logs dead-man fired ~3h later, if at all. A flat counter also converts
-    # defect 1 from hypothesis to fact, which no amount of reading the code can do.
-    #
-    # If this fires, ALSO read prometheus_sd_refresh_failures_total{mechanism="docker"} on the same
-    # host: climbing failures mean a persistently ERRORING refresh instead (identical symptom,
-    # different cause -- the refresh loop withholds updates on error by design). See T0048.
-    data:
-      - refId: A
-        queryType: ""
-        relativeTimeRange: {from: 1800, to: 0}
-        datasourceUid: "${GRAFANA_PROM_DS_UID}"
-        model:
-          # 15m window: the default refresh interval is far shorter, so a healthy instance records
-          # many refreshes here and fewer than one is unambiguous. increase() handles the counter
-          # reset on an Alloy restart, so a restart does not fire this.
-          expr: increase(prometheus_sd_refresh_duration_seconds_count{mechanism="docker"}[15m])
-          instant: true
-          refId: A
-      - refId: C
-        queryType: ""
-        relativeTimeRange: {from: 0, to: 0}
-        datasourceUid: "__expr__"
-        model:
-          datasource: {type: "__expr__", uid: "__expr__"}
-          type: threshold
-          expression: "A"
-          refId: C
-          conditions:
-            - evaluator: {type: lt, params: [1]}
-    # OK, not Alerting. Absence does NOT mean wedged -- it means the series is not being shipped:
-    # either Alloy is not running at all (a different failure, and this rule must not double-page
-    # for it), or that host's keep-list change has not been deployed yet. The NAS was converged
-    # 2026-07-20; ops and both capture hosts are render-only and get it at their next attended
-    # deploy, so until then their series is legitimately absent. NOTE the gap this leaves: nothing
-    # currently alerts on an Alloy that has stopped shipping entirely.
-    noDataState: OK
-    execErrState: Alerting
-    # 10m on top of the 15m window: a wedge is permanent, so there is no value in firing fast and
-    # every reason not to fire on a scrape gap.
-    for: 10m
-    annotations:
-      summary: "Alloy's docker service-discovery has recorded no refresh for 15m on this host -- discovery is wedged (T0048 defect 1), so container recreations are invisible and the tailer is following a dead container id. Log shipping for recreated containers is silently stopped; only an Alloy restart recovers. Before restarting, capture prometheus_sd_refresh_duration_seconds_count and prometheus_sd_refresh_failures_total from port 12345 on the host — the restart destroys the evidence, and this is the only way to confirm the root cause."
-    labels:
-      severity: warning
-    notification_settings:
-      receiver: metrics
-
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas
@@ -1148,11 +1085,15 @@ rules:
       # jobs AND the liquidations poller, a long-lived daemon whose errors flip NO exit-code metric,
       # so this rule is its ONLY error channel.
       #
-      # The `level` label exists only after config.alloy's parse stages attach it. T0060: before
-      # this branch's fix both stages' selectors were the NAS's container names, so the label was
-      # absent on every ops stream and this rule could never have fired -- which is why it lands
-      # together with that fix. NoData is normal here (quiet logs = healthy; liveness is owned by
-      # the dead-men), and `or on() vector(0)` keeps a clean window an explicit 0 anyway.
+      # The `level` label reaches this rule via TWO independent paths (00068 T6/T7/T8 review): the
+      # four zcrypto-* units and Alloy's own logs get it from config.alloy's parse stages at ingest;
+      # the liquidations poller now direct-ships (spec 00068 D3/T6) and stamps `level` itself at the
+      # source (cli/logging/ship.py: `level` = `record.levelname`, always present) -- Alloy is not in
+      # that path at all. T0060: before this branch's fix both config.alloy stages' selectors were
+      # the NAS's container names, so the label was absent on every ops stream and this rule could
+      # never have fired -- which is why it lands together with that fix. NoData is normal here
+      # (quiet logs = healthy; liveness is owned by the dead-men below), and `or on() vector(0)`
+      # keeps a clean window an explicit 0 anyway.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
@@ -1202,17 +1143,24 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The canary that closes the ERROR-logs rule's green-when-blind gap. That rule selects on the
-      # `level` label, which exists only because config.alloy's parse stages attach it -- so if the
-      # parse chain regresses (the exact T0060 failure mode: the label scheme, the --name flags, a
-      # selector, or the zcrypto line format drifting), every stream ships level=- again,
-      # `level=~"ERROR|CRITICAL"` selects nothing, and the ERROR rule reads 0 = healthy, forever.
-      # THIS rule fires on the absence of ANY parsed line -- level matching anything at all: the
-      # liquidations poller emits INFO every ~5 minutes, so six silent hours means the pipeline is
-      # dead (Alloy, the parse chain, or the label scheme), not the host quiet. Scope caveat: the
-      # poller ships via the DOCKER path, so its lines alone keep this canary green -- it proves
-      # Alloy + the parse chain + the docker path, and is structurally blind to a
-      # journal-transport-only death; the journal companion rule below owns that failure mode.
+      # The canary that closes the ERROR-logs rule's green-when-blind gap for the Alloy-fed half of
+      # its scope (Alloy's own logs + the four zcrypto-* units). Scoped to `container="alloy"`
+      # (review finding, 00068 T6/T7/T8 review Critical 2) -- NOT host-wide any more: the liquidations
+      # poller now direct-ships (spec 00068 D3/T6) with its OWN `level` stamped at the source
+      # (cli/logging/ship.py), completely bypassing Alloy, so its ~5-min heartbeat alone would have
+      # kept a host-wide query green forever even if Alloy/loki.write died outright -- a dead-man
+      # pinned green is strictly worse than NoData, because NoData is visible. Alloy's own logfmt
+      # stream (config.alloy's `{container="alloy"}` parse stage) is continuous while Alloy lives, is
+      # Alloy-produced end to end, and cannot be faked by anything the poller does -- so THIS rule
+      # fires on the absence of ANY parsed Alloy-stream line in 6h, which means Alloy itself (or its
+      # own parse/ship path) is dead. Deliberately NOT `container=~"zcrypto-.*"` either: on a
+      # fail-closed skip-gate streak (archive-pull.sh.j2) the unit emits only unleveled echoes, so a
+      # level-filtered 6h query on the units alone would false-fire during a legitimate long skip
+      # streak -- `zcrypto-ops-unit-parse-dead` below covers that stream instead, at a wider 26h
+      # window sized to tolerate it. This rule is structurally blind to a journal-transport-only
+      # death (Alloy alive, journal reader wedged); `zcrypto-ops-journal-transport-dead` below owns
+      # that failure mode, and `zcrypto-ops-poller-log-dead` below owns the poller's own direct-ship
+      # path, which this rule can no longer see at all now that it is Alloy-scoped.
       # `or on() vector(0)` keeps the query returning data while it is intact; execErrState
       # Alerting still covers "Loki unreachable".
       - refId: A
@@ -1221,7 +1169,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="ops", level=~".+"} [6h])) or on() vector(0)
+            sum(count_over_time({host="ops", container="alloy", level=~".+"} [6h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -1255,7 +1203,128 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED log line (any level label) from the ops node in 6h -- the liquidations poller alone emits INFO every ~5 minutes, so the log pipeline is dead or the parse chain has regressed to level=- (T0060). Every log-based ops alert is blind until this is fixed."
+      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy emits its own logfmt output continuously while alive, so this means Alloy itself is dead, its parse stage has regressed to level=- (T0060), or it cannot reach Loki. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-ops-poller-log-dead
+    title: "Ops · poller log pipeline dead (no lines)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The liquidations poller is now the ONLY ops workload that bypasses Alloy entirely
+      # (direct-ship, spec 00068 D3/T6) -- nothing watched its own shipping path in isolation until
+      # this rule (review finding, 00068 T6/T7/T8 review Critical 2): `zcrypto-ops-log-pipeline-dead`
+      # above is now scoped to Alloy only and structurally cannot see this container at all. Mirrors
+      # the capture hosts' own per-container canaries (`zcrypto-capture-log-dead-primary/secondary`):
+      # `level` comes from the poller's OWN direct-ship handler (cli/logging/ship.py: `level` =
+      # `record.levelname`, always present, no regex, Alloy not involved), so <1 line in 6h means the
+      # poller's ship path is dead (the --ship-logs flag lost at render time, its Loki credentials
+      # dead, or the container gone) -- not a quiet host, since the poller runs continuously on a
+      # ~5-min cycle. `or on() vector(0)` keeps the query returning data while intact.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", container="liquidations", level=~".+"} [6h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting, not OK: same fires-on-silence dead-man reasoning as the rules around it -- the
+    # vector(0) fallback means this never evaluates NoData while intact, and if that ever breaks,
+    # silence stays the alarm rather than parking green.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one PARSED log line from the liquidations poller (container=liquidations) in 6h -- it direct-ships and runs continuously on a ~5-min cycle, so silence means its ship path is dead (the --ship-logs flag, its Loki credentials, or the container itself), not a quiet host."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-ops-unit-parse-dead
+    title: "Ops · unit log parse dead (no leveled lines)"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Restores the T0060 coverage `zcrypto-ops-log-pipeline-dead` used to carry for the four
+      # zcrypto-* units before this rework scoped that rule to Alloy only (review finding, 00068
+      # T6/T7/T8 review Critical 2) -- without this, a parse regression on config.alloy's zcrypto
+      # stage (the stage.regex line-shape, the container selector, the label scheme) would go
+      # completely undetected: Alloy itself stays alive and its OWN logfmt stream (watched by
+      # `zcrypto-ops-log-pipeline-dead` above) keeps flowing, so that canary would never notice, and
+      # `Ops · ERROR logs` would read 0 = healthy forever for the unit streams specifically.
+      # Deliberately level-filtered AND a wide 26h window (matching `zcrypto-ops-journal-transport-
+      # dead`'s own window below, for the same reason): during a fail-closed skip-gate streak
+      # archive-pull emits only unleveled echoes, but panel-materialize (hourly) and verify-replay/
+      # verified-replay (daily) run on independent schedules unaffected by that gate, so at least one
+      # of the four units produces a leveled line well within 26h even through an extended streak --
+      # a 6h window on this same selector would false-fire and was rejected for that reason.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 93600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} [26h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting, not OK: same fires-on-silence dead-man reasoning as the rules around it.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one LEVEL-PARSED line from any of the four zcrypto-* ops units in 26h -- the four run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (T0060: the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy."
     labels:
       severity: critical
     notification_settings:
@@ -1268,21 +1337,26 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The journal-scoped companion to the canary above (review finding). That rule is kept green
-      # by the liquidations poller's docker-path lines alone, so it cannot see a
-      # journal-transport-only death -- and loki.source.journal is the SOLE carrier of the four
-      # zcrypto-*.service units' logs, including the reconcile skip-gate warning this pipeline
-      # exists to ship. The unit failure modes it covers are all silent everywhere else: a rebuilt
-      # host where /var/log/journal does not exist (docker CREATES an empty dir for the bind mount,
-      # so Alloy starts fine and tails an empty journal forever), journald flipping to volatile
+      # The journal-scoped companion to the canary above. `zcrypto-ops-log-pipeline-dead` is scoped to
+      # `container="alloy"` (00068 T6/T7/T8 review) -- it proves Alloy's OWN journald-driver stream
+      # is flowing, not that the SEPARATE journal-reader path carrying the four zcrypto-* units is
+      # intact, so it cannot see a journal-transport-only death either -- and loki.source.journal is
+      # the SOLE carrier of those units' logs, including the reconcile skip-gate warning this
+      # pipeline exists to ship. The unit failure modes it covers are all silent everywhere else: a
+      # rebuilt host where /var/log/journal does not exist (docker CREATES an empty dir for the bind
+      # mount, so Alloy starts fine and tails an empty journal forever), journald flipping to volatile
       # storage (/run/log/journal, outside the mount), systemd-journal gid drift after an OS
       # reinstall, or the keep regex going stale after a unit rename. The units' exit-code and
       # staleness metrics don't cover log SHIPPING, so no other rule fires for any of these.
       #
-      # Scoping: `container="zcrypto-archive-pull"` can ONLY come from the journal path -- the
-      # docker path drops every zcrypto-* container by name (config.alloy's drop rule) -- so 26h of
-      # silence from this stream isolates the journal transport specifically. Count ANY line, NOT
-      # level-parsed: the hourly archive-pull unit writes at least one line in every code path
+      # Scoping: `container="zcrypto-archive-pull"` can ONLY come from the journal path -- not
+      # because a docker-discovery drop rule filters it out (there is no docker path left at all,
+      # discovery.docker retired fleet-wide, 00068 D6/D8), but because these four units run their
+      # work as an ephemeral `docker run --rm` ATTACHED to the unit (T0060, config.alloy) -- their
+      # stdout is journal-stamped as part of the unit's own log stream, never a separately
+      # discoverable container. So 26h of silence from this stream isolates the journal transport
+      # specifically. Count ANY line, NOT level-parsed: the hourly archive-pull unit writes at
+      # least one line in every code path
       # (reconcile CLI INFO on the happy path, the skip-gate/failure echoes otherwise), but its own
       # echoes carry no level label, so a level-filtered query would false-fire during a
       # pull-failure streak. 26h = a full day of hourly runs plus headroom.
@@ -1440,13 +1514,15 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Loki, level LABEL not a text grep (config.alloy's parse stages strip level out of the message
-      # line -- a grep would be silently blind). The capture daemon's logs get a level label via the
-      # `{container=~"capture|zcrypto-.*"}` parse selector (verified live: INFO/WARNING present, ZERO
-      # ERROR/CRITICAL in 7d -- a clean baseline). Scoped to container="capture": the daemon on both
-      # hosts, whose errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal.
-      # (Out of scope here: Alloy self-errors -- a separate instrument-health concern; and the engine's
-      # logs, which get no level label on the capture-host parse and are the T0042 egress question.)
+      # Loki, level LABEL not a text grep -- no regex anywhere in this path (D4). The capture daemon's
+      # logs get their level label from its OWN direct-ship handler (cli/logging/ship.py, spec 00068
+      # D3/D4: `level` = `record.levelname` at the source, pushed straight to Grafana Cloud Loki --
+      # Alloy is not in this path at all any more) (verified live pre-rework: INFO/WARNING present,
+      # ZERO ERROR/CRITICAL in 7d -- a clean baseline; the label VALUES are unchanged by the rework, so
+      # this selector still holds). Scoped to container="capture": the daemon on both hosts, whose
+      # errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal. (Out of scope
+      # here: Alloy self-errors -- a separate instrument-health concern; and the engine's logs, which
+      # ship no level label until its own --ship-logs lands post-gate (D7) -- the T0042 egress question.)
       # `sum by (host)` names the firing host; `or on() vector(0)` keeps a clean window an explicit 0.
       - refId: A
         queryType: instant
@@ -1489,18 +1565,21 @@ rules:
       receiver: logs
 
   # Two per-host canaries that make the ERROR rule above trustworthy (mirror zcrypto-ops-log-pipeline-dead).
-  # The ERROR rule selects on the `level` label, which exists ONLY because config.alloy's parse stages
-  # attach it -- so if the capture container's parse chain regresses (the T0060 class: the label scheme,
-  # a selector, or the zcrypto line format drifting), its lines ship level=- again, `level=~"ERROR|CRITICAL"`
-  # selects nothing, and the ERROR rule reads 0 = healthy FOREVER. These fire on the absence of ANY
-  # parsed capture line (level matching anything). Scoped to container="capture" -- NOT host-wide -- on
-  # purpose: a capture-parse regression leaves Alloy's OWN leveled lines flowing, so a host-wide canary
-  # would stay green in exactly the blind state this exists to page on. The capture daemon emits ~35
-  # parsed lines/hr (evidence: 342/341 INFO + 499/497 WARNING per 24h), so <1 in 6h means the capture
-  # log plane is dead (parse regression, Alloy death, or the container gone), not a quiet daemon. One
-  # rule per host: Loki cannot synthesize a per-host zero (an absent stream is no series, not a 0 series),
-  # so `or on() vector(0)` only injects a 0 for a SINGLE-host query -- a `sum by(host)` would fire only
-  # when BOTH hosts go dark and miss a single host's Alloy death.
+  # The ERROR rule selects on the `level` label, which exists ONLY because the capture daemon's OWN
+  # direct-ship handler attaches it at the source (cli/logging/ship.py, spec 00068 D3/D4: `level` =
+  # `record.levelname`, no regex anywhere in this path -- Alloy is not involved) -- so if the daemon's
+  # ship path regresses (the T0060 class: the label scheme drifting, or the handler/formatter itself
+  # breaking), its lines stop arriving with a usable level and the ERROR rule reads 0 = healthy FOREVER.
+  # These fire on the absence of ANY parsed capture line (level matching anything). Scoped to
+  # container="capture" -- NOT host-wide -- on purpose: a capture-side regression leaves Alloy's OWN
+  # leveled lines (its journald-driver stream) flowing, so a host-wide canary would stay green in
+  # exactly the blind state this exists to page on. The capture daemon emits ~35 parsed lines/hr
+  # (evidence: 342/341 INFO + 499/497 WARNING per 24h, pre-rework baseline), so <1 in 6h means the
+  # capture log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the
+  # container gone), not a quiet daemon. One rule per host: Loki cannot synthesize a per-host zero (an
+  # absent stream is no series, not a 0 series), so `or on() vector(0)` only injects a 0 for a
+  # SINGLE-host query -- a `sum by(host)` would fire only when BOTH hosts go dark and miss a single
+  # host's outage.
   - uid: zcrypto-capture-log-dead-primary
     title: "Capture · log pipeline dead — primary (zcrypto)"
     ruleGroup: zcrypto-capture
@@ -1546,7 +1625,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (parse regression -> level=- (T0060), Alloy death, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
     labels:
       severity: critical
     notification_settings:
@@ -1593,7 +1672,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (parse regression -> level=- (T0060), Alloy death, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
     labels:
       severity: critical
     notification_settings:
@@ -1603,9 +1682,11 @@ rules:
   # Uniform severity is deliberate: the responder's action is identical on every host (SSH, check the
   # container, restart), so a differentiated severity would imply a differentiated response that does
   # not exist. What differs is only what accumulates unseen meanwhile, which the per-host summary
-  # states. These own "not shipping"; `zcrypto-alloy-docker-sd-wedged` owns "shipping but wedged" and
-  # says so inline -- neither subsumes the other, and the T0048 incident (Alloy alive, discovery
-  # frozen) would have fired the SD rule, not these.
+  # states. These own "not shipping" only -- a rule for "shipping but wedged" (`zcrypto-alloy-docker-
+  # sd-wedged`, T0048 defect 1: the T0048 incident was Alloy alive, discovery frozen) used to cover
+  # the other case, but it is *removed from this file*, retired on all four hosts once D7's
+  # converges run (spec 00068 D6/D8/D7) -- once that rollout completes, nothing re-detects that
+  # failure mode.
 
   - uid: zcrypto-alloy-dark-nas
     title: "Fleet · Alloy dark — NAS"

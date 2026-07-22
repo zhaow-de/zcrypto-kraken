@@ -19,6 +19,15 @@ services:
       CAPTURE_DEPTH: "${CAPTURE_DEPTH:-100}"
       CAPTURE_PAIRS: "${CAPTURE_PAIRS:-}"
       HEALTHCHECK_URL: "${HEALTHCHECK_URL:-}"
+      # Mirrors the capture role's guarded logship additions (compose.yaml.j2) so this reference
+      # file stays in lock-step: all empty by default (--ship-logs stays off), or set every
+      # ZCRYPTO_LOKI_*/ZCRYPTO_LOG_* var to test --ship-logs against a real Loki endpoint locally.
+      ZCRYPTO_SHIP_LOGS: "${ZCRYPTO_SHIP_LOGS:-}"
+      ZCRYPTO_LOG_HOST: "${ZCRYPTO_LOG_HOST:-}"
+      ZCRYPTO_LOG_SERVICE: "${ZCRYPTO_LOG_SERVICE:-}"
+      ZCRYPTO_LOKI_URL: "${ZCRYPTO_LOKI_URL:-}"
+      ZCRYPTO_LOKI_USERNAME: "${ZCRYPTO_LOKI_USERNAME:-}"
+      ZCRYPTO_LOKI_PASSWORD: "${ZCRYPTO_LOKI_PASSWORD:-}"
     volumes:
       - /var/lib/zcrypto-capture:/var/lib/zcrypto-capture
     deploy:

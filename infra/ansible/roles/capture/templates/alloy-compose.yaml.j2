@@ -26,22 +26,15 @@ services:
     # below for free-disk-space metrics, and a key-owning user's ~/.ssh would be readable straight
     # through that mount, no escalation needed. `zcrypto-alloy` owns nothing key-adjacent, so that
     # direct-read path stays closed by construction (the NAS's uid-1031 choice, T0030, replicated).
-    # `group_add` is the host's real numeric docker gid (derived at converge time via `getent` --
-    # tasks/main.yml -- never hardcoded, since it is a per-host accident), NOT a named "docker" entry:
-    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
-    # and the upstream grafana/alloy image ships only `alloy:x:473:` -- no `docker` entry -- so a
-    # literal "docker" here would fail to resolve and the container would refuse to start. Socket
-    # access this way is defence in depth only (see config.alloy's header comment for the residual).
     user: "{{ capture_alloy_uid }}:{{ capture_alloy_gid }}"
     group_add:
-      - "{{ capture_docker_gid }}"
       # Journal files are root:systemd-journal 0640 and the container runs as the non-root
       # zcrypto-alloy user above, so reading the /host/journal mount below needs the host's
       # systemd-journal gid -- NUMERIC, derived at converge time via `getent` (tasks/main.yml), never
-      # hardcoded, for exactly the reason the docker gid above is numeric. This grants read of the
-      # WHOLE system journal, read-only -- broader than the capture units the pipeline keeps, but
-      # strictly telemetry-class data, and far narrower than the docker-socket residual already
-      # accepted for this container.
+      # hardcoded (it is a per-host accident). This grants read of the WHOLE system journal,
+      # read-only -- broader than the units the pipeline keeps, but strictly telemetry-class data.
+      # The docker-socket group_add this used to sit alongside is gone: the socket mount below it
+      # retired with `discovery.docker` (D6), so this is Alloy's only remaining group grant.
       - "{{ capture_journal_gid }}"
     network_mode: host
     environment:
@@ -67,17 +60,14 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-      # Docker API, for discovery.docker + loki.source.docker. `:ro` is cosmetic -- it makes the
-      # socket FILE read-only, not the API -- the accepted residual (root-equivalent) noted above.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config.alloy:/etc/alloy/config.alloy:ro
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
       - ./alloy-data:/var/lib/alloy
       # The host's persistent journal, for loki.source.journal (config.alloy): the capture prune
-      # unit's host-side lines, which exist in NO container log and so can never arrive via the docker
-      # socket above. The `group_add` gid above is what makes the 0640 root:systemd-journal files
-      # readable.
+      # unit's host-side lines AND Alloy's own journald-driver stream (D6) both exist in no
+      # container json.log, so this is their only transport. The `group_add` gid above is what
+      # makes the 0640 root:systemd-journal files readable.
       - /var/log/journal:/host/journal:ro
       # Journal readers resolve the CURRENT boot's files via the host's machine id
       # (/var/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
@@ -93,8 +83,9 @@ services:
           # ceiling actually holds; 0.5 is ample for shipping 10 pairs' logs + host metrics and leaves
           # the daemon its headroom on both hosts.
           cpus: "0.5"
+    # journald, not json-file (D6): Alloy's own logs now reach Grafana Cloud through the same
+    # journal + `loki.source.journal` pipeline (config.alloy) that already carries the prune unit's
+    # lines -- so its stdout has no json.log to rotate any more, and rotation is the host journal's
+    # job instead.
     logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      driver: journald

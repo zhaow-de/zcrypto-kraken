@@ -20,6 +20,28 @@
     group: zcrypto-deploy
     mode: "0755"
 
+# The zcrypto CLI's own Loki push creds for the ops-node LIQUIDATIONS container (spec 00068 D5/T6)
+# -- distinct from the alloy secrets rendered further below, and NOT gated on `ops_image_digest`:
+# this render is unrelated to whether the liquidations poller is deployed at all. Owned by
+# zcrypto-deploy, not root: unlike capture (whose `docker compose up` runs as root via a systemd
+# unit), nothing on this host starts the liquidations poller as root -- OPS-2 below is a manual,
+# attended `docker compose up -d` by the zcrypto-deploy operator, the same account that already
+# owns compose.yaml.j2 itself. `logship_loki_token is defined` is the structural safety net -- the
+# vault already carries it fleet-wide (2026-07-22), so this renders on every `observed` host from
+# the next converge; a converge landing before that vault change existed would simply skip this
+# task, matching the same guard on the compose file's entrypoint/environment/env_file additions
+# that reference this file.
+- name: render the logship secrets env file
+  ansible.builtin.template:
+    src: logship-secrets.env.j2
+    dest: "{{ ops_compose_dir }}/logship-secrets.env"
+    owner: zcrypto-deploy
+    group: zcrypto-deploy
+    mode: "0600"
+  when: logship_loki_token is defined
+  no_log: true
+  diff: false
+
 # rsync STAYS after T0058 retired the ops-side pull loop: it ships /usr/bin/rrsync, which the
 # NAS-initiated pull channels (liquidations, panel, reconciled overlay) force-command into — the
 # write-back direction is unchanged, the NAS still pulls FROM this host. nfs-common is the client
@@ -379,17 +401,18 @@
     # admin (`zcrypto-deploy`) nor the m2m (`zcrypto-data`) home holds any private key (only public
     # authorized_keys). Running Alloy as a key-owning user would still be the wrong default, so
     # `zcrypto-alloy` is a dedicated, non-login system user that owns nothing under any such home -- the
-    # direct-read path stays closed by construction, mirroring the NAS's uid-1031 choice. `group_add` (alloy-compose.yaml.j2) grants Docker socket access via
-    # the host's real numeric docker gid, derived below via `getent` -- NOT a named "docker" entry:
-    # Docker resolves a NAMED group_add entry against the CONTAINER's own /etc/group, not the host's,
-    # and the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker" would
-    # never resolve and the container would fail to start -- the same reason the NAS passes the
-    # numeric `group_add: ["0"]` rather than a name. Either way this is DEFENCE IN DEPTH ONLY:
-    # membership in the `docker` group is root-equivalent by definition (anything holding the Docker
-    # API can create a privileged container regardless of a `:ro` socket mount) -- the escalation
-    # path remains and is a known, accepted residual, exactly as the NAS's comments record for
-    # T0042. The point of the dedicated uid is narrower and real: it closes the DIRECT, no-escalation
-    # read.
+    # direct-read path stays closed by construction, mirroring the NAS's uid-1031 choice.
+    #
+    # The Docker-socket grant this comment used to describe is GONE (spec 00068 D6): Alloy no longer
+    # mounts /var/run/docker.sock nor carries the docker gid in `group_add`, because it no longer
+    # reads container logs -- the CLI ships its own, and Alloy's remaining log job is the journal.
+    # So the root-equivalent escalation residual that T0042 recorded for this host is CLOSED, not
+    # merely mitigated by the dedicated uid. What `group_add` still carries is the systemd-journal
+    # gid (alloy-compose.yaml.j2), derived below via `getent` -- numeric, NOT a named entry, because
+    # Docker resolves a NAMED group_add against the CONTAINER's own /etc/group and the upstream
+    # grafana/alloy image ships only `alloy:x:473:`, so a name would never resolve and the container
+    # would fail to start. Journal-group membership confers log READ only; it is not an escalation
+    # path.
     - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
       ansible.builtin.user:
         name: zcrypto-alloy
@@ -408,35 +431,11 @@
         ops_alloy_uid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][1] }}"
         ops_alloy_gid: "{{ ansible_facts['getent_passwd']['zcrypto-alloy'][2] }}"
 
-    # Docker's `group_add` resolves a NAMED entry against the CONTAINER's own /etc/group, not the
-    # host's -- the upstream grafana/alloy image ships only `alloy:x:473:`, so a literal "docker"
-    # would never resolve and the container would fail to start. The fix is the host's real numeric
-    # docker gid, derived here (never hardcoded -- it is a per-host accident) and passed as a string
-    # in alloy-compose.yaml.j2, the same way the NAS passes its numeric `group_add: ["0"]`. Safe to
-    # look up here: the `docker` role (installed unconditionally, before this role, in site.yml's
-    # ops_host play) creates the `docker` group as a side effect of the docker-ce package install,
-    # so it exists regardless of which digest(s) this converge passes. Placed inside this
-    # `ops_alloy_digest`-gated block, not hoisted above it like ops_uid/ops_gid: unlike those (needed
-    # by the OTHER digest-gated block too), this gid is consumed only by the alloy compose template
-    # rendered a few tasks below, inside this same guard -- so gating it here does not reintroduce
-    # the ops_uid coupling bug (a fact's guard must match its consumer's, not a different block's).
-    #
-    # `getent` with `database: group` does NOT share `passwd`'s field layout above: passwd's row is
-    # `name:passwd:uid:gid:gecos:home:shell` (so index 1 = uid, index 2 = gid), but group's row is
-    # `name:passwd:gid:members` (so index 1 = gid -- there is no index-2 gid to mistake it for).
-    - name: look up the docker group (created by the docker role; Alloy's group_add needs its numeric gid)
-      ansible.builtin.getent:
-        database: group
-        key: docker
-
-    - name: derive the docker group's numeric gid for the alloy container's group_add
-      ansible.builtin.set_fact:
-        ops_docker_gid: "{{ ansible_facts['getent_group']['docker'][1] }}"
-
-    # Same numeric-gid derivation as the docker gid above, same reason (a NAMED group_add entry
-    # resolves against the CONTAINER's /etc/group, not the host's): the host's persistent journal
-    # files are root:systemd-journal 0640, and Alloy -- running as the non-root zcrypto-alloy user
-    # -- reads them through the /var/log/journal:/host/journal:ro mount (alloy-compose.yaml.j2) for
+    # Same numeric-gid derivation pattern as the zcrypto-alloy uid/gid above (a NAMED group_add entry
+    # resolves against the CONTAINER's own /etc/group, not the host's, so a literal "systemd-journal"
+    # name would never resolve): the host's persistent journal files are root:systemd-journal 0640,
+    # and Alloy -- running as the non-root zcrypto-alloy user -- reads them through the
+    # /var/log/journal:/host/journal:ro mount (alloy-compose.yaml.j2) for
     # the four zcrypto-*.service units' logs (T0060: the orchestration scripts' host-side lines
     # exist in no container log, so the docker socket can never ship them). Safe to look up here:
     # the `systemd-journal` group is created by the systemd package itself, so it exists on any

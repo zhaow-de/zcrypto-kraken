@@ -5,6 +5,14 @@ from pathlib import Path
 import pytest
 
 from cli.logging.config import configure
+from cli.logging.ship import LokiShipHandler, ShipConfig
+
+# RFC 5737 TEST-NET-1 (192.0.2.0/24): guaranteed non-routable, so if a test ever did trigger a
+# post this could never reach a real host -- though none of the tests below emit a log record,
+# so the ring stays empty and the worker thread never calls _post() at all.
+_DEAD_SHIP = ShipConfig(
+    url="http://192.0.2.1:1/loki/api/v1/push", username="u", password="p", host="test-host", service="test-service"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +88,37 @@ def test_file_mode_writes_jsonl_end_to_end(tmp_path: Path):
     assert obj["logger"] == "zcrypto.example"
     assert obj["message"] == "hello world"
     assert obj["file"] == "test_logging_config.py"
+
+
+def test_ship_config_attaches_ship_handler_alongside_console_handler():
+    from cli.logging.formatters import PlainTextFormatter
+
+    configure(None, "INFO", ship=_DEAD_SHIP)
+    lg = logging.getLogger("zcrypto")
+    own = [h for h in lg.handlers if getattr(h, "_zcrypto_owned", False)]
+    assert len(own) == 2
+
+    ship_handlers = [h for h in own if isinstance(h, LokiShipHandler)]
+    console_handlers = [h for h in own if h not in ship_handlers]
+    assert len(ship_handlers) == 1
+    assert len(console_handlers) == 1
+    assert isinstance(console_handlers[0], logging.StreamHandler)
+    assert isinstance(console_handlers[0].formatter, PlainTextFormatter)
+    assert console_handlers[0].level == logging.INFO  # shipping must not mute the local ground truth (D2)
+
+
+def test_reconfigure_with_ship_leaves_one_ship_handler_and_stops_prior_worker():
+    configure(None, "INFO", ship=_DEAD_SHIP)
+    lg = logging.getLogger("zcrypto")
+    first_ship = next(h for h in lg.handlers if isinstance(h, LokiShipHandler))
+
+    configure(None, "INFO", ship=_DEAD_SHIP)
+    ship_handlers = [h for h in lg.handlers if isinstance(h, LokiShipHandler)]
+    assert len(ship_handlers) == 1
+    assert ship_handlers[0] is not first_ship
+    # The removal loop must have called close() on the prior handler, which stops its
+    # worker thread -- a leaked worker per reconfigure is a defect (spec 00068 T3).
+    assert not first_ship._worker.is_alive()
 
 
 def test_configure_swallows_owned_handler_close_error():

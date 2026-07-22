@@ -11,9 +11,59 @@ services:
     container_name: zcrypto-engine
     restart: unless-stopped
     user: "{{ engine_uid }}:{{ engine_gid }}"
+{% if logship_loki_token is defined %}
+    # --ship-logs is spelled out here, not left to the image's own shell-ENTRYPOINT conveyance
+    # (Dockerfile's `${ZCRYPTO_SHIP_LOGS:+--ship-logs}`, spec 00068 D3/T4): this service's
+    # exec-form `entrypoint:` REPLACES the image's ENTRYPOINT wholesale, so that shell expansion
+    # never runs here -- the flag must be baked in at render time instead (same reasoning as the
+    # ops liquidations service, spec 00068 T6).
+    #
+    # REPO CHANGE ONLY -- this guard does not, by itself, restart the live engine: a restart needs
+    # BOTH `-e converge_primary=true` (site.yml already refuses the whole engine play on the
+    # primary without it) AND a converge that runs after this template change has landed, which
+    # then fires `notify: restart engine service` (tasks/main.yml) the next time either happens.
+    # Spec D7 step 6 forbids that restart before the Stage-6a gate (earliest ~2026-07-25; a
+    # mid-soak engine restart remains forbidden) -- ATTENDED discipline, same as every other D7
+    # step, NOT a code-enforced barrier: an operator who runs `--tags engine -e
+    # converge_primary=true` for an unrelated reason before the gate clears would land this too.
+    # This edit merges now so the converge is ready the moment the gate clears.
+    entrypoint: ["zcrypto", "--ship-logs", "engine", "run"]
+{% else %}
     entrypoint: ["zcrypto", "engine", "run"]
+{% endif %}
+{% if logship_loki_token is defined %}
+    environment:
+      # Literal "zcrypto", NOT a `base_hostname` reference (review finding, 00068 T6/T7/T8 review
+      # Critical 1): the engine only ever runs on the primary, and role defaults are PLAY-SCOPED --
+      # site.yml's engine_host play applies `roles: [engine]` only, with no `base` role and no
+      # vars_files, so `base_hostname` (a `base` role default, and unset in this host's own
+      # host_vars) resolves in NEITHER play. Under StrictUndefined that aborts the render outright --
+      # on the trade-key host, mid-converge. The capture role can use that variable (site.yml's
+      # capture_host play includes `base`); this one cannot, so it matches the ops/NAS precedent of a
+      # literal host label instead (`ZCRYPTO_LOG_HOST: ops` / `ZCRYPTO_LOG_HOST: nas`) rather than
+      # coupling this template to a play it is never rendered in.
+      ZCRYPTO_LOG_HOST: zcrypto
+      ZCRYPTO_LOG_SERVICE: engine
+{% endif %}
     env_file:
       - /opt/zcrypto-engine/engine.env
+{% if logship_loki_token is defined %}
+      # The zcrypto CLI's own Loki push creds -- REUSES the capture role's rendered copy (spec
+      # 00068 D5/T7): the engine and the primary capture daemon share one host (host_vars:
+      # engine_host = {zcrypto}, a subset of capture_host), so the `capture` role already renders
+      # this file from the same vault values -- no separate render task needed here. `required:
+      # false` (long form) keeps `docker compose up` from refusing to start outright if the file is
+      # ever absent at start time (a converge landing before the vault carried the token, or the
+      # file deleted out-of-band between converges) -- INCLUDING a `--tags engine` run, which skips
+      # the capture play (and thus its render task) entirely: without `required: false` a converge
+      # that races ahead of a `--tags capture`/full run would refuse to start the engine outright;
+      # with it, compose starts anyway and the baked-in `--ship-logs` above would instead crash-loop
+      # the engine on the trade-key host for want of the Loki env vars (D7 step 5 rendering the file,
+      # then step 6 converging `--tags engine`, is the sanctioned order; see also the engine-play
+      # note in site.yml).
+      - path: /opt/zcrypto-capture/logship-secrets.env
+        required: false
+{% endif %}
     volumes:
       # The state dir maps to the same path in-container, so the host-absolute store/journal
       # paths in zcrypto.toml are also the container-visible ones.

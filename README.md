@@ -43,9 +43,12 @@ zcrypto [OPTIONS]          # or: uv run python -m cli [OPTIONS]
 | `-v`, `--version` | Show the application version and exit. |
 | `-l`, `--log <path>` | Append JSONL logs to this file. If unset, plain-text logs go to stdout. |
 | `--log-level {DEBUG,INFO,WARNING,ERROR}` | Log threshold (default `INFO`). Applies to the `zcrypto.*` loggers. |
+| `--ship-logs` | Also ship logs to Grafana Cloud Loki, in addition to stdout/file. Requires `ZCRYPTO_LOKI_URL`, `ZCRYPTO_LOKI_USERNAME`, `ZCRYPTO_LOKI_PASSWORD`, `ZCRYPTO_LOG_HOST`, `ZCRYPTO_LOG_SERVICE` (exits with an error naming every missing one if any is unset or empty). |
 | `-h`, `--help` | Show help and exit. |
 
 Running `zcrypto` with no options (or with `-h` / `--help`) prints the help.
+
+Log shipping is additive — it never replaces the stdout/file handler — and never blocks the app: records are buffered in a bounded ring and shipped from a background thread, dropping the oldest lines rather than buffering unboundedly when Loki is unreachable.
 
 ### `zcrypto capture`<a name="zcrypto-capture"></a>
 

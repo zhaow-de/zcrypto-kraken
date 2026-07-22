@@ -43,12 +43,12 @@ prometheus.exporter.unix "host" {
 // active-series budget (00043). A future task can add it if a container-level gate ever needs it.
 
 // ---- Scrape -> remote_write ------------------------------------------------------------------
-// T0048 defect 1: discovery.docker can wedge permanently, and the ONLY positive signal is
-// prometheus_sd_refresh_duration_seconds_count going flat. Those counters live on Alloy's OWN
-// /metrics endpoint, which nothing here scraped -- so admitting them to the keep-list below was a
-// no-op and the alert built on them could never fire. This exporter is what actually puts them in
-// the pipeline. The drop rule below still discards go_/process_/alloy_, so the added cardinality is
-// only the two prometheus_sd_ series the keep-list names.
+// T0048 defect 1's SD-wedge detection RETIRED with `discovery.docker` (D6/D8): the alert it fed
+// (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
+// _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
+// on this host, neither series exists any more, and both are gone from the keep-regex below too (a
+// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below still
+// discards go_/process_/alloy_, so this target's only surviving contribution is its own `up`.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -89,92 +89,43 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_scrape_collector_success|node_scrape_collector_duration_seconds|prometheus_sd_refresh_duration_seconds_count|prometheus_sd_refresh_failures_total"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_scrape_collector_success|node_scrape_collector_duration_seconds"
       action        = "keep"
     }
   }
 }
 
-// ---- Logs: long-lived containers, via the docker API ----------------------------------------
-// Discover and ship EVERY long-lived container on this host -- the see-everything default (the logs
-// dashboard filters by `container`; a keep/drop here would silently shrink what it can show). On a
-// capture-only host that is the capture daemon (compose service `capture`) + Alloy (`alloy`). On the
-// PRIMARY -- which is ALSO the engine host -- the engine container (compose service `engine`) is
-// long-lived too, so it is discovered and shipped as well: its stdout thus egresses to Grafana Cloud
-// FROM the trade-key host. Benign today (the engine does not trade live), but a go-live security
-// decision (drop `engine` vs ship it parsed, since live engine logs may carry order/PnL detail) --
-// tracked in T0042 alongside the docker-socket residual. The POLLING discovery reliably finds these
-// long-lived containers; there are NO ephemeral `docker run --rm` jobs on a capture host, so no drop
-// rule is needed for those (unlike the ops copy, whose systemd-launched ephemerals it must exclude).
-discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
-}
-
-discovery.relabel "container_logs" {
-  targets = discovery.docker.containers.targets
-
-  // The compose SERVICE name is authoritative -- stable across restarts, and unaffected by the explicit
-  // container_name (spec 00057: zcrypto-capture -> capture, grafana-alloy -> alloy). This is what the
-  // logs dashboard and the parse selectors below key on.
-  rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "(.+)"
-    target_label  = "container"
-  }
-
-  // Name fallback for FUTURE non-compose containers -- today it matches nothing (both containers on
-  // this host are compose-managed). The join with the (possibly empty) container label makes it
-  // match ONLY when the compose rule above did not set it: relabel regexes are fully anchored, so a
-  // joined value that does not START with ";" (i.e. container already set) cannot match "^;...".
-  rule {
-    source_labels = ["container", "__meta_docker_container_name"]
-    separator     = ";"
-    regex         = ";/?(.*?)(?:-[0-9]+)?"
-    target_label  = "container"
-    replacement   = "$1"
-  }
-
-  // `host="<this host>"` from the runtime hostname (see the file header) -- one label scheme across
-  // the metrics path (external_labels above) and both log transports.
-  rule {
-    target_label = "host"
-    replacement  = constants.hostname
-  }
-}
-
-loki.source.docker "containers" {
-  host       = "unix:///var/run/docker.sock"
-  targets    = discovery.relabel.container_logs.output
-  forward_to = [loki.process.parse.receiver]
-}
-
-// ---- Logs: the host-side capture units, via the host journal --------------------------------
-// The docker path above carries the capture CONTAINER's own stdout in full (it is long-lived, so
-// discovery never misses it). What it CANNOT carry is host-side lines that exist in no container
-// log: the segment-prune oneshot (zcrypto-capture-prune.service) runs a bash script under systemd,
-// not a container, so the journal is its ONLY transport.
+// ---- Logs: the host journal -- host-side units AND Alloy's own container ---------------------
+// Two unrelated sources share this one journal reader (D6, the docker-socket residual retired):
+// the segment-prune oneshot (zcrypto-capture-prune.service) runs a bash script under systemd, not
+// a container, so the journal is its ONLY transport; and Alloy's OWN container logs, via the
+// journald logging driver (alloy-compose.yaml.j2) -- there is no docker-socket path left on this
+// host to carry them instead, so the journal is their only transport too now.
 //
-// Deliberately KEPT NARROW to the prune unit -- zcrypto-capture.service is NOT kept here. That unit
-// runs `docker compose up` ATTACHED, so the capture container's stdout also flows into ITS journal;
-// keeping it would double-ingest exactly the lines the docker path already ships. The prune unit has
-// no such container twin, so it ships once, here, and only here.
+// zcrypto-capture.service (the daemon's own systemd wrapper) is deliberately NOT kept here: that
+// unit runs `docker compose up` ATTACHED, so the capture container's stdout also flows into ITS
+// journal -- and the capture daemon now ships its OWN logs straight to Grafana Cloud (--ship-logs,
+// D3) rather than through Alloy at all, so admitting it here would double-ingest for no reason.
 loki.relabel "journal_units" {
   // Rules-only component: `forward_to` is a required argument, but nothing streams THROUGH this
   // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
   forward_to = []
 
-  // KEEP only the prune unit: the journal carries every unit on the host, and this pipeline's
-  // contract is the host-side capture jobs only -- sshd, cron, dockerd and the rest stay local.
+  // KEEP the prune unit's journal lines (source 1: __journal__systemd_unit) OR Alloy's own
+  // journald-driver stream (source 2: __journal_container_name = grafana-alloy, the container_name
+  // the alloy compose service sets) -- everything else on the host journal (sshd, cron, dockerd,
+  // ...) stays local.
   rule {
-    source_labels = ["__journal__systemd_unit"]
-    regex         = "zcrypto-capture-prune\\.service"
+    source_labels = ["__journal__systemd_unit", "__journal_container_name"]
+    separator     = ";"
+    regex         = "zcrypto-capture-prune\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 
-  // Unit name minus ".service" -> the `container` label, so these journal streams wear the same
-  // label scheme as the docker path (the parse stage below scopes its zcrypto stage by
-  // {container=~"capture|zcrypto-.*"}, so mapping the unit name in means these streams get parsed
-  // with NO selector change).
+  // Unit name minus ".service" -> the `container` label. For the prune unit that yields
+  // "zcrypto-capture-prune". Alloy's journald-driver entries carry _SYSTEMD_UNIT=docker.service
+  // (journald stamps the SENDING process's unit -- dockerd), so this rule sets container="docker"
+  // for them, which the next rule overwrites. That is why the order below is load-bearing.
   rule {
     source_labels = ["__journal__systemd_unit"]
     regex         = "(.+)\\.service"
@@ -182,7 +133,19 @@ loki.relabel "journal_units" {
     replacement   = "$1"
   }
 
-  // `host="<this host>"` from the runtime hostname, exactly like the docker path above.
+  // Alloy's own stream -> container="alloy" (the parse stage below's `{container="alloy"}`
+  // selector keys on this). MUST come after the unit-name rule above -- relabel rules apply in
+  // order, each seeing the previous rule's output, and the unit-name rule must run first wherever
+  // both fields could ever be populated on the same stream.
+  rule {
+    source_labels = ["__journal_container_name"]
+    regex         = "grafana-alloy"
+    target_label  = "container"
+    replacement   = "alloy"
+  }
+
+  // `host="<this host>"` from the runtime hostname (see the file header) -- one label scheme
+  // across the metrics path (external_labels above) and this log transport.
   rule {
     target_label = "host"
     replacement  = constants.hostname
@@ -199,61 +162,31 @@ loki.source.journal "capture_units" {
 
   // After an Alloy outage this component resumes from its saved cursor but never reads further back
   // than max_age -- UNSET it defaults to 7h, so a longer outage would permanently skip the window
-  // between the cursor and now-7h. 48h is cheap for one low-volume daily unit: lossless up to a 48h
-  // Alloy outage; beyond that the skipped window survives only in the host journal, never in Loki.
+  // between the cursor and now-7h. 48h was sized for the prune unit alone (one low-volume daily
+  // run); this reader now also carries Alloy's own journald-driver stream (D6), so a restart after
+  // an outage backfills up to 48h of that too -- still a bounded, one-time replay, not a
+  // steady-state cost, so the same ceiling stands.
   max_age       = "48h"
 }
 
-// Parse ONCE, here at ingest -- never at query time. Two stages: our Python services' own timestamped
-// log line, and Alloy's own logfmt output.
+// Parse ONCE, here at ingest -- never at query time. One stage now: Alloy's own logfmt output.
+// The capture daemon's own Python-timestamped lines had a stage here too, but the docker log path
+// that carried them into this pipeline is gone (D6) -- the capture container now ships its OWN
+// logs straight to Grafana Cloud (--ship-logs, D3), never through Alloy, so nothing on this host
+// would ever match that selector again. The prune unit's bash lines fall through this component
+// unmatched by the stage below (no selector here admits them), keeping their journal capture time
+// and no level label, same as before.
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
 
-  // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.capture.command [command.py:75] - msg`
-  // Scoped by container, so a container with a different format can never be mangled by this regex.
-  // The capture container emits this shape; the prune unit's bash lines do not match and fall through
-  // untouched (action_on_failure = "skip" keeps their journal capture time and adds no level label).
+  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`, arriving via the
+  // journald logging driver (D6). `{container="alloy"}` matches because the journal_units
+  // container-name rule above relabels CONTAINER_NAME=grafana-alloy to container="alloy".
   stage.match {
-    selector = "{container=~\"capture|zcrypto-.*\"}"
+    selector = "{container=\"alloy\"}"
 
-    stage.regex {
-      expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
-    }
-
-    stage.timestamp {
-      source   = "ts"
-      format   = "2006-01-02 15:04:05,000"
-      location = "UTC"
-      // "skip", NOT the default "fudge": lines that fail the stage.regex above (the prune script's
-      // echoes, tracebacks) have no `ts` in the extracted map, and "fudge" would rewrite their
-      // timestamp to the stream's LAST PARSED app timestamp +1ns -- time-warping a headline warning
-      // into the past. "skip" keeps the capture time for non-matching lines; matching lines still get
-      // the app timestamp.
-      action_on_failure = "skip"
-    }
-
-    stage.template {
-      source   = "level"
-      template = "{{ ToUpper .Value }}"
-    }
-
-    stage.labels {
-      values = { level = "level" }
-    }
-
-    stage.output {
-      source = "rest"
-    }
-  }
-
-  // Alloy's own logs are logfmt: `ts=<t> level=<lvl> msg="<text>" k=v k=v ...`.
-  // `{container="alloy"}` matches because the compose-service rule above labels this stack's own
-  // container "alloy" (compose project `alloy`, service `alloy`).
-  stage.match {
-    selector = "{container=\"alloy\"} |~ \"^ts=\\\\S+ level=\\\\S+ msg=\""
-
-    stage.regex {
-      expression = "^ts=\\S+ level=(?P<level>\\w+) msg=(?:\"(?P<msg>(?:[^\"\\\\]|\\\\.)*)\"|(?P<msg_bare>\\S+))\\s*(?P<rest>.*)$"
+    stage.logfmt {
+      mapping = { "level" = "" }
     }
 
     stage.template {
@@ -265,14 +198,10 @@ loki.process "parse" {
       values = { level = "level" }
     }
 
-    stage.template {
-      source   = "line"
-      template = "{{ if .msg }}{{ .msg }}{{ if .rest }} {{ .rest }}{{ end }}{{ else if .msg_bare }}{{ .msg_bare }}{{ if .rest }} {{ .rest }}{{ end }}{{ else }}{{ .Entry }}{{ end }}"
-    }
-
-    stage.output {
-      source = "line"
-    }
+    // No stage.output: the line ships UNMODIFIED. Unlike the old regex-and-reassemble approach,
+    // this keeps every logfmt attribute in the body (msg= plus whatever k=v pairs followed), and a
+    // non-logfmt line (a panic, a bare traceback) simply passes through with no `level` label rather
+    // than being mangled by a stage that assumed logfmt shape.
   }
 }
 

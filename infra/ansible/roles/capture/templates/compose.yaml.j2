@@ -2,6 +2,9 @@
 # hand-edit on the host, it is overwritten on the next converge. Edit
 # infra/ansible/roles/capture/templates/compose.yaml.j2 (and its standalone reference
 # counterpart infra/docker/compose.yaml) instead.
+# Manual `docker compose` invocations against this file must run as root (Minor-6, 00068 T4/T5
+# review): logship-secrets.env is 0600 root:root, so a habitual non-sudo `docker compose -f
+# /opt/zcrypto-capture/compose.yaml up -d` (zcrypto-deploy is in the docker group) fails reading it.
 services:
   capture:
     image: "{{ capture_image }}@{{ capture_image_digest }}"
@@ -13,8 +16,30 @@ services:
       CAPTURE_DEPTH: "{{ capture_depth }}"
       CAPTURE_PAIRS: "{{ capture_pairs | join(',') }}"
       HEALTHCHECK_URL: "{{ capture_healthcheck_url }}"
+{% if logship_loki_token is defined %}
+      ZCRYPTO_LOG_HOST: "{{ base_hostname }}"
+      ZCRYPTO_LOG_SERVICE: capture
+{% endif %}
     volumes:
       - "{{ capture_data_dir }}:{{ capture_data_dir }}"
+{% if logship_loki_token is defined %}
+    # The zcrypto CLI's own Loki push creds (ZCRYPTO_LOKI_URL/USERNAME/PASSWORD) AND
+    # ZCRYPTO_SHIP_LOGS itself now live in logship-secrets.env.j2 (Minor-1, 00068 T4/T5 review),
+    # rendered by tasks/main.yml alongside this compose file -- spec 00068 D5. `required: false`
+    # (long form) makes the missing-secrets-file case unreachable BY DESIGN on this unbackfillable
+    # host, not merely by construction: file present -> all four vars -> ships; file ABSENT -> the
+    # SHIP flag is absent too (it is one of the file's own lines) -> the ENTRYPOINT omits
+    # --ship-logs and capture starts normally on stdout only. Keeping ZCRYPTO_SHIP_LOGS in
+    # `environment:` above instead would defeat this: `required: false` alone lets `docker compose
+    # up` succeed with the file gone, but the flag would still be set with the creds missing, and
+    # the CLI would raise BadParameter and crash-loop identically -- see logship-secrets.env.j2's
+    # own comment for the full reasoning. Guarded by the SAME `logship_loki_token is defined`
+    # condition as the environment additions above (cold-review I4): a converge landing before the
+    # vault carries the token must still leave this container fully restartable.
+    env_file:
+      - path: /opt/zcrypto-capture/logship-secrets.env
+        required: false
+{% endif %}
     deploy:
       resources:
         limits:
