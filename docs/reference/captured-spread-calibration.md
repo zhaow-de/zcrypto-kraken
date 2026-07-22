@@ -22,28 +22,30 @@ Between pinned sizes the helper interpolates **linearly in log notional**; above
 ## Provenance
 
 - **Source:** `l2-panel` (spec `00052`), the 1-second L2 primitive panel, read over the NAS NFS mount.
-- **Window:** `2026-07-08T13:47:33Z … 2026-07-21T15:59:59Z` — **315 hourly files per pair**, 1,123,509–1,123,514 rows per pair (~11.2 M total). Row counts agree to within 5 rows across all ten pairs, so the grid is complete and the pairs are jointly sampled.
-- **Span is 13.1 days, not 14.** The panel trails live capture by the ~7 h settle watermark (T0066). Recorded as measured; one marginal day cannot move a statistic over 1.1 M observations.
+- **Window:** `2026-07-08T13:47:33Z … 2026-07-21T15:59:59Z` — **315 hourly files per pair**, 1,123,509–1,123,514 rows per pair (~11.2 M total). Row counts agree to within 5 rows across all ten pairs, so the pairs are **jointly sampled** — the same gaps in all ten. That is not completeness: the window spans 1,131,147 s, so ~7,635 s (**0.675 %**) are absent in 6 shared gaps (three of 32–55 min on 2026-07-08, three shorter). A row-count check cannot see shared gaps; see the catalog's honest-gaps caveat.
+- **Span is 13.1 days, not 14.** The panel trails live capture by the ~7 h settle watermark (T0066). This does **not** discharge Phase 2's exit-bar row ("≥2 weeks of captured spreads") — see [T0091](../open-topics/T0091-spread-calibration-two-week-restamp.md). **Uncertainty:** the 1.1 M rows are 1-second samples whose independent unit is roughly the day, so each constant carries a **day-level standard error of 1–6 %** (BTC 5.7 %); BTC and ETH trend downward through the window, and dropping the two earliest days alone moves BTC's constant ≈ −8 %. This is a 13.1-day **benign-regime** estimate — the window sits at the 0th–9.7th percentile of each pair's historical volatility — not a converged parameter.
 - **Era coverage:** the full window, per the [capture-era data-hygiene map](capture-era-data-hygiene-map.md) — the desync-era archive was never contaminated, so no era is excluded.
-- **Null rate:** 0.00 % at every size for every pair, i.e. the visible book covered €10k at all times; no shallow-book exclusions.
+- **Nulls:** exactly 2 across 10 pairs × 3 sizes × 2 sides — XRP `fill_bps_ask_10k` at 2026-07-13 07:04:31–32Z, where `spread_bps` is 8.99 against a 1.19 window mean. The visible book covered €10k effectively always; those 2 rows drop out of XRP's @10k mean.
 
 ## Two things to know before you quote a spread number
 
-**1. Never quote a *median top-of-book* spread for BTC/EUR.** BTC/EUR is tick-quantised at €0.10 and sits at exactly one tick 42–58 % of the time. Because that fraction straddles 50 %, the median flips ~15× (0.29 bps → 0.018 bps around 2026-07-13) on a modest change in the one-tick share, while the distribution barely moves.
+**1. Never quote a *median top-of-book* spread for BTC/EUR.** BTC/EUR is tick-quantised at €0.10 and sits at exactly one tick 42–58 % of the seconds on complete UTC days. Because that fraction straddles 50 %, the median flips ~15× (0.29 bps → 0.018 bps around 2026-07-13) on a modest change in the one-tick share, while the distribution barely moves.
 
 | | BTC | every other pair |
 |---|---|---|
 | `spread_bps` mean ÷ median | **11.2×** | 0.9–1.3× |
 
-This is why the table is built from the **effective spread at size** (`fill_bps`), which shows no such instability (BTC p50 0.346 vs mean 0.392 at €1k) — walking the book averages over the quantisation, and it is also the quantity actually paid. A 5× disagreement between this table and `data-catalog-full.md`'s 2026-07-15 first-look BTC figure (0.18) is this effect, not an error in either: both are correct medians over windows that straddled the crossing differently.
+(One-tick share: 42–58 % of the seconds on complete UTC days; 41.4 % including the two partial edge days, 49.5 % pooled.)
 
-**2. There is no session term.** Mean effective spread at €1k across UTC sessions (Asia 00–07 / EU 07–15 / US 15–24) varies by **1.02×–1.08×** for every pair tested — inside the noise of the thing being modelled. One constant per pair per size is the honest resolution.
+This is why the table is built from the **effective spread at size** (`fill_bps`), which shows no such instability (BTC p50 0.346 vs mean 0.392 at €1k) — walking the book averages over the quantisation, and it is also the quantity actually paid. A 5× disagreement between this table and `data-catalog-full.md`'s 2026-07-15 first-look BTC figure (0.18) is this effect, not an error in either: both are correct medians over windows that straddled the crossing differently — verified by recomputing on the catalog's own 174-hour window, which reproduces its published figures to ≤0.5 % on all ten pairs.
+
+**2. There is no session term — on materiality, not absence.** Mean effective spread at €1k across UTC sessions (Asia 00–07 / EU 07–15 / US 15–24) varies by **1.01×–1.10× across all ten pairs** (widest LTC 1.098×). A ≤10 % modulation of a 2–4 bps term against a 40–80 bps fee does not earn a per-session dimension. Note a paired day-level test *does* detect a consistently-signed Asia-wider effect (t = −1.9…−2.3 on BTC/ETH/LTC; 7/10 pairs), so "inside the noise" would be the wrong reason to give — and **top-of-hour seconds are measurably ~1.2× wider**, decaying to the mean by ~second 50, which matters to a 6b executor firing taker inside the first minute of a bar boundary (over the ratified 15–30 min execution window it washes out to ×1.010).
 
 ## Caveats
 
 - **Ranks beyond 10 are venue-unverified in every era** (the hygiene map's standing caveat). At €10k the fill walk passes rank 10 on the thin pairs, so those figures rest on protocol congruence rather than on Kraken's own checksums. The €100 and €1k columns sit inside the CRC-verified window for most pairs.
 - **This is the *visible* cost of crossing.** Market impact beyond the visible book, queue position, and maker-fill probability are out of scope: a maker-first strategy pays less than this, and a size beyond €10k pays more (which is why the helper refuses rather than guessing).
-- **Fees still dominate at low tiers.** At tier 1 (maker 0.40 % / taker 0.80 % per side) the fee term is 40–80 bps against 0.6–12.4 bps of spread. The spread term is additive to the fee term and never a substitute for it.
+- **Fees still dominate at low tiers.** At tier 1 (maker 0.40 % / taker 0.80 % per side) the fee term is 40–80 bps against 0.6–12.4 bps of spread **at €10k** (0.27–3.68 bps at €100). The spread term is additive to the fee term and never a substitute for it.
 
 ## Recalibrating
 

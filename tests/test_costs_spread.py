@@ -122,10 +122,35 @@ def test_spot_path_has_no_carry():
     assert r["carry"] == 0.0
 
 
-def test_carry_applies_only_when_a_margin_rate_and_hold_are_given():
+def test_carry_applies_whenever_a_margin_rate_is_given():
     r = round_trip_cost(1_000.0, pair="ETH", maker_rate=0.0, taker_rate=0.0, hold_hours=24.0, margin_rate_=0.0002)
     assert r["carry"] > 0.0
     assert r["total"] == pytest.approx(r["fee"] + r["spread"] + r["carry"])
+
+
+@pytest.mark.parametrize(
+    ("hold_hours", "expected"),
+    [
+        # margin_carry = notional * rate * (1 opening + floor(hold/4) rollovers). The OPENING charge
+        # is unconditional, so a position opened and closed inside one 4h window still pays it --
+        # gating the whole leg on `hold_hours` silently dropped it (cost-understating), and every
+        # earlier test passed because none asserted a carry VALUE, only > 0 / == 0.
+        (0.0, 0.2),
+        (3.9, 0.2),
+        (4.0, 0.4),
+        (9.0, 0.6),
+    ],
+)
+def test_carry_value_includes_the_unconditional_opening_charge(hold_hours, expected):
+    r = round_trip_cost(1_000.0, pair="ETH", maker_rate=0.0, taker_rate=0.0, hold_hours=hold_hours, margin_rate_=0.0002)
+    assert r["carry"] == pytest.approx(expected)
+
+
+def test_carry_matches_margin_carry_exactly_rather_than_reimplementing():
+    from cli.costs.margin import margin_carry
+
+    r = round_trip_cost(2_500.0, pair="BTC", maker_rate=0.0, taker_rate=0.0, hold_hours=13.0, margin_rate_=0.0003)
+    assert r["carry"] == margin_carry(2_500.0, 13.0, 0.0003)
 
 
 def test_at_tier_one_fees_dominate_spread_even_on_the_widest_pair():

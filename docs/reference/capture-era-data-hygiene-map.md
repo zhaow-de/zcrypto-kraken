@@ -37,9 +37,13 @@ So there is **no era-boundary for content**. What varies by era is *structural* 
 - Rely on the panel's anchoring/settle/gap machinery for completeness, never on manifests; state the ranks-beyond-10 protocol-congruence caveat once in the write-up if depth-beyond-10 values are load-bearing.
 - Optionally down-weight or sensitivity-check the launch day (07-08), which is gap-dense.
 
-## Falsification probe (registered in [T0014](../open-topics/T0014-captured-spread-cost-calibration.md), optional)
+## Falsification probe — RUN 2026-07-22, and INCONCLUSIVE (see [T0014](../open-topics/archive/T0014-captured-spread-cost-calibration.md))
 
-The soundness conclusion is falsifiable cheaply: compare a depth-sensitive panel metric (`fill_bps` at a size whose fill walk passes rank 10) over matched clock-hours straddling 2026-07-14 04:00. The fix changed only in-memory reconstruction, and the panel replays everything through the fixed book — so **no discontinuity should exist**. Finding one would contradict this map's central claim and reopen [T0071]. None is expected; run it as a cheap consistency check alongside the calibration if desired.
+The design was: compare a depth-sensitive panel metric (`fill_bps` at a size whose fill walk passes rank 10) over matched clock-hours straddling 2026-07-14 04:00. The fix changed only in-memory reconstruction and the panel replays through the fixed book, so **no discontinuity should exist**; finding one would contradict this map and reopen [T0071].
+
+**Run 2026-07-22, and it settles nothing.** Across all ten pairs `fill_bps@10k` moved **−17.2 %…+4.5 %** over the boundary (7/10 down). But the identical statistic at **seven non-event dates** gives −26.6…+17.3, −12.2…+22.2, −22.5…+8.6, −22.2…+55.2, −19.1…+51.2, −8.1…+12.1 and −24.2…+19.1, with 4–8 of 10 pairs down at every one — the real boundary is the *least* remarkable of the eight. Day-to-day drift at this window size swamps any effect the probe could detect, so **it has no discriminating power: it could not have refuted the map, and it does not corroborate it.**
+
+This map's conclusion therefore rests **entirely on its mechanism argument** (the archive stores wire messages; every book-state product replays through the fixed book) — which is the strong evidence and always was. A probe with power would need a longer matched window, a trend control, and a size whose fill walk provably passes rank 10 on the pair being tested (€10k does so on only five of the ten). Worth building only if the mechanism argument is ever doubted.
 
 ## Physical excision: none
 
