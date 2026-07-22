@@ -94,3 +94,76 @@ def test_escalate_false_when_selected_count_within_bounds():
     selection = finalize_universe(pairs, volumes)
     assert len(selection.selected) == MIN_NAMES
     assert selection.escalate is False
+
+
+# --- spread cap (T0024, spec 00067) -------------------------------------------------------------
+
+
+def _pair(symbol, *, margin=True, leverage=(2, 5, 10)):
+    base, quote = symbol.split("/")
+    return _Pair(symbol=symbol, base=base, quote=quote, margin_enabled=margin, leverage_buy=leverage)
+
+
+def test_no_spreads_argument_leaves_selection_byte_identical():
+    """D4: the criterion is opt-in. Every existing caller must be unaffected."""
+    pairs = [_pair("BTC/EUR"), _pair("DOT/EUR")]
+    volumes = {"BTC/EUR": 1e7, "DOT/EUR": 2e5}
+    base = finalize_universe(pairs, volumes)
+    with_none = finalize_universe(pairs, volumes, spreads=None)
+    assert [dict(e) for e in base.entries] == [dict(e) for e in with_none.entries]
+
+
+def test_a_pair_wider_than_the_cap_is_rejected_with_the_numbers_in_the_reason():
+    pairs = [_pair("WIDE/EUR")]
+    sel = finalize_universe(pairs, {"WIDE/EUR": 1e7}, spreads={"WIDE/EUR": 25.0}, max_spread_bps=10.0)
+    entry = sel.entries[0]
+    assert entry["selected"] is False
+    assert entry["spread_bps"] == 25.0
+    assert any("25.0" in r and "10.0" in r for r in entry["reasons"]), entry["reasons"]
+
+
+def test_a_pair_inside_the_cap_passes_and_records_its_spread():
+    sel = finalize_universe([_pair("DOT/EUR")], {"DOT/EUR": 2e5}, spreads={"DOT/EUR": 6.548}, max_spread_bps=10.0)
+    entry = sel.entries[0]
+    assert entry["selected"] is True
+    assert entry["spread_bps"] == 6.548
+    assert not entry["reasons"]
+
+
+def test_exactly_at_the_cap_passes():
+    sel = finalize_universe([_pair("EDGE/EUR")], {"EDGE/EUR": 1e7}, spreads={"EDGE/EUR": 10.0}, max_spread_bps=10.0)
+    assert sel.entries[0]["selected"] is True
+
+
+def test_an_uncaptured_pair_is_recorded_as_unevaluated_and_NOT_rejected():
+    """D3: ETH/BTC and SOL/BTC have no L2 capture. Absence of evidence is not a wide spread."""
+    sel = finalize_universe([_pair("ETH/BTC")], {"ETH/BTC": 5.8e5}, spreads={"BTC/EUR": 0.4}, max_spread_bps=10.0)
+    entry = sel.entries[0]
+    assert entry["selected"] is True
+    assert entry["spread_bps"] is None, "an unmeasured pair must be null, not 0.0 and not omitted"
+    assert not entry["reasons"]
+
+
+def test_spread_bps_is_present_on_every_entry_so_the_gap_is_visible():
+    """The artifact must show which symbols the cap did not evaluate."""
+    pairs = [_pair("BTC/EUR"), _pair("ETH/BTC")]
+    sel = finalize_universe(pairs, {"BTC/EUR": 1e7, "ETH/BTC": 5.8e5}, spreads={"BTC/EUR": 0.428}, max_spread_bps=10.0)
+    got = {e["symbol"]: e["spread_bps"] for e in sel.entries}
+    assert got == {"BTC/EUR": 0.428, "ETH/BTC": None}
+
+
+def test_a_mandatory_pair_breaching_the_cap_is_kept_but_flagged():
+    """The mandatory override already exists; the spread reason must ride it like any other."""
+    sel = finalize_universe([_pair("BTC/EUR")], {"BTC/EUR": 1e7}, spreads={"BTC/EUR": 99.0}, max_spread_bps=10.0)
+    entry = sel.entries[0]
+    assert entry["selected"] is True
+    assert any("mandatory" in r for r in entry["reasons"])
+    assert any("spread" in r for r in entry["reasons"])
+
+
+def test_the_cap_rejects_only_on_spread_leaving_other_criteria_intact():
+    """A pair failing BOTH volume and spread reports both, not just the first."""
+    sel = finalize_universe([_pair("THIN/EUR")], {"THIN/EUR": 1.0}, spreads={"THIN/EUR": 50.0}, max_spread_bps=10.0)
+    reasons = sel.entries[0]["reasons"]
+    assert any("volume" in r for r in reasons)
+    assert any("spread" in r for r in reasons)
