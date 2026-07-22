@@ -50,6 +50,8 @@ Running `zcrypto` with no options (or with `-h` / `--help`) prints the help.
 
 Log shipping is additive — it never replaces the stdout/file handler — and never blocks the app: records are buffered in a bounded ring and shipped from a background thread, dropping the oldest lines rather than buffering unboundedly when Loki is unreachable.
 
+Setting the `ZCRYPTO_METRICS_PORT` env var starts a Prometheus `/metrics` HTTP exporter on that port for `capture`, `engine run`, and `liquidations-poll` (process self-metrics plus each daemon's own application series). It is opt-in: unset means no exporter at all, and a non-integer value logs an error and runs without one — a metrics misconfiguration never stops a daemon.
+
 ### `zcrypto capture`<a name="zcrypto-capture"></a>
 
 24/7 daemon that streams Kraken's **public** WS v2 feed (no API keys) — order book (depth 100) + trades — for the universe pairs, and writes hourly zstd-compressed Parquet segments (with a `.sha256` manifest per segment) for later backfill/analysis.

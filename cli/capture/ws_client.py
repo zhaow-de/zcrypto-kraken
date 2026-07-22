@@ -116,6 +116,10 @@ class CaptureClient:
         self._connect = connect_fn or websockets.connect
         self._sleep = sleep_fn or asyncio.sleep
         self._ws = None
+        # Additive, state-only (spec 00069 D5/T3): no behavioral change, plain ints a metrics
+        # collector reads at scrape time -- never mutated from anywhere but the two sites below.
+        self.reconnects_total = 0
+        self.resubscribes_total = 0
 
     @property
     def connected(self) -> bool:
@@ -146,6 +150,7 @@ class CaptureClient:
                 logger.warning("WS connect attempt failed, reconnecting: %s", exc)
             finally:
                 self._ws = None
+            self.reconnects_total += 1
             delay = compute_backoff(attempt)
             attempt += 1
             logger.info("reconnecting in %.1fs (attempt %d)", delay, attempt)
@@ -168,3 +173,4 @@ class CaptureClient:
             return
         await self._ws.send(json.dumps(build_unsubscribe_message("book", [pair], depth=self._depth)))
         await self._ws.send(json.dumps(build_subscribe_message("book", [pair], depth=self._depth)))
+        self.resubscribes_total += 1

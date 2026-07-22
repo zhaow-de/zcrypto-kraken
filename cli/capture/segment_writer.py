@@ -331,6 +331,14 @@ class SegmentWriter:
         self._floor: datetime | None = None  # oldest hour still open, per the segments on disk
         self._drops = 0  # consecutive timestamps the plausibility guard has refused
         self._last_drop_ts: datetime | None = None
+        # Additive, state-only counters (spec 00069 D5/T3): no behavioral change, plain ints a
+        # metrics collector reads at scrape time. `rows_held` counts every row this writer has ever
+        # parked pending oracle confirmation (see `_hold`); `rows_quarantined` counts the subset of
+        # those rows actually spilled to a `.held` file rather than redeemed while still in RAM.
+        self.segments_written = 0
+        self.segment_bytes = 0
+        self.rows_held = 0
+        self.rows_quarantined = 0
         self._recover()
 
     def append(self, event: dict) -> None:
@@ -390,6 +398,7 @@ class SegmentWriter:
         for hour, rows in self._held.items():
             if rows:
                 self._write_part(rows, hour, marker=".held")
+                self.rows_quarantined += len(rows)
         self._held = {}
         self._held_seen = {}
 
@@ -524,12 +533,14 @@ class SegmentWriter:
             seen.add(key)
         rows = self._held.setdefault(hour, [])
         rows.append(event)
+        self.rows_held += 1
         ts = event["ts"]
         if self._max_ts is None or ts > self._max_ts:
             self._max_ts = ts
             self._max_at = _utcnow()
         if len(rows) >= self._flush_rows:
             self._write_part(rows, hour, marker=".held")
+            self.rows_quarantined += len(rows)
             self._held[hour] = []
 
     def _implausible(self, ts: datetime) -> bool:
@@ -733,6 +744,21 @@ class SegmentWriter:
             if self._write_merging(parts, merging_path):
                 self._commit(merging_path, final_path)
                 logger.info("segment written pair=%s kind=%s path=%s", self._pair, self._kind, final_path)
+                try:
+                    # Isolation invariant (spec 00069 D5): the commit above already succeeded and
+                    # `final_path` is durably on disk -- a metrics update must never look like the
+                    # merge itself failing. `stat()` is the one call here that can still raise (an
+                    # unreadable/vanished file, e.g. a racing external `rm`), so it gets its own
+                    # try/except rather than sharing the outer "merge failed" one.
+                    self.segments_written += 1
+                    self.segment_bytes += final_path.stat().st_size
+                except Exception:
+                    logger.exception(
+                        "segment committed but its metrics update failed pair=%s kind=%s path=%s",
+                        self._pair,
+                        self._kind,
+                        final_path,
+                    )
         except Exception:
             logger.exception("merge failed pair=%s kind=%s dir=%s hour=%s", self._pair, self._kind, hour_dir, hh)
 
