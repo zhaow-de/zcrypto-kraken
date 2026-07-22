@@ -8,14 +8,17 @@ DEFAULT_MIN_LEVERAGE = 2
 DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0
 # bps per side, effective spread at the SAME max-size position the volume floor above is calibrated
 # against (~EUR 1,400), so the two criteria are commensurable -- both answer "can we trade this at
-# our size?". Derived, not tuned: a round trip crossing twice at this cap costs ~25% of the tier-1
-# round-trip maker fee (2 x 0.40% = 80bps), beyond which spread stops being a rounding error on the
-# fee stack and becomes the dominant cost. Held as an ABSOLUTE constant rather than evaluated
-# against the live tier: at the top tiers maker -> 0%, and a "25% of the maker fee" formula would
-# degenerate to a cap of zero and reject everything.
-# Measured 2026-07-22 (T0014, spec 00066): every current member passes, DOT worst at 6.55 bps/side
-# (16.4% of the RT fee) -- i.e. this criterion excludes nothing today and is a guard for future
-# refreshes, not a filter that changes the current names.
+# our size?". Anchored to the fee stack rather than tuned to the data: a round trip crossing twice
+# at this cap costs 25% of the tier-1 round-trip maker fee (2 x 0.40% = 80bps), at which point
+# spread has stopped being a rounding error on the fee stack. The 25% itself is a chosen
+# convention, not a derivation -- at the cap spread is 20% of the 100bps round trip, so "dominant"
+# would need ~40bps/side. Held as an ABSOLUTE constant rather than evaluated against the live tier:
+# at the top tiers maker -> 0%, and a "25% of the maker fee" formula would degenerate to a cap of
+# zero and reject everything.
+# Calibrated over 2026-07-08..07-21 (T0014, spec 00066): every current member passes, DOT worst at
+# 6.55 bps/side (16.4% of the RT fee) -- i.e. this criterion excludes nothing today and is a guard
+# for future refreshes, not a filter that changes the current names. That 6.55 is a log-notional
+# interpolation between the table's EUR 1k and 10k anchors, not a measurement at EUR 1,400.
 DEFAULT_MAX_SPREAD_BPS = 10.0
 # The reference position the cap is priced at, matching the volume floor's own sizing note.
 SPREAD_REFERENCE_NOTIONAL_EUR = 1_400.0

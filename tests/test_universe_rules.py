@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 
-from cli.universe.rules import MAX_NAMES, MIN_NAMES, finalize_universe
+from cli.universe.rules import (
+    DEFAULT_MAX_SPREAD_BPS,
+    MAX_NAMES,
+    MIN_NAMES,
+    SPREAD_REFERENCE_NOTIONAL_EUR,
+    finalize_universe,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,13 +110,28 @@ def _pair(symbol, *, margin=True, leverage=(2, 5, 10)):
     return _Pair(symbol=symbol, base=base, quote=quote, margin_enabled=margin, leverage_buy=leverage)
 
 
-def test_no_spreads_argument_leaves_selection_byte_identical():
-    """D4: the criterion is opt-in. Every existing caller must be unaffected."""
+def test_omitting_spreads_screens_nothing_but_still_records_the_gap():
+    """D4: the criterion is opt-in -- the *selection outcome* is unchanged for existing callers.
+
+    The output is NOT byte-identical to pre-T0024: every entry gains a `spread_bps` key, null here.
+    Comparing `finalize_universe(pairs, volumes)` against `spreads=None` would assert nothing at all
+    -- None is the default, so that is the same call twice (T0024 review).
+    """
     pairs = [_pair("BTC/EUR"), _pair("DOT/EUR")]
-    volumes = {"BTC/EUR": 1e7, "DOT/EUR": 2e5}
-    base = finalize_universe(pairs, volumes)
-    with_none = finalize_universe(pairs, volumes, spreads=None)
-    assert [dict(e) for e in base.entries] == [dict(e) for e in with_none.entries]
+    sel = finalize_universe(pairs, {"BTC/EUR": 1e7, "DOT/EUR": 2e5})
+    assert sel.selected == ("BTC/EUR", "DOT/EUR")
+    for entry in sel.entries:
+        assert entry["spread_bps"] is None, "unscreened means null, not 0.0 and not absent"
+        assert not any("spread" in r for r in entry["reasons"]), entry["reasons"]
+
+
+def test_the_shipped_cap_and_reference_notional_are_pinned():
+    """Both constants are load-bearing and every other test passes them explicitly, so nothing
+    else would notice an edit to them. The cap is 25 % of the tier-1 round-trip maker fee
+    (2 x 0.40 % = 80 bps -> 20 bps round trip -> 10 per side); the notional is the max-size
+    position the volume floor is already calibrated against (spec 00067 D1/D2)."""
+    assert DEFAULT_MAX_SPREAD_BPS == 10.0
+    assert SPREAD_REFERENCE_NOTIONAL_EUR == 1_400.0
 
 
 def test_a_pair_wider_than_the_cap_is_rejected_with_the_numbers_in_the_reason():

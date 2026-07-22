@@ -104,7 +104,7 @@ def test_the_rendered_table_shows_the_spread_and_names_uncaptured_symbols():
     md = render_markdown(file)
     assert "Spread (bps/side)" in md
     assert "0.428" in md
-    assert "not captured" in md, "an unscreened symbol must say so in the table, not render blank"
+    assert "not screened" in md, "an unscreened symbol must say so in the table, not render blank"
 
 
 def test_the_rendered_cap_section_states_the_cap_and_the_unscreened_count():
@@ -125,3 +125,13 @@ def test_the_placeholder_still_renders_without_the_structured_keys():
     file = build_universe_file(_sel([_entry("BTC/EUR", spread_bps=None)]), as_of="2026-07-22", params={}, provenance={})
     md = render_markdown(file)
     assert "pending-capture" in md
+
+
+def test_the_placeholder_path_does_not_claim_symbols_are_uncaptured():
+    """On the placeholder path the criterion never ran, so every row is null -- including symbols
+    with hundreds of captured hours. Rendering those as "not screened"/"not captured" would assert
+    something false about the capture set rather than about the criterion (T0024 review)."""
+    file = build_universe_file(_sel([_entry("BTC/EUR", spread_bps=None)]), as_of="2026-07-22", params={}, provenance={})
+    md = render_markdown(file)
+    assert "not screened" not in md and "not captured" not in md
+    assert "| — |" in md
