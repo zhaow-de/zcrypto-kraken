@@ -199,18 +199,22 @@ series, and every container's logs to Grafana Cloud — mirroring `infra/nas/con
 (see `infra/ansible/roles/ops/files/config.alloy` for the three deliberate divergences: no
 cadvisor, dedicated non-admin uid + rootfs mount, compose-service-first log labelling).
 
-Ops log streams are labelled two ways (T0060): the long-lived compose-managed containers
-(`liquidations`, `alloy`) ship via the docker path, labelled from the **compose service label**;
-the ephemeral systemd-unit `docker run --rm` jobs are **dropped** from the docker path (their
-`--rm` lifetime makes polling discovery structurally lossy) and ship via the **unit journal**,
-labelled by unit name. The full `container` label set is therefore `liquidations`, `alloy`,
-`zcrypto-archive-pull`, `zcrypto-verify-replay`, `zcrypto-verified-replay`,
-`zcrypto-panel-materialize` — there is **no** `zcrypto-reconcile` or `zcrypto-trade-backfill`
-stream: those runs are attached children of the archive-pull unit, so their stdout lands under
-`container="zcrypto-archive-pull"`. (The docker-name fallback rule in `config.alloy` is
-future-proofing for a later non-compose container; today it matches nothing.) This deliberately
-differs from the NAS's docker-name-derived scheme (whose selectors, copied verbatim, were dead on
-ops — T0060); unifying the fleet's labelling is T0020's fleet-wide dashboards pass.
+Ops log streams reach Grafana Cloud two ways (00068 D3/D6, superseding the docker-path scheme
+T0060 introduced — that path is retired fleet-wide): the liquidations poller **direct-ships** its
+own logs straight to Grafana Cloud Loki (`--ship-logs`, `cli/logging/ship.py`) — Alloy is not in
+that path at all, and the `container` label (`liquidations`) is set by the app itself
+(`ZCRYPTO_LOG_SERVICE`), never by an Alloy relabel rule. Everything else — Alloy's own logs
+(journald logging driver on the alloy compose service) and the four ephemeral systemd-unit
+`docker run --rm` jobs (their `--rm` lifetime makes polling docker discovery structurally lossy,
+T0060) — ships via the **host journal** to Alloy's `loki.source.journal` pipeline, labelled by
+unit/container name there. The full `container` label set across the two paths is therefore
+`liquidations` (direct-ship), `alloy`, `zcrypto-archive-pull`, `zcrypto-verify-replay`,
+`zcrypto-verified-replay`, `zcrypto-panel-materialize` (journal) — there is **no**
+`zcrypto-reconcile` or `zcrypto-trade-backfill` stream: those runs are attached children of the
+archive-pull unit, so their stdout lands under `container="zcrypto-archive-pull"`. This deliberately
+differs from the NAS's docker-name-derived scheme that predated 00068 (whose selectors, copied
+verbatim, were dead on ops — T0060); unifying the fleet's labelling is T0020's fleet-wide
+dashboards pass.
 
 **Runs as the dedicated `zcrypto-alloy` system user, never `zcrypto-deploy` or `zcrypto-data`.** The role creates it
 (`nologin`, no home) and derives its uid/gid via `getent`, the same pattern used for the `zcrypto-data`
@@ -221,20 +225,20 @@ from the NAS (T0030). The acute case this originally guarded — the `sync_nas_a
 admin home — is now moot: that channel was retired, credentials removed 2026-07-17 (T0058), and today
 neither the admin (`zcrypto-deploy`) nor the m2m (`zcrypto-data`) home holds any private key (only public
 `authorized_keys`). `zcrypto-alloy` owns nothing under either home, so the direct-read path stays closed
-by construction. Docker-socket access is granted via `group_add` set to the host's real
-numeric docker gid, derived at converge time with `getent` (`infra/ansible/roles/ops/tasks/main.yml`)
-— **not** a named `"docker"` entry: Docker resolves a named `group_add` entry against the
-**container's own** `/etc/group`, not the host's, and the upstream `grafana/alloy` image ships only
-`alloy:x:473:`, so a literal `"docker"` would never resolve and the container would fail to start.
-This is exactly why `infra/nas/compose.yaml`'s `alloy` service passes the numeric `group_add: ["0"]`
-rather than a name. Either way this is **defence in depth only**: holding the Docker API is
-root-equivalent by definition (it can launch a privileged container regardless of a `:ro` socket
-mount), so that escalation path remains — the same accepted residual the NAS's comments record for
-T0042.
+by construction. The docker-socket mount and its `group_add` are gone entirely (00068 D6/T6) — Alloy's
+only remaining `group_add` grants read of the host's persistent journal, set to the host's real
+numeric **systemd-journal** gid, derived at converge time with `getent`
+(`infra/ansible/roles/ops/tasks/main.yml`) — **not** a named `"systemd-journal"` entry: Docker resolves
+a named `group_add` entry against the **container's own** `/etc/group`, not the host's, and the
+upstream `grafana/alloy` image ships only `alloy:x:473:` with no such entry, so a literal name would
+never resolve and the container would fail to start. This grants read of the whole system journal,
+read-only — broader than the units the pipeline keeps, but strictly telemetry-class data — and confers
+**no** Docker API access, so [[T0042]]'s docker-socket residual on this host **closes**: nothing here
+holds the API any more.
 
 ### Deploy
 
-1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`). There is no hand-placed secrets file (and none on the NAS either since T0056 — the `nas` role renders its copy from the same vault group): the `ops` role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, mode `0600`, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. The six vars (`GRAFANA_PROM_URL/USERNAME/PASSWORD`, `GRAFANA_LOKI_URL/USERNAME/PASSWORD`) live in `group_vars/observed/vault.yml` — rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
+1. Converge with the digest: `./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<...>` (from `infra/ansible/`). There is no hand-placed secrets file anywhere on this host (and none on the NAS either since T0056 — the `nas` role renders its copy from the same vault group): the `ops` role renders **two** such files, both mode `0600`, never hand-placed — this Alloy one, and `{{ ops_compose_dir }}/logship-secrets.env` for the liquidations poller's own direct-ship Loki creds (spec 00068 D3/T6 — see the Liquidations poller section above). For Alloy: the role renders `{{ ops_alloy_dir }}/alloy-secrets.env` (default `/etc/zcrypto-ops/alloy/alloy-secrets.env`) straight from the vault, owned by `zcrypto-alloy` (the container runs as that user and must be able to read a 0600 file it does not own by default), with `no_log: true` + `diff: false` so the converge never prints the values. The six vars (`GRAFANA_PROM_URL/USERNAME/PASSWORD`, `GRAFANA_LOKI_URL/USERNAME/PASSWORD`) live in `group_vars/observed/vault.yml` — rotate them there. `config.alloy` reads the rendered file via the River `sys.env(...)` stdlib function; `compose.yaml` itself stays secret-free (only `env_file: ./alloy-secrets.env` references the file by name).
 2. Start it (attended, plan Task 3): `ssh hp`, then `docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d`.
 3. Verify by outcome: the four textfile series (`ops_archive_pull_*`, `ops_panel_*`,
    `ops_verify_replay_*`, `ops_verified_replay_*`) and host metrics appear in Grafana Cloud within a

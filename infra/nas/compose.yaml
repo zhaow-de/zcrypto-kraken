@@ -144,6 +144,17 @@ services:
     # protection rests on the keys being 0600 -- owner-only, group has no read (verified live) -- not
     # on group isolation; keep the keys 0600. See infra/nas/README.md.
     user: "1031:1000"
+    # gid 19 = DSM's `log` group (measured live, 2026-07-22: `getent group log` -> `log:x:19:root`).
+    # NOT the retired docker-socket grant this replaces (gid 0, `["0"]`, deleted with the socket
+    # mount above) -- and could not have been, since DSM's group model has no `systemd-journal` at
+    # all: the persistent journal path (/var/log/journal) is EMPTY here, and the volatile one this
+    # stack actually reads (/run/log/journal below) is owned root:log, not root:systemd-journal.
+    # Without this, uid 1031's only group is `users` (100) -- a fresh read probe as that uid against
+    # the live files returned "Permission denied" -- so the journal pipeline below would silently
+    # ship nothing at all (review finding, 00068 T6/T7/T8 review Important 4). gid 19 grants ONLY
+    # journal read: no Docker API access, so T0042's docker-socket residual on this host stays
+    # closed (the mount is gone; this grant cannot reopen it).
+    group_add: ["19"]
     network_mode: host
     environment:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
@@ -183,7 +194,7 @@ services:
       # that the docker socket is gone.
       - /run/log/journal:/host/journal:ro
       # Journal readers resolve the CURRENT boot's files via the host's machine id
-      # (/var/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
+      # (/run/log/journal/<machine-id>/...) -- without this mount the reader sees an empty journal.
       - /etc/machine-id:/etc/machine-id:ro
     deploy:
       resources:
