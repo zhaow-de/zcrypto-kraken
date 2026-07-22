@@ -21,10 +21,11 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from prometheus_client import Counter, Gauge
 
 from cli.config import ConfigError, EngineConfig, load_config
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
-from cli.engine.cycle import CycleResult, run_cycle
+from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.gate_cache import (
     GateCache,
@@ -39,6 +40,7 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
 from cli.logging import get_logger
+from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
 
 logger = get_logger("engine.command")
@@ -409,6 +411,69 @@ def _start_watchdog(node) -> threading.Timer:
     return watchdog
 
 
+class _CycleGauges:
+    """The engine's cumulative gauge/counter state (spec 00069 D5, engine's pinned instrument
+    set): `run()` builds one of these on the SAME registry the exporter serves, then installs
+    `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure."""
+
+    def __init__(self, registry) -> None:
+        self.target_weight = Gauge(
+            "zcrypto_engine_target_weight", "Latest per-asset target portfolio weight.", ["asset"], registry=registry
+        )
+        self.orders_total = Counter(
+            "zcrypto_engine_orders_total", "Intended orders emitted, across every cycle.", registry=registry
+        )
+        # A Gauge, not a Counter: the pinned name (spec 00069 D5, "names verbatim") carries no
+        # `_total` suffix, and `Counter` would silently ADD one to the exposed series name --
+        # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative.
+        self.order_notional_eur = Gauge(
+            "zcrypto_engine_order_notional_eur", "Intended order notional (EUR), summed across every cycle.", registry=registry
+        )
+        self.cycle_success = Gauge(
+            "zcrypto_engine_cycle_success", "1 if the most recent cycle succeeded, else 0.", registry=registry
+        )
+        self.cycle_completed_at = Gauge(
+            "zcrypto_engine_cycle_completed_at_seconds", "Unix timestamp the most recent cycle completed at.", registry=registry
+        )
+        self.cycle_duration = Gauge(
+            "zcrypto_engine_cycle_duration_seconds", "Wall time the most recent cycle took, in seconds.", registry=registry
+        )
+
+    def update(self, result: CycleResult, completed_at: datetime, duration_seconds: float) -> None:
+        self.cycle_success.set(1.0 if result.status == "success" else 0.0)
+        self.cycle_completed_at.set(completed_at.timestamp())
+        self.cycle_duration.set(duration_seconds)
+        if result.targets is not None:
+            for asset, weight in result.targets.items():
+                self.target_weight.labels(asset=asset).set(weight)
+        if result.orders is not None:
+            self.orders_total.inc(len(result.orders))
+            self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
+
+
+def _seed_completed_at(journal_dir: Path) -> datetime:
+    """The startup value for `zcrypto_engine_cycle_completed_at_seconds` (spec 00069 D5): the
+    newest journal artifact's own `completed_at` wall-clock time -- a success record's field or a
+    failed-cycle sidecar's, whichever is newer -- so a routine restart never leaves the series
+    absent and false-firing the staleness alert. Falls back to process start (`_utc_now()`) when
+    the journal holds nothing yet (a brand-new deployment). Reuses this module's own
+    `_journal_artifacts` glob (the same day-dir layout `node.py`'s `startup_action` walks, though
+    that one does not glob)."""
+    newest: datetime | None = None
+    for _, path in _journal_artifacts(journal_dir, "*", "cycle-*.json"):
+        try:
+            record = from_json(path.read_text())
+        except EngineJournalError:
+            continue
+        if newest is None or record.completed_at > newest:
+            newest = record.completed_at
+    for boundary, path in _journal_artifacts(journal_dir, "*", "failed-cycle-*.json"):
+        _, completed_at, _ = _sidecar_fields(boundary, path)
+        if newest is None or completed_at > newest:
+            newest = completed_at
+    return newest if newest is not None else _utc_now()
+
+
 @engine_app.command()
 def run() -> None:
     """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this).
@@ -428,6 +493,17 @@ def run() -> None:
     logger.info(
         "engine run: exec_enabled=%s, store_dir=%s, journal_dir=%s", config.exec_enabled, config.store_dir, config.journal_dir
     )
+
+    # Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server, no gauges, no
+    # sink installed -- cycle.py's `_metrics_sink` stays None and every update below is a no-op.
+    port = metrics_port_from_env()
+    if port is not None:
+        registry = build_registry()
+        gauges = _CycleGauges(registry)
+        gauges.cycle_completed_at.set(_seed_completed_at(config.journal_dir).timestamp())
+        set_metrics_sink(gauges.update)
+        start_metrics_server(port, registry)
+
     # Lazy: cli.engine.node imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
     from cli.engine.node import build_shadow_node
 
