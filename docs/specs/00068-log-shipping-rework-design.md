@@ -29,7 +29,11 @@ The default behavior is untouched: plain-text stdout, exactly today's format. Th
 New module `cli/logging/ship.py`, stdlib-only (urllib, no new dependencies). A `logging.Handler` subclass:
 
 - `emit()` formats the record and appends to a fixed `collections.deque(maxlen=4096)` — O(1), never blocks, never allocates unboundedly. When full, the **oldest** entry is evicted and a drop counter increments (freshest context survives for the recovery flush; everything is on stdout locally regardless).
-- One daemon worker thread drains batches of ≤500 lines or every 1 s, whichever first, and POSTs to `/loki/api/v1/push` (JSON body, basic auth, connect timeout 2 s, read timeout 5 s).
+- One daemon worker thread drains batches of ≤500 lines or every 1 s, whichever first, and POSTs to `/loki/api/v1/push` (JSON body, basic auth, single **5 s per-operation socket timeout**).
+- **Timeout semantics, stated precisely:** `settimeout(5)` bounds every blocking socket call individually — `connect()`, each TLS-handshake read/write, each `send()`, each `recv()` — so accept-then-stall peers (connected but unable to write, or silent after accept) unblock within 5 s per operation. What no stdlib or third-party HTTP client provides is a *total request* deadline: an adversarial peer draining one byte per 4.9 s could stretch a batch almost arbitrarily. DNS resolution (`getaddrinfo`) runs before the socket exists and is governed by the resolver config, not these timeouts. Both residuals are confined to the worker thread — see the structural insulation point below.
+- **Deterministic egress:** the opener is built explicitly with `ProxyHandler({})` (env `http_proxy`/`https_proxy` ignored — a stray proxy variable must not reroute log traffic carrying the auth header) and no redirect handler (Loki push never legitimately redirects; a redirect re-sending credentials elsewhere is refused by construction). No connection pooling: one connection per batch has dumber, cleaner failure semantics at ≤1 batch/s.
+- **The non-blocking guarantee is structural, not timeout-based:** `emit()` only touches the deque; the POST lives in a separate daemon thread; the exit flush has its own 2 s deadline independent of HTTP state. The absolute worst case — a request that defeats every timeout — costs: shipping stalls, the ring rotates and counts, stdout and process exit are untouched. Timeouts bound how *stale* shipping can get, never app latency.
+- **urllib3 evaluated and rejected:** its `Timeout(connect=, read=)` is per-operation too — no total deadline, so the adversarial-trickle residual is unfixed by it; its connection pooling is a liability at this volume (stale keep-alive sockets are where its subtle failures live); its `Retry` machinery would fight the deliberate one-batch/capped-backoff design; and it is a new runtime dependency on the capture image for marginal gain.
 - On POST failure: hold that one batch (part of the fixed memory bound) and retry with capped backoff 1 s → 30 s, forever — the ring keeps absorbing and dropping meanwhile. Retries never multiply: one in-flight batch, one backoff clock.
 - On recovery after any drops: emit one WARNING — to stdout *and* shipped — "log shipping recovered; N lines dropped". A shipping failure is self-announcing; no silent dark window.
 - At process exit: flush with a **2 s hard deadline** (daemon thread + atexit), then drop the remainder and report the count to stdout. A one-shot CLI run against a dead Loki is delayed ≤2 s, never hung.
@@ -61,6 +65,7 @@ New module `cli/logging/ship.py`, stdlib-only (urllib, no new dependencies). A `
 - Deleted on all four Alloys: the `- /var/run/docker.sock:...` bind-mount, the docker-group `group_add` that exists only to open it, and the `discovery.docker` + `loki.source.docker` components that dial it. The socket itself is untouched — it is dockerd's own API endpoint; host tooling and every container are unaffected.
 - All four Alloys ship **their own** logs via the journald driver: keep-rules widen to `CONTAINER_NAME=grafana-alloy` (journal field `__journal_container_name`), relabeled `container="alloy"` as today, parsed with `stage.logfmt` in place of today's regex — the regex-avoidance principle reaches the journal path too. The journald driver takes effect on container recreation, which the rollout performs anyway.
 - The zcrypto regex parse stage in every Alloy config is deleted outright — the app labels its own levels now.
+- **NAS caveats, measured 2026-07-22 (they falsified a prior):** DSM 7 runs systemd with a live journald (PID 1 = systemd; journalctl reads entries as root), so the journald treatment works there — but the journal is **volatile** (`/run/log/journal/<machine-id>/` populated, `/var/log/journal/` empty), so a NAS reboot loses any unshipped tail; and the NAS Alloy has **no journal pipeline today** — it is a first-time build there (journal source + relabel + the volatile-path mounts `/run/log/journal` + `/etc/machine-id`). The rollout probes the driver with a throwaway container (`docker run --rm --log-driver=journald …`) **before** touching `zcrypto-archive-pull` — custody discipline: the pull container is never the experiment.
 - Division of labor, stated: a dead Alloy cannot ship its own death (true on the old path too); Alloy **liveness** belongs to the metrics-side `Fleet · Alloy dark` rules, Alloy **content** to the journal path. No feedback loop: Alloy logs one error per backoff-limited failed push; self-scraping them does not amplify.
 
 ## D7 — Rollout: attended, canary-disciplined, and T0089's recovery vehicle
@@ -68,7 +73,7 @@ New module `cli/logging/ship.py`, stdlib-only (urllib, no new dependencies). A `
 Ordered steps, each verified by a **positive line arriving in Loki** (the T0089 lesson: never verify by absence), with the Alloy-dark and log-dead-man rules watching throughout:
 
 1. **ops** — poller (new image + flag) and Alloy (journald driver) recreated. First live verification of both new paths; clears the poller's wedge.
-2. **NAS** — Alloy + `zcrypto-archive-pull` to journald driver, recreated.
+2. **NAS** — journald-driver probe with a throwaway container first; then Alloy + `zcrypto-archive-pull` to journald driver, recreated.
 3. **Secondary capture** — new image + flag; **24 h bake per the canary rule** (`capture-deploys.md`); clears its wedge.
 4. **Primary capture** — after the bake, `-e converge_primary=true`; clears the last capture wedge.
 5. **Engine** — flag added only **after the Stage-6a gate** (earliest ~2026-07-25); a mid-soak restart remains forbidden.
@@ -91,6 +96,8 @@ Unit tests against an in-process fake Loki (`http.server` on a loopback port), n
 - Drop-on-full: ring at capacity evicts oldest, counter arithmetic exact, recovery WARNING carries the count.
 - Capped backoff: failure schedule 1 s → 30 s, one in-flight batch, no retry multiplication.
 - **The non-blocking guarantee, measured:** `emit()` latency bounded (µs-scale) while the endpoint is a black hole; the app thread never waits on the network.
+- **Accept-then-silent:** a fake server that accepts the TCP connection and never reads nor responds — the POST unblocks within the per-operation timeout and the worker proceeds to backoff, not hang.
+- **Proxy-env immunity:** with `http_proxy`/`https_proxy` pointing at a dead port, the POST still reaches the fake Loki directly — the explicit `ProxyHandler({})` opener is what is under test.
 - Exit flush: completes under the 2 s deadline against both a live and a dead endpoint; remainder counted.
 - Config: flag with missing env fails at startup with the exact error; env complete → handler attached alongside the untouched console handler.
 
