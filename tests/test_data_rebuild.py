@@ -122,8 +122,11 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     payload = json.loads((out_root / "point-in-time-universe.json").read_text())
     assert set(payload) == {"as_of", "entries", "escalate", "params", "provenance", "selected", "spread_cap"}
     assert payload["selected"] == ["BTC/EUR", "ETH/BTC"]
-    # The declared window must be the one actually computed -- they were separate literals until
-    # T0093, so the artifact could claim a window the medians never used.
+    # Pins that the artifact's DECLARED window is the module constant, so the two cannot drift
+    # apart in the payload. It does NOT pin the constant->computation wiring: both sides of this
+    # assertion move together, so removing `window=` from the quote_volume_in_eur call would still
+    # pass. That wiring is correct at HEAD; pinning it needs a fixture whose last 30 rows differ
+    # from its last 20 (T0093 review).
     assert payload["params"]["median_quote_volume_window_days"] == rebuild._UNIVERSE_VOLUME_WINDOW_DAYS
     assert payload["provenance"]["ohlc_dataset_hash"] == "deadbeef"
     assert len(payload["provenance"]["snapshot_sha256"]) == 64

@@ -23,7 +23,7 @@ For most consumers the dump extent is fine — the deployable strategy is backte
 
 ## Why this matters
 
-A rebuild does not reproduce the committed universe, and the difference crosses a selection boundary:
+Absent the guard, a rebuild does not reproduce the committed universe, and the difference crosses a selection boundary:
 
 | symbol | committed `median_quote_volume` | recomputed from `data/ohlc-full` | floor 150,000 |
 |---|---|---|---|
@@ -32,7 +32,7 @@ A rebuild does not reproduce the committed universe, and the difference crosses 
 | ADA/EUR | 1,299,998.00 | 864,628.44 | passes |
 | ETH/BTC | 579,963.79 | 1,079,523.50 | passes |
 
-**A rebuild selects eleven names, not twelve** — dropping AVAX/EUR on volume. `escalate` stays `false` (11 ≥ `MIN_NAMES` 8), so nothing flags it: the universe would silently shrink, and the drop would read as a liquidity move when its actual cause is a months-stale window.
+**Absent the guard, a rebuild would select eleven names, not twelve** — dropping AVAX/EUR on volume. `escalate` stays `false` (11 ≥ `MIN_NAMES` 8), so nothing flags it: the universe would silently shrink, and the drop would read as a liquidity move when its actual cause is a months-stale window.
 
 Every recomputed figure differs from the committed one, in both directions. [[T0025]]'s pre-live universe refresh is exactly the operation that runs this path.
 
