@@ -11,6 +11,7 @@ import pytest
 from cli.costs.spread import effective_spread_bps
 from cli.data import rebuild
 from cli.data.errors import DataSyncError
+from cli.ohlc.reach import ReachEntry, ReachReport
 from cli.universe.rules import DEFAULT_MAX_SPREAD_BPS, SPREAD_REFERENCE_NOTIONAL_EUR
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -316,3 +317,73 @@ def test_refresh_universe_requires_live_ohlc_full(tmp_path, monkeypatch):
 
     with pytest.raises(DataSyncError, match="ohlc-full"):
         rebuild._refresh_universe(ctx, tmp_path / "universe-20260718")
+
+
+def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
+    """The reach builder must read the LIVE ohlc-full and write into the minted sibling only --
+    reading the sibling instead would reach forward from an empty set."""
+    (tmp_path / "ohlc-full").mkdir()
+    seen = {}
+
+    def _fake_reach(canonical_root, out_root, **kwargs):
+        seen["canonical"] = canonical_root
+        seen["out"] = out_root
+        (out_root / "written").write_text("x")
+        return ReachReport(entries=())
+
+    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
+
+    minted = rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+    assert seen["canonical"] == tmp_path / "ohlc-full"
+    assert seen["out"] == tmp_path / "ohlc-reach-20260723" == minted[0]
+    assert (tmp_path / "ohlc-reach-20260723" / "written").exists()
+
+
+def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeypatch, caplog):
+    """A detached series is the case an operator must not miss, so it is logged by name."""
+    (tmp_path / "ohlc-full").mkdir()
+    entries = (
+        ReachEntry(
+            symbol="BTC",
+            interval=60,
+            status="detached",
+            rest_first=datetime(2026, 6, 23, tzinfo=UTC),
+            rest_last=datetime(2026, 7, 23, tzinfo=UTC),
+            overlap_bars=0,
+            appended=720,
+            gap_bars=2009,
+        ),
+        ReachEntry(
+            symbol="BTC",
+            interval=240,
+            status="continuous",
+            rest_first=datetime(2026, 3, 25, tzinfo=UTC),
+            rest_last=datetime(2026, 7, 23, tzinfo=UTC),
+            overlap_bars=38,
+            appended=682,
+            gap_bars=0,
+        ),
+    )
+
+    def _fake_reach(canonical_root, out_root, **kwargs):
+        (out_root / "x").write_text("x")
+        return ReachReport(entries=entries)
+
+    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
+
+    with caplog.at_level("WARNING"):
+        rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+    assert "1 of 2 reach series are DETACHED" in caplog.text
+    assert "BTC@60" in caplog.text
+    assert "BTC@240" not in caplog.text
+
+
+def test_rebuild_ohlc_reach_fails_closed_without_a_live_canonical(tmp_path, monkeypatch):
+    """No ohlc-full means nothing to reach forward FROM -- refuse rather than mint an empty set."""
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
+    with pytest.raises(DataSyncError):
+        rebuild.rebuild_sets(["ohlc-reach"], ctx)
