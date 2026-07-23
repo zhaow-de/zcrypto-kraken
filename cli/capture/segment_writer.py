@@ -134,7 +134,7 @@ class HourOracle:
     Rotation trusts the event's own `ts` — a field Kraken sends — so one bogus stamp inside the
     plausibility window used to finalize the live hour early, permanently truncating it (the T0036
     invariant correctly refuses to reopen a committed final). The one signal no single bad field can
-    forge is AGREEMENT: 20 writers share this process, a genuine hour boundary crosses all of them
+    forge is AGREEMENT: 24 writers share this process, a genuine hour boundary crosses all of them
     within seconds, and a bogus stamp hits exactly one. So a writer may act on a boundary only once
     `HOUR_QUORUM` witnesses have seen time reach it.
 
@@ -149,7 +149,7 @@ class HourOracle:
     `confirmed_hour()` is monotone: once an hour is confirmed it stays confirmed, so a clock stepping
     backwards (chrony) can never un-confirm a boundary a writer already acted on.
 
-    Shared mutable state across the 20 writers — safe because the daemon appends from ONE consumer
+    Shared mutable state across the 24 writers — safe because the daemon appends from ONE consumer
     task; there is no concurrency here by construction. The coupling is read-only at the decision
     point: a writer never waits ON another writer, it only reads how far time has provably got, so a
     quiet market cannot deadlock anything (no events -> no rotation attempted -> nothing is waiting).
@@ -679,7 +679,7 @@ class SegmentWriter:
         except Exception:
             # The hottest write in the daemon (every `flush_rows` rows), and it is one `OSError`
             # (EIO, ENOSPC despite DiskWatermark) away from taking down the single consumer task —
-            # i.e. capture for all 10 pairs and both kinds. This buffer is lost either way; the other
+            # i.e. capture for all 12 pairs and both kinds. This buffer is lost either way; the other
             # 19 streams need not be. The dead-man's switch goes red on the watermark breach that
             # normally causes this, and the traceback names the pair.
             logger.exception("flush failed — buffer dropped pair=%s kind=%s hour=%s", self._pair, self._kind, hh)

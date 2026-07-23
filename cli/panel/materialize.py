@@ -36,7 +36,7 @@ from cli.capture.book import OrderBook
 from cli.capture.segment_writer import _replace_durably
 from cli.logging import get_logger
 from cli.panel.errors import PanelError
-from cli.panel.primitives import NOTIONALS_EUR, PANEL_SCHEMA, sample_row
+from cli.panel.primitives import NOTIONALS_EUR, PANEL_QUOTE, PANEL_SCHEMA, sample_row
 
 logger = get_logger("panel.materialize")
 
@@ -230,6 +230,10 @@ class MaterializeResult:
     hours_unsettled: int
     rows: int
     errors: list[tuple[str, datetime, str]]
+    #: pairs present in the archive but outside the panel's EUR-quoted scope (T0092). Reported so
+    #: an out-of-scope stream is visible rather than an absence that looks like success. Defaulted
+    #: and last so it stays after the non-default `errors` field.
+    pairs_out_of_scope: int = 0
 
 
 def materialize(
@@ -276,8 +280,17 @@ def materialize(
     books: dict[str, OrderBook | None] = {}
     unanchored_run: dict[str, bool] = {}  # suppresses repeat WARNING logging within one bad run
 
+    skipped_pairs: set[str] = set()  # logged once per pair, not per hour
+
     for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
         if pair is not None and seg_pair != pair:
+            continue
+        if seg_pair.split("/")[-1] != PANEL_QUOTE:
+            if seg_pair not in skipped_pairs:
+                skipped_pairs.add(seg_pair)
+                logger.info(
+                    "panel skipping non-%s-quoted pair=%s (the notional ladder is quote-denominated)", PANEL_QUOTE, seg_pair
+                )
             continue
         if since is not None and hour < since:
             continue
@@ -334,7 +347,7 @@ def materialize(
         books[seg_pair] = book_out
         unanchored_run[seg_pair] = False
 
-    return MaterializeResult(hours_written, hours_skipped, hours_unanchored, hours_unsettled, rows, errors)
+    return MaterializeResult(hours_written, hours_skipped, hours_unanchored, hours_unsettled, rows, errors, len(skipped_pairs))
 
 
 def _code_ref() -> str:
