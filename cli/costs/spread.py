@@ -35,9 +35,9 @@ from cli.costs.fees import round_trip_fee
 from cli.costs.margin import margin_carry
 
 # Provenance of the table below -- asserted by the tests so a new window cannot arrive unstamped.
-CALIBRATION_WINDOW: tuple[str, str] = ("2026-07-08T13:47:33Z", "2026-07-21T15:59:59Z")
-CALIBRATION_HOURS: int = 315
-CALIBRATION_MIN_ROWS: int = 1_123_509
+CALIBRATION_WINDOW: tuple[str, str] = ("2026-07-08T13:47:33Z", "2026-07-23T05:59:59Z")
+CALIBRATION_HOURS: int = 353
+CALIBRATION_MIN_ROWS: int = 1_260_309
 
 # Mean effective spread, **bps per side**, mid-relative, by EUR notional. Nulls over the window:
 # exactly 2 across 10 pairs x 3 sizes x 2 sides (XRP fill_bps_ask_10k, 2026-07-13 07:04:31-32Z), so
@@ -46,16 +46,16 @@ CALIBRATION_MIN_ROWS: int = 1_123_509
 # the thin pairs, and ranks beyond 10 are venue-unverified in every era -- those figures rest on
 # protocol congruence rather than on Kraken's own checksums.
 SPREAD_CALIBRATION: dict[str, dict[int, float]] = {
-    "BTC": {100: 0.266, 1_000: 0.392, 10_000: 0.635},
-    "ETH": {100: 0.425, 1_000: 0.494, 10_000: 0.698},
-    "XRP": {100: 0.768, 1_000: 1.121, 10_000: 2.076},
-    "SOL": {100: 0.925, 1_000: 1.034, 10_000: 1.834},
-    "DOGE": {100: 1.707, 1_000: 1.839, 10_000: 3.724},
-    "LINK": {100: 2.102, 1_000: 2.275, 10_000: 3.677},
-    "LTC": {100: 2.035, 1_000: 3.028, 10_000: 5.245},
-    "ADA": {100: 2.174, 1_000: 2.452, 10_000: 5.324},
-    "AVAX": {100: 2.438, 1_000: 2.886, 10_000: 5.916},
-    "DOT": {100: 3.684, 1_000: 5.545, 10_000: 12.412},
+    "BTC": {100: 0.260, 1_000: 0.386, 10_000: 0.625},
+    "ETH": {100: 0.420, 1_000: 0.486, 10_000: 0.686},
+    "XRP": {100: 0.758, 1_000: 1.116, 10_000: 2.071},
+    "SOL": {100: 0.922, 1_000: 1.029, 10_000: 1.822},
+    "DOGE": {100: 1.721, 1_000: 1.853, 10_000: 3.741},
+    "LINK": {100: 2.207, 1_000: 2.367, 10_000: 3.704},
+    "LTC": {100: 2.036, 1_000: 3.022, 10_000: 5.237},
+    "ADA": {100: 2.180, 1_000: 2.459, 10_000: 5.365},
+    "AVAX": {100: 2.408, 1_000: 2.858, 10_000: 5.863},
+    "DOT": {100: 3.579, 1_000: 5.405, 10_000: 12.223},
 }
 
 _PINNED_SIZES: tuple[int, ...] = (100, 1_000, 10_000)
