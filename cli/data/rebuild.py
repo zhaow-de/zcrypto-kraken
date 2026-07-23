@@ -169,7 +169,27 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
     }
     manifest_path = ohlc_root / "manifest.json"
-    ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"] if manifest_path.exists() else ""
+    # Fail closed on a missing manifest (T0094). `backfill_basket` always writes one, so its absence
+    # means a broken or half-written set -- exactly when emitting a provenance hash of `""` is most
+    # harmful: an empty string reads as a value and compares EQUAL across two entirely different
+    # broken builds, so two artifacts would agree on provenance while sharing none. A directory name
+    # is not an identity (T0093); the hash is what makes the citation resolvable.
+    if not manifest_path.exists():
+        raise DataSyncError(
+            f"data rebuild: universe needs {manifest_path} to record the OHLC set's identity -- "
+            "absent, so the set is broken or half-written; refusing to write an artifact whose "
+            "provenance hash would be empty (T0094)"
+        )
+    # A manifest that exists but cannot be read is the same defect wearing a different costume, so
+    # it gets the same typed failure rather than an untyped KeyError/JSONDecodeError from deep in
+    # the call stack (review finding): both mean "this set cannot identify itself".
+    try:
+        ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"]
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise DataSyncError(
+            f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "
+            "refusing to write an artifact that cannot cite the set it was built from (T0094)"
+        ) from exc
     # Name the set this build actually READ, and how fresh it was (T0093). A hash alone is not a
     # citation: the 2026-07-07 artifact cited `data/ohlc`'s hash, that directory was later retired,
     # and the reference became unresolvable -- with nothing in the file saying which window the

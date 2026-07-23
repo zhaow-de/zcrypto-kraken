@@ -267,7 +267,7 @@ zcrypto data rebuild <SET>...
 | `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-15m`, `derivatives-funding`, `snapshots`, `universe`. |
 | `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
 
-All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose `ohlc-full` set is staler than the 7-day budget), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
+All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose `ohlc-full` set is staler than the 7-day budget or whose `manifest.json` is missing/unreadable — the set then cannot identify itself, so no artifact is written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 
 ## Configuration<a name="configuration"></a>
 

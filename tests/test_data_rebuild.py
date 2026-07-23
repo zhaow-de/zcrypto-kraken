@@ -143,6 +143,62 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     assert payload["provenance"]["ohlc_stalest_daily_bar"] == "2026-07-14"
 
 
+def test_refresh_universe_refuses_a_basket_with_no_manifest(tmp_path, monkeypatch):
+    """A missing `manifest.json` must fail closed, never emit `ohlc_dataset_hash: ""` (T0094).
+
+    `backfill_basket` always writes a manifest, so its absence means a broken or half-written set --
+    exactly when a silent empty hash is most harmful. An empty string is also the wrong shape for
+    "unknown": it reads as a value and compares EQUAL across two entirely different broken builds,
+    so two artifacts could agree on provenance while sharing none. A directory name is not an
+    identity (that is T0093's whole story); the hash is what makes a citation resolvable.
+    """
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    # deliberately NO manifest.json
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="manifest"):
+        rebuild._refresh_universe(ctx, out_root)
+
+    # and it must fail BEFORE writing anything -- a half-written artifact is the failure mode too
+    assert not (out_root / "point-in-time-universe.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("payload", "label"),
+    [("{not json", "invalid JSON"), ('{"other_key": 1}', "missing basket_sha256")],
+)
+def test_refresh_universe_refuses_an_unreadable_manifest(tmp_path, monkeypatch, payload, label):
+    """A manifest that EXISTS but cannot be read is the same defect as an absent one (T0094).
+
+    Both mean the set cannot identify itself, so both get the same typed failure -- otherwise this
+    path raises an untyped KeyError/JSONDecodeError from deep in the call stack, with no path in
+    the message, inconsistent with every other guard in this module.
+    """
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    (ohlc_root / "manifest.json").write_text(payload)
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="unreadable"):
+        rebuild._refresh_universe(ctx, out_root)
+    assert not (out_root / "point-in-time-universe.json").exists(), label
+
+
 def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch):
     # The production path is the whole point of the criterion: wiring it in `_refresh_universe` is
     # what makes the cap real, so reverting that call to `finalize_universe(pairs, volumes)` must
@@ -154,6 +210,7 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
     ohlc_root = tmp_path / "ohlc-full"
     _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
     _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
 
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
     out_root = tmp_path / "universe-20260718"
@@ -241,6 +298,7 @@ def test_refresh_universe_accepts_an_ohlc_set_inside_the_staleness_budget(tmp_pa
 
     ohlc_root = tmp_path / "ohlc-full"
     _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 16))
+    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
 
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
     out_root = tmp_path / "universe-20260718"
