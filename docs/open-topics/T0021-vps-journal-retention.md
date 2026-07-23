@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the VPS root filesystem crosses the 80% disk watermark — the trigger mechanism is the NAS Alloy `/volume1` disk-free alert (T0020's `NAS · /volume1 free space low` rule, provisioned live 2026-07-13 via `infra/scripts/grafana-push.sh`); the workstation gate-ops read that used to be the interim watch is retired (iter-094, superseded by Role B's NAS gate-export) — or an attended ops window wants it earlier
+ripe_when: NOW — the retention parameter is decided (14 d, owner 2026-07-23) and the remainder is a small well-scoped build; take it at the next attended ops window (attended deploy — engine state dir on the VPS + Role B on the NAS, never capture's). The old disk-pressure trigger is retired — it guarded the then-undecided design and would not have fired for years at ~0.35 GiB/month
 ---
 
 # VPS engine-journal retention — prune-after-verified-pull
@@ -18,9 +18,10 @@ Left alone the journal eventually pressures the VPS disk that also hosts the cap
 - Growth measured, not estimated: 2,090,692 bytes for cycle-00 (20 snapshot parquets + record) on 2026-07-11.
 - The NAS's hourly Role B journal pull + gate-verify replay gives a natural "verified pull" event a pruning rule could key on (superseded the workstation's daily 06:30 UTC gate-ops pull, iter-094).
 - Cross-links: [[T0003]] (its disk-watch item covers the same filesystem for capture; the NAS archive Role B builds is where pruned journal history would durably live), [[T0020-grafana-cloud-observability]] (the NAS `/volume1` disk-free alert that fires this topic's trigger).
+- **Retention decided (owner ruling, 2026-07-23 grooming): 14 days flat** — the benefit of a longer window is marginal. Safe because the gate never reads the VPS copy: `zcrypto engine gate-export` scores `$JOURNAL_DEST` on the NAS (`infra/nas/pull-entrypoint.sh:110`), so VPS-local retention cannot starve the ≥14-clean-day gate window — the prune-after-verified-pull condition is what protects evidence, not the length of the local tail. 14 also matches the fleet's existing convention: the capture segment prune runs `retention_days=14` (spec 00050 D8).
 
 ## Suggested next steps
 
-- Design the retention rule: e.g. VPS keeps the rolling N most recent days (N ≥ the gate window 14 + margin); pruning runs only after the NAS's verified replay of the day succeeded; never prune the current UTC day.
+- Design the remaining safety semantics around the **decided 14-day window** (the N question is closed — see Findings): pruning runs only after the NAS's verified replay of the day succeeded, never prune the current UTC day, and tamper-evidence across the prune boundary.
 - Decide the durable archive home: the NAS copy alone, or fold into T0003's NAS compaction.
 - Implement as a small role task or a Role B gate-export extension (attended deploy; touches the engine state dir, never capture's).
