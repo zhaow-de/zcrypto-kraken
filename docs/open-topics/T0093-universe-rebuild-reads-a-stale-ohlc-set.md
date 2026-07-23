@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: before the pre-live universe refresh ([[T0025]]) — that refresh is the operation this breaks. The silent-shrink path is closed by a fail-closed guard (landed 2026-07-22); the remainder is the DATA gap, and it is NOT dischargeable by ingesting dumps — the OHLCVT dumps are quarterly, so even a freshly-ingested just-closed quarter leaves the frontier weeks stale and the guard still fires. Ripe when a LIVE-TAILED volume source exists for the rebuild: either [[T0065]]'s live-trades→bars materializer or a REST volume pull in the rebuild path. Also ripe if any decision starts leaning on the committed universe's `median_quote_volume` figures as current
+ripe_when: **the data half is DISCHARGED as of 2026-07-23** — `zcrypto data rebuild ohlc-reach` (T0065) mints a live-tailed daily series whose stalest bar is **1 day old** against the 7-day budget, where `data/ohlc-full` sits at 114 days and correctly fails closed. What remains is the WIRING decision, and it is deliberately not autonomous: pointing `_refresh_universe` at the reach set changes which dataset defines the tradeable universe, so it belongs to [[T0025]]'s pre-live refresh with the owner present. Also ripe if any decision starts leaning on the committed universe's `median_quote_volume` figures as current
 ---
 
 # The universe rebuild reads an OHLC set that stops months short, so its volume floor measures the past
@@ -51,6 +51,19 @@ Also corrected in the same change: `docs/universe/point-in-time-universe.md`'s "
 Provenance hardened 2026-07-22/23 in the same spirit (completed by [[T0094]]): the artifact now records `ohlc_dataset_dir` and `ohlc_stalest_daily_bar`, and a set that cannot produce a resolvable hash is refused outright rather than published with an empty one — so a future reader can see which set a build read and where its trailing window ended, instead of inferring it from a bare hash that may no longer resolve. The remaining hole — an empty `ohlc_dataset_hash` when the manifest is missing — is [[T0094]].
 
 **This closes the silent-shrink path, not the data gap** — a rebuild now fails loudly instead of quietly selecting eleven. The gap itself is the remainder below.
+
+## Done so far
+
+- **The live-tailed volume source now exists (2026-07-23).** This topic's `ripe_when` named exactly two acceptable discharges — [[T0065]]'s live-trades→bars materializer, or *a REST volume pull in the rebuild path*. The second landed as `zcrypto data rebuild ohlc-reach` (`cli/ohlc/reach.py`), and it clears the freshness budget with room to spare:
+
+  | set | stalest daily bar | staleness | `_require_fresh_ohlc` |
+  |---|---|---|---|
+  | `data/ohlc-full` | ETH @ 2026-03-31 | 114 d | **fails closed** (budget 7 d) |
+  | `data/ohlc-reach-20260723` | ETH @ 2026-07-22 | **1 d** | **passes** |
+
+  Note this vindicates the guard rather than working around it: the rebuild was *correctly* refusing, and the fix was to supply a fresh source, not to relax the budget.
+
+- **The remainder is a wiring decision, and it is deliberately parked.** `_refresh_universe` still reads `ohlc-full` via `_require_ohlc_full`. Repointing it at a reach set changes **which dataset defines the tradeable universe** — a research-relevant choice (the reach set's tail is REST-derived rather than dump-derived), so it rides [[T0025]]'s pre-live refresh with the owner present rather than being switched autonomously. Until then a universe rebuild continues to fail closed, which is the safe state.
 
 ## Suggested next steps
 
