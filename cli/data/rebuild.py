@@ -16,6 +16,7 @@ from cli.backfill.substrate15m import build_15m_substrate
 from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
 from cli.data.errors import DataSyncError
 from cli.derivatives.funding import build_funding_substrate
+from cli.derivatives.oi import build_oi_substrate
 from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet
 from cli.ohlc.reach import reach_round
@@ -90,6 +91,10 @@ def _rebuild_ohlc_reach(ctx: RebuildContext, out_root: Path) -> None:
 
 def _refresh_funding(ctx: RebuildContext, out_root: Path) -> None:
     build_funding_substrate(out_root)
+
+
+def _refresh_oi(ctx: RebuildContext, out_root: Path) -> None:
+    build_oi_substrate(out_root)
 
 
 def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
@@ -243,6 +248,7 @@ REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
     "ohlc-15m": _rebuild_ohlc_15m,
     "ohlc-reach": _rebuild_ohlc_reach,
     "derivatives-funding": _refresh_funding,
+    "derivatives-oi": _refresh_oi,
     "snapshots": _refresh_snapshots,
     "universe": _refresh_universe,
 }

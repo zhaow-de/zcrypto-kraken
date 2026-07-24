@@ -80,6 +80,14 @@ Dataset root `data/ohlc-reach/` — the canonical, **unstamped** name, like ever
 
 10 USDT-M perpetuals' full realized-funding history from Binance Vision monthly `fundingRate` dumps, checksum-verified per file, via `cli/derivatives/funding.py` (iter-090, spec/plan `00047`). Dataset root `data/derivatives-funding/`; `basket_sha256` `e08ea1a9…`. 68,281 funding prints; balanced-panel start 2020-09-22 (AVAX); zero cadence gaps except SOL's 2022-11-09→18 window of 4h→2h funding (a real venue action around the FTX collapse, preserved via `interval_hours`). Staged for the B2 derivatives-positioning family ([[T0023]]) — this substrate is funding-only; OI and liquidations are separate.
 
+### `derivatives-oi`
+
+10 USDT-M perpetuals' 5-minute open-interest history from Binance Vision **daily `metrics`** dumps, checksum-verified per file, via `cli/derivatives/oi.py` (the `derivatives-oi` `data rebuild` target; sibling of the funding backfill). Dataset root `data/derivatives-oi/`; `basket_sha256` `e9f7344c…`; ~189 MB, 5,010,882 rows. Columns: `ts` (5-min, aware-UTC), `sum_open_interest`, `sum_open_interest_value`, plus the four free ratios (`count_toptrader_long_short_ratio`, `sum_toptrader_long_short_ratio`, `count_long_short_ratio`, `sum_taker_long_short_vol_ratio`). Raw 5-minute cadence is stored as-is — resampling to the 1h/4h/8h decision grid is the B2 harness's job.
+
+**Coverage — the binding constraint on a balanced B2 panel.** Only **BTCUSDT** reaches back to **2020-09-01** (618,850 rows); **every other symbol starts 2021-12-01** (~488,000 rows each) — verified against the CDN, not inferred: ETH/SOL/LTC all 404 before 2021-12-01 and 200 from it, so Binance simply began publishing metrics for the non-BTC perps on that date. A **balanced 10-name OI panel therefore starts 2021-12-01**, which is *later* than the funding panel's 2020-09-22 — **OI, not funding, bounds the balanced B2 window.** All series end 2026-07-22 (the 07-23 dump was not yet published; Binance's daily metrics lag ~1-2 days).
+
+**Null semantics.** `sum_open_interest`/`_value` are **complete (zero nulls)**. The four ancillary ratio columns carry genuine Binance gaps — e.g. BTCUSDT has 92,226 null `count_toptrader_long_short_ratio` (~15%) — because early metrics leave them absent in two forms (bare-empty and quoted-empty `""`). Those absences parse to **null** so a missing auxiliary ratio never discards a valid OI reading; a consumer must treat the ratio columns as nullable and the OI columns as dense.
+
 ### `ohlc-holdout-2026-07-10`
 
 The pre-registered out-of-time holdout pull: 100 bars/pair, 2026-04-01 → 2026-07-09 (621 overlap bars/pair verified exact against the canonical `ohlc-full`). Dataset root `data/ohlc-holdout-2026-07-10/`; manifest sha256 `4e251df2…`. The holdout look budget is spent (1 → 0, executed 2026-07-10); see `docs/research/13.phase5-holdout-ledger.md` for the full ledger and the (degenerate) result.
