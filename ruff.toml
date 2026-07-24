@@ -1,7 +1,14 @@
 line-length = 132
 
 exclude = [
-    ".vscode/launch.json"
+    ".vscode/launch.json",
+    "*.md",
+    # Vendored verbatim, byte-identical to the fleet's /usr/bin/rrsync — a reformat defeats the
+    # provenance (spec 00056 D2). Ruff reads it as Python from its shebang, so the extension does
+    # not spare it. This entry guards ruff ONLY: pre-commit's top-level `exclude:` is still
+    # required and is the sole guard against every other hook — with it removed, trailing-whitespace
+    # rewrites this file (measured 2026-07-24).
+    "infra/nas/rrsync"
 ]
 
 [format]
