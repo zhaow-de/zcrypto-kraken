@@ -35,7 +35,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 ### Partially done<a name="partially-done"></a>
 
-- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); the OI backfill + harness are autonomous when B2 is picked.
+- [T0023 — B2 derivatives-positioning data sourcing](T0023-b2-derivatives-data-sourcing.md) — funding substrate delivered (iter-090); liquidations LIVE via the Coinalyze poller (iter-097; Binance futures WS geo-fenced from our egresses); **the OI substrate is DELIVERED 2026-07-24 (PR #201)** — tooling, the full 2020→present backfill (10 series, 5,010,882 rows, `basket_sha256 e9f7344c…`), promotion to canonical `data/derivatives-oi/`, the hub push and the catalog entry are all done, so it is `data fetch`-able on ops. Measured coverage that **changes the B2 panel**: only BTC reaches 2020-09-01, every other symbol starts 2021-12-01, so a balanced funding+OI panel starts 2021-12-01 and **OI, not funding, is the binding leg**. **Only the B2 harness remains** as autonomous pre-work (ripe when: B2 is picked for an iteration).
 
 - [T0016 — Bucket-B/C alpha families](T0016-bucket-b-c-alpha-families.md) — the §5 queue umbrella, now partial: B1 split out to T0022 (iter-086); remainder = B2/B3/B4, C1–C3 (budgets B=25 shared/C=10) with per-family prerequisites in the frontmatter.
 
