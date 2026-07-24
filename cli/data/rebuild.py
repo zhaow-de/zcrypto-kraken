@@ -17,7 +17,9 @@ from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
 from cli.data.errors import DataSyncError
 from cli.derivatives.funding import build_funding_substrate
 from cli.derivatives.oi import build_oi_substrate
+from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet
+from cli.ohlc.reach import reach_round
 from cli.snapshot import CANDIDATE_SYMBOLS, derive_universe
 from cli.snapshot.fetch import fetch_public
 from cli.snapshot.register import build_snapshot
@@ -31,6 +33,8 @@ from cli.universe.rules import (
     finalize_universe,
 )
 from cli.universe.volume import quote_volume_in_eur
+
+logger = get_logger("data.rebuild")
 
 _OHLC_INTERVALS = ["1440", "240", "60"]
 _UNIVERSE_VOLUME_WINDOW_DAYS = 30
@@ -64,6 +68,25 @@ def _rebuild_ohlc_full(ctx: RebuildContext, out_root: Path) -> None:
 def _rebuild_ohlc_15m(ctx: RebuildContext, out_root: Path) -> None:
     source_dir = _require_source_dir(ctx, "ohlc-15m")
     build_15m_substrate(source_dir, list(CANDIDATE_SYMBOLS), out_root, fetched_at=datetime.now(UTC).isoformat())
+
+
+def _rebuild_ohlc_reach(ctx: RebuildContext, out_root: Path) -> None:
+    """Carry `ohlc-full` forward from Kraken's REST OHLC window (T0065).
+
+    Reads the LIVE canonical set and writes only into the minted sibling, so the canonical stays
+    immutable. Series whose REST window still overlaps the canonical tail land continuous; those it
+    no longer reaches land `.detached` -- kept because REST bars expire as the window recedes. See
+    `cli/ohlc/reach.py` for why both outcomes are written rather than one being refused.
+    """
+    report = reach_round(_require_ohlc_full(ctx), out_root)
+    detached = report.detached
+    if detached:
+        logger.warning(
+            "data rebuild: %d of %d reach series are DETACHED (no seam to the canonical tail): %s",
+            len(detached),
+            len(report.entries),
+            ", ".join(f"{e.symbol}@{e.interval}" for e in detached),
+        )
 
 
 def _refresh_funding(ctx: RebuildContext, out_root: Path) -> None:
@@ -223,6 +246,7 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
 REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
     "ohlc-full": _rebuild_ohlc_full,
     "ohlc-15m": _rebuild_ohlc_15m,
+    "ohlc-reach": _rebuild_ohlc_reach,
     "derivatives-funding": _refresh_funding,
     "derivatives-oi": _refresh_oi,
     "snapshots": _refresh_snapshots,

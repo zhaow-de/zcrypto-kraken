@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 6b's realized window reaches a length where a regime split leaves usable sub-samples (≈30+ days of realized cycles), or a dated market-structure event lands inside the soak window — re-pointed 2026-07-21 from "a concrete definition exists for regime context", which was circular: that trigger waited on nobody, since only deliberate design work could ever fire it, and conditioning a ≤14-day soak on regime has no discriminating power anyway
+ripe_when: the realized window `soak-check` reads — **shadow or live** — reaches ≥30 days of clean cycles, or a dated market-structure event lands inside it. Re-pointed twice: from "a concrete definition exists for regime context" (2026-07-21; circular — only deliberate design work could ever fire it), and from "**6b's** realized window reaches ≈30+ days" (2026-07-23) because the discriminating quantity is the length of the window the instrument reads, and the **shadow** soak alone passes 30 days around 2026-08-10 without 6b having started — the old wording fired roughly two months after the condition it was written to capture
 ---
 
 # soak-check: wire the secondary block-bootstrap null + `--null`/`--path` options + regime context
