@@ -9,4 +9,4 @@ nfs_mount_dir = "/mnt/zhao-crypto"
 # command -- NEVER the rw NFS mount) + the sets this node may push. Fetch source derives from nfs_mount_dir.
 [zcrypto.data]
 push_dest = "nas-hot:"
-authored_sets = ["ohlc-full", "ohlc-15m", "ohlc-holdout-2026-07-10", "derivatives-funding", "snapshots", "universe"]
+authored_sets = ["ohlc-full", "ohlc-15m", "ohlc-holdout-2026-07-10", "derivatives-funding", "derivatives-oi", "snapshots", "universe"]
