@@ -2,6 +2,7 @@
 builders are monkeypatched into `rebuild.REBUILDABLE` so these tests stay hermetic."""
 
 import json
+import tomllib
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
@@ -387,3 +388,28 @@ def test_rebuild_ohlc_reach_fails_closed_without_a_live_canonical(tmp_path, monk
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
     with pytest.raises(DataSyncError):
         rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+
+def test_every_rebuildable_dataset_is_an_authored_set():
+    """A dataset this node can REBUILD is one it AUTHORS, so it must also be publishable.
+
+    Guards a real, silent failure mode. `authored_sets` drives `data push`; `push_hot` raises only
+    when a listed set is missing from DISK, never when a set is merely absent from the list. So a
+    dataset dropped from `authored_sets` is never pushed, the ops node can never `data fetch` it,
+    and NOTHING errors. That is exactly what a careless merge produces: two branches each appending
+    a different dataset to this one-line array conflict, and a resolution keeping only one side
+    looks clean. This assertion is what makes that loud.
+
+    The converse is deliberately NOT asserted -- `authored_sets` may legitimately hold sets that are
+    not rebuildable (e.g. `ohlc-holdout-*`, a frozen one-off with a spent look budget).
+    """
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / "zcrypto.toml").read_text())
+    authored = set(config["zcrypto"]["data"]["authored_sets"])
+
+    missing = sorted(set(rebuild.REBUILDABLE) - authored)
+
+    assert not missing, (
+        f"rebuildable dataset(s) absent from zcrypto.toml authored_sets: {missing}. "
+        "`data push` would silently skip them and the ops node could never fetch them -- if you hit "
+        "this after a merge, the resolution dropped an entry; the fix is the UNION of both sides."
+    )
