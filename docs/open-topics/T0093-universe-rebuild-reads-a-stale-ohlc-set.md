@@ -59,7 +59,7 @@ Provenance hardened 2026-07-22/23 in the same spirit (completed by [[T0094]]): t
   | set | stalest daily bar | staleness | `_require_fresh_ohlc` |
   |---|---|---|---|
   | `data/ohlc-full` | ETH @ 2026-03-31 | 114 d | **fails closed** (budget 7 d) |
-  | `data/ohlc-reach-20260723` | ETH @ 2026-07-22 | **1 d** | **passes** |
+  | `data/ohlc-reach` | ETH @ 2026-07-22 | **1 d** | **passes** |
 
   Note this vindicates the guard rather than working around it: the rebuild was *correctly* refusing, and the fix was to supply a fresh source, not to relax the budget.
 
