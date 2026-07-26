@@ -179,9 +179,9 @@ def materialize(
     if pair is not None and pair.count("/") != 1:
         raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
     if pair is not None and pair.split("/")[-1] != PANEL_QUOTE:
-        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing.
+        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing. (T0092)
         raise typer.BadParameter(
-            f"--pair {pair}: the panel is {PANEL_QUOTE}-quoted only (the notional ladder is quote-denominated, T0092)"
+            f"--pair {pair}: the panel is {PANEL_QUOTE}-quoted only (the notional ladder is quote-denominated)"
         )
 
     since_dt = _parse_since(since) if since is not None else None
