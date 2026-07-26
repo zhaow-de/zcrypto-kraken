@@ -1463,7 +1463,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + healthchecks dead-man are the last line. Check the zcrypto-capture-prune timer and for an unexpected disk consumer."
+      summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + healthchecks dead-man are the last line. Check both prune timers (zcrypto-capture-prune for the spool, zcrypto-engine-journal-prune for the engine journal) and for an unexpected disk consumer."
     labels:
       severity: warning
     notification_settings:

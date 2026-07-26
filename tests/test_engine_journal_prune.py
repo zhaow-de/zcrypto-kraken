@@ -1,0 +1,270 @@
+"""VPS engine-journal retention (spec 00070, T0021).
+
+The unit under test is the **shell script the `engine` role installs**
+(`infra/ansible/roles/engine/files/zcrypto-engine-journal-prune.sh`), driven with `bash` over a
+fixture journal tree — not a Python re-implementation. What deletes bytes on the trade-key host is
+that file; a second implementation would only be a second thing to get wrong.
+
+The load-bearing assertions are the NEGATIVE ones, and one of them is not about disk at all.
+`cli/engine/cycle.py` derives each cycle's orders as a delta against the most recent journaled
+cycle, located by globbing this tree; with no prior record every delta becomes the full target and
+the engine rebuilds the whole book ("the shadow book starts flat"). So the prune must keep the
+newest `retention_days` day-dirs REGARDLESS of age — the guard is inert in healthy operation and
+is the only thing standing between a >14-day engine outage and a spurious book rebuild (spec
+00070 D2).
+
+Dates are taken from the directory NAME, never from mtime (D4): the name is the day's identity,
+while an mtime is rewritten by any restore or rsync.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+SCRIPT = Path(__file__).resolve().parents[1] / "infra/ansible/roles/engine/files/zcrypto-engine-journal-prune.sh"
+
+
+def _day(root: Path, days_ago: int) -> Path:
+    """Plant a realistic journal day-dir dated N days before today (UTC), with its cycle records."""
+    name = (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+    d = root / name
+    (d / "snapshots" / "cycle-00").mkdir(parents=True, exist_ok=True)
+    (d / "cycle-00.json").write_text('{"cycle_ts": "x"}')
+    (d / "orders.jsonl").write_text("{}\n")
+    (d / "snapshots" / "cycle-00" / "BTC-240.parquet").write_bytes(b"snap")
+    return d
+
+
+# 14 here is a TEST parameter chosen to keep fixtures small -- it is deliberately NOT the deployed
+# default (60, spec 00070). The script is parameterized; the deployed value is pinned separately by
+# test_the_deployed_retention_matches_the_spec below.
+def _prune(root: Path, days: str = "14", *extra: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["bash", str(SCRIPT), str(root), days, *extra], capture_output=True, text=True, check=False)
+
+
+def test_deletes_only_days_older_than_retention(tmp_path):
+    old, edge, fresh = _day(tmp_path, 40), _day(tmp_path, 15), _day(tmp_path, 3)
+    # 20 recent days so the keep-newest floor is satisfied and age is the only variable under test.
+    for n in range(1, 21):
+        _day(tmp_path, n)
+    result = _prune(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not old.exists(), "a 40-day-old day must be pruned"
+    assert not edge.exists(), "a 15-day-old day is beyond the 14-day window"
+    assert fresh.exists(), "a 3-day-old day is inside the window"
+
+
+def test_keeps_the_newest_n_days_even_when_all_are_aged(tmp_path):
+    """D2, the load-bearing guard: a >14-day engine outage ages out EVERY day. An age-only prune
+    would empty the journal and the next cycle would rebuild the whole book from flat."""
+    days = [_day(tmp_path, n) for n in range(30, 60)]  # every one far beyond retention
+    result = _prune(tmp_path)
+    assert result.returncode == 0, result.stderr
+    survivors = sorted(p.name for p in tmp_path.iterdir() if p.is_dir())
+    assert len(survivors) == 14, f"must keep the newest 14 regardless of age, kept {len(survivors)}"
+    assert survivors == sorted(d.name for d in days)[-14:], "the survivors must be the NEWEST 14"
+
+
+def test_never_touches_the_current_utc_day(tmp_path):
+    today = _day(tmp_path, 0)
+    for n in range(1, 21):
+        _day(tmp_path, n)
+    assert _prune(tmp_path).returncode == 0
+    assert today.exists(), "the day being written must never be deleted"
+
+
+def test_a_day_exactly_at_the_retention_boundary_survives(tmp_path):
+    """The AGE condition, isolated from the keep-newest floor.
+
+    15 consecutive days means exactly one candidate below the floor — the oldest, aged exactly
+    `retention_days`. The cutoff is `today - 14` and the comparison is strictly-older, so that day
+    must survive. This is the only shape where age decides anything the floor has not already
+    decided: with 15 distinct days the oldest is necessarily >= 14 days old, so any fixture with
+    more days makes the floor sufficient and leaves the cutoff untested.
+    """
+    days = {n: _day(tmp_path, n) for n in range(15)}  # ages 0..14
+    result = _prune(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "deleted=0" in result.stdout, f"nothing is strictly older than the cutoff: {result.stdout}"
+    assert days[14].exists(), "a day aged exactly retention_days is NOT strictly older than the cutoff"
+
+
+def test_a_day_one_past_the_boundary_is_deleted(tmp_path):
+    """The other side of the same comparison — together these pin the sense of `<` and prove the
+    cutoff is evaluated at all."""
+    days = {n: _day(tmp_path, n) for n in range(16)}  # ages 0..15
+    result = _prune(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not days[15].exists(), "a day one past the window must go"
+    assert days[14].exists(), "...but the boundary day itself stays"
+    assert "deleted=1" in result.stdout, result.stdout
+
+
+def test_the_regex_anchors_reject_names_that_merely_contain_a_date(tmp_path):
+    """D3 calls this glob the entire safety argument, so mutate-test it rather than assert it.
+
+    retention_days=1 leaves the single real day-dir protected by the floor and every stray a
+    deletion candidate, so each anchor failure shows up as a deletion:
+      - no trailing `$`      -> `2020-01-01.tmp` / `2020-01-03x` match and are swept
+      - no leading `/`       -> `backup-2020-01-02` matches, and the real dir sorts ahead of it
+                                into the candidate slot and is swept instead
+      - no `-type d`         -> the plain FILE `2020-01-04` matches and is swept
+    """
+    real = _day(tmp_path, 40)
+    affixed = [tmp_path / n for n in ("2020-01-01.tmp", "backup-2020-01-02", "2020-01-03x")]
+    for d in affixed:
+        d.mkdir()
+        (d / "evidence").write_text("x")
+    plain_file = tmp_path / "2020-01-04"
+    plain_file.write_text("not a directory")
+
+    result = _prune(tmp_path, "1")
+    assert result.returncode == 0, result.stderr
+    for d in affixed:
+        assert d.exists(), f"{d.name} is not an ISO day-dir and must never be swept"
+    assert plain_file.exists(), "a plain file is not a day-dir even when its name is a date"
+    assert real.exists(), "the one genuine day-dir is the only match, so the floor protects it"
+
+
+def test_ignores_anything_that_is_not_an_iso_day_dir(tmp_path):
+    """An unexpected name means something else writes here — a reason to stop, not to sweep."""
+    for n in range(1, 21):
+        _day(tmp_path, n)
+    stray_dir = tmp_path / "cache"
+    stray_dir.mkdir()
+    (stray_dir / "keep").write_text("x")
+    stray_file = tmp_path / "README"
+    stray_file.write_text("x")
+    weird = tmp_path / "2026-07"  # partial date, must not match
+    weird.mkdir()
+    assert _prune(tmp_path).returncode == 0
+    assert stray_dir.exists() and (stray_dir / "keep").exists()
+    assert stray_file.exists()
+    assert weird.exists()
+
+
+def test_dry_run_deletes_nothing_but_reports(tmp_path):
+    old = _day(tmp_path, 40)
+    # Exactly 14 in-window days: satisfies the keep-newest floor while leaving `old` the sole
+    # deletable candidate, so `deleted=1` isolates the one thing under test.
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    result = _prune(tmp_path, "14", "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert old.exists(), "--dry-run must not delete"
+    assert "deleted=1" in result.stdout, "it must still report what it WOULD delete"
+
+
+def test_reports_a_structured_line(tmp_path):
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    out = _prune(tmp_path).stdout
+    assert "zcrypto-engine-journal-prune:" in out
+    assert "deleted=1" in out and "retention_days=14" in out and "kept=" in out
+
+
+def test_writes_a_textfile_metric_when_asked(tmp_path):
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    prom = tmp_path.parent / "prune.prom"
+    assert _prune(tmp_path, "14", "--textfile", str(prom)).returncode == 0
+    body = prom.read_text()
+    assert "zcrypto_engine_journal_prune_deleted_days 1" in body
+    assert "zcrypto_engine_journal_prune_kept_days" in body
+    assert "zcrypto_engine_journal_prune_last_run_timestamp_seconds" in body
+
+
+@pytest.mark.parametrize("bad", ["/", "/var", "/var/lib", "/usr", "/etc", "/home"])
+def test_refuses_system_roots(tmp_path, bad):
+    result = _prune(Path(bad))
+    assert result.returncode == 2, "a system root must be refused before anything is deleted"
+    assert "refusing" in result.stderr.lower()
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "abc", ""])
+def test_refuses_a_bad_retention(tmp_path, bad):
+    _day(tmp_path, 40)
+    assert _prune(tmp_path, bad).returncode == 2
+
+
+def test_refuses_a_missing_journal_dir(tmp_path):
+    result = _prune(tmp_path / "nope")
+    assert result.returncode == 2
+    assert "not found" in result.stderr.lower()
+
+
+def test_deletes_the_whole_day_never_a_partial(tmp_path):
+    """The day is the unit the engine and the gate both reason about."""
+    old = _day(tmp_path, 40)
+    for n in range(1, 21):
+        _day(tmp_path, n)
+    assert _prune(tmp_path).returncode == 0
+    assert not old.exists(), "the day dir and everything under it goes together"
+
+
+# --- The systemd wiring ------------------------------------------------------------------------
+# The script above is only correct if the unit invokes it the way it expects. A mismatch here is
+# near-silent: the timer fires nightly, the oneshot fails, and nothing pages — the journal simply
+# grows while the fleet looks healthy. These two guard the seam.
+
+ROLE = Path(__file__).resolve().parents[1] / "infra/ansible/roles/engine"
+
+
+def _role_vars() -> dict[str, str]:
+    """The role defaults the unit template interpolates."""
+    import re
+
+    text = (ROLE / "defaults/main.yml").read_text()
+    return {k: re.search(rf"^{k}:\s*(\S+)", text, re.M).group(1) for k in ("engine_state_dir", "engine_journal_retention_days")}
+
+
+def _rendered_unit() -> str:
+    unit = (ROLE / "templates/zcrypto-engine-journal-prune.service.j2").read_text()
+    for key, value in _role_vars().items():
+        unit = unit.replace("{{ " + key + " }}", value)
+    assert "{{" not in unit, f"an unsubstituted variable remains: {unit}"
+    return unit
+
+
+def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_it_expects():
+    exec_start = next(line for line in _rendered_unit().splitlines() if line.startswith("ExecStart="))
+    binary, journal_dir, days, *rest = exec_start.removeprefix("ExecStart=").split()
+
+    install_dest = next(
+        line.strip()
+        for line in (ROLE / "tasks/main.yml").read_text().splitlines()
+        if "zcrypto-engine-journal-prune" in line and "dest:" in line
+    )
+    assert binary in install_dest, f"the unit runs {binary}, the role installs {install_dest}"
+
+    assert journal_dir == f"{_role_vars()['engine_state_dir']}/journal"
+    assert days == _role_vars()["engine_journal_retention_days"]
+    # Positional order is <journal-dir> <retention-days>: swapped, the retention parse rejects a
+    # path and the unit fails closed rather than sweeping with a nonsense window.
+    assert _prune(Path("/nonexistent"), days).returncode == 2
+    assert not rest, f"the unit passes an argument the deploy has not been reasoned about: {rest}"
+
+
+def test_protectsystem_strict_still_permits_writing_the_journal_dir():
+    """ProtectSystem=strict mounts /usr and /var read-only; without the ReadWritePaths escape the
+    prune cannot delete anything it correctly identified."""
+    unit = _rendered_unit()
+    assert "ProtectSystem=strict" in unit
+    journal = f"{_role_vars()['engine_state_dir']}/journal"
+    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    assert journal in rw, f"{journal} is not writable under ProtectSystem=strict: {rw}"
+
+
+def test_the_deployed_retention_matches_the_spec():
+    """The retention window is an owner ruling with safety consequences (how long a day survives on
+    the VPS, and how deep the keep-newest floor is), not a tunable. Pin it so a drive-by edit to the
+    role default has to change this line and confront the spec."""
+    assert _role_vars()["engine_journal_retention_days"] == "60", (
+        "spec 00070 records 60 days (owner ruling 2026-07-26) -- update the spec, not just the default"
+    )

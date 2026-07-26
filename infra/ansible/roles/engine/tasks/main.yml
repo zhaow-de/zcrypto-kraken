@@ -325,3 +325,40 @@
     state: directory
     recurse: true
     mode: g+rX
+
+# --- Journal retention (spec 00070, T0021) -----------------------------------------------------
+# Bounds the VPS journal at a {{ engine_journal_retention_days }}-day tail. Deployed AFTER the pull
+# plumbing above, deliberately: the NAS mirror is what makes deleting a local day safe, so the path
+# that copies days off the host is established before the one that removes them.
+- name: install the journal-prune script
+  ansible.builtin.copy:
+    src: zcrypto-engine-journal-prune.sh
+    dest: /usr/local/sbin/zcrypto-engine-journal-prune
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the journal-prune systemd unit
+  ansible.builtin.template:
+    src: zcrypto-engine-journal-prune.service.j2
+    dest: /etc/systemd/system/zcrypto-engine-journal-prune.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: install the journal-prune systemd timer
+  ansible.builtin.copy:
+    src: zcrypto-engine-journal-prune.timer
+    dest: /etc/systemd/system/zcrypto-engine-journal-prune.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+# Only the TIMER is enabled -- the service is the oneshot it triggers, and enabling that too would
+# prune on every boot (same reasoning as the capture-prune pair).
+- name: enable + start the journal-prune timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-engine-journal-prune.timer
+    daemon_reload: true
+    enabled: true
+    state: started

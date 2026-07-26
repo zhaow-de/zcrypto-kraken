@@ -1,0 +1,17 @@
+# Installed by the `engine` Ansible role at /etc/systemd/system/zcrypto-engine-journal-prune.timer —
+# do not hand-edit on the host, edit this file and re-converge instead.
+[Unit]
+Description=Daily prune of aged engine-journal days (spec 00070, T0021)
+
+[Timer]
+# 01:23 UTC (the host's timezone is UTC, base role): clear of the 4-hourly cycle boundaries
+# (nearest is 00:00, 83 min away), of the capture prune on this same host (03:17), and of both
+# maintenance windows (21:25 / 22:25).
+OnCalendar=*-*-* 01:23:00
+# A host down at 01:23 prunes on the next boot rather than skipping the day. Harmless here: the
+# prune is idempotent and bounded by the keep-newest floor.
+Persistent=true
+Unit=zcrypto-engine-journal-prune.service
+
+[Install]
+WantedBy=timers.target

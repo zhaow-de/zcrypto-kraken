@@ -1,0 +1,25 @@
+# Rendered by the `engine` Ansible role at /etc/systemd/system/zcrypto-engine-journal-prune.service
+# — do not hand-edit on the host, edit
+# infra/ansible/roles/engine/templates/zcrypto-engine-journal-prune.service.j2 and re-converge.
+[Unit]
+Description=Prune engine-journal days older than {{ engine_journal_retention_days }} days (spec 00070)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-engine-journal-prune {{ engine_state_dir }}/journal {{ engine_journal_retention_days }}
+# No --textfile, and no /metrics either. Since spec 00069 app metrics here are SCRAPED from live
+# processes (capture_app :9101, engine_app :9102) -- a oneshot that runs for a second has nothing to
+# scrape. The fleet's answer for ephemeral timers is the textfile collector, which the ops node runs
+# and these hosts deliberately do not. So this run is observable through its journald line, shipped
+# to Loki by the same Alloy -- the established pattern for the sibling capture prune. A timer that
+# stops emits no signal; that is backstopped by the "Capture - spool disk low" alert on this same
+# filesystem (spec 00070 D5).
+#
+# The script deletes only inside the journal dir. These make that STRUCTURAL rather than a promise:
+# a bug in its globs cannot reach any path outside ReadWritePaths -- and this host holds the live
+# trade key and the capture spool, neither of which this unit has any business touching.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ engine_state_dir }}/journal
