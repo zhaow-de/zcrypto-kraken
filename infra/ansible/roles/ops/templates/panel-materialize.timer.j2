@@ -1,8 +1,9 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-panel-materialize.timer — do
 # not hand-edit on the host, edit infra/ansible/roles/ops/templates/panel-materialize.timer.j2
 # instead.
+# Traceability: spec 00052 D6
 [Unit]
-Description=Hourly L2 primitive panel materialize (spec 00052 D6)
+Description=Hourly L2 primitive panel materialize
 
 [Timer]
 # Off the hour boundary, after the overlay-writer timer's :12 slot so the overlay hours the panel

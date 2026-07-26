@@ -76,7 +76,8 @@ def _check_generation(panel_root: Path) -> None:
         raise _abort(
             f"panel materialize: {meta_path} generation differs from this code's -- "
             f"existing={existing} code={expected}. A generation change must be an explicit "
-            "regeneration of the whole panel tree (spec 00052 D5), never a silent mix."
+            # spec 00052 D5: whole-tree regeneration on a generation change.
+            "regeneration of the whole panel tree, never a silent mix."
         )
 
 

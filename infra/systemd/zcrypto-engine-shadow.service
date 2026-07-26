@@ -17,8 +17,9 @@
 #   systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
 #   journalctl --user -u zcrypto-engine-shadow.service -f    # follow the node's logs
 
+# Traceability: Phase 6a soak
 [Unit]
-Description=zcrypto shadow engine (Phase 6a soak): one journaled shadow cycle per 4h UTC boundary
+Description=zcrypto shadow engine: one journaled shadow cycle per 4h UTC boundary
 
 [Service]
 WorkingDirectory=<repo>

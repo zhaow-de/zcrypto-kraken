@@ -1,7 +1,8 @@
 # Installed by the `engine` Ansible role at /etc/systemd/system/zcrypto-engine-journal-prune.timer —
 # do not hand-edit on the host, edit this file and re-converge instead.
+# Traceability: spec 00070, T0021
 [Unit]
-Description=Daily prune of aged engine-journal days (spec 00070, T0021)
+Description=Daily prune of aged engine-journal days
 
 [Timer]
 # 01:23 UTC (the host's timezone is UTC, base role): clear of the 4-hourly cycle boundaries

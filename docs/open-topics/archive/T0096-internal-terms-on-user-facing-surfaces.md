@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: NOW — an autonomous small iteration (a standing rule + a repo sweep, all reversible edits); the host-side effect of the systemd rewordings lands opportunistically at each role's next converge (a `Description=` change is cosmetic, so no dedicated deploy)
+status: resolved
 ---
 
 # Internal development terms leak onto user-facing surfaces
@@ -28,8 +27,20 @@ These are the surfaces a future operator (or the owner, months later) reads cold
 - Compose is clean and CLI `--help` is clean, but the third CLI surface — runtime error messages — was never measured and holds two known leaks (above), so the rule does more than *pin* the status quo: the sweep is ~9 `Description=` rewordings + 3 README spots + 2 raised-message rewordings, with the done-check a `cli/` AST walk over raised text across the whole vocabulary.
 - Log messages were not named in the ruling and are left as a boundary question for the rule's design (operator-visible, but also the primary debugging surface where a `T<NNNN>` pointer can genuinely help — decide, rather than leave implicit).
 
-## Suggested next steps
+## Resolution
 
-- **(one small iteration, autonomous)** Write the standing rule in `.claude/rules/` (a `claude`-type commit): the in-scope surface list above, the vocabulary list (`Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec <NNNNN>`/D-numbers), the move-to-comment convention for displaced traceability, and the settled log-line decision; cross-reference the existing `WP<N>` ban rather than restating it.
-- **(same iteration)** The sweep: reword the ~9 systemd `Description=` lines (semantic content stays, tokens move to the adjacent comment), the 3 README spots, and the **two known CLI raised-message leaks** — `cli/data/rebuild.py:103` (`T0093`) and `cli/panel/command.py:76` (`spec 00052 D5`). Done-check: re-run the AST walk over every `raise` in `cli/` **across the full vocabulary, not just `T\d{4}`** (a `T\d{4}`-only pass already produced one false all-clear), plus a re-grep of the other surfaces. **Extend the walk past `raise` before calling it done** — `typer.echo`/`print`/bare `logger.*` reach the operator without raising and the raise-only walk cannot see them; measured 2026-07-26 they carry no vocabulary tokens, so this is a method gap to close, not a live leak. Host-side, the reworded Descriptions take effect at each role's next natural converge — no dedicated deploy.
-- **(decide in the rule design, optional)** A pre-commit guard greping the named surfaces for the vocabulary, so the rule enforces itself; weigh against hook noise before adopting.
+**Resolved 2026-07-26.** The rule is `.claude/rules/operator-facing-text.md`, the sweep is done, and both are enforced by `tests/test_internal_terms_not_operator_visible.py`.
+
+**Enforced by a test rather than swept once.** A sweep has to be re-run by someone who remembers it exists; a test runs on every PR. That also answers this topic's optional pre-commit-guard question — a hook would add noise for a check the suite already performs.
+
+**The method gap this topic named was the real work.** A `T\d{4}`-only pass over `raise` statements had produced a false all-clear here before. The walk now covers the whole vocabulary and every operator-facing call — raises, `typer.echo`/`print`, `help=` — and, for `--help`, scans the **rendered output of the real Typer app** rather than inferring from the AST. That last choice matters in both directions: it has no false positives from internal helper docstrings (which are source comments, out of scope) and no false negatives from a command registered in a way a static walk would not recognise. An AST-only draft of this test flagged 30 helper docstrings that were never in scope.
+
+**The counts were stale, and four of the leaks were mine.** The topic estimated ~9 systemd Descriptions + 3 README spots + 2 CLI messages. Measured: **17 systemd, 2 README, 4 CLI** — and four of the systemd leaks were added *this same evening* by the T0021 and T0027 iterations, while this topic sat in the queue. That is the argument for the test in one sentence.
+
+**Decisions the rule now records** rather than leaving implicit:
+
+- **Log lines are out of scope.** Operator-visible, but they are the primary debugging surface and whoever reads one has the repo open — a `T<NNNN>` pointer there genuinely helps.
+- **A token inside a file path is not a leak.** `docs/open-topics/T0023-*` stays: you need the exact name to open the file, so the token is an operand rather than a reference. This is why the README's third flagged spot needed no edit.
+- **Semantic content stays, the token moves to the adjacent comment.** `systemctl status` still says what the unit does; the serial sits on the line above. Two Descriptions kept a parenthetical that was *operator*-useful ("the unit name is historical") while shedding the serial next to it.
+
+Host-side, the reworded Descriptions land at each role's next natural converge — a `Description=` change is cosmetic, so no dedicated deploy.

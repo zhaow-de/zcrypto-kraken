@@ -1,8 +1,9 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-grafana-watchdog.timer — do
 # not hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-watchdog.timer.j2
 # instead.
+# Traceability: T0083
 [Unit]
-Description=Every-5-minutes Grafana Cloud probe for the T0083 mutual watchdog
+Description=Every-5-minutes Grafana Cloud probe for the mutual watchdog
 
 [Timer]
 # Every 5 minutes, off the minute boundary (the check's 600 s timeout + 600 s grace tolerate one

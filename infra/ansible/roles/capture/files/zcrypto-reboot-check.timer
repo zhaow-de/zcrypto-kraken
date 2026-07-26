@@ -1,7 +1,8 @@
 # Installed by the `capture` Ansible role at /etc/systemd/system/zcrypto-reboot-check.timer — do not
 # hand-edit on the host, edit this file and re-converge instead.
+# Traceability: spec 00071, T0027
 [Unit]
-Description=Publish the pending-reboot flag as a node-exporter textfile (spec 00071, T0027)
+Description=Publish the pending-reboot flag as a node-exporter textfile
 
 [Timer]
 # Interval, not OnCalendar: this is a stat plus a three-line write, so there is no reason to pick a
