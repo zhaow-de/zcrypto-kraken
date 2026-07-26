@@ -9,7 +9,7 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 | `zcrypto` | `ssh zcrypto` | `capture_host`, `engine_host` | L2 capture **primary** + the trade engine | holds the **live Kraken trade key** (as container env — see CLAUDE.md `## Secrets`) |
 | `zcrypto-red` | `ssh red` | `capture_host` | L2 capture **secondary** only | never joins `engine_host`; no trade key |
 | `zcrypto-ops` | `ssh hp` | `ops_host`, `observed` | compute tier (spec `00051`): archive reconcile/backfill, liquidations poller, panel materialize | no trade key (D10); **no `uv`** — it runs containers, not the repo CLI |
-| `nas` | `ssh nas` | `nas_host`, `observed` | archive/custody (spec `00048` Role A), gate export, NFS server | DSM owns the OS; ansible manages only the zcrypto payload |
+| `nas` | `ssh nas` | `nas_host`, `observed` | archive/custody (spec `00048` Role A), gate export, NFS server | DSM owns the OS; ansible manages only the zcrypto payload. **`docker` is at `/usr/local/bin/docker` and is NOT on a non-interactive ssh `PATH`** — call it by full path and with `sudo`, or `docker ps` returns empty and reads as "no containers" rather than "command not found" |
 | workstation | — | `workstation` (local) | research node; the repo checkout | its `data/engine-store`/`engine-journal` are the **retired** pre-VPS engine state, not live data |
 
 ## Services and instruments
