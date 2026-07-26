@@ -367,6 +367,48 @@ def test_close_ships_a_still_held_batch_via_the_final_flush_loop(handler_factory
         assert "unshipped" not in capsys.readouterr().out
 
 
+def test_successful_ship_updates_shipped_counter_and_last_success_timestamp(fake_loki):
+    url, requests = fake_loki
+    handler = _make_handler(url)
+    try:
+        before = time.time()
+        for i in range(3):
+            handler.emit(_make_record(f"m{i}"))
+        assert _wait_until(lambda: handler.shipped_lines_total >= 3)
+        assert handler.shipped_lines_total == 3
+        assert handler.last_ship_success_at is not None
+        assert before - 0.1 <= handler.last_ship_success_at <= time.time() + 0.1
+
+        for i in range(2):  # a second successful batch accumulates, it does not replace
+            handler.emit(_make_record(f"n{i}"))
+        assert _wait_until(lambda: handler.shipped_lines_total == 5)
+    finally:
+        handler.close()
+
+
+def test_shipped_counter_and_timestamp_only_move_on_the_ok_outcome(handler_factory):
+    """dropped_total grows on 'drop'/ring-overflow; shipped_lines_total and
+    last_ship_success_at are the 'ok'-only counterpart -- a poisoned (400) batch must leave
+    them untouched, and only a later successful batch moves them."""
+    handler_cls = handler_factory(status_code=400)
+    with FakeLoki(handler_cls) as url:
+        handler = _make_handler(url, batch_max=3, ring_capacity=32)
+        try:
+            for i in range(3):
+                handler.emit(_make_record(f"poison-{i}"))
+            assert _wait_until(lambda: handler.dropped_total == 3)
+            assert handler.shipped_lines_total == 0
+            assert handler.last_ship_success_at is None
+
+            handler_cls.status_code = 200
+            for i in range(3):
+                handler.emit(_make_record(f"good-{i}"))
+            assert _wait_until(lambda: handler.shipped_lines_total == 3)
+            assert handler.last_ship_success_at is not None
+        finally:
+            handler.close()
+
+
 def test_close_joins_the_worker_thread_no_leak(fake_loki):
     url, _requests = fake_loki
     handler = _make_handler(url)

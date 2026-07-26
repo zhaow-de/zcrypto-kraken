@@ -50,9 +50,35 @@ _BACKOFF_MAX_SECS = 60.0
 _sleep = time.sleep  # module-level so tests can stub the backoff wait
 _hc_opener = urllib.request.urlopen  # module-level so tests can stub the dead-man's-switch ping
 
+# The engine's metrics-update hook (spec 00069 D5/T4): `run()` installs this exactly when
+# ZCRYPTO_METRICS_PORT is set; None (the default) makes every call below a no-op, so the
+# workstation soak -- and every one-shot subcommand (`cycle`, `replay`, `report`, `soak-check`),
+# none of which ever calls `set_metrics_sink`, since each is a fresh process -- runs unaffected.
+_metrics_sink = None
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def set_metrics_sink(sink) -> None:
+    """Install (or clear, with `None`) `run()`'s per-cycle metrics-update hook: called with
+    `(CycleResult, completed_at, duration_seconds)` immediately after every completion artifact
+    (success record or failed-cycle sidecar) is written."""
+    global _metrics_sink
+    _metrics_sink = sink
+
+
+def _update_metrics(result: CycleResult, completed_at: datetime, duration_seconds: float) -> None:
+    """Isolation invariant (spec 00069 D5): the CycleResult and its journal artifact are already
+    built/written by the time this runs -- a raising sink can never affect either. Mirrors
+    `_ping_healthcheck`'s wrap-and-log."""
+    if _metrics_sink is None:
+        return
+    try:
+        _metrics_sink(result, completed_at, duration_seconds)
+    except Exception:
+        logger.exception("metrics sink raised for cycle %s -- continuing", result.cycle_ts.isoformat())
 
 
 def _ping_healthcheck(success: bool) -> None:
@@ -285,10 +311,11 @@ def _failed(
 ) -> CycleResult:
     """The failed-cycle sidecar: a shape alongside -- not a change to -- schema v1, written WITHOUT
     validate_record (which by design can never pass for a failure)."""
+    completed_at = clock()
     payload = {
         "cycle_ts": cycle_ts.isoformat(),
         "attempted_at": started_at.isoformat(),
-        "completed_at": clock().isoformat(),
+        "completed_at": completed_at.isoformat(),
         "reason": reason,
         "offending_pairs": list(offending),
     }
@@ -297,7 +324,7 @@ def _failed(
     sidecar_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     _ping_healthcheck(False)
     logger.warning("run_cycle: %s failed (%s: %s); sidecar at %s", cycle_ts.isoformat(), reason, ", ".join(offending), sidecar_path)
-    return CycleResult(
+    result = CycleResult(
         status="failed",
         cycle_ts=cycle_ts,
         record_path=None,
@@ -307,6 +334,8 @@ def _failed(
         reason=reason,
         offending_pairs=offending,
     )
+    _update_metrics(result, completed_at, (completed_at - started_at).total_seconds())
+    return result
 
 
 def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, clock=_utc_now) -> CycleResult:
@@ -373,7 +402,7 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
     record_path.write_text(to_json(record) + "\n")
     _ping_healthcheck(True)
     logger.info("run_cycle: %s journaled (%d snapshots, %d order(s))", cycle_ts.isoformat(), len(entries), len(orders))
-    return CycleResult(
+    cycle_result = CycleResult(
         status="success",
         cycle_ts=cycle_ts,
         record_path=record_path,
@@ -383,3 +412,5 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
         reason=None,
         offending_pairs=None,
     )
+    _update_metrics(cycle_result, completed_at, (completed_at - started_at).total_seconds())
+    return cycle_result

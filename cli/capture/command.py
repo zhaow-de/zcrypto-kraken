@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metric
 
 from cli.capture.book import OrderBook
 from cli.capture.errors import CaptureError
@@ -20,6 +21,7 @@ from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, Se
 from cli.capture.ws_client import ALLOWED_DEPTHS, CaptureClient, classify
 from cli.config import load_config
 from cli.logging import get_logger
+from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 
 logger = get_logger("capture.command")
 
@@ -265,6 +267,92 @@ async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, in
         await asyncio.sleep(interval)
 
 
+class CaptureCollector:
+    """Exposes capture's live objects as scrape-time series (spec 00069 D5, T3): registered once,
+    inside `_run()`, after every object below already exists. These attributes have THREE mutators,
+    not one -- `_consume`'s task, `_disk_watermark_loop`'s SEPARATE task (`watermark.check()`,
+    `monitor.start_watermark_gap`/`end_watermark_gap`), and `writer.close()` on the main task at
+    shutdown -- but every one of them runs on the SAME single event-loop thread, while a scrape
+    runs on prometheus_client's own HTTP server thread and only ever reads. That single-writer-
+    thread property is what makes a race here safe, not an absence of concurrent mutation: reads
+    are consistent enough for counter semantics (`increase()` over these series, not a bare
+    point-in-time read, is the intended consumption) even though `GapMonitor.end_watermark_gap`
+    itself has a microsecond torn-read window across its own two fields -- do not restate "never a
+    torn read"."""
+
+    def __init__(
+        self,
+        pairs: list[str],
+        client: CaptureClient,
+        books: dict[str, OrderBook],
+        book_writers: dict[str, SegmentWriter],
+        trade_writers: dict[str, SegmentWriter],
+        monitor: GapMonitor,
+        watermark: DiskWatermark,
+    ) -> None:
+        self._pairs = pairs
+        self._client = client
+        self._books = books
+        self._book_writers = book_writers
+        self._trade_writers = trade_writers
+        self._monitor = monitor
+        self._watermark = watermark
+
+    def collect(self) -> Iterator[Metric]:
+        writers = (*self._book_writers.values(), *self._trade_writers.values())
+        yield CounterMetricFamily(
+            "zcrypto_capture_reconnects_total", "WS reconnect attempts since process start.", value=self._client.reconnects_total
+        )
+        yield CounterMetricFamily(
+            "zcrypto_capture_resubscribes_total",
+            "Book resubscribes issued to recover from a checksum desync.",
+            value=self._client.resubscribes_total,
+        )
+        yield CounterMetricFamily(
+            "zcrypto_capture_segments_written_total",
+            "Hourly segments committed, summed across every pair and kind.",
+            value=sum(w.segments_written for w in writers),
+        )
+        yield CounterMetricFamily(
+            "zcrypto_capture_segment_bytes_total",
+            "Bytes of committed segment files, summed across every pair and kind.",
+            value=sum(w.segment_bytes for w in writers),
+        )
+        yield CounterMetricFamily(
+            "zcrypto_capture_rows_held_total",
+            "Rows parked pending oracle hour confirmation (T0037), summed across every pair and kind.",
+            value=sum(w.rows_held for w in writers),
+        )
+        yield CounterMetricFamily(
+            "zcrypto_capture_rows_quarantined_total",
+            "Held rows actually spilled to a .held quarantine file, summed across every pair and kind.",
+            value=sum(w.rows_quarantined for w in writers),
+        )
+
+        now = datetime.now(UTC)
+        gap = CounterMetricFamily(
+            "zcrypto_capture_gap_seconds_total",
+            "Cumulative gap seconds since process start, per pair -- use `increase()` (restart-safe).",
+            labels=["pair"],
+        )
+        for pair in self._pairs:
+            gap.add_metric([pair], self._monitor.gap_seconds(pair, at=now))
+        yield gap
+
+        desynced = GaugeMetricFamily(
+            "zcrypto_capture_book_desynced", "1 if the pair's book is currently checksum-desynced, else 0.", labels=["pair"]
+        )
+        for pair in self._pairs:
+            desynced.add_metric([pair], 1.0 if self._books[pair].desynced else 0.0)
+        yield desynced
+
+        yield GaugeMetricFamily(
+            "zcrypto_capture_disk_watermark_breached",
+            "1 if the disk watermark is breached (T0032 -- every write stops while the WS stays connected), else 0.",
+            value=1.0 if self._watermark.breached else 0.0,
+        )
+
+
 async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | None, healthcheck_url: str | None) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     books = {pair: OrderBook(pair, depth) for pair in pairs}
@@ -282,6 +370,27 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     monitor = GapMonitor()
     watermark = DiskWatermark(data_dir)
     client = CaptureClient(pairs, depth)
+
+    # Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server, no thread, no
+    # collector -- registered here, late, because every object the collector reads must already
+    # exist. A registration failure must not stop capture from running (or from serving at least
+    # the process-self-metrics ProcessCollector already carries): log and still start the server.
+    # The guard wraps `.register()` itself, not just `CaptureCollector(...)`'s construction
+    # (cold-review M2): `CollectorRegistry.register()` calls the collector's OWN `.collect()`
+    # synchronously, right here, whenever the collector has no `describe()` -- CaptureCollector
+    # doesn't define one -- so capture evaluates these live objects at REGISTRATION time, not
+    # lazily at the next scrape, and this is the one place that read can raise. (The engine's and
+    # poller's own instruments are stock `Counter`/`Gauge`, which DO implement `describe()`, so
+    # `.register()` never evaluates them eagerly the way it does here -- see the poller's own
+    # comment for why its construction needs no equivalent guard.)
+    port = metrics_port_from_env()
+    if port is not None:
+        registry = build_registry()
+        try:
+            registry.register(CaptureCollector(pairs, client, books, book_writers, trade_writers, monitor, watermark))
+        except Exception:
+            logger.exception("capture metrics collector registration failed -- continuing with process metrics only")
+        start_metrics_server(port, registry)
 
     loop = asyncio.get_running_loop()
     main_task = asyncio.current_task()

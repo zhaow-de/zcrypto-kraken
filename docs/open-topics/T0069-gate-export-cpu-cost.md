@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 2026-07-20 — linearity MEASURED on the ops i7 (39 controlled runs); the NAS Atom's ~10.9 s/cycle is DERIVED from this topic's single 2026-07-18 datapoint on that host, not a fresh controlled benchmark, so the original "~20 min wall" trigger projects to fire ≈2026-07-29 and 50% of the hourly budget ≈2026-08-07; treat the remedy (incremental scoring, and/or the relocation to ops) as ripe NOW rather than waiting for the trigger
+ripe_when: the next attended maintenance window — incremental scoring (the structural fix) is deployed and verified in production (spec `00069` rollout, NAS Step 2, warm-cycle facts measured 2026-07-26 in Done so far); only the relocation-to-ops sub-item remains, parked per spec `00069` D8 (different work shape — moves a Role-B deliverable across hosts — so it stays out of that rollout)
 ---
 
 # gate-export CPU cost — ~8 min per archive-pull cycle on a 96 MB journal
@@ -90,8 +90,14 @@ Two corrections, both established by reading the deployed loop rather than the p
 
 **Consequence for the remedy comparison.** With no cliff, the relocation's constant ~6.8x may be sufficient on its own, and it preserves the integrity check that `--cache` removes. Relocation is therefore the *safer* remedy, not the redundant one — the opposite of what the comparison above concludes. Re-decide on that basis.
 
+### Update 2026-07-26 (spec `00069` rollout, NAS Step 2) — `--cache` is live in production, unblocked by [[T0077]]
+
+The **[[T0077]] block is cleared** — its bounded rotating re-verification landed 2026-07-20 (resolved), which is precisely what makes enabling the cache safe: a cache hit no longer serves an un-re-verified PASS forever. `infra/nas/pull-entrypoint.sh` has passed `--cache /tmp/gate-cache.json` since commit `b60dea5` (2026-07-20); the rollout re-pinned the NAS to the `00068`+`00069` image and recreated the container, which empties `/tmp` — so the first post-recreate cycle was a cold rebuild and the second-cycle warm read is the verifiable one.
+
+**Measured directly (2026-07-26 13:41 UTC, live `gate.prom` read on the NAS):** `zcrypto_gate_cache_hits 89`, `zcrypto_gate_cache_replayed 5` ([[T0077]]'s bounded rotating re-verification, not a cold run), `zcrypto_gate_cache_invalidated 0`, `zcrypto_gate_export_duration_seconds 55.75` — **seconds, not minutes** (spec `00060` D4's property, holding in production). `zcrypto_gate_status 1`, `zcrypto_gate_streak_days 15`, `zcrypto_gate_mismatch_total 0` — the gate reads clean under the cache. This also settles the standing "emit gate-export duration as a metric" next-step: `zcrypto_gate_export_duration_seconds` is live and populated, not merely designed.
+
+**Relocation to ops does not ride this rollout** (spec `00069` D8 — different work shape, moves a Role-B deliverable across hosts with healthcheck + textfile rewiring) and stays parked below.
+
 ## Suggested next steps
 
-- **(Autonomous, the structural fix — recommended first)** Implement **incremental scoring** in `_evaluate_journal`: persist a cache of already-verified cycles keyed on the journal's own `content_hash` values, replay only cycles absent from it, and keep a full-recompute escape hatch (a flag, plus automatic invalidation if any cached hash no longer matches). This is gate *evidence*, so it wants its own iteration with TDD: a cache hit must be provably identical to a fresh replay, a tampered/renamed journal must miss the cache rather than trust it, and the streak arithmetic must be unchanged. Expected effect: hourly cost drops from ~8.5 min (rising) to roughly one cycle's rebuild (~11 s on the Atom) and stays flat as the journal grows.
 - **(ATTENDED — parked for a maintenance window)** Relocate gate-export to the ops node (spec `00054` D6's deferred option): run it against ops' own journal mirror and ship `gate.prom` back, or emit it via the ops Alloy textfile collector. Buys a constant ~6.8× and removes the step from the single-threaded archive-pull loop entirely. Attended because it moves a Role-B deliverable across hosts, with its healthcheck + textfile wiring following. Complementary to incremental scoring, not a substitute — it postpones the growth rather than bounding it.
-- **(Autonomous, cheap)** Emit the gate-export wall/CPU duration each cycle as a textfile-collector metric so the approach to the 3600 s budget is visible in Grafana rather than inferred from a linear projection.

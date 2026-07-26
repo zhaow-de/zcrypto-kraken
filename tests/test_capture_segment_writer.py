@@ -1805,3 +1805,66 @@ def test_restart_reseeds_dedup_keys_from_open_hour_parts(tmp_path, caplog):
 
     parts = sorted(tmp_path.rglob("*.part*.parquet"))
     assert sum(pl.read_parquet(p).height for p in parts) == 1  # one row, not two
+
+
+# --- spec 00069 T3: additive metrics counters (segments/bytes/held/quarantined rows) --------------
+
+
+def test_segments_written_and_segment_bytes_increment_on_commit(tmp_path):
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(14, 0))
+    assert w.segments_written == 0  # not yet finalized -- still the open hour
+    w.append(_book_event(15, 0))  # crosses the boundary -> hour 14 finalizes
+
+    path = _segment_path(tmp_path, 14)
+    assert w.segments_written == 1
+    assert w.segment_bytes == path.stat().st_size
+
+
+def test_rows_held_counts_every_row_parked_pending_oracle_confirmation(tmp_path, clock):
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):  # held: a lone stream, clock < 10:05 -> hour 10 not yet confirmed
+        w.append(_trade_event(10, i, i))
+    assert w._held  # sanity: the rows really are in the held state, not admitted
+    assert w.rows_held == 3
+
+
+def test_rows_quarantined_counts_only_rows_actually_spilled_to_a_held_file(tmp_path, clock):
+    clock.now = _ts(10, 3)
+    w = _oracle_writer(tmp_path, HourOracle(), kind="trades", schema=TRADE_SCHEMA, dedup_key="trade_id")
+    for i in range(3):
+        w.append(_trade_event(10, i, i))
+    assert w.rows_quarantined == 0  # held in RAM so far, nothing spilled to disk yet
+
+    w.close()  # close() spills every still-held row to a `.held` quarantine file
+    assert w.rows_quarantined == 3
+
+
+def test_a_raising_metrics_update_after_a_segment_commit_does_not_undo_or_interrupt_it(tmp_path, monkeypatch, caplog):
+    # Isolation invariant (spec 00069 D5): `_merge_hour` already committed the segment (durable on
+    # disk, manifest written) by the time the metrics update runs -- a raising `stat()` there must
+    # never look like the merge itself failing, and must never propagate into `append()`'s caller
+    # (the capture message-handler path).
+    w = _new_writer(tmp_path, flush_rows=5000)
+    w.append(_book_event(14, 0))
+
+    path = _segment_path(tmp_path, 14)
+    real_stat = Path.stat
+
+    def _boom_stat(self, *args, **kwargs):
+        if self == path:
+            raise OSError("simulated stat failure")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _boom_stat)
+    with caplog.at_level(logging.ERROR):
+        w.append(_book_event(15, 0))  # crosses the boundary -> finalizes/merges hour 14 -- must not raise
+    monkeypatch.undo()  # restore the real stat() before inspecting the result below
+
+    assert path.exists()  # the segment itself committed regardless of the metrics failure
+    assert verify_manifest(path) is True
+    assert w.segments_written == 1  # incremented before the raising stat() call
+    assert w.segment_bytes == 0  # the byte count itself is what failed to update
+    assert "segment committed but its metrics update failed" in caplog.text
+    assert "merge failed" not in caplog.text  # the merge succeeded; only its OWN metrics update failed

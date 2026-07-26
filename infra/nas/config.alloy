@@ -39,8 +39,16 @@ prometheus.exporter.unix "host" {
 // fed (zcrypto-alloy-docker-sd-wedged) watched prometheus_sd_refresh_duration_seconds_count /
 // _failures_total, which only this self-scrape ever produced -- with no discovery.* component left
 // on this host, neither series exists any more, and both are gone from the keep-regex below too (a
-// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below still
-// discards go_/process_/alloy_, so this target's only surviving contribution is its own `up`.
+// keep-list entry for a series that cannot exist is the T0051 trap). The drop rule below no longer
+// discards process_* (00069 T7): that family moved to the keep-list below, admitted explicitly --
+// the same six names the app daemons' own endpoints publish elsewhere on the fleet (spec D4/D5),
+// widened uniformly to every host rather than trimmed per-job. Alloy's own `client_golang`
+// ProcessCollector on Linux is a SUPERSET of `prometheus_client`'s six (it also publishes at least
+// `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate SUBSET FILTER on
+// Alloy's own self-scrape: all six Python names exist in client_golang too (no
+// admitted-but-unpublishable gap), and the extras it drops (e.g. `process_virtual_memory_max_bytes`)
+// are unwanted here. This target's surviving contribution is therefore its own `up` plus those six
+// process_* names, nothing more.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -50,6 +58,19 @@ prometheus.scrape "host" {
 }
 
 prometheus.remote_write "grafana" {
+  // `host="nas"` on every metric this component ships (spec 00069 D7 -- the owner's call to fold
+  // this in now rather than wait for the dashboards iteration). Previously this Alloy set NO host
+  // label at all, deliberately: see infra/ansible/roles/ops/files/config.alloy's remote_write
+  // comment for the full history of why, and why that reasoning no longer blocks adding it here
+  // (the one series it protected, zcrypto_reconcile_residual_gap_seconds_total, no longer
+  // publishes from the NAS -- the writer moved to ops at spec 00054 D2). `external_labels` is
+  // applied component-wide, before the write_relabel_config blocks below run -- so it does not
+  // touch the drop/keep pair (both match on `__name__` only), same as every other host's copy of
+  // this comment.
+  external_labels = {
+    host = "nas",
+  }
+
   endpoint {
     url = sys.env("GRAFANA_PROM_URL")
 
@@ -59,19 +80,22 @@ prometheus.remote_write "grafana" {
     }
 
     // Series minimization is a design principle, not an afterthought (00043): drop Alloy's own
-    // self-metrics first (defense in depth -- nothing scraped above is Alloy's own /metrics
-    // endpoint, so this is normally a no-op), then keep-only the host/container/gate series this
-    // stack actually wants. Target: comfortably under 1k active series. This list is provisional
-    // -- confirm the actual active-series count at the NAS deploy shakedown and trim/extend here.
+    // `go_*`/`alloy_*` self-metrics first -- this is NOT a no-op: `prometheus.exporter.self "alloy"`
+    // above feeds the `host` scrape, and this rule is what keeps its internals out of remote_write.
+    // Then keep-only the host/container/gate/process series this stack actually wants. Target:
+    // comfortably under 1k active series. This list is provisional -- confirm the actual
+    // active-series count at the NAS deploy shakedown and trim/extend here. The six ProcessCollector
+    // families (00069 T7) are Alloy's own -- no daemon runs on the NAS, so there is no app or
+    // logship series to admit here, unlike the capture/ops hosts.
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "go_.*|process_.*|alloy_.*"
+      regex         = "go_.*|alloy_.*"
       action        = "drop"
     }
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_filesystem_files|node_filesystem_files_free|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_gate_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes"
       action        = "keep"
     }
   }

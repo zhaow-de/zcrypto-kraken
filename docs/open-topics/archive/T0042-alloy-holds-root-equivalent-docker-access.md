@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the PR #191 closeout (rollout Steps 6–7 done) — archive with per-host `docker inspect` evidence that nothing in the fleet mounts `/var/run/docker.sock`; the former go-live boundary questions are mooted by the socket's removal (specs 00068/00069) and the egress remainder lives in T0095
+status: resolved
 ---
 
 # Alloy holds root-equivalent Docker access (accepted 2026-07-14)
@@ -35,3 +34,14 @@ _Related archived record:_ [[T0040]] (docker-socket-proxy denial alert) was clos
 - ~~Engine-log egress~~ — **split to [[T0095]]** (2026-07-23 grooming), where the owner's ruling is recorded: the egress is *accepted*, live trading included, and the same order/position/PnL detail is wanted as first-class metrics at the dashboards iteration. No go-live gate remains on this subject.
 - ~~Upstream filing (`Tecnativa/docker-socket-proxy` streaming-timeout bug)~~ — **dropped (2026-07-23 grooming, owner's call: whichever is simpler)**: after the socket retirement we run zero proxies and zero socket mounts, so there is no environment left to reproduce or verify a patch against, and this repo has no stake in the fix. The two-line diagnosis (route `/containers/<id>/logs?follow=1` like `/events`, `timeout server 0`) stays preserved in the Findings above for anyone who searches.
 - **(executed as specs 00068/00069)** The owner's preferred end-state — socket-free integration fleet-wide, `/metrics` over HTTP + the cli shipping its own JSON logs — is the design that shipped; its open question (do docker-stdio-only lines carry signal?) was settled by the 00068 ruling: plain text on console, Docker's own rotation, stdout stays local and is retrieved via `docker logs`.
+## Resolution (2026-07-26, specs `00068`/`00069` rollout)
+
+**The docker-socket residual is eliminated fleet-wide, not merely bounded.** Spec `00068` retired `discovery.docker`/`loki.source.docker` from every Alloy config (NAS, ops, both capture hosts) — app logs now ship directly from each daemon (`--ship-logs`, a Loki `logs:write`-only token) and container CPU/memory arrives via each daemon's own `/metrics` process-self-metrics endpoint (spec `00069` D4), never cadvisor — this was the owner's preferred end-state recorded in this topic's own 2026-07-21 grooming note, now built.
+
+**Verified by `docker inspect` on all four hosts (2026-07-26), `.Mounts` on each `grafana-alloy` container:** NAS, `zcrypto` (primary), `zcrypto-red` (secondary), and the ops host all show only host-journal / config / machine-id / `/host/root` bind mounts — **no `/var/run/docker.sock` mount on any of the four**. The live `config.alloy` on all four hosts confirms the same at the source: no `discovery.docker` or `loki.source.docker` component exists anywhere, only comments recording the retirement (e.g. `// T0048 defect 1's SD-wedge detection RETIRED with discovery.docker (00068 D6/D8)`).
+
+**Engine-egress note, updated:** the concern this topic carried — the capture Alloy on the primary shipping the live-trade-key host's `engine` container logs to a third-party SaaS with no keep/drop — is resolved by the same retirement, not by a relabel rule. There is no docker-log discovery left on that host to carry the engine's stdout at all; the engine ships its own logs directly (`docker inspect zcrypto-engine` on `zcrypto`, 2026-07-26: `Entrypoint ["zcrypto","--ship-logs","engine","run"]`), and the capture-host Alloy's journal reader admits only `zcrypto-capture-prune.service` and Alloy's own container stream — the engine's (and capture's) own systemd-unit journal entries are explicitly excluded by the same keep-rule. The original three-way choice this topic posed (patch the proxy timeout / drop the socket for logs only / go socket-free fleet-wide) resolved to the third.
+
+**Dropped, not deferred:** filing the Tecnativa `docker-socket-proxy` timeout bug upstream. Moot — no host runs that proxy, or any other Docker-socket consumer, any longer, so there is no defect of ours left for that fix to protect.
+
+**Every remaining `## Suggested next steps` bullet above is moot, not this topic's remainder.** The two "decide whether Alloy should regain a boundary" items and "reconsider whether Alloy needs the container-log path at all" all asked how to *bound* a socket access that no longer exists anywhere on the fleet; "socket-free integration, fleet-wide" is the option this resolution took, not an outstanding one. They are left unedited above as the record of what was weighed.

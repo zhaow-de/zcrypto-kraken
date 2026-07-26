@@ -32,11 +32,62 @@ _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # failure class the log-dead canaries exist to close. So it is pinned for all three configs, not
 # just the two that happened to list it already.
 
+# 00069 T6/T7: the app daemons' own `/metrics` series, admitted per host below. The six
+# ProcessCollector families are shared by every app endpoint AND (per each config.alloy's own
+# `exporter.self "alloy"` comment) admitted uniformly for Alloy's own self-scrape too -- the plan's
+# earlier "shave Alloy down to a process pair" idea was dropped as machinery for nothing, so all
+# three hosts admit the same six names (spec 00069 D5, cold-review -- a keep-list admitting four
+# while the app publishes six is the T0051 admitted-but-unpublished trap in the other direction).
+PROCESS_FAMILIES = [
+    "process_cpu_seconds_total",
+    "process_max_fds",
+    "process_open_fds",
+    "process_resident_memory_bytes",
+    "process_start_time_seconds",
+    "process_virtual_memory_bytes",
+]
+# The 00068 ship-handler internals, shared by every daemon that runs with `--ship-logs` (capture
+# x2, engine, the liquidations poller) -- NOT the NAS, which runs no `--ship-logs`/`/metrics`
+# daemon at all (its pull loop is shell).
+LOGSHIP_SERIES = [
+    "zcrypto_logship_dropped_lines_total",
+    "zcrypto_logship_shipped_lines_total",
+    "zcrypto_logship_last_success_timestamp_seconds",
+]
+CAPTURE_APP_SERIES = [
+    "zcrypto_capture_reconnects_total",
+    "zcrypto_capture_resubscribes_total",
+    "zcrypto_capture_segments_written_total",
+    "zcrypto_capture_segment_bytes_total",
+    "zcrypto_capture_rows_held_total",
+    "zcrypto_capture_rows_quarantined_total",
+    "zcrypto_capture_gap_seconds_total",
+    "zcrypto_capture_book_desynced",
+    "zcrypto_capture_disk_watermark_breached",
+]
+# Scraped from the capture role's config.alloy on BOTH capture hosts (one file serves both,
+# `engine_app` included on the secondary too even though nothing listens there -- see that file's
+# own `engine_app` scrape comment).
+ENGINE_APP_SERIES = [
+    "zcrypto_engine_target_weight",
+    "zcrypto_engine_orders_total",
+    "zcrypto_engine_order_notional_eur",
+    "zcrypto_engine_cycle_success",
+    "zcrypto_engine_cycle_completed_at_seconds",
+    "zcrypto_engine_cycle_duration_seconds",
+]
+LIQUIDATIONS_APP_SERIES = [
+    "zcrypto_liquidations_polls_total",
+    "zcrypto_liquidations_api_errors_total",
+    "zcrypto_liquidations_last_success_timestamp_seconds",
+]
+
 NAS_REQUIRED = [
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
     "zcrypto_gate_streak_days",
+    *PROCESS_FAMILIES,
 ]
 # ADMITTED by the NAS keep-regex but NOT published there any more: the overlay writer moved to the
 # ops node (spec 00054 D2) and the NAS's stale reconcile/trade-backfill textfiles were deleted at
@@ -73,6 +124,27 @@ OPS_REQUIRED = [
     # reasonable guess produces.
     "hc_check_up",
     "hc_checks_down_total",
+    *LIQUIDATIONS_APP_SERIES,
+    *LOGSHIP_SERIES,
+    *PROCESS_FAMILIES,
+]
+# The capture host's own alert-bearing families (cold-review Important 2): `Capture · spool disk
+# low` (alerts.yaml:1442-1443) reads node_filesystem_avail_bytes/node_filesystem_size_bytes, and
+# `Capture · node load high` (alerts.yaml:1486-1488) reads node_load1/node_cpu_seconds_total --
+# all four already pass today's keep-regex, but the CAPTURE_REQUIRED list that used to carry only
+# `up` (with a comment admitting capture had no FULL required-list) read as authoritative once it
+# grew long, while these four alert-bearing names stayed unpinned. Pinned now so a future keep-list
+# edit that drops one fails here instead of silently disarming that alert.
+CAPTURE_REQUIRED = [
+    "up",
+    "node_load1",
+    "node_cpu_seconds_total",
+    "node_filesystem_avail_bytes",
+    "node_filesystem_size_bytes",
+    *CAPTURE_APP_SERIES,
+    *ENGINE_APP_SERIES,
+    *LOGSHIP_SERIES,
+    *PROCESS_FAMILIES,
 ]
 
 
@@ -88,15 +160,24 @@ def _keep_regex(path: Path) -> re.Pattern:
     return re.compile(r"\A(?:" + m.group(1) + r")\Z")
 
 
+def _drop_regex(path: Path) -> re.Pattern:
+    """Extract the `drop` write_relabel_config's regex from an Alloy config."""
+    text = path.read_text()
+    blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL)
+    drops = [b for b in blocks if "action" in b and '"drop"' in b]
+    assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
+    m = re.search(r'regex\s*=\s*"([^"]+)"', drops[0])
+    assert m, f"{path}: drop block has no regex"
+    # Prometheus relabel regexes are fully anchored.
+    return re.compile(r"\A(?:" + m.group(1) + r")\Z")
+
+
 @pytest.mark.parametrize(
     ("path", "required"),
     [
         (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
         (OPS_ALLOY, OPS_REQUIRED),
-        # capture still has no FULL required-list (pre-existing gap), but every series an alert
-        # depends on is pinned: `up`, for the two Fleet · Alloy dark rules scoped to
-        # host="zcrypto" / host="zcrypto-red" (T0079).
-        (CAPTURE_ALLOY, ["up"]),
+        (CAPTURE_ALLOY, CAPTURE_REQUIRED),
     ],
     ids=["nas", "ops", "capture"],
 )
@@ -104,6 +185,48 @@ def test_keep_regex_admits_every_published_series(path, required):
     keep = _keep_regex(path)
     missing = [s for s in required if not keep.match(s)]
     assert not missing, f"{path}: keep-regex drops {missing} -- those series will NOT exist"
+
+
+@pytest.mark.parametrize(
+    ("path", "required"),
+    [
+        (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
+        (OPS_ALLOY, OPS_REQUIRED),
+        (CAPTURE_ALLOY, CAPTURE_REQUIRED),
+    ],
+    ids=["nas", "ops", "capture"],
+)
+def test_drop_regex_does_not_shadow_the_keep_list(path, required):
+    """The D4 mechanism this task exists to implement (00069 T6/T7): the drop rule used to discard
+    `process_.*` fleet-wide before the keep stage ever saw it. `test_keep_regex_admits_every_
+    published_series` above only checks the keep-regex in isolation, so reverting the drop rule to
+    re-admit `process_.*` (undoing D4 entirely) left that test -- and the whole suite -- green: the
+    keep-regex still matches `process_cpu_seconds_total` on its own, it just never gets the chance
+    to see it. This test runs both stages in order, the way remote_write actually does."""
+    drop = _drop_regex(path)
+    shadowed = [s for s in required if drop.match(s)]
+    assert not shadowed, f"{path}: the drop rule eats {shadowed} before the keep stage sees them"
+
+
+@pytest.mark.parametrize(
+    ("path", "excluded"),
+    [
+        # No daemon runs on the NAS at all (00069 T7) -- none of the app/logship families exist there.
+        (NAS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
+        # The poller runs on ops, not capture or engine.
+        (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES]),
+        # Capture/engine run on the capture hosts, not the poller.
+        (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
+    ],
+    ids=["nas", "ops", "capture"],
+)
+def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
+    """T0051, the other direction (00069 T6/T7): admitting a family this host never publishes is
+    not merely wasted machinery -- it is silent go-ahead for a future daemon addition to ship
+    there unreviewed."""
+    keep = _keep_regex(path)
+    admitted = [s for s in excluded if keep.match(s)]
+    assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
 
 
 @pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])

@@ -16,10 +16,21 @@ services:
       CAPTURE_DEPTH: "{{ capture_depth }}"
       CAPTURE_PAIRS: "{{ capture_pairs | join(',') }}"
       HEALTHCHECK_URL: "{{ capture_healthcheck_url }}"
+      # Spec 00069 D6: UNGUARDED, unlike the logship block below -- no embargo flag, because
+      # env+port without the new image are inert (unknown env var, unpublished port) and the new
+      # image without this env is exporter-off. Port 9101 is 00043's pinned value, read by
+      # roles/capture/files/config.alloy's `capture_app` scrape job -- change both together.
+      ZCRYPTO_METRICS_PORT: "9101"
 {% if logship_loki_token is defined %}
       ZCRYPTO_LOG_HOST: "{{ base_hostname }}"
       ZCRYPTO_LOG_SERVICE: capture
 {% endif %}
+    # `127.0.0.1:9101:9101` (spec 00069 D3): the security boundary is this HOST-side publish, not
+    # an in-container bind -- the exporter binds 0.0.0.0 inside the container (bridge-networked;
+    # Docker delivers published-port traffic to eth0, never loopback), so loopback-only here is
+    # what keeps `/metrics` off the internet on this trade-adjacent host. nftables untouched.
+    ports:
+      - "127.0.0.1:9101:9101"
     volumes:
       - "{{ capture_data_dir }}:{{ capture_data_dir }}"
 {% if logship_loki_token is defined %}

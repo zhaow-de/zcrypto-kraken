@@ -93,9 +93,13 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
 
 ~~Not yet deployed: the fix ships with the next capture-image rollout~~ *\[superseded 2026-07-19: the
 breach-withhold fix has been **deployed since 2026-07-14** (verified inside the running image
-`sha256:63708539…`); only the (c) measurable-probe sub-fix `3e03aac` remains undeployed and rides the
-next rollout — see the next-steps section. The ~135-day runway framing is dissolved by the live prune
-timers (a ~14-day ring once the first deletion pass verifies).\]*
+`sha256:63708539…`); the (c) measurable-probe sub-fix `3e03aac` was the one remaining undeployed piece
+— **now also deployed, confirmed 2026-07-26**: both `zcrypto` and `zcrypto-red` run image
+`sha256:e5a44e1c…` (`RestartCount 0`), and `docker exec ... grep measurable cli/capture/gap_monitor.py`
+finds the `measurable` property and the ping-gate's `and watermark.measurable` clause live in the
+running code on both hosts — the spec `00069` capture-image rollout this topic's `ripe_when` named.
+The ~135-day runway framing is dissolved by the live prune timers (a ~14-day ring once the first
+deletion pass verifies).\]*
 
 - **(b) 00048's eviction rationale corrected** — the body §Non-goals now carries an inline `[Superseded — …]` marker flagging that the "~12× margin makes delete-after-verified unnecessary" claim rests on the 20×-wrong fill figure, and that eviction is in fact *not* implemented (disk fills ≈2026-11-23).
 - **(c) probe-outage blind spot closed** — `DiskWatermark` now tracks `measurable`; a probe that raises sets it False, and the dead-man ping is gated on `not breached AND measurable`, so "cannot measure" no longer pings green on a frozen `breached` (the healthcheck grace absorbs a transient blip; a sustained failure pages).
@@ -140,9 +144,10 @@ timers (a ~14-day ring once the first deletion pass verifies).\]*
 - **(2026-07-23 — sub-item (c)/(2) DISCHARGED: the measurable-probe fix is now deployed fleet-wide.)** Spec 00069's rollout put image `e5a44e1c` (revision `bada2e36`) on **both** capture hosts (secondary 07-22 Step 5, primary 07-23 Step 6). Verified two ways that it carries `3e03aac`: `git merge-base --is-ancestor 3e03aac bada2e36` is true, and the running image's `cli.capture.gap_monitor` source contains the `disk watermark UNMEASURABLE` line. So the "next capture-image rollout carries the not-yet-deployed probe fix" clause is satisfied; only the secondary deletion pass keeps this topic `partial`.
 
 
+- **(2026-07-26, spec/plan `00069` T3 — the `/metrics` gauge)** `zcrypto_capture_disk_watermark_breached` (gauge, 0/1, tapped from `watermark.breached`) ships on both capture hosts' `/metrics` endpoints and is admitted by both hosts' Alloy keep-lists. Scrape-verified directly: `curl 127.0.0.1:9101/metrics` on both `zcrypto` and `zcrypto-red` returns `zcrypto_capture_disk_watermark_breached 0.0` (checked 2026-07-26). The alert itself is out of scope here — it lands in the dedicated alerting/dashboards iteration ([[T0020]]).
+
 ## Suggested next steps
 
 - ~~(process, at the re-pin) schedule the T+24 h canary reminder~~ **(done as standing process, 2026-07-15):** codified in `.claude/rules/capture-deploys.md` — the reminder is scheduled via the Slack MCP at every secondary re-pin, no longer this topic's item.
 - **Retention: designed, config-implemented, deployed AND proven on the primary (2026-07-23).** Spec `00050` D8's `zcrypto-capture-prune` timer is **live on both hosts** (14-day retention, finals + `.sha256` only, never `.part`/`.held`/`.corrupt`). The primary's first real deletion pass is **verified** (deleted=560, sandboxed `-delete` proven, ring buffer confirmed — see Done so far), so the `≈2026-11-23` disk-fill deadline is dissolved there. **The delete-path property is thereby proven for BOTH hosts**: the prune `.service` is byte-identical across them (`sha256 ee51b6c5…`), same sandbox (`ProtectSystem=strict` + `ReadWritePaths=/var/lib/zcrypto-capture`), same `ext4` fs — nothing host-specific is left to differ. **The one remaining sub-item is therefore a natural confirmation, not a blocking verification: glance at the SECONDARY's first deletion pass ~2026-07-29** (its oldest final is later) — expect the oldest day emptied, `.part` surviving, `deleted>0`, `Result=success` — and resolve this topic if clean. Forcing it earlier was rejected (see `ripe_when`). **Recorded stance (explicit, 2026-07-19): the NAS custody mirror is deliberately never pruned** — it is the keep-forever archive (spec `00048` Role A); only the capture-host working copies ring-buffer.
-- **(verification of the breach-withhold: DONE 2026-07-19)** — the running image (`sha256:63708539…`) contains the `watermark.breached` ping-gate (checked inside the image). The **(c) measurable-probe fix (`3e03aac`) is NOT in that image** (committed 2026-07-14 23:51 UTC, ~20 h after the image build) — it deploys with the next capture-image rollout, whose canary/bake steps this sub-item now rides.
 - **(residual, noted)** Compound fault: if the disk actually FILLS *during* an unmeasurable-probe window, `_write_part`'s `ENOSPC` is caught, logged, and the buffer dropped -- a real, un-booked loss, because `breached` is frozen at its last (green) value so no watermark gap is booked. Narrow (needs a disk that fills exactly while the probe is also down), and it still pages within ~20 min via the withheld ping, but the exit-bar gap accounting under-counts that window. A full fix would treat an unmeasurable window as a provisional gap and reconcile once the probe recovers.

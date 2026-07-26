@@ -27,10 +27,21 @@ services:
       ZCRYPTO_LIQUIDATIONS_DATA_DIR: /data/liquidations
       LIQUIDATIONS_HEALTHCHECK_URL: "{{ ops_liquidations_healthcheck_url }}"
       COINALYZE_API_KEY: "{{ coinalyze_api_key }}"
+      # Spec 00069 D6: UNGUARDED, unlike the logship additions below -- no embargo flag, because
+      # env+port without the new image are inert (unknown env var, unpublished port) and the new
+      # image without this env is exporter-off. Port 9103 is scraped by the `liquidations_app`
+      # job in this role's own files/config.alloy -- change both together.
+      ZCRYPTO_METRICS_PORT: "9103"
 {% if logship_loki_token is defined %}
       ZCRYPTO_LOG_HOST: ops
       ZCRYPTO_LOG_SERVICE: liquidations
 {% endif %}
+    # `127.0.0.1:9103:9103` (spec 00069 D3): the security boundary is this HOST-side publish, not
+    # an in-container bind -- the exporter binds 0.0.0.0 inside the container (bridge-networked;
+    # Docker delivers published-port traffic to eth0, never loopback), so loopback-only here is
+    # what keeps `/metrics` off the internet. nftables untouched.
+    ports:
+      - "127.0.0.1:9103:9103"
     volumes:
       - "{{ ops_data_dir }}:/data"
 {% if logship_loki_token is defined %}

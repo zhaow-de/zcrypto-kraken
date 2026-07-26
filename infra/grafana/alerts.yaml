@@ -302,12 +302,14 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # `{host=""}` looks odd but is deliberate: ops's Alloy now ships node_load1 too (it sets
-          # `external_labels = { host = "ops" }` on prometheus.remote_write), and ops is a 24-thread
-          # box whose normal working load would trip this Atom-sized `gt 4` threshold constantly.
-          # The NAS's own node_load1 carries no `host` label at all, so an empty-value matcher --
-          # documented PromQL for "label absent" -- selects the NAS's copy of the series only.
-          expr: node_load1{host=""}
+          # Scoped to host="nas" (re-keyed from the old empty-value matcher, spec 00069 D7):
+          # ops's Alloy also ships node_load1 (it sets `external_labels = { host = "ops" }` on
+          # prometheus.remote_write), and ops is a 24-thread box whose normal working load would
+          # trip this Atom-sized `gt 4` threshold constantly. The NAS's config.alloy now sets
+          # `external_labels = { host = "nas" }` too (it used to carry no `host` label at all,
+          # selected via an empty-value "label absent" matcher instead), so an explicit
+          # `host="nas"` selects the NAS's copy of the series only, same partition as before.
+          expr: node_load1{host="nas"}
           instant: true
           refId: A
       - refId: C
@@ -1032,9 +1034,9 @@ rules:
       # Scoped to host="ops": infra/ansible/roles/ops/files/config.alloy sets
       # `external_labels = { host = "ops" }` on prometheus.remote_write, so every metrics series
       # this Alloy ships carries host="ops" -- that's what makes this selector resolve. The NAS's
-      # own node_load1 carries no `host` label at all (infra/nas/config.alloy deliberately doesn't
-      # set one), so `NAS · load high` above scopes itself with `{host=""}` instead (see that
-      # rule's own comment) -- the two rules partition the metric between the two hosts.
+      # own node_load1 now carries `host="nas"` too (infra/nas/config.alloy, spec 00069 D7), so
+      # `NAS · load high` above scopes itself with `{host="nas"}` (see that rule's own comment) --
+      # the two rules partition the metric between the two hosts.
       #
       # Threshold: the ops box has 24 threads (infra/ansible/roles/ops/defaults/main.yml), so the NAS
       # rule's `gt 4` (100% of its 4 cores) would not mean the same thing here. `gt 20` is ~83% of 24
@@ -1700,13 +1702,18 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # `{host=""}` is deliberate and load-bearing -- do NOT "fix" it to `{host="nas"}`.
-          # ops and both capture hosts set `external_labels = { host = ... }` on their
-          # prometheus.remote_write; the NAS's config.alloy deliberately does not (adding a label to
-          # an already-live series changes its identity, which can read as a value jump under the
-          # reconciler's `increase()` rule -- i.e. a FALSE permanent-data-loss page). An empty-value
-          # matcher is documented PromQL for "label absent", so this selects the NAS's copy only --
-          # the same idiom `NAS · load high` already uses for the same reason.
+          # `{host="nas"}` (re-keyed from an empty-value matcher, spec 00069 D7 -- this comment
+          # used to forbid exactly this re-key; it is now the deliberate, done thing). ops and both
+          # capture hosts already set `external_labels = { host = ... }` on their
+          # prometheus.remote_write; the NAS's config.alloy now does too. The old empty-value
+          # matcher existed because adding a label to an already-live series changes its identity,
+          # which can read as a value jump under an `increase()`/`resets()` rule -- i.e. a FALSE
+          # permanent-data-loss page -- but the one series that risk was about,
+          # zcrypto_reconcile_residual_gap_seconds_total, no longer publishes from the NAS (the
+          # writer moved to ops at spec 00054 D2), so nothing left here sits under that shape of
+          # rule. The smaller seam this rule itself carries -- `up`'s own identity changing at the
+          # labeling moment -- is the accepted cost (D7): a possible one-off false page at this
+          # attended rollout window, cheap to dismiss.
           # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
           # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
           # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
@@ -1716,7 +1723,7 @@ rules:
           # so it would need noDataState: OK and would then park green if the datasource itself went
           # away.
           expr: >-
-            count(up{host=""}) or on() vector(0)
+            count(up{host="nas"}) or on() vector(0)
           instant: true
           refId: A
       - refId: C

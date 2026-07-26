@@ -8,6 +8,7 @@ dependencies = [
     "nautilus-trader==1.230.0",
     "numpy>=2.5.1",
     "polars>=1.43.0",
+    "prometheus-client>=0.25.0",
     "typer>=0.27.0",
     "websockets>=16.1.1",
 ]

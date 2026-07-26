@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the policy is purged fleet-wide (2026-07-21) so no NEW wedge can form; the remainder is clearing the six existing ones, and only container recreation is demonstrated to do that. **The journal-path mitigation once suggested below is superseded, not ripe** — spec 00068 deletes the capture hosts' zcrypto parse stage from `config.alloy` and ships the capture container itself, so widening the keep-regex would admit lines with no `level` while double-ingesting every capture line (see Findings). Ripe NOW for recreating the ops poller + the two capture-host Alloys, and for both capture daemons — all four ride spec 00068 D7's rollout (`docs/specs/00068-log-shipping-rework-design.md`), now this topic's registered recovery vehicle; the engine waits past the Stage-6a gate (D7 step 7). Close only when every one of the six is confirmed shipping again by a post-recreation line in Loki
+status: resolved
 ---
 
 # `logrotate copytruncate` on docker's json logs wedges the log readers
@@ -45,9 +44,15 @@ The policy is also **redundant**: docker rotates these itself by *renaming*, the
 
 **Policy purged from all three hosts 2026-07-21** (owner, by hand; verified — no other logrotate config matches docker's json logs). So no *new* wedge can form on any container. This is **prevention only**: measurement then showed it clears none of the six existing wedges.
 
+**RESOLVED 2026-07-26 — all six containers confirmed shipping post-recreation.** The closure criterion this topic set for itself ("close only when every one of the six is confirmed shipping again by a post-recreation line in Loki") is met, measured in Loki rather than inferred from the recreations: `sum by (host, service_name) (count_over_time(...[2h]))` returns all six — ops/liquidations, zcrypto/alloy, zcrypto-red/alloy, zcrypto/capture, zcrypto-red/capture, zcrypto/engine. The last of them was the engine, cleared by spec 00069's rollout Step 7 (2026-07-26 13:35 UTC), exactly the vehicle this topic registered for it.
+
+One measurement trap worth recording, because it produced a false negative first: the engine's two post-recreation lines are stamped **13:35:18 / 13:35:20**, while the ansible converge *returned* at 13:35:22. Cutting the query at the converge's return time therefore showed "0 post-restart lines" and read as a failure. The container's own `StartedAt` is **13:35:16.873** — the correct marker; both lines fall after it. Use `docker inspect .State.StartedAt`, never the deploy command's finish time, when asking whether a container logged after a restart.
+
+Also settled here: the engine ships only its **own** structured logger (`zcrypto.engine.command`), not the vendored trading node's stdout — hence `zcrypto_logship_shipped_lines_total 2` with `dropped 0` at startup and silence between 4-hourly cycles. Two lines shipped, zero dropped is the healthy steady state, not a stalled shipper.
+
 ## Suggested next steps
 
-- **(Recovery — per container, since the cost differs wildly and only recreation is demonstrated to work)**
+- **(Recovery — DONE, kept for the record: what each container's recreation cost and why the order was what it was)**
   - **Already done, and not a recovery**: the policy is purged from all three hosts (verified 2026-07-21 21:27 UTC; no other logrotate config matches docker's json logs). That prevents the *next* wedge on every container. It does nothing for the current ones.
   - **Safe to recreate now**: `zcrypto-ops-liquidations` (the poller's Coinalyze catch-up covers a short stop — proven at the iter-104 fleet-users window (spec 00057), ~2 m 46 s with no data loss; the poller re-fetches a full 30 h every cycle) and the two capture-host `grafana-alloy` containers (telemetry only, and an Alloy restart is already the standard T0048 remediation — but **recreate rather than merely restart**: restart keeps the same log file and is untested against this wedge). Note what this does **not** buy: a fresh Alloy still cannot read the *capture* container's logs, because the block is dockerd-side for that container.
   - **Wait for the gate**: `zcrypto-engine` — restarting the shadow engine mid-soak is exactly the soak-hostile act [[T0020]] defers past the Stage-6a gate. Its log blindness is not worth disturbing the soak.
