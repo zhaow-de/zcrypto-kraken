@@ -824,9 +824,9 @@ def gate_export(
         help="Dead-man's-switch base URL: GET on a clean gate, GET <url>/fail otherwise. Omit to skip the ping.",
     ),
     lag_fail_seconds: float = typer.Option(
-        18000.0,
+        21600.0,
         "--lag-fail-seconds",
-        help="Journal-pull staleness threshold in seconds beyond which the ping counts as unclean (default 18000, 5h).",
+        help="Journal-pull staleness threshold in seconds beyond which the ping counts as unclean (default 21600, 6h).",
     ),
     cache: Optional[Path] = typer.Option(
         None,

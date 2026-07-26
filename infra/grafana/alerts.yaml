@@ -150,12 +150,17 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [18000]}  # 5h, matching gate-export's own --lag-fail-seconds default
+            - evaluator: {type: gt, params: [21600]}  # 6h. DERIVED (T0069), not copied: the metric is now-minus-newest-journaled-cycle, so
+            # its floor is the ENGINE's 4h cycle cadence, not pull health -- measured 30d ceiling 14767s (4.10h), p99 14512s, 175 samples
+            # above 4h and ZERO above 4.5h. A pull period is 3600s + work (work p95 78s, max 791s on a post-recreate cold rebuild), so the
+            # old 18000 sat only ~0.9 periods above the ceiling: one slow or missed cycle at a near-ceiling moment paged with nothing wrong.
+            # 21600 = ceiling + one worst-case missed cycle + margin. A genuinely stalled pull grows lag without bound, so detection costs
+            # ~1h, not correctness. Keep in lockstep with gate-export's --lag-fail-seconds default -- that one gates the hc.io dead-man ping.
     noDataState: Alerting
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The newest journaled cycle is more than 5h old -- the NAS journal pull is stuck or the VPS engine has stalled."
+      summary: "The newest journaled cycle is more than 6h old -- the NAS journal pull is stuck or the VPS engine has stalled."
     labels:
       severity: critical
     notification_settings:

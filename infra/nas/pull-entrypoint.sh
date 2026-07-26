@@ -107,8 +107,14 @@ while true; do
 		# reachable by both hosts, which run different polars runtimes that replay_fingerprint
 		# does not digest, so a shared cache file would be mutually poisonable (00062 D9). Cost of
 		# ephemerality: one cold rebuild after each container recreate.
+		# --lag-fail-seconds is passed EXPLICITLY, not left to the CLI default: this script is
+		# bind-mounted and ansible-deployed, so the value reaches production with a converge
+		# instead of an image rebuild, and the deployed threshold is visible here rather than
+		# hidden in a default. 21600 (6h) is derived in infra/grafana/alerts.yaml's rule comment
+		# and archived T0069; it gates the hc.io dead-man ping, so it must equal that rule's
+		# evaluator -- change them together.
 		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
-				--cache /tmp/gate-cache.json \
+				--cache /tmp/gate-cache.json --lag-fail-seconds 21600 \
 				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
 			log ERROR "gate-export failed (dest=$JOURNAL_DEST), continuing"
 		fi

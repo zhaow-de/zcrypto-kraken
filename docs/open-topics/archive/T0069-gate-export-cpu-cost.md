@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the next attended maintenance window — incremental scoring (the structural fix) is deployed and verified in production (spec `00069` rollout, NAS Step 2, warm-cycle facts measured 2026-07-26 in Done so far); only the relocation-to-ops sub-item remains, parked per spec `00069` D8 (different work shape — moves a Role-B deliverable across hosts — so it stays out of that rollout)
+status: resolved
 ---
 
 # gate-export CPU cost — ~8 min per archive-pull cycle on a 96 MB journal
@@ -98,6 +97,18 @@ The **[[T0077]] block is cleared** — its bounded rotating re-verification land
 
 **Relocation to ops does not ride this rollout** (spec `00069` D8 — different work shape, moves a Role-B deliverable across hosts with healthcheck + textfile rewiring) and stays parked below.
 
+## Resolution — 2026-07-26: the cost concern is measured gone; the relocation is consciously DROPPED, and the real risk was elsewhere
+
+**The driver dissolved, measured not assumed.** The case for both remedies was "~8 min per cycle on a 96 MB journal, growing without bound". Re-measured today against a journal that has since **doubled** — 194 MB / 2011 files vs 96 MB / 995 — `zcrypto_gate_export_duration_seconds` reads **33.6 s** (from ~510 s), with `cache_hits 92 / replayed 3 / invalidated 0`. That is spec `00060`'s incremental scoring doing exactly what it was built for: cost decoupled from journal size. Combined with the earlier no-cliff correction (the loop sleeps *after* work, so it drifts and cannot fall behind), the growth argument that motivated relocation no longer exists.
+
+**Relocation to ops: DROPPED.** Its measured value today is 33.6 s → ~5 s, i.e. **0.9% → 0.14%** of the hourly pull interval, in exchange for an attended cross-host move of a Role-B deliverable with healthcheck + textfile rewiring. That trade is not worth making, and the topic's own 2026-07-20 update had already asked for exactly this re-decision ("With no cliff, the relocation's constant ~6.8× may be sufficient on its own … Re-decide on that basis"). Owner ruling 2026-07-26: drop it. Should the cost ever return — a `--cache` regression, a builder-version invalidation storm, or `export_duration` climbing back toward a meaningful fraction of the interval — the analysis above is preserved here and relocation can be re-registered as a fresh topic on fresh evidence.
+
+**What the re-decision surfaced instead, and fixed.** This topic's standing "worth re-deriving" note on the lag alert was the live risk. `zcrypto_gate_journal_pull_lag_seconds` is `now − newest_journaled_cycle_ts`, so its floor is the **engine's 4-hourly cycle cadence**, not pull health — measured 30-day ceiling **14,767 s (4.10 h)**, p99 14,512 s, 175 samples above 4 h and **zero above 4.5 h**. The threshold was **18,000 s**, leaving only ~0.9 pull periods of headroom (a period is 3600 s + work; work p95 78 s, max 791 s on a post-recreate cold rebuild) — so one slow or missed cycle at a near-ceiling moment would page with nothing wrong, going into three unattended weeks.
+
+Both consumers moved together to **21,600 s (6 h)** = ceiling + one worst-case missed cycle + margin: the Grafana rule *and* `gate-export --lag-fail-seconds`, whose default gates the **hc.io dead-man ping** (`clean = … lag <= lag_fail_seconds`). Raising only the alert would have left the dead-man still failing at 5 h — the harder page of the two, and a linkage nothing in either file recorded. Detection cost is ~1 h: a genuinely stalled pull grows lag without bound, so a higher threshold delays the page rather than risking a miss.
+
+**Also settled here:** the standing "emit gate-export duration as a metric" next-step — `zcrypto_gate_export_duration_seconds` is live and populated in production. The residual on execution-environment fingerprinting stays registered as [[T0074]]; nothing else from this topic remains open.
+
 ## Suggested next steps
 
-- **(ATTENDED — parked for a maintenance window)** Relocate gate-export to the ops node (spec `00054` D6's deferred option): run it against ops' own journal mirror and ship `gate.prom` back, or emit it via the ops Alloy textfile collector. Buys a constant ~6.8× and removes the step from the single-threaded archive-pull loop entirely. Attended because it moves a Role-B deliverable across hosts, with its healthcheck + textfile wiring following. Complementary to incremental scoring, not a substitute — it postpones the growth rather than bounding it.
+- **DROPPED 2026-07-26 (owner ruling) — kept as the record of what was weighed, not as pending work.** Relocate gate-export to the ops node (spec `00054` D6's deferred option): run it against ops' own journal mirror and ship `gate.prom` back, or emit it via the ops Alloy textfile collector. Buys a constant ~6.8× and removes the step from the single-threaded archive-pull loop entirely. Attended because it moves a Role-B deliverable across hosts, with its healthcheck + textfile wiring following. Complementary to incremental scoring, not a substitute — it postpones the growth rather than bounding it.
