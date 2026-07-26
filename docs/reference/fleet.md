@@ -12,6 +12,8 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 | `nas` | `ssh nas` | `nas_host`, `observed` | archive/custody (spec `00048` Role A), gate export, NFS server | DSM owns the OS; ansible manages only the zcrypto payload. **`docker` is at `/usr/local/bin/docker` and is NOT on a non-interactive ssh `PATH`** — call it by full path and with `sudo`, or `docker ps` returns empty and reads as "no containers" rather than "command not found" |
 | workstation | — | `workstation` (local) | research node; the repo checkout | its `data/engine-store`/`engine-journal` are the **retired** pre-VPS engine state, not live data |
 
+- SSH as `zcrypto-deploy` (**passwordless sudo** — non-interactive `sudo` over ssh works). Root is key-only break-glass, installed by hand at bootstrap.
+
 ## Services and instruments
 
 | service | host(s) | data / output | endpoint |
