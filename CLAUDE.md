@@ -15,6 +15,10 @@ Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-versio
 - `docs/` — the knowledge tree, organized into subdirectories: `research/` (master plan + phase reports + phase decisions logs, serial-prefixed and grouped by phase), `reference/` (living cross-phase artifacts that belong to no single phase — fee schedule, data catalogs, the corporate-action ledger, and the append-only `trial-registry.jsonl`), `open-topics/` (parked follow-ups + index), `specs/` + `plans/` (per `spec-plan-locations.md`). The only Markdown files that live **directly** under `docs/` are the per-phase changelogs `iterations-history-phase<N>.md` (+ the `iterations-history.md` index) and `memo.local.md`. **Do not create new documents directly under `docs/`** — every new doc belongs in a subdirectory (`research/` for phase-specific reports, `reference/` for living reference, `specs/`/`plans/`/`open-topics/` for their kinds).
 - `data/` — the gitignored data root (its own `.gitignore` ignores everything inside): the compiled/canonical datasets plus the engine's transactional dirs (`data/engine-store`, `data/engine-journal`).
 
+## Secrets
+
+**Never print a container's environment on the engine host `zcrypto`** — `docker inspect … {{json .Config.Env}}` / `{{json .Config}}`, `docker exec … env`, `docker compose config`: `zcrypto-engine` carries the live Kraken trade key and the Loki push password as env vars. Scope every inspect to the field you need — `.Mounts`, `.State`, `.Config.Image`, `.Config.Entrypoint`, `.RestartCount` — and **name those fields in a subagent's dispatch prompt**, since an unscoped "gather `docker inspect` evidence" invites the whole-object form. Vault- and deploy-specific hazards (`ansible-inventory --host`/`--list`) are in `capture-deploys.md`.
+
 ## Rules
 
 ### 1. Think Before Coding
