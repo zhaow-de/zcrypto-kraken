@@ -1,6 +1,6 @@
 # Commit message convention
 
-[Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)<!>: <subject>` — types `feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert` plus **`claude`** (any change to `CLAUDE.md` or `.claude/` — never `docs`). Scope: the snake_case component, or `config`/`build` for cross-cutting. Subject: imperative, lowercase, no trailing period. No `iter-N` tags in commit subjects — that belongs only in PR titles.
+[Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>)<!>: <subject>` — types `feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert` plus **`claude`** (any change to `CLAUDE.md` or `.claude/` — never `docs`). Scope: the snake_case component, or `config`/`build` for cross-cutting. Subject: imperative, lowercase, no trailing period; an `iter-<N>` tag is permitted where informative (closeouts routinely carry one).
 
 Breaking changes: append `!` after the scope (preferred). A descriptive footer must use the **hyphenated** token `BREAKING-CHANGE:` — the space form is not a valid git trailer, and when it shares the footer block with `Co-Authored-By:` git drops the whole block, silently losing the co-author. Commitizen bumps MAJOR for either spelling.
 
