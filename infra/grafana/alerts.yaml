@@ -1673,6 +1673,272 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-book-desync-stuck
+    title: "Capture · book desync stuck on a pair"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Recovery from a checksum desync is a SINGLE fire-and-forget resubscribe, fired only on the
+      # not-was_desynced TRANSITION (deliberately -- retrying in a loop trips Kraken's rate limit).
+      # So if that one attempt does not take, `desynced` stays True, the transition guard never
+      # re-fires, and the pair is stuck. min_over_time, not max: a desync that HEALED within the
+      # window has a 0 in it, so only a pair desynced for the whole 15 min fires -- the stuck shape,
+      # not the transient one the daemon handles by itself 234/234 times.
+      #
+      # This is not one pair's problem. `gap_monitor.is_healthy()` is False while ANY pair has an
+      # open gap and the healthcheck ping is gated on it, so one stuck pair silences this host's
+      # dead-man for ALL 12 -- the hc.io watchdog then fires and STAYS fired, and any later, worse
+      # fault on the same host produces no new page while that signal is saturated. This rule is
+      # what names the pair; the dead-man only says the host went quiet.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min_over_time(zcrypto_capture_book_desynced{host=~"zcrypto|zcrypto-red"}[15m])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- its single fire-and-forget resubscribe did not take, and the transition guard will not retry. That pair's L2 is not being captured, AND it silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-resubscribe-rate
+    title: "Capture · book resubscribe rate re-elevating"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The second half of T0008's trigger, self-evaluating. The ~200/day desync rate was OUR bug
+      # (an unpruned book resurfacing phantom levels, fixed 2026-07-13: replaying a real hour went
+      # 482/117/398 CRC failures to ZERO with the depth prune), so any post-fix resubscribe is a
+      # genuine venue/network event and should be rare. More than one in a day means either the rate
+      # is re-elevating or a pair is flapping desync/heal -- neither is visible in the stuck-pair
+      # rule above, which only sees a pair that never recovers. (At a 60 s scrape a fast flapper is
+      # invisible to both as a heal; this rule catches it through the counter, not the gauge.)
+      #
+      # NOTE: this counter carries no `pair` label (one series per host), so it says THAT the rate
+      # rose, not which pair. Cross-reference zcrypto_capture_book_desynced to find it.
+      # `increase()` handles the counter reset on container recreate.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'increase(zcrypto_capture_resubscribes_total{host=~"zcrypto|zcrypto-red"}[1d])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # NOT [1]: increase() extrapolates to the window edges, so a SINGLE increment
+            # returns ~1.0007 for any nonzero sample offset -- `> 1` would page on one genuine
+            # self-healed venue desync, asserting a re-elevating rate that is not happening, and
+            # stay firing for a day. 1.5 is silent at one and fires at two.
+            - evaluator: {type: gt, params: [1.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A capture host has resubscribed a book more than once in 24h. Post-2026-07-13 these should be rare genuine venue events, so a re-elevating rate suggests a regression or a pair flapping desync/heal. This counter has no pair label -- check zcrypto_capture_book_desynced by pair on that host to find which."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-watermark-breached
+    title: "Capture · disk watermark breached -- DISCARDING data"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The most consequential unwatched signal on these hosts, and it was unwatched for months.
+      # A breached watermark does not merely warn: cli/capture/command.py's book and trade handlers
+      # `continue`/`return` past the writers while it holds, so incoming L2 and trades are DROPPED.
+      # That data is unbackfillable -- every second breached is permanent loss.
+      #
+      # It also gates the dead-man ping, so hc.io does fire -- but that page says "this host went
+      # quiet", not "the disk hit the watermark and capture is discarding". Without this rule the
+      # operator has no way to tell those apart, and the 1 GiB watermark sits BELOW the
+      # `Capture - spool disk low` early warning (10% free), so that rule fires first only if the
+      # fill is gradual; a sudden consumer can breach the watermark with disk-low still green.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'max by (host) (zcrypto_capture_disk_watermark_breached{host=~"zcrypto|zcrypto-red"})'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 2m
+    annotations:
+      summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so hc.io is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer."
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-rows-quarantined
+    title: "Capture · rows quarantined to .held"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Rows that arrived after their hour was finalized and were spilled to a `.held` sidecar
+      # rather than written in place. Measured baseline over 7 d: ZERO on both hosts, so any
+      # nonzero value is a real event, not noise. Held rows are not lost, but they are not in the
+      # canonical tree either -- the reconciler has to fold them, and nobody knows to look.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'increase(zcrypto_capture_rows_quarantined_total{host=~"zcrypto|zcrypto-red"}[6h])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "A capture host quarantined rows to .held in the last 6h -- rows arrived after their hour was finalized. Baseline is zero, so this is a real event: check for clock skew, a late-delivering stream, or a stalled writer on that host."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-logship-lines-dropped
+    title: "Logs · lines dropped before reaching Loki"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The log transport's own loss counter. Measured baseline over 7 d: ZERO on every host. A
+      # nonzero value means log lines were discarded before Loki -- so the Loki-based rules
+      # (capture-error-logs, log-dead-primary/secondary) are reasoning over an incomplete stream and
+      # can go quiet for the wrong reason. This is the one fault that makes OTHER alerts unreliable.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'increase(zcrypto_logship_dropped_lines_total[6h])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "Log lines were dropped before reaching Loki in the last 6h. Baseline is zero. This matters beyond the lost lines: the Loki-based alert rules now reason over an incomplete stream, so their silence no longer means healthy. Check the shipper's backlog and the Loki push credentials on the named host."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-node-collector-failed
+    title: "Node · a node-exporter collector is failing"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # 0 means that collector errored on its last scrape, so its whole metric family goes quietly
+      # ABSENT -- and every rule keyed on those series then evaluates NoData, which this fleet maps
+      # to OK. A failed `filesystem` collector silently disarms the disk-low rule; a failed
+      # `textfile` collector silently disarms every one-off timer alert. Baseline: 1 on all four
+      # hosts. This is the rule that keeps the other rules honest.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min by (host) (node_scrape_collector_success)'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "A node-exporter collector is failing on this host, so its entire metric family is absent -- and rules keyed on those series evaluate NoData, which this fleet maps to OK. Any alert depending on them is silently disarmed right now. Check Alloy's logs on the named host for the failing collector."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-capture-load-high
     title: "Capture · node load high"
     ruleGroup: zcrypto-capture

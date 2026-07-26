@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: `max_over_time(zcrypto_capture_book_desynced[15m]) == 1` for any pair (the stuck shape — desynced past its single resubscribe), or `increase(zcrypto_capture_resubscribes_total[1d]) > 1` (the rate re-elevating). Rewritten 2026-07-23: both clauses were log-dives until 00069 shipped these two metrics, and both are now one PromQL query. Re-deferred 2026-07-19 on the grounds that the single-attempt residual is loud, dead-man-guarded, and archive loss is healed by the 00050 splice — see the absence caveat below, which qualifies "loud"
+ripe_when: the alert now evaluates this topic's own trigger continuously — *Capture · book desync stuck on a pair* fires at 20 min, and *Capture · book resubscribe rate re-elevating* at >1.5/day. Ripe when either fires: that is a real stuck pair the single fire-and-forget resubscribe failed to clear, which is the evidence the recovery-robustness work was waiting for
 ---
 
 # Capture daemon — robust book-desync recovery (retry / ack-correlated resubscribe)
@@ -61,13 +61,31 @@ defaulting it would silently reintroduce this.
 
 **Deployed 2026-07-14** — the depth-prune fix (`71b72e9`, 2026-07-13) rode the T0036 image (`sha256:63708539…`, built 2026-07-14 03:51 UTC), running on both capture hosts since.
 
+## Done so far — the alert leg (2026-07-26)
+
+**This topic's trigger is now evaluated continuously instead of by hand.** Two rules key on it: *Capture · book desync stuck on a pair* (`min_over_time(zcrypto_capture_book_desynced[15m]) > 0.5`, per pair, paging at 20 min) and *Capture · book resubscribe rate re-elevating* (`increase(...[1d]) > 1.5`, per host).
+
+**`min_over_time`, not the `max_over_time` this topic's own `ripe_when` proposed.** `max` fires on *any* desync inside the window, including the transient the daemon self-heals 234/234 times; `min` requires the pair to have been desynced for the entire window, which is the stuck shape — desynced past its single resubscribe — that the topic actually cares about.
+
+**The `> 1` threshold the topic proposed would have misfired**, caught by review before deploy: `increase()` extrapolates to the window edges, so a *single* increment returns ~1.0007 for any nonzero sample offset. One genuine self-healed venue desync would have paged, asserted a re-elevating rate that was not happening, and stayed firing for a full day. Threshold is 1.5.
+
+**Writing the guard test found four more unwatched fault signals**, so the fix generalized:
+
+- `zcrypto_capture_disk_watermark_breached` — the worst of them. A breach makes the book and trade handlers `continue`/`return` past the writers, so incoming L2 and trades are **discarded**, unbackfillable, while the only signal is the same saturated dead-man. Now `critical`.
+- `zcrypto_capture_rows_quarantined_total`, `zcrypto_logship_dropped_lines_total` — measured baseline zero over 7 d, so any nonzero value is a real event.
+- `node_scrape_collector_success` — a failed collector makes its whole family absent, and NoData maps to OK on this fleet, so it silently disarms every rule keyed on those series.
+
+**`zcrypto_capture_reconnects_total` was deliberately NOT alerted**, and the measurement is why: 32–35 reconnects per host per week is baseline, not a fault, so a naive rule would page ~5×/day. [[T0035]]'s trigger is a counter *reset* correlated with a `process_start_time_seconds` jump — that needs the correlation, not a raw count, and stays that topic's work.
+
+**The guard is derived, not hand-listed** — 46 admitted series minus 38 explicit exclusions, each carrying its reason. A hand-list cannot catch the *next* unwatched metric, which is the mechanism that let these sit for two months.
+
 ## Suggested next steps
 
 - ~~Investigate the underlying desync *rate*~~ **(answered by the root cause above, 2026-07-13):** the ~200/day rate WAS the unpruned book resurfacing phantom levels — replaying a real hour went 482/117/398 CRC failures → **0** with the depth prune, so there is no residual rate question to investigate (any post-fix desync is a genuine venue/network event, handled below).
 - **(autonomous — consciously re-deferred 2026-07-19)** Make recovery robust to a failed single attempt. Options to weigh: (a) retry `resubscribe_book` with backoff while a pair remains desynced past a grace period / N updates (bounded, so it can't re-storm the rate limit); (b) `req_id`-correlate the resubscribe — wait for the `unsubscribe_ack` before sending the `subscribe`, and treat an `unsubscribe_error`/`subscribe_error` as a signal to retry; (c) escalate to a full reconnect (which re-subscribes everything with fresh snapshots) if a pair stays desynced beyond a threshold. TDD on the WS-client/handler with a fake connection that simulates a rejected/failed recovery.
 - ~~**(verification, pending a natural event)** … a 14-min watcher saw no natural desync, so the live self-heal is still unobserved~~ **— superseded, and it was already superseded when written.** The Kraken unsubscribe→subscribe ordering question this bullet parked is empirically settled **234/234** by the two 2026-07-09 probes recorded above (75/75 and 159/159 first-attempt heals, zero `unsubscribe error`/`subscribe error`/`Already subscribed`). It is left struck rather than deleted because it read as an open question for two weeks after the evidence landed.
 
-- **(autonomous, ripe NOW — the one sub-item that is not blocked)** **Alert on the stuck shape.** 00069 shipped `zcrypto_capture_book_desynced{pair}` (gauge, 1 = currently desynced) and `zcrypto_capture_resubscribes_total`, both scraped and **live on both hosts** — and `infra/grafana/alerts.yaml` carries **no rule on either** (verified 2026-07-23: zero matches). So this topic's own trigger is measurable but unwatched. Add one rule (`max_over_time(zcrypto_capture_book_desynced[15m]) == 1` by pair), optionally with an `increase(zcrypto_capture_resubscribes_total[1d]) > 1` companion that self-evaluates the second trigger clause. It is **repo-only** — `infra/grafana/alerts.yaml` + `infra/scripts/grafana-push.sh`, an upsert against Grafana Cloud with no host converge, no capture restart, no image — so it is compatible with the pre-absence change freeze that (correctly) rules out the code remainder above. Author it on/after PR #191, which owns both the metric and the alerts file; the natural home is [[T0020]]'s alerting remainder.
+- ~~**(autonomous, ripe NOW) Alert on the stuck shape**~~ — **DONE 2026-07-26**, and it grew: the guard test written for it found *four more* unwatched fault signals, so six rules landed rather than one. Detail in `## Done so far`.
 
 - **Why that alert matters more during an unattended stretch than the "loud" framing suggests.** A stuck pair does not merely withhold one pair's data: `gap_monitor.is_healthy()` returns False while **any** pair has an open gap, and the healthcheck loop pings only when it is True — so **one** stuck pair silences that host's dead-man for **all** pairs. The hc.io watchdog then fires and *stays* fired, and while it is saturated a later, worse failure on that host produces no new page. Self-heal by restart is also not guaranteed to arrive: [[T0027]]'s ruling turns off automatic reboots on exactly these two hosts. Data loss stays covered (the 00050 splice heals a host-local silence, and both BTC-quoted legs are two-host after the secondary converge) — the exposure is **operational blindness**, and its cost grows with the length of the unattended window.
 
