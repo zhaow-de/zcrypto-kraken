@@ -103,7 +103,10 @@ def test_materialize_end_to_end_writes_the_panel_and_the_meta(tmp_path: Path) ->
     result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code == 0, result.output
-    assert "pairs=1 hours_written=1 hours_skipped=0 hours_unsettled=0 hours_unanchored=0 rows=3600 errors=0" in result.output
+    assert (
+        "pairs=1 pairs_out_of_scope=0 hours_written=1 hours_skipped=0 hours_unsettled=0 hours_unanchored=0 rows=3600 errors=0"
+        in result.output
+    )
 
     final = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet"
     assert final.exists()
@@ -329,3 +332,43 @@ def test_since_parsing_edges(tmp_path):
         ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--since", H.strftime("%Y-%m-%d"), "--allow-holes"],
     )
     assert r.exit_code == 0, r.output
+
+
+# --- quote scope: the ladder is quote-denominated, so the panel is EUR-quoted only (T0092) ------------
+
+
+def test_materialize_skips_non_eur_quoted_pairs_in_the_sweep(tmp_path: Path) -> None:
+    """A BTC-quoted book must never be materialized.
+
+    `NOTIONALS_EUR` walks `price * qty` in the QUOTE currency, so on ETH/BTC the rungs read as
+    100/1k/10k BTC -- the @100 rung alone is ~10x that pair's entire daily volume, so every
+    `fill_bps_*` column would be null. A dead EUR-labelled ladder on an out-of-scope tree; the
+    sweep therefore takes EUR-quoted pairs only.
+    """
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "ETH/EUR", H)
+    _seed_primary(primary, "ETH/BTC", H)
+
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+
+    assert result.exit_code == 0, result.output
+    # only the EUR leg is counted and written
+    assert "pairs=1 pairs_out_of_scope=1 " in result.output, result.output
+    assert (panel_root / "ETH" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet").exists()
+    assert not (panel_root / "ETH" / "BTC").exists()
+
+
+def test_materialize_refuses_an_explicit_non_eur_pair(tmp_path: Path) -> None:
+    """`--pair ETH/BTC` must fail loudly, not exit 0 having done nothing."""
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "ETH/BTC", H)
+
+    result = runner.invoke(
+        app,
+        ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0", "--pair", "ETH/BTC"],
+    )
+
+    assert result.exit_code != 0, result.output
+    assert "EUR" in result.output

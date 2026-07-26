@@ -224,13 +224,15 @@ zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>
 | `primary_root` | The primary (raw) canonical book archive; must exist. |
 | `reconciled_root` | Optional healed overlay; its hours materialize reconciled-first. Omit to use the primary alone. |
 | `--panel-root` | The panel tree root to write into (required). |
-| `--pair` | Only this pair (e.g. `BTC/EUR`). Defaults to every pair. |
+| `--pair` | Only this pair (e.g. `BTC/EUR`); must be EUR-quoted. Defaults to every EUR-quoted pair. |
 | `--since` | Only hours at/after this UTC boundary: a `YYYY-MM-DD` date or an ISO-8601 hour (e.g. `2026-07-16T09`). |
 | `--depth` | Book depth the archive was captured at (default `100`, capture's default). |
 | `--allow-holes` | Proceed even if `--since` is newer than a pair's panel watermark, permanently skipping the hole in between. |
 | `--settle-hours` | Defer hours newer than this (default `7`): the heal-settle margin so an hour is only materialized once the reconciler (H+6h max mint) has healed it, keeping the monotone watermark off the un-healed primary (spec 00052 D6 / T0066). |
 
 `materialize` writes `<panel_root>/panel-meta.json` (schema version, grid, notional ladder, K-levels) on a fresh panel root, and **refuses** if an existing one's generation differs from the running code's — a generation change must be an explicit regeneration of the whole panel tree, never a silent mix.
+
+The panel is **EUR-quoted only**: the notional ladder walks `price × qty`, which is denominated in the pair's *quote* currency, so those figures are EUR notionals only for EUR-quoted pairs. Non-EUR pairs present in the archive (e.g. the universe's `ETH/BTC` / `SOL/BTC` relative-value legs) are skipped by the sweep — logged once per pair — and an explicit non-EUR `--pair` is refused rather than silently doing nothing.
 
 Each pair is watermarked at its newest existing panel hour; a sweep only materializes hours strictly newer than that — **and only once they have settled** (`--settle-hours`, default 7h): a canonical hour is *final* well before it is *heal-complete*, since the reconciler mints the healed book overlay at H+2h…H+6h; taking an hour before then would let the monotone watermark permanently capture the un-healed primary (spec 00052 D6 / T0066). A newer, not-yet-settled hour is counted `hours_unsettled` and left for a later sweep. **`--since` that would open a gap above a pair's watermark — or above a fresh pair's earliest canonical hour — refuses by default**: skipping straight to `--since` would permanently strand the hours in `[watermark+1h, since)` once later hours advance the watermark past them. Pass `--allow-holes` to proceed anyway (a warning still names the pair, the watermark, and the stranded range).
 

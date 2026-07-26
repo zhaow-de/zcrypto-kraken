@@ -1,5 +1,8 @@
 capture_depth: 100
-capture_pairs: [ADA/EUR, AVAX/EUR, BTC/EUR, DOGE/EUR, DOT/EUR, ETH/EUR, LINK/EUR, LTC/EUR, SOL/EUR, XRP/EUR]
+# The universe's twelve selected symbols. The two BTC-quoted legs were added 2026-07-23 (T0092):
+# capture had been EUR-only, so the spread cap screened 10 of 12 and the cost table carried the
+# same blind spot. L2 book data is unbackfillable, so the start date is the whole cost of waiting.
+capture_pairs: [ADA/EUR, AVAX/EUR, BTC/EUR, DOGE/EUR, DOT/EUR, ETH/EUR, LINK/EUR, LTC/EUR, SOL/EUR, XRP/EUR, ETH/BTC, SOL/BTC]
 capture_data_dir: /var/lib/zcrypto-capture
 capture_image: ghcr.io/zhaow-de/zcrypto-capture
 healthchecks_project_id: "32eaee6f-cb82-4773-9471-4b802136adc1"

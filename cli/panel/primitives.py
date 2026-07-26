@@ -14,6 +14,14 @@ import polars as pl
 # notional is filled, then compare the resulting VWAP to mid in bps. Column-name suffixes below are
 # keyed off these exact values -- extending the ladder means extending `_FILL_SUFFIXES` too.
 NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
+# The ladder walks `price * qty`, which is denominated in the pair's QUOTE currency -- so these are
+# EUR notionals only for EUR-quoted pairs. The panel is scoped to those (T0092). On a BTC-quoted
+# pair the rungs read as 100/1k/10k BTC: at the 2026-03-31 BTC/EUR close (EUR 58,968.90) the @100
+# rung alone asks EUR 5.9 M, which is ~10x ETH/BTC's and ~25x SOL/BTC's ENTIRE daily volume, so
+# `_fill_bps` returns None on insufficient depth and all six `fill_bps_*` columns go null. The harm
+# is therefore a dead EUR-labelled ladder and an out-of-scope tree, not a wrong number -- which is
+# still worth excluding, and is why the calibration reads `<BASE>/EUR/**` by design.
+PANEL_QUOTE = "EUR"
 _FILL_SUFFIXES: dict[float, str] = {100.0: "100", 1_000.0: "1k", 10_000.0: "10k"}
 
 # Cumulative-depth price levels (spec 00052 D2).

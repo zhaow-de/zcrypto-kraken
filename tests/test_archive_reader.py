@@ -84,3 +84,27 @@ def test_held_and_corrupt_files_are_never_yielded(tmp_path):
     _final(pri, "BTC/EUR", "book", H)
     _held(pri, "BTC/EUR", "book", H)
     assert len(list(canonical_segments(pri, None))) == 1
+
+
+def test_two_quote_dirs_under_one_base_stay_independent_streams(tmp_path):
+    """`ETH/EUR` and `ETH/BTC` must resolve as two separate pairs, never merged by base (T0092).
+
+    Until 2026-07-23 capture was EUR-only, so every base directory happened to hold exactly one
+    quote subdirectory. That was an observation, not a guarantee, and nothing in the suite pinned
+    it. `canonical_segments` keys on `BASE/QUOTE` by construction; this test makes a future
+    refactor back to base-keying fail loudly instead of silently merging two books.
+    """
+    primary = tmp_path / "primary"
+    _final(primary, "ETH/EUR", "book", H)
+    _final(primary, "ETH/BTC", "book", H)
+    _final(primary, "ETH/EUR", "book", H + timedelta(hours=1))
+
+    segments = list(canonical_segments(primary, None, kind="book"))
+    pairs = sorted({seg_pair for seg_pair, _, _ in segments})
+
+    assert pairs == ["ETH/BTC", "ETH/EUR"], pairs
+    assert len(segments) == 3
+    # each pair's hours are its own -- the BTC leg must not inherit the EUR leg's second hour
+    by_pair = {p: sorted(h for sp, h, _ in segments if sp == p) for p in pairs}
+    assert by_pair["ETH/BTC"] == [H]
+    assert by_pair["ETH/EUR"] == [H, H + timedelta(hours=1)]

@@ -40,7 +40,7 @@ def single_instance_lock(data_dir: Path) -> Iterator[None]:
     `SegmentWriter` derives the next part sequence by globbing the hour directory and names the part
     deterministically, so two processes pick the SAME sequence and write the SAME file: they clobber
     each other's parts and shred the hour (measured: 70 of 120 rows destroyed). Within one process
-    the 20 writers are safe — disjoint `pair/kind` roots — but nothing stopped a SECOND process: an
+    the 24 writers are safe — disjoint `pair/kind` roots — but nothing stopped a SECOND process: an
     overlapping restart, or a human running `zcrypto capture` beside the service. These rows are
     unbackfillable, so refuse to start rather than race.
 
@@ -90,7 +90,21 @@ def _default_pairs(universe_path: Path) -> list[str]:
         selected = json.loads(universe_path.read_text())["selected"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise CaptureError(f"{universe_path} is not a valid point-in-time universe file: {exc}") from exc
-    return [symbol for symbol in selected if symbol.endswith("/EUR")]
+    pairs = [symbol for symbol in selected if symbol.endswith("/EUR")]
+    # T0092: the universe selects BTC-quoted legs too, and this fallback drops them. The deploy
+    # path passes --pairs explicitly (capture_pairs), so production is unaffected -- but a run
+    # without --pairs would silently capture fewer streams than the universe selects, and
+    # unbackfillable non-collection looks exactly like success.
+    dropped = [symbol for symbol in selected if symbol not in pairs]
+    if dropped:
+        # ERROR, not WARNING: `alerts.yaml`'s "Capture · daemon ERROR logs" selects level=~"ERROR|CRITICAL",
+        # and silent under-collection is exactly what must page -- it looks identical to success otherwise.
+        logger.error(
+            "default pairs dropped %d non-EUR-quoted universe symbol(s): %s -- pass --pairs to capture them",
+            len(dropped),
+            ", ".join(dropped),
+        )
+    return pairs
 
 
 def _parse_ts(raw: str) -> datetime:
@@ -254,7 +268,7 @@ async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, in
 async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | None, healthcheck_url: str | None) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)  # disk_usage() (DiskWatermark) requires the path to exist
     books = {pair: OrderBook(pair, depth) for pair in pairs}
-    # One oracle shared by all 20 writers (T0037): an hour boundary is acted on only once a second
+    # One oracle shared by all 24 writers (T0037): an hour boundary is acted on only once a second
     # witness — another stream, or the handicapped wall clock — has seen time reach it, so a single
     # bogus `timestamp` field can no longer finalize (and thereby permanently truncate) the live hour.
     oracle = HourOracle()
@@ -302,7 +316,7 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
             except Exception:
                 # A task that DIED earlier re-raises its corpse's exception here — already surfaced
                 # (or about to be, by the try block's own re-raise). Letting it escape this loop
-                # would skip writer.close() below for all 20 writers, losing up to flush_rows
+                # would skip writer.close() below for all 24 writers, losing up to flush_rows
                 # buffered rows per stream on top of the original failure.
                 logger.exception("background task failed during shutdown")
         for writer in (*book_writers.values(), *trade_writers.values()):

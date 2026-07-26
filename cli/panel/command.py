@@ -23,7 +23,7 @@ from cli.archive.reader import canonical_segments
 from cli.logging import get_logger
 from cli.panel.materialize import K_LEVELS, SCHEMA_VERSION, panel_watermark, write_meta
 from cli.panel.materialize import materialize as materialize_hours
-from cli.panel.primitives import NOTIONALS_EUR
+from cli.panel.primitives import NOTIONALS_EUR, PANEL_QUOTE
 
 logger = get_logger("panel.command")
 
@@ -83,7 +83,13 @@ def _check_generation(panel_root: Path) -> None:
 def _affected_pairs(primary_root: Path, reconciled_root: Path | None, pair: Optional[str]) -> set[str]:
     if pair is not None:
         return {pair}
-    return {seg_pair for seg_pair, _, _ in canonical_segments(primary_root, reconciled_root, kind="book")}
+    # EUR-quoted only, matching the sweep's own scope (PANEL_QUOTE) -- otherwise the completion
+    # line would report pairs=N counting pairs the sweep never processes.
+    return {
+        seg_pair
+        for seg_pair, _, _ in canonical_segments(primary_root, reconciled_root, kind="book")
+        if seg_pair.split("/")[-1] == PANEL_QUOTE
+    }
 
 
 def _check_since_holes(
@@ -141,7 +147,11 @@ def materialize(
         None, help="The healed overlay; its hours materialize reconciled-first. Omit to use the primary alone."
     ),
     panel_root: Path = typer.Option(..., "--panel-root", help="The panel tree root to write into."),
-    pair: Optional[str] = typer.Option(None, "--pair", help="Only this pair (e.g. BTC/EUR). Defaults to every pair."),
+    pair: Optional[str] = typer.Option(
+        None,
+        "--pair",
+        help=f"Only this pair (e.g. BTC/EUR); must be {PANEL_QUOTE}-quoted. Defaults to every {PANEL_QUOTE}-quoted pair.",
+    ),
     since: Optional[str] = typer.Option(
         None,
         "--since",
@@ -166,6 +176,14 @@ def materialize(
     Writes `panel-meta.json` if absent; refuses if an existing one's generation differs from this
     code's. Exits non-zero iff any hour errored, mirroring `archive verify-replay`'s contract.
     """
+    if pair is not None and pair.count("/") != 1:
+        raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
+    if pair is not None and pair.split("/")[-1] != PANEL_QUOTE:
+        # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing. (T0092)
+        raise typer.BadParameter(
+            f"--pair {pair}: the panel is {PANEL_QUOTE}-quoted only (the notional ladder is quote-denominated)"
+        )
+
     since_dt = _parse_since(since) if since is not None else None
     affected_pairs = _affected_pairs(primary_root, reconciled_root, pair)
 
@@ -181,8 +199,9 @@ def materialize(
         logger.error("panel hour failed pair=%s hour=%s: %s", seg_pair, hour.isoformat(), message)
 
     logger.info(
-        "panel materialize complete pairs=%d hours_written=%d hours_skipped=%d hours_unsettled=%d hours_unanchored=%d rows=%d errors=%d",
+        "panel materialize complete pairs=%d pairs_out_of_scope=%d hours_written=%d hours_skipped=%d hours_unsettled=%d hours_unanchored=%d rows=%d errors=%d",
         len(affected_pairs),
+        result.pairs_out_of_scope,
         result.hours_written,
         result.hours_skipped,
         result.hours_unsettled,
