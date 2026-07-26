@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: implementation (config flip + reboot-required alert) — after `chore/topics-grooming` and PR #191 both merge to develop (the flip gets its own small converge, never folded into a rollout); the mid-order reconciliation test — before the Stage-6b executor session
+ripe_when: the mid-order reconciliation test needs a live 6b order round-trip to exist; the attended-reboot skill needs the T0081/T0084 skill family to be built
 ---
 
 # Unattended-upgrades auto-reboot policy for the live VPS
@@ -37,8 +37,19 @@ The process the flip must come with (attended mode creates a new gap — a reboo
 3. **Order — attended mode flips spec `00050`'s ordering.** 00050's primary-first (21:25→22:25) is *unattended paging logic*: a failed primary reboot pages while the secondary still captures. Attended, with both hosts taking the **same new kernel**, canary logic wins: **secondary first, verify it boots and captures, then primary.** If the kernel bricks the secondary, the primary is never touched. The 00050 pairwise-distinct window assert stays — the windows remain meaningful as scheduling guidance.
 4. **Verify** — the shared checklist (T0084's runbook) plus the reboot-specific expectations: ~83 s capture gap is the measured norm (2026-07-11), containers self-restart via `restart: unless-stopped` + the systemd units.
 
+## Done so far — the flip and its detector (2026-07-26)
+
+**The flip is live on both capture VPSes.** `Automatic-Reboot "false"`, verified on-host; `zcrypto-ops` still reads `"true"` at 02:25, untouched, because the role default preserves today's behaviour and only `group_vars/capture_host` overrides it. Patches still auto-install. Delivered by spec `00071`.
+
+**The detector that makes attended mode safe is live and proven end-to-end.** `zcrypto-reboot-check` publishes `node_reboot_required` every 15 min; touching `/run/reboot-required` flipped it to 1 in Grafana Cloud and removing it returned it to 0. Four alert rules back it: pending-reboot, plus absent / unreadable / stale coverage for the transport itself.
+
+**The recorded guideline's transport did not exist**, and that is the substantive finding. It called for "the same `integrations/unix` transport that already carries the NAS `gate.prom` — no regex, no new plumbing", but the capture hosts ran **no textfile collector** (dropped with spec `00069` for a reason that had since expired), and `integrations/unix` is static-mode Grafana Agent vocabulary this flow-mode fleet does not use. Building it was its own defect, [[T0100]], which had already cost [[T0021]] all of its observability.
+
+**Ordering hazard, found before it fired:** this topic's own verification step — "touch and remove the flag file" — would have rebooted the live capture + engine primary had it run while `Automatic-Reboot` was still `"true"`, because a present `/run/reboot-required` is exactly what unattended-upgrades acts on. The flip was landed and verified first; the precondition was re-checked on-host in the same command that touched the flag.
+
+**Reboot order is settled and recorded in `capture-deploys.md`:** secondary first, then primary — the reverse of the image-rollout order, because if the kernel bricks the secondary the primary is never touched.
+
 ## Suggested next steps
 
-- **(autonomous — ripe when this topic's trigger fires) Land the flip + detection harness as one small iteration:** Ansible `Automatic-Reboot "false"` for `zcrypto` + `zcrypto-red` only (base role — `--check --diff` first; a pure `/etc/apt` change, no compose render, no capture restart), the `node_reboot_required` textfile timer + alert rule → Slack, verified end-to-end by touching and removing the flag file on one host.
 - **(autonomous — a 6b requirement, still open) Confirm order-state reconciliation survives a reboot _mid-order-submission_.** The day-1 proof covers only the **shadow / data-only** cycle (exec disabled, no live orders); a reboot landing during a live 6b order round-trip is a distinct, untested path — [[T0018]].
 - **(when the skill family gets built)** The attended-reboot skill as a sibling of [[T0081]]/[[T0084]], sharing the post-disruption verification checklist as a common reference.
