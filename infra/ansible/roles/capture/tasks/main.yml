@@ -121,6 +121,51 @@
 # host's local spool at `capture_retention_days` of committed hours. The NAS mirror is the durable
 # archive; this disk is not. The script is the load-bearing part — it deletes finals + sidecars and
 # nothing else (never .part / .held / .corrupt) — and is tested directly by tests/test_capture_prune.py.
+# --- One-off timer metrics (spec 00071, T0027 + T0100) ----------------------------------------
+# 0755 root:root: Alloy runs as a non-key-owning user with only the journal gid, so world-readable
+# is what lets its textfile collector read what root writes here. Placed OUTSIDE the Alloy-digest
+# gate below -- the directory and its producers must exist whether or not this converge carries a
+# digest, or the .prom writers land with nowhere to write.
+- name: ensure the node-exporter textfile directory exists
+  ansible.builtin.file:
+    path: "{{ capture_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: install the reboot-check script
+  ansible.builtin.copy:
+    src: zcrypto-reboot-check.sh
+    dest: /usr/local/sbin/zcrypto-reboot-check
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the reboot-check systemd unit
+  ansible.builtin.template:
+    src: zcrypto-reboot-check.service.j2
+    dest: /etc/systemd/system/zcrypto-reboot-check.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: install the reboot-check systemd timer
+  ansible.builtin.copy:
+    src: zcrypto-reboot-check.timer
+    dest: /etc/systemd/system/zcrypto-reboot-check.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+# Only the TIMER is enabled -- same reasoning as the prune pairs.
+- name: enable + start the reboot-check timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-reboot-check.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+
 - name: install the segment-prune script
   ansible.builtin.copy:
     src: zcrypto-capture-prune.sh

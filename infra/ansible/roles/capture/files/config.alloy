@@ -24,16 +24,30 @@
 // /->/host/root) let this exporter see the capture host's own /proc, /sys and rootfs without
 // colliding with Alloy's own container /proc//sys.
 //
-// NO textfile collector here (the ops/nas copies keep one): the capture hosts publish no
-// node-exporter textfile .prom -- there is no gate/replay/archive timer on them -- so the collector
-// and its /textfile mount are both dropped. free disk space (`filesystem`) IS kept: the capture
-// spool fills toward the prune horizon and disk-full is the classic capture-killer.
+// The textfile collector IS enabled here, and the rule that governs it (spec 00071 D1):
+// LONG-LIVED services publish a /metrics endpoint Alloy scrapes (00069); ONE-OFF timers publish a
+// .prom here, because a oneshot that runs for a second has no process to scrape. This file used to
+// say the collector was dropped because "there is no gate/replay/archive timer on them" -- a
+// contingent fact, not a policy, and it expired: T0021's engine-journal prune and T0027's
+// reboot-required probe are both one-off timers on these hosts. The cost of noticing late was that
+// the prune shipped observable through NOTHING (T0100).
+//
+// `directory` is just a container path this collector globs *.prom in -- it has no relationship to
+// rootfs_path, so pointing it INSIDE the existing `/:/host/root:ro` mount means no compose edit and
+// no Alloy container recreate. Producers write to /var/lib/zcrypto-node-textfile on the host.
+//
+// free disk space (`filesystem`) IS kept: the capture spool fills toward the prune horizon and
+// disk-full is the classic capture-killer.
 prometheus.exporter.unix "host" {
-  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev"]
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
 
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
   rootfs_path = "/host/root"
+
+  textfile {
+    directory = "/host/root/var/lib/zcrypto-node-textfile"
+  }
 }
 
 // ---- Container metrics: intentionally NOT collected -----------------------------------------
@@ -115,7 +129,8 @@ prometheus.remote_write "grafana" {
     // is what keeps its internals out of remote_write. Then keep-only the series this stack wants.
     // A `keep` action drops everything it does not list, so a series missing here does not merely
     // go undashboarded -- it does not exist (T0051). This host publishes the unix-exporter host
-    // metrics (no textfile series -- no collector -- no ops_*/reconcile/trade-backfill families,
+    // metrics INCLUDING the one-off timers' textfile series (spec 00071 -- but no
+    // ops_*/reconcile/trade-backfill families,
     // those are the ops node's), PLUS -- since 00069 T6 -- the capture app series, the engine app
     // series (primary only; see the `engine_app` scrape's own comment), the logship-handler series
     // the two daemons share with every other daemon on the fleet, and the six ProcessCollector
@@ -129,7 +144,7 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_capture_reconnects_total|zcrypto_capture_resubscribes_total|zcrypto_capture_segments_written_total|zcrypto_capture_segment_bytes_total|zcrypto_capture_rows_held_total|zcrypto_capture_rows_quarantined_total|zcrypto_capture_gap_seconds_total|zcrypto_capture_book_desynced|zcrypto_capture_disk_watermark_breached|zcrypto_engine_target_weight|zcrypto_engine_orders_total|zcrypto_engine_order_notional_eur|zcrypto_engine_cycle_success|zcrypto_engine_cycle_completed_at_seconds|zcrypto_engine_cycle_duration_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_scrape_collector_success|node_scrape_collector_duration_seconds|zcrypto_capture_reconnects_total|zcrypto_capture_resubscribes_total|zcrypto_capture_segments_written_total|zcrypto_capture_segment_bytes_total|zcrypto_capture_rows_held_total|zcrypto_capture_rows_quarantined_total|zcrypto_capture_gap_seconds_total|zcrypto_capture_book_desynced|zcrypto_capture_disk_watermark_breached|zcrypto_engine_target_weight|zcrypto_engine_orders_total|zcrypto_engine_order_notional_eur|zcrypto_engine_cycle_success|zcrypto_engine_cycle_completed_at_seconds|zcrypto_engine_cycle_duration_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|node_reboot_required|node_textfile_scrape_error|node_textfile_mtime_seconds|zcrypto_engine_journal_prune_deleted_days|zcrypto_engine_journal_prune_kept_days|zcrypto_engine_journal_prune_last_run_timestamp_seconds"
       action        = "keep"
     }
   }
@@ -158,7 +173,7 @@ loki.relabel "journal_units" {
   rule {
     source_labels = ["__journal__systemd_unit", "__journal_container_name"]
     separator     = ";"
-    regex         = "zcrypto-capture-prune\\.service;.*|.*;grafana-alloy"
+    regex         = "zcrypto-(capture-prune|engine-journal-prune|reboot-check)\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 

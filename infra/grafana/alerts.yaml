@@ -1469,6 +1469,92 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-reboot-pending
+    title: "Capture · reboot pending (attended)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The capture VPSes run unattended-upgrades with Automatic-Reboot "false" (T0027, spec 00071):
+      # patches install, the reboot is a human act. That closes the risk of an unwatched reboot of
+      # unbackfillable L2 capture -- and, on the primary, the live trade engine -- and opens the
+      # opposite one: a kernel flag nobody notices. THIS rule is the whole reason the flip is safe.
+      # It keeps firing until the human reboots; that persistence is the point, not a nuisance.
+      # Published by the zcrypto-reboot-check timer as an explicit 0/1 -- never an absent series,
+      # which would be indistinguishable from a dead exporter.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'node_reboot_required{host=~"zcrypto|zcrypto-red"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # == 1, pending
+    noDataState: OK
+    execErrState: Alerting
+    # 15m: the publisher runs every 15 min, so a shorter `for` could flap across a single scrape gap.
+    for: 15m
+    annotations:
+      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended (T0027). Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in .claude/rules/capture-deploys.md."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-oneoff-textfile-stale
+    title: "Capture · one-off timer stopped publishing"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The alert whose ABSENCE made T0100 invisible. One-off timers publish .prom files; a timer
+      # that stops leaves its last file in place and the collector serves those values forever, so
+      # the gauge reads healthy indefinitely. node_textfile_scrape_error does NOT cover this -- it
+      # fires only on MALFORMED input. Staleness is the collector's own mtime stamp, and this is the
+      # only thing that distinguishes "the timer ran and had nothing to report" from "the timer is
+      # dead". 26h threshold: the slowest publisher here is the daily journal prune (01:23 UTC).
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-red"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [93600]}  # 26 h
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A one-off timer on a capture host has not refreshed its node-exporter textfile in over 26h -- its .prom is stale, so whatever it reports is a frozen last-known value, not current state. The `file` label names it (engine-journal-prune = the 60-day journal prune; reboot = the pending-reboot probe). Check `systemctl list-timers` and the unit's journal on that host."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-capture-load-high
     title: "Capture · node load high"
     ruleGroup: zcrypto-capture

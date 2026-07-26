@@ -6,14 +6,12 @@ Description=Prune engine-journal days older than {{ engine_journal_retention_day
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/zcrypto-engine-journal-prune {{ engine_state_dir }}/journal {{ engine_journal_retention_days }}
-# No --textfile, and no /metrics either. Since spec 00069 app metrics here are SCRAPED from live
-# processes (capture_app :9101, engine_app :9102) -- a oneshot that runs for a second has nothing to
-# scrape. The fleet's answer for ephemeral timers is the textfile collector, which the ops node runs
-# and these hosts deliberately do not. So this run is observable through its journald line, shipped
-# to Loki by the same Alloy -- the established pattern for the sibling capture prune. A timer that
-# stops emits no signal; that is backstopped by the "Capture - spool disk low" alert on this same
-# filesystem (spec 00070 D5).
+ExecStart=/usr/local/sbin/zcrypto-engine-journal-prune {{ engine_state_dir }}/journal {{ engine_journal_retention_days }} --textfile {{ engine_textfile_dir }}/engine-journal-prune.prom
+# A oneshot has no /metrics endpoint to scrape -- it runs for a second -- so it publishes a .prom
+# and Alloy's textfile collector reads it (spec 00071 D1). This unit originally passed no --textfile
+# at all, on the reasoning that these hosts ran no collector: true at the time, and the wrong
+# conclusion. The fix was to add the reader, not drop the writer, and until it landed this prune was
+# observable through NOTHING -- its journald line was not in the journal keep-regex either (T0100).
 #
 # The script deletes only inside the journal dir. These make that STRUCTURAL rather than a promise:
 # a bug in its globs cannot reach any path outside ReadWritePaths -- and this host holds the live
@@ -22,4 +20,4 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths={{ engine_state_dir }}/journal
+ReadWritePaths={{ engine_state_dir }}/journal {{ engine_textfile_dir }}

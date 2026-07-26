@@ -56,19 +56,19 @@ Refusals, before any deletion: a non-existent journal dir; a system root (`/`, `
 
 The cutoff is computed as a **UTC calendar date** and compared against the directory's own parsed name, not against filesystem mtimes. Two reasons: `-mtime +N` truncates to whole days (a boundary a day fuzzier than the operator asked for), and mtimes are rewritten by any touch — including a restore or an rsync — while the directory *name* is the day's identity. The current UTC day can never satisfy `date < today − 60`, so it is excluded by construction rather than by a special case.
 
-## D5 — Observability: a log line, and why that is the right answer here
+## D5 — Observability: a published metric, plus the log line
 
-The script prints one structured line: `zcrypto-engine-journal-prune: deleted=<n> kept=<n> retention_days=<n> cutoff="<date>" dir=<path>`, shipped to Loki by the capture-host Alloy's journal source. That is the whole observability story, matching the sibling `zcrypto-capture-prune` on the same host.
+The script prints one structured line — `zcrypto-engine-journal-prune: deleted=<n> kept=<n> retention_days=<n> cutoff="<date>" dir=<path>` — **and** publishes a node-exporter textfile (`--textfile`), read by the capture-host Alloy's textfile collector.
 
-**It emits no metric, and that follows from the architecture rather than from laziness.** Since spec `00069` app metrics on this fleet come from **`/metrics` endpoints Alloy scrapes** (`capture_app` :9101, `engine_app` :9102) — which requires a *live process*. A daily oneshot exists for about a second; there is nothing to scrape. The fleet's mechanism for that class is the node-exporter textfile collector, and the ops node keeps one for exactly that reason (its four ephemeral timers). The capture/engine hosts deliberately run **none** (`roles/capture/files/config.alloy`), so a `.prom` written here would be read by nobody.
+**This section originally argued the opposite, and was wrong in a way worth recording.** The reasoning was: app metrics on this fleet come from `/metrics` endpoints Alloy scrapes (spec `00069`), which needs a *live process*; a daily oneshot exists for about a second and has nothing to scrape; the capture/engine hosts ran no textfile collector; therefore a `.prom` here would be read by nobody, therefore publish nothing.
 
-**That leaves a real gap, stated plainly: nothing detects a timer that silently stops.** The *Capture · spool disk low* alert covers this same root filesystem, but it is a backstop against disk exhaustion, **not a dead-man for the timer** — at 13 MB/day a fully stopped prune needs roughly 43 GB, about **nine years**, to move a <10%-free threshold, and the rule's `noDataState: OK` means it never fires on absence either.
+Every step of that was true and the conclusion did not follow. **The correct response to "no reader exists" is to add the reader**, which spec `00071` does. The rule the fleet now states explicitly: *long-lived services publish `/metrics`; one-off timers publish a `.prom`.* The collector had been dropped for a **contingent** reason — "there is no gate/replay/archive timer on them" — and this prune is exactly such a timer, so the premise expired the day it deployed.
 
-The gap is accepted rather than closed, for a reason that survives the arithmetic: **over-deletion is the dangerous failure, and no disk alert could ever catch that** — the keep-newest floor is what guards it. A stopped timer merely returns the journal to the append-only behaviour it had before this spec, on a disk with a decade of headroom. Building a bespoke liveness metric for that, on the one host class that runs no textfile collector, would buy nothing. The alert's summary does name both prune timers, so an operator who *is* paged looks in the right place.
+The fallback claimed in place of the metric was false too: the log line was **not** shipped to Loki, because `config.alloy`'s journal keep-regex admitted only `zcrypto-capture-prune.service`. For its first day this prune was observable through **nothing**. Both halves are fixed in `00071`; the defect is [[T0100]].
 
-The script still *supports* `--textfile` (and is tested for it) so the same binary serves a host that does have a collector — the ops node — without a rewrite. The unit simply does not pass it.
+Staleness is `node_textfile_mtime_seconds`, which the collector stamps for every `.prom` — the signal that distinguishes "ran, nothing to report" from "stopped running", and the one a `node_textfile_scrape_error` cannot give (that fires only on *malformed* input). The *Capture · one-off timer stopped publishing* rule alerts on it.
 
-`--dry-run` prints and counts without deleting, so the first production run can be proven before it is armed.
+`--dry-run` prints and counts without deleting, so the first production run can be proven before it is armed. A dry run deliberately publishes **no** metric — its counts are counterfactual.
 
 ## D6 — Systemd hardening and schedule
 

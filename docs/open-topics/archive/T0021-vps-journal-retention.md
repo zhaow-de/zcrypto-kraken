@@ -31,6 +31,8 @@ Left alone the journal eventually pressures the VPS disk that also hosts the cap
 
 Retention was never a capacity question: 13 MB/day against 51 GB free is ~11 years of headroom, which is why the design could pay any amount of caution for safety.
 
+**Observability was wrong at first, and is corrected by spec `00071`.** This prune shipped publishing no metric, on the reasoning that the capture hosts ran no textfile collector to read one — true, and the wrong conclusion: the fix is to add the reader. The fallback claimed in its place (its journald line) was also false, because `config.alloy`'s journal keep-regex admitted only `zcrypto-capture-prune.service`. So for its first day the prune was observable through **nothing**. Both halves are fixed in `00071` — the unit passes `--textfile` again and the collector reads it. The defect is registered as [[T0100]].
+
 **Retention is 60 days, not the 14 originally ruled** — raised by the owner during implementation, *between* the two converges: the first deploy ran at 14, which is why the evidence below spans both values. The design is value-independent (both the cutoff and the floor read the same parameter), so only numbers moved: steady state ~780 MB, ~1,440 pull opportunities of margin.
 
 **Deploy verified by outcome** (2026-07-26, converged at 14 and re-converged at 60): the deployed unit runs `... /var/lib/zcrypto-engine/journal 60` (confirmed via systemd's own resolved `argv[]`, not just the file on disk), timer armed for 01:23 UTC, service `static` (timer-only, so no prune on boot), and the engine container **not restarted** by either converge — `StartedAt` byte-identical across both, `RestartCount` 0.

@@ -32,3 +32,10 @@ capture_retention_days: 14
 # rendered by this role from group_vars/observed/vault.yml (tasks/main.yml), owned by zcrypto-alloy.
 capture_alloy_dir: /etc/zcrypto-capture/alloy
 capture_alloy_image: grafana/alloy
+
+# Where one-off timers on this host publish node-exporter .prom files (spec 00071 D1, T0100).
+# Alloy's textfile collector reads it through the EXISTING `/:/host/root:ro` mount as
+# /host/root/var/lib/zcrypto-node-textfile -- so this needs no compose edit and no container
+# recreate. Keep the two in step: a producer writing where no reader looks is precisely the defect
+# T0100 records (tests/test_reboot_check.py pins them together).
+capture_textfile_dir: /var/lib/zcrypto-node-textfile

@@ -21,3 +21,10 @@ os_ignore_users: [zcrypto-data, vagrant, kitchen]
 # at play scope (a virgin host has no zcrypto-deploy yet — play vars beat group_vars).
 ansible_user: zcrypto-deploy
 ansible_port: 10022
+
+# Attended reboots on BOTH capture VPSes (owner ruling 2026-07-23, T0027): a kernel update must not
+# reboot the unbackfillable L2 capture -- and, on the primary, the live trade engine -- unwatched.
+# Patches still auto-install; only the reboot becomes a human act, made visible by the
+# node_reboot_required alert (spec 00071). Quoted string, never a bare YAML boolean -- see the
+# base role's default for why.
+base_unattended_upgrades_automatic_reboot: "false"

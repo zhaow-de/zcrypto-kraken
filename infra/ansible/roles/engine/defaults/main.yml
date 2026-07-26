@@ -10,6 +10,12 @@ engine_image_digest: ""
 
 engine_state_dir: /var/lib/zcrypto-engine
 
+# Where the journal prune publishes its .prom (spec 00071, T0100). Same path the capture role uses
+# -- the engine only ever runs on a capture host -- but declared here so the engine play does not
+# depend on the capture play having run first. tests/test_engine_journal_prune.py pins it equal to
+# the capture role's value and to the directory Alloy's textfile collector actually reads.
+engine_textfile_dir: /var/lib/zcrypto-node-textfile
+
 # Where the workstation's QA'd warm store lives on the controller (ansible runs from the
 # workstation); playbook_dir is infra/ansible, so ../.. is the repo root.
 engine_store_src: "{{ playbook_dir }}/../../data/engine-store/"

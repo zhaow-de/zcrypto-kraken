@@ -28,7 +28,10 @@ The engine runs on the capture primary — everything above applies (the canary 
 
 ## Maintenance windows
 
-- Current reboot slots: primary 21:25 UTC, secondary 22:25 UTC. When re-deciding: ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation — measure from the archive, don't guess. (Derivation: spec `00050`; `infra/ansible/roles/base/defaults/main.yml`.)
+- **The capture VPSes do NOT reboot themselves** (`Automatic-Reboot "false"`, T0027 / spec `00071`) — patches still auto-install; the reboot is yours. The ops node still auto-reboots at 02:25.
+- A pending reboot pages: *Capture · reboot pending (attended)* fires until you do it, from `node_reboot_required` published by the `zcrypto-reboot-check` timer.
+- **Reboot order is SECONDARY first, then primary** — the reverse of the image-rollout order and of spec `00050`'s slots. 00050's primary-first was *unattended paging logic* (a failed primary reboot pages while the secondary still captures); attended, with both hosts taking the same kernel, canary logic wins: if the kernel bricks the secondary, the primary is never touched.
+- Scheduling is now guidance, not cron: the 21:25 / 22:25 slots remain rendered on-host as a reminder but no longer fire. Pick a time ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation — measure from the archive, don't guess. On the primary, right after a completed engine cycle, never approaching a boundary. Expect a ~83 s capture gap (measured 2026-07-11); containers self-restart via `restart: unless-stopped` + their systemd units. (Derivation: specs `00050`, `00071`.)
 
 ## SSH
 

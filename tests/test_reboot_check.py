@@ -1,0 +1,159 @@
+"""The attended-reboot detector (spec 00071, T0027).
+
+Flipping `Automatic-Reboot` to false creates a new gap: a kernel flag nobody notices. This timer is
+what closes it, so the harness is part of the decision, not an optional extra.
+
+As with `tests/test_engine_journal_prune.py`, the unit under test is the **shell script the capture
+role installs**, driven with `bash` over a fixture directory — not a Python re-implementation.
+
+Two things carry most of the weight here, and neither is about the happy path:
+
+- The script must read **`/run`**, not `/var/run`. `/var/run` is a compatibility symlink; it works
+  today, but the flag's real home is `/run` and the indirection is exactly the kind of thing that
+  breaks silently under a hardened unit's namespace.
+- It must publish `0` explicitly, never "no file". An absent series is indistinguishable from a
+  dead exporter, so "no reboot pending" has to be a value, not a silence.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+ROLE = REPO / "infra/ansible/roles/capture"
+SCRIPT = ROLE / "files/zcrypto-reboot-check.sh"
+
+
+def _run(flag_path: Path, out: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["bash", str(SCRIPT), str(flag_path), str(out)], capture_output=True, text=True, check=False)
+
+
+def _series(prom: Path) -> dict[str, float]:
+    """Parse the .prom into {name: value}, ignoring HELP/TYPE lines."""
+    out = {}
+    for line in prom.read_text().splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        name, _, value = line.rpartition(" ")
+        out[name.strip()] = float(value)
+    return out
+
+
+def test_publishes_1_when_the_flag_is_present(tmp_path):
+    flag = tmp_path / "reboot-required"
+    flag.write_text("*** System restart required ***\n")
+    prom = tmp_path / "reboot.prom"
+    result = _run(flag, prom)
+    assert result.returncode == 0, result.stderr
+    assert _series(prom)["node_reboot_required"] == 1.0
+
+
+def test_publishes_0_rather_than_nothing_when_no_reboot_is_pending(tmp_path):
+    """The load-bearing negative. An ABSENT series looks identical to a dead exporter, so the
+    healthy state must be an explicit 0 — otherwise the alert can never distinguish "fine" from
+    "this host stopped reporting"."""
+    prom = tmp_path / "reboot.prom"
+    result = _run(tmp_path / "definitely-not-here", prom)
+    assert result.returncode == 0, result.stderr
+    assert _series(prom)["node_reboot_required"] == 0.0
+
+
+def test_the_flag_going_away_flips_the_gauge_back(tmp_path):
+    """After the human reboots, the alert must resolve on its own."""
+    flag = tmp_path / "reboot-required"
+    flag.write_text("x")
+    prom = tmp_path / "reboot.prom"
+    _run(flag, prom)
+    assert _series(prom)["node_reboot_required"] == 1.0
+    flag.unlink()
+    _run(flag, prom)
+    assert _series(prom)["node_reboot_required"] == 0.0
+
+
+def test_the_prom_is_well_formed_for_the_collector(tmp_path):
+    prom = tmp_path / "reboot.prom"
+    _run(tmp_path / "nope", prom)
+    body = prom.read_text()
+    assert "# HELP node_reboot_required " in body
+    assert "# TYPE node_reboot_required gauge" in body
+    assert body.endswith("\n"), "a .prom without a trailing newline can trip the parser"
+
+
+def test_the_write_is_atomic_leaving_no_partial_file(tmp_path):
+    """The collector globs this directory continuously; it must never read a half-written file."""
+    prom = tmp_path / "reboot.prom"
+    assert _run(tmp_path / "nope", prom).returncode == 0
+    assert prom.exists()
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith("reboot.prom.")]
+    assert not leftovers, f"temp file left behind: {leftovers}"
+
+
+def test_an_unwritable_destination_fails_loudly(tmp_path):
+    """A silent failure here recreates the very blindness this whole change exists to fix."""
+    result = _run(tmp_path / "nope", tmp_path / "no-such-dir" / "reboot.prom")
+    assert result.returncode != 0
+    assert result.stderr.strip(), "it must say why, not just exit nonzero"
+
+
+def test_missing_arguments_are_refused(tmp_path):
+    assert subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True).returncode == 2
+
+
+# --- The systemd + ansible seam -----------------------------------------------------------------
+# Same reasoning as the journal prune's seam test: a rename or an argument-order change fails
+# nightly in a oneshot nobody watches.
+
+
+def _rendered_unit() -> str:
+    import re
+
+    unit = (ROLE / "templates/zcrypto-reboot-check.service.j2").read_text()
+    defaults = (ROLE / "defaults/main.yml").read_text()
+    for var in set(re.findall(r"\{\{ (\w+) \}\}", unit)):
+        m = re.search(rf"^{var}:\s*(\S+)", defaults, re.M)
+        assert m, f"{var} has no default in roles/capture/defaults/main.yml"
+        unit = unit.replace("{{ " + var + " }}", m.group(1).strip('"'))
+    assert "{{" not in unit, f"unsubstituted variable remains: {unit}"
+    return unit
+
+
+def test_the_unit_runs_the_installed_script_with_the_expected_arguments():
+    exec_start = next(line for line in _rendered_unit().splitlines() if line.startswith("ExecStart="))
+    binary, flag, out = exec_start.removeprefix("ExecStart=").split()
+
+    tasks = (ROLE / "tasks/main.yml").read_text()
+    assert f"dest: {binary}" in tasks, f"the unit runs {binary}, which the role does not install"
+    assert flag == "/run/reboot-required", f"must read /run, not the /var/run compatibility symlink — got {flag}"
+    assert out.endswith(".prom"), out
+
+
+def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
+    """The defect T0100 records is a producer writing where no reader looks. This pins the two ends
+    together: the unit's output path and the collector's `directory` must agree."""
+    out = next(line for line in _rendered_unit().splitlines() if line.startswith("ExecStart=")).split()[-1]
+    host_dir = str(Path(out).parent)
+
+    alloy = (ROLE / "files/config.alloy").read_text()
+    directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
+    # Alloy sees the host root at /host/root; the unit writes on the host itself.
+    assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory} — a .prom nobody scrapes"
+
+
+def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
+    unit = _rendered_unit()
+    assert "ProtectSystem=strict" in unit
+    out = next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]
+    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    assert str(Path(out).parent) in rw, f"{out} is not writable under ProtectSystem=strict: {rw}"
+
+
+@pytest.mark.parametrize("unit_file", ["zcrypto-reboot-check.timer"])
+def test_only_the_timer_is_enabled_not_the_oneshot(unit_file):
+    tasks = (ROLE / "tasks/main.yml").read_text()
+    assert unit_file in tasks
+    assert "zcrypto-reboot-check.service" not in tasks.split("systemd_service")[-1], (
+        "enabling the oneshot too would run it on every boot"
+    )
