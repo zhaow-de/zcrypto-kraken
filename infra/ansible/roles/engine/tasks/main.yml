@@ -330,6 +330,16 @@
 # Bounds the VPS journal at a {{ engine_journal_retention_days }}-day tail. Deployed AFTER the pull
 # plumbing above, deliberately: the NAS mirror is what makes deleting a local day safe, so the path
 # that copies days off the host is established before the one that removes them.
+# Idempotent with the capture role's identical task -- declared in both so neither play depends on
+# the other's ordering (spec 00071).
+- name: ensure the node-exporter textfile directory exists
+  ansible.builtin.file:
+    path: "{{ engine_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: install the journal-prune script
   ansible.builtin.copy:
     src: zcrypto-engine-journal-prune.sh

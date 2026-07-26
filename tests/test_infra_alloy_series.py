@@ -135,12 +135,33 @@ OPS_REQUIRED = [
 # `up` (with a comment admitting capture had no FULL required-list) read as authoritative once it
 # grew long, while these four alert-bearing names stayed unpinned. Pinned now so a future keep-list
 # edit that drops one fails here instead of silently disarming that alert.
+# One-off timers publish a .prom, not a /metrics endpoint (spec 00071 D1) -- a daily oneshot runs
+# for a second and has no process to scrape. The keep-regex is an ALLOW-list with no `node_.*`
+# wildcard (D2), so a published-but-unadmitted series is dropped at the remote-write boundary and
+# looks exactly like a producer that never ran. That is not hypothetical: it is how T0021's prune
+# came to be observable through nothing. Pinned here so the keep-list edit is TDD-gated.
+ONEOFF_TEXTFILE_SERIES = [
+    "node_reboot_required",
+    # A MALFORMED .prom raises this; a STALE one does not (D3).
+    "node_textfile_scrape_error",
+    # ...staleness is `node_textfile_mtime_seconds{file=...}`, which the collector emits for EVERY
+    # .prom it reads. Free, standard, and the only signal that distinguishes "the timer stopped" from
+    # "the timer ran and had nothing to report" -- a stopped timer leaves its last file in place and
+    # the collector serves those values forever.
+    "node_textfile_mtime_seconds",
+    "zcrypto_engine_journal_prune_deleted_days",
+    "zcrypto_engine_journal_prune_kept_days",
+    "zcrypto_engine_journal_prune_oldest_day_age_seconds",
+    "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
+]
+
 CAPTURE_REQUIRED = [
     "up",
     "node_load1",
     "node_cpu_seconds_total",
     "node_filesystem_avail_bytes",
     "node_filesystem_size_bytes",
+    *ONEOFF_TEXTFILE_SERIES,
     *CAPTURE_APP_SERIES,
     *ENGINE_APP_SERIES,
     *LOGSHIP_SERIES,

@@ -178,6 +178,42 @@ def test_reports_a_structured_line(tmp_path):
     assert "deleted=1" in out and "retention_days=14" in out and "kept=" in out
 
 
+def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
+    """Alloy runs as the non-root zcrypto-alloy user, and `mv` PRESERVES mktemp's 0600 — so without
+    an explicit chmod this .prom publishes root-only and the collector gets EACCES.
+
+    This shipped broken: the retro-fix that made this unit pass --textfile again was inert on
+    delivery, failing in exactly the silent mode T0100 exists to record, while the staleness alert
+    shipped alongside it was structurally unable to surface the failure (the collector skips an
+    unreadable file BEFORE stamping its mtime, so there is no series to go stale).
+    """
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    prom = tmp_path.parent / "mode.prom"
+    assert _prune(tmp_path, "14", "--textfile", str(prom)).returncode == 0
+    mode = prom.stat().st_mode & 0o777
+    assert mode == 0o644, f"published {oct(mode)}; a non-root collector cannot read it"
+
+
+def test_every_published_series_is_admitted_by_the_keep_regex(tmp_path):
+    """The allow-list has no `node_.*` wildcard, so a published-but-unadmitted series is dropped at
+    the remote-write boundary and looks exactly like a producer that never ran (spec 00071 D2).
+    Derived from what the script ACTUALLY emits rather than from a hand-kept list — that is how
+    `oldest_day_age_seconds` came to be published and silently dropped."""
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    prom = tmp_path.parent / "admitted.prom"
+    assert _prune(tmp_path, "14", "--textfile", str(prom)).returncode == 0
+    emitted = {line.split()[0] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
+
+    alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
+    regex = next(line for line in alloy.splitlines() if "regex" in line and "node_load1" in line).split('"')[1]
+    admitted = set(regex.split("|"))
+    assert not (emitted - admitted), f"published but dropped at remote_write: {sorted(emitted - admitted)}"
+
+
 def test_writes_a_textfile_metric_when_asked(tmp_path):
     _day(tmp_path, 40)
     for n in range(1, 15):
@@ -227,11 +263,19 @@ ROLE = Path(__file__).resolve().parents[1] / "infra/ansible/roles/engine"
 
 
 def _role_vars() -> dict[str, str]:
-    """The role defaults the unit template interpolates."""
-    import re
+    """Every role default the unit template interpolates, discovered from the template itself.
 
+    Discovered rather than listed: a hardcoded list silently stops covering a variable the moment
+    the template grows one, and this seam is the only thing pinning the unit to the role.
+    """
     text = (ROLE / "defaults/main.yml").read_text()
-    return {k: re.search(rf"^{k}:\s*(\S+)", text, re.M).group(1) for k in ("engine_state_dir", "engine_journal_retention_days")}
+    template = (ROLE / "templates/zcrypto-engine-journal-prune.service.j2").read_text()
+    out = {}
+    for var in sorted(set(re.findall(r"\{\{ (\w+) \}\}", template))):
+        m = re.search(rf"^{var}:\s*(\S+)", text, re.M)
+        assert m, f"{var} is used by the unit but has no default in roles/engine/defaults/main.yml"
+        out[var] = m.group(1).strip('"')
+    return out
 
 
 def _rendered_unit() -> str:
@@ -258,7 +302,10 @@ def test_the_unit_invokes_the_script_the_role_installs_with_the_argument_order_i
     # Positional order is <journal-dir> <retention-days>: swapped, the retention parse rejects a
     # path and the unit fails closed rather than sweeping with a nonsense window.
     assert _prune(Path("/nonexistent"), days).returncode == 2
-    assert not rest, f"the unit passes an argument the deploy has not been reasoned about: {rest}"
+    # The guard stays, its allow-list grows by exactly the one flag T0100 added. Anything else is
+    # an argument nobody reasoned about reaching a script that deletes bytes on the trade-key host.
+    assert rest[:1] == ["--textfile"], f"unexpected argument: {rest}"
+    assert len(rest) == 2, f"--textfile takes exactly one path: {rest}"
 
 
 def test_protectsystem_strict_still_permits_writing_the_journal_dir():
@@ -269,6 +316,32 @@ def test_protectsystem_strict_still_permits_writing_the_journal_dir():
     journal = f"{_role_vars()['engine_state_dir']}/journal"
     rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
     assert journal in rw, f"{journal} is not writable under ProtectSystem=strict: {rw}"
+
+
+def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
+    """T0100's defect in one assertion: a producer writing where no reader looks.
+
+    This unit originally passed no --textfile at all, because these hosts ran no textfile collector.
+    That was true, and the wrong conclusion — the fix was to add the reader. Three paths must agree
+    or the metric silently goes nowhere: the engine role's dir, the capture role's dir (same host),
+    and the container path Alloy's collector globs.
+    """
+    unit = _rendered_unit()
+    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert "--textfile" in exec_start, "the prune must publish a .prom — a oneshot has no /metrics endpoint to scrape"
+    out = exec_start.split("--textfile", 1)[1].strip().split()[0]
+    host_dir = str(Path(out).parent)
+
+    capture_defaults = (ROLE.parent / "capture/defaults/main.yml").read_text()
+    capture_dir = re.search(r"^capture_textfile_dir:\s*(\S+)", capture_defaults, re.M).group(1)
+    assert host_dir == capture_dir, f"engine writes {host_dir}, capture role declares {capture_dir} — same host, must agree"
+
+    alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
+    directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
+    assert directory == f"/host/root{host_dir}", f"prune writes {host_dir}, Alloy reads {directory} — a .prom nobody scrapes"
+
+    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    assert host_dir in rw, f"ProtectSystem=strict would block the write: {rw}"
 
 
 def test_the_deployed_retention_matches_the_spec():

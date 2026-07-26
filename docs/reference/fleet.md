@@ -12,6 +12,8 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 | `nas` | `ssh nas` | `nas_host`, `observed` | archive/custody (spec `00048` Role A), gate export, NFS server | DSM owns the OS; ansible manages only the zcrypto payload. **`docker` is at `/usr/local/bin/docker` and is NOT on a non-interactive ssh `PATH`** — call it by full path and with `sudo`, or `docker ps` returns empty and reads as "no containers" rather than "command not found" |
 | workstation | — | `workstation` (local) | research node; the repo checkout | its `data/engine-store`/`engine-journal` are the **retired** pre-VPS engine state, not live data |
 
+- SSH as `zcrypto-deploy` (**passwordless sudo** — non-interactive `sudo` over ssh works). Root is key-only break-glass, installed by hand at bootstrap.
+
 ## Services and instruments
 
 | service | host(s) | data / output | endpoint |
@@ -21,7 +23,7 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 | liquidations poller | zcrypto-ops | under `ops_data_dir` = `/var/lib/zcrypto-ops` (container-visible as `/data`) | `/metrics` `127.0.0.1:9103` |
 | `grafana-alloy` | all four | scrape jobs: `capture_app`+`engine_app` (both capture hosts; `engine_app` reads 0 on red by design), `liquidations_app`+`healthchecks` (ops), host/textfile only (nas); + journal log sources | self-metrics `:12345` |
 | ops timers | zcrypto-ops | `zcrypto-{archive-pull,panel-materialize,verify-replay,verified-replay}.service` (+ grafana-watchdog) — ephemeral `docker run` per tick; `.prom` outputs under `/var/lib/zcrypto-ops/textfile` | scraped by the ops Alloy textfile collector |
-| capture/engine timers | zcrypto, zcrypto-red | `zcrypto-capture-prune` (03:17, segments) and — zcrypto only — `zcrypto-engine-journal-prune` (01:23, journal day-dirs, 60 d + a keep-newest-60 floor) | **no textfile collector on these hosts** — both are observable only through their journald line in Loki |
+| capture/engine timers | zcrypto, zcrypto-red | `zcrypto-capture-prune` (03:17, segments), `zcrypto-reboot-check` (every 15 min, pending-reboot gauge), and — zcrypto only — `zcrypto-engine-journal-prune` (01:23, journal day-dirs, 60 d + a keep-newest-60 floor) | **`zcrypto-reboot-check` and `zcrypto-engine-journal-prune` publish `.prom` into `/var/lib/zcrypto-node-textfile`**, read by Alloy's textfile collector through the existing `/:/host/root:ro` mount (spec `00071`); long-lived services use `/metrics` instead. **`zcrypto-capture-prune` publishes no metric** — it predates the transport and is observable only through its journald line in Loki, so the staleness alerts do not cover it |
 | `zcrypto-archive-pull` | nas | hourly pull+verify loop into `/volume1/ZhaoCrypto`; runs the gate export | container, journald logging |
 | gate export | nas | `/volume1/docker/zcrypto-archive/textfile/gate.prom` — `zcrypto_gate_{status,streak_days,journal_pull_lag_seconds,mismatch_total,cache_*,export_*}` | refreshed each archive-pull loop (~hourly, `ARCHIVE_PULL_INTERVAL` 3600 s); the gate score itself advances per 4 h engine cycle |
 

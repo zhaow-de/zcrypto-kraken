@@ -1,0 +1,17 @@
+# Rendered by the `capture` Ansible role at /etc/systemd/system/zcrypto-reboot-check.service — do
+# not hand-edit on the host, edit
+# infra/ansible/roles/capture/templates/zcrypto-reboot-check.service.j2 and re-converge.
+[Unit]
+Description=Publish the pending-reboot flag as a node-exporter textfile (spec 00071, T0027)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-reboot-check /run/reboot-required {{ capture_textfile_dir }}/reboot.prom
+# This unit only ever writes one .prom. ProtectSystem=strict makes that STRUCTURAL rather than a
+# promise -- on a host holding the live Kraken trade key and the unbackfillable L2 spool, a
+# housekeeping probe has no business being able to reach either.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ capture_textfile_dir }}

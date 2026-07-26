@@ -6,7 +6,8 @@ base_packages:
   - net-tools
   - aptitude
 
-# unattended-upgrades: security pocket only, auto-reboot, email on failure only.
+# unattended-upgrades: security pocket only, email on failure only. Auto-reboot is per-host now --
+# ops reboots itself, the two capture VPSes are ATTENDED (T0027); see the variable below.
 # No mailer/relay is wired up for this host yet — "root" is the safe, always-present
 # local recipient (readable via the local mail spool even without an MTA); override
 # with a real address once alerting/monitoring lands.
@@ -15,6 +16,13 @@ base_packages:
 # Criteria: >=1h from any 4h bar boundary (00/04/08/12/16/20), off the hour boundary, low book
 # traffic (books are the unbackfillable loss currency; trades are REST-backfillable). The
 # redundant capture host overrides this with "22:25" in its host_vars (+1h separation).
+# Whether unattended-upgrades REBOOTS on its own once an update sets /var/run/reboot-required.
+# Security patches install regardless -- only the reboot is governed here. Default "true" keeps the
+# ops node automatic; group_vars/capture_host flips the two capture VPSes to attended (T0027, spec
+# 00071 D4). MUST be a QUOTED string: a bare YAML false renders as Python's "False", which apt reads
+# as not-true by accident rather than by intention, and nothing would catch it.
+base_unattended_upgrades_automatic_reboot: "true"
+
 base_unattended_upgrades_reboot_time: "21:25"
 base_unattended_upgrades_mail_to: root
 
