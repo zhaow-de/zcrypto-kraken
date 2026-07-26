@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: a venue-side WS restart (close 1012 / handshake 503) is observed after 2026-07-14 — verify it was ridden out in-process, then close
+ripe_when: a reconnect ATTEMPT is observed failing — any `attempt [2-9]` line in the capture logs, or the `_RECONNECT_ERROR_EVERY` ERROR, or `process_start_time_seconds{job="capture_app"}` jumping while `zcrypto_capture_reconnects_total` resets (the crash-restart shape). Rewritten 2026-07-23 from "a venue-side WS restart is observed" — that phrasing needed a log dive to evaluate and conflated a connection DROP (routine, already proven survivable) with a rejected reconnect ATTEMPT (the path the fix actually added, still unexercised); the metrics that make it a one-query check shipped with 00069
 ---
 
 # Capture crashes when a WS reconnect attempt is rejected (Kraken 503)
@@ -98,9 +98,29 @@ status flip:
   commit `a57b2c6`) contains the fixed `ws_client.py` (`WebSocketException` handler present, checked
   inside the image itself). The deploy sub-item is done; only the live verification remains.
 
+- **Live evidence pulled 2026-07-23 — half the verification is now done, and the half that matters is not.**
+  Measured from Grafana Cloud (Prom + Loki), read-only:
+
+  - `zcrypto-red` ran **17.6 h with 9 reconnects and no process restart** (`process_start_time_seconds`
+    = 2026-07-22 21:45:07 UTC, the rollout Step-5/6 recreate, unmoved across all nine events;
+    `zcrypto_capture_reconnects_total{host=zcrypto-red}` = 9, no reset). The primary shows 0 reconnects
+    since its 13:08:52 T0092 recreate.
+  - **Every one of the nine succeeded on the first try** — all nine log pairs read
+    `WS connection closed, reconnecting: no close frame received or sent` + `reconnecting in 1.0s (attempt 1)`.
+  - **Zero `attempt [2-9]` lines exist on either host across the full retained Loki window (~3 days).**
+
+  So the daemon demonstrably rides out connection **drops** in-process — the crash-restart shape does not
+  occur. But every observed reconnect *succeeded*, so the handler this topic added
+  (`WebSocketException`/`OSError`/`TimeoutError` on a **rejected** attempt) has **never been exercised in
+  production**. The nine events are abnormal closures ("no close frame"), not the close-1012 venue restart
+  the original trigger named. Re-deferred rather than closed: passing an easier test is not passing this one.
+
 ## Suggested next steps
 
-- Verify on the next venue-side WS restart (Kraken close 1012): the container journal must show
-  `WS connect attempt failed, reconnecting: ...` followed by `reconnecting in ...s (attempt N)` and a
-  resumed stream — **no** container restart, no `InvalidStatus` traceback, no non-zero exit. Then
-  close this topic.
+- Close it when a **failed attempt** is actually observed — the rewritten `ripe_when` above is now a
+  one-query check rather than a log dive. Expected shape on that event: `attempt 2`+ with `compute_backoff`
+  applied, a resumed stream, and **no** container restart, no `InvalidStatus` traceback, no non-zero exit.
+- If a long quiet period makes that observation unlikely, the honest alternative is to close on the
+  *engineered* evidence instead (the three regression tests drive the real production `InvalidStatus`) and
+  record that the production path stayed unexercised — but do that as a conscious drop with the reason
+  written, not by quietly archiving.

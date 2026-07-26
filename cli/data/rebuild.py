@@ -16,7 +16,10 @@ from cli.backfill.substrate15m import build_15m_substrate
 from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
 from cli.data.errors import DataSyncError
 from cli.derivatives.funding import build_funding_substrate
+from cli.derivatives.oi import build_oi_substrate
+from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet
+from cli.ohlc.reach import reach_round
 from cli.snapshot import CANDIDATE_SYMBOLS, derive_universe
 from cli.snapshot.fetch import fetch_public
 from cli.snapshot.register import build_snapshot
@@ -30,6 +33,8 @@ from cli.universe.rules import (
     finalize_universe,
 )
 from cli.universe.volume import quote_volume_in_eur
+
+logger = get_logger("data.rebuild")
 
 _OHLC_INTERVALS = ["1440", "240", "60"]
 _UNIVERSE_VOLUME_WINDOW_DAYS = 30
@@ -65,8 +70,31 @@ def _rebuild_ohlc_15m(ctx: RebuildContext, out_root: Path) -> None:
     build_15m_substrate(source_dir, list(CANDIDATE_SYMBOLS), out_root, fetched_at=datetime.now(UTC).isoformat())
 
 
+def _rebuild_ohlc_reach(ctx: RebuildContext, out_root: Path) -> None:
+    """Carry `ohlc-full` forward from Kraken's REST OHLC window (T0065).
+
+    Reads the LIVE canonical set and writes only into the minted sibling, so the canonical stays
+    immutable. Series whose REST window still overlaps the canonical tail land continuous; those it
+    no longer reaches land `.detached` -- kept because REST bars expire as the window recedes. See
+    `cli/ohlc/reach.py` for why both outcomes are written rather than one being refused.
+    """
+    report = reach_round(_require_ohlc_full(ctx), out_root)
+    detached = report.detached
+    if detached:
+        logger.warning(
+            "data rebuild: %d of %d reach series are DETACHED (no seam to the canonical tail): %s",
+            len(detached),
+            len(report.entries),
+            ", ".join(f"{e.symbol}@{e.interval}" for e in detached),
+        )
+
+
 def _refresh_funding(ctx: RebuildContext, out_root: Path) -> None:
     build_funding_substrate(out_root)
+
+
+def _refresh_oi(ctx: RebuildContext, out_root: Path) -> None:
+    build_oi_substrate(out_root)
 
 
 def _refresh_snapshots(ctx: RebuildContext, out_root: Path) -> None:
@@ -169,7 +197,27 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
         "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
     }
     manifest_path = ohlc_root / "manifest.json"
-    ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"] if manifest_path.exists() else ""
+    # Fail closed on a missing manifest (T0094). `backfill_basket` always writes one, so its absence
+    # means a broken or half-written set -- exactly when emitting a provenance hash of `""` is most
+    # harmful: an empty string reads as a value and compares EQUAL across two entirely different
+    # broken builds, so two artifacts would agree on provenance while sharing none. A directory name
+    # is not an identity (T0093); the hash is what makes the citation resolvable.
+    if not manifest_path.exists():
+        raise DataSyncError(
+            f"data rebuild: universe needs {manifest_path} to record the OHLC set's identity -- "
+            "absent, so the set is broken or half-written; refusing to write an artifact whose "
+            "provenance hash would be empty (T0094)"
+        )
+    # A manifest that exists but cannot be read is the same defect wearing a different costume, so
+    # it gets the same typed failure rather than an untyped KeyError/JSONDecodeError from deep in
+    # the call stack (review finding): both mean "this set cannot identify itself".
+    try:
+        ohlc_dataset_hash = json.loads(manifest_path.read_text())["basket_sha256"]
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise DataSyncError(
+            f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "
+            "refusing to write an artifact that cannot cite the set it was built from (T0094)"
+        ) from exc
     # Name the set this build actually READ, and how fresh it was (T0093). A hash alone is not a
     # citation: the 2026-07-07 artifact cited `data/ohlc`'s hash, that directory was later retired,
     # and the reference became unresolvable -- with nothing in the file saying which window the
@@ -198,7 +246,9 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
 REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
     "ohlc-full": _rebuild_ohlc_full,
     "ohlc-15m": _rebuild_ohlc_15m,
+    "ohlc-reach": _rebuild_ohlc_reach,
     "derivatives-funding": _refresh_funding,
+    "derivatives-oi": _refresh_oi,
     "snapshots": _refresh_snapshots,
     "universe": _refresh_universe,
 }

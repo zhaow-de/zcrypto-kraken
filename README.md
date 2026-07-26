@@ -264,12 +264,21 @@ zcrypto data push
 zcrypto data rebuild <SET>...
 ```
 
+`ohlc-reach` is the exception to "from the OHLCVT dumps": it carries the **live** `ohlc-full` set forward using Kraken's public REST OHLC window, which serves the most recent ~720 bars per interval. That window recedes at a rate set by the interval — roughly 720 days at the daily grid, 120 days at 4h, but only 30 days at 1h — so a reach set is routinely **mixed**, and each series lands one of two ways:
+
+- **continuous** (`<interval>.parquet`) — the REST window still overlaps the canonical tail, the seam was verified (at least 6 shared stamps, every shared close equal), and the merged series is drop-in compatible with any `ohlc-full` reader.
+- **detached** (`<interval>.detached.parquet`) — the window no longer reaches the canonical tail. The bars are still written, because a REST bar is retrievable only while the window still reaches it; but they sit under a filename no `ohlc-full` reader globs, so a detached segment cannot be silently spliced across the gap. Promote it deliberately once an intervening dump closes the gap. Whether a detached capture is a *bridge* (a scheduled dump will cover the same span, so it just buys continuity earlier) or a *rescue* (nothing else will ever cover it) depends on the dump calendar — the set does not assume, so check before treating one as either.
+
+`manifest.json` records the status per series — a reach set never makes one set-wide continuity claim. A run logs a WARNING naming every detached series. A seam that *overlaps but does not hold* (too few shared stamps, or a disagreeing close) is a hard error, not a fallback to detached: the canonical set is authoritative, so a contradiction there is a data-integrity failure rather than a gap.
+
 | Argument / Option | Description |
 | -- | -- |
-| `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-15m`, `derivatives-funding`, `snapshots`, `universe`. |
+| `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-reach`, `ohlc-15m`, `derivatives-funding`, `derivatives-oi`, `snapshots`, `universe`. |
 | `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
 
-All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose `ohlc-full` set is staler than the 7-day budget), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
+All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose `ohlc-full` set is staler than the 7-day budget or whose `manifest.json` is missing/unreadable — the set then cannot identify itself, so no artifact is written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
+
+`derivatives-oi` backfills open-interest history from Binance Vision daily `metrics` dumps (5-minute `sum_open_interest` + the free long/short and taker ratios, back to each perp's listing) into `data/derivatives-oi/`, the sibling of `derivatives-funding` — the second free-backfillable B2 input. Both come from the public `data.binance.vision` CDN (checksum-verified per file); liquidations, the third B2 input, have no free dump and are collected live via Coinalyze instead (see `docs/open-topics/T0023-*`).
 
 ## Configuration<a name="configuration"></a>
 
