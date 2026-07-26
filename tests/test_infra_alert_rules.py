@@ -8,6 +8,7 @@ Every constraint pinned here is one the API enforces silently and the repo previ
 40-char UID limit cost a full attended round-trip on 2026-07-20 (a 41-char uid); note that the
 longest surviving uid is exactly 40, so the ceiling is real and routinely approached."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -72,3 +73,116 @@ def test_datasource_uids_are_templated_not_hardcoded():
     allowed = {"${GRAFANA_PROM_DS_UID}", "${GRAFANA_LOKI_DS_UID}", "__expr__"}
     bad = [(r["uid"], d.get("datasourceUid")) for r in _rules() for d in r["data"] if d.get("datasourceUid") not in allowed]
     assert not bad, f"datasourceUid neither templated nor the expression node: {bad}"
+
+
+# --- A shipped metric that nothing watches ------------------------------------------------------
+# T0008's content, generalized. Spec 00069 shipped `zcrypto_capture_book_desynced` and
+# `zcrypto_capture_resubscribes_total`, both scraped and live on both hosts, and for two months no
+# alert rule mentioned either -- the topic's own trigger was measurable but unwatched. The same gap
+# hid T0100 (a producer shipping into a transport nobody reads) and, found by the review of this
+# very commit, `zcrypto_capture_disk_watermark_breached` -- whose breach makes the daemon DISCARD
+# unbackfillable L2.
+#
+# `test_infra_alloy_series.py` proves a metric REACHES Grafana; this proves something looks at it.
+# Admitting a series and watching nothing is the more expensive half, and nothing else would
+# surface it: the Grafana dashboard carries no `zcrypto_capture_*` or `zcrypto_engine_*` panel at
+# all, so an unwatched app metric is invisible everywhere.
+#
+# The candidate set is DERIVED from the capture keep-regex, not hand-listed. A hand-list cannot
+# catch the next unwatched metric, which is precisely the mechanism that let these sit for months:
+# a new fault gauge added to the keep-regex tomorrow would be invisible to a fixed list. Every
+# admitted series is therefore a candidate until explicitly excluded below, so omitting one is a
+# conscious act with a written reason rather than an oversight.
+CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
+
+
+def _admitted_series() -> list[str]:
+    """Every metric name the capture hosts' keep-regex admits to remote_write."""
+    line = next(ln for ln in CAPTURE_ALLOY.read_text().splitlines() if "regex" in ln and "node_load1" in ln)
+    return line.split('"')[1].split("|")
+
+
+# Not fault signals: context you read once something ELSE has paged, or state whose meaning is a
+# level rather than an event. Each exclusion states why, because an unexamined exclusion is how the
+# original defect would grow back.
+NOT_A_FAULT_SIGNAL = {
+    # Capacity/utilisation context. Read while diagnosing; alerting on them directly is noise, and
+    # the conditions that matter already have their own rules (disk-low, load-high).
+    "up",
+    "node_load1",
+    "node_load5",
+    "node_load15",
+    "node_memory_MemTotal_bytes",
+    "node_memory_MemAvailable_bytes",
+    "node_memory_MemFree_bytes",
+    "node_filesystem_avail_bytes",
+    "node_filesystem_size_bytes",
+    "node_filesystem_free_bytes",
+    "node_network_receive_bytes_total",
+    "node_network_transmit_bytes_total",
+    "node_cpu_seconds_total",
+    "node_scrape_collector_duration_seconds",
+    "node_textfile_mtime_seconds",  # the staleness INPUT; the rules keyed on it are the signal
+    # Throughput counters -- healthy when RISING. Their failure mode is going flat, which the
+    # dead-man and the log-dead rules already own.
+    "zcrypto_capture_segments_written_total",
+    "zcrypto_capture_segment_bytes_total",
+    "zcrypto_capture_rows_held_total",
+    "zcrypto_logship_shipped_lines_total",
+    "zcrypto_logship_last_success_timestamp_seconds",
+    # Reconnects run 32-35/week per host (measured 2026-07-26): that is BASELINE, not a fault, so a
+    # naive threshold here is pure alarm fatigue. T0035's trigger is a reconnect counter RESET
+    # alongside a process_start_time_seconds jump (a crash-restart), which needs the correlation,
+    # not a raw count -- it stays that topic's work.
+    "zcrypto_capture_reconnects_total",
+    # Cumulative gap seconds: measured zero across all 24 series (2026-07-26), and an open gap is
+    # already covered twice over -- the dead-man (is_healthy gates the ping) and the desync rule.
+    # The cumulative counter's alerting design belongs to T0095's dashboard/alerting iteration.
+    "zcrypto_capture_gap_seconds_total",
+    # Engine cycle health -- registered under T0095 with `ripe_when: the dashboards/alerting design
+    # iteration`. Named here so its absence is a decision, not an oversight.
+    "zcrypto_engine_cycle_success",
+    "zcrypto_engine_cycle_completed_at_seconds",
+    "zcrypto_engine_cycle_duration_seconds",
+    "zcrypto_engine_target_weight",
+    "zcrypto_engine_orders_total",
+    "zcrypto_engine_order_notional_eur",
+    # Process self-metrics: diagnostic context, no fault semantics of their own.
+    "process_cpu_seconds_total",
+    "process_max_fds",
+    "process_open_fds",
+    "process_resident_memory_bytes",
+    "process_start_time_seconds",
+    "process_virtual_memory_bytes",
+    # Prune bookkeeping -- the fault is the timer STOPPING, which the staleness rules own.
+    "zcrypto_engine_journal_prune_deleted_days",
+    "zcrypto_engine_journal_prune_kept_days",
+    "zcrypto_engine_journal_prune_oldest_day_age_seconds",
+    "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
+}
+
+FAULT_SIGNAL_METRICS = sorted(set(_admitted_series()) - NOT_A_FAULT_SIGNAL)
+
+
+def test_the_exclusion_list_has_not_gone_stale():
+    """Every exclusion must name a series the keep-regex still admits — otherwise a rename leaves a
+    dead entry silently excusing nothing, and the metric it was renamed to is unguarded."""
+    stale = NOT_A_FAULT_SIGNAL - set(_admitted_series())
+    assert not stale, f"excluded but no longer admitted (rename? removal?): {sorted(stale)}"
+
+
+@pytest.mark.parametrize("metric", FAULT_SIGNAL_METRICS)
+def test_every_fault_signal_metric_is_watched_by_a_rule(metric):
+    """A fault signal nobody alerts on is a metric that renders green while the fault is live."""
+    # Word-boundary, not substring: `node_load1` is a strict prefix of `node_load15` (both admitted),
+    # so a plain `in` lets a node_load15 rule satisfy a node_load1 entry. Same for
+    # process_virtual_memory_bytes / _max_bytes.
+    pattern = re.compile(rf"\b{re.escape(metric)}\b(?!_)")
+    watching = [
+        r["uid"] for r in _rules() if any(pattern.search(str(q.get("model", {}).get("expr", ""))) for q in r.get("data", []))
+    ]
+    assert watching, (
+        f"{metric} is admitted to the capture keep-list but no alert rule queries it — nothing "
+        f"would surface it, since no dashboard panel carries the app-metric families either. Add a "
+        f"rule, or add it to NOT_A_FAULT_SIGNAL with the reason."
+    )
