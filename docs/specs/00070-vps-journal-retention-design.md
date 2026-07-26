@@ -72,7 +72,7 @@ Staleness is `node_textfile_mtime_seconds`, which the collector stamps for every
 
 ## D6 — Systemd hardening and schedule
 
-`ProtectSystem=strict` with `ReadWritePaths=` the journal dir only, plus `NoNewPrivileges`/`PrivateTmp`/`ProtectHome` — mirroring the capture prune, so a bug in the script *cannot* reach a path outside the journal even if its own globs were wrong. Structure, not promise.
+`ProtectSystem=strict` with `ReadWritePaths=` the journal dir plus the node-exporter textfile dir it publishes into (spec `00071`) — nothing else — plus `NoNewPrivileges`/`PrivateTmp`/`ProtectHome` — mirroring the capture prune, so a bug in the script *cannot* reach a path outside the journal even if its own globs were wrong. Structure, not promise.
 
 Schedule **01:23 UTC daily**, `Persistent=true`: clear of the 4-hourly cycle boundaries (nearest is 00:00, 83 min away), clear of the capture prune on the same host (03:17), and clear of both maintenance windows (21:25 / 22:25).
 

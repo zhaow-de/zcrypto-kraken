@@ -89,6 +89,7 @@ if [ -n "$textfile" ] && [ "$dry_run" -eq 0 ]; then
     oldest_age=$(( $(date -u '+%s') - $(date -u -d "$oldest" '+%s') ))
   fi
   tmp=$(mktemp "${textfile}.XXXXXX")
+  chmod 0644 -- "$tmp"   # mktemp makes 0600 and `mv` preserves it; the collector reads as non-root
   {
     echo "# HELP zcrypto_engine_journal_prune_deleted_days day-directories deleted by the last run"
     echo "zcrypto_engine_journal_prune_deleted_days $deleted"

@@ -20,7 +20,9 @@ So this is one defect with three victims. It is registered as [[T0100]].
 
 **One-off timers publish a `.prom`; long-lived services publish `/metrics`.** That rule is now stated in the config itself so the next reader does not re-derive it from an expired premise.
 
-The material simplification: Alloy already bind-mounts the host root read-only (`alloy-compose.yaml.j2:62`, `- /:/host/root:ro`). The textfile collector's `directory` is just a path it globs `*.prom` in — it has no relationship to `rootfs_path`. Pointing it at `/host/root/var/lib/zcrypto-node-textfile` therefore needs **no compose edit and no Alloy container recreate**: `config.alloy` is `copy:`'d and reloaded.
+The material simplification: Alloy already bind-mounts the host root read-only (`alloy-compose.yaml.j2:62`, `- /:/host/root:ro`). The textfile collector's `directory` is just a path it globs `*.prom` in — it has no relationship to `rootfs_path`. Pointing it at `/host/root/var/lib/zcrypto-node-textfile` therefore needs **no compose-template edit** — the mount already exists, so no volume changes.
+
+**It does still need an Alloy container recreate, and that is an attended step.** `config.alloy` is bind-mounted as a *single file*, which pins the inode; `copy:` writes a new inode, so the running container keeps serving the old config. No role in the fleet restarts Alloy — that is deliberate (the Alloy block is render-only; the first start has always been attended), so the converge lands the config and a human recreates the container. Do not "fix" this with a handler: an automatic restart of Alloy on every converge is a different decision than the one the fleet made.
 
 Rejected alternatives, with the reason each fails rather than a preference:
 
@@ -34,11 +36,15 @@ Rejected alternatives, with the reason each fails rather than a preference:
 
 Every metric this spec introduces is therefore added to the allow-list **and** to `tests/test_infra_alloy_series.py`'s `CAPTURE_REQUIRED`, which fails until the regex is edited. Also admitted: `node_textfile_scrape_error`, which ops and nas already carry and the capture hosts omit — without it a malformed `.prom` is invisible.
 
-## D3 — A stale `.prom` is not a scrape error, so freshness is its own gauge
+## D3 — Three ways a `.prom` fails, and each needs its own rule
 
-`node_textfile_scrape_error` fires on a *malformed* file, never on a *stale* one: a timer that stops running leaves its last `.prom` in place, and the collector keeps serving those values forever. A metric that cannot go stale-detectably is worse than no metric — it reads as healthy.
+The value being wrong is the *least* likely failure. Three others are all silent, and each defeats the rule that catches the others:
 
-Every `.prom` this spec produces therefore carries `_last_run_timestamp_seconds`, and every alert on it is written against that freshness, not only against the value. (T0021's prune script already emits this gauge; it was simply never wired to a reader.)
+1. **Stale** — the timer stopped; its last `.prom` sits there and the collector serves those values forever, reading healthy. `node_textfile_scrape_error` does **not** fire on this (only on malformed input). Caught by `node_textfile_mtime_seconds`, which the collector stamps for every file it reads — free, standard, no producer work. Thresholds are **per publisher**: the 15-minute reboot probe gets 1 h, the daily prune 26 h. One shared threshold would let the attended-reboot safety net sit dead for a day.
+2. **Unreadable or malformed** — caught by `node_textfile_scrape_error`. Not hypothetical: **`mktemp` creates `0600` and `mv` preserves it**, so a publisher without an explicit `chmod 0644` publishes root-only and the non-root collector gets `EACCES`. This spec's own retro-fix shipped with exactly that bug and a review caught it before deploy. Every publisher chmods; both test suites assert the mode.
+3. **Absent entirely** — the timer was never enabled, or the script fails every run. Then there is no series at all, and with `noDataState: OK` that reads green forever. A staleness rule **cannot fire on a series that does not exist**, and the mtime stamp is never recorded either, because the collector skips an unreadable file *before* stamping it. Caught by `count(node_reboot_required{...}) < 2` — turning absence into a value is the only shape that alerts on nothing.
+
+The `_last_run_timestamp_seconds` gauge the prune emits is kept as a producer-side cross-check, but the collector's mtime is the load-bearing signal because it applies to every publisher without cooperation.
 
 ## D4 — The flip: a variable with a safe default, quoted
 

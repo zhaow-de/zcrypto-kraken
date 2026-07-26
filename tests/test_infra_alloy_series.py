@@ -151,6 +151,7 @@ ONEOFF_TEXTFILE_SERIES = [
     "node_textfile_mtime_seconds",
     "zcrypto_engine_journal_prune_deleted_days",
     "zcrypto_engine_journal_prune_kept_days",
+    "zcrypto_engine_journal_prune_oldest_day_age_seconds",
     "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
 ]
 

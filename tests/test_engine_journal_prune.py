@@ -178,6 +178,42 @@ def test_reports_a_structured_line(tmp_path):
     assert "deleted=1" in out and "retention_days=14" in out and "kept=" in out
 
 
+def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
+    """Alloy runs as the non-root zcrypto-alloy user, and `mv` PRESERVES mktemp's 0600 — so without
+    an explicit chmod this .prom publishes root-only and the collector gets EACCES.
+
+    This shipped broken: the retro-fix that made this unit pass --textfile again was inert on
+    delivery, failing in exactly the silent mode T0100 exists to record, while the staleness alert
+    shipped alongside it was structurally unable to surface the failure (the collector skips an
+    unreadable file BEFORE stamping its mtime, so there is no series to go stale).
+    """
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    prom = tmp_path.parent / "mode.prom"
+    assert _prune(tmp_path, "14", "--textfile", str(prom)).returncode == 0
+    mode = prom.stat().st_mode & 0o777
+    assert mode == 0o644, f"published {oct(mode)}; a non-root collector cannot read it"
+
+
+def test_every_published_series_is_admitted_by_the_keep_regex(tmp_path):
+    """The allow-list has no `node_.*` wildcard, so a published-but-unadmitted series is dropped at
+    the remote-write boundary and looks exactly like a producer that never ran (spec 00071 D2).
+    Derived from what the script ACTUALLY emits rather than from a hand-kept list — that is how
+    `oldest_day_age_seconds` came to be published and silently dropped."""
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    prom = tmp_path.parent / "admitted.prom"
+    assert _prune(tmp_path, "14", "--textfile", str(prom)).returncode == 0
+    emitted = {line.split()[0] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
+
+    alloy = (ROLE.parent / "capture/files/config.alloy").read_text()
+    regex = next(line for line in alloy.splitlines() if "regex" in line and "node_load1" in line).split('"')[1]
+    admitted = set(regex.split("|"))
+    assert not (emitted - admitted), f"published but dropped at remote_write: {sorted(emitted - admitted)}"
+
+
 def test_writes_a_textfile_metric_when_asked(tmp_path):
     _day(tmp_path, 40)
     for n in range(1, 15):

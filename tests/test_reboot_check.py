@@ -83,12 +83,34 @@ def test_the_prom_is_well_formed_for_the_collector(tmp_path):
 
 
 def test_the_write_is_atomic_leaving_no_partial_file(tmp_path):
-    """The collector globs this directory continuously; it must never read a half-written file."""
+    """The collector globs this directory continuously; it must never read a half-written file.
+
+    Asserted by INODE, not by the absence of temp files: a truncate-in-place rewrite (`> "$out"`)
+    leaves no temp file either, so the no-turd check alone passes precisely *because* the safety
+    mechanism was removed. A rename gives a new inode; an in-place rewrite keeps it.
+    """
     prom = tmp_path / "reboot.prom"
     assert _run(tmp_path / "nope", prom).returncode == 0
-    assert prom.exists()
+    first = prom.stat().st_ino
+    assert _run(tmp_path / "nope", prom).returncode == 0
+    assert prom.stat().st_ino != first, (
+        "the output inode did not change — the script rewrote in place rather than renaming over, "
+        "so the collector can read a partially-written file"
+    )
     leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith("reboot.prom.")]
     assert not leftovers, f"temp file left behind: {leftovers}"
+
+
+def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
+    """Alloy runs as the non-root zcrypto-alloy user. mktemp creates 0600 and `mv` PRESERVES it, so
+    without an explicit chmod the .prom is published root-only and the collector gets EACCES —
+    metrics silently absent, which is exactly the T0100 failure mode. This is not hypothetical: the
+    sibling journal-prune script shipped with precisely this bug and a review caught it.
+    """
+    prom = tmp_path / "reboot.prom"
+    assert _run(tmp_path / "nope", prom).returncode == 0
+    mode = prom.stat().st_mode & 0o777
+    assert mode == 0o644, f"published {oct(mode)}; a non-root collector cannot read it"
 
 
 def test_an_unwritable_destination_fails_loudly(tmp_path):
@@ -137,6 +159,10 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
     host_dir = str(Path(out).parent)
 
     alloy = (ROLE / "files/config.alloy").read_text()
+    # The directory agreeing is necessary but NOT sufficient: dropping "textfile" from
+    # set_collectors leaves the block orphaned and the collector off, with the paths still matching.
+    set_collectors = next(line for line in alloy.splitlines() if "set_collectors" in line)
+    assert '"textfile"' in set_collectors, f"the textfile collector is not enabled, so the block is inert: {set_collectors.strip()}"
     directory = next(line for line in alloy.splitlines() if "directory =" in line).split('"')[1]
     # Alloy sees the host root at /host/root; the unit writes on the host itself.
     assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory} — a .prom nobody scrapes"
@@ -150,10 +176,41 @@ def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
     assert str(Path(out).parent) in rw, f"{out} is not writable under ProtectSystem=strict: {rw}"
 
 
-@pytest.mark.parametrize("unit_file", ["zcrypto-reboot-check.timer"])
-def test_only_the_timer_is_enabled_not_the_oneshot(unit_file):
-    tasks = (ROLE / "tasks/main.yml").read_text()
-    assert unit_file in tasks
-    assert "zcrypto-reboot-check.service" not in tasks.split("systemd_service")[-1], (
-        "enabling the oneshot too would run it on every boot"
-    )
+def test_only_the_timer_is_enabled_not_the_oneshot():
+    """Enabling the oneshot as well would prune/probe on every boot.
+
+    The earlier form of this test split on "systemd_service" and inspected only [-1] — the region
+    after the LAST of three occurrences in this file, which does not contain the reboot-check task
+    at all. It passed without ever looking at the thing it named.
+    """
+    import yaml
+
+    tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+    enabled = [
+        t["ansible.builtin.systemd_service"]["name"]
+        for t in _flatten(tasks)
+        if "ansible.builtin.systemd_service" in t and t["ansible.builtin.systemd_service"].get("enabled")
+    ]
+    assert "zcrypto-reboot-check.timer" in enabled, f"the timer is not enabled: {enabled}"
+    assert "zcrypto-reboot-check.service" not in enabled, f"the oneshot must not be enabled — it would run on every boot: {enabled}"
+
+
+def _flatten(tasks):
+    """Task lists nest inside `block:`; a flat scan would miss anything inside one."""
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        yield t
+        for key in ("block", "rescue", "always"):
+            if key in t:
+                yield from _flatten(t[key])
+
+
+def test_the_timer_actually_repeats():
+    """Content coverage for the .timer file, which nothing parsed before: removing OnUnitActiveSec
+    leaves a timer that fires once at boot and never again — converging green, publishing a gauge
+    that freezes at its first value."""
+    timer = (ROLE / "files/zcrypto-reboot-check.timer").read_text()
+    assert "OnUnitActiveSec=" in timer, "without a repeat interval this fires once per boot"
+    assert "OnBootSec=" in timer, "without a boot trigger the gauge is stale until the first interval"
+    assert "Unit=zcrypto-reboot-check.service" in timer
