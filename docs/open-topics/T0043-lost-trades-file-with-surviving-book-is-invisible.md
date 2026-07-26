@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: a trades segment is ever found missing from a mirror while its book sibling is present (any manual audit, any consumer error), or before the reconciled overlay feeds a paid/production consumer
+ripe_when: before the reconciled overlay feeds a paid/production consumer, or before go-live — this is the OPERATIVE leg, date-free but human-reachable. The repaired-real-loss signature (the REST backfill minting a trades hour that did not exist while the pair's book final for that same hour did) is deliberately NOT a trigger clause: it becomes observable only once this topic's own metric is built, so listing it would be the same circular trigger [[T0073]] was just re-pointed off — it is the build's acceptance criterion, not its trigger. Re-pointed 2026-07-23 from "a trades segment is ever found missing from a mirror while its book sibling is present", which iter-100's backfill (spec `00053`) now silently REPAIRS against Kraken's dense `trade_id` tape — an observation the system was deliberately engineered not to produce
 ---
 
 # A genuinely lost trades file is invisible when its book sibling survives

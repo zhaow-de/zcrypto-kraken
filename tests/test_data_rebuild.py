@@ -2,6 +2,7 @@
 builders are monkeypatched into `rebuild.REBUILDABLE` so these tests stay hermetic."""
 
 import json
+import tomllib
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 from cli.costs.spread import effective_spread_bps
 from cli.data import rebuild
 from cli.data.errors import DataSyncError
+from cli.ohlc.reach import ReachEntry, ReachReport
 from cli.universe.rules import DEFAULT_MAX_SPREAD_BPS, SPREAD_REFERENCE_NOTIONAL_EUR
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -143,6 +145,62 @@ def test_refresh_universe_writes_point_in_time_universe_json(tmp_path, monkeypat
     assert payload["provenance"]["ohlc_stalest_daily_bar"] == "2026-07-14"
 
 
+def test_refresh_universe_refuses_a_basket_with_no_manifest(tmp_path, monkeypatch):
+    """A missing `manifest.json` must fail closed, never emit `ohlc_dataset_hash: ""` (T0094).
+
+    `backfill_basket` always writes a manifest, so its absence means a broken or half-written set --
+    exactly when a silent empty hash is most harmful. An empty string is also the wrong shape for
+    "unknown": it reads as a value and compares EQUAL across two entirely different broken builds,
+    so two artifacts could agree on provenance while sharing none. A directory name is not an
+    identity (that is T0093's whole story); the hash is what makes a citation resolvable.
+    """
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    # deliberately NO manifest.json
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="manifest"):
+        rebuild._refresh_universe(ctx, out_root)
+
+    # and it must fail BEFORE writing anything -- a half-written artifact is the failure mode too
+    assert not (out_root / "point-in-time-universe.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("payload", "label"),
+    [("{not json", "invalid JSON"), ('{"other_key": 1}', "missing basket_sha256")],
+)
+def test_refresh_universe_refuses_an_unreadable_manifest(tmp_path, monkeypatch, payload, label):
+    """A manifest that EXISTS but cannot be read is the same defect as an absent one (T0094).
+
+    Both mean the set cannot identify itself, so both get the same typed failure -- otherwise this
+    path raises an untyped KeyError/JSONDecodeError from deep in the call stack, with no path in
+    the message, inconsistent with every other guard in this module.
+    """
+    monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
+    _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    (ohlc_root / "manifest.json").write_text(payload)
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="unreadable"):
+        rebuild._refresh_universe(ctx, out_root)
+    assert not (out_root / "point-in-time-universe.json").exists(), label
+
+
 def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch):
     # The production path is the whole point of the criterion: wiring it in `_refresh_universe` is
     # what makes the cap real, so reverting that call to `finalize_universe(pairs, volumes)` must
@@ -154,6 +212,7 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
     ohlc_root = tmp_path / "ohlc-full"
     _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0)
     _write_daily(ohlc_root / "ETH" / "BTC" / "1440.parquet", vwap=0.05, volume=1_000.0)
+    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
 
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
     out_root = tmp_path / "universe-20260718"
@@ -241,6 +300,7 @@ def test_refresh_universe_accepts_an_ohlc_set_inside_the_staleness_budget(tmp_pa
 
     ohlc_root = tmp_path / "ohlc-full"
     _write_daily(ohlc_root / "BTC" / "EUR" / "1440.parquet", vwap=50_000.0, volume=1_000.0, last=date(2026, 7, 16))
+    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
 
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
     out_root = tmp_path / "universe-20260718"
@@ -258,3 +318,98 @@ def test_refresh_universe_requires_live_ohlc_full(tmp_path, monkeypatch):
 
     with pytest.raises(DataSyncError, match="ohlc-full"):
         rebuild._refresh_universe(ctx, tmp_path / "universe-20260718")
+
+
+def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
+    """The reach builder must read the LIVE ohlc-full and write into the minted sibling only --
+    reading the sibling instead would reach forward from an empty set."""
+    (tmp_path / "ohlc-full").mkdir()
+    seen = {}
+
+    def _fake_reach(canonical_root, out_root, **kwargs):
+        seen["canonical"] = canonical_root
+        seen["out"] = out_root
+        (out_root / "written").write_text("x")
+        return ReachReport(entries=())
+
+    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
+
+    minted = rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+    assert seen["canonical"] == tmp_path / "ohlc-full"
+    assert seen["out"] == tmp_path / "ohlc-reach-20260723" == minted[0]
+    assert (tmp_path / "ohlc-reach-20260723" / "written").exists()
+
+
+def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeypatch, caplog):
+    """A detached series is the case an operator must not miss, so it is logged by name."""
+    (tmp_path / "ohlc-full").mkdir()
+    entries = (
+        ReachEntry(
+            symbol="BTC",
+            interval=60,
+            status="detached",
+            rest_first=datetime(2026, 6, 23, tzinfo=UTC),
+            rest_last=datetime(2026, 7, 23, tzinfo=UTC),
+            overlap_bars=0,
+            appended=720,
+            gap_bars=2009,
+        ),
+        ReachEntry(
+            symbol="BTC",
+            interval=240,
+            status="continuous",
+            rest_first=datetime(2026, 3, 25, tzinfo=UTC),
+            rest_last=datetime(2026, 7, 23, tzinfo=UTC),
+            overlap_bars=38,
+            appended=682,
+            gap_bars=0,
+        ),
+    )
+
+    def _fake_reach(canonical_root, out_root, **kwargs):
+        (out_root / "x").write_text("x")
+        return ReachReport(entries=entries)
+
+    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
+
+    with caplog.at_level("WARNING"):
+        rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+    assert "1 of 2 reach series are DETACHED" in caplog.text
+    assert "BTC@60" in caplog.text
+    assert "BTC@240" not in caplog.text
+
+
+def test_rebuild_ohlc_reach_fails_closed_without_a_live_canonical(tmp_path, monkeypatch):
+    """No ohlc-full means nothing to reach forward FROM -- refuse rather than mint an empty set."""
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
+    with pytest.raises(DataSyncError):
+        rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+
+def test_every_rebuildable_dataset_is_an_authored_set():
+    """A dataset this node can REBUILD is one it AUTHORS, so it must also be publishable.
+
+    Guards a real, silent failure mode. `authored_sets` drives `data push`; `push_hot` raises only
+    when a listed set is missing from DISK, never when a set is merely absent from the list. So a
+    dataset dropped from `authored_sets` is never pushed, the ops node can never `data fetch` it,
+    and NOTHING errors. That is exactly what a careless merge produces: two branches each appending
+    a different dataset to this one-line array conflict, and a resolution keeping only one side
+    looks clean. This assertion is what makes that loud.
+
+    The converse is deliberately NOT asserted -- `authored_sets` may legitimately hold sets that are
+    not rebuildable (e.g. `ohlc-holdout-*`, a frozen one-off with a spent look budget).
+    """
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / "zcrypto.toml").read_text())
+    authored = set(config["zcrypto"]["data"]["authored_sets"])
+
+    missing = sorted(set(rebuild.REBUILDABLE) - authored)
+
+    assert not missing, (
+        f"rebuildable dataset(s) absent from zcrypto.toml authored_sets: {missing}. "
+        "`data push` would silently skip them and the ops node could never fetch them -- if you hit "
+        "this after a merge, the resolution dropped an entry; the fix is the UNION of both sides."
+    )

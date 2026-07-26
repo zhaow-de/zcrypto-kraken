@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: a Grafana Alloy release newer than the fleet's pinned version exists — human-checked at any convenient moment, and the skill is always human-run
+status: partial
+ripe_when: the first real bump run — PR #191 merged + a release newer than the fleet pin (true today: v1.18.0 vs v1.17.1; deliberately deferred past the 2026-07-29→08-20 absence). The skill itself is BUILT; the run validates it and resolves this topic
 ---
 
 # `/zcrypto-bump-alloy` — a manual skill to roll a new Alloy image across the fleet
@@ -21,7 +21,10 @@ An Alloy bump is a four-host deploy on infrastructure carrying unbackfillable ca
 - Only the NAS role automates restart-after-recreate; ops and the capture hosts are render-only, so the skill must bake the post-recreate restart in. This discharges [[T0048]]'s residual for **Alloy's own recreations only** — the render-only-host residual for app-container recreations remains its own item.
 - Canary order for a telemetry-only change: NAS/ops first, then capture secondary, then capture primary.
 
+## Done so far
+
+**(2026-07-23) The skill is built and adversarially reviewed** — `.claude/skills/zcrypto-bump-alloy/SKILL.md`, authored from a 5-surface fact survey of the post-00068/00069 tree and corrected by an adversarial review that verified every command against both trees. Its load-bearing content: canary order ops → NAS → capture secondary → capture primary (ordered for verification quality — telemetry-only, so no 24 h bake is owed; the canary rule is capture-image-scoped); the currently-running-capture-digest requirement on capture converges (via `{{.Config.Image}}`, never `{{.Image}}` — measured host-dependent: equal to the pin only under the containerd image store); the render-only reality on ops/capture (`compose up -d` is the operator's step); the empty-`-e`-counts-as-defined footgun; the alert clocks (per-host `Alloy dark` ≈15 m effective, ops raced by the hcio-watchdog at ~10 m); `docs/reference/fleet-pins.md` as the durable digest record for the three hosts whose pins are converge-time-only (deliberately left that way — the skip-when-absent gate is load-bearing, so no repo defaults were added). Prerequisite pinned: PR #191 merged before the first run.
+
 ## Suggested next steps
 
-- **(When ripe)** Write the skill: check pinned vs newest release; update pins; converge in canary order with the restart baked in; verify per host by outcome (Alloy up, series shipping — reuse `tests/test_infra_alloy_series.py`'s pins as the checklist source so skill and tests never drift).
-- **(With it)** `disable-model-invocation: true` — human-triggered only.
+- **(At the first real bump)** Run the skill end-to-end; whatever the live run corrects in it lands as edits, then this topic resolves. The trigger stands: a release newer than the fleet pin exists (v1.18.0 vs the fleet's v1.17.1 as of 2026-07-23 — deliberately NOT bumped pre-departure; first run post-return unless needed sooner).

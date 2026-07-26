@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: before the pre-live universe refresh ([[T0025]]) — that refresh is the operation this breaks. The silent-shrink path is closed by a fail-closed guard (landed 2026-07-22); the remainder is the DATA gap, and it is NOT dischargeable by ingesting dumps — the OHLCVT dumps are quarterly, so even a freshly-ingested just-closed quarter leaves the frontier weeks stale and the guard still fires. Ripe when a LIVE-TAILED volume source exists for the rebuild: either [[T0065]]'s live-trades→bars materializer or a REST volume pull in the rebuild path. Also ripe if any decision starts leaning on the committed universe's `median_quote_volume` figures as current
+ripe_when: **the data half is DISCHARGED as of 2026-07-23** — `zcrypto data rebuild ohlc-reach` (T0065) mints a live-tailed daily series whose stalest bar is **1 day old** against the 7-day budget, where `data/ohlc-full` sits at 114 days and correctly fails closed. What remains is the WIRING decision, and it is deliberately not autonomous: pointing `_refresh_universe` at the reach set changes which dataset defines the tradeable universe, so it belongs to [[T0025]]'s pre-live refresh with the owner present. Also ripe if any decision starts leaning on the committed universe's `median_quote_volume` figures as current
 ---
 
 # The universe rebuild reads an OHLC set that stops months short, so its volume floor measures the past
@@ -48,12 +48,25 @@ Every recomputed figure differs from the committed one, in both directions. [[T0
 
 Also corrected in the same change: `docs/universe/point-in-time-universe.md`'s "Full-history volume — resolved / dropped" bullet, which had declared this very question closed on a false premise since 2026-07-11.
 
-Provenance hardened 2026-07-22 in the same spirit: the artifact now records `ohlc_dataset_dir` and `ohlc_stalest_daily_bar`, so a future reader can see which set a build read and where its trailing window ended, instead of inferring it from a bare hash that may no longer resolve. The remaining hole — an empty `ohlc_dataset_hash` when the manifest is missing — is [[T0094]].
+Provenance hardened 2026-07-22/23 in the same spirit (completed by [[T0094]]): the artifact now records `ohlc_dataset_dir` and `ohlc_stalest_daily_bar`, and a set that cannot produce a resolvable hash is refused outright rather than published with an empty one — so a future reader can see which set a build read and where its trailing window ended, instead of inferring it from a bare hash that may no longer resolve. The remaining hole — an empty `ohlc_dataset_hash` when the manifest is missing — is [[T0094]].
 
 **This closes the silent-shrink path, not the data gap** — a rebuild now fails loudly instead of quietly selecting eleven. The gap itself is the remainder below.
+
+## Done so far
+
+- **The live-tailed volume source now exists (2026-07-23).** This topic's `ripe_when` named exactly two acceptable discharges — [[T0065]]'s live-trades→bars materializer, or *a REST volume pull in the rebuild path*. The second landed as `zcrypto data rebuild ohlc-reach` (`cli/ohlc/reach.py`), and it clears the freshness budget with room to spare:
+
+  | set | stalest daily bar | staleness | `_require_fresh_ohlc` |
+  |---|---|---|---|
+  | `data/ohlc-full` | ETH @ 2026-03-31 | 114 d | **fails closed** (budget 7 d) |
+  | `data/ohlc-reach` | ETH @ 2026-07-22 | **1 d** | **passes** |
+
+  Note this vindicates the guard rather than working around it: the rebuild was *correctly* refusing, and the fix was to supply a fresh source, not to relax the budget.
+
+- **The remainder is a wiring decision, and it is deliberately parked.** `_refresh_universe` still reads `ohlc-full` via `_require_ohlc_full`. Repointing it at a reach set changes **which dataset defines the tradeable universe** — a research-relevant choice (the reach set's tail is REST-derived rather than dump-derived), so it rides [[T0025]]'s pre-live refresh with the owner present rather than being switched autonomously. Until then a universe rebuild continues to fail closed, which is the safe state.
 
 ## Suggested next steps
 
 - **(The remaining blocker — and dump ingestion does NOT discharge it)** The OHLCVT dumps are **quarterly** (`Kraken_OHLCVT_Q<N>_<YYYY>.zip`; newest on the NAS is Q1 2026, with Q2 still absent 22 days after the quarter closed). A dump-derived frontier is therefore always a quarter boundary: ingesting Q2 today gives 2026-06-30, still 22 days stale against a 7-day budget, so the guard fires anyway. **A universe rebuild needs a live-tailed volume source, not a fresher dump.**
 - **(The real options, one of which T0025 must pick)** (a) a REST volume pull in the rebuild path, which is what the 2026-07-07 build effectively did — decouples selection from the dump cadence, but reintroduces a network dependency; (b) [[T0065]]'s live-trades→bars materializer, which per [[T0092]] feeds **EUR pairs only**, so the two BTC-quoted legs would still need a source; (c) widen the staleness budget, which is the option that quietly reintroduces the defect and is recorded here to be rejected explicitly rather than drifted into.
-- ~~**(Cheap, independent)** Record the resolved dataset path + hash in the universe provenance from the same handle the builder actually read, so the artifact cannot cite a set the code does not use.~~ **Done 2026-07-22** — *partially*: provenance now carries `ohlc_dataset_dir` (the directory read, taken from `ohlc_root` itself) and `ohlc_stalest_daily_bar` (the stalest symbol's newest bar — the value the staleness guard tests, and the only one supporting "every symbol's window ends at or after this"). The bullet's success criterion is **not fully met**: a directory name is not an identity, so an artifact whose `ohlc_dataset_hash` is empty still cites nothing resolvable → split out as [[T0094]].
+- ~~**(Cheap, independent)** Record the resolved dataset path + hash in the universe provenance from the same handle the builder actually read, so the artifact cannot cite a set the code does not use.~~ **Done 2026-07-22** — *partially*: provenance now carries `ohlc_dataset_dir` (the directory read, taken from `ohlc_root` itself) and `ohlc_stalest_daily_bar` (the stalest symbol's newest bar — the value the staleness guard tests, and the only one supporting "every symbol's window ends at or after this"). The bullet's success criterion is **now fully met** (2026-07-23): the residual — a directory name is not an identity, so an artifact whose `ohlc_dataset_hash` was empty still cited nothing resolvable — was split out as [[T0094]] and **resolved**, so a rebuild whose OHLC set carries no usable `manifest.json` fails closed instead of publishing an unciteable artifact. Provenance is no longer this topic's problem; the remainder below is purely the DATA gap.

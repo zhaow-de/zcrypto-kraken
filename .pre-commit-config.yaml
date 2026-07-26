@@ -2,6 +2,8 @@
 # fleet's own /usr/bin/rrsync (sha256 d4739b6f…). Our formatters must never rewrite third-party
 # security code: a reformat both defeats the provenance and edits the sole write-jail into custody
 # (spec 00056 D2). Excluded globally; its integrity is verified by hash against the in-fleet copy.
+# This line is the ONLY thing holding every non-ruff hook off that file — removed, trailing-whitespace
+# rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
 exclude: '^infra/nas/rrsync$'
 
 repos:
@@ -24,12 +26,26 @@ repos:
         args: ["--fix=lf"]
       - id: trailing-whitespace
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.21
+  # Local (not the upstream mirror) so there is ONE ruff: the one pinned in pyproject/uv.lock, which
+  # dependabot's `uv` ecosystem already tracks -- same reasoning as ansible-lint below. The mirror
+  # pinned ruff a second time and the two drifted: #199 bumped only the uv side, leaving the gate on
+  # 0.15.22 while `uv run ruff` was 0.16.0 (T0099).
+  # `--force-exclude` is REQUIRED here: pre-commit passes explicit paths, and without it ruff ignores
+  # `exclude` for paths named on the command line. `types_or` mirrors the upstream hooks' scoping.
+  - repo: local
     hooks:
       - id: ruff-check
-        args: ["--fix"]
+        name: ruff check
+        entry: uv run ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
       - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
 
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0
