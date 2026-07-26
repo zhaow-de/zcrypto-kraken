@@ -10,7 +10,7 @@ The load-bearing assertions are the NEGATIVE ones, and one of them is not about 
 cycle, located by globbing this tree; with no prior record every delta becomes the full target and
 the engine rebuilds the whole book ("the shadow book starts flat"). So the prune must keep the
 newest `retention_days` day-dirs REGARDLESS of age — the guard is inert in healthy operation and
-is the only thing standing between a >14-day engine outage and a spurious book rebuild (spec
+is the only thing standing between a >60-day engine outage and a spurious book rebuild (spec
 00070 D2).
 
 Dates are taken from the directory NAME, never from mtime (D4): the name is the day's identity,
@@ -19,6 +19,7 @@ while an mtime is rewritten by any restore or rsync.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,15 +59,22 @@ def test_deletes_only_days_older_than_retention(tmp_path):
     assert fresh.exists(), "a 3-day-old day is inside the window"
 
 
-def test_keeps_the_newest_n_days_even_when_all_are_aged(tmp_path):
-    """D2, the load-bearing guard: a >14-day engine outage ages out EVERY day. An age-only prune
-    would empty the journal and the next cycle would rebuild the whole book from flat."""
-    days = [_day(tmp_path, n) for n in range(30, 60)]  # every one far beyond retention
-    result = _prune(tmp_path)
+@pytest.mark.parametrize("retention", ["14", "60"])
+def test_keeps_the_newest_n_days_even_when_all_are_aged(tmp_path, retention):
+    """D2, the load-bearing guard: an engine outage longer than the window ages out EVERY day. An
+    age-only prune would empty the journal and the next cycle would rebuild the whole book flat.
+
+    Parametrized over the DEPLOYED retention (60) as well as the small test default, because this
+    is the case where the floor binds: a literal `14` hardcoded into the floor passes every
+    fixed-at-14 test in this file and shows up only here.
+    """
+    n = int(retention)
+    planted = [_day(tmp_path, m) for m in range(n + 10, n + 10 + n + 16)]  # all far beyond retention
+    result = _prune(tmp_path, retention)
     assert result.returncode == 0, result.stderr
     survivors = sorted(p.name for p in tmp_path.iterdir() if p.is_dir())
-    assert len(survivors) == 14, f"must keep the newest 14 regardless of age, kept {len(survivors)}"
-    assert survivors == sorted(d.name for d in days)[-14:], "the survivors must be the NEWEST 14"
+    assert len(survivors) == n, f"must keep the newest {n} regardless of age, kept {len(survivors)}"
+    assert survivors == sorted(d.name for d in planted)[-n:], "the survivors must be the NEWEST n"
 
 
 def test_never_touches_the_current_utc_day(tmp_path):
@@ -77,7 +85,8 @@ def test_never_touches_the_current_utc_day(tmp_path):
     assert today.exists(), "the day being written must never be deleted"
 
 
-def test_a_day_exactly_at_the_retention_boundary_survives(tmp_path):
+@pytest.mark.parametrize("retention", ["14", "60"])
+def test_a_day_exactly_at_the_retention_boundary_survives(tmp_path, retention):
     """The AGE condition, isolated from the keep-newest floor.
 
     15 consecutive days means exactly one candidate below the floor — the oldest, aged exactly
@@ -86,11 +95,12 @@ def test_a_day_exactly_at_the_retention_boundary_survives(tmp_path):
     decided: with 15 distinct days the oldest is necessarily >= 14 days old, so any fixture with
     more days makes the floor sufficient and leaves the cutoff untested.
     """
-    days = {n: _day(tmp_path, n) for n in range(15)}  # ages 0..14
-    result = _prune(tmp_path)
+    n = int(retention)
+    days = {m: _day(tmp_path, m) for m in range(n + 1)}  # ages 0..n
+    result = _prune(tmp_path, retention)
     assert result.returncode == 0, result.stderr
     assert "deleted=0" in result.stdout, f"nothing is strictly older than the cutoff: {result.stdout}"
-    assert days[14].exists(), "a day aged exactly retention_days is NOT strictly older than the cutoff"
+    assert days[n].exists(), "a day aged exactly retention_days is NOT strictly older than the cutoff"
 
 
 def test_a_day_one_past_the_boundary_is_deleted(tmp_path):
@@ -267,4 +277,38 @@ def test_the_deployed_retention_matches_the_spec():
     role default has to change this line and confront the spec."""
     assert _role_vars()["engine_journal_retention_days"] == "60", (
         "spec 00070 records 60 days (owner ruling 2026-07-26) -- update the spec, not just the default"
+    )
+
+
+def _field(out: str, name: str) -> str:
+    return re.search(rf"{name}=(\S+)", out).group(1)
+
+
+def test_a_dry_run_publishes_no_metric(tmp_path):
+    """A dry run's `kept` counts would-delete entries, so publishing it renders a pruned journal
+    that was never pruned. The log line can say "(dry-run)"; a .prom the collector scrapes cannot."""
+    _day(tmp_path, 40)
+    for n in range(1, 15):
+        _day(tmp_path, n)
+    prom = tmp_path.parent / "dry.prom"
+    assert _prune(tmp_path, "14", "--dry-run", "--textfile", str(prom)).returncode == 0
+    assert not prom.exists(), "a dry run must not publish metrics for deletions it did not make"
+    assert not list(tmp_path.parent.glob("dry.prom.*")), "and must leave no mktemp turd behind"
+
+
+@pytest.mark.parametrize("zero_prefixed,plain", [("014", "14"), ("060", "60")])
+def test_a_zero_prefixed_retention_is_decimal_not_octal(tmp_path, zero_prefixed, plain):
+    """`$(( 014 ))` is octal 12 in bash while `date -d "014 days ago"` reads decimal 14 — without a
+    `10#` prefix the floor and the cutoff silently disagree, protecting fewer days than asked.
+
+    Only visible when the floor binds, which is why every day planted here is far beyond retention.
+    """
+    n = int(plain)
+    for m in range(200, 200 + n + 20):
+        _day(tmp_path, m)
+    prefixed = _prune(tmp_path, zero_prefixed, "--dry-run")
+    assert prefixed.returncode == 0, prefixed.stderr
+    plain_run = _prune(tmp_path, plain, "--dry-run")
+    assert _field(prefixed.stdout, "kept") == _field(plain_run.stdout, "kept") == str(n), (
+        f"{zero_prefixed} must mean {n}, not octal: {prefixed.stdout}"
     )

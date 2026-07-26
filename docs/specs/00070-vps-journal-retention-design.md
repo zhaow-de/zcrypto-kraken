@@ -1,6 +1,6 @@
 # VPS engine-journal retention — prune-after-verified-pull (spec 00070, T0021)
 
-**Goal.** Bound the VPS engine journal at a 60-day local tail (owner ruling 2026-07-26, raised from an earlier 14 before deploy) without ever destroying gate evidence or perturbing order generation.
+**Goal.** Bound the VPS engine journal at a 60-day local tail (owner ruling 2026-07-26, raised from an earlier 14 *between* the two converges — the first deploy ran at 14) without ever destroying gate evidence or perturbing order generation.
 
 **Scope.** A daily systemd timer on the engine host (`zcrypto`) that deletes whole aged journal day-directories under `/var/lib/zcrypto-engine/journal`. Nothing else: capture's tree is untouched, the NAS archive is untouched, no CLI surface changes.
 
@@ -11,7 +11,7 @@
 | journal growth | 13 MB/day ≈ 0.38 GB/month |
 | VPS free | 51 GB of 79 GB (32% used) ⇒ **~11 years** of headroom |
 | journal today | 16 day-dirs, 197 MB |
-| steady state at 60 d | ~780 MB — 1.5% of free space |
+| steady state at 60 d | ~780 MB — 1.5% of free space *(derived, not measured: 13 MB/day × 60)* |
 | NAS mirror completeness | **16 of 16 VPS days present — zero missing** |
 | journal pull cadence | hourly; lag ceiling 4.10 h, alerted at 6 h (spec `00069`/T0069) |
 
@@ -33,7 +33,7 @@ This is written down as a deliberate, evidence-backed choice — not an oversigh
 
 `cli/engine/cycle.py:270` derives each cycle's orders as a delta against the most recent journaled cycle, located by globbing the journal tree. With **no** prior record, `prev_targets is None`, every delta becomes the full target, and the engine emits orders to establish the entire book from scratch ("the shadow book starts flat").
 
-An age-only prune reaches that state in one scenario: **the engine stops for longer than the retention window.** Every day then exceeds 14 days, a naive sweep empties the journal, and the next start emits a full book instead of deltas. Shadow-mode today; real orders after go-live.
+An age-only prune reaches that state in one scenario: **the engine stops for longer than the retention window.** Every day then exceeds 60 days, a naive sweep empties the journal, and the next start emits a full book instead of deltas. Shadow-mode today; real orders after go-live.
 
 **The prune therefore always keeps the newest `retention_days` day-directories, regardless of age.** Both conditions must hold for deletion:
 
@@ -62,7 +62,9 @@ The script prints one structured line: `zcrypto-engine-journal-prune: deleted=<n
 
 **It emits no metric, and that follows from the architecture rather than from laziness.** Since spec `00069` app metrics on this fleet come from **`/metrics` endpoints Alloy scrapes** (`capture_app` :9101, `engine_app` :9102) — which requires a *live process*. A daily oneshot exists for about a second; there is nothing to scrape. The fleet's mechanism for that class is the node-exporter textfile collector, and the ops node keeps one for exactly that reason (its four ephemeral timers). The capture/engine hosts deliberately run **none** (`roles/capture/files/config.alloy`), so a `.prom` written here would be read by nobody.
 
-The gap that leaves — a timer that silently stops running emits no signal — **is already covered at the level that matters**. The failure mode is "the journal resumes growing at 13 MB/day against 51 GB free", and the *Capture · spool disk low* alert fires at <10% free on this same root filesystem. That alert is the honest backstop, not a hand-wave: it names the prune timers as the first thing to check. Building a bespoke metric to detect a condition that takes years to become visible, on a host whose disk is already alerted, would be ceremony.
+**That leaves a real gap, stated plainly: nothing detects a timer that silently stops.** The *Capture · spool disk low* alert covers this same root filesystem, but it is a backstop against disk exhaustion, **not a dead-man for the timer** — at 13 MB/day a fully stopped prune needs roughly 43 GB, about **nine years**, to move a <10%-free threshold, and the rule's `noDataState: OK` means it never fires on absence either.
+
+The gap is accepted rather than closed, for a reason that survives the arithmetic: **over-deletion is the dangerous failure, and no disk alert could ever catch that** — the keep-newest floor is what guards it. A stopped timer merely returns the journal to the append-only behaviour it had before this spec, on a disk with a decade of headroom. Building a bespoke liveness metric for that, on the one host class that runs no textfile collector, would buy nothing. The alert's summary does name both prune timers, so an operator who *is* paged looks in the right place.
 
 The script still *supports* `--textfile` (and is tested for it) so the same binary serves a host that does have a collector — the ops node — without a rewrite. The unit simply does not pass it.
 
