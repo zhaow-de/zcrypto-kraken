@@ -225,8 +225,15 @@ def test_the_handler_records_last_seen_for_every_book_message():
     last_seen: dict[str, datetime] = {}
     asyncio.run(
         _handle_book_message(
-            _book_msg("BTC/EUR"), "book_update", _FakeClient(), {"BTC/EUR": _StubBook()},
-            {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), last_seen,
+            _book_msg("BTC/EUR"),
+            "book_update",
+            _FakeClient(),
+            {"BTC/EUR": _StubBook()},
+            {},
+            _StubMonitor(),
+            _StubWatermark(),
+            DesyncRecovery(),
+            last_seen,
         )
     )
     assert "BTC/EUR" in last_seen, "the daemon received a book message and recorded no last-seen time"
@@ -249,8 +256,15 @@ def test_last_seen_is_recorded_even_while_the_disk_watermark_is_breached():
     last_seen: dict[str, datetime] = {}
     asyncio.run(
         _handle_book_message(
-            _book_msg("BTC/EUR"), "book_update", _FakeClient(), {"BTC/EUR": _StubBook()},
-            {}, _StubMonitor(), _Breached(), DesyncRecovery(), last_seen,
+            _book_msg("BTC/EUR"),
+            "book_update",
+            _FakeClient(),
+            {"BTC/EUR": _StubBook()},
+            {},
+            _StubMonitor(),
+            _Breached(),
+            DesyncRecovery(),
+            last_seen,
         )
     )
     assert "BTC/EUR" in last_seen, "a watermark breach blinded the staleness watchdog"
@@ -271,8 +285,14 @@ def test_the_consumer_hands_its_last_seen_map_down_to_the_handler():
     last_seen: dict[str, datetime] = {}
     asyncio.run(
         _consume(
-            _ScriptedClient(), {"BTC/EUR": _StubBook()}, {}, {},
-            _StubMonitor(), _StubWatermark(), DesyncRecovery(), last_seen,
+            _ScriptedClient(),
+            {"BTC/EUR": _StubBook()},
+            {},
+            {},
+            _StubMonitor(),
+            _StubWatermark(),
+            DesyncRecovery(),
+            last_seen,
         )
     )
     assert "BTC/EUR" in last_seen, "_consume never handed its last-seen map down -- the watchdog is fed by nothing"
@@ -290,8 +310,13 @@ def test_the_staleness_loop_books_silence_stamped_at_the_last_message():
     # Detected 209 s later; the window must still be stamped at T0.
     asyncio.run(
         _staleness_loop(
-            ["BTC/EUR"], monitor, last_seen, interval=0, threshold=30.0,
-            now_fn=lambda: T0 + timedelta(seconds=209), once=True,
+            ["BTC/EUR"],
+            monitor,
+            last_seen,
+            interval=0,
+            threshold=30.0,
+            now_fn=lambda: T0 + timedelta(seconds=209),
+            once=True,
         )
     )
     assert monitor.is_silent("BTC/EUR") is True
@@ -308,8 +333,13 @@ def test_the_staleness_loop_does_not_fire_inside_the_threshold():
     monitor = GapMonitor()
     asyncio.run(
         _staleness_loop(
-            ["BTC/EUR"], monitor, {"BTC/EUR": T0}, interval=0, threshold=30.0,
-            now_fn=lambda: T0 + timedelta(seconds=29.9), once=True,
+            ["BTC/EUR"],
+            monitor,
+            {"BTC/EUR": T0},
+            interval=0,
+            threshold=30.0,
+            now_fn=lambda: T0 + timedelta(seconds=29.9),
+            once=True,
         )
     )
     assert monitor.is_silent("BTC/EUR") is False
@@ -343,11 +373,37 @@ def test_a_pair_that_has_never_produced_a_message_is_not_booked_as_silent():
     monitor = GapMonitor()
     asyncio.run(
         _staleness_loop(
-            ["BTC/EUR"], monitor, {}, interval=0, threshold=30.0,
-            now_fn=lambda: T0 + timedelta(seconds=9999), once=True,
+            ["BTC/EUR"],
+            monitor,
+            {},
+            interval=0,
+            threshold=30.0,
+            now_fn=lambda: T0 + timedelta(seconds=9999),
+            once=True,
         )
     )
     assert monitor.is_silent("BTC/EUR") is False
+
+
+def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
+    """A watchdog nobody starts is [[T0100]]'s defect in another costume -- and this one was caught by
+    mutation rather than by reading: replacing `_run`'s `create_task(_staleness_loop(...))` with a
+    no-op sleep passed all 22 tests in this file. Every property above holds on a loop that never
+    runs, because every one of them drives the loop body directly.
+
+    Parsed, not grepped: the call must appear inside `_run`'s own body, and the task must be in the
+    shutdown tuples, or a cancelled-but-never-awaited task hangs the exit path.
+    """
+    import ast
+    import inspect
+
+    from cli.capture import command
+
+    run_src = inspect.getsource(command._run)
+    tree = ast.parse(run_src.lstrip())
+    called = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    assert "_staleness_loop" in called, "_staleness_loop is defined but _run never schedules it"
+    assert run_src.count("staleness") >= 3, "the staleness task is created but not cancelled-and-awaited on shutdown"
 
 
 def test_one_pair_raising_does_not_starve_the_others():
@@ -367,8 +423,13 @@ def test_one_pair_raising_does_not_starve_the_others():
     last_seen = {"AAA/EUR": T0, "BTC/EUR": T0}
     asyncio.run(
         _staleness_loop(
-            ["AAA/EUR", "BTC/EUR"], monitor, last_seen, interval=0, threshold=30.0,
-            now_fn=lambda: T0 + timedelta(seconds=209), once=True,
+            ["AAA/EUR", "BTC/EUR"],
+            monitor,
+            last_seen,
+            interval=0,
+            threshold=30.0,
+            now_fn=lambda: T0 + timedelta(seconds=209),
+            once=True,
         )
     )
     assert monitor.is_silent("BTC/EUR") is True, "one pair's exception starved the pair after it"
