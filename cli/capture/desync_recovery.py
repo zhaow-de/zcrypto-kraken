@@ -88,11 +88,14 @@ class DesyncRecovery:
         Dropping `escalated_at` here would make the cooldown bind only on a pair that stays
         *continuously* desynced — and the likeliest healer is the escalation's own reconnect, which
         forces a fresh snapshot for every pair. That is a positive feedback path: escalate ->
-        reconnect -> pair heals -> record erased -> next episode escalates ~55 s later. Measured on
-        the real ladder, a pair desyncing every 10 minutes produced 72 reconnects/hour against an
-        advertised bound of 12, and a flapping pair produced 610. Each reconnect costs ~39 s of
-        silence on all 12 pairs, so that is exactly the "strictly worse than the defect" outcome
-        the terminal state exists to prevent.
+        reconnect -> pair heals -> record erased -> next episode escalates ~55 s later. Simulated
+        against the real ladder, a pair desyncing every 10 minutes escalated 6x/hour against the
+        intended 1, and a flapping pair 51x/hour -- 72 and ~610 reconnects/hour fleet-wide across
+        12 pairs, against 12. Those are state-machine ceilings: this class has no clock and no I/O,
+        so it does not charge the reconnect's own downtime, and the real rate would be lower. The
+        over-run ratio is the point, and at ~39 s of silence per pair per reconnect (T0101's
+        arithmetic from one incident, not a fitted number) it is exactly the "strictly worse than
+        the defect" outcome the terminal state exists to prevent.
         """
         state = self._pairs.get(pair)
         if state is None:

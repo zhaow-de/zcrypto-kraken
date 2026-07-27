@@ -149,8 +149,10 @@ def test_the_escalation_cooldown_survives_a_recovery():
     """H1. The likeliest healer of an escalated pair is the escalation's own reconnect — it forces a
     fresh snapshot for every pair. If recovery erased the escalation record, that would close a
     feedback loop: escalate -> reconnect -> heal -> record gone -> escalate again ~55 s later.
-    Measured on the real ladder before the fix: 72 reconnects/hour for a pair desyncing every 10
-    min, 610/hour flapping, against an advertised bound of 12.
+    Simulated against the real ladder before the fix: a pair desyncing every 10 min escalated
+    6x/hour against the intended 1, a flapping pair 51x/hour -- 72 and ~610 fleet-wide across 12
+    pairs, against 12. Ceilings, not steady state (the ladder has no clock, so the reconnect's own
+    downtime is uncharged); the over-run ratio is what matters.
     """
     lad = _ladder()
     lad.note_desync("BTC/EUR", at=T0)

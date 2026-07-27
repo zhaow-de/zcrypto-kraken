@@ -13,6 +13,7 @@ Hard-won session lessons; each rule prevents an observed failure.
 - **Subagent dispatch prompts say**: run everything as plain blocking commands, background nothing, do not end the turn before the commit exists — and still expect to occasionally resume.
 - **Never run two subagents that may write the same worktree concurrently.** Dispatch write-capable agents one at a time, or give each `isolation: "worktree"`. Read-only reviewers may run in parallel with each other, but not alongside a writer — and a reviewer permitted to mutate-and-restore is a writer.
 - **A mutation harness seeds from `git archive <sha>`, never `cp -a` the working tree.**
+- **But never run `pytest` inside that sandbox** — the editable install's `.pth` puts the repo on `sys.path`, so `cli` and `tests` resolve to the **repo**, and every survived/killed verdict measures unmutated code. Mutate in-repo on a committed tree and `git checkout -- <file>` after each; prove the harness bites by confirming one mutation fails before trusting any that passes.
 - **Never mutate-and-restore in a worktree carrying uncommitted work** — `git checkout -- <file>` restores the *committed* state, silently destroying the uncommitted changes. Commit first, or run the probe in a `git archive` sandbox.
 - **Chain history-rewriting git commands one per call, never compounded** — verify each step's effect before issuing the next.
 - **A count derived by arithmetic is not a measured count** — `total_a - total_b` is the set difference only when the sets nest. Measure the set.
