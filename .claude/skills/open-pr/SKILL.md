@@ -71,6 +71,10 @@ git log <base>..HEAD --pretty='%(trailers:key=Reviewed-by,valueonly)' \
 
 Omit the line entirely when there are no reviewer trailers. The PR body is free text, so this line is plain text (not parsed by git's trailer engine) — it just mirrors the co-author aggregation.
 
+## The deferral sweep — before every create or body edit
+
+Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted — this failed twice in one branch with the rule already written, which is why it is a step here and not only prose in `open-topics.md`.
+
 ## Editing a PR body
 
 `gh pr edit --body/--title` **silently no-ops** in this repo (a Projects-classic GraphQL deprecation aborts the mutation while exiting 0). Update via REST instead, and always verify the edit persisted — never trust the exit code:

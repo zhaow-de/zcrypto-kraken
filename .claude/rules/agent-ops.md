@@ -22,3 +22,7 @@ Hard-won session lessons; each rule prevents an observed failure.
 - **A number quoted from a reviewer's or subagent's report is unmeasured until you reproduce it** against the source data, at full precision.
 - **An empty filtered query is not an absent event** — require a positive trace before concluding nothing happened; validate the filter before trusting its emptiness.
 - **Never narrate a wall-clock time or elapsed duration you did not just measure** — run `date`/`uptime` first.
+- **Host-touching (ssh/sudo) steps run in the main loop, never inside a dispatched subagent or workflow** — the permission gate blocks them there and the step dies where nobody sees the prompt; gather host evidence first, or expect the rejection and re-dispatch from the main loop.
+- **A repo script failing on a missing host binary is a host finding to report, not a script to patch** — and what the probe found goes into `fleet.md` in the same change.
+- **Observed drift is not license** — a recent change that skipped a required step is a finding to flag, never a template to copy.
+- **A truncated sweep is not a sweep** — piping aggregated evidence through `head`/`tail` before the assertion silently drops the counterexample; bound the input per-file, never the evidence stream.
