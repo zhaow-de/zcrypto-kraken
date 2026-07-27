@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: before the next capture-image rollout — the skill should exist by the time it is next needed (rollouts are expected to be rare once the harness work settles)
+status: partial
+ripe_when: the next capture-image rollout — it runs VIA the skill and is the skill's validation (the T0081 pattern); the pending T0008/T0101 capture image is the standing candidate
 ---
 
 # `/zcrypto-captures-rollout` — wrap the capture-image canary rollout into a skill
@@ -27,9 +27,9 @@ Distilled from the 00068/00069 attended rollout (2026-07-22). This is the substa
 
 ### What the bake actually buys (and does not)
 
-- **Covers**: the scheduled segment-prune (`zcrypto-capture-prune.service`, 03:17 UTC) — the one recurring writer that mutates the capture data dir *concurrently with* the capture daemon, so a capture-image change that mishandled it would surface only across a prune; and a multi-hour **resource-slope** signal (RSS / threads / fds) that a sub-hour soak cannot produce with any power.
+- **Covers**: the scheduled segment-prune (`zcrypto-capture-prune.service`, 03:17 UTC) — the one recurring writer that mutates the capture data dir *concurrently with* the capture daemon, so a capture-image change that mishandled it would surface only across a prune; and a multi-hour **resource-slope** signal (RSS / threads / fds) that a sub-hour soak cannot produce with any power — under the smallest-window default (Done so far) that signal gets a **≥3-rotation-hour floor inside the window** plus a ~T+24 h post-re-pin re-read on both hosts.
 - **Does not cover**: random infra loss. That is a runbook-and-failsafe problem, not a bake problem.
-- **Minimal window** = max(time until the next prune completes cleanly on the just-converged host, ≥1 full segment-rotation hour) with every abort signal below clear. In the 2026-07-22 rollout that was ≈ 5.5 h (bounded by the 03:17 prune), an ~80 % cut from 24 h with essentially all the value retained. Skipping the bake entirely still requires the owner's explicit approval per `capture-deploys.md`; this determination shrinks the *default*, it does not remove the gate.
+- **Minimal window** = max(time until the next prune completes cleanly on the just-converged host, ≥3 full segment-rotation hours — the slope floor) with every abort signal below clear. In the 2026-07-22 rollout that was ≈ 5.5 h (bounded by the 03:17 prune), an ~80 % cut from 24 h with essentially all the value retained. Skipping the bake entirely still requires the owner's explicit approval per `capture-deploys.md`; this determination shrinks the *default*, it does not remove the gate.
 - **The prune wait is collapsible on demand (2026-07-23 addendum).** The constraint is *a clean prune under the new image*, not the clock: `sudo systemctl start zcrypto-capture-prune.service` on the just-converged host fires it immediately, turning the up-to-24 h wait into minutes with zero standing change — raising the scheduled cadence was considered and declined (it would alter a steady-state production process, retune the dead-man's expected cadence, and multiply the concurrent-deletion windows in normal operation, all to serve a rare rollout gate). **Caveat — read `deleted=N` in the result**: a `deleted=0` run exercises the scan concurrently with capture writes but never the deletion path, and is the weaker signal; note which form the bake actually got. Measured 2026-07-22: the secondary's archive is younger than its 14-day retention (`cutoff=2026-07-08, deleted=0`), so its prunes are scan-only until ≈ 2026-07-29 regardless of trigger; check `deleted=N` on the primary's first post-converge prune — its older archive may already be deleting daily, which is where the strong-form coverage lives today.
 
 ### Abort signals — monitor on the just-converged host; any one trips a rollback decision
@@ -52,8 +52,13 @@ The previous-good digest is retained locally on **both** capture hosts (confirme
 
 Identical to the Slack T+24h reminder's 7-point checklist (running digest == candidate, `StartedAt` ≥ window with `RestartCount` 0, capture green, dead-man `Result=success`, `dropped_lines_total` 0 + fresh `last_success`, Alloy `remote_storage_samples_failed_total` 0 + `up{job="capture_app"}`==1, `continuity.py` on a *pulled* copy shows no new truncated hours). The skill should emit this checklist as its own gate step, not rely on the ambient reminder.
 
+## Done so far
+
+- **The skill is BUILT** — `.claude/skills/zcrypto-captures-rollout/SKILL.md` (branch `feat/t0084-captures-rollout-skill`): five phases encoding the runbook above verbatim-in-substance — preflight with the rollback operand captured up front, secondary converge, the event-coverage bake with the abort-signal table, the 7-point primary gate emitted as the skill's own step, the no-pull rollback, verify-by-outcome with the fleet-pins update.
+- **Owner rulings at build time (2026-07-27):** (1) **the fixed ≥24 h bake is DEPRECATED** — the default gate is the smallest event-coverage window between the two re-pins (with a ≥3-rotation-hour slope floor); `capture-deploys.md`'s canary language was reconciled in the same change, discharging the shrink step's "reconcile ≥24 h" clause early. (2) Invocation flipped to **user-only** (`disable-model-invocation: true`), overriding this topic's earlier model-invocation note. (3) **Host-touching commands run in the main loop only** — the permission gate blocks ssh-sudo inside dispatched workflows/subagents, observed live when a T0101 investigation strand died on exactly that.
+- The Slack reminder is now scheduled at the **computed gate-open time**, not a fixed T+24 h.
+- **The `capture-deploys.md` shrink landed early** (owner's word, 2026-07-27, same branch): the rule keeps the law — the never-re-pin invariant, the skip-or-degrade approval gate, pair-add ordering, the engine/reboot/vault sections — and points at the skill for every rollout mechanic; net −601 bytes always-loaded. A cold lossless check classified 9 of 11 removals RELOCATED at equal-or-greater precision and caught the one genuinely shared bullet — pre-stage/stop→start also serves engine and pair-add converges, which the skill's scope excludes — restored as a generic bullet.
+
 ## Suggested next steps
 
-- **(When ripe)** Write the skill from `capture-deploys.md` verbatim-in-substance (steps, gates, checks), `disable-model-invocation: false` per the owner's note that model invocation is acceptable here — confirm that choice at build time.
-- **(When ripe)** Encode the **healthcheck + failsafe runbook above** as the skill's bake/verify/abort steps: the event-driven minimal window (cover the next prune + a rotation hour, not a fixed 24 h), the named abort signals with their thresholds, and the local-digest rollback path — so the skill makes the bake a real gate, not a timer.
-- **(After its first real rollout)** Shrink `capture-deploys.md` to the invariants + a pointer to the skill; the rule file keeps only what must hold even outside a rollout (SSH posture, vault safety, window times). Reconcile its "≥ 24 h" language with the event-driven window this topic determined.
+- **(At the next capture-image rollout)** Run it via the skill — the run is the validation, and corrections land in `SKILL.md` in the same change (the T0081 pattern).
