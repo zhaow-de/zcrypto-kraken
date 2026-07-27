@@ -22,6 +22,25 @@ The drill's starting inventory:
 - **Runbook fragments scattered:** ledger correction (`infra/nas/README.md`, [[T0044]]), capture-deploy canary + maintenance windows (`.claude/rules/capture-deploys.md`), Alloy tailer restart ([[T0048]]), reboot slots (spec `00050`).
 - **Drill-worthy failure modes already parked:** disk-watermark ping-withhold deploy verification ([[T0032]]), WS-reconnect ride-out ([[T0035]]), phantom-splice guard ([[T0039]]), Alloy tailer death on recreate ([[T0048]]), lost-trades invisibility ([[T0043]]).
 
+## Impact discovery and recovery of a real incident (added 2026-07-27)
+
+The drill matrix below rehearses *inducing* faults. It had no entry for the harder half: a fault that already happened, was absorbed silently, and has to be reconstructed after the fact. One occurred on 2026-07-27 and is the worked example — [[T0101]].
+
+**The drill matrix gains a scenario: "an alert fired for something already over."** Rehearse the reconstruction, not the induction:
+
+1. **Bound it in time.** Query the same counter across widening windows — `increase(<metric>[1h])`, `[6h]`, `[24h]`, `[7d]`. Equal values at 6 h and 7 d mean one event, not a trend; a zero at 1 h means it has stopped. Two queries separate "degrading host" from "one bad patch", and the alert's own wording cannot.
+2. **Establish loss or no loss before anything else.** Compare the *healable* counter against the *healed/minted* one. Equal ⇒ fully covered, and the incident is an observability question rather than a data question. That ordering matters: it decides whether this is urgent.
+3. **Cross-check the producers against each other.** The reconciler and the capture daemon measure the same silence independently; when they disagree, the disagreement *is* the finding. A single source cannot tell you it is under-reporting.
+4. **Rule out your own recent changes explicitly, with timestamps** — compare the alert's `activeAt` against every converge, restart and drill of that day. On 2026-07-27 the alert predated the morning's drills by 41 min and the Alloy bump by ~8 h; without that check the incident would have been misattributed to the deploy, which is the cheapest wrong answer available.
+5. **Read the ledger for shape, not just totals.** Per-pair and per-hour records distinguish "every pair briefly" from "one pair for a long time" — different faults with the same total.
+
+**Recovery, when the system already healed it:** confirm the mint is real (records exist, hashes verify), confirm the archive is whole, and then treat the remaining work as *measurement* — the recovery already happened. The failure mode to avoid is reacting operationally to an event that is over, on a host that is fine.
+
+**Drill methodology proven the same day**, and reusable by the scenarios below:
+
+- **Fault injection without touching production**: a throwaway container from the *same pinned digest* on the ops node — isolated data dir, no Loki creds, no dead-man URL — driven against the real venue, with `docker network disconnect/connect` as the fault. Validated [[T0035]]'s reconnect handling end to end, including data consistency across the fault (the spanning hour's `.parquet` hash-verified against its manifest).
+- **Alert-path injection**: writing a synthetic `.prom` into the node-exporter textfile dir fires a real rule through the real transport to the real Slack channel, with no daemon involvement, and resolves when the file is removed. Validated [[T0008]]'s stuck-pair alert. **Caveat to carry into any such drill**: a brand-new series does not reproduce real latency — `min_over_time` aggregates only present samples, so an injected series fires in minutes where a real one takes the full window. A drill proves wiring, not timing.
+
 ## Suggested next steps
 
 - Enumerate the scenario matrix (draft — extend at execution): capture daemon stopped (each host) → dead-man fires, Slack lands; disk-watermark breach → withheld ping pages; engine cycle failure → `/fail` ping routes; NAS pull stall → Loki alert (re-verify post-[[T0048]]-fix); Alloy itself down → what pages, and how fast; secondary host loss → primary unaffected, loss still visible; Grafana Cloud unreachable → the healthchecks.io independent failure domain still pages; ops-node timer failure → its dead-man; reboot-window overlap sanity (primary 21:25 / secondary 22:25 UTC); a compose-level "container never created" failure (docker-path logs never exist and the owning unit's journal is filtered on the capture hosts — the one log class no Alloy pipeline sees; registered 2026-07-19 from the iter-105 config.alloy review) → confirm the healthchecks dead-man is the catcher and time it.
