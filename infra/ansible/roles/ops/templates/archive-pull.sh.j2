@@ -191,16 +191,17 @@ fi
 
 # Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
 # half-written one is scraped as garbage — same pattern as the reconcile exporter's
-# _write_textfile. Metric names are HISTORICAL (see header): this unit pulls nothing any more.
+# _write_textfile. Metric names are HISTORICAL (spec 00054 / T0058): this unit pulls nothing any
+# more, and the names predate the overlay-writer rename.
 tmp="$PROM.tmp"
 {
-    printf '# HELP ops_archive_pull_exit_code Exit code of the last overlay-writer cycle (0 = clean cycle or gate-skip; non-zero = the reconcile step failed). Historical name: the rsync pull this cycle replaced (spec 00054/T0058).\n'
+    printf '# HELP ops_archive_pull_exit_code Exit code of the last overlay-writer cycle (0 = clean cycle or gate-skip; non-zero = the reconcile step failed). Historical name: the rsync pull this cycle replaced.\n'
     printf '# TYPE ops_archive_pull_exit_code gauge\n'
     printf 'ops_archive_pull_exit_code %s\n' "$rc"
-    printf '# HELP ops_archive_pull_last_run_timestamp Unix time of the last overlay-writer cycle, clean or not. Historical name (spec 00054/T0058).\n'
+    printf '# HELP ops_archive_pull_last_run_timestamp Unix time of the last overlay-writer cycle, clean or not. Historical name.\n'
     printf '# TYPE ops_archive_pull_last_run_timestamp gauge\n'
     printf 'ops_archive_pull_last_run_timestamp %s\n' "$now"
-    printf '# HELP ops_archive_pull_last_success_timestamp Unix time of the last clean (or gate-skipped) overlay-writer cycle (0 = never). Historical name (spec 00054/T0058).\n'
+    printf '# HELP ops_archive_pull_last_success_timestamp Unix time of the last clean (or gate-skipped) overlay-writer cycle (0 = never). Historical name.\n'
     printf '# TYPE ops_archive_pull_last_success_timestamp gauge\n'
     printf 'ops_archive_pull_last_success_timestamp %s\n' "$success"
 } > "$tmp"

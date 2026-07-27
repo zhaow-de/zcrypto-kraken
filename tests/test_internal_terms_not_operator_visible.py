@@ -62,17 +62,22 @@ VOCABULARY = re.compile(
       | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
       | \bWP\d                 # WP4
     )""",
-    re.VERBOSE | re.IGNORECASE,
+    re.VERBOSE,
 )
 
 # A token inside a real file PATH is an operand, not a reference: you need the exact name to open
-# the file, so `docs/open-topics/T0023-*.md` stays. Requires two separators or a file extension.
-PATH_LIKE = re.compile(r"[\w.*-]+/[\w.*-]+/[\w.*-]+|[\w.*-]+/[\w.*-]*\.[A-Za-z]{2,4}\b")
+# the file, so `docs/open-topics/T0023-*.md` stays. A path must start at a known repo root OR carry
+# a file extension — not merely contain slashes, or `spec 00054/T0058` (two tokens joined by a
+# slash) and `half-hourly/hourly/T0060-daily` would be excused as paths.
+PATH_LIKE = re.compile(
+    r"(?:docs|cli|infra|tests|data|scripts|\.claude)/[\w./*-]+"
+    r"|[\w*-]+(?:/[\w.*-]+)*\.[A-Za-z0-9]{1,8}\b"
+)
 
 
 def _leaks(text: str) -> list[str]:
     """Vocabulary hits, ignoring any inside a path, after collapsing whitespace."""
-    flat = re.sub(r"[\s│|]+", " ", text)
+    flat = re.sub(r"[\s\u2502]+", " ", text)
     spans = [m.span() for m in PATH_LIKE.finditer(flat)]
     return [m.group(0) for m in VOCABULARY.finditer(flat) if not any(s <= m.start() and m.end() <= e for s, e in spans)]
 
@@ -81,6 +86,31 @@ def _python_files() -> list[Path]:
     out = [p for pkg in SCANNED_PACKAGES for p in pkg.rglob("*.py") if "__pycache__" not in p.parts]
     assert out, "scanned no python files — the globs are broken, not the tree clean"
     return sorted(out)
+
+
+def _shell_files() -> list[Path]:
+    """Shell emits operator-facing text too: `# HELP` lines from the textfile exporters and stderr
+    from the deploy scripts. Widening the scanned DIRECTORY without widening the file types is how
+    the very string this rule uses as its example survived a sweep."""
+    out = [p for root in (REPO / "infra",) for pattern in ("*.sh", "*.sh.j2", "*.bash") for p in root.rglob(pattern)]
+    assert out, "scanned no shell files — the globs are broken, not the tree clean"
+    return sorted(out)
+
+
+@pytest.mark.parametrize("path", _shell_files(), ids=lambda p: str(p.relative_to(REPO)))
+def test_shell_operator_output_carries_no_internal_vocabulary(path):
+    """`echo`/`printf` to stdout or stderr, including the `# HELP` text of textfile exporters.
+
+    Line-based rather than AST-based: `#`-only comment lines are skipped, but a `printf` whose
+    payload happens to contain a `#` (every HELP line) is still checked.
+    """
+    found = []
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if re.match(r"\s*#", line):  # a shell comment is source documentation, out of scope
+            continue
+        if hits := _leaks(line):
+            found.append((i, line.strip()[:100], hits))
+    assert not found, "\n".join(f"{path.relative_to(REPO)}:{ln} leaks {hits}: {txt!r}" for ln, txt, hits in found)
 
 
 def _non_docstring_literals(tree: ast.AST) -> list[tuple[int, str]]:

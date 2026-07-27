@@ -190,7 +190,8 @@ while IFS= read -r uid; do
     ds_bad=1
   fi
 done <<<"${rule_uids}"
-[ "${ds_bad}" = "0" ] || { echo "grafana-push: datasource check FAILED — a rule is pointing at the wrong data (T0034)" >&2; exit 1; }
+# T0034: "first datasource of each type" silently repointed every rule at the wrong data once.
+[ "${ds_bad}" = "0" ] || { echo "grafana-push: datasource check FAILED — a rule is pointing at the wrong data" >&2; exit 1; }
 
 # --- Prune orphaned rules (T0034) ----------------------------------------------------------------
 # The push upserts but never deletes: a rule removed from alerts.yaml keeps evaluating and emailing
