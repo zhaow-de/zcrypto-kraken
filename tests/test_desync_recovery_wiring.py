@@ -169,9 +169,9 @@ def test_the_drill_knob_is_inert_unless_explicitly_enabled():
     single env var, once, at import, and that var is set nowhere in the fleet."""
     from cli.capture import command
 
-    assert command._DRILL_FAIL_SNAPSHOTS == 0, "the drill knob is ENABLED in this environment"
-    assert command._drill_maybe_fail("BTC/EUR", "book_snapshot", True) is True
-    assert command._drill_maybe_fail("BTC/EUR", "book_update", False) is False
+    assert command._DRILL_DESYNC_SECONDS == 0, "the drill knob is ENABLED in this environment"
+    assert command._drill_maybe_fail("BTC/EUR", "book_snapshot", True, None, T0) is True
+    assert command._drill_maybe_fail("BTC/EUR", "book_update", False, None, T0) is False
 
 
 def test_the_drill_knob_is_absent_from_every_infra_config():
