@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: a reconnect ATTEMPT is observed failing — any `attempt [2-9]` line in the capture logs, or the `_RECONNECT_ERROR_EVERY` ERROR, or `process_start_time_seconds{job="capture_app"}` jumping while `zcrypto_capture_reconnects_total` resets (the crash-restart shape). Rewritten 2026-07-23 from "a venue-side WS restart is observed" — that phrasing needed a log dive to evaluate and conflated a connection DROP (routine, already proven survivable) with a rejected reconnect ATTEMPT (the path the fix actually added, still unexercised); the metrics that make it a one-query check shipped with 00069
+status: resolved
 ---
 
 # Capture crashes when a WS reconnect attempt is rejected (Kraken 503)
@@ -115,12 +114,27 @@ status flip:
   production**. The nine events are abnormal closures ("no close frame"), not the close-1012 venue restart
   the original trigger named. Re-deferred rather than closed: passing an easier test is not passing this one.
 
-## Suggested next steps
+## Resolution
 
-- Close it when a **failed attempt** is actually observed — the rewritten `ripe_when` above is now a
-  one-query check rather than a log dive. Expected shape on that event: `attempt 2`+ with `compute_backoff`
-  applied, a resumed stream, and **no** container restart, no `InvalidStatus` traceback, no non-zero exit.
-- If a long quiet period makes that observation unlikely, the honest alternative is to close on the
-  *engineered* evidence instead (the three regression tests drive the real production `InvalidStatus`) and
-  record that the production path stayed unexercised — but do that as a conscious drop with the reason
-  written, not by quietly archiving.
+**Resolved 2026-07-27 by drill.** The residual was never a code question — the fix was landed, deployed and regression-tested; what was missing was that the handler for a **rejected** connection attempt had never executed in production. Across the full Loki retention there were zero `attempt [2-9]` lines: every observed reconnect succeeded first try, so passing that test was never passing this one.
+
+A throwaway capture container on the ops node — same pinned digest, real Kraken, isolated data dir, no Loki creds, no dead-man URL — exercised it end to end.
+
+**Both arms of the `except (WebSocketException, OSError, TimeoutError)` branch fired, one of them unprompted:**
+
+- **`WebSocketException`** — Kraken rejected the sandbox's *very first* connect with `server rejected WebSocket connection: HTTP 503`. Nothing induced it. That is this topic's originating fault, arriving on its own within seconds, which says the 503 is more common than production logs suggest: production has simply always succeeded on the retry.
+- **`OSError`** — a `docker network disconnect` produced `[Errno -3] Temporary failure in name resolution` for a sustained blackout.
+
+**What the sustained fault proved**, none of it previously observed:
+
+| behaviour | observed |
+| --- | --- |
+| backoff schedule | `1, 2, 4, 8, 16, 32, 60, 60, 60, 60` — exponential, capped at `_BACKOFF_MAX_SECONDS` |
+| the every-10 ERROR | `WS reconnect still failing after 10 consecutive attempts`, at attempt 10 |
+| **process survival** | `restarts=0` across ~6 min and 15 attempts — the whole claim |
+| recovery | on reconnect: resubscribed and resumed writing without intervention |
+| **data consistency** | book **and** trades `10.parquet` — the hour spanning the fault — both hash-verify against their `.sha256` manifests |
+
+**Why a drill is a legitimate close and not a shortcut.** Waiting on a production 503 meant waiting on Kraken, and the topic had already been half-verified twice on evidence that did not test the handler. The drill reproduces the exact exception types the production code catches, in the production image, against the real venue. What it cannot show is *incidence* — how often Kraken rejects a reconnect in normal operation — but incidence was never this topic's question.
+
+**Trigger retained for the record:** any `attempt [2-9]` line, the `_RECONNECT_ERROR_EVERY` ERROR, or `process_start_time_seconds{job="capture_app"}` jumping while `zcrypto_capture_reconnects_total` resets. Those now indicate a live event worth reading, not an unvalidated code path.

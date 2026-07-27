@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the alert now evaluates this topic's own trigger continuously — *Capture · book desync stuck on a pair* fires at 20 min, and *Capture · book resubscribe rate re-elevating* at >1.5/day. Ripe when either fires: that is a real stuck pair the single fire-and-forget resubscribe failed to clear, which is the evidence the recovery-robustness work was waiting for
+ripe_when: either alert firing on a REAL stuck pair — and the alert path itself is now drill-validated (2026-07-27), so a firing is trustworthy evidence rather than an unproven signal. Alternatively an owner ruling to build or drop the recovery robustness unconditionally
 ---
 
 # Capture daemon — robust book-desync recovery (retry / ack-correlated resubscribe)
@@ -78,6 +78,22 @@ defaulting it would silently reintroduce this.
 **`zcrypto_capture_reconnects_total` was deliberately NOT alerted**, and the measurement is why: 32–35 reconnects per host per week is baseline, not a fault, so a naive rule would page ~5×/day. [[T0035]]'s trigger is a counter *reset* correlated with a `process_start_time_seconds` jump — that needs the correlation, not a raw count, and stays that topic's work.
 
 **The guard is derived, not hand-listed** — 46 admitted series minus 38 explicit exclusions, each carrying its reason. A hand-list cannot catch the *next* unwatched metric, which is the mechanism that let these sit for two months.
+
+## The alert leg is drill-validated (2026-07-27)
+
+The alert shipped 2026-07-26 but had never fired, so nothing established it *would*. Injecting `zcrypto_capture_book_desynced{pair="DRILL"} 1` as a `.prom` on the secondary — through the textfile transport built the same day — exercised the whole path:
+
+| step | observed |
+| --- | --- |
+| injected 10:29:37 | series reached Grafana Cloud as `zcrypto-red/DRILL` |
+| 10:31:00 | rule instance `Pending` |
+| 10:36:00 | `Alerting`, Slack paged, summary naming the pair |
+| all 24 real pair instances | stayed `Normal` throughout — the rule discriminates |
+| `.prom` removed 10:40:33 | instance resolved on its own |
+
+**A caveat that matters for reading a real firing.** The drill fired in 6.4 min, but that is *not* the real latency: `min_over_time` aggregates only the samples present, so a brand-new series satisfies it immediately, leaving just the 5 min hold. A genuine desync flips an **existing** series from 0 to 1, so its 15 min window holds zeros and the summary's stated ~20 min is correct. The drill proves the wiring, not the timing.
+
+**What this does NOT close.** No desync occurred, so `resubscribe_book` never ran and the single-attempt recovery this topic is actually about remains unexercised. The safety net is proven; the defect behind it is not. Deliberately scored that way rather than counted as a validation that did not happen.
 
 ## Suggested next steps
 
