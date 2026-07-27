@@ -22,6 +22,11 @@ ALLOWED_DEPTHS = (10, 25, 100, 500, 1000)
 _BACKOFF_BASE_SECONDS = 1.0
 _BACKOFF_MAX_SECONDS = 60.0
 _RECONNECT_ERROR_EVERY = 10  # log an ERROR every N consecutive failed reconnect attempts (T0035)
+# Kraken's documented floor for reconnecting after maintenance or extended downtime (T0101).
+_SERVICE_RESTART_MIN_DELAY_SECONDS = 5.0
+# WebSocket close code 1012 "service restart" -- the venue announcing its own restart. Measured
+# twice in 19.3 days (2026-07-13, 2026-07-27), both times arriving AFTER the silence, not before.
+_WS_CLOSE_SERVICE_RESTART = 1012
 
 
 def build_subscribe_message(
@@ -76,6 +81,13 @@ def classify(msg: dict) -> str:
         return "trade_snapshot" if mtype == "snapshot" else "trade_update"
     if channel == "heartbeat":
         return "heartbeat"
+    if channel == "status":
+        # Kraken pushes this automatically on connect and on every trading-engine state change
+        # (online / cancel_only / maintenance / post_only), and its planned-downtime notification
+        # carries an `effectiveTime`. It used to fall through to "other" and be dropped unlogged,
+        # which is why "did the venue announce the 2026-07-27 outage?" is unanswerable rather than
+        # answered no (T0101). Recorded now; ACTED ON by nothing yet -- see spec 00073 D1.
+        return "status"
     if msg.get("method") == "subscribe":
         return "subscribe_ack" if msg.get("success") else "subscribe_error"
     if msg.get("method") == "unsubscribe":
@@ -83,11 +95,29 @@ def classify(msg: dict) -> str:
     return "other"
 
 
-def compute_backoff(attempt: int, *, base: float = _BACKOFF_BASE_SECONDS, max_delay: float = _BACKOFF_MAX_SECONDS) -> float:
-    """Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`."""
+def compute_backoff(
+    attempt: int,
+    *,
+    base: float = _BACKOFF_BASE_SECONDS,
+    max_delay: float = _BACKOFF_MAX_SECONDS,
+    after_service_restart: bool = False,
+) -> float:
+    """Exponential backoff delay (seconds) for the `attempt`-th (0-indexed) reconnect, capped at `max_delay`.
+
+    `after_service_restart` floors the delay at `_SERVICE_RESTART_MIN_DELAY_SECONDS`. Kraken's
+    guidance is to reconnect instantly a handful of times on a random drop but no faster than once
+    every 5 s after maintenance -- and on 2026-07-27 the primary's first attempt fired 1.0 s after
+    the 1012 and was answered HTTP 503, costing ~3.9 s of extra silence on the unbackfillable path
+    while the secondary, whose attempt landed later, connected first try. It is a FLOOR, never a
+    cap: a genuinely escalating backoff is left alone, and ordinary drops (~8.2/day) keep the fast
+    path untouched.
+    """
     if attempt < 0:
         raise CaptureError(f"attempt must be >= 0, got {attempt}")
-    return min(base * (2**attempt), max_delay)
+    delay = min(base * (2**attempt), max_delay)
+    if after_service_restart:
+        return max(delay, _SERVICE_RESTART_MIN_DELAY_SECONDS)
+    return delay
 
 
 class CaptureClient:
@@ -132,15 +162,21 @@ class CaptureClient:
         """Yield parsed messages forever, reconnecting (with backoff) on any drop. Cancel the
         consuming task to stop — there is no internal stop condition."""
         attempt = 0
+        service_restart = False
         while True:
             try:
                 async with self._connect(self._uri) as ws:
                     self._ws = ws
                     await self._subscribe_all(ws)
                     attempt = 0
+                    service_restart = False
                     async for raw in ws:
                         yield parse_message(raw)
             except ConnectionClosed as exc:
+                # A 1012 is the venue announcing its own restart; reconnecting at 1.0 s into it is
+                # what earned the HTTP 503 on 2026-07-27. Sticky across attempts until a connection
+                # actually succeeds -- the endpoint stays unready for longer than one attempt.
+                service_restart = service_restart or getattr(exc.rcvd, "code", None) == _WS_CLOSE_SERVICE_RESTART
                 logger.warning("WS connection closed, reconnecting: %s", exc)
             except (WebSocketException, OSError, TimeoutError) as exc:
                 # A failed connection *attempt* — e.g. InvalidStatus on the HTTP 503 Kraken's
@@ -152,7 +188,7 @@ class CaptureClient:
             finally:
                 self._ws = None
             self.reconnects_total += 1
-            delay = compute_backoff(attempt)
+            delay = compute_backoff(attempt, after_service_restart=service_restart)
             attempt += 1
             logger.info("reconnecting in %.1fs (attempt %d)", delay, attempt)
             if attempt % _RECONNECT_ERROR_EVERY == 0:

@@ -74,7 +74,9 @@ def test_parse_message_raises_capture_error_on_invalid_json():
         ({"method": "subscribe", "success": False}, "subscribe_error"),
         ({"method": "unsubscribe", "success": True}, "unsubscribe_ack"),
         ({"method": "unsubscribe", "success": False}, "unsubscribe_error"),
-        ({"channel": "status"}, "other"),
+        # Was "other" until T0101: dropping the venue's own status meant nothing recorded whether an
+        # outage had been announced, so the question was unanswerable rather than answered.
+        ({"channel": "status"}, "status"),
     ],
 )
 def test_classify(msg, expected):

@@ -237,7 +237,7 @@ async def _test_the_daemon_arms_the_ladder_when_a_pair_desyncs():
     ladder, client = DesyncRecovery(), _FakeClient()
     books = {"BTC/EUR": _StubBook([False])}
     monitor, watermark = _StubMonitor(), _StubWatermark()
-    await _handle_book_message(_book_msg("BTC/EUR"), "book_update", client, books, {}, monitor, watermark, ladder)
+    await _handle_book_message(_book_msg("BTC/EUR"), "book_update", client, books, {}, monitor, watermark, ladder, {})
     assert client.resubscribed == ["BTC/EUR"], "rung 1 did not fire"
     assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=25)) is Action.RETRY, (
         "the daemon resubscribed but never told the ladder — it is armed by nothing"
@@ -255,8 +255,8 @@ async def _test_the_daemon_disarms_the_ladder_when_a_pair_recovers():
     books = {"BTC/EUR": _StubBook([False, True])}
     monitor, watermark = _StubMonitor(), _StubWatermark()
     msg = _book_msg("BTC/EUR")
-    await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder)
-    await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder)
+    await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder, {})
+    await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder, {})
     assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=999)) is Action.NONE, (
         "the pair recovered but the ladder still holds it — its record outlives the fault"
     )
@@ -284,7 +284,7 @@ async def _test_the_consumer_arms_the_ladder_it_was_given():
 
     ladder, client = DesyncRecovery(), _ScriptedClient()
     books = {"BTC/EUR": _StubBook([False])}
-    await _consume(client, books, {}, {}, _StubMonitor(), _StubWatermark(), ladder)
+    await _consume(client, books, {}, {}, _StubMonitor(), _StubWatermark(), ladder, {})
 
     assert client.resubscribed == ["BTC/EUR"], "the consumer never reached the desync branch"
     assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=25)) is Action.RETRY, (

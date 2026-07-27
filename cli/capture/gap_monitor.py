@@ -37,6 +37,14 @@ class GapMonitor:
         # dead-man ping while the disk is STILL breached — reintroducing the very silent-loss bug.
         self._watermark_open: datetime | None = None
         self._watermark_seconds: float = 0.0
+        # Upstream silence -- a subscribed, CONNECTED stream receiving nothing (T0101, spec 00073).
+        # Its own per-pair window for the same reason the watermark has one: `start_gap` is
+        # idempotent per pair, so routing silence through it would let a concurrent checksum_resync
+        # gap swallow it, and whichever window closed first would book the other's duration as its
+        # own. These two faults genuinely co-occur -- a venue that stops publishing is exactly when a
+        # book also stops passing its checksum -- so the windows must be independent.
+        self._silent_open: dict[str, datetime] = {}
+        self._silent_seconds: dict[str, float] = {}
 
     def start_gap(self, pair: str, reason: str, *, at: datetime) -> None:
         """Open a gap window for `pair`. Idempotent: a second `start_gap` before the matching
@@ -90,6 +98,40 @@ class GapMonitor:
         logger.warning("gap end reason=disk_watermark seconds=%.3f", duration)
         return duration
 
+    def start_silence(self, pair: str, *, at: datetime) -> None:
+        """Open `pair`'s upstream-silence window, stamped at its LAST SEEN message (T0101).
+
+        `at` is the last-message time, never the detection time. The watchdog cannot notice until the
+        staleness threshold has already elapsed, so stamping at detection would discard exactly the
+        threshold from every outage -- under-reporting by 30 s each time, which is the same direction
+        as the defect this exists to fix.
+
+        Idempotent per pair, earliest stamp wins: the watchdog re-evaluates every tick while a pair
+        stays silent, and a later open must not restart the window.
+        """
+        if pair in self._silent_open:
+            return
+        self._silent_open[pair] = at
+        logger.warning("gap start pair=%s reason=upstream_silent at=%s", pair, at.isoformat())
+
+    def end_silence(self, pair: str, *, at: datetime) -> float:
+        """Close `pair`'s silence window, returning its duration (0.0 if none was open).
+
+        Negative durations are clamped rather than raised, mirroring `end_gap`: this is driven from a
+        bare task nothing awaits until shutdown, so an escaping exception would end silence tracking
+        for the life of the process -- reintroducing the blind spot silently.
+        """
+        started = self._silent_open.pop(pair, None)
+        if started is None:
+            return 0.0
+        duration = max((at - started).total_seconds(), 0.0)
+        self._silent_seconds[pair] = self._silent_seconds.get(pair, 0.0) + duration
+        logger.warning("gap end pair=%s reason=upstream_silent seconds=%.3f", pair, duration)
+        return duration
+
+    def is_silent(self, pair: str) -> bool:
+        return pair in self._silent_open
+
     def is_open(self, pair: str) -> bool:
         return pair in self._open
 
@@ -98,12 +140,15 @@ class GapMonitor:
         (T0032), which lost data for every pair — plus any still-open windows' duration as of `at`.
         Each open window's contribution is clamped to >= 0: an `at` before a window's start (a
         backward-stepped wall clock) must not produce a negative gap or eat booked gap time."""
-        total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds
+        total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds + self._silent_seconds.get(pair, 0.0)
         open_gap = self._open.get(pair)
         if open_gap is not None and at is not None:
             total += max((at - open_gap.start).total_seconds(), 0.0)
         if self._watermark_open is not None and at is not None:
             total += max((at - self._watermark_open).total_seconds(), 0.0)
+        silent_since = self._silent_open.get(pair)
+        if silent_since is not None and at is not None:
+            total += max((at - silent_since).total_seconds(), 0.0)
         return total
 
     def gap_ratio(self, pair: str, *, window_seconds: float, at: datetime | None = None) -> float:
@@ -123,7 +168,14 @@ class GapMonitor:
         }
 
     def is_healthy(self, pairs: list[str]) -> bool:
-        """True iff none of `pairs` currently has an open gap (reconnecting or desynced)."""
+        """True iff none of `pairs` currently has an open gap (reconnecting or desynced).
+
+        DELIBERATELY does NOT consult `is_silent` (spec 00073 D3). This gates the healthchecks.io
+        ping for EVERY pair at once, so an upstream-silence threshold fitted to ~4 days of thin-leg
+        data would let one twitchy pair darken the fleet's last-resort liveness signal on both
+        capture hosts -- strictly worse than the metric gap it would close. Silence is BOOKED first;
+        gating waits until the exported gauge shows a production distribution worth thresholding.
+        """
         return not any(self.is_open(pair) for pair in pairs)
 
 

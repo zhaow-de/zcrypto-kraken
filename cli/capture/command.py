@@ -170,12 +170,18 @@ async def _handle_book_message(
     monitor: GapMonitor,
     watermark: DiskWatermark,
     recovery: DesyncRecovery,
+    last_seen: dict[str, datetime],
 ) -> None:
     for entry in msg.get("data", []):
         pair = entry["symbol"]
         book = books.get(pair)
         if book is None:
             continue  # a pair we didn't subscribe to; ignore defensively
+
+        # BEFORE every early return below (T0101). A watermark breach makes this loop `continue`
+        # past the writers while the socket stays connected; if it also stopped `last_seen` moving,
+        # the watchdog would book a phantom silence on top of a real, different silent loss.
+        last_seen[pair] = datetime.now(UTC)
 
         was_desynced = book.desynced
         in_sync = book.ingest_snapshot(entry) if category == "book_snapshot" else book.ingest_update(entry)
@@ -250,15 +256,23 @@ async def _consume(
     monitor: GapMonitor,
     watermark: DiskWatermark,
     recovery: DesyncRecovery,
+    last_seen: dict[str, datetime],
 ) -> None:
     async for msg in client.stream():
         category = classify(msg)
         if category in ("book_snapshot", "book_update"):
-            await _handle_book_message(msg, category, client, books, book_writers, monitor, watermark, recovery)
+            await _handle_book_message(msg, category, client, books, book_writers, monitor, watermark, recovery, last_seen)
         elif category in ("trade_snapshot", "trade_update"):
             _handle_trade_message(msg, trade_writers, watermark)
         elif category == "subscribe_error":
             logger.error("subscribe error: %s", msg)
+        elif category == "status":
+            # RECORDED, not acted on (spec 00073 D1). Kraken pushes this on connect and on every
+            # engine-state change, and its planned-downtime form carries an `effectiveTime`. Until
+            # one is actually observed in production there is nothing to build a reaction against --
+            # and this log line is what makes "was the outage announced?" answerable at all.
+            for item in msg.get("data", []):
+                logger.info("venue status system=%s version=%s", item.get("system"), item.get("version"))
         elif category == "unsubscribe_error":
             # the resubscribe recovery's unsubscribe leg was rejected — surface it, since a silently
             # rejected request is exactly what made the desync incident undiagnosable
@@ -296,6 +310,60 @@ async def _healthcheck_loop(
 # How often the recovery ladder is evaluated. Well under the 20 s grace, so a retry fires close to
 # when it is due rather than up to a tick late.
 DESYNC_RECOVERY_INTERVAL_SECONDS = 5
+
+# A book stream silent this long is booked as gap (T0101, spec 00073 D5). Derived, not guessed:
+# the worst NATURAL intra-hour book spacing measured across the fleet is 12.196 s (ETH/BTC, the
+# thinnest leg), with a 101-hour p99 of 12.299 s -- so 30 s is ~2.4x the binding pair's p99. It
+# deliberately equals the reconciler's --min-gap-seconds, so the two producers finally measure the
+# same thing instead of merely adjacent things.
+BOOK_STALENESS_SECONDS = 30.0
+STALENESS_CHECK_INTERVAL_SECONDS = 5
+
+
+async def _staleness_loop(
+    pairs: list[str],
+    monitor: GapMonitor,
+    last_seen: dict[str, datetime],
+    *,
+    interval: int = STALENESS_CHECK_INTERVAL_SECONDS,
+    threshold: float = BOOK_STALENESS_SECONDS,
+    now_fn=None,
+    once: bool = False,
+) -> None:
+    """Book gap for any book stream that is subscribed, connected, and receiving nothing (T0101).
+
+    This is the fault class the daemon could not represent: on 2026-07-27 all 12 pairs went silent
+    for ~209 s on BOTH hosts while `client.connected` was True, the library keepalive completed >=11
+    ping/pong round trips, and `gap_seconds_total` read 0.0 throughout.
+
+    The window is stamped at `last_seen[pair]`, NOT at detection: the watchdog cannot notice until
+    the threshold has elapsed, so stamping at `now` would discard 30 s from every outage -- an
+    under-report, the same direction as the defect being fixed.
+
+    A pair with no `last_seen` yet is skipped rather than booked: before the first snapshot arrives
+    there is nothing to be stale relative to, and booking from process start would charge every
+    restart a threshold's worth of phantom gap on all 12 pairs at once.
+
+    Never raises, and never lets one pair abort the sweep -- `pairs` is ordered, so a wrapping
+    try/except would starve every pair after the raising one, deterministically and forever.
+    """
+    now_fn = now_fn or (lambda: datetime.now(UTC))
+    while True:
+        now = now_fn()
+        for pair in pairs:
+            try:
+                seen = last_seen.get(pair)
+                if seen is None:
+                    continue
+                if (now - seen).total_seconds() > threshold:
+                    monitor.start_silence(pair, at=seen)
+                elif monitor.is_silent(pair):
+                    monitor.end_silence(pair, at=seen)
+            except Exception:
+                logger.exception("staleness check failed for pair=%s -- continuing with the rest", pair)
+        if once:
+            return
+        await asyncio.sleep(interval)
 
 
 async def _desync_recovery_loop(
@@ -410,8 +478,10 @@ class CaptureCollector:
         trade_writers: dict[str, SegmentWriter],
         monitor: GapMonitor,
         watermark: DiskWatermark,
+        last_seen: dict[str, datetime] | None = None,
     ) -> None:
         self._pairs = pairs
+        self._last_seen = last_seen if last_seen is not None else {}
         self._client = client
         self._books = books
         self._book_writers = book_writers
@@ -461,6 +531,20 @@ class CaptureCollector:
             gap.add_metric([pair], self._monitor.gap_seconds(pair, at=now))
         yield gap
 
+        # The proof-it-runs signal for the staleness watchdog (spec 00073 D4). Fed by the SAME
+        # `last_seen` map the watchdog reads, so a gauge that stays fresh in production proves the
+        # watchdog's input is live on every message -- without injecting a fault into an
+        # unbackfillable pipeline, and without waiting for a real outage to find out.
+        since = GaugeMetricFamily(
+            "zcrypto_capture_seconds_since_last_book_message",
+            "Seconds since this pair's last book message; grows without bound while upstream is silent.",
+            labels=["pair"],
+        )
+        for pair in self._pairs:
+            seen = self._last_seen.get(pair)
+            since.add_metric([pair], (now - seen).total_seconds() if seen is not None else 0.0)
+        yield since
+
         desynced = GaugeMetricFamily(
             "zcrypto_capture_book_desynced", "1 if the pair's book is currently checksum-desynced, else 0.", labels=["pair"]
         )
@@ -506,11 +590,15 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # poller's own instruments are stock `Counter`/`Gauge`, which DO implement `describe()`, so
     # `.register()` never evaluates them eagerly the way it does here -- see the poller's own
     # comment for why its construction needs no equivalent guard.)
+    # Per-pair last book message time: written by the handler, read by the staleness watchdog AND
+    # by the collector's gauge. Declared here because the collector registers before the tasks start.
+    last_seen: dict[str, datetime] = {}
+
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()
         try:
-            registry.register(CaptureCollector(pairs, client, books, book_writers, trade_writers, monitor, watermark))
+            registry.register(CaptureCollector(pairs, client, books, book_writers, trade_writers, monitor, watermark, last_seen))
         except Exception:
             logger.exception("capture metrics collector registration failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
@@ -526,12 +614,13 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # module docstring; the drill measures the first real heal latency this project has had since
     # the 2026-07-13 root-cause fix took desyncs to zero.
     recovery = DesyncRecovery()
-    consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark, recovery))
+    consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark, recovery, last_seen))
     health = asyncio.create_task(
         _healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS, watermark)
     )
     disk_check = asyncio.create_task(_disk_watermark_loop(watermark, monitor, DISK_WATERMARK_INTERVAL_SECONDS))
     desync_recovery = asyncio.create_task(_desync_recovery_loop(client, books, recovery))
+    staleness = asyncio.create_task(_staleness_loop(pairs, monitor, last_seen))
 
     try:
         if duration is not None:
@@ -543,9 +632,9 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     except asyncio.CancelledError:
         pass
     finally:
-        for task in (consumer, health, disk_check, desync_recovery):
+        for task in (consumer, health, disk_check, desync_recovery, staleness):
             task.cancel()
-        for task in (consumer, health, disk_check, desync_recovery):
+        for task in (consumer, health, disk_check, desync_recovery, staleness):
             try:
                 await task
             except asyncio.CancelledError:
