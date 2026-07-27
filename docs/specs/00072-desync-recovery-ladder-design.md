@@ -72,6 +72,40 @@ So the build is not done until a sandbox drill on the ops node — throwaway con
 
 The fault knob is test-only and must not be reachable in a normal run; the drill's value depends on the validated binary being the deployed binary, so it ships in the image, gated on an environment variable absent everywhere in the fleet.
 
+## Drill results (2026-07-27) — and two flaws in the instrument, not the ladder
+
+Both drills ran on the ops node against real Kraken, from an image built off this branch.
+
+**Drill A — hold 45 s (heals before escalation):**
+
+```
+12:40:34.435  rung 1: checksum desync - resubscribing   (fires ONCE; the transition guard holds)
+12:40:57.868  retry 1   (+23.4 s = 20 s grace + tick)
+12:41:02.870  retry 2   (+5.002 s  = backoff[0])
+12:41:12.874  retry 3   (+10.004 s = backoff[1])
+              hold expires, pair heals, no escalation
+```
+
+**Drill B — hold 600 s (every retry fails):**
+
+```
+12:45:24.292  ERROR ... still desynced after bounded retries -- forcing a full reconnect  (+20.002 s)
+12:45:24.342  reconnecting in 1.0s (attempt 1)          force_reconnect reached stream()
+```
+
+`retries=3, escalations=1`, and over the following ~4 minutes with the pair still held desynced there were **no further retries and no second escalation** — the terminal state holds, which is the property no unit test can establish in a live process. `restarts=0` throughout both.
+
+**Desync→escalation measured 58.3 s** against this spec's predicted ~55 s, inside D4's ~90 s budget. That is the first real timing this project has had for the recovery path since desyncs went to zero.
+
+**Two drill runs failed before these, both in the knob:**
+
+1. Faking only `_handle_book_message`'s return value left the book reporting healthy, so `was_desynced` read `False` on every forced failure — the transition guard saw a *fresh* desync each time and re-fired rung 1 twice in 0.5 s, which is the resubscribe storm the guard exists to prevent. Meanwhile the recovery loop, which reads live book state, saw nothing wrong and never engaged.
+2. Also setting `book.desynced`, but on a book whose data was genuinely valid, meant the next update recomputed a good CRC and healed it in milliseconds — before the 20 s grace could elapse. The daemon stayed healthy and kept writing parquet, which is exactly what made it look like a pass.
+
+Hence the knob's unit is a **duration**: a pair is stuck for a length of time, and neither a snapshot count nor a state flag alone expresses that. Recorded because the lesson generalises — a fault injector that does not move the state the system actually keys on simulates a different fault, and will do so convincingly.
+
+**Not verified by these drills:** manifest integrity across the fault. Neither run crossed an hour boundary, so only `.part` files existed. That property was established the same day by [[T0035]]'s drill, which did cross one.
+
 ## Out of scope
 
 - Option (b) `req_id` correlation — D6, its own topic.

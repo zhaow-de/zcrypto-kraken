@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: either alert firing on a REAL stuck pair — and the alert path itself is now drill-validated (2026-07-27), so a firing is trustworthy evidence rather than an unproven signal. Alternatively an owner ruling to build or drop the recovery robustness unconditionally
+status: resolved
 ---
 
 # Capture daemon — robust book-desync recovery (retry / ack-correlated resubscribe)
@@ -95,14 +94,27 @@ The alert shipped 2026-07-26 but had never fired, so nothing established it *wou
 
 **What this does NOT close.** No desync occurred, so `resubscribe_book` never ran and the single-attempt recovery this topic is actually about remains unexercised. The safety net is proven; the defect behind it is not. Deliberately scored that way rather than counted as a validation that did not happen.
 
-## Suggested next steps
+## Resolution
 
-- ~~Investigate the underlying desync *rate*~~ **(answered by the root cause above, 2026-07-13):** the ~200/day rate WAS the unpruned book resurfacing phantom levels — replaying a real hour went 482/117/398 CRC failures → **0** with the depth prune, so there is no residual rate question to investigate (any post-fix desync is a genuine venue/network event, handled below).
-- **(autonomous — consciously re-deferred 2026-07-19)** Make recovery robust to a failed single attempt. Options to weigh: (a) retry `resubscribe_book` with backoff while a pair remains desynced past a grace period / N updates (bounded, so it can't re-storm the rate limit); (b) `req_id`-correlate the resubscribe — wait for the `unsubscribe_ack` before sending the `subscribe`, and treat an `unsubscribe_error`/`subscribe_error` as a signal to retry; (c) escalate to a full reconnect (which re-subscribes everything with fresh snapshots) if a pair stays desynced beyond a threshold. TDD on the WS-client/handler with a fake connection that simulates a rejected/failed recovery.
-- ~~**(verification, pending a natural event)** … a 14-min watcher saw no natural desync, so the live self-heal is still unobserved~~ **— superseded, and it was already superseded when written.** The Kraken unsubscribe→subscribe ordering question this bullet parked is empirically settled **234/234** by the two 2026-07-09 probes recorded above (75/75 and 159/159 first-attempt heals, zero `unsubscribe error`/`subscribe error`/`Already subscribed`). It is left struck rather than deleted because it read as an open question for two weeks after the evidence landed.
+**Resolved 2026-07-27.** Recovery no longer depends on its first attempt succeeding: a bounded retry ladder, escalating once to a full reconnect, then stopping. Spec `00072`; built and drill-validated the same day.
 
-- ~~**(autonomous, ripe NOW) Alert on the stuck shape**~~ — **DONE 2026-07-26**, and it grew: the guard test written for it found *four more* unwatched fault signals, so six rules landed rather than one. Detail in `## Done so far`.
+**The design turns on one thing** — retries are driven by desync **state**, never by protocol responses. A snapshot that fails its own checksum produces no error frame: Kraken is satisfied, the protocol succeeded, and the book is still wrong. Only "still desynced N seconds later" can see that. It is also why `req_id` correlation is *not* a substitute — it prevents the race (cause 2) but is structurally blind to the bad snapshot (cause 1). Registered separately as [[T0102]] for its observability value.
 
-- **Why that alert matters more during an unattended stretch than the "loud" framing suggests.** A stuck pair does not merely withhold one pair's data: `gap_monitor.is_healthy()` returns False while **any** pair has an open gap, and the healthcheck loop pings only when it is True — so **one** stuck pair silences that host's dead-man for **all** pairs. The hc.io watchdog then fires and *stays* fired, and while it is saturated a later, worse failure on that host produces no new page. Self-heal by restart is also not guaranteed to arrive: [[T0027]]'s ruling turns off automatic reboots on exactly these two hosts. Data loss stays covered (the 00050 splice heals a host-local silence, and both BTC-quoted legs are two-host after the secondary converge) — the exposure is **operational blindness**, and its cost grows with the length of the unattended window.
+**The ladder, measured against real Kraken rather than asserted:**
 
-- **Trigger evaluated 2026-07-23 — NOT fired, with the window stated.** `zcrypto_capture_book_desynced` = 0 for every pair on both hosts, and `zcrypto_capture_resubscribes_total` = **0** on both. Bounded claim: these counters reset with the process, so this covers 17.6 h on `zcrypto-red` (up since 2026-07-22 21:45 UTC) and 2.2 h on `zcrypto` (recreated 13:08 UTC for [[T0092]]) — it is **not** evidence of zero desyncs since the 07-13 root-cause fix, only that none is open or recent. Blast radius is now **12** pairs, not 10, and the two BTC-quoted legs have no desync observation history at all.
+| rung | drill A (heals) | drill B (exhausts) |
+| --- | --- | --- |
+| 1 — transition resubscribe | fires **once**; the guard holds, no storm | same |
+| 2 — retry ×3 | +23.4 s, +5.002 s, +10.004 s | same |
+| 3 — reconnect | not reached; pair healed first | fires at **+20.002 s**, `force_reconnect` reaches `stream()` |
+| terminal | — | **no second escalation over the following ~4 min** |
+
+`retries=3, escalations=1, restarts=0`. Desync→escalation **58.3 s** against the spec's predicted ~55 s, inside the ~90 s dead-man budget — the first real timing for this path since the 2026-07-13 root-cause fix took desyncs to zero.
+
+**The terminal state was the part worth drilling.** A ladder that cycles turns one stuck pair into a reconnect loop, and every reconnect drops all 12 pairs — strictly worse than the defect. No unit test can establish that in a live process; drill B did.
+
+**Two drill runs failed first, both in the instrument.** Faking only the return value left the book healthy, so the transition guard re-fired rung 1 twice in 0.5 s — the very storm it exists to prevent — while the state-reading recovery loop never engaged. Setting `book.desynced` too, but on a book whose data was valid, let the next update heal it in milliseconds, before the grace elapsed; the daemon stayed healthy and kept writing, which is exactly what made it look like a pass. The knob's unit became a **duration**, because a pair is stuck for a length of time. Generalised in [[T0049]]: a fault injector that does not move the state the system keys on simulates a different fault, convincingly.
+
+**The alert leg**, shipped 2026-07-26 and drill-validated the same morning, remains the escalation path once the ladder gives up — it is what carries a pair the ladder cannot fix.
+
+**Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build, the ≥24 h secondary canary bake, then the primary re-pin (`capture-deploys.md`). Merged and unrolled is the intended state here; the deploy is its own attended step.
