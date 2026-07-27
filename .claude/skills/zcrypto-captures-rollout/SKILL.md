@@ -37,7 +37,9 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 2. **≥1 full segment-rotation hour** — the next hour's every book `<HH>.parquet` begins at `:00:00.0x`.
 3. **Every abort signal clear throughout** (table below).
 
-Schedule the Slack reminder (`slack_schedule_message` — survives the session) at the **computed gate-open time**, carrying the Phase-3 checklist. The checklist opens the gate, never the reminder itself. Skipping the gate entirely still requires the user's explicit approval — never silently.
+**The computed window is usually too short for the RSS-slope row to discriminate** — a slope needs multi-hour samples the smallest window does not produce. Name that residual explicitly when presenting the gate for the user's word, and the slope watch does NOT end at the primary re-pin: re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+6 h and ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host.
+
+Schedule the Slack reminder (`slack_schedule_message` — survives the session) at the **computed gate-open time**, carrying the Phase-3 checklist. The checklist opens the gate, never the reminder itself. **Skipping or degrading the gate — any of the three events unmet, or the prune only in weak form (`deleted=0`) — requires the user's explicit approval — never silently.**
 
 ### Abort signals — read on the just-converged host; any one trips the rollback decision
 
@@ -53,7 +55,7 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 
 ## Phase 3 — Primary re-pin
 
-Read all seven from the hosts and quote them before asking the user's word:
+Read all eight from the hosts and quote them before asking the user's word:
 
 1. Secondary running digest == candidate (`{{.Config.Image}}`).
 2. `StartedAt` ≥ the computed window, `RestartCount` 0.
@@ -62,6 +64,7 @@ Read all seven from the hosts and quote them before asking the user's word:
 5. `dropped_lines_total` 0 and `last_success` fresh.
 6. Alloy `remote_storage_samples_failed_total` 0 and `up{job="capture_app"} == 1` in Cloud.
 7. `continuity.py` on a **pulled** copy (never the live dir) shows no new truncated hours — genesis hours of new streams excepted.
+8. The bake's prune form quoted (`deleted=N`) — the weak form (`deleted=0`) needs the user's explicit acceptance here, not a Phase-5 footnote.
 
 Then, on the user's word: converge the primary with `-e converge_primary=true -e capture_image_digest=sha256:<candidate>` and the capture tag discipline per `capture-deploys.md`.
 

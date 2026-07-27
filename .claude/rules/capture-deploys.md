@@ -5,7 +5,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 ## Canary rule
 
 - **Never re-pin the primary to a capture-image digest whose secondary bake gate has not passed.** The gate is **event-coverage, sized to the smallest window between the two re-pins** — a clean prune under the new image (triggerable on demand; read `deleted=N`, 0 is the weak scan-only form), ≥1 full segment-rotation hour, every abort signal clear throughout; mechanics and the abort table are the `zcrypto-captures-rollout` skill. The fixed ≥24 h window is deprecated. Before the primary re-pin, verify on the secondary: running digest == candidate, `StartedAt` ≥ the computed window with `RestartCount` 0, capture green (all pairs flowing, no `quarantined`/`ambiguous`/`merge failed` lines, dead-man pinging).
-- Skipping the gate entirely requires the user's explicit approval — never silently.
+- Skipping **or degrading** the gate — any event unmet, or the prune only in weak form (`deleted=0`) — requires the user's explicit approval — never silently. The RSS-slope signal needs multi-hour samples the smallest window does not produce, so the slope watch continues past the primary re-pin (skill Phase 2).
 - At the secondary re-pin, schedule the Slack reminder (`slack_schedule_message`, survives the session) at the **computed gate-open time**, carrying the checklist above — the checklist opens the gate, never the reminder itself.
 
 ## Deploys
