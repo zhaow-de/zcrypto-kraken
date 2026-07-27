@@ -15,6 +15,7 @@ import typer
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metric
 
 from cli.capture.book import OrderBook
+from cli.capture.desync_recovery import Action, DesyncRecovery
 from cli.capture.errors import CaptureError
 from cli.capture.gap_monitor import DiskWatermark, GapMonitor, ping_healthcheck
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter
@@ -121,6 +122,37 @@ def _parse_ts(raw: str) -> datetime:
     return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
+# --- Drill knob (spec 00072 D7) -----------------------------------------------------------------
+# T0008's whole history is a fix nobody could prove ran in production. The ladder is only closable
+# if a drill walks every rung against the real venue -- and that drill is only meaningful if the
+# validated binary IS the deployed binary, which is why this ships in the image rather than in a
+# test-only build.
+#
+# It is inert unless ZCRYPTO_DRILL_FAIL_SNAPSHOTS is set, which is set NOWHERE in the fleet: not in
+# the compose templates, not in any role, not in any env file. Read once at import, so a running
+# daemon cannot be pushed into it by a later environment change.
+_DRILL_FAIL_SNAPSHOTS = int(os.environ.get("ZCRYPTO_DRILL_FAIL_SNAPSHOTS", "0") or 0)
+_drill_failures_remaining: dict[str, int] = {}
+
+
+def _drill_maybe_fail(pair: str, category: str, in_sync: bool) -> bool:
+    """Force the next N post-resubscribe snapshots for `pair` to read as desynced.
+
+    Reproduces the ONE failure mode no external action can induce: a snapshot that arrives intact
+    and wrong, which Kraken considers a success and which therefore produces no error frame. Only
+    snapshots are failed -- updates are left alone, so the daemon's normal path is untouched and the
+    drill isolates exactly the rung-1-did-not-take case.
+    """
+    if not _DRILL_FAIL_SNAPSHOTS or category != "book_snapshot" or not in_sync:
+        return in_sync
+    remaining = _drill_failures_remaining.get(pair, _DRILL_FAIL_SNAPSHOTS)
+    if remaining <= 0:
+        return in_sync
+    _drill_failures_remaining[pair] = remaining - 1
+    logger.warning("DRILL: forcing snapshot desync pair=%s (%d remaining)", pair, remaining - 1)
+    return False
+
+
 async def _handle_book_message(
     msg: dict,
     category: str,
@@ -129,6 +161,7 @@ async def _handle_book_message(
     book_writers: dict[str, SegmentWriter],
     monitor: GapMonitor,
     watermark: DiskWatermark,
+    recovery: DesyncRecovery | None = None,
 ) -> None:
     for entry in msg.get("data", []):
         pair = entry["symbol"]
@@ -138,6 +171,7 @@ async def _handle_book_message(
 
         was_desynced = book.desynced
         in_sync = book.ingest_snapshot(entry) if category == "book_snapshot" else book.ingest_update(entry)
+        in_sync = _drill_maybe_fail(pair, category, in_sync)
         now = datetime.now(UTC)
         if not in_sync:
             # Resubscribe (and open a gap) ONCE, on the transition into desync — NOT on every
@@ -149,8 +183,15 @@ async def _handle_book_message(
                 monitor.start_gap(pair, "checksum_resync", at=now)
                 logger.warning("checksum desync pair=%s - resubscribing", pair)
                 await client.resubscribe_book(pair)
+                # Rung 1 has fired. The ladder now owns what happens if it does not take -- see
+                # _desync_recovery_loop. Nothing else here re-fires: the transition guard above is
+                # what keeps a desync from becoming a resubscribe storm.
+                if recovery is not None:
+                    recovery.note_desync(pair, at=now)
         elif was_desynced:
             monitor.end_gap(pair, at=now)
+            if recovery is not None:
+                recovery.note_recovered(pair, at=now)
 
         if watermark.breached:
             continue
@@ -202,11 +243,12 @@ async def _consume(
     trade_writers: dict[str, SegmentWriter],
     monitor: GapMonitor,
     watermark: DiskWatermark,
+    recovery: DesyncRecovery | None = None,
 ) -> None:
     async for msg in client.stream():
         category = classify(msg)
         if category in ("book_snapshot", "book_update"):
-            await _handle_book_message(msg, category, client, books, book_writers, monitor, watermark)
+            await _handle_book_message(msg, category, client, books, book_writers, monitor, watermark, recovery)
         elif category in ("trade_snapshot", "trade_update"):
             _handle_trade_message(msg, trade_writers, watermark)
         elif category == "subscribe_error":
@@ -243,6 +285,62 @@ async def _healthcheck_loop(
         # sustained probe failure pages (the healthcheck grace absorbs a transient blip).
         if client.connected and monitor.is_healthy(pairs) and not watermark.breached and watermark.measurable:
             ping_healthcheck(url)
+
+
+# How often the recovery ladder is evaluated. Well under the 20 s grace, so a retry fires close to
+# when it is due rather than up to a tick late.
+DESYNC_RECOVERY_INTERVAL_SECONDS = 5
+
+
+async def _desync_recovery_loop(
+    client,
+    books: dict[str, OrderBook],
+    recovery: DesyncRecovery,
+    *,
+    interval: int = DESYNC_RECOVERY_INTERVAL_SECONDS,
+    now_fn=None,
+    once: bool = False,
+) -> None:
+    """Drive the recovery ladder for pairs that are still desynced (spec 00072, T0008).
+
+    TIME-driven, not message-driven, and deliberately so. A grace period keyed on incoming messages
+    would depend on the stuck pair still receiving traffic, and would re-evaluate hundreds of times
+    per second at depth-100 instead of once per tick.
+
+    Live book state is authoritative: a pair that healed between ticks is dropped from the ladder
+    here, so the ladder's own record can never outlive the fault it describes.
+
+    Never raises. This runs as a bare task beside the consumer, so an escaping exception would take
+    the daemon's recovery down silently and permanently -- the exact failure class T0008 exists to
+    fix, reintroduced one level up.
+    """
+    now_fn = now_fn or (lambda: datetime.now(UTC))
+    while True:
+        try:
+            now = now_fn()
+            for pair, book in books.items():
+                if not book.desynced:
+                    recovery.note_recovered(pair, at=now)
+                    continue
+                action = recovery.due(pair, at=now)
+                if action is Action.RETRY:
+                    logger.warning("desync recovery: retrying resubscribe pair=%s", pair)
+                    await client.resubscribe_book(pair)
+                    recovery.note_attempt(pair, at=now)
+                elif action is Action.RECONNECT:
+                    # Escalation drops EVERY pair, not just this one -- bounded to once per pair
+                    # per cooldown by the ladder, because a loop here is worse than the stuck pair.
+                    logger.error(
+                        "desync recovery: pair=%s still desynced after bounded retries -- forcing a full reconnect",
+                        pair,
+                    )
+                    await client.force_reconnect()
+                    recovery.note_escalated(pair, at=now)
+        except Exception:
+            logger.exception("desync recovery loop iteration failed -- continuing")
+        if once:
+            return
+        await asyncio.sleep(interval)
 
 
 async def _disk_watermark_loop(watermark: DiskWatermark, monitor: GapMonitor, interval: int) -> None:
@@ -401,11 +499,16 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
             with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.add_signal_handler(sig, main_task.cancel)
 
-    consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark))
+    # One ladder per host, shared by every pair (spec 00072). Defaults are unfitted -- see the
+    # module docstring; the drill measures the first real heal latency this project has had since
+    # the 2026-07-13 root-cause fix took desyncs to zero.
+    recovery = DesyncRecovery()
+    consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark, recovery))
     health = asyncio.create_task(
         _healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS, watermark)
     )
     disk_check = asyncio.create_task(_disk_watermark_loop(watermark, monitor, DISK_WATERMARK_INTERVAL_SECONDS))
+    desync_recovery = asyncio.create_task(_desync_recovery_loop(client, books, recovery))
 
     try:
         if duration is not None:

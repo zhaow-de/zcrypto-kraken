@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
 from decimal import Decimal
@@ -161,6 +162,23 @@ class CaptureClient:
     async def _subscribe_all(self, ws) -> None:
         await ws.send(json.dumps(build_subscribe_message("book", self._pairs, depth=self._depth)))
         await ws.send(json.dumps(build_subscribe_message("trade", self._pairs)))
+
+    async def force_reconnect(self) -> None:
+        """Drop the live connection so `stream()` rebuilds it — the recovery ladder's last rung.
+
+        Closing the socket makes `stream()`'s `async for` raise `ConnectionClosed`, which its
+        existing handler already treats as an ordinary drop: reconnect, re-subscribe everything,
+        fresh snapshots for every pair. Reusing that path rather than adding a second reconnect
+        implementation is the point — there is exactly one way this daemon reconnects.
+
+        A no-op when nothing is connected: `stream()` is already mid-reconnect, which is what this
+        would have asked for anyway.
+        """
+        ws = self._ws
+        if ws is None:
+            return
+        with contextlib.suppress(Exception):
+            await ws.close()
 
     async def resubscribe_book(self, pair: str) -> None:
         """Force a fresh `book` snapshot for one pair to recover from a checksum desync without
