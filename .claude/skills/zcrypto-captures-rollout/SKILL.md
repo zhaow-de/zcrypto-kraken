@@ -2,7 +2,6 @@
 name: zcrypto-captures-rollout
 description: Attended canary rollout of a capture-image digest across the capture fleet — preflight, secondary converge, event-driven bake with abort signals, primary re-pin, rollback, verify-by-outcome. User-invoked only.
 disable-model-invocation: true
-model: claude-fable-5
 ---
 
 # zcrypto-captures-rollout
@@ -31,13 +30,13 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 
 ## Phase 2 — The bake gate: the smallest window that covers the events
 
-**The fixed ≥24 h bake is deprecated (owner ruling): the gate is event-coverage, and the default is always the smallest window between the two re-pins that satisfies all three.** Compute the window, state it, then start it:
+**The gate is event-coverage: the smallest window between the two re-pins that satisfies all three.** Compute the window, state it for the user's word, then start it:
 
 1. **A clean prune under the new image** — the one recurring writer that mutates the capture dir concurrently with the daemon. Do not wait for 03:17: `sudo systemctl start zcrypto-capture-prune.service` on the just-converged host fires it now. **Read `deleted=N` in the result**: `deleted=0` exercises the scan but never the deletion path (the weak form) — note which form the bake got, and prefer a host/day where the archive age yields a deleting prune.
-2. **≥1 full segment-rotation hour** — the next hour's every book `<HH>.parquet` begins at `:00:00.0x`.
+2. **≥3 full segment-rotation hours** — the first hour's every book `<HH>.parquet` beginning at `:00:00.0x` proves the boundary write; three hours are the RSS-slope row's minimal viable duration — two complete rotation cycles plus the current one, separating a real trend from the rotation sawtooth.
 3. **Every abort signal clear throughout** (table below).
 
-**The computed window is usually too short for the RSS-slope row to discriminate** — a slope needs multi-hour samples the smallest window does not produce. Name that residual explicitly when presenting the gate for the user's word, and the slope watch does NOT end at the primary re-pin: re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+6 h and ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host.
+**The residual, named:** a leak slower than the window can still pass the slope row — re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host.
 
 Schedule the Slack reminder (`slack_schedule_message` — survives the session) at the **computed gate-open time**, carrying the Phase-3 checklist. The checklist opens the gate, never the reminder itself. **Skipping or degrading the gate — any of the three events unmet, or the prune only in weak form (`deleted=0`) — requires the user's explicit approval — never silently.**
 
