@@ -35,6 +35,16 @@ It also matters for the redundancy argument itself: the secondary is justified b
 - Not caused by that morning's drills — the alert predates them by 41 min, and both ran on the ops node and the secondary, never the primary.
 - Not caused by the Alloy bump (01:33–01:58 UTC): that is ~8 h before, outside the 6 h window, and the 7 d total shows nothing before this event.
 
+## [[T0008]]'s ladder makes this blind spot reachable more often (2026-07-27)
+
+Registered the same day, and it cuts against this topic staying parked.
+
+T0008's recovery ladder adds a **full reconnect** as its last rung (spec `00072`, rung 3). This topic's leading hypothesis is that **reconnect silence is precisely what the daemon does not book** — the arithmetic that fits the 2026-07-27 event is ~39 s per pair per reconnect, across 12 pairs.
+
+If both hold, then once the ladder deploys, every escalation manufactures exactly the silence that `zcrypto_capture_gap_seconds_total` cannot see. The ladder is bounded — one escalation per pair per hour — so this is not a runaway; but it converts an accidental blind spot into one the system will now walk into deliberately, by design, as part of a recovery path.
+
+That does not merge the two topics: this is a different defect in a different producer, and its first step is still a measurement. It does mean the measurement is worth doing **before** T0008's image reaches the fleet, so the ladder is not deployed on top of an accounting gap nobody has characterised.
+
 ## Suggested next steps
 
 - **(autonomous, measurement first) Read the reconcile ledger for the event** — `would_mint`/`minted` records over the window — and establish the per-pair, per-hour shape and the exact wall-clock span. That answers whether this is reconnect silence (expected-but-unbooked) or something else, and it is the input every other decision needs.
