@@ -56,7 +56,7 @@ If a pair is **still** desynced after the full reconnect, the ladder **stops**. 
 
 Cycling would convert one stuck pair into a reconnect loop — every reconnect drops all 12 pairs, so a loop is strictly worse than the defect it is trying to fix, and repeated whole-connection re-subscribes are exactly the shape that trips the rate limit at connection level. At that point the fault is not ours to fix in-process: `Capture · book desync stuck on a pair` (shipped 2026-07-26, drill-validated 2026-07-27) is the escalation path, and the withheld dead-man is the backstop.
 
-**Escalation cost, priced from a real event.** [[T0101]] measured a reconnect at roughly 39 s of silence per pair across 12 pairs (arithmetic from one incident, not a fitted number). So pulling rung 3 costs a bounded, secondary-covered gap on every pair — clearly worth paying against one pair losing data indefinitely, and clearly not worth paying repeatedly.
+**Escalation cost, re-priced from measurement (corrected 2026-07-27).** This spec first quoted ~39 s of silence per pair per reconnect, from [[T0101]]'s arithmetic on one incident. **That figure is wrong and is withdrawn.** Reading the capture hosts' own logs put a reconnect at **2.276 s (secondary) to 6.204 s (primary)** close-to-first-message — the 39 s came from dividing a single ~209 s venue outage by a reconnect count that had nothing to do with it. So rung 3 costs single-digit seconds on every pair, not ~39, and the "strictly worse than the defect" argument for the terminal state holds *a fortiori* at the smaller number.
 
 ## D6 — Why `req_id` correlation is excluded
 

@@ -135,10 +135,19 @@ NOT_A_FAULT_SIGNAL = {
     # alongside a process_start_time_seconds jump (a crash-restart), which needs the correlation,
     # not a raw count -- it stays that topic's work.
     "zcrypto_capture_reconnects_total",
-    # Cumulative gap seconds: measured zero across all 24 series (2026-07-26), and an open gap is
-    # already covered twice over -- the dead-man (is_healthy gates the ping) and the desync rule.
-    # The cumulative counter's alerting design belongs to T0095's dashboard/alerting iteration.
+    # Cumulative gap seconds. BOTH of this exclusion's original grounds were falsified on 2026-07-27
+    # (T0101) and are rewritten rather than left standing, because as written they argue against the
+    # fix. It said the metric measured zero across all 24 series -- that ZERO WAS THE BLIND SPOT: the
+    # daemon booked nothing through a total 12-pair blackout on both hosts. And it said an open gap
+    # is covered twice over by the dead-man and the desync rule -- NEITHER saw it, because
+    # `is_healthy()` consults open gap windows and a connected-but-silent stream opened none.
+    # Spec 00073 makes the silence observable; alerting on it is deliberately deferred to T0105,
+    # since an unfitted threshold in `is_healthy()` darkens the dead-man fleet-wide on both hosts.
     "zcrypto_capture_gap_seconds_total",
+    # Seconds since the last book message (spec 00073 D4): the proof-it-runs gauge for the staleness
+    # watchdog. Excluded on purpose -- it exists to be READ so T0105 can fit a paging threshold to a
+    # real production distribution; a rule on it before that fitting is the guess this defers.
+    "zcrypto_capture_seconds_since_last_book_message",
     # Engine cycle health -- registered under T0095 with `ripe_when: the dashboards/alerting design
     # iteration`. Named here so its absence is a decision, not an oversight.
     "zcrypto_engine_cycle_success",

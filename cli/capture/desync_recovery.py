@@ -93,9 +93,11 @@ class DesyncRecovery:
         intended 1, and a flapping pair 51x/hour -- 72 and ~610 reconnects/hour fleet-wide across
         12 pairs, against 12. Those are state-machine ceilings: this class has no clock and no I/O,
         so it does not charge the reconnect's own downtime, and the real rate would be lower. The
-        over-run ratio is the point, and at ~39 s of silence per pair per reconnect (T0101's
-        arithmetic from one incident, not a fitted number) it is exactly the "strictly worse than
-        the defect" outcome the terminal state exists to prevent.
+        over-run ratio is the point. This docstring once priced a reconnect at ~39 s of silence per
+        pair, from T0101's arithmetic on one incident; that figure was WRONG and is withdrawn --
+        measured against the hosts' own logs a reconnect costs 2.276-6.204 s close-to-first-message.
+        The "strictly worse than the defect" argument for the terminal state survives at the smaller
+        number, since 6 escalations/pair/hour is still six times the intended bound.
         """
         state = self._pairs.get(pair)
         if state is None:
