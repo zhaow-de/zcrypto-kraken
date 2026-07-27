@@ -169,7 +169,7 @@ async def _handle_book_message(
     book_writers: dict[str, SegmentWriter],
     monitor: GapMonitor,
     watermark: DiskWatermark,
-    recovery: DesyncRecovery | None = None,
+    recovery: DesyncRecovery,
 ) -> None:
     for entry in msg.get("data", []):
         pair = entry["symbol"]
@@ -194,12 +194,10 @@ async def _handle_book_message(
                 # Rung 1 has fired. The ladder now owns what happens if it does not take -- see
                 # _desync_recovery_loop. Nothing else here re-fires: the transition guard above is
                 # what keeps a desync from becoming a resubscribe storm.
-                if recovery is not None:
-                    recovery.note_desync(pair, at=now)
+                recovery.note_desync(pair, at=now)
         elif was_desynced:
             monitor.end_gap(pair, at=now)
-            if recovery is not None:
-                recovery.note_recovered(pair, at=now)
+            recovery.note_recovered(pair, at=now)
 
         if watermark.breached:
             continue
@@ -251,7 +249,7 @@ async def _consume(
     trade_writers: dict[str, SegmentWriter],
     monitor: GapMonitor,
     watermark: DiskWatermark,
-    recovery: DesyncRecovery | None = None,
+    recovery: DesyncRecovery,
 ) -> None:
     async for msg in client.stream():
         category = classify(msg)

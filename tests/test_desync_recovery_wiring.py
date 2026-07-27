@@ -194,7 +194,14 @@ def test_the_drill_knob_is_absent_from_every_infra_config():
 # Deleting `recovery.note_desync(...)`, `recovery.note_recovered(...)`, or the `recovery` argument
 # from _consume's call all SURVIVED the entire suite: a ladder nobody arms, with every test green.
 # That is the T0035/T0100 failure class one level down -- a mechanism nobody proved runs -- which is
-# the exact trap this whole branch exists to escape. These call the real handler.
+# the exact trap this whole branch exists to escape.
+#
+# Calling the real handler kills the first two. It does NOT kill the third: a second review re-ran
+# the mutations and found dropping `recovery` from _consume's call still passed all 2424 tests,
+# because these tests pass the ladder explicitly and so never observe the production CALL SITE. The
+# argument now has no default -- dropping it is a TypeError, not a silent None -- and
+# `test_the_consumer_arms_the_ladder_it_was_given` drives _consume itself so that TypeError is
+# actually reached by the suite. Covering a callee is not covering its caller.
 
 
 def _book_msg(pair: str) -> dict:
@@ -252,6 +259,37 @@ async def _test_the_daemon_disarms_the_ladder_when_a_pair_recovers():
     await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder)
     assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=999)) is Action.NONE, (
         "the pair recovered but the ladder still holds it — its record outlives the fault"
+    )
+
+
+def test_the_consumer_arms_the_ladder_it_was_given():
+    asyncio.run(_test_the_consumer_arms_the_ladder_it_was_given())
+
+
+async def _test_the_consumer_arms_the_ladder_it_was_given():
+    """The production call site, not just the handler it calls.
+
+    `_run` builds one DesyncRecovery and hands it to `_consume`, which must pass it down to
+    `_handle_book_message` on every book message. Nothing else in the suite executes that hop, so a
+    review found the argument could be dropped there with all 2424 tests still green -- the daemon
+    would resubscribe on the transition and then nobody would ever escalate, which is exactly the
+    defect this branch was built to fix, silently reintroduced.
+    """
+    from cli.capture.command import _consume
+
+    class _ScriptedClient(_FakeClient):
+        async def stream(self):
+            for msg in ({"channel": "book", "type": "update", **_book_msg("BTC/EUR")},):
+                yield msg
+
+    ladder, client = DesyncRecovery(), _ScriptedClient()
+    books = {"BTC/EUR": _StubBook([False])}
+    await _consume(client, books, {}, {}, _StubMonitor(), _StubWatermark(), ladder)
+
+    assert client.resubscribed == ["BTC/EUR"], "the consumer never reached the desync branch"
+    assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=25)) is Action.RETRY, (
+        "_consume resubscribed but did not hand its ladder down — the daemon's ladder is armed by "
+        "nothing, and no pair will ever escalate"
     )
 
 
