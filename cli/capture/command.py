@@ -135,13 +135,20 @@ _DRILL_FAIL_SNAPSHOTS = int(os.environ.get("ZCRYPTO_DRILL_FAIL_SNAPSHOTS", "0") 
 _drill_failures_remaining: dict[str, int] = {}
 
 
-def _drill_maybe_fail(pair: str, category: str, in_sync: bool) -> bool:
+def _drill_maybe_fail(pair: str, category: str, in_sync: bool, book: OrderBook | None = None) -> bool:
     """Force the next N post-resubscribe snapshots for `pair` to read as desynced.
 
     Reproduces the ONE failure mode no external action can induce: a snapshot that arrives intact
     and wrong, which Kraken considers a success and which therefore produces no error frame. Only
     snapshots are failed -- updates are left alone, so the daemon's normal path is untouched and the
     drill isolates exactly the rung-1-did-not-take case.
+
+    It MUST also set `book.desynced`, not just return False. The first drill run proved why: faking
+    only the return value left the book reporting healthy, so `was_desynced` read False on every
+    forced failure, the transition guard saw a fresh desync each time and re-fired rung 1 twice in
+    0.5 s -- the resubscribe storm the guard exists to prevent -- while the recovery loop, which
+    reads live book state, saw nothing wrong and never engaged. A knob that does not move the state
+    the system actually keys on does not simulate the fault; it simulates a different one.
     """
     if not _DRILL_FAIL_SNAPSHOTS or category != "book_snapshot" or not in_sync:
         return in_sync
@@ -150,6 +157,8 @@ def _drill_maybe_fail(pair: str, category: str, in_sync: bool) -> bool:
         return in_sync
     _drill_failures_remaining[pair] = remaining - 1
     logger.warning("DRILL: forcing snapshot desync pair=%s (%d remaining)", pair, remaining - 1)
+    if book is not None:
+        book.desynced = True
     return False
 
 
@@ -171,7 +180,7 @@ async def _handle_book_message(
 
         was_desynced = book.desynced
         in_sync = book.ingest_snapshot(entry) if category == "book_snapshot" else book.ingest_update(entry)
-        in_sync = _drill_maybe_fail(pair, category, in_sync)
+        in_sync = _drill_maybe_fail(pair, category, in_sync, book)
         now = datetime.now(UTC)
         if not in_sync:
             # Resubscribe (and open a gap) ONCE, on the transition into desync — NOT on every
