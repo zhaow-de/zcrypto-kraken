@@ -354,8 +354,19 @@ async def _staleness_loop(
     under-report, the same direction as the defect being fixed.
 
     A pair with no `last_seen` yet is skipped rather than booked: before the first snapshot arrives
-    there is nothing to be stale relative to, and booking from process start would charge every
-    restart a threshold's worth of phantom gap on all 12 pairs at once.
+    there is nothing to be stale relative to. `_run` seeds every pair at process start, so this
+    guards only the theoretical case -- an unseeded pair would be skipped forever AND report a 0.0
+    gauge, the healthiest value there is, which is the opposite of what a never-delivering stream
+    should look like.
+
+    KNOWN IMPRECISION, bounded and always in the same direction. The window closes at the pair's
+    `last_seen` as of the *closing tick*, not at the first message after the silence, so it includes
+    up to one `interval` of live traffic: last message t=0, data resumes t=209.01, tick at t=210
+    reads `seen=209.98` and books 209.98 s for a 209.01 s silence. Over-reporting by <= `interval`
+    (5 s, i.e. <= 2.4 % of a 209 s outage), never under. Left as-is deliberately: closing at the
+    true resume instant needs the first post-silence message time, which is exactly the value
+    `last_seen` has already overwritten by the time the tick runs, and an under-reporting gap
+    counter is the failure mode this whole topic exists to remove.
 
     Never raises, and never lets one pair abort the sweep -- `pairs` is ordered, so a wrapping
     try/except would starve every pair after the raising one, deterministically and forever.

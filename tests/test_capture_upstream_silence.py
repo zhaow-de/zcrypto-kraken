@@ -409,6 +409,62 @@ def test_the_staleness_loop_does_not_fire_inside_the_threshold():
     assert monitor.is_silent("BTC/EUR") is False
 
 
+def test_the_close_over_books_by_at_most_one_check_interval_and_never_under():
+    """Finding 8 of the pre-push review, pinned rather than left as prose.
+
+    The window closes at the pair's `last_seen` as of the CLOSING TICK, not at the first message
+    after the silence, so it absorbs up to one `interval` of live traffic. Bounded and always in the
+    same direction -- over, never under -- which is the safe direction for a counter whose whole
+    defect was under-reporting. If someone later closes at the true resume instant, this test tells
+    them the bound they are changing.
+    """
+    import asyncio
+
+    from cli.capture.command import _staleness_loop
+
+    monitor = GapMonitor()
+    last_seen = {"BTC/EUR": T0}
+    true_silence = 209.01
+    interval = 5.0
+
+    # Tick 1: still silent -> window opens, stamped at T0.
+    asyncio.run(
+        _staleness_loop(
+            ["BTC/EUR"], monitor, last_seen, interval=0, threshold=30.0, now_fn=lambda: T0 + timedelta(seconds=100), once=True
+        )
+    )
+    # Data resumed at +209.01 and has been flowing since; the closing tick sees the LATEST message.
+    last_seen["BTC/EUR"] = T0 + timedelta(seconds=209.98)
+    asyncio.run(
+        _staleness_loop(
+            ["BTC/EUR"], monitor, last_seen, interval=0, threshold=30.0, now_fn=lambda: T0 + timedelta(seconds=210), once=True
+        )
+    )
+    booked = monitor.gap_seconds("BTC/EUR")
+    assert booked >= true_silence, f"booked {booked}s for a {true_silence}s silence -- UNDER-reporting"
+    assert booked <= true_silence + interval, (
+        f"booked {booked}s for a {true_silence}s silence -- over-reports by more than one {interval}s interval"
+    )
+
+
+def test_gap_seconds_can_double_count_and_the_ratio_can_exceed_one():
+    """Finding 9, pinned as the deliberate behaviour it is. The three window kinds are summed
+    independently, so a pair desynced THROUGH an upstream blackout books those seconds twice and
+    `gap_ratio` exceeds 1.0. T0105 plans a rule on this counter; that rule must read it as an upper
+    bound on lost time, never as a fraction of the window."""
+    m = GapMonitor()
+    m.start_gap("BTC/EUR", "checksum_resync", at=T0)
+    m.start_silence("BTC/EUR", at=T0)
+    m.end_gap("BTC/EUR", at=T0 + timedelta(seconds=60))
+    m.end_silence("BTC/EUR", at=T0 + timedelta(seconds=60))
+
+    assert m.gap_seconds("BTC/EUR") == 120.0, "the two concurrent windows no longer sum independently"
+    assert m.gap_ratio("BTC/EUR", window_seconds=60.0) == 2.0, (
+        "gap_ratio no longer exceeds 1.0 on overlapping windows -- if that is intended, T0105's rule "
+        "design and the gap_seconds docstring must change with it"
+    )
+
+
 def test_the_threshold_is_exclusive_at_the_boundary():
     """`>` not `>=`, pinned. Spec 00073 D5 claims the threshold deliberately EQUALS the reconciler's
     `--min-gap-seconds` so the two producers measure the same thing -- and T0103 separately records

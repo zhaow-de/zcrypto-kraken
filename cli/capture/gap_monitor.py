@@ -137,7 +137,18 @@ class GapMonitor:
 
     def gap_seconds(self, pair: str, *, at: datetime | None = None) -> float:
         """Total closed gap seconds for `pair` — its own gaps plus the global disk-watermark breach
-        (T0032), which lost data for every pair — plus any still-open windows' duration as of `at`.
+        (T0032), which lost data for every pair — plus upstream silence (T0101) — plus any
+        still-open windows' duration as of `at`.
+
+        THE THREE KINDS ARE SUMMED INDEPENDENTLY AND CAN DOUBLE-COUNT THE SAME SECOND. That is
+        deliberate: each answers a different question (did this pair desync / did the disk stop us
+        writing / did the venue stop sending), and collapsing them would make a pair that suffers
+        two faults at once look like it suffered one. The cost is that the total is an upper bound
+        on lost time, not a measurement of it, and it can exceed the elapsed wall clock — a pair
+        desynced *through* an upstream blackout books that window twice. A rule on
+        `increase(zcrypto_capture_gap_seconds_total[...])` therefore reads "how bad, roughly",
+        never "what fraction of the window was lost"; T0105 owns that rule and must not treat this
+        as a coverage ratio.
         Each open window's contribution is clamped to >= 0: an `at` before a window's start (a
         backward-stepped wall clock) must not produce a negative gap or eat booked gap time."""
         total = self._closed_seconds.get(pair, 0.0) + self._watermark_seconds + self._silent_seconds.get(pair, 0.0)
@@ -152,6 +163,10 @@ class GapMonitor:
         return total
 
     def gap_ratio(self, pair: str, *, window_seconds: float, at: datetime | None = None) -> float:
+        """Gap seconds over `window_seconds`. **CAN EXCEED 1.0** — see `gap_seconds`: the three
+        window kinds are summed independently, so a pair that is desynced *through* an upstream
+        blackout books the same wall-clock seconds twice. Any consumer treating this as a fraction
+        of elapsed time must say what it does above 1.0 (T0101; the paging work is T0105)."""
         if window_seconds <= 0:
             raise CaptureError(f"window_seconds must be > 0, got {window_seconds}")
         return self.gap_seconds(pair, at=at) / window_seconds
