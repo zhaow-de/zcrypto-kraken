@@ -29,7 +29,7 @@ The engine runs on the capture primary — everything above applies (the canary 
 ## Reboots
 
 - **The capture VPSes never reboot themselves** — patches still auto-install; *Capture · reboot pending (attended)* — a Grafana rule paging Slack, not the dead-man domain — fires until you reboot. The ops node still auto-reboots at 02:25. The on-host 21:25 / 22:25 times no longer fire but are kept on purpose — they are the measured slots that already satisfy the Schedule bullet, and the base role's window-collision assert still reads their host_vars, so never delete them as dead config.
-- **Reboot SECONDARY first, then primary** — the reverse of the image-rollout order: if the kernel bricks the secondary, the primary is never touched.
+- **Reboot SECONDARY first, then primary** — the same canary order as an image rollout: if the kernel bricks the secondary, the primary is never touched.
 - Schedule: ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation, and on the primary right after a completed engine cycle. Measure from the archive, don't guess.
 - Expect a ~83 s capture gap; both containers self-restart.
 

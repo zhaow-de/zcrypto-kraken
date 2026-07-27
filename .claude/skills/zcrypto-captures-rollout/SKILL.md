@@ -61,7 +61,7 @@ Read all eight from the hosts and quote them before asking the user's word:
 3. Capture green: all pairs flowing, no `quarantined`/`ambiguous`/`merge failed`.
 4. Dead-man green: hc.io pinging; prune `Result=success`.
 5. `dropped_lines_total` 0 and `last_success` fresh.
-6. Alloy `remote_storage_samples_failed_total` 0 and `up{job="capture_app"} == 1` in Cloud.
+6. Alloy healthy: `prometheus_remote_storage_samples_failed_total` 0 on the host (`127.0.0.1:12345/metrics`), and `up{job="capture_app"} == 1` in Cloud.
 7. `continuity.py` on a **pulled** copy (never the live dir) shows no new truncated hours — genesis hours of new streams excepted.
 8. The bake's prune form quoted (`deleted=N`) — the weak form (`deleted=0`) needs the user's explicit acceptance here, not a Phase-5 footnote.
 

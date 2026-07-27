@@ -14,7 +14,7 @@ The codified Alloy image bump (T0081). Four hosts run digest-pinned `grafana/all
 
 ## Prerequisite
 
-**PR #191 (specs 00068/00069) must be merged before this skill runs.** The fleet already runs that branch, and several of this skill's references land with it (`CAPTURE_REQUIRED`/`PROCESS_FAMILIES` in the series test, the config-vs-re-pin bullet in `capture-deploys.md`). Running the converge from a pre-#191 tree also silently reverts the deployed 00069 metrics config — the 2026-07-23 deploy-tree hazard.
+**Converge only from a tree whose rendered config matches the fleet** — a stale tree silently reverts deployed config (the deploy-tree hazard); `--check --diff` before every apply.
 
 ## Standing cautions (they all transfer)
 
@@ -38,7 +38,7 @@ The codified Alloy image bump (T0081). Four hosts run digest-pinned `grafana/all
 
 1. Newest release: `timeout 30 gh api repos/grafana/alloy/releases/latest -q '.tag_name + " " + .published_at'`. **Read its release notes** (and any skipped intermediate versions') for config-language breaking changes/deprecations — the 00068 lesson: a `concat` → `array.concat` deprecation was caught only by validating against the real binary. If the notes flag config-language changes, dry-start the new image against each of the three `config.alloy` files (NAS `infra/nas/`, ops `roles/ops/files/`, capture `roles/capture/files/`) before touching any host, supplying dummy values for the `sys.env(...)` secrets.
 2. Resolve the tag to its **multi-arch index digest**: `timeout 60 docker buildx imagetools inspect grafana/alloy:<tag>` → the top-level `Digest:` line (`sha256:…`). That full-index form is the pin (the current NAS pin is the same shape).
-3. Record the **current baseline** before changing anything — the deployed digests live only on the hosts for 3 of 4 (per-converge extra-vars, no repo default): `docker inspect grafana-alloy --format '{{.Config.Image}}'` on `hp`, `nas`, `red`, `zcrypto` — into `docs/reference/fleet-pins.md` (create it on the first run; it is the durable record the *next* bump diffs against, and the rollback reference for this one). **Always `.Config.Image` (the `repo@sha256:…` compose asked for), never `.Image`** — the latter equals the pinned digest only under docker's containerd image store (the capture VPSes), and is the local config-blob ID under classic storage (the NAS): a host-dependent trap, measured 2026-07-23.
+3. Record the **current baseline** before changing anything — the deployed digests live only on the hosts for 3 of 4 (per-converge extra-vars, no repo default): `docker inspect grafana-alloy --format '{{.Config.Image}}'` on `hp`, `nas`, `red`, `zcrypto` — into `docs/reference/fleet-pins.md` (the durable record the *next* bump diffs against, and the rollback reference for this one). **Always `.Config.Image` (the `repo@sha256:…` compose asked for), never `.Image`** — the latter equals the pinned digest only under docker's containerd image store (the capture VPSes), and is the local config-blob ID under classic storage (the NAS): a host-dependent trap, measured 2026-07-23.
 
 ## Step 1 — update the repo pins
 
