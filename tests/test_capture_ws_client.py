@@ -1,10 +1,12 @@
 import asyncio
+import json
 import logging
 from decimal import Decimal
 
 import pytest
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.frames import Close
 from websockets.http11 import Response
 
 from cli.capture.errors import CaptureError
@@ -74,7 +76,9 @@ def test_parse_message_raises_capture_error_on_invalid_json():
         ({"method": "subscribe", "success": False}, "subscribe_error"),
         ({"method": "unsubscribe", "success": True}, "unsubscribe_ack"),
         ({"method": "unsubscribe", "success": False}, "unsubscribe_error"),
-        ({"channel": "status"}, "other"),
+        # Was "other" until T0101: dropping the venue's own status meant nothing recorded whether an
+        # outage had been announced, so the question was unanswerable rather than answered.
+        ({"channel": "status"}, "status"),
     ],
 )
 def test_classify(msg, expected):
@@ -335,3 +339,63 @@ def test_resubscribe_book_is_noop_when_not_connected():
         await client.resubscribe_book("BTC/EUR")  # must not raise
 
     asyncio.run(run())
+
+
+# --- T0101: a venue-announced restart must not be reconnected into at 1.0 s ----------------------
+#
+# Measured 2026-07-27: Kraken sent `1012 (service restart)` to both capture hosts 19.65 ms apart;
+# the primary's first reconnect fired 1.0 s later and was answered HTTP 503, costing ~3.9 s of extra
+# silence on the unbackfillable path, while the secondary -- whose attempt landed later -- connected
+# first try. Kraken's documented guidance is >= 5 s after maintenance.
+#
+# The pre-push review found this shipped as a mechanism nobody proved runs: every existing close-path
+# test raises `ConnectionClosedError(None, None)`, i.e. `rcvd is None` and no close code, so the
+# branch that reads the code was never executed. These drive the REAL close frame through `stream()`.
+
+
+class _ClosingConnection(_FakeConnection):
+    """Raises a close carrying a real `Close` frame, the way `websockets` does on a venue close."""
+
+    def __init__(self, messages, close_code):
+        super().__init__(messages)
+        self._close_code = close_code
+
+    async def _gen(self):
+        for m in self._messages:
+            yield m
+        rcvd = Close(self._close_code, "Kraken websockets restarting, please reconnect.")
+        raise ConnectionClosedError(rcvd, None)
+
+
+def _delays_after_close(close_code, *, messages):
+    """Run `stream()` across one close carrying `close_code`; return the observed backoff delays."""
+    conn1 = _ClosingConnection(messages, close_code)
+    conn2 = _FakeConnection(messages)
+    connect_fn, _ = _connect_fn_returning(conn1, conn2)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    async def run():
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=fake_sleep)
+        seen = []
+        async for msg in client.stream():
+            seen.append(msg)
+            if len(seen) == 2:
+                break
+
+    asyncio.run(run())
+    return sleep_calls
+
+
+def test_a_1012_service_restart_floors_the_first_reconnect_at_five_seconds():
+    msg = json.dumps({"channel": "heartbeat"})
+    assert _delays_after_close(1012, messages=[msg]) == [5.0]
+
+
+def test_an_ordinary_close_still_reconnects_fast():
+    """~8.2 reconnects/day are ordinary drops recovering in single-digit seconds. Slowing them to
+    5 s would trade a rare venue restart for a daily cost on the unbackfillable path."""
+    msg = json.dumps({"channel": "heartbeat"})
+    assert _delays_after_close(1006, messages=[msg]) == [1.0]
