@@ -188,6 +188,10 @@ def test_a_status_message_without_a_system_field_does_not_crash_the_consumer():
     asyncio.run(
         _consume(_OddClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, venue_status)
     )  # must not raise
+    # And it must not record a None key. `collect()` does `sorted(self._venue_status.items())`, so a
+    # None beside any string key raises TypeError out of the collector -- /metrics 500s and EVERY
+    # capture series goes dark, which is a far worse outcome than the malformed message itself.
+    assert venue_status == {}, f"a status message with no `system` was counted: {venue_status}"
 
 
 def test_classifying_status_does_not_disturb_the_existing_categories():
@@ -405,6 +409,30 @@ def test_the_staleness_loop_does_not_fire_inside_the_threshold():
     assert monitor.is_silent("BTC/EUR") is False
 
 
+def test_the_threshold_is_exclusive_at_the_boundary():
+    """`>` not `>=`, pinned. Spec 00073 D5 claims the threshold deliberately EQUALS the reconciler's
+    `--min-gap-seconds` so the two producers measure the same thing -- and T0103 separately records
+    that the reconciler's own two predicates disagree at exactly this boundary (`>=` vs `>`). An
+    unpinned boundary here would make that alignment claim untestable in the same way."""
+    import asyncio
+
+    from cli.capture.command import _staleness_loop
+
+    monitor = GapMonitor()
+    asyncio.run(
+        _staleness_loop(
+            ["BTC/EUR"],
+            monitor,
+            {"BTC/EUR": T0},
+            interval=0,
+            threshold=30.0,
+            now_fn=lambda: T0 + timedelta(seconds=30.0),
+            once=True,
+        )
+    )
+    assert monitor.is_silent("BTC/EUR") is False, "exactly-at-threshold opened a window; the comparison is >="
+
+
 def test_a_returning_stream_closes_the_silence_window():
     import asyncio
 
@@ -476,6 +504,70 @@ def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
             f"shutdown tuple #{i} omits the staleness task ({members.strip()}) -- awaited-but-not-"
             "cancelled hangs shutdown forever; cancelled-but-not-awaited leaks it"
         )
+
+
+def test_run_hands_the_SAME_maps_to_the_producer_and_the_consumer_of_each():
+    """Findings 1 and 6 of the pre-push review: `_staleness_loop(pairs, monitor, {})` survived all
+    350 capture tests, and so did handing `_consume` a throwaway `venue_status`.
+
+    Making `last_seen` a required ARGUMENT only protects the producer side -- the third positional
+    parameter accepts any dict, so `_run` can hand the watchdog a map nothing ever writes and every
+    test still passes while T0101 ships un-fixed. This is the T0008/T0100 defect one call site over,
+    which is exactly why it is asserted structurally rather than trusted.
+
+    Parsed from `_run`'s AST: the identifier passed to `_consume` must be the identifier passed to
+    `_staleness_loop` / `CaptureCollector`, not merely *a* dict.
+    """
+    import ast
+    import inspect
+
+    from cli.capture import command
+
+    tree = ast.parse(inspect.getsource(command._run).lstrip())
+    args_of = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            args_of[node.func.id] = [a.id for a in node.args if isinstance(a, ast.Name)]
+
+    assert "_consume" in args_of and "_staleness_loop" in args_of, f"call sites not found: {sorted(args_of)}"
+    consume_args, stale_args = args_of["_consume"], args_of["_staleness_loop"]
+
+    # The watchdog reads what the handler writes.
+    shared = set(consume_args) & set(stale_args)
+    assert shared, (
+        f"_staleness_loop{tuple(stale_args)} shares NO variable with _consume{tuple(consume_args)} -- "
+        "the watchdog is reading a map the daemon never writes"
+    )
+    assert "last_seen" in stale_args, f"_staleness_loop is not given last_seen: {stale_args}"
+    assert "last_seen" in consume_args, f"_consume is not given last_seen: {consume_args}"
+    assert "venue_status" in consume_args, f"_consume is not given venue_status: {consume_args}"
+    assert "venue_status" in args_of.get("CaptureCollector", []), (
+        "the collector exports a venue-status counter fed by a different dict than the consumer writes"
+    )
+
+
+def test_every_pair_is_seeded_so_a_never_delivered_stream_is_not_invisible():
+    """Finding 3. Without a seed, a pair that is subscribed and never sends anything has no
+    `last_seen`, so the watchdog skips it forever AND the gauge reports 0.0 -- the healthiest value
+    there is. The instrument built to see silence would be blind to total silence."""
+    import ast
+    import inspect
+
+    from cli.capture import command
+
+    src = inspect.getsource(command._run)
+    assert "dict.fromkeys(pairs" in src or "for pair in pairs" in src.split("last_seen")[1][:120], (
+        "last_seen is not seeded from `pairs` at process start -- a stream that never delivers is invisible"
+    )
+    tree = ast.parse(src.lstrip())
+    seeded = any(
+        isinstance(n, ast.AnnAssign)
+        and isinstance(n.target, ast.Name)
+        and n.target.id == "last_seen"
+        and not (isinstance(n.value, ast.Dict) and not n.value.keys)
+        for n in ast.walk(tree)
+    )
+    assert seeded, "last_seen is initialised to an empty dict; seed it from `pairs`"
 
 
 def test_one_pair_raising_does_not_starve_the_others():

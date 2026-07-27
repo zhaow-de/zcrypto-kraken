@@ -61,10 +61,11 @@ Measured worst intra-hour book spacing per pair, primary mirror, excluding the t
 | --- | --- |
 | Sun 2026-07-26 (weekend trough) | **11.439 s** — ETH/BTC |
 | Fri 2026-07-24 (weekday) | **12.196 s** — ETH/BTC |
-| ETH/BTC, 101 hours, p99 of hourly maxima | **12.299 s** |
+| ETH/BTC, 104 hourly segments, largest **natural** hourly max | **12.299 s** (2026-07-25 h07) |
+| ETH/BTC, same sample, p99 of hourly maxima excluding the two incidents | 12.186 s |
 | XRP/EUR, 464 hours, p99 of hourly maxima | 9.245 s |
 
-The thin BTC-quoted legs bind, as expected — they are the newest and least liquid. **30 s is ~2.4× the p99 of the binding pair**, and it deliberately matches the reconciler's `--min-gap-seconds`, so the two producers finally measure the same thing and their numbers become comparable instead of merely adjacent.
+The thin BTC-quoted legs bind, as expected — they are the newest and least liquid. **30 s is ~2.4× the binding pair's worst natural gap** (2.44× against 12.299, 2.46× against the 12.186 p99 — the choice does not turn on which), and it deliberately matches the reconciler's `--min-gap-seconds`, so the two producers finally measure the same thing and their numbers become comparable instead of merely adjacent.
 
 The sample is ~4 days for the `/BTC` legs. That is enough to set a conservative booking threshold; it is **not** enough to set a paging threshold, which is D3's other reason for deferring the gate.
 
@@ -87,7 +88,7 @@ So: when the close carried code `1012`, floor the first delay at 5 s. Ordinary d
 ## Out of scope — registered, not built here
 
 - **The reconciler's accounting** — `healed_seconds` books the full width of a gap on one secondary `update` row; `residual_seconds` is a hardcoded `0.0` on minted records; a pair with no update witness produces no record at all; `trade_deficit` books zero residual. Measured: of 2,311.54 s claimed healed for this event, **82.96 s** is real, and 2,187.03 s is double-booked into both the "covered" and the "nobody covered" counter. A different producer (`cli/archive`), therefore a different component and its own topic.
-- **The panel materializes frozen rows across a canonical hole** — measured on `BTC/EUR` hour 07: 212 rows inside the blackout carrying **2 distinct `mid` values**, against 8 distinct across an equal-length genuinely-quiet control. The hour has its full 3600 rows and reads as complete. Its own topic.
+- **The panel materializes frozen rows across a canonical hole** — measured on `BTC/EUR` hour 07: 212 rows inside the blackout carrying **2 distinct `mid` values**, against 8 across the hour's 11 other zero-update seconds. The hour has its full 3600 rows and reads as complete. Its own topic.
 - **Alerting on the reconcile counters** — the healable-gap-rate threshold is in pair-seconds while its summary claims minutes, and the critical permanent-loss rule self-resolves after 60 minutes. **Registered in [[T0103]]**, with that topic, because both are defects in the surfacing of the counters it fixes. (This bullet first said "registered" while no topic named them — prose is not registration, and a spec sentence claiming otherwise is worse than silence because it reads as done.)
 - **Acting on a venue announcement** — ripe when D1 has actually recorded one.
 - **Whether the outage was venue-side or a shared edge** — both hosts resolve `ws.kraken.com` to the *identical* Cloudflare anycast set (`104.17.185.205`–`104.17.189.205`), so host independence is established but **network-path independence is not**, and `HTTP 503` is what a CDN edge returns when it cannot reach origin. This does not change any decision here — the watchdog fires either way — but it does bear on whether a second mirror on a different provider would have covered the loss.

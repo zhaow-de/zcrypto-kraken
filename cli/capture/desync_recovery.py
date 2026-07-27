@@ -95,7 +95,10 @@ class DesyncRecovery:
         so it does not charge the reconnect's own downtime, and the real rate would be lower. The
         over-run ratio is the point. This docstring once priced a reconnect at ~39 s of silence per
         pair, from T0101's arithmetic on one incident; that figure was WRONG and is withdrawn --
-        measured against the hosts' own logs a reconnect costs 2.276-6.204 s close-to-first-message.
+        measured against the hosts' own logs a reconnect costs SECONDS -- single-digit under every method
+        tried (0.002-2.82 s close-frame-to-first-book-event; 2.276-6.204 s close-to-first-processed-
+        message, which counts the replay burst). The two disagree on the exact interval; neither is
+        anywhere near 39.
         The "strictly worse than the defect" argument for the terminal state survives at the smaller
         number, since 6 escalations/pair/hour is still six times the intended bound.
         """

@@ -331,6 +331,10 @@ def test_metrics_port_set_serves_process_and_capture_series(tmp_path, monkeypatc
         "zcrypto_capture_rows_held_total",
         "zcrypto_capture_rows_quarantined_total",
         "zcrypto_capture_gap_seconds_total",
+        # T0101: without these two here, dropping either from the producer or from the
+        # keep-regex leaves every test green while the series goes dark -- the T0051 trap.
+        "zcrypto_capture_seconds_since_last_book_message",
+        "zcrypto_capture_venue_status_total",
         "zcrypto_capture_book_desynced",
         "zcrypto_capture_disk_watermark_breached",
     ):

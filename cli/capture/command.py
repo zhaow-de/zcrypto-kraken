@@ -325,7 +325,8 @@ DESYNC_RECOVERY_INTERVAL_SECONDS = 5
 
 # A book stream silent this long is booked as gap (T0101, spec 00073 D5). Derived, not guessed:
 # the worst NATURAL intra-hour book spacing measured across the fleet is 12.196 s (ETH/BTC, the
-# thinnest leg), with a 101-hour p99 of 12.299 s -- so 30 s is ~2.4x the binding pair's p99. It
+# thinnest leg on 2026-07-24), and across ETH/BTC's 104 hourly segments the largest natural hourly
+# maximum is 12.299 s -- so 30 s is ~2.4x the binding pair's worst natural gap. It
 # deliberately equals the reconciler's --min-gap-seconds, so the two producers finally measure the
 # same thing instead of merely adjacent things.
 BOOK_STALENESS_SECONDS = 30.0
@@ -617,7 +618,14 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # comment for why its construction needs no equivalent guard.)
     # Per-pair last book message time: written by the handler, read by the staleness watchdog AND
     # by the collector's gauge. Declared here because the collector registers before the tasks start.
-    last_seen: dict[str, datetime] = {}
+    # SEEDED at process start, not left empty. An unseeded pair has no `last_seen`, so the watchdog
+    # skips it forever and the gauge reports 0.0 -- indistinguishable from "a message this instant",
+    # the healthiest possible value. A pair that is subscribed and never delivers anything would
+    # therefore be invisible to the very instrument built to see silence, and T0105's planned
+    # `max_over_time(...) > threshold` could never fire on it either. Seeding costs no phantom gap:
+    # measured subscribe-to-first-book-message is 2.311 s (SOL/BTC) and 2.769 s (ETH/BTC), an order
+    # of magnitude under the 30 s threshold.
+    last_seen: dict[str, datetime] = dict.fromkeys(pairs, datetime.now(UTC))
     venue_status: dict[str, int] = {}
 
     port = metrics_port_from_env()
