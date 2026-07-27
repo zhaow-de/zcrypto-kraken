@@ -59,7 +59,10 @@ timeout 600 ./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sh
 timeout 600 ./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<new>
 # NB an EMPTY -e ops_alloy_digest= still counts as defined and renders a broken image ref —
 # the same footgun as capture_alloy_digest below; pass a real digest or omit the flag entirely.
-ssh hp 'docker compose -f /etc/zcrypto-ops/alloy/compose.yaml up -d'   # role renders only — never starts
+ssh hp 'cd /etc/zcrypto-ops/alloy && sudo docker compose up -d'   # role renders only — never starts
+# sudo is REQUIRED on every host: alloy-secrets.env is 0600 zcrypto-alloy, so an unprivileged
+# `up -d` dies with "permission denied" reading it — before touching the container, so the old one
+# keeps running and no dark window opens.
 ```
 
 ### NAS
@@ -108,12 +111,15 @@ Shipping health — **only readable on the host** (`127.0.0.1:12345`; none of th
 curl -s http://127.0.0.1:12345/metrics | grep -E \
   '^prometheus_remote_storage_samples_(failed_total|pending|total)|^loki_write_(sent|dropped)_entries_total'
 # failed_total 0, pending 0, samples_total CLIMBING on a second read; sent_entries >= 1, dropped 0
+# Leave >60 s between reads and >60 s after the recreate: the scrape interval is 60 s, so a fresh
+# container legitimately reports samples_total=0 until its first scrape lands. `pending` briefly
+# non-zero is in-flight, not failure — only `failed_total` matters.
 ```
 
 In Cloud, per host (the positive traces the alert stack itself keys on):
 
 - `count(up{host="<host>"}) >= 1` and the host's `Fleet · Alloy dark` rule back to **Normal** — the canonical proof.
-- A **fresh** `{host="<host>", container="alloy", level=~".+"}` line in Loki — proves the whole journald → `loki.source.journal` → parse → write path end-to-end. (T0048's lesson: a metric existing on `:12345` and the keep-list admitting it were both true while the path between them did not exist — verify end-to-end, not at endpoints.)
+- A **fresh** Loki line for the host — proves the whole journald → `loki.source.journal` → parse → write path end-to-end. (T0048's lesson: a metric existing on `:12345` and the keep-list admitting it were both true while the path between them did not exist — verify end-to-end, not at endpoints.) **Do not filter on `container="alloy"` in a short window**: Alloy logs at startup and then goes quiet, so `{host=…, container="alloy"}` over 15 m reads empty on a perfectly healthy host that was bumped 30 min ago. Query `{host="<host>", level=~".+"}` (any container) for the liveness proof, and widen to 60 m if you specifically want Alloy's own startup lines.
 - The six `process_*` families present for the host (the keep-lists admit exactly six; `tests/test_infra_alloy_series.py` is the authoritative per-host series checklist — read `NAS_REQUIRED` / `OPS_REQUIRED` / `CAPTURE_REQUIRED` there rather than trusting any list copied here).
 
 Host-specific additions:
@@ -121,6 +127,8 @@ Host-specific additions:
 - **ops**: `zcrypto-hcio-watchdog` back to Normal (it races you); `up{job="liquidations_app"} == 1` (poller untouched, still scraped).
 - **NAS**: the next `archive-pull` cycle logs `pull complete … failed=0` (the apply bounced it); `zcrypto_gate_*` series still arriving (the NAS unix exporter's textfile collector scrapes `/textfile/gate.prom`).
 - **capture hosts**: `up{job="capture_app"} == 1`; capture container `RestartCount` unchanged and its newest parquet still advancing (`sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0) — proving the bump really did not touch the daemon. `up{job="engine_app"}` is a valid check **only on the primary and only after the engine flip**; on the secondary it reads 0 permanently by design.
+
+**Expect `Ops · ERROR logs` to fire on the ops bump, ~35 s after the recreate.** The OUTGOING container logs two `service=remotecfg … err="noop client"` errors as it shuts down (remote config is unused here, so there is nothing to unregister from). The rule is host-wide with `for: 0s` over a 15 m window, so it fires on the old container's dying breath and self-clears ~15 min later. Confirm it is that and not something real: the lines are timestamped ~200 ms BEFORE the new container's `StartedAt`, and `docker logs grafana-alloy` on the new one shows zero errors. Only ops has a host-wide ERROR rule; the other three recreates trip nothing.
 
 If a `Fleet · Alloy dark` or exporter-stale page fires because a window ran long: it self-resolves once `up` returns; note it in the Slack thread rather than silencing anything.
 
