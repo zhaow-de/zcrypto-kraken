@@ -194,7 +194,8 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     spread_cap = {
         "max_spread_bps": DEFAULT_MAX_SPREAD_BPS,
         "reference_notional_eur": SPREAD_REFERENCE_NOTIONAL_EUR,
-        "source": "cli/costs/spread.py (T0014, spec 00066) — mean effective spread at size",
+        # T0014 / spec 00066: the spread model this provenance field cites.
+        "source": "cli/costs/spread.py — mean effective spread at size",
         "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
     }
     manifest_path = ohlc_root / "manifest.json"

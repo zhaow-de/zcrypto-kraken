@@ -231,4 +231,4 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0100 — one-off timer metrics have no transport on the capture hosts](archive/T0100-capture-host-oneoff-metrics-have-no-transport.md) — **resolved 2026-07-26**: the textfile collector is back on the capture hosts via the existing `/host/root` mount, with absent/unreadable/stale rules; it had already cost \[[T0021]\] all observability, silently.
 
-- [T0096 — internal terms on user-facing surfaces](archive/T0096-internal-terms-on-user-facing-surfaces.md) — **resolved 2026-07-26**: the rule is `operator-facing-text.md` and a test enforces it, walking the rendered `--help` rather than the AST; the sweep found 23 leaks against an estimated 14, four of them added the same evening by other iterations.
+- [T0096 — internal terms on user-facing surfaces](archive/T0096-internal-terms-on-user-facing-surfaces.md) — **resolved 2026-07-26**: the rule is `operator-facing-text.md`, enforced by a test that checks every non-docstring literal and the rendered `--help`; 48 leak sites across eight surfaces, and review tripled the first pass by showing the detector's own blind spots.

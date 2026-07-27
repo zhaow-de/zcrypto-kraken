@@ -12,7 +12,7 @@ services:
     # NAS Atom has no AVX and the default build dies instantly with `Illegal instruction` (T0029).
     # The `:?` makes compose REFUSE to start without the pin: the committed `:latest` placeholder
     # this replaces was deployed verbatim once and killed the pull loop for ~90 s on 2026-07-16.
-    image: ${CAPTURE_IMAGE:?set by the ansible-rendered .env — the -compat digest pin, T0056}
+    image: ${CAPTURE_IMAGE:?set by the ansible-rendered .env — the -compat digest pin}
     container_name: zcrypto-archive-pull
     entrypoint: ["/opt/pull-entrypoint.sh"]
     user: "1000:1000"
@@ -129,7 +129,7 @@ services:
     # host_vars/nas/vars.yml). Same `:?` refuse-to-start trap as CAPTURE_IMAGE above: the previous
     # committed `:latest` only HAPPENED to resolve to the deployed digest — the same trap class
     # the pin kills (T0056).
-    image: ${ALLOY_IMAGE:?set by the ansible-rendered .env — the alloy digest pin, T0056}
+    image: ${ALLOY_IMAGE:?set by the ansible-rendered .env — the alloy digest pin}
     container_name: grafana-alloy
     restart: unless-stopped
     # Run as the dedicated non-root, non-secret-owning user `zcrypto-dummy` (uid 1031, gid 1000 -- the

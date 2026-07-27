@@ -146,7 +146,8 @@ def _report(
     seconds = [g for _p, _h, g in obs]
     stats = summarize(seconds)
 
-    lines.append("=== cross-host primary book-silence distribution (Task 12 / T0039) ===")
+    # T0039 Task 12: the derivation this report backs.
+    lines.append("=== cross-host primary book-silence distribution ===")
 
     if skipped:
         # Loud, never a footnote: a skipped hour is unmeasured, not clean. If one of these was a real
@@ -186,12 +187,13 @@ def _report(
     lines.append("  sit at or near the top of this list -- a real primary-down window the secondary covered, NOT")
     lines.append("  a coalescing artifact. Exclude any such reboot/outage window and re-read the max below it;")
     lines.append("  a coalescing artifact, by contrast, must be COVERED by the threshold. Record the chosen value")
-    lines.append("  + this derivation in T0039 before flipping the reconciler to --mint.")
+    lines.append("  + this derivation before flipping the reconciler to --mint.")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Pin --min-gap-seconds from the soaked cross-host mirrors (T0039).")
+    # T0039: the soak these mirrors come from.
+    ap = argparse.ArgumentParser(description="Pin --min-gap-seconds from the soaked cross-host mirrors.")
     ap.add_argument("primary_root", type=Path)
     ap.add_argument("secondary_root", type=Path)
     ap.add_argument("--since", type=lambda s: datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=UTC))

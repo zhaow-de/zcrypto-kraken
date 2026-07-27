@@ -31,16 +31,25 @@ These are the surfaces a future operator (or the owner, months later) reads cold
 
 **Resolved 2026-07-26.** The rule is `.claude/rules/operator-facing-text.md`, the sweep is done, and both are enforced by `tests/test_internal_terms_not_operator_visible.py`.
 
-**Enforced by a test rather than swept once.** A sweep has to be re-run by someone who remembers it exists; a test runs on every PR. That also answers this topic's optional pre-commit-guard question — a hook would add noise for a check the suite already performs.
+**Enforced by a test rather than swept once.** A sweep has to be re-run by whoever remembers it exists; a test runs on every PR. That also answers this topic's optional pre-commit-guard question — a hook would add noise for a check the suite already performs.
 
-**The method gap this topic named was the real work.** A `T\d{4}`-only pass over `raise` statements had produced a false all-clear here before. The walk now covers the whole vocabulary and every operator-facing call — raises, `typer.echo`/`print`, `help=` — and, for `--help`, scans the **rendered output of the real Typer app** rather than inferring from the AST. That last choice matters in both directions: it has no false positives from internal helper docstrings (which are source comments, out of scope) and no false negatives from a command registered in a way a static walk would not recognise. An AST-only draft of this test flagged 30 helper docstrings that were never in scope.
+**Two rounds, and the second was three times the first.** The initial pass found **23** leaks against an estimated 14. Adversarial review then showed the detector itself had blind spots, and widening it found **25 more** — 48 sites, 62 token instances, across eight surfaces. The method was the work; the sweep was mechanical.
 
-**The counts were stale, and four of the leaks were mine.** The topic estimated ~9 systemd Descriptions + 3 README spots + 2 CLI messages. Measured: **17 systemd, 2 README, 4 CLI** — and four of the systemd leaks were added *this same evening* by the T0021 and T0027 iterations, while this topic sat in the queue. That is the argument for the test in one sentence.
+**What the review's widening actually closed** — each of these was a false-all-clear waiting to happen:
 
-**Decisions the rule now records** rather than leaving implicit:
+- **Indirection.** A message built into a variable and echoed later (`text = render_report(...); typer.echo(text)`) is invisible to any call-site walk, and chasing it statically is dataflow analysis. The detector now checks **every non-docstring literal**, sidestepping it — measured cost: four findings, zero false positives, because docstrings are excluded and no `logger.*` literal carries vocabulary.
+- **Line wrapping.** Rich wraps the `--help` column at ~46 chars, so `spec 00052` split across a break was invisible to a regex expecting the space. Whitespace is collapsed before matching.
+- **A too-greedy path carve-out.** `spec 00054/T0058` is two tokens joined by a slash, not a path — the original pattern excused the second one. A path now needs two separators or a file extension. That exact string was in this repo, in a `Description=` that only failed on its *other* token.
+- **Surfaces the rule named but nothing checked**: Prometheus metric HELP text, Grafana alert summaries and panel descriptions, compose `${VAR:?message}` errors, and `infra/scripts/` — the instruments `capture-deploys.md` tells an operator to run.
 
-- **Log lines are out of scope.** Operator-visible, but they are the primary debugging surface and whoever reads one has the repo open — a `T<NNNN>` pointer there genuinely helps.
-- **A token inside a file path is not a leak.** `docs/open-topics/T0023-*` stays: you need the exact name to open the file, so the token is an operand rather than a reference. This is why the README's third flagged spot needed no edit.
-- **Semantic content stays, the token moves to the adjacent comment.** `systemctl status` still says what the unit does; the serial sits on the line above. Two Descriptions kept a parenthetical that was *operator*-useful ("the unit name is historical") while shedding the serial next to it.
+**Grafana alert summaries turned out to be the strongest case in the rule, not an exception.** The reasoning that excuses log lines — the reader has the repo open — is exactly inverted for an alert: it is read on a phone, in Slack, with nothing open. Ten summaries carried trailing tokens appended to otherwise actionable text; the tokens went, the instructions stayed. Pushed live and read back from the API: 48 rules, zero carrying vocabulary.
 
-Host-side, the reworded Descriptions land at each role's next natural converge — a `Description=` change is cosmetic, so no dedicated deploy.
+**Several leaks were added the same evening**, by the T0021 and T0027 iterations, while this topic sat in the queue. That is the argument for enforcement over a one-time sweep, in one line.
+
+**Boundaries decided rather than left implicit**, now recorded in the rule:
+
+- **Log lines are out of scope** — the primary debugging surface, and its reader has the repo open. Verified rather than assumed: no `logger.*` literal in the scanned packages carries vocabulary, so the carve-out costs nothing today.
+- **A token inside a file path is not a leak** — you need the exact name to open the file, which makes it an operand rather than a reference.
+- **Semantic content stays, the token moves to the adjacent comment.** Two Descriptions kept the operator-useful half of their parenthetical ("the unit name is historical") while shedding the serial beside it.
+
+Host-side, the reworded Descriptions land at each role's next natural converge — a `Description=` change is cosmetic, so no dedicated deploy. The Grafana half was pushed immediately, since alert text is a deployed artifact.
