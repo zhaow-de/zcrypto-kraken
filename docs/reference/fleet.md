@@ -37,6 +37,13 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 - Under `/mnt/zhao-crypto`: `hot/` (the canonical datasets: `ohlc-full`, `ohlc-15m`, `ohlc-reach`, `ohlc-holdout-*`, `derivatives-funding`, `derivatives-oi`, `snapshots`, `universe`), `engine-journal/` (pulled replica — the engine host is authoritative; check freshness before trusting the tail), `capture-segments/`, `capture-segments-red/`, `capture-reconciled/`, `kraken-ohlcvt-updates/`, `kraken-trades/`, `l2-panel/`, `liquidations/`.
 - **Not replicated anywhere: the engine price store** (`/var/lib/zcrypto-engine/store`, zcrypto only). Anything needing it reads the engine host.
 
+## Reboots
+
+- **The capture VPSes never reboot themselves** — patches still auto-install; *Capture · reboot pending (attended)* — a Grafana rule paging Slack, not the dead-man domain — fires until you reboot. The ops node still auto-reboots at 02:25. The on-host 21:25 / 22:25 times no longer fire but are kept on purpose — they are the measured slots that already satisfy the Schedule bullet, and the base role's window-collision assert still reads their host_vars, so never delete them as dead config.
+- **Reboot SECONDARY first, then primary** — the same canary order as an image rollout: if the kernel bricks the secondary, the primary is never touched.
+- Schedule: ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation, and on the primary right after a completed engine cycle. Measure from the archive, don't guess.
+- Expect a ~83 s capture gap; both containers self-restart.
+
 ## Telemetry labels
 
 - Loki labels: `container`, `host`, `job`, `level`, `service_name`; `host ∈ {nas, ops, zcrypto, zcrypto-red}`.
