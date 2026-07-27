@@ -284,7 +284,7 @@ async def _test_the_consumer_arms_the_ladder_it_was_given():
 
     ladder, client = DesyncRecovery(), _ScriptedClient()
     books = {"BTC/EUR": _StubBook([False])}
-    await _consume(client, books, {}, {}, _StubMonitor(), _StubWatermark(), ladder, {})
+    await _consume(client, books, {}, {}, _StubMonitor(), _StubWatermark(), ladder, {}, {})
 
     assert client.resubscribed == ["BTC/EUR"], "the consumer never reached the desync branch"
     assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=25)) is Action.RETRY, (

@@ -131,6 +131,65 @@ def test_the_status_channel_is_recognised_rather_than_discarded():
     assert classify({"channel": "status", "type": "update", "data": [{"system": "maintenance"}]}) == "status"
 
 
+def test_the_consumer_counts_and_records_the_venue_status_it_receives():
+    """D1 is "log AND count, keeping system and effectiveTime" -- a log line alone answers the
+    question only for whoever thinks to grep Loki. `effectiveTime` is the field that would carry a
+    planned-downtime lead time, which is the single number deciding whether a pre-drain is worth
+    building ([[T0105]]); capturing `system` while dropping it would answer the easy half.
+    """
+    import asyncio
+
+    from cli.capture.command import _consume
+    from cli.capture.desync_recovery import DesyncRecovery
+
+    class _StatusClient(_FakeClient):
+        async def stream(self):
+            yield {
+                "channel": "status",
+                "type": "update",
+                "data": [{"system": "maintenance", "version": "2.0.11", "effectiveTime": 1784880000}],
+            }
+
+    venue_status: dict[str, int] = {}
+    asyncio.run(_consume(_StatusClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, venue_status))
+    assert venue_status == {"maintenance": 1}, f"venue status not counted by system value: {venue_status}"
+
+
+def test_repeated_venue_status_accumulates_per_system_value():
+    import asyncio
+
+    from cli.capture.command import _consume
+    from cli.capture.desync_recovery import DesyncRecovery
+
+    class _StatusClient(_FakeClient):
+        async def stream(self):
+            for system in ("online", "online", "cancel_only"):
+                yield {"channel": "status", "type": "update", "data": [{"system": system}]}
+
+    venue_status: dict[str, int] = {}
+    asyncio.run(_consume(_StatusClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, venue_status))
+    assert venue_status == {"online": 2, "cancel_only": 1}
+
+
+def test_a_status_message_without_a_system_field_does_not_crash_the_consumer():
+    """The consumer is the single task the whole daemon runs on; an unexpected payload shape here
+    kills capture for all 12 pairs and both kinds."""
+    import asyncio
+
+    from cli.capture.command import _consume
+    from cli.capture.desync_recovery import DesyncRecovery
+
+    class _OddClient(_FakeClient):
+        async def stream(self):
+            yield {"channel": "status", "type": "update", "data": [{}]}
+            yield {"channel": "status", "type": "update"}  # no data key at all
+
+    venue_status: dict[str, int] = {}
+    asyncio.run(
+        _consume(_OddClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, venue_status)
+    )  # must not raise
+
+
 def test_classifying_status_does_not_disturb_the_existing_categories():
     assert classify({"channel": "book", "type": "snapshot"}) == "book_snapshot"
     assert classify({"channel": "book", "type": "update"}) == "book_update"
@@ -293,6 +352,7 @@ def test_the_consumer_hands_its_last_seen_map_down_to_the_handler():
             _StubWatermark(),
             DesyncRecovery(),
             last_seen,
+            {},
         )
     )
     assert "BTC/EUR" in last_seen, "_consume never handed its last-seen map down -- the watchdog is fed by nothing"
@@ -396,6 +456,7 @@ def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
     """
     import ast
     import inspect
+    import re
 
     from cli.capture import command
 
@@ -403,7 +464,18 @@ def test_the_staleness_loop_is_actually_scheduled_by_the_daemon():
     tree = ast.parse(run_src.lstrip())
     called = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     assert "_staleness_loop" in called, "_staleness_loop is defined but _run never schedules it"
-    assert run_src.count("staleness") >= 3, "the staleness task is created but not cancelled-and-awaited on shutdown"
+    # EVERY shutdown tuple must carry it. A task awaited but never cancelled hangs `_run` forever on
+    # its own `while True`: SIGTERM never completes, the container is SIGKILLed, and `writer.close()`
+    # never runs -- losing buffered rows on the unbackfillable path. Not hypothetical: the first
+    # version of this assertion counted occurrences of the word "staleness", which the create_task
+    # line alone satisfied, and the defect shipped and hung the suite for 89 minutes.
+    tuples = re.findall(r"for task in \(([^)]*)\):", run_src)
+    assert len(tuples) >= 2, f"expected a cancel loop and an await loop in _run, found {len(tuples)}"
+    for i, members in enumerate(tuples):
+        assert "staleness" in members, (
+            f"shutdown tuple #{i} omits the staleness task ({members.strip()}) -- awaited-but-not-"
+            "cancelled hangs shutdown forever; cancelled-but-not-awaited leaks it"
+        )
 
 
 def test_one_pair_raising_does_not_starve_the_others():

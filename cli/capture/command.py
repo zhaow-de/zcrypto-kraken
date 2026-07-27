@@ -257,6 +257,7 @@ async def _consume(
     watermark: DiskWatermark,
     recovery: DesyncRecovery,
     last_seen: dict[str, datetime],
+    venue_status: dict[str, int],
 ) -> None:
     async for msg in client.stream():
         category = classify(msg)
@@ -271,8 +272,19 @@ async def _consume(
             # engine-state change, and its planned-downtime form carries an `effectiveTime`. Until
             # one is actually observed in production there is nothing to build a reaction against --
             # and this log line is what makes "was the outage announced?" answerable at all.
-            for item in msg.get("data", []):
-                logger.info("venue status system=%s version=%s", item.get("system"), item.get("version"))
+            for item in msg.get("data", []) or []:
+                system = item.get("system")
+                # `effectiveTime` is the lead time a planned-downtime notice carries -- the one
+                # number deciding whether a pre-drain is worth building (T0105). Capturing `system`
+                # and dropping it would answer only the easy half.
+                logger.info(
+                    "venue status system=%s version=%s effective_time=%s",
+                    system,
+                    item.get("version"),
+                    item.get("effectiveTime"),
+                )
+                if system is not None:
+                    venue_status[system] = venue_status.get(system, 0) + 1
         elif category == "unsubscribe_error":
             # the resubscribe recovery's unsubscribe leg was rejected — surface it, since a silently
             # rejected request is exactly what made the desync incident undiagnosable
@@ -479,9 +491,11 @@ class CaptureCollector:
         monitor: GapMonitor,
         watermark: DiskWatermark,
         last_seen: dict[str, datetime] | None = None,
+        venue_status: dict[str, int] | None = None,
     ) -> None:
         self._pairs = pairs
         self._last_seen = last_seen if last_seen is not None else {}
+        self._venue_status = venue_status if venue_status is not None else {}
         self._client = client
         self._books = books
         self._book_writers = book_writers
@@ -545,6 +559,17 @@ class CaptureCollector:
             since.add_metric([pair], (now - seen).total_seconds() if seen is not None else 0.0)
         yield since
 
+        # Kraken's own engine state, counted by value (T0101/T0105). Series exist only for values
+        # actually seen, so the presence of anything other than `online` is itself the signal.
+        status = CounterMetricFamily(
+            "zcrypto_capture_venue_status_total",
+            "Venue status messages received, by reported system state.",
+            labels=["system"],
+        )
+        for system, count in sorted(self._venue_status.items()):
+            status.add_metric([system], count)
+        yield status
+
         desynced = GaugeMetricFamily(
             "zcrypto_capture_book_desynced", "1 if the pair's book is currently checksum-desynced, else 0.", labels=["pair"]
         )
@@ -593,12 +618,15 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # Per-pair last book message time: written by the handler, read by the staleness watchdog AND
     # by the collector's gauge. Declared here because the collector registers before the tasks start.
     last_seen: dict[str, datetime] = {}
+    venue_status: dict[str, int] = {}
 
     port = metrics_port_from_env()
     if port is not None:
         registry = build_registry()
         try:
-            registry.register(CaptureCollector(pairs, client, books, book_writers, trade_writers, monitor, watermark, last_seen))
+            registry.register(
+                CaptureCollector(pairs, client, books, book_writers, trade_writers, monitor, watermark, last_seen, venue_status)
+            )
         except Exception:
             logger.exception("capture metrics collector registration failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
@@ -614,7 +642,9 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     # module docstring; the drill measures the first real heal latency this project has had since
     # the 2026-07-13 root-cause fix took desyncs to zero.
     recovery = DesyncRecovery()
-    consumer = asyncio.create_task(_consume(client, books, book_writers, trade_writers, monitor, watermark, recovery, last_seen))
+    consumer = asyncio.create_task(
+        _consume(client, books, book_writers, trade_writers, monitor, watermark, recovery, last_seen, venue_status)
+    )
     health = asyncio.create_task(
         _healthcheck_loop(healthcheck_url, client, monitor, pairs, HEALTHCHECK_INTERVAL_SECONDS, watermark)
     )
