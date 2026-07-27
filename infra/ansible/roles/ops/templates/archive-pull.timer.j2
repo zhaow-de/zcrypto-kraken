@@ -1,7 +1,8 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-archive-pull.timer — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/archive-pull.timer.j2 instead.
+# Traceability: spec 00054 / T0058
 [Unit]
-Description=Half-hourly overlay-writer cycle (spec 00054/T0058; unit name is historical)
+Description=Half-hourly overlay-writer cycle (the unit name is historical)
 
 [Timer]
 # :12 AND :42 -- T0058 doubled the cadence (consensus #4): reads go through the NFS mount now and

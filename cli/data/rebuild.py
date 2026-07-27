@@ -132,8 +132,9 @@ def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> 
             f"data rebuild: universe needs an ohlc-full set reaching the present -- {symbol}'s newest "
             f"daily bar is {last_bar.date().isoformat()}, {staleness_days} days before the rebuild "
             f"stamp {as_of.date().isoformat()} (budget {UNIVERSE_MAX_OHLC_STALENESS_DAYS} days). A "
+            # T0093: the staleness budget and this message's wording.
             f"trailing {_UNIVERSE_VOLUME_WINDOW_DAYS}-day median over that window measures past "
-            f"liquidity, not current (T0093)."
+            f"liquidity, not current."
         )
 
 
@@ -193,7 +194,8 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     spread_cap = {
         "max_spread_bps": DEFAULT_MAX_SPREAD_BPS,
         "reference_notional_eur": SPREAD_REFERENCE_NOTIONAL_EUR,
-        "source": "cli/costs/spread.py (T0014, spec 00066) — mean effective spread at size",
+        # T0014 / spec 00066: the spread model this provenance field cites.
+        "source": "cli/costs/spread.py — mean effective spread at size",
         "unevaluated_count": sum(1 for e in selection.entries if e["spread_bps"] is None),
     }
     manifest_path = ohlc_root / "manifest.json"
@@ -205,8 +207,9 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     if not manifest_path.exists():
         raise DataSyncError(
             f"data rebuild: universe needs {manifest_path} to record the OHLC set's identity -- "
+            # T0094: why an absent manifest is a hard refusal rather than a warning.
             "absent, so the set is broken or half-written; refusing to write an artifact whose "
-            "provenance hash would be empty (T0094)"
+            "provenance hash would be empty"
         )
     # A manifest that exists but cannot be read is the same defect wearing a different costume, so
     # it gets the same typed failure rather than an untyped KeyError/JSONDecodeError from deep in
@@ -216,7 +219,8 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     except (json.JSONDecodeError, KeyError) as exc:
         raise DataSyncError(
             f"data rebuild: {manifest_path} is unreadable as a basket manifest ({exc!r}) -- "
-            "refusing to write an artifact that cannot cite the set it was built from (T0094)"
+            # T0094: same defect as the absent-manifest branch above, different costume.
+            "refusing to write an artifact that cannot cite the set it was built from"
         ) from exc
     # Name the set this build actually READ, and how fresh it was (T0093). A hash alone is not a
     # citation: the 2026-07-07 artifact cited `data/ohlc`'s hash, that directory was later retired,

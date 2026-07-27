@@ -717,7 +717,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "No clean `zcrypto archive backfill-trades` run in over ~2 days -- the daily step has been failing every cycle or has stopped running (spec 00053)."
+      summary: "No clean `zcrypto archive backfill-trades` run in over ~2 days -- the daily step has been failing every cycle or has stopped running."
     labels:
       severity: critical
     notification_settings:
@@ -759,7 +759,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The daily trade-backfill run recorded a non-zero exit code (1 = errors recorded, 2 = primary root missing). It no longer retries hourly (T0053) -- this alert is the only signal."
+      summary: "The daily trade-backfill run recorded a non-zero exit code (1 = errors recorded, 2 = primary root missing). It no longer retries hourly -- this alert is the only signal."
     labels:
       severity: critical
     notification_settings:
@@ -1210,7 +1210,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy emits its own logfmt output continuously while alive, so this means Alloy itself is dead, its parse stage has regressed to level=- (T0060), or it cannot reach Loki. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
+      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy emits its own logfmt output continuously while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
     labels:
       severity: critical
     notification_settings:
@@ -1331,7 +1331,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one LEVEL-PARSED line from any of the four zcrypto-* ops units in 26h -- the four run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (T0060: the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy."
+      summary: "Not one LEVEL-PARSED line from any of the four zcrypto-* ops units in 26h -- the four run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy."
     labels:
       severity: critical
     notification_settings:
@@ -1509,7 +1509,7 @@ rules:
     # no gap between 15-minute publishes to ride out.
     for: 15m
     annotations:
-      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended (T0027). Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in .claude/rules/capture-deploys.md."
+      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in .claude/rules/capture-deploys.md."
     labels:
       severity: warning
     notification_settings:
@@ -2219,7 +2219,7 @@ rules:
     # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
     for: 10m
     annotations:
-      summary: "The NAS's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the gate metrics the Stage-6a soak verdict is read from and the NAS archive-pull's log stream (the reconciler is unaffected: its series publish from ops since 2026-07-16). Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+      summary: "The NAS's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the gate metrics the Stage-6a soak verdict is read from and the NAS archive-pull's log stream (the reconciler is unaffected: its series publish from ops since 2026-07-16). Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
     labels:
       severity: critical
     notification_settings:
@@ -2267,7 +2267,7 @@ rules:
     # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
     for: 10m
     annotations:
-      summary: "The ops node's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the panel/verify timer series, the liquidations poller signals, and the reconcile/trade-backfill exporter families — expect their exporter-stale rules to double-page alongside this one. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+      summary: "The ops node's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the panel/verify timer series, the liquidations poller signals, and the reconcile/trade-backfill exporter families — expect their exporter-stale rules to double-page alongside this one. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
     labels:
       severity: critical
     notification_settings:
@@ -2315,7 +2315,7 @@ rules:
     # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
     for: 10m
     annotations:
-      summary: "The capture PRIMARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the unbackfillable L2 capture signals on the host that also runs the engine and holds the live trade key. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+      summary: "The capture PRIMARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the unbackfillable L2 capture signals on the host that also runs the engine and holds the live trade key. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
     labels:
       severity: critical
     notification_settings:
@@ -2363,7 +2363,7 @@ rules:
     # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
     for: 10m
     annotations:
-      summary: "The capture SECONDARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the redundant unbackfillable L2 capture signals. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix (T0048)."
+      summary: "The capture SECONDARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the redundant unbackfillable L2 capture signals. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
     labels:
       severity: critical
     notification_settings:
@@ -2412,7 +2412,7 @@ rules:
     # so a `down` state here is post-grace and real.
     for: 5m
     annotations:
-      summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule (T0083)."
+      summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule."
     labels:
       severity: critical
     notification_settings:

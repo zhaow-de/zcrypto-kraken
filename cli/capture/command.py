@@ -320,7 +320,8 @@ class CaptureCollector:
         )
         yield CounterMetricFamily(
             "zcrypto_capture_rows_held_total",
-            "Rows parked pending oracle hour confirmation (T0037), summed across every pair and kind.",
+            # T0037: why held rows are parked rather than written in place.
+            "Rows parked pending oracle hour confirmation, summed across every pair and kind.",
             value=sum(w.rows_held for w in writers),
         )
         yield CounterMetricFamily(
@@ -348,7 +349,8 @@ class CaptureCollector:
 
         yield GaugeMetricFamily(
             "zcrypto_capture_disk_watermark_breached",
-            "1 if the disk watermark is breached (T0032 -- every write stops while the WS stays connected), else 0.",
+            # T0032: the breach stops every write while the WS stays connected -- a silent-death shape.
+            "1 if the disk watermark is breached (every write stops while the WS stays connected), else 0.",
             value=1.0 if self._watermark.breached else 0.0,
         )
 

@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: NOW — an autonomous small iteration (a standing rule + a repo sweep, all reversible edits); the host-side effect of the systemd rewordings lands opportunistically at each role's next converge (a `Description=` change is cosmetic, so no dedicated deploy)
+status: resolved
 ---
 
 # Internal development terms leak onto user-facing surfaces
@@ -28,8 +27,30 @@ These are the surfaces a future operator (or the owner, months later) reads cold
 - Compose is clean and CLI `--help` is clean, but the third CLI surface — runtime error messages — was never measured and holds two known leaks (above), so the rule does more than *pin* the status quo: the sweep is ~9 `Description=` rewordings + 3 README spots + 2 raised-message rewordings, with the done-check a `cli/` AST walk over raised text across the whole vocabulary.
 - Log messages were not named in the ruling and are left as a boundary question for the rule's design (operator-visible, but also the primary debugging surface where a `T<NNNN>` pointer can genuinely help — decide, rather than leave implicit).
 
-## Suggested next steps
+## Resolution
 
-- **(one small iteration, autonomous)** Write the standing rule in `.claude/rules/` (a `claude`-type commit): the in-scope surface list above, the vocabulary list (`Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec <NNNNN>`/D-numbers), the move-to-comment convention for displaced traceability, and the settled log-line decision; cross-reference the existing `WP<N>` ban rather than restating it.
-- **(same iteration)** The sweep: reword the ~9 systemd `Description=` lines (semantic content stays, tokens move to the adjacent comment), the 3 README spots, and the **two known CLI raised-message leaks** — `cli/data/rebuild.py:103` (`T0093`) and `cli/panel/command.py:76` (`spec 00052 D5`). Done-check: re-run the AST walk over every `raise` in `cli/` **across the full vocabulary, not just `T\d{4}`** (a `T\d{4}`-only pass already produced one false all-clear), plus a re-grep of the other surfaces. **Extend the walk past `raise` before calling it done** — `typer.echo`/`print`/bare `logger.*` reach the operator without raising and the raise-only walk cannot see them; measured 2026-07-26 they carry no vocabulary tokens, so this is a method gap to close, not a live leak. Host-side, the reworded Descriptions take effect at each role's next natural converge — no dedicated deploy.
-- **(decide in the rule design, optional)** A pre-commit guard greping the named surfaces for the vocabulary, so the rule enforces itself; weigh against hook noise before adopting.
+**Resolved 2026-07-26.** The rule is `.claude/rules/operator-facing-text.md`, the sweep is done, and both are enforced by `tests/test_internal_terms_not_operator_visible.py`.
+
+**Enforced by a test rather than swept once.** A sweep has to be re-run by whoever remembers it exists; a test runs on every PR. That also answers this topic's optional pre-commit-guard question — a hook would add noise for a check the suite already performs.
+
+**Two rounds, and the second was three times the first.** The initial pass found **23** leaks against an estimated 14. Adversarial review then showed the detector itself had blind spots, and widening it found **25 more** — 48 sites, 62 token instances, across eight surfaces. The method was the work; the sweep was mechanical.
+
+**What the review's widening actually closed** — each of these was a false-all-clear waiting to happen:
+
+- **Indirection.** A message built into a variable and echoed later (`text = render_report(...); typer.echo(text)`) is invisible to any call-site walk, and chasing it statically is dataflow analysis. The detector now checks **every non-docstring literal**, sidestepping it — measured cost: four findings, zero false positives, because docstrings are excluded and no `logger.*` literal carries vocabulary.
+- **Line wrapping.** Rich wraps the `--help` column at ~46 chars, so `spec 00052` split across a break was invisible to a regex expecting the space. Whitespace is collapsed before matching.
+- **A too-greedy path carve-out.** `spec 00054/T0058` is two tokens joined by a slash, not a path — the original pattern excused the second one. A path now needs two separators or a file extension. That exact string was in this repo, in a `Description=` that only failed on its *other* token.
+- **Surfaces the rule named but nothing checked**: Prometheus metric HELP text, Grafana alert summaries and panel descriptions, compose `${VAR:?message}` errors, and `infra/scripts/` — the instruments `capture-deploys.md` tells an operator to run.
+- **Shell, found by a third review round.** Widening the scanned *directory* without widening the *file types* left `*.sh`/`*.sh.j2` unread — and that is where the trophy example survived: three `# HELP` lines emitted by `printf` from the ops textfile exporter, still carrying the exact `spec 00054/T0058` string this topic used to demonstrate the path-carve-out fix. Plus an operator-facing stderr message in `grafana-push.sh`.
+
+**Grafana alert summaries turned out to be the strongest case in the rule, not an exception.** The reasoning that excuses log lines — the reader has the repo open — is exactly inverted for an alert: it is read on a phone, in Slack, with nothing open. Ten summaries carried trailing tokens appended to otherwise actionable text; the tokens went, the instructions stayed. Pushed live and read back from the API: 48 rules, zero carrying vocabulary.
+
+**Several leaks were added the same evening**, by the T0021 and T0027 iterations, while this topic sat in the queue. That is the argument for enforcement over a one-time sweep, in one line.
+
+**Boundaries decided rather than left implicit**, now recorded in the rule:
+
+- **Log lines are out of scope** — the primary debugging surface, and its reader has the repo open. Verified rather than assumed: no `logger.*` literal in the scanned packages carries vocabulary, so the carve-out costs nothing today.
+- **A token inside a file path is not a leak** — you need the exact name to open the file, which makes it an operand rather than a reference.
+- **Semantic content stays, the token moves to the adjacent comment.** Two Descriptions kept the operator-useful half of their parenthetical ("the unit name is historical") while shedding the serial beside it.
+
+Host-side, the reworded Descriptions land at each role's next natural converge — a `Description=` change is cosmetic, so no dedicated deploy. The Grafana half was pushed immediately, since alert text is a deployed artifact.

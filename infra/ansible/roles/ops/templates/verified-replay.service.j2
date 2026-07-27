@@ -1,8 +1,9 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-verified-replay.service — do
 # not hand-edit on the host, edit infra/ansible/roles/ops/templates/verified-replay.service.j2
 # instead.
+# Traceability: spec 00051 OPS-3
 [Unit]
-Description=Verified-path replay of the pulled engine journal (spec 00051 OPS-3)
+Description=Verified-path replay of the pulled engine journal
 Requires=docker.service
 After=docker.service
 # T0058: the runner reads the journal through the NAS NFS automount, so it is ordered below it.

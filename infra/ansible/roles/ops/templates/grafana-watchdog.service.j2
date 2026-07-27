@@ -1,8 +1,9 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-grafana-watchdog.service — do
 # not hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-watchdog.service.j2
 # instead.
+# Traceability: T0083
 [Unit]
-Description=Grafana Cloud availability probe gating the zcrypto-grafana-watchdog dead-man (T0083)
+Description=Grafana Cloud availability probe gating the zcrypto-grafana-watchdog dead-man
 Wants=network-online.target
 After=network-online.target
 

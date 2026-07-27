@@ -137,7 +137,8 @@ def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.date
     print(f"  worst single stream : {worst:.4f}%")
     if show_exit_bar:
         print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
-    print(f"  truncated hours (T0036 signature): {tt}  -- MUST be 0 after the fix")
+    # T0036: the truncated-hour signature this counts.
+    print(f"  truncated hours: {tt}  -- MUST be 0 after the fix")
     return 0
 
 
@@ -151,7 +152,8 @@ def add_args(ap: argparse.ArgumentParser) -> None:
         type=Path,
         default=None,
         help="reconciled-root: also print a SEPARATE canonical (reconciled-first) report -- "
-        "informational only, never the T0003 exit-bar instrument (exit-bar isolation, spec 00050)",
+        # T0003 / spec 00050: the exit-bar isolation this flag preserves.
+        "informational only, never the exit-bar instrument",
     )
 
 
@@ -173,8 +175,7 @@ def main() -> int:
         # T0003 instrument; the canonical view is informational.
         print()
         print(
-            f"=== CANONICAL VIEW (reconciled-first, healed from {a.overlay}) "
-            f"-- informational only, NOT the T0003 exit-bar instrument ==="
+            f"=== CANONICAL VIEW (reconciled-first, healed from {a.overlay}) -- informational only, NOT the exit-bar instrument ==="
         )
         report(_canonical_streams(a.root, a.overlay, a.kind), since=since, quiet=a.quiet, show_exit_bar=False)
     return rc

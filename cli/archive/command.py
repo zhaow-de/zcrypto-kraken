@@ -274,8 +274,9 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "counter",
         "Primary book silence the secondary WITNESSED and could cover, whether or not it was minted. "
         "Unlike healed_gap_seconds_total this is non-zero in detect-only, so the gap RATE -- the only "
+        # T0039: the soak this counter was added for.
         "signal that reveals a degrading primary whose gaps are always healed -- is visible during the "
-        "T0039 soak.",
+        "soak.",
         [("", totals["healable_seconds"])],
     )
     _emit(

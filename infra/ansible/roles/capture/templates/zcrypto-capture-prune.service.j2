@@ -1,8 +1,9 @@
 # Rendered by the `capture` Ansible role at /etc/systemd/system/zcrypto-capture-prune.service —
 # do not hand-edit on the host, edit
 # infra/ansible/roles/capture/templates/zcrypto-capture-prune.service.j2 and re-converge instead.
+# Traceability: spec 00050 D8
 [Unit]
-Description=Prune capture segments older than {{ capture_retention_days }} days (spec 00050 D8)
+Description=Prune capture segments older than {{ capture_retention_days }} days
 
 [Service]
 Type=oneshot

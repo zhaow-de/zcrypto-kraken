@@ -1,8 +1,9 @@
 # Rendered by the `engine` Ansible role at /etc/systemd/system/zcrypto-engine-journal-prune.service
 # — do not hand-edit on the host, edit
 # infra/ansible/roles/engine/templates/zcrypto-engine-journal-prune.service.j2 and re-converge.
+# Traceability: spec 00070
 [Unit]
-Description=Prune engine-journal days older than {{ engine_journal_retention_days }} days (spec 00070)
+Description=Prune engine-journal days older than {{ engine_journal_retention_days }} days
 
 [Service]
 Type=oneshot

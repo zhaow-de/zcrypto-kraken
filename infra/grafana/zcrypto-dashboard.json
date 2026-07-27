@@ -2,7 +2,7 @@
   "id": null,
   "uid": "zcrypto-main",
   "title": "zcrypto — Data Pipeline Health",
-  "description": "The one canonical zcrypto dashboard (spec 00049, Role B / Task 4). Rows are namespaced (Gate · ..., NAS · ...) so a later VPS telemetry increment (T0020) can add its own namespaced rows to this same file without collision.",
+  "description": "The one canonical zcrypto dashboard. Rows are namespaced (Gate · ..., NAS · ...) so a later VPS telemetry increment can add its own namespaced rows to this same file without collision.",
   "tags": [
     "zcrypto",
     "gate",
@@ -792,7 +792,7 @@
         "type": "prometheus",
         "uid": "grafanacloud-prom"
       },
-      "description": "Hours actually written to the healed overlay. Flat at zero during the T0039 soak BY DESIGN -- reconcile is detect-only until the soak pins --min-gap-seconds. If these rise before that flip, minting got enabled.",
+      "description": "Hours actually written to the healed overlay. Flat at zero during the soak BY DESIGN -- reconcile is detect-only until the soak pins --min-gap-seconds. If these rise before that flip, minting got enabled.",
       "gridPos": {
         "h": 8,
         "w": 12,

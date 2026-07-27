@@ -39,7 +39,7 @@
         },
         "options": [],
         "hide": 0,
-        "description": "Machine the log came from. Only the NAS ships logs today; capture hosts join when T0020's obs role lands. (All = .+; Loki requires at least one matcher that cannot match empty.)",
+        "description": "Machine the log came from. Only the NAS ships logs today; capture hosts join when their obs role lands. (All = .+; Loki requires at least one matcher that cannot match empty.)",
         "sort": 1
       },
       {

@@ -1,7 +1,8 @@
 # Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-verified-replay.timer — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/verified-replay.timer.j2 instead.
+# Traceability: spec 00051 OPS-3
 [Unit]
-Description=Daily verified-path journal replay (spec 00051 OPS-3)
+Description=Daily verified-path journal replay
 
 [Timer]
 # Off the hour boundary, clear of the ops reboot window (02:25 UTC), the capture hosts' maintenance

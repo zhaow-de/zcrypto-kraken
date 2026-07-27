@@ -1,7 +1,8 @@
 # Installed by the `capture` Ansible role at /etc/systemd/system/zcrypto-capture-prune.timer —
 # do not hand-edit on the host, edit this file and re-converge instead.
+# Traceability: spec 00050 D8
 [Unit]
-Description=Daily prune of aged capture segments (spec 00050 D8)
+Description=Daily prune of aged capture segments
 
 [Timer]
 # Off the hour boundary (segment rotation), clear of both maintenance windows (21:25 / 22:25 UTC)
