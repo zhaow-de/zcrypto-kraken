@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: a new `dependabot/` PR appears against develop (`gh pr list --search "author:app/dependabot" --state all`, created after 2026-07-24) — inspect it BEFORE running the `/dependabot` skill, which squash-merges and would discard the evidence: record which of uv / github-actions / pre-commit had an update available at that PR's `createdAt`, and whether they all landed in the one PR
+status: resolved
 ---
 
 # Dependabot's multi-ecosystem group is not consolidating pre-commit with uv
@@ -28,7 +27,11 @@ That dual-pin class of harm is now **structurally removed** (see Done so far) �
 - **The dual-pin class is eliminated, not just reconciled (2026-07-24, branch `chore/ruff-exclude-md`).** The obvious response — re-pin the mirror to v0.16.0 so the two ruffs match again — is symptomatic: it leaves the second pin in place, free to drift at the next release. The owner pointed at the pattern the repo already uses for ansible-lint, and the fix adopted instead is structural: the `ruff-pre-commit` mirror repo is **removed** and replaced by two `repo: local` hooks (`ruff-check`, `ruff-format`) whose entries are `uv run ruff …`, so the gate and `uv run ruff` are the same installation by construction and *cannot* diverge. Two upstream behaviors were deliberately carried over — `--force-exclude` (verified load-bearing: without it, ruff processed an explicitly-passed excluded file, `1 file would be reformatted`; with it, `No Python files found`, and pre-commit always passes explicit paths) and the `types_or: [python, pyi, jupyter]` scoping. Measured: full gate green rewriting nothing, vendored `infra/nas/rrsync` untouched, ~20 ms added per invocation. As a side effect the `pre-commit` ecosystem no longer tracks ruff at all, so this particular split cannot recur regardless of the group's behavior.
 - **The bare-command path was closed separately** by excluding `*.md` in `ruff.toml` — still needed, because the `types_or` scoping only protects the gate, not a developer (or agent) running `uv run ruff format` directly.
 
-## Suggested next steps
+## Resolution
+
+**Consciously dropped, 2026-07-27 (owner ruling), by removing the group itself.** `.github/dependabot.yml` no longer declares `multi-ecosystem-groups` — each ecosystem is back to its own per-package PRs on the pre-group schedules (uv daily, github-actions weekly, pre-commit weekly). The motivating question — whether GitHub honors a multi-ecosystem group — is moot for this repo, and the consolidated group-style PR titles were about to break the `/dependabot` skill's per-package triage besides. The harmful half (a stale ruff mirror pin drifting from the uv-side ruff) was already fixed before this drop: ruff runs from the lock (`repo: local`), so no pre-commit entry has a uv-side twin.
+
+## Suggested next steps (overtaken by the resolution)
 
 - **(autonomous, at the next Dependabot PR — read it before invoking the `/dependabot` skill, which squash-merges) Observe one cycle and settle the cause.** Record: the PR number, which files it touches, and — for each ecosystem that did *not* appear — whether an update was actually available at that moment (for `pre-commit`, compare each hook's pinned `rev:` in `.pre-commit-config.yaml` against `git ls-remote --tags <hook repo>`). A split with a demonstrably-available update confirms the group is not honored; a consolidated PR closes this topic as a transient. Note the remaining `pre-commit` entries — `pre-commit-hooks`, `yamllint`, `mdformat` — have no uv-side twin, so a split is now cosmetic rather than harmful.
 - **(autonomous) Inspect Dependabot's own run logs** at `https://github.com/zhaow-de/zcrypto-kraken/network/updates` — each ecosystem's last run is listed with its outcome. Read the `pre-commit` entry for the 2026-07-24 06:24 UTC run and record whether it ran, was skipped, or errored; that distinguishes "ran and chose not to group" from "did not run".
