@@ -1,31 +1,26 @@
 version: 2
 
-# One consolidated PR across all three ecosystems (multi-ecosystem groups,
-# https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#multi-ecosystem-groups):
-# the group's schedule replaces the per-entry ones (daily preserves the old uv cadence — the
-# consolidated PR simply carries whatever the other ecosystems have pending that day).
-# target-branch stays develop on every entry (branch model: develop is the integration branch;
-# a Dependabot PR against main means this drifted — see .claude/skills/dependabot).
-multi-ecosystem-groups:
-  dependencies:
-    schedule:
-      interval: "daily"
-
+# Per-ecosystem PRs, deliberately UNGROUPED (owner ruling): the multi-ecosystem group
+# produced consolidated "bump the dependencies group" titles that broke the dependabot
+# skill's per-package triage, and whether the group was honored at all was never
+# established (T0099, resolved by this removal).
+# target-branch stays develop on every entry (branch model: develop is the integration
+# branch; a Dependabot PR against main means this drifted — see .claude/skills/dependabot).
 updates:
   - package-ecosystem: "uv"
     directory: "/"
     target-branch: "develop"
-    multi-ecosystem-group: "dependencies"
-    patterns: ["*"]
+    schedule:
+      interval: "daily"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "develop"
-    multi-ecosystem-group: "dependencies"
-    patterns: ["*"]
+    schedule:
+      interval: "weekly"
 
   - package-ecosystem: "pre-commit"
     directory: "/"
     target-branch: "develop"
-    multi-ecosystem-group: "dependencies"
-    patterns: ["*"]
+    schedule:
+      interval: "weekly"
