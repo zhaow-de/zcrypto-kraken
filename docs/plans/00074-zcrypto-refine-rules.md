@@ -14,7 +14,7 @@
 - Markdown per `docs-style.md`: one line per bullet, no hard wrap, operational voice, sole audience = Claude.
 - Commit types: `docs(rules)` for spec/plan, `claude(skills)`/`claude(rules)` for `.claude/` changes.
 - Memory files live OUTSIDE the repo — never committed; the run touches them via Write/Edit only, and graduation STAGES (moves), never deletes — deletion is step 5's last action.
-- The run must NOT shrink `capture-deploys.md` — that has a named trigger (T0084's first real rollout), and the file is in the protected set besides.
+- The run must NOT shrink `capture-deploys.md` unprompted — its shrink had a named trigger (T0084's first real rollout). **Lifted mid-round by the owner's explicit word**: the canary/skill split and the Reboots relocation to `fleet.md` were both owner-directed, each with per-edit sign-off as the protected set requires.
 - Joint steps: the user's disposition closes an item; undecided is the default; nothing is decided unilaterally.
 - Keep commits local until PR-open (`commit-messages.md`); every non-exempt commit gets a subagent review + `Reviewed-by:` trailer.
 

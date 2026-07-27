@@ -25,4 +25,5 @@ Hard-won session lessons; each rule prevents an observed failure.
 - **Host-touching (ssh/sudo) steps run in the main loop, never inside a dispatched subagent or workflow** — the permission gate blocks them there and the step dies where nobody sees the prompt; gather host evidence first, or expect the rejection and re-dispatch from the main loop.
 - **A repo script failing on a missing host binary is a host finding to report, not a script to patch** — and what the probe found goes into `fleet.md` in the same change.
 - **Observed drift is not license** — a recent change that skipped a required step is a finding to flag, never a template to copy.
+- **A local branch is not a merge path until its remote/upstream is verified** — `git ls-remote --heads origin <branch>` plus the upstream ref; no remote and an upstream pointing elsewhere = a local composition that merges nowhere.
 - **A truncated sweep is not a sweep** — piping aggregated evidence through `head`/`tail` before the assertion silently drops the counterexample; bound the input per-file, never the evidence stream.
