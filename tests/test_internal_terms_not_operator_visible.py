@@ -61,6 +61,7 @@ VOCABULARY = re.compile(
       | \biter-\d+             # iter-117
       | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
       | \bWP\d                 # WP4
+      | \bD\d{1,2}\b           # D3 / D12 — spec decision numbers (the rule names them; this enforces it)
     )""",
     re.VERBOSE,
 )

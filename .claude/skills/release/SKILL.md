@@ -38,8 +38,8 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
    git merge origin/main --no-edit
    ```
 
-   - If the merge succeeds cleanly, push `git push origin develop`, then continue to step 3.
-   - If the merge fails with conflicts, do **not** push. Investigate each conflicted file, propose a resolution to the user (typical patterns: version files → take whichever is newer / about-to-be-bumped; `CHANGELOG.md` → keep both entries chronologically; modified-on-main but deleted-on-develop → confirm the fix exists in the replacement code, then keep the deletion), apply it, commit the merge, and push. Only then continue.
+   - If the merge succeeds cleanly: `develop` is PR-protected (no direct pushes — the same fact step 17 is built on), so land it exactly as step 17 lands the back-merge — a short `chore/pre-release-sync-v<VERSION>` branch, PR, poll-then-merge. Then continue to step 3.
+   - If the merge fails with conflicts, do **not** push. Investigate each conflicted file, propose a resolution to the user (typical patterns: version files → take whichever is newer / about-to-be-bumped; `CHANGELOG.md` → keep both entries chronologically; modified-on-main but deleted-on-develop → confirm the fix exists in the replacement code, then keep the deletion), apply it, commit the merge, and land it via the same PR route. Only then continue.
 
    **If the user chooses to abort:** stop and report — do not proceed.
 

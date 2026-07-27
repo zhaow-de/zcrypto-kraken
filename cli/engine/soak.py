@@ -1596,7 +1596,8 @@ def render_report(
             lines.append(f"  {d}")
         lines.append("")
 
-    lines.append("D4 GAP (governed vs live-cost null)")
+    # "Governor-bias gap" is D4 in the spec vocabulary; the token stays off the report surface.
+    lines.append("GOVERNOR-BIAS GAP (governed vs live-cost null)")
     bias = "bias ACTIVE" if analysis.d4_active else "bias INACTIVE"
     lines.append(f"  d4_gap_bps: {analysis.d4_gap_bps:.4f} bps/cycle ({bias})")
     lines.append("  the null P&L uses the live cost convention, so the governor bias cancels by construction")
@@ -1742,7 +1743,7 @@ def _json_payload(
             "null_gov_rate": analysis.null_gov_rate,
             "null_cap_rate": analysis.null_cap_rate,
             "note": (
-                "null_gov_rate/null_cap_rate are the null's GLOBAL rates (D9) -- do not use them as the "
+                "null_gov_rate/null_cap_rate are the null's GLOBAL rates -- do not use them as the "  # D9
                 f"comparison reference; {_CONTEXT_NOTE_REFERENCE_BY_MODE[null_mode]}"
             ),
         }

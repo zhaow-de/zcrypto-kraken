@@ -35,7 +35,7 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 4. `## Checklist`,
 5. the aggregated `Co-Authored-By:` trailer — plus a `Reviewed-by:` line if any commits carry reviewer trailers (see below).
 
-**Flexible middle:** between Spec/Plan and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home (see `open-topics.md` → *Deferrals and ripeness triggers*).
+**Flexible middle:** between Spec/Plan and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home (see `open-topics.md`).
 
 ### Co-author trailer (PR description)
 
@@ -70,6 +70,10 @@ git log <base>..HEAD --pretty='%(trailers:key=Reviewed-by,valueonly)' \
 ```
 
 Omit the line entirely when there are no reviewer trailers. The PR body is free text, so this line is plain text (not parsed by git's trailer engine) — it just mirrors the co-author aggregation.
+
+## The deferral sweep — before every create or body edit
+
+Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted — this failed twice in one branch with the rule already written, which is why it is a step here and not only prose in `open-topics.md`.
 
 ## Editing a PR body
 

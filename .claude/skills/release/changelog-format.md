@@ -3,7 +3,7 @@
 Write changelog entries to `CHANGELOG.md` using this format:
 
 ```markdown
-## {version} ({release_date})
+## v{version} ({release_date})
 
 ### 🚀 Features
 

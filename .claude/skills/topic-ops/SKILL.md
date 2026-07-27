@@ -79,6 +79,6 @@ Within the chosen category, the topic moves between that category's `### Open` /
 - **Partially completing:** **move** the bullet from `### Open` to the **end of the same category's `### Partially done` subsection** (transition order).
 - **Closing:** **move** the bullet from `### Open` or `### Partially done` to the **end of the same category's `### Resolved` subsection**, and **update its link to the archived path** (`archive/<file>`) since the file itself moves into `docs/open-topics/archive/` (see Closing a topic). Within `### Resolved`, entries are in resolution order (append-only at close time), which may differ from serial order.
 
-Each bullet is a markdown link to the topic file followed by a one-sentence description, e.g. `- [T0000 — empty-slice warnings](T0000-empty-slice-warnings.md) — benign numpy diagnostic per-step aggregation; revisit when the logger gains warning filters.`
+Each bullet is a markdown link to the topic file followed by a one-sentence description, e.g. `- [T9999 — an example topic](T9999-an-example-topic.md) — one-sentence description of what it is and when it becomes ripe.`
 
 The pre-commit `mdformat` hook covers `docs/open-topics/README.md`; the TOC is generated at `--maxlevel 3` (so it lists the two categories and their `###` subsections) — let `mdformat` regenerate it, never hand-edit the `<!-- mdformat-toc … -->` block.

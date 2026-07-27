@@ -900,7 +900,8 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "No successful verified-path journal replay in over 48h (D9) -- the daily replay has stopped running or has not succeeded in two cycles."
+      # 48h = two daily replay cycles; the invariant is D9 in the spec vocabulary.
+      summary: "No successful verified-path journal replay in over 48h -- the daily replay has stopped running or has not succeeded in two cycles."
     labels:
       severity: warning
     notification_settings:

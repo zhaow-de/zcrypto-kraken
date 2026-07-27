@@ -14,7 +14,7 @@ The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/ite
 
 Each entry is a new section appended at the bottom of its phase file (`## <YYYY-MM-DD> — <heading>`) followed by a bullet list: one bullet per feature/change/fix, covering what landed, the artifacts/settings/log events it introduced, and any non-obvious behavior.
 
-**Related:** the per-phase decision log is committed the same way — appended and committed with each iteration's closing commit, one file per phase, never drained. See `decisions-log.md` (*Routing*).
+**Related:** the per-phase decision log is committed the same way — appended and committed with each iteration's closing commit, one file per phase, never drained. Routing: the `### Routing — one file per phase` section below (the WHEN gate is `decisions-log.md`).
 
 ## Dataset-catalog sync (every dataset-introducing closeout)
 

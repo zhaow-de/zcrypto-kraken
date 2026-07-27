@@ -229,7 +229,8 @@ def backfill(
         residual_dup_rows = (det2.rows - det2.unique) - cross_hour_dup_rows
         if residual_missing != 0 or residual_dup_rows != 0:
             msg = (
-                f"trade backfill D9 invariant violated for pair={p}: post-mint missing={det2.missing} "
+                # The full-attribution accounting invariant is D9 in the spec vocabulary.
+                f"trade backfill accounting invariant violated for pair={p}: post-mint missing={det2.missing} "
                 f"(unrecoverable={pair_unrecoverable} deferred={pair_deferred} "
                 f"fetch_errors={pair_fetch_error_missing} unaccounted={residual_missing}), "
                 f"post-mint duplicate_rows={det2.rows - det2.unique} "
