@@ -188,7 +188,7 @@ def test_d9_catches_a_mint_that_silently_did_nothing(tmp_path, monkeypatch):
 
     res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 13, 14]))
     assert len(res.errors) == 1
-    assert "D9" in res.errors[0][1]
+    assert "accounting invariant violated" in res.errors[0][1]  # D9, worded without the token (operator surface)
     assert "unaccounted=3" in res.errors[0][1]
     assert not (overlay / "BTC" / "EUR" / "trades" / "2026/07/11" / "02.parquet").exists()
 
