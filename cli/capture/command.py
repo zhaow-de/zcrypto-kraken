@@ -324,28 +324,45 @@ async def _desync_recovery_loop(
     """
     now_fn = now_fn or (lambda: datetime.now(UTC))
     while True:
-        try:
-            now = now_fn()
-            for pair, book in books.items():
+        now = now_fn()
+        for pair, book in books.items():
+            # PER-PAIR, never around the whole sweep: one pair's exception must not abort the tick.
+            # `books` is insertion-ordered from `pairs`, so a wrapping try/except starves every pair
+            # after the raising one -- deterministically the same pairs, forever. That is T0008's own
+            # defect reintroduced for 11 pairs by 1.
+            try:
                 if not book.desynced:
                     recovery.note_recovered(pair, at=now)
                     continue
                 action = recovery.due(pair, at=now)
+                if action is Action.NONE:
+                    continue
+                # A rung spent against a client that is mid-reconnect reaches no socket:
+                # `resubscribe_book`/`force_reconnect` both no-op when `_ws is None`. Counting it
+                # would burn grace + 3 retries + the one escalation in 55 s against nothing, then go
+                # terminal for an hour -- deaf exactly when the post-reconnect snapshot might fail.
+                if not client.connected:
+                    logger.debug("desync recovery: client reconnecting, holding pair=%s", pair)
+                    continue
+                # The ladder advances BEFORE the await. If the call raises, the attempt still
+                # happened as far as the schedule is concerned -- otherwise `attempts` stays 0,
+                # `since` keeps measuring from the desync, and the pair retries every tick forever
+                # without ever reaching rung 3 (measured: 57 retries in 5 min, 0 escalations).
                 if action is Action.RETRY:
+                    recovery.note_attempt(pair, at=now)
                     logger.warning("desync recovery: retrying resubscribe pair=%s", pair)
                     await client.resubscribe_book(pair)
-                    recovery.note_attempt(pair, at=now)
                 elif action is Action.RECONNECT:
                     # Escalation drops EVERY pair, not just this one -- bounded to once per pair
                     # per cooldown by the ladder, because a loop here is worse than the stuck pair.
+                    recovery.note_escalated(pair, at=now)
                     logger.error(
                         "desync recovery: pair=%s still desynced after bounded retries -- forcing a full reconnect",
                         pair,
                     )
                     await client.force_reconnect()
-                    recovery.note_escalated(pair, at=now)
-        except Exception:
-            logger.exception("desync recovery loop iteration failed -- continuing")
+            except Exception:
+                logger.exception("desync recovery failed for pair=%s -- continuing with the rest", pair)
         if once:
             return
         await asyncio.sleep(interval)
@@ -528,9 +545,9 @@ async def _run(pairs: list[str], depth: int, data_dir: Path, duration: int | Non
     except asyncio.CancelledError:
         pass
     finally:
-        for task in (consumer, health, disk_check):
+        for task in (consumer, health, disk_check, desync_recovery):
             task.cancel()
-        for task in (consumer, health, disk_check):
+        for task in (consumer, health, disk_check, desync_recovery):
             try:
                 await task
             except asyncio.CancelledError:

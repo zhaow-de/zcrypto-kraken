@@ -83,9 +83,25 @@ class DesyncRecovery:
         self._pairs[pair] = _PairState(desynced_at=at, escalated_at=escalated_at)
 
     def note_recovered(self, pair: str, *, at: datetime) -> None:
-        """The pair is in sync again. Recovery is the ONLY full reset — including the escalation
-        record, so a pair that desyncs twice in an hour does not escalate on its second, milder
-        episode purely because of the first."""
+        """The pair is in sync again: clear the active ladder, but KEEP the escalation record.
+
+        Dropping `escalated_at` here would make the cooldown bind only on a pair that stays
+        *continuously* desynced — and the likeliest healer is the escalation's own reconnect, which
+        forces a fresh snapshot for every pair. That is a positive feedback path: escalate ->
+        reconnect -> pair heals -> record erased -> next episode escalates ~55 s later. Measured on
+        the real ladder, a pair desyncing every 10 minutes produced 72 reconnects/hour against an
+        advertised bound of 12, and a flapping pair produced 610. Each reconnect costs ~39 s of
+        silence on all 12 pairs, so that is exactly the "strictly worse than the defect" outcome
+        the terminal state exists to prevent.
+        """
+        state = self._pairs.get(pair)
+        if state is None:
+            return
+        if state.escalated_at is not None and (at - state.escalated_at).total_seconds() < self.cooldown_seconds:
+            # Ladder cleared, cooldown preserved — a re-desync inside the hour gets rungs 1 and 2,
+            # never a second reconnect.
+            self._pairs[pair] = _PairState(escalated_at=state.escalated_at)
+            return
         self._pairs.pop(pair, None)
 
     def note_attempt(self, pair: str, *, at: datetime) -> None:

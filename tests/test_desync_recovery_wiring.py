@@ -23,10 +23,11 @@ T0 = datetime(2026, 7, 27, 12, 0, 0, tzinfo=UTC)
 
 
 class _FakeClient:
-    def __init__(self) -> None:
+    def __init__(self, connected: bool = True) -> None:
         self.resubscribed: list[str] = []
         self.reconnects = 0
         self.resubscribes_total = 0
+        self.connected = connected
 
     async def resubscribe_book(self, pair: str) -> None:
         self.resubscribed.append(pair)
@@ -184,6 +185,110 @@ def test_the_drill_knob_is_absent_from_every_infra_config():
         for p in root.rglob("*")
         if p.is_file()
         and p.suffix in {".j2", ".yaml", ".yml", ".env", ".sh"}
-        and "ZCRYPTO_DRILL_FAIL_SNAPSHOTS" in p.read_text(errors="ignore")
+        and "ZCRYPTO_DRILL_DESYNC_SECONDS" in p.read_text(errors="ignore")
     ]
     assert not hits, f"the drill knob is referenced in fleet config: {hits}"
+
+
+# --- The seam the mutation review found completely untested ---------------------------------------
+# Deleting `recovery.note_desync(...)`, `recovery.note_recovered(...)`, or the `recovery` argument
+# from _consume's call all SURVIVED the entire suite: a ladder nobody arms, with every test green.
+# That is the T0035/T0100 failure class one level down -- a mechanism nobody proved runs -- which is
+# the exact trap this whole branch exists to escape. These call the real handler.
+
+
+def _book_msg(pair: str) -> dict:
+    return {"data": [{"symbol": pair}]}
+
+
+class _StubBook:
+    """Ingest outcome is scripted; `desynced` tracks it the way OrderBook does."""
+
+    def __init__(self, results: list[bool]) -> None:
+        self._results = list(results)
+        self.desynced = False
+
+    def _next(self) -> bool:
+        ok = self._results.pop(0) if self._results else True
+        self.desynced = not ok
+        return ok
+
+    def ingest_snapshot(self, entry) -> bool:
+        return self._next()
+
+    def ingest_update(self, entry) -> bool:
+        return self._next()
+
+
+def test_the_daemon_arms_the_ladder_when_a_pair_desyncs():
+    asyncio.run(_test_the_daemon_arms_the_ladder_when_a_pair_desyncs())
+
+
+async def _test_the_daemon_arms_the_ladder_when_a_pair_desyncs():
+    from cli.capture.command import _handle_book_message
+
+    ladder, client = DesyncRecovery(), _FakeClient()
+    books = {"BTC/EUR": _StubBook([False])}
+    monitor, watermark = _StubMonitor(), _StubWatermark()
+    await _handle_book_message(_book_msg("BTC/EUR"), "book_update", client, books, {}, monitor, watermark, ladder)
+    assert client.resubscribed == ["BTC/EUR"], "rung 1 did not fire"
+    assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=25)) is Action.RETRY, (
+        "the daemon resubscribed but never told the ladder — it is armed by nothing"
+    )
+
+
+def test_the_daemon_disarms_the_ladder_when_a_pair_recovers():
+    asyncio.run(_test_the_daemon_disarms_the_ladder_when_a_pair_recovers())
+
+
+async def _test_the_daemon_disarms_the_ladder_when_a_pair_recovers():
+    from cli.capture.command import _handle_book_message
+
+    ladder, client = DesyncRecovery(), _FakeClient()
+    books = {"BTC/EUR": _StubBook([False, True])}
+    monitor, watermark = _StubMonitor(), _StubWatermark()
+    msg = _book_msg("BTC/EUR")
+    await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder)
+    await _handle_book_message(msg, "book_update", client, books, {}, monitor, watermark, ladder)
+    assert ladder.due("BTC/EUR", at=datetime.now(UTC) + timedelta(seconds=999)) is Action.NONE, (
+        "the pair recovered but the ladder still holds it — its record outlives the fault"
+    )
+
+
+class _StubMonitor:
+    def start_gap(self, *a, **k) -> None: ...
+    def end_gap(self, *a, **k) -> float:
+        return 0.0
+
+
+class _StubWatermark:
+    breached = False
+    measurable = True
+
+
+def test_the_drill_knob_moves_the_book_state_not_just_the_return_value():
+    """Drill run 1's defect, pinned. Returning False while leaving `book.desynced` False makes every
+    forced failure read as a fresh transition: the guard re-fires rung 1 in a storm, and the
+    recovery loop — which reads live book state — never engages. The knob then simulates a different
+    fault, convincingly enough to look like a pass.
+
+    The earlier knob test passes `book=None`, so it structurally cannot see this line.
+    """
+    from cli.capture import command
+
+    book = _StubBook([])
+    book.desynced = False
+    original = command._DRILL_DESYNC_SECONDS
+    command._DRILL_DESYNC_SECONDS = 60.0
+    command._drill_started_at.clear()
+    try:
+        result = command._drill_maybe_fail("BTC/EUR", "book_update", True, book, datetime.now(UTC))
+    finally:
+        command._DRILL_DESYNC_SECONDS = original
+        command._drill_started_at.clear()
+
+    assert result is False, "the knob did not force the failure"
+    assert book.desynced is True, (
+        "the knob returned False but left book.desynced False — the transition guard will see a "
+        "fresh desync on every message and re-fire rung 1 in a storm"
+    )

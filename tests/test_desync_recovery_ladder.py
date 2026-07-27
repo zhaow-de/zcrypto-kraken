@@ -143,3 +143,46 @@ def test_the_whole_ladder_is_bounded_in_wall_clock():
     assert escalated_at is not None, "ladder never reached escalation"
     span = (escalated_at - T0).total_seconds()
     assert span <= 90, f"desync-to-escalation took {span}s; the dead-man is dark for every pair meanwhile"
+
+
+def test_the_escalation_cooldown_survives_a_recovery():
+    """H1. The likeliest healer of an escalated pair is the escalation's own reconnect — it forces a
+    fresh snapshot for every pair. If recovery erased the escalation record, that would close a
+    feedback loop: escalate -> reconnect -> heal -> record gone -> escalate again ~55 s later.
+    Measured on the real ladder before the fix: 72 reconnects/hour for a pair desyncing every 10
+    min, 610/hour flapping, against an advertised bound of 12.
+    """
+    lad = _ladder()
+    lad.note_desync("BTC/EUR", at=T0)
+    lad.note_escalated("BTC/EUR", at=T0 + timedelta(seconds=55))
+    lad.note_recovered("BTC/EUR", at=T0 + timedelta(seconds=60))  # the reconnect healed it
+
+    # A fresh episode inside the cooldown gets retries, but must NOT reach a second reconnect.
+    lad.note_desync("BTC/EUR", at=T0 + timedelta(seconds=600))
+    now = T0 + timedelta(seconds=600)
+    for _ in range(60):
+        now += timedelta(seconds=5)
+        if lad.due("BTC/EUR", at=now) is Action.RECONNECT:
+            pytest.fail(f"second escalation at +{(now - T0).total_seconds()}s, inside the cooldown")
+        if lad.due("BTC/EUR", at=now) is Action.RETRY:
+            lad.note_attempt("BTC/EUR", at=now)
+
+
+def test_a_flapping_pair_cannot_manufacture_reconnects():
+    """The same defect from the other direction: heal/re-desync cycling must not mint an escalation
+    per cycle. Counts them over a simulated hour."""
+    lad = _ladder()
+    now, escalations = T0, 0
+    for cycle in range(60):
+        lad.note_desync("BTC/EUR", at=now)
+        for _ in range(14):  # ~70 s desynced — long enough to reach escalation
+            now += timedelta(seconds=5)
+            action = lad.due("BTC/EUR", at=now)
+            if action is Action.RETRY:
+                lad.note_attempt("BTC/EUR", at=now)
+            elif action is Action.RECONNECT:
+                escalations += 1
+                lad.note_escalated("BTC/EUR", at=now)
+        lad.note_recovered("BTC/EUR", at=now)
+        now += timedelta(seconds=10)
+    assert escalations <= 2, f"{escalations} escalations in ~80 min of flapping — the cooldown is not binding"

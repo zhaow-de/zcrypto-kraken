@@ -41,7 +41,7 @@ Registered the same day, and it cuts against this topic staying parked.
 
 T0008's recovery ladder adds a **full reconnect** as its last rung (spec `00072`, rung 3). This topic's leading hypothesis is that **reconnect silence is precisely what the daemon does not book** — the arithmetic that fits the 2026-07-27 event is ~39 s per pair per reconnect, across 12 pairs.
 
-If both hold, then once the ladder deploys, every escalation manufactures exactly the silence that `zcrypto_capture_gap_seconds_total` cannot see. The ladder is bounded — one escalation per pair per hour — so this is not a runaway; but it converts an accidental blind spot into one the system will now walk into deliberately, by design, as part of a recovery path.
+If both hold, then once the ladder deploys, every escalation manufactures exactly the silence that `zcrypto_capture_gap_seconds_total` cannot see. The ladder is bounded — one escalation per pair per hour, a bound that review had to repair before it actually held — so this is not a runaway; but it converts an accidental blind spot into one the system will now walk into deliberately, by design, as part of a recovery path.
 
 That does not merge the two topics: this is a different defect in a different producer, and its first step is still a measurement. It does mean the measurement is worth doing **before** T0008's image reaches the fleet, so the ladder is not deployed on top of an accounting gap nobody has characterised.
 

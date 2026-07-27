@@ -40,7 +40,7 @@ So the parameters are set from the two constraints that *are* known, and confirm
 - **Grace before the first retry: 20 s.** Must exceed a healthy resubscribe's snapshot round-trip by a wide margin, or a retry fires on a recovery already in flight. No production distribution exists; 20 s is generous against any plausible round-trip and the drill measures the real value.
 - **Retries: 3, backing off 5 s / 10 s / 20 s.** Bounded by construction. Against the storm this design guards against — hundreds/sec — three attempts across ~35 s is not a rate-limit risk by any margin.
 - **Escalate after the 3rd failed retry.**
-- **Terminal state: one escalation per pair per hour, then stop retrying** — see D4.
+- **Terminal state: one escalation per pair per hour, then stop retrying** — see D4. **The cooldown must survive recovery**, and review found it did not: clearing the escalation record on heal made the bound apply only to a *continuously* desynced pair, while the likeliest healer is the escalation's own reconnect (it forces a fresh snapshot for every pair). That closed a feedback loop — escalate → reconnect → heal → record erased → escalate again ~55 s later. Measured on the real ladder: **72 reconnects/hour** for a pair desyncing every 10 min and **610/hour** flapping, against the advertised 12.
 
 **Total ladder ≈ 55 s to escalation, ≈ 90 s including the reconnect's own resubscribe.** That number is the one that matters, because of D4's budget.
 
