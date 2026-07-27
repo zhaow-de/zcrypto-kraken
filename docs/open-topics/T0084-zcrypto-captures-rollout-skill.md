@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: before the next capture-image rollout — the skill should exist by the time it is next needed (rollouts are expected to be rare once the harness work settles)
+status: partial
+ripe_when: the next capture-image rollout — it runs VIA the skill and is the skill's validation (the T0081 pattern); the pending T0008/T0101 capture image is the standing candidate, and the capture-deploys.md shrink keys on that run completing
 ---
 
 # `/zcrypto-captures-rollout` — wrap the capture-image canary rollout into a skill
@@ -52,8 +52,13 @@ The previous-good digest is retained locally on **both** capture hosts (confirme
 
 Identical to the Slack T+24h reminder's 7-point checklist (running digest == candidate, `StartedAt` ≥ window with `RestartCount` 0, capture green, dead-man `Result=success`, `dropped_lines_total` 0 + fresh `last_success`, Alloy `remote_storage_samples_failed_total` 0 + `up{job="capture_app"}`==1, `continuity.py` on a *pulled* copy shows no new truncated hours). The skill should emit this checklist as its own gate step, not rely on the ambient reminder.
 
+## Done so far
+
+- **The skill is BUILT** — `.claude/skills/zcrypto-captures-rollout/SKILL.md` (branch `feat/t0084-captures-rollout-skill`): five phases encoding the runbook below verbatim-in-substance — preflight with the rollback operand captured up front, secondary converge, the event-coverage bake with the abort-signal table, the 7-point primary gate emitted as the skill's own step, the no-pull rollback, verify-by-outcome with the fleet-pins update.
+- **Owner rulings at build time (2026-07-27):** (1) **the fixed ≥24 h bake is DEPRECATED** — the default gate is the smallest event-coverage window between the two re-pins; `capture-deploys.md`'s canary language was reconciled in the same change, discharging the shrink step's "reconcile ≥24 h" clause early. (2) Invocation flipped to **user-only** (`disable-model-invocation: true`), overriding this topic's earlier model-invocation note. (3) **Host-touching commands run in the main loop only** — the permission gate blocks ssh-sudo inside dispatched workflows/subagents, observed live when a T0101 investigation strand died on exactly that.
+- The Slack reminder is now scheduled at the **computed gate-open time**, not a fixed T+24 h.
+
 ## Suggested next steps
 
-- **(When ripe)** Write the skill from `capture-deploys.md` verbatim-in-substance (steps, gates, checks), `disable-model-invocation: false` per the owner's note that model invocation is acceptable here — confirm that choice at build time.
-- **(When ripe)** Encode the **healthcheck + failsafe runbook above** as the skill's bake/verify/abort steps: the event-driven minimal window (cover the next prune + a rotation hour, not a fixed 24 h), the named abort signals with their thresholds, and the local-digest rollback path — so the skill makes the bake a real gate, not a timer.
-- **(After its first real rollout)** Shrink `capture-deploys.md` to the invariants + a pointer to the skill; the rule file keeps only what must hold even outside a rollout (SSH posture, vault safety, window times). Reconcile its "≥ 24 h" language with the event-driven window this topic determined.
+- **(At the next capture-image rollout)** Run it via the skill — the run is the validation, and corrections land in `SKILL.md` in the same change (the T0081 pattern).
+- **(After that run)** Shrink `capture-deploys.md` to the invariants + a pointer to the skill; the rule file keeps only what must hold even outside a rollout (SSH posture, vault safety, window times). The "≥ 24 h" reconciliation already landed with the build.
