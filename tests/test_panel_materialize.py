@@ -80,7 +80,7 @@ def _messages() -> list[dict]:
 
 def _materialize(root: Path, pair: str, hour: datetime, *, depth: int = 10) -> pl.DataFrame:
     path = _book(root, pair, hour, _explode(pair, hour, _messages()))
-    frame, _book_out = materialize_hour(path, pair, hour, depth=depth)
+    frame, _book_out, _lm = materialize_hour(path, pair, hour, depth=depth)
     return frame
 
 
@@ -118,7 +118,7 @@ def test_materialize_hour_emits_no_rows_before_the_snapshot_lands(tmp_path: Path
     messages = [{"offset": 1.5, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 1}]
     path = _book(tmp_path, "BTC/EUR", H, _explode("BTC/EUR", H, messages))
 
-    frame, _book_out = materialize_hour(path, "BTC/EUR", H, depth=10)
+    frame, _book_out, _lm = materialize_hour(path, "BTC/EUR", H, depth=10)
 
     assert frame.height == 3598  # 3600 minus the two pre-snapshot boundaries
     assert frame["ts"][0] == H + timedelta(seconds=2)
@@ -141,14 +141,14 @@ def test_materialize_hour_with_carried_book_samples_from_second_0(tmp_path: Path
     # H+1's rows ONLY via the carried book. That is the hand-checked, carry-dependent value.
     h_messages = [{"offset": 0, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 1}]
     path_h = _book(tmp_path, "BTC/EUR", H, _explode("BTC/EUR", H, h_messages))
-    frame_h, book_h = materialize_hour(path_h, "BTC/EUR", H, depth=10)
+    frame_h, book_h, _lm = materialize_hour(path_h, "BTC/EUR", H, depth=10)
     assert frame_h.height == 3600  # both sides quotable from second 0 onward
 
     h1 = H + timedelta(hours=1)
     h1_messages = [{"offset": 0, "type": "update", "bids": [(99.0, 5.0)], "asks": [], "checksum": 2}]
     path_h1 = _book(tmp_path, "BTC/EUR", h1, _explode("BTC/EUR", h1, h1_messages))
 
-    frame_h1, book_h1 = materialize_hour(path_h1, "BTC/EUR", h1, depth=10, book=book_h)
+    frame_h1, book_h1, _lm = materialize_hour(path_h1, "BTC/EUR", h1, depth=10, book=book_h)
 
     assert frame_h1.height == 3600  # the ask side is quotable ONLY because of the carried book
     first = frame_h1.row(0, named=True)
@@ -165,7 +165,7 @@ def test_materialize_hour_snapshot_resets_a_stale_carried_book(tmp_path: Path) -
     poisoned.asks = {Decimal("2.0"): Decimal("999.0")}
     path = _book(tmp_path, "BTC/EUR", H, _explode("BTC/EUR", H, _messages()))
 
-    frame, book_out = materialize_hour(path, "BTC/EUR", H, depth=10, book=poisoned)
+    frame, book_out, _lm = materialize_hour(path, "BTC/EUR", H, depth=10, book=poisoned)
 
     assert Decimal("1.0") not in book_out.bids  # the poisoned carry-in did not survive the reset
     assert Decimal("2.0") not in book_out.asks
@@ -222,10 +222,14 @@ def test_write_state_and_load_state_round_trip_decimals_exactly(tmp_path: Path) 
 
     assert path == panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.state.json"
     raw = json.loads(path.read_text())
-    assert raw == {"bids": {"100.00000000": "1.50000000"}, "asks": {"101.10000000": "2.25000000"}}
+    assert raw == {
+        "bids": {"100.00000000": "1.50000000"},
+        "asks": {"101.10000000": "2.25000000"},
+        "last_msg_ts": None,  # T0104: present, null when the caller passed no time
+    }
     assert not list(panel_root.rglob("*.tmp"))  # no tmp left behind after a clean write
 
-    loaded = load_state(panel_root, "BTC/EUR", H, depth=10)
+    loaded, _loaded_ts = load_state(panel_root, "BTC/EUR", H, depth=10)
 
     assert loaded is not None
     assert loaded.bids == book.bids
@@ -236,13 +240,13 @@ def test_write_state_and_load_state_round_trip_decimals_exactly(tmp_path: Path) 
 
 def test_load_state_returns_none_for_missing_or_corrupt_file(tmp_path: Path) -> None:
     panel_root = tmp_path / "panel"
-    assert load_state(panel_root, "BTC/EUR", H, depth=10) is None  # nothing written yet -- missing
+    assert load_state(panel_root, "BTC/EUR", H, depth=10) == (None, None)  # nothing written yet -- missing
 
     path = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not valid json{{{")
 
-    assert load_state(panel_root, "BTC/EUR", H, depth=10) is None  # corrupt -- never raises
+    assert load_state(panel_root, "BTC/EUR", H, depth=10) == (None, None)  # corrupt -- never raises
 
 
 # --- panel_watermark: round trip -----------------------------------------------------------------------
@@ -464,9 +468,129 @@ def test_final_fractional_second_messages_reach_the_carried_book(tmp_path: Path)
     path_h = _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, msgs_h))
     path_h2 = _book(primary, "BTC/EUR", h2, _explode("BTC/EUR", h2, msgs_h2))
 
-    frame_h, book_h = materialize_hour(path_h, "BTC/EUR", H, depth=10)
+    frame_h, book_h, _lm = materialize_hour(path_h, "BTC/EUR", H, depth=10)
     # H's own rows never saw the 3599.5s move (no boundary owns it)...
     assert frame_h["mid"][-1] == pytest.approx((100 + 101) / 2)
     # ...but the carried book did: H+1 opens on mid (100+150)/2.
-    frame_h2, _ = materialize_hour(path_h2, "BTC/EUR", h2, depth=10, book=book_h)
+    frame_h2, _, _lm2 = materialize_hour(path_h2, "BTC/EUR", h2, depth=10, book=book_h)
     assert frame_h2["mid"][0] == pytest.approx((100 + 150) / 2), "final-second message lost from the carry"
+
+
+# --- T0104: the staleness marker -----------------------------------------------------------------
+#
+# The panel builds a DENSE 3600-row/hour grid from a canonical archive that can have holes. Before
+# this column, a hole produced rows carrying a CARRIED-FORWARD book marked only by `updates == 0` --
+# which is also the marker for a genuinely quiet second. Measured on the real 2026-07-27 hour 07
+# blackout: 212 rows with 2 distinct `mid` values against 8 across the hour's other zero-update
+# seconds, in an hour holding its full 3600 rows and reading as complete. ~2,437 pair-seconds of
+# frozen book entered the research feature set indistinguishable from calm market.
+#
+# `stale_seconds` is the distinguishing property, emitted rather than inferred: seconds from the
+# last message actually applied to the book to this boundary. It is threaded across hours, because
+# the 2026-07-13 blackout began at 06:59:59.69 -- inside the PREVIOUS hour -- and a within-hour
+# counter would have restarted it at the boundary and understated it.
+
+
+def _stale_messages() -> list[dict]:
+    """Snapshot at :00, an update at :01, then a 10-second hole, then an update at :12."""
+    return [
+        {"offset": 0, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 1},
+        {"offset": 1, "type": "update", "bids": [(100.0, 2.0)], "asks": [], "checksum": 2},
+        {"offset": 12, "type": "update", "bids": [(100.0, 3.0)], "asks": [], "checksum": 3},
+    ]
+
+
+def test_stale_seconds_grows_across_a_hole_and_resets_on_the_next_message(tmp_path: Path) -> None:
+    """The whole point: a frozen book is now self-describing. During the hole every row carries a
+    growing `stale_seconds`; the second the data returns it drops back to ~0."""
+    path = _book(tmp_path, "BTC/EUR", H, _explode("BTC/EUR", H, _stale_messages()))
+    frame, _book_out, _last = materialize_hour(path, "BTC/EUR", H, depth=10)
+
+    by_sec = {int((r["ts"] - H).total_seconds()): r for r in frame.to_dicts()}
+    assert by_sec[1]["stale_seconds"] == pytest.approx(0.0)  # message landed exactly on the boundary
+    assert by_sec[5]["stale_seconds"] == pytest.approx(4.0)  # 4 s since the :01 update
+    assert by_sec[11]["stale_seconds"] == pytest.approx(10.0)  # the hole's last second
+    assert by_sec[12]["stale_seconds"] == pytest.approx(0.0)  # data returned
+    # And the marker is what `updates` alone could not say: both seconds look identically quiet.
+    assert by_sec[5]["updates"] == 0 and by_sec[11]["updates"] == 0
+
+
+def test_stale_seconds_threads_across_the_hour_boundary(tmp_path: Path) -> None:
+    """A blackout spanning midnight-of-the-hour must not have its clock reset. The 2026-07-13 event
+    began at 06:59:59.69 -- in the previous hour -- so a within-hour counter would have reported a
+    fraction of the true silence at exactly the moment the number mattered most."""
+    hour_a, hour_b = H, H + timedelta(hours=1)
+    # Hour A: snapshot at :00, last message at :10, then silence to the end of the hour.
+    msgs_a = [
+        {"offset": 0, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 1},
+        {"offset": 10, "type": "update", "bids": [(100.0, 2.0)], "asks": [], "checksum": 2},
+    ]
+    path_a = _book(tmp_path, "BTC/EUR", hour_a, _explode("BTC/EUR", hour_a, msgs_a))
+    _frame_a, book_a, last_a = materialize_hour(path_a, "BTC/EUR", hour_a, depth=10)
+    assert last_a is not None, "the last-message time must be carried out for the next hour"
+
+    # Hour B opens with an update (no snapshot) 5 s in -- so seconds 0..4 continue A's silence.
+    msgs_b = [{"offset": 5, "type": "update", "bids": [(100.0, 4.0)], "asks": [], "checksum": 3}]
+    path_b = _book(tmp_path, "BTC/EUR", hour_b, _explode("BTC/EUR", hour_b, msgs_b))
+    frame_b, _book_b, _last_b = materialize_hour(path_b, "BTC/EUR", hour_b, depth=10, book=book_a, last_msg_ts=last_a)
+
+    by_sec = {int((r["ts"] - hour_b).total_seconds()): r for r in frame_b.to_dicts()}
+    # Second 0 of hour B is 3590 s after hour A's :10 message -- not 0, and not restarted.
+    assert by_sec[0]["stale_seconds"] == pytest.approx(3590.0)
+    assert by_sec[4]["stale_seconds"] == pytest.approx(3594.0)
+    assert by_sec[5]["stale_seconds"] == pytest.approx(0.0)
+
+
+def test_stale_seconds_is_null_when_the_carried_state_predates_the_column(tmp_path: Path) -> None:
+    """A legacy `<HH>.state.json` has no last-message time. Emitting 0.0 there would assert
+    freshness we cannot know; null says 'unknown' honestly and is filterable."""
+    hour_b = H + timedelta(hours=1)
+    book = OrderBook("BTC/EUR", 10)
+    book.ingest_snapshot(
+        {
+            "bids": [{"price": Decimal("100"), "qty": Decimal("1")}],
+            "asks": [{"price": Decimal("101"), "qty": Decimal("1")}],
+            "checksum": 0,
+        }
+    )
+    msgs = [{"offset": 5, "type": "update", "bids": [(100.0, 4.0)], "asks": [], "checksum": 3}]
+    path = _book(tmp_path, "BTC/EUR", hour_b, _explode("BTC/EUR", hour_b, msgs))
+    frame, _b, _l = materialize_hour(path, "BTC/EUR", hour_b, depth=10, book=book, last_msg_ts=None)
+
+    by_sec = {int((r["ts"] - hour_b).total_seconds()): r for r in frame.to_dicts()}
+    assert by_sec[0]["stale_seconds"] is None, "unknown staleness must be null, never 0.0"
+    assert by_sec[5]["stale_seconds"] == pytest.approx(0.0), "the first real message anchors it"
+
+
+def test_the_state_sidecar_round_trips_the_last_message_time(tmp_path: Path) -> None:
+    """Threading only works if the sidecar carries it; and a sidecar written before this column
+    must still load (returning None for the time) rather than crashing the sweep."""
+    book = OrderBook("BTC/EUR", 10)
+    book.ingest_snapshot(
+        {
+            "bids": [{"price": Decimal("100"), "qty": Decimal("1")}],
+            "asks": [{"price": Decimal("101"), "qty": Decimal("1")}],
+            "checksum": 0,
+        }
+    )
+    ts = H + timedelta(seconds=42)
+    write_state(tmp_path, "BTC/EUR", H, book, last_msg_ts=ts)
+    loaded_book, loaded_ts = load_state(tmp_path, "BTC/EUR", H, depth=10)
+    assert loaded_book is not None and loaded_ts == ts
+
+    # A legacy sidecar (no key) loads with a None time, not an exception.
+    p = tmp_path / "BTC" / "EUR" / "panel-1s" / f"{H:%Y}" / f"{H:%m}" / f"{H:%d}" / f"{H:%H}.state.json"
+    p.write_text(json.dumps({"bids": {"100": "1"}, "asks": {"101": "1"}}))
+    legacy_book, legacy_ts = load_state(tmp_path, "BTC/EUR", H, depth=10)
+    assert legacy_book is not None and legacy_ts is None
+
+
+def test_stale_seconds_is_in_the_schema_and_the_written_hour(tmp_path: Path) -> None:
+    """A column nothing writes is the T0100 defect in another costume."""
+    from cli.panel.primitives import PANEL_SCHEMA
+
+    assert "stale_seconds" in PANEL_SCHEMA
+    path = _book(tmp_path, "BTC/EUR", H, _explode("BTC/EUR", H, _stale_messages()))
+    frame, _b, _l = materialize_hour(path, "BTC/EUR", H, depth=10)
+    out = write_hour(tmp_path / "panel", "BTC/EUR", H, frame)
+    assert "stale_seconds" in pl.read_parquet(out).columns
