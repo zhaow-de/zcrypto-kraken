@@ -1997,7 +1997,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The log-shipping worker on the named host has not completed a cycle for over 5 minutes -- it is stuck retrying a push it cannot complete, so logs are queueing and every Loki-based alert on this host is now silent for the wrong reason. Look for a Loki endpoint that is unreachable or erroring, not for rejected credentials: a rejected push still completes a cycle and would leave this rule green, showing up instead as dropped log lines."
+      summary: "The log-shipping worker on the named host has not completed a cycle for over 5 minutes -- either it is stuck retrying a push it cannot complete, or the worker thread is wedged, so logs are queueing and every Loki-based alert on this host is now silent for the wrong reason. Look for a Loki endpoint that is unreachable or erroring, not for rejected credentials: a rejected push still completes a cycle and would leave this rule green, showing up instead as dropped log lines."
     labels:
       severity: warning
     notification_settings:

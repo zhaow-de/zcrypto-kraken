@@ -117,11 +117,19 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
     # Pre-seed a known total: presence alone does not pin monotonicity. A reviewer moved the
     # prev_repaired read BELOW the arithmetic (still above the mv, so the order assertion held) and
     # the counter silently reset to the per-run value every run while every test stayed green.
-    prom.write_text("zcrypto_trade_backfill_hours_repaired_after_loss_total 5\n")
-    # A FAILED run with no parseable count -- the case that must still write all four.
-    harness = f'set -u\nbackfill_rc=1\nbackfill_repaired=""\n' + block.replace(
-        '"{}/trade-backfill.prom"'.format(CONTEXT["ops_textfile_dir"]), f'"{prom}"'
+    prom.write_text(
+        "zcrypto_trade_backfill_hours_repaired_after_loss_total 5\n"
+        # last_success is the OTHER carry-forward, and it was unpinned: rewriting its fallback to a
+        # literal 0 passed every test here. A zero makes `time() - 0` enormous and the staleness rule
+        # -- noDataState: Alerting -- pages critical on the first bad day, which is the 2026-07-17
+        # incident by a different route.
+        "zcrypto_trade_backfill_last_success_timestamp 1753700000\n"
     )
+    # A FAILED run with no parseable count -- the case that must still write all four.
+    target = '"{}/trade-backfill.prom"'.format(CONTEXT["ops_textfile_dir"])
+    # str.replace no-ops silently on a miss, and the un-substituted target is the LIVE ops path.
+    assert target in block, f"the textfile path did not match {target!r} -- the harness would write to the real path"
+    harness = f'set -u\nbackfill_rc=1\nbackfill_repaired=""\n' + block.replace(target, f'"{prom}"')
     proc = subprocess.run([bash, "-c", harness], capture_output=True, text=True)
     assert proc.returncode == 0, f"the writer block aborted on a failed run: {proc.stderr}"
     written = prom.read_text()
@@ -132,7 +140,29 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
         "zcrypto_trade_backfill_hours_repaired_after_loss_total",
     ):
         assert f"{series} " in written, f"{series} is missing after a FAILED run -- the series is deleted"
+
     # The seeded 5 must survive a failed, count-less run: prev + 0 == 5. A read that happens after
     # the arithmetic, or after the mv, yields 0 here.
-    total = next(ln for ln in written.splitlines() if ln.startswith("zcrypto_trade_backfill_hours_repaired_after_loss_total"))
-    assert total.split()[1] == "5", f"the carried-forward total was lost: {total!r} -- the counter is not monotone"
+    def _val(text: str, name: str) -> str:
+        return next(ln for ln in text.splitlines() if ln.startswith(name)).split()[1]
+
+    assert _val(written, "zcrypto_trade_backfill_hours_repaired_after_loss_total") == "5", (
+        "the carried-forward total was lost -- the counter is not monotone"
+    )
+    assert _val(written, "zcrypto_trade_backfill_last_success_timestamp") == "1753700000", (
+        "last_success was not carried forward on a failed run -- a 0 here pages the staleness rule"
+    )
+
+    # Now a SUCCESSFUL run carrying a real repair: the previous total must be ADDED to, not replaced.
+    # Without this the add is only ever exercised as prev + 0, and an implementation that resets on
+    # exactly the runs which can carry a repair passes everything above.
+    prom.write_text("zcrypto_trade_backfill_hours_repaired_after_loss_total 5\n")
+    ok = subprocess.run(
+        [bash, "-c", f'set -u\nbackfill_rc=0\nbackfill_repaired="3"\n' + block.replace(target, f'"{prom}"')],
+        capture_output=True,
+        text=True,
+    )
+    assert ok.returncode == 0, ok.stderr
+    assert _val(prom.read_text(), "zcrypto_trade_backfill_hours_repaired_after_loss_total") == "8", (
+        "5 + 3 != 8 -- the total is replaced rather than accumulated on a run that carries a repair"
+    )

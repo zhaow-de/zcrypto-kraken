@@ -17,7 +17,7 @@ when: capture_alloy_digest is defined
 
 Ordinary converges omit that variable by design; `capture-deploys.md` states the same discipline for the ops tier ("Omit `ops_alloy_digest` unless Alloy is the subject"). So every capture converge that is not *about* Alloy skips the config install, and a repo edit to `config.alloy` reaches neither host.
 
-Measured on `zcrypto-red`, deployed keep-regex vs the repo's — **46 terms deployed against the repo's 50 when this was measured on 2026-07-28; 4 admitted by the repo and dropped in production** (the repo side is 51 today — a later commit on this branch added the logship liveness gauge, so re-count rather than trusting the 50):
+Measured on `zcrypto-red`, deployed keep-regex vs the repo's — **46 terms deployed against the repo's 50 when this was measured on 2026-07-28; 4 admitted by the repo and dropped in production** (the 46-term revision is `e82d8f05`, which differs from its successor by exactly the keep-regex line; the repo side is 51 today — a later commit on this branch added the logship liveness gauge, so re-count rather than trusting the 50):
 
 | series | emitted by the running image? | consequence |
 | --- | --- | --- |
