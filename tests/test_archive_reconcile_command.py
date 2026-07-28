@@ -922,3 +922,55 @@ def test_a_pre_split_fleet_record_still_reads_as_the_intersection(tmp_path, monk
     minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"][0]
     assert minted["residual_gaps"], "the gap must be genuinely unfilled or this test asserts nothing"
     assert minted["residual_seconds"] == pytest.approx(0.0), "the legacy record's 590 s are still subtracted"
+
+
+# --- the late-mirror trap: a per-stream window is only honest with BOTH mirrors (T0103) ------------
+#
+# `stream_windows` is computed from the mirrors readable THIS cycle, and the record is `_decided`
+# once and never revised -- while the heal path deliberately WAITS for a late mirror. Unsynchronised,
+# a stream whose second mirror lands a cycle later has its entire SINGLE-mirror silence booked as
+# permanent loss, into a monotone counter that cannot be walked back. Reachable by the repo's own
+# mandated pair-add order (primary first, secondary second), which creates single-mirror hours by
+# construction.
+
+
+def test_a_stream_missing_a_mirror_is_booked_the_intersection_not_its_own_window(tmp_path, monkeypatch):
+    """The fallback that bounds the damage: without both mirrors we cannot know the stream's own
+    silence, so book the intersection -- the old, bounded behaviour -- rather than a window the
+    absent mirror would have shortened."""
+    pri, sec, rec = _roots(tmp_path)
+    # ETH has both mirrors and is dark 600->1400; BTC has both and is dark 600->1200, so the
+    # intersection is [600, 1200). ADA has ONLY a primary and is quiet 600->3600.
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+    _write(pri, "ADA/EUR", "book", H, _book("ADA/EUR", H, [(float(s), "update") for s in range(0, 600, 10)]))
+
+    result = _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    per_stream = {p: sum(w["seconds"] for w in ws) for p, ws in fleet["stream_windows"].items()}
+    intersection = sum(w["seconds"] for w in fleet["windows"])
+
+    assert per_stream["ADA/EUR"] == pytest.approx(intersection), (
+        f"single-mirror stream booked {per_stream['ADA/EUR']}s of its own silence instead of the "
+        f"{intersection}s intersection -- an unbounded over-count into the permanent-loss counter"
+    )
+    assert per_stream["ETH/EUR"] > intersection, "a stream WITH both mirrors still gets its own window"
+
+
+def test_a_present_but_empty_final_is_booked_the_intersection_not_the_whole_hour(tmp_path, monkeypatch):
+    """Its file exists, so it evades `total_loss`; it has no stamps, so `containing_dark_window`
+    would hand back the entire hour. Same root cause, same fallback."""
+    pri, sec, rec = _roots(tmp_path)
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+    for root in (pri, sec):
+        _write(root, "ADA/EUR", "book", H, _book("ADA/EUR", H, []))
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    ada = sum(w["seconds"] for w in fleet["stream_windows"].get("ADA/EUR", []))
+    assert ada == pytest.approx(sum(w["seconds"] for w in fleet["windows"])), f"empty final booked {ada}s"
+    assert ada < 3600.0, "the whole hour was booked for a stream we know nothing about"

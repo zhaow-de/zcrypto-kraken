@@ -252,7 +252,7 @@ class CaptureClient:
         if future is not None and not future.done():
             future.set_result(bool(msg.get("success", False)))
 
-    async def _subscribe_after_ack(self, pair: str, future: asyncio.Future) -> None:
+    async def _subscribe_after_ack(self, pair: str, future: asyncio.Future, socket: object, req_id: int) -> None:
         """Send the `subscribe` once the `unsubscribe` is acknowledged — or once the wait times out.
 
         Runs as its own task so `resubscribe_book` never blocks its caller: rung 1 fires from inside
@@ -263,11 +263,17 @@ class CaptureClient:
             try:
                 await asyncio.wait_for(future, self._ack_timeout)
             except TimeoutError:
+                self._pending.pop(req_id, None)  # nothing will resolve it now; do not leak the entry
                 self.resubscribe_ack_timeouts_total += 1
                 logger.warning(
                     "resubscribe: no unsubscribe ack for pair=%s in %.1fs -- subscribing anyway", pair, self._ack_timeout
                 )
-            if self._ws is None:  # the connection went away while we waited; the reconnect resubscribes everything
+            # IDENTITY, not None-ness. A reconnect inside the ack window installs a NEW socket and
+            # `_subscribe_all` has already resubscribed every pair on it, so sending here would be a
+            # duplicate: Kraken answers "Already subscribed", which is logged at ERROR and counted as
+            # a rejection -- and the ops log rule pages on any capture ERROR. A benign reconnect must
+            # not page, and the new counter must not report a fault that did not happen.
+            if self._ws is not socket:
                 return
             self._req_seq += 1
             sub_id = self._req_seq
@@ -290,17 +296,18 @@ class CaptureClient:
         the `unsubscribe` is acknowledged — closing the race where the subscribe overtakes the
         unsubscribe server-side and is rejected. This method itself never awaits the reply.
         """
-        if self._ws is None:
+        socket = self._ws
+        if socket is None:
             return
         self._req_seq += 1
         req_id = self._req_seq
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._issued.add(req_id)
         self._pending[req_id] = future
-        await self._ws.send(json.dumps(build_unsubscribe_message("book", [pair], depth=self._depth, req_id=req_id)))
+        await socket.send(json.dumps(build_unsubscribe_message("book", [pair], depth=self._depth, req_id=req_id)))
         self.resubscribes_total += 1
 
-        task = asyncio.create_task(self._subscribe_after_ack(pair, future))
+        task = asyncio.create_task(self._subscribe_after_ack(pair, future, socket, req_id))
         self._resub_tasks.add(task)  # a bare create_task can be garbage-collected mid-flight
         task.add_done_callback(self._resub_tasks.discard)
 

@@ -1780,6 +1780,56 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-resubscribe-failing
+    title: "Capture · book resubscribe is failing (recovery degraded)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and, until
+      # now, none for whether it WORKS. Both counters mean the ladder is degraded, differently:
+      # a rejected frame (the venue answered subscribe/unsubscribe error, correlated by req_id) means
+      # the desync recovery did not happen at all and the book stays stale; a missing unsubscribe ack
+      # means the subscribe was sent blind into the race the ack exists to close, so the resubscribe
+      # may be silently rejected downstream. Summed because the response is the same -- read the
+      # capture log for which, the lines carry the pair.
+      #
+      # A rejection also logs at ERROR and so already reaches the capture ERROR-log rule; this exists
+      # because the ack TIMEOUT logs at WARNING and reaches nothing, and because a rate is what
+      # distinguishes one venue hiccup from a recovery path that has stopped working.
+      # `increase()` handles the counter reset on container recreate.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'sum(increase(zcrypto_capture_resubscribe_errors_total{host=~"zcrypto|zcrypto-red"}[1d]) + increase(zcrypto_capture_resubscribe_ack_timeouts_total{host=~"zcrypto|zcrypto-red"}[1d]))'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 1.5, not 1: increase() extrapolates a single increment to ~1.0007, so `> 1` would page
+            # on one transient rejection -- the same arithmetic recorded on the resubscribe-rate rule.
+            - evaluator: {type: gt, params: [1.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A capture host's book resubscribe is failing: the venue rejected the frames, or the unsubscribe acks are not arriving. The desync recovery ladder depends on this leg -- while it fails, a desynced book cannot heal and the pair keeps writing from a stale state. Check the capture log for the pair and the venue reply."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-capture-watermark-breached
     title: "Capture · disk watermark breached -- DISCARDING data"
     ruleGroup: zcrypto-capture

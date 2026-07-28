@@ -531,6 +531,16 @@ class CaptureCollector:
             value=self._client.resubscribes_total,
         )
         yield CounterMetricFamily(
+            "zcrypto_capture_resubscribe_errors_total",
+            "Resubscribe frames the venue REJECTED (subscribe/unsubscribe error replies), correlated by req_id.",
+            value=self._client.resubscribe_errors_total,
+        )
+        yield CounterMetricFamily(
+            "zcrypto_capture_resubscribe_ack_timeouts_total",
+            "Resubscribes whose unsubscribe ack never arrived in time; the subscribe was sent anyway.",
+            value=self._client.resubscribe_ack_timeouts_total,
+        )
+        yield CounterMetricFamily(
             "zcrypto_capture_segments_written_total",
             "Hourly segments committed, summed across every pair and kind.",
             value=sum(w.segments_written for w in writers),

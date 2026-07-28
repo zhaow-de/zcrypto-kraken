@@ -658,3 +658,50 @@ def test_the_sweep_threads_the_clock_across_a_resumed_run(tmp_path: Path) -> Non
     assert first["stale_seconds"] == pytest.approx(3590.0), (
         f"hour H+1 second 0 reports {first['stale_seconds']} -- the clock did not cross the boundary"
     )
+
+
+def test_the_sweep_carries_the_clock_between_hours_of_a_SINGLE_run(tmp_path: Path) -> None:
+    """The gap the resumed-run test above cannot see. That one crosses hours in SEPARATE processes,
+    so the clock travels through the state sidecar. Within ONE sweep it travels through the
+    in-memory `last_seen` dict instead — a different line — and deleting that carry-forward leaves
+    the whole suite green while every hour after the first reads `stale_seconds = null` at its head.
+
+    That matters beyond the hourly timer: the panel REGENERATION is one sweep over every hour of
+    every pair, so this line is what carries staleness across ~470 hour boundaries in a row. Nulls
+    are the worst possible failure here, because a `> 30` filter drops them from BOTH sides.
+    """
+    primary = tmp_path / "primary"
+    panel = tmp_path / "panel"
+    h2 = H + timedelta(hours=1)
+    # H: snapshot at :00, last message at :10, then silence to the boundary.
+    _book(
+        primary,
+        "BTC/EUR",
+        H,
+        _explode(
+            "BTC/EUR",
+            H,
+            [
+                {"offset": 0, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 1},
+                {"offset": 10, "type": "update", "bids": [(100.0, 2.0)], "asks": [], "checksum": 2},
+            ],
+        ),
+    )
+    # H+1 opens with an update 30 s in, so its first 30 seconds continue H's silence.
+    _book(
+        primary,
+        "BTC/EUR",
+        h2,
+        _explode("BTC/EUR", h2, [{"offset": 30, "type": "update", "bids": [(100.0, 3.0)], "asks": [], "checksum": 3}]),
+    )
+
+    # ONE call spanning both hours: the clock can only reach H+1 through `last_seen`.
+    materialize(primary, None, panel, settle=timedelta(hours=1), now=h2 + timedelta(hours=2))
+
+    second = pl.read_parquet(panel / "BTC" / "EUR" / "panel-1s" / f"{h2:%Y}" / f"{h2:%m}" / f"{h2:%d}" / f"{h2:%H}.parquet")
+    head = second["stale_seconds"][0]
+    assert head is not None, "hour H+1 opened with 'staleness unknown'; the in-run carry-forward was lost"
+    # H's last message was at :10, so H+1 second 0 is 3600 - 10 = 3590 s stale.
+    assert head == pytest.approx(3590.0), f"expected 3590 s carried from H's last message, got {head}"
+    assert second["stale_seconds"][29] == pytest.approx(3619.0), "and it keeps climbing until the first real message"
+    assert second["stale_seconds"][30] == pytest.approx(0.0), "which resets it"

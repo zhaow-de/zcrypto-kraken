@@ -575,11 +575,26 @@ def reconcile(
                 #
                 # Deduplicated per stream: two intersections exist only because some OTHER stream
                 # ticked between them, and a stream that did not tick has ONE window containing both.
+                #
+                # ONLY for a stream with BOTH mirrors readable this hour, and at least one stamp in
+                # it. `pair_stamps` holds what was readable THIS cycle, and this record is decided
+                # once and never revised -- while the heal path deliberately waits for a late mirror.
+                # Unsynchronised, a stream whose second mirror lands a cycle later would have its
+                # entire SINGLE-mirror silence booked as permanent loss, unbounded and unwalkbackable,
+                # and the repo's own pair-add order (primary first) creates single-mirror hours by
+                # construction. Without both, fall back to the intersection: it under-books, but it is
+                # bounded by the window every stream demonstrably shared.
                 stream_windows: dict[str, list] = {}
                 for p in present:
+                    frames = books[p]
+                    both_mirrors = frames["primary"] is not None and frames["secondary"] is not None
                     own: list = []
                     for w in windows:
-                        c = containing_dark_window(pair_stamps.get(p, []), w, hour_start=hour, hour_end=hour_end)
+                        c = (
+                            containing_dark_window(pair_stamps[p], w, hour_start=hour, hour_end=hour_end)
+                            if both_mirrors and pair_stamps.get(p)
+                            else w
+                        )
                         if c is not None and c not in own:
                             own.append(c)
                     stream_windows[p] = own
