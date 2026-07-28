@@ -51,6 +51,19 @@ Bounded blast radius, measured rather than estimated: the ledger's lifetime `hea
 - **Enumerate the 18 `trade_deficit` records' actual deficits** and decide whether trades loss belongs in the residual counter.
 - **Decide explicitly what to do about the 2,252.718188 s of existing fiction.** The ledger is append-only, so either leave it with a written note or correct it by an appended record — but a fix that silently leaves the counter wrong is not done, and a correction reads to Prometheus as a counter reset (see [[T0044]]).
 
+### The alert inversion — observed live, 2026-07-27
+
+**The misleading alert is louder and more persistent than the true one, and that inversion is worse than either defect alone.** Read off the Slack channel and Grafana's own rule state, not inferred:
+
+| rule | duration | truth |
+| --- | --- | --- |
+| *Reconciler · residual gap increased* (**critical**) | fired 09:18:35Z, **false-resolved 10:18Z** via `grafana_state_reason = MissingSeries` — 60 min | **correct**: 2,437 s permanently gone |
+| *Reconciler · primary gap rate high* (**warning**) | active since 09:48:00Z, re-notified 4× (11:48 / 15:49 / 19:50 / 23:53 CEST), **still firing 24 h later** | its summary says *"Every gap was covered"* — **false**; only 82.96 s was really healed |
+
+So the alert that got the facts right went quiet after an hour, while the one asserting the fiction has re-notified four times and continues until the 24 h window rolls past the ledger append (~09:12Z). Its `A` value is pinned at **2313.14** across all four notifications. That is the fictional healed figure this topic exists to correct, paged repeatedly as though it were reassurance — and it does not equal the ledger's **2,311.536587 s** exactly because `increase()` extrapolates a counter step to its window edges (the same arithmetic that returns ~1.0007 for a single increment, recorded under [[T0008]]'s alert leg). The ~1.6 s difference is the extrapolation, not a second event.
+
+This is live evidence rather than analysis, and it raises the ranking: fixing the counters (above) also fixes what the warning *says*, and the `increase(...[1h])` window (below) is what silenced the page that was right.
+
 ### The two alert rules that read these counters
 
 Folded in 2026-07-27 rather than left as prose in spec `00073`'s *Out of scope*, which claimed they were "registered" when no topic named them — the exact drift `open-topics.md` forbids. They belong here because both are defects **in the surfacing of the counters this topic fixes**; re-deriving either number before the counters mean what they say would be fitting a threshold to a known-wrong signal.

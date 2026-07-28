@@ -57,6 +57,8 @@ Recorded here because this topic is the only place that sees the WHOLE picture; 
 
 - ~~**(human decision, later)** Healthchecks.io vs Grafana IRM heartbeat consolidation~~ **Decided 2026-07-21: keep both — no migration.** The independent failure domain is load-bearing; the retag + the Grafana↔healthchecks mutual watchdog are registered as [[T0083]].
 
+- **(inherited from [[T0095]] at its 2026-07-28 resolution — the dashboard half)** **Panels over the engine's order/position/PnL families**, once [[T0018]]'s 6b executor emits them. This topic owns the presentation; T0018 owns making the families exist and admitting them through the keep-lists, so this bullet is **blocked until the executor ships**. **Confirm keep-list admission before wiring any panel** — the T0051 trap runs both directions, and a panel over a series the keep-regex silently drops renders empty, indistinguishable from a quiet metric — it is the one item in this package that cannot be scoped from today's telemetry table, because its metrics do not yet exist. The standing owner ruling behind them (2026-07-23): order/position/PnL detail leaving the trade-key host to Grafana Cloud is **accepted, live trading included** — no redaction or drop gate — so there is no privacy question left to settle at design time.
+
 - **(untriaged additions, 2026-07-21 grooming — captured per the owner's "no need to triage now", to be triaged when the dashboards package runs):**
   - update both dashboards' tags; fix the metrics dashboard's title (engine is in scope but is not "data pipeline")
   - add charts for exposed-but-unvisualized metrics
