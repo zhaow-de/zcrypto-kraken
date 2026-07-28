@@ -49,6 +49,8 @@ Timing note, recorded because it was initially got wrong: a first pass reported 
 
 ## Suggested next steps
 
+The landed work sits on the pushed branch **`feat/t0101-remediation`** (no PR — every remaining item here is attended).
+
 - **(ATTENDED) Regenerate the tree — and it is now a REFUSAL, not a choice.** `SCHEMA_VERSION` is 2, so the hourly materializer will **abort** against the existing generation-1 tree until it is regenerated (spec `00052` D5's whole-tree rule). Sequencing therefore matters: **the deploy and the regeneration go together in one attended window**, or the hourly timer fails and its dead-man pages in the interim. Regenerating also removes the leading null row described above. The inputs are immutable so the replay is deterministic, but it rewrites bytes a manifest may cover — check before rewriting, and never write through the NFS mount.
 - **Decide what to do about the already-materialized hours.** Re-materializing 2026-07-27 hours 07–08 with the fix is cheap and the inputs are immutable, but it changes bytes a manifest may already cover — check before rewriting anything, and never write through the NFS mount.
 - **Sweep for other blackouts already in the panel**: the 2026-07-13 event (2,697.235577 s per-pair total) predates the panel's current frontier and may carry the same signature. Measure before assuming it does not.
