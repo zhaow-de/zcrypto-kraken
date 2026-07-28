@@ -288,8 +288,10 @@ def _totals(records: list[dict]) -> dict[str, float]:
     for record in records:
         state = record.get("state")
         if state not in _MINT_FAMILY:
-            # both_streams_silent / total_loss / failed are decided once per (pair, hour) and never
-            # re-ledgered, so they add unconditionally.
+            # both_streams_silent / total_loss / failed / unwitnessed are decided once per
+            # (pair, hour) and never re-ledgered, so they add unconditionally. `unwitnessed`
+            # carries no `residual_seconds` key at all, so it contributes nothing here by
+            # construction rather than by being zero -- see T0108 for what that leaves unseen.
             totals["residual_seconds"] += float(record.get("residual_seconds") or 0.0)
         if state == "minted":
             totals["healed_seconds"] += float(record.get("healed_seconds") or 0.0)
