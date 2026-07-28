@@ -139,6 +139,10 @@ OPS_REQUIRED = [
     "ops_verify_replay_exit_code",
     "ops_verified_replay_exit_code",
     "ops_verified_replay_last_success_timestamp",
+    # The "did the timer RUN?" discriminator. Absent from the ops keep-regex until 2026-07-28 while
+    # capture carried it, so on the host running four timers it was published and dropped at
+    # remote-write -- found by a reviewer checking a coverage claim that turned out to be false.
+    "node_textfile_mtime_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
     *INTERPOLATED_METRIC_NAMES,
@@ -314,7 +318,9 @@ def test_alloy_self_metrics_are_dropped_before_the_keep(path):
 # It cannot see a host running an older config than the repo -- that is a converge concern, not CI.
 # Scope is `zcrypto_*` only: the ops_*, node_* and hc_* families this infra also publishes are out
 # of range, and an uppercase name would fall out of the token pattern rather than fail. Both are
-# fail-open gaps, covered today by the per-host lists above.
+# fail-open gaps. The per-host lists above cover them only as far as someone remembered to list the
+# name -- `node_textfile_mtime_seconds` sat outside both this guard and the ops list while ops
+# published it, so do not read those lists as coverage.
 _SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py")
 
 # Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how

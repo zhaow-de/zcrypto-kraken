@@ -28,6 +28,8 @@ Measured on `zcrypto-red`, deployed keep-regex vs the repo's — **46 terms depl
 
 Both hosts are identical: `sudo grep -c` on the deployed config returns **0** for the first two names on `zcrypto` and `zcrypto-red` alike, while each host's `127.0.0.1:9101/metrics` returns **13** matching lines. Cloud returns `(no series)` for both, against 24 series for the sibling `zcrypto_capture_book_desynced` that *is* in the deployed keep-list.
 
+**The ops tier has the identical gate, and it has already cost a series.** `infra/ansible/roles/ops/tasks/main.yml` wraps its Alloy block in the same `when: ops_alloy_digest is defined`, with its config install inside — and `capture-deploys.md` instructs omitting that variable unless Alloy is the subject. Found 2026-07-28 by a reviewer checking a coverage claim: **`node_textfile_mtime_seconds` is admitted on capture but not on ops**, while `zcrypto-ops` runs the textfile collector (`node_scrape_collector_success{collector="textfile"}` = 1) over six `.prom` files. Cloud carries it for `zcrypto` and `zcrypto-red` and **not for `zcrypto-ops`** — so on the host running four timers, the signal that distinguishes *"the timer stopped"* from *"the timer ran and had nothing to report"* is invisible. The sibling `node_textfile_scrape_error` **is** admitted there, which is why nothing looked wrong.
+
 ## Why this matters
 
 **The measurement half of the 2026-07-27 blackout response is invisible in production.** Spec `00073` built `seconds_since_last_book_message` and `venue_status_total` precisely because every existing liveness signal read healthy through a 12-pair blackout. That code now runs on both hosts and emits correctly — and no alert can be written against it, no dashboard can show it, because the series never leaves the host.
@@ -45,6 +47,7 @@ Two compounding failures, and the second is the durable one:
 - The deployed file is a genuinely older revision, and the **term count is the proof**: 46 against the repo's 50, differing by exactly the four names above. (An earlier version of this bullet cited a line-91 comment as absent from the repo; it is present there verbatim, and that evidence line was simply wrong — the count is what establishes the claim.)
 - Both capture hosts are equally stale; this is not a one-host miss.
 - `zcrypto_capture_book_desynced` arriving with 24 series proves the pipeline itself is healthy — this is exclusively an allow-list-contents problem.
+- The keep-regex fix for `node_textfile_mtime_seconds` is committed here, but like every other `config.alloy` change it **only ships if the converge passes `ops_alloy_digest`** — the same gate that hid it.
 - The two undeployed T0102 counters mean [[T0107]]'s payload list is **incomplete**: it names the image roll but not the Alloy converge, so following it exactly would roll the image and still leave the new alert rule reading no data.
 
 ## Done so far
@@ -60,4 +63,5 @@ Both repo-side sub-items landed 2026-07-28 on `docs/ops-converge-0728-record`:
 ## Suggested next steps
 
 - *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs, then confirm **the two series the running image emits** — `zcrypto_capture_seconds_since_last_book_message` and `zcrypto_capture_venue_status_total` — arrive in Cloud. The two resubscribe counters and the logship liveness gauge are **not** expected to appear: none is in the running image (verified — their commits are not ancestors of the converged revision), so they wait on [[T0107]]'s roll. Config change, not a re-pin: no bake owed.
+- *(ATTENDED, at the next OPS converge)* Pass `ops_alloy_digest=<currently-running>` so the ops config installs, then confirm `node_textfile_mtime_seconds` appears for `zcrypto-ops` in Cloud. Config change, not a re-pin; no bake owed on the ops tier.
 - *(autonomous, after that converge)* Re-evaluate [[T0105]]'s trigger, which is unsatisfiable until then.
