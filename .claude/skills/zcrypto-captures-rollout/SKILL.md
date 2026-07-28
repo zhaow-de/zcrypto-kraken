@@ -45,8 +45,8 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 | Signal | Threshold | Where |
 | --- | --- | --- |
 | `zcrypto_logship_dropped_lines_total` | > 0 (was 0 at converge) | `127.0.0.1:9101/metrics` |
-| `zcrypto_logship_last_success_timestamp_seconds` | stale > ~120 s | same |
-| `RestartCount` | > 0 on capture or alloy container | `docker inspect --format '{{.RestartCount}}'` |
+| `zcrypto_logship_last_success_timestamp_seconds` | stale > ~120 s — **known false red, see [[T0106]]**: the worker skips the post on an empty buffer and stamps the gauge only on a successful *non-empty* ship, so it goes stale whenever logging is quiet, which is what healthy looks like. Corroborate with `shipped_lines_total` advancing before treating it as an abort | same |
+| `RestartCount` | > 0 on `zcrypto-capture` or `grafana-alloy` | `docker inspect --format '{{.RestartCount}}'` |
 | capture stdout | any `quarantined` / `ambiguous` / `merge failed` | `docker logs` |
 | newest parquet | `find <data-dir> -name '*.parquet' -mmin -3` returns 0 | host shell |
 | RSS slope | materially positive vs the daemon's **own** earlier samples — never cross-host (mem limits differ: primary 2 GiB, secondary 1 GiB) | `/metrics` `process_resident_memory_bytes` |
@@ -56,13 +56,14 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 
 Read all eight from the hosts and quote them before asking the user's word:
 
+0. **The candidate is present on the PRIMARY** (`docker image ls --digests`) — re-verify even though Phase 0 pre-staged it; pull now if absent, so the converge's stop→start window never contains a pull.
 1. Secondary running digest == candidate (`{{.Config.Image}}`).
 2. `StartedAt` ≥ the computed window, `RestartCount` 0.
 3. Capture green: all pairs flowing, no `quarantined`/`ambiguous`/`merge failed`.
 4. Dead-man green: hc.io pinging; prune `Result=success`.
 5. `dropped_lines_total` 0 and `last_success` fresh.
-6. Alloy healthy: `prometheus_remote_storage_samples_failed_total` 0 on the host (`127.0.0.1:12345/metrics`), and `up{job="capture_app"} == 1` in Cloud.
-7. `continuity.py` on a **pulled** copy (never the live dir) shows no new truncated hours — genesis hours of new streams excepted.
+6. Alloy healthy: `prometheus_remote_storage_samples_failed_total` 0 on the host (`127.0.0.1:12345/metrics`), and `uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}' 'hc_check_up{name=~"zcrypto-capture.*"}'` returns **1 for both hosts** and 1 for both capture dead-men. Scoped to the capture checks on purpose: bare `hc_check_up` spans every ops check, and a gate an unrelated failure can block is a gate that gets waved through. Use that script — never improvise the vault decrypt; `(no series)` is not a zero.
+7. `continuity.py` on a **pulled** copy (never the live dir) shows no new truncated hours — genesis hours of new streams excepted. It has to be the pulled copy for a second reason too: the capture hosts carry **no parquet reader** (no `pyarrow`, no repo CLI), so a book final cannot be opened on the host at all.
 8. The bake's prune form quoted (`deleted=N`) — the weak form (`deleted=0`) needs the user's explicit acceptance here, not a Phase-5 footnote.
 
 Then, on the user's word: converge the primary with `-e converge_primary=true -e capture_image_digest=sha256:<candidate>` and the capture tag discipline per `capture-deploys.md`.
@@ -73,4 +74,8 @@ The previous-good digest is retained locally (verified in Phase 0), so rollback 
 
 ## Phase 5 — Verify by outcome
 
-After the next hour boundary: every book stream's `<HH>.parquet` begins `:00:00.0x`; the NAS archive-pull's next cycle reports `failed=0` (that IS the manifest verification); `continuity.py` on a pulled copy shows no new truncated hours (read past a new stream's genesis hour). Update `docs/reference/fleet-pins.md` with the new digest in the same change, and record which bake form (`deleted=N`) the gate actually got.
+**Runs after EVERY converge, secondary included — not once at the end**, so `docs/reference/fleet-pins.md` never disagrees with a live host for the length of the bake.
+
+After the next hour boundary: every book stream's `<HH>.parquet` begins `:00:00.0x` — read from the **pulled** copy, since the hosts have no parquet reader; the NAS archive-pull's next cycle reports `failed=0` (that IS the manifest verification); `continuity.py` on a pulled copy shows no new truncated hours (read past a new stream's genesis hour). Update `docs/reference/fleet-pins.md` with the new digest in the same change, and record which bake form (`deleted=N`) the gate actually got.
+
+Read the pull result with `sudo /usr/local/bin/docker logs --since <ts> zcrypto-archive-pull` on the NAS (a container, not a systemd unit; full path — `docker` is off the non-interactive ssh `PATH` there). Allow ~35 min after the hour boundary before the finals appear.
