@@ -36,4 +36,21 @@ Three constraints bind *future* iterations and would otherwise be invisible at p
 
 ## Suggested next steps
 
-- **6b executor iteration** (the sole remainder; convene when the Stage-6a gate is met): order submission + order state machine + reconciliation loop + kill-switch, §12's weekly tracking-error report in full, cost-model recalibration from real fills, tiny-live sleeve funding (D3(ii) second half, human money action), and the D3(iii) T2 tax-probe set within the first two 6b weeks — per constraint 4. T0005's Blockpit T1 check rides alongside. ~~The 6a exit review also decides retiring the workstation soak~~ *(already retired — iter-103, spec `00056` D6)*.
+The sole remainder is the **6b executor iteration** — convene when the Stage-6a gate is met. Broken out below because a single paragraph hides both the sequencing and the human touchpoints; every bullet carries whether it is autonomous or a decision.
+
+**The build (constraint 4's scope):**
+
+- **(autonomous)** Order submission + the order state machine — the executor's core.
+- **(autonomous)** The reconciliation loop: exchange state vs journalled intent, and what it does on divergence.
+- **(autonomous)** The kill-switch, and the conditions that trip it.
+- **(autonomous)** **Emit order/position/PnL as first-class `/metrics` families as the state machine is built — not bolted on afterward.** Gauges for position/PnL state, counters for orders/fills, inside the active-series budget, and admit every new family through the Alloy keep-lists **in the same change** (both directions of the T0051 trap: published-but-unadmitted, and admitted-but-unpublished). Inherited from [[T0095]] at its 2026-07-28 resolution, which also recorded the standing owner ruling that trading-data egress to Grafana Cloud is **accepted, live trading included** — no redaction gate. The dashboard side of that work is [[T0020]]'s, and depends on these families existing.
+- **(autonomous)** §12's weekly tracking-error report **in full**: fills, fees, rollover accrual, slippage vs the cost model.
+- **(autonomous)** Cost-model recalibration from real fills — feeds [[T0090]]'s re-quote.
+
+**The human touchpoints (never automatic):**
+
+- **(decision — D3(vi))** The go/no-go call, and every ramp step: conditional on no gate breaches and the DD ladder untouched or correctly handled. Never a calendar promotion.
+- **(decision + money — D3(ii) second half)** Tiny-live sleeve funding.
+- **(decision — D3(iii))** Schedule the T2 tax-probe set **within the first two 6b weeks**: ≥1 margin long + ≥1 margin short, each held across ≥2 rollover events, one closed and one settled — so the tax verification (T2 pass, or T3 fallback) closes **before any ramp past 25 %**. [[T0005]]'s Blockpit T1 check rides alongside.
+
+**Entering state, not to be re-derived:** the governor enters live at its true carried state (×0.5); the build targets registry **record 44** via the committed builder (constraint 1). ~~The 6a exit review also decides retiring the workstation soak~~ *(already retired — iter-103, spec `00056` D6)*.
