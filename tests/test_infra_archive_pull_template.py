@@ -24,7 +24,9 @@ _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja
 _ENV.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in {"true", "yes", "1", "on"}
 
 CONTEXT = {
-    "ops_textfile_dir": "/var/lib/node_exporter/textfile",
+    # Real values: textfile_dir defaults to "{{ ops_data_dir }}/textfile" with no override, and
+    # uid/gid arrive as STRINGS (set_fact from getent_passwd), not the ints a guess supplies.
+    "ops_textfile_dir": "/var/lib/zcrypto-ops/textfile",
     "ops_nas_mount": "/mnt/zhao-crypto",
     "ops_data_dir": "/var/lib/zcrypto-ops",
     "ops_archive_pull_healthcheck_url": "https://hc-ping.example/abc",
@@ -32,8 +34,8 @@ CONTEXT = {
     "ops_reconciled_subdir": "capture-reconciled",
     "ops_image": "ghcr.io/zhaow-de/zcrypto-capture",
     "ops_image_digest": "sha256:" + "c" * 64,
-    "ops_uid": 998,
-    "ops_gid": 998,
+    "ops_uid": "998",
+    "ops_gid": "998",
     "ops_reconcile_mint": False,
     "ops_reconcile_min_gap_seconds": 30,
     "ops_reconcile_window_hours": 48,
@@ -57,10 +59,17 @@ def test_the_repair_count_is_exported_as_a_monotone_total():
     erase the evidence. The exported series must therefore ADD to what the file already holds."""
     r = _rendered()
     assert "zcrypto_trade_backfill_hours_repaired_after_loss_total" in r
-    assert re.search(r"prev_repaired=\$\(awk\s+'/\^zcrypto_trade_backfill_hours_repaired_after_loss_total/", r), (
-        "the previous total must be read back, or the counter resets every run"
+    read_at = r.find("prev_repaired=$(awk")
+    assert read_at != -1, "the previous total must be read back, or the counter resets every run"
+    # ORDER is the load-bearing property, not the line's presence: the whole .prom is rewritten each
+    # run, so a read placed after the mv silently resets the counter every time. A reviewer moved
+    # this line below the mv and the text-only assertion still passed.
+    assert read_at < r.index('mv "$backfill_textfile.tmp"'), (
+        "the previous total is read AFTER the file is replaced -- the counter resets every run"
     )
-    assert "backfill_repaired_total=$(( ${prev_repaired:-0} + ${backfill_repaired:-0} ))" in r
+    # Both operands base-10: the sed admits leading zeros, and a bare $(( )) reads 08 as OCTAL,
+    # whose expansion error leaves the total unset and aborts the whole cycle under `set -u`.
+    assert "10#${prev_repaired:-0}" in r and "10#${backfill_repaired:-0}" in r
 
 
 def test_the_repair_count_parse_matches_what_the_cli_actually_prints():
@@ -98,4 +107,13 @@ def test_a_failed_run_still_writes_every_series():
         "zcrypto_trade_backfill_last_success_timestamp",
         "zcrypto_trade_backfill_hours_repaired_after_loss_total",
     ):
-        assert f"printf '{series} " in block, f"{series} is not written unconditionally"
+        emitted = [ln for ln in block.splitlines() if f"printf '{series} " in ln]
+        assert emitted, f"{series} is never written"
+        for ln in emitted:
+            # Presence is not the property. A reviewer wrapped a printf in `if [ "$backfill_rc" -eq 0 ]`
+            # -- the exact 2026-07-17 shape this docstring cites -- and a substring check still passed.
+            # Any enclosing conditional indents the line past the block's own 8, so depth catches it.
+            assert len(ln) - len(ln.lstrip()) == 8, (
+                f"{series} is written at indent {len(ln) - len(ln.lstrip())}, not the block's 8 -- it "
+                f"sits inside a conditional, so a failed run DELETES the series"
+            )

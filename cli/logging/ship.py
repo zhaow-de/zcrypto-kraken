@@ -92,7 +92,7 @@ class LokiShipHandler(logging.Handler):
         self.last_ship_success_at: float | None = (
             None  # unix ts of the last "ok" from the main loop; the exit flush (see _run) does not update it
         )
-        # "the worker completed a cycle without failing" -- a different question from
+        # "the worker completed a cycle" -- a different question from
         # last_ship_success_at's "Loki accepted something", and the one an abort/liveness row
         # wants (T0106). A healthy capture daemon is quiet, so an idle cycle stamps this too;
         # a retrying one does not. Seeded here so the series exists from startup rather than
@@ -170,7 +170,7 @@ class LokiShipHandler(logging.Handler):
                 with self._ring_lock:
                     self.dropped_total += len(self._held)
                     self._dropped_unannounced += len(self._held)
-                    self.last_cycle_at = time.time()  # the batch was disposed of; the worker is alive
+                    self.last_cycle_at = time.time()  # a 4xx is still a completed cycle -- see the gauge's HELP
                 self._held, backoff = [], self._backoff_min_s
             else:
                 self._stop.wait(backoff)  # interruptible: close() never waits on this

@@ -53,6 +53,7 @@ LOGSHIP_SERIES = [
     "zcrypto_logship_dropped_lines_total",
     "zcrypto_logship_shipped_lines_total",
     "zcrypto_logship_last_success_timestamp_seconds",
+    "zcrypto_logship_last_cycle_timestamp_seconds",
 ]
 CAPTURE_APP_SERIES = [
     "zcrypto_capture_reconnects_total",
@@ -290,13 +291,37 @@ def test_alloy_self_metrics_are_dropped_before_the_keep(path):
 #   2. The union of all three configs is the bar, since a metric may legitimately be admitted only on
 #      the host that publishes it.
 # It cannot see a host running an older config than the repo -- that is a converge concern, not CI.
+# Scope is `zcrypto_*` only: the ops_*, node_* and hc_* families this infra also publishes are out
+# of range, and an uppercase name would fall out of the token pattern rather than fail. Both are
+# fail-open gaps, covered today by the per-host lists above.
 _SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py")
 
 # Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how
 # the trap grows back.
+# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
+# command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
+# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the eight
+# real names are absent from the candidate set entirely. Listed explicitly so narrowing that
+# wildcard fails here instead of taking eight series dark.
+INTERPOLATED_METRIC_NAMES = [
+    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all nine, including
+    # last_success_timestamp_seconds, which the scan only ever picked up because an unrelated comment
+    # in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not derivation.
+    "zcrypto_reconcile_last_success_timestamp_seconds",
+    "zcrypto_reconcile_source_lag_seconds",
+    "zcrypto_reconcile_healed_gap_seconds_total",
+    "zcrypto_reconcile_healable_gap_seconds_total",
+    "zcrypto_reconcile_residual_gap_seconds_total",
+    "zcrypto_reconcile_spliced_hours_total",
+    "zcrypto_reconcile_union_hours_total",
+    "zcrypto_reconcile_trade_dedup_rows_total",
+    "zcrypto_reconcile_trade_deficit_rows_total",
+]
+
 NOT_A_PUBLISHED_METRIC = {
     "zcrypto_ed25519",  # the vaulted deploy-key filename in infra/ansible/scripts/run.sh
     "zcrypto_owned",  # the logger-ownership marker in cli/logging/config.py, never exported
+    "zcrypto_reconcile_",  # the f-string STEM, not a series -- the real names are listed above
     # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
     # adds a `_created` series per Counter by default and `_use_created = False` disables them
     # process-wide. Confirmed absent from Grafana Cloud, as intended.
@@ -316,7 +341,15 @@ def _tokens_in_tree() -> dict[str, set[str]]:
 # Deliberately a shape match over the whole source, not a scan of definition sites: scanning
 # `MetricFamily(` and `# HELP` misses how cli/engine/command.py, cli/liquidations/coinalyze.py and
 # archive-pull.sh.j2 each publish, and a guard with blind spots is worse than none.
-PUBLISHED_METRIC_NAMES = sorted(n for n in _tokens_in_tree() if n not in NOT_A_PUBLISHED_METRIC)
+PUBLISHED_METRIC_NAMES = sorted({n for n in _tokens_in_tree() if n not in NOT_A_PUBLISHED_METRIC} | set(INTERPOLATED_METRIC_NAMES))
+
+# pytest SKIPS an empty parametrize by default, so a glob that stops matching (a cli/ reorg, a
+# rename) would silently evaporate this guard with the suite still green. The floor is deliberately
+# a real count, not `> 0`: the staleness test below cannot serve as the backstop, since emptying
+# NOT_A_PUBLISHED_METRIC makes it pass vacuously too.
+assert len(PUBLISHED_METRIC_NAMES) >= 30, (
+    f"only {len(PUBLISHED_METRIC_NAMES)} metric names found -- the source globs have drifted and this guard would pass vacuously"
+)
 
 
 def test_the_not_a_published_metric_list_has_not_gone_stale():

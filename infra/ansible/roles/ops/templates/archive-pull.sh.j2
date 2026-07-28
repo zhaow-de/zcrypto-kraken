@@ -173,11 +173,17 @@ else
         # because a per-run gauge would return to 0 and erase the very evidence this exists to keep.
         # The CLI prints the summary twice (its logger and its closing echo) with the same value, so
         # take the last match; a failed or output-less run yields empty and adds 0.
+        # 10# on BOTH operands, per this script's base-10 rule above: the sed admits leading zeros
+        # over arbitrary stdout, and a bare $(( )) reads 08 as OCTAL. That is not a wrong number --
+        # the expansion error leaves the variable UNSET, and `set -u` then aborts the shell at the
+        # next printf, so the mv never runs, trade-backfill.prom keeps stale content with exit_code
+        # still 0, ops-archive-pull.prom is never rewritten, and the hc.io ping is skipped. Unlike
+        # last_success, which only ever reaches printf %d and degrades to 0 with the shell alive.
         backfill_repaired=$(sed -n 's/.*hours_repaired_after_loss=\([0-9][0-9]*\).*/\1/p' "$backfill_log" | tail -1)
         rm -f "$backfill_log"
         backfill_textfile="{{ ops_textfile_dir }}/trade-backfill.prom"
         prev_repaired=$(awk '/^zcrypto_trade_backfill_hours_repaired_after_loss_total/ {print $2}' "$backfill_textfile" 2>/dev/null)
-        backfill_repaired_total=$(( ${prev_repaired:-0} + ${backfill_repaired:-0} ))
+        backfill_repaired_total=$(( 10#${prev_repaired:-0} + 10#${backfill_repaired:-0} ))
         # Review fix (2026-07-17): carry last_success FORWARD on failure, and write the series on
         # EVERY run. The old shape omitted the line on a failed run, which DELETED the series --
         # and zcrypto-trade-backfill-stale is noDataState: Alerting, so one bad day paged critical

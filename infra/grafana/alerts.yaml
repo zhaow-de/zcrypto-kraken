@@ -1965,9 +1965,15 @@ rules:
     data:
       # Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
       # buffer is empty, so last_success goes stale whenever logging is merely quiet -- which is
-      # what a healthy capture daemon looks like. This gauge advances on an idle cycle too and
-      # stalls only while pushes are failing or the thread is dead, so staleness here is a real
-      # fault. The worker cycles every second; 5 min is ~300 missed cycles.
+      # what a healthy capture daemon looks like. This gauge advances on an idle cycle too, and
+      # stalls only while the worker is stuck RETRYING (5xx/429/network) or wedged. The worker
+      # cycles every second; 5 min is ~300 missed cycles.
+      #
+      # What it deliberately does NOT catch: a permanently-rejected batch (non-429 4xx -- a revoked
+      # token, a bad URL) still completes a cycle and still advances this gauge, so logs can be
+      # discarded at full rate while this reads green. That fault belongs to
+      # zcrypto-logship-lines-dropped, which counts exactly those discards. Two questions, two
+      # rules -- conflating them is what left last_success unable to answer either.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -1991,7 +1997,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The log-shipping worker on the named host has not completed a cycle for over 5 minutes, so logs are no longer reaching Loki. Every Loki-based alert on this host is now silent for the wrong reason. Check the container is running and the Loki push endpoint and credentials still resolve."
+      summary: "The log-shipping worker on the named host has not completed a cycle for over 5 minutes -- it is stuck retrying a push it cannot complete, so logs are queueing and every Loki-based alert on this host is now silent for the wrong reason. Look for a Loki endpoint that is unreachable or erroring, not for rejected credentials: a rejected push still completes a cycle and would leave this rule green, showing up instead as dropped log lines."
     labels:
       severity: warning
     notification_settings:

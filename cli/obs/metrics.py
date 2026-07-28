@@ -112,9 +112,12 @@ class LogshipCollector:
         yield CounterMetricFamily("zcrypto_logship_shipped_lines_total", "Log lines successfully shipped to Loki.", value=shipped)
         # Liveness, published from startup: the shipper goes quiet whenever logging is quiet, so
         # last_success below is stale in ordinary steady state and cannot answer "is it alive?".
+        # It answers ONLY that -- a permanently-rejected batch (4xx) still advances it, because the
+        # worker did complete a cycle. "Is anything reaching Loki?" is dropped_lines_total's question,
+        # and conflating the two is what made last_success useless for liveness in the first place.
         yield GaugeMetricFamily(
             "zcrypto_logship_last_cycle_timestamp_seconds",
-            "Unix timestamp of the last log-shipping cycle that completed without a failed push.",
+            "Unix timestamp of the last log-shipping cycle the worker completed -- idle, shipped, or batch discarded.",
             value=last_cycle,
         )
         if last_success is not None:  # absent until the first success -- see the class docstring

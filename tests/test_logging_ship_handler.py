@@ -439,14 +439,18 @@ def test_last_cycle_timestamp_stalls_while_the_post_keeps_failing(handler_factor
     retrying cycle must not stamp it -- otherwise the row is green through a real outage."""
     handler_cls = handler_factory(status_code=500)  # 5xx -> 'retry', the wedged case
     with FakeLoki(handler_cls) as url:
-        handler = _make_handler(url, batch_max=2, ring_capacity=32, backoff_min_s=5.0)
+        # Short backoff, and the baseline captured BEFORE the first emit. The earlier form used a 5 s
+        # backoff and read the baseline after the first request, so a variant that wrongly stamps on
+        # the retry path had already stamped by then and the 0.3 s sleep sat inside the backoff wait
+        # -- it observed a short interval, never a stall, and a reviewer proved both the correct and
+        # the broken implementation passed it. Spanning several failing cycles is what discriminates.
+        handler = _make_handler(url, batch_max=2, ring_capacity=32, backoff_min_s=0.05)
         try:
+            seed = handler.last_cycle_at
             for i in range(2):
                 handler.emit(_make_record(f"m{i}"))
-            assert _wait_until(lambda: len(handler_cls.requests) >= 1)
-            stalled = handler.last_cycle_at
-            time.sleep(0.3)  # well inside the 5s backoff: the worker is waiting, not cycling
-            assert handler.last_cycle_at == stalled
+            assert _wait_until(lambda: len(handler_cls.requests) >= 3)  # several failed cycles elapsed
+            assert handler.last_cycle_at == seed, "a retrying cycle must not advance the liveness gauge"
         finally:
             handler_cls.status_code = 200
             handler.close()
