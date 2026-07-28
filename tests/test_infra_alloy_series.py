@@ -120,6 +120,10 @@ OPS_REQUIRED = [
     "zcrypto_reconcile_source_lag_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
+    # T0043: the repair count, exported as a monotone total by archive-pull.sh.j2. Admitted today
+    # only by the `zcrypto_trade_backfill_.*` wildcard — pinned by name so narrowing that wildcard
+    # fails here rather than silently dropping the series.
+    "zcrypto_trade_backfill_hours_repaired_after_loss_total",
     # T0083: the hc.io watchdog scrape's series. zcrypto-hcio-watchdog alerts on
     # hc_checks_down_total — dropping THAT silently disarms the Grafana half of the mutual
     # watchdog (same failure class as `up` above); hc_check_up is the per-check triage detail

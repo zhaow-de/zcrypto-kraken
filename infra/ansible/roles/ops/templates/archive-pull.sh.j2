@@ -147,6 +147,7 @@ else
     backfill_today="$(date -u +%Y-%m-%d)"
     if [ "$(cat "$backfill_stamp" 2>/dev/null || echo none)" != "$backfill_today" ]; then
         echo "$backfill_today" > "$backfill_stamp"
+        backfill_log="$(mktemp)"
         if docker run --rm --pull never \
                 --name zcrypto-trade-backfill \
                 --user "{{ ops_uid }}:{{ ops_gid }}" \
@@ -154,13 +155,29 @@ else
                 -v "{{ ops_data_dir }}:/data" \
                 --entrypoint zcrypto \
                 "{{ ops_image }}@{{ ops_image_digest }}" \
-                archive backfill-trades "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"; then
+                archive backfill-trades "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" \
+                > "$backfill_log" 2>&1; then
             backfill_rc=0
         else
             backfill_rc=$?
             echo "zcrypto-archive-pull: trade backfill failed (exit=$backfill_rc), continuing"
         fi
+        # Output is captured rather than streamed so the repair count can be read out of it, then
+        # replayed to the journal unchanged. No pipe on the run itself: this script sets `set -u`
+        # but NOT pipefail, so `docker run | tee` would report tee's status and every failure would
+        # read as success.
+        cat "$backfill_log"
+        # T0043: a settled hour with a book final but no trades final that this run minted. The
+        # sweep exits 0 on it and the next run reports 0, so until now the only trace was the log
+        # line above -- gone with the journal. Exported as a MONOTONE total, carried forward below,
+        # because a per-run gauge would return to 0 and erase the very evidence this exists to keep.
+        # The CLI prints the summary twice (its logger and its closing echo) with the same value, so
+        # take the last match; a failed or output-less run yields empty and adds 0.
+        backfill_repaired=$(sed -n 's/.*hours_repaired_after_loss=\([0-9][0-9]*\).*/\1/p' "$backfill_log" | tail -1)
+        rm -f "$backfill_log"
         backfill_textfile="{{ ops_textfile_dir }}/trade-backfill.prom"
+        prev_repaired=$(awk '/^zcrypto_trade_backfill_hours_repaired_after_loss_total/ {print $2}' "$backfill_textfile" 2>/dev/null)
+        backfill_repaired_total=$(( ${prev_repaired:-0} + ${backfill_repaired:-0} ))
         # Review fix (2026-07-17): carry last_success FORWARD on failure, and write the series on
         # EVERY run. The old shape omitted the line on a failed run, which DELETED the series --
         # and zcrypto-trade-backfill-stale is noDataState: Alerting, so one bad day paged critical
@@ -174,6 +191,7 @@ else
         printf 'zcrypto_trade_backfill_exit_code %d\n' "$backfill_rc" > "$backfill_textfile.tmp"
         printf 'zcrypto_trade_backfill_last_run_timestamp %d\n' "$(date -u +%s)" >> "$backfill_textfile.tmp"
         printf 'zcrypto_trade_backfill_last_success_timestamp %d\n' "$backfill_success" >> "$backfill_textfile.tmp"
+        printf 'zcrypto_trade_backfill_hours_repaired_after_loss_total %d\n' "$backfill_repaired_total" >> "$backfill_textfile.tmp"
         mv "$backfill_textfile.tmp" "$backfill_textfile"
     fi
 fi
