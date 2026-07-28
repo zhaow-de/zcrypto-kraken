@@ -67,8 +67,37 @@ def _expected_generation() -> dict[str, object]:
 def _check_generation(panel_root: Path) -> None:
     meta_path = panel_root / "panel-meta.json"
     if not meta_path.exists():
+        # An absent meta means "fresh tree" ONLY if the tree is actually fresh. Deleting the meta
+        # alone -- the obvious reading of the abort below, and the cheapest-looking way past it --
+        # would otherwise mint a new-generation manifest over old-generation hours, and every later
+        # run would read that manifest and pass. Nothing downstream can detect the mix: this check
+        # sees only the manifest, and the watermarked sweep never revisits an hour it has written.
+        stranded = next(panel_root.glob("*/*/panel-1s/*/*/*/*.parquet"), None)
+        if stranded is not None:
+            raise _abort(
+                f"panel materialize: {meta_path} is missing but the tree already holds hours "
+                f"(e.g. {stranded}). Deleting the manifest alone does not regenerate anything -- it "
+                f"would stamp this code's generation onto hours written by another one. Either "
+                f"restore the manifest (the NAS mirror carries a copy), or delete the whole tree on "
+                f"BOTH this host and the NAS -- the archive pull is `rsync -a` with no --delete, so "
+                f"deleting only one side leaves the other's hours to be pulled back alongside."
+            )
         write_meta(panel_root)
         return
+    # A matching manifest is not enough: the sweep is `PANEL_QUOTE`-scoped, so hours for a pair
+    # outside that scope are never revisited and stay at whatever generation wrote them. The manifest
+    # then asserts a generation the tree does not have, and a whole-tree read raises SchemaError on
+    # files nobody remembers exist. No sweep can repair it -- only deleting them can.
+    stray = next(
+        (h for h in panel_root.glob("*/*/panel-1s/*/*/*/*.parquet") if h.parts[-6] != PANEL_QUOTE),
+        None,
+    )
+    if stray is not None:
+        raise _abort(
+            f"panel materialize: the tree holds hours outside the {PANEL_QUOTE}-quoted scope this "
+            f"sweep covers (e.g. {stray}), so they can never be regenerated and the manifest would "
+            f"describe a generation they do not share. Delete them on BOTH this host and the NAS."
+        )
     expected = _expected_generation()
     existing_full = json.loads(meta_path.read_text())
     existing = {key: existing_full.get(key) for key in expected}

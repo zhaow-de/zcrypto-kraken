@@ -142,6 +142,86 @@ def test_meta_mismatch_refuses_before_writing_anything(tmp_path: Path) -> None:
     assert not final.exists()  # refused before writing anything
 
 
+def test_a_missing_meta_over_a_POPULATED_tree_refuses_instead_of_minting_a_fresh_one(tmp_path: Path) -> None:
+    """The generation guard read the meta file, not the tree it describes — so `rm panel-meta.json`
+    alone, which is the obvious response to its own abort message while a warning and a critical page
+    are both firing, wrote a fresh meta and then appended new-generation hours onto old ones. Every
+    later run read the new meta and passed. The tree is then permanently unreadable as a whole, and
+    nothing anywhere detects it: `_check_generation` cannot see the mix, and the watermarked sweep
+    never revisits an hour it has already written.
+
+    An absent meta means "fresh tree" ONLY if the tree is actually fresh.
+    """
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "BTC/EUR", H)
+    # A tree with hours in it and no meta: exactly the post-`rm` state.
+    stranded = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "15"
+    stranded.mkdir(parents=True)
+    (stranded / "09.parquet").write_bytes(b"not really parquet -- presence is what is checked")
+
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+
+    assert result.exit_code != 0, result.output
+    assert not (panel_root / "panel-meta.json").exists(), "a fresh meta was minted over an existing tree"
+    assert "panel-meta.json" in result.output
+    final = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet"
+    assert not final.exists(), "refused before writing anything"
+
+
+def test_an_out_of_scope_subtree_refuses_because_no_sweep_can_ever_repair_it(tmp_path: Path) -> None:
+    """The hole the manifest check could not see, and the one the planned regeneration creates. The
+    sweep is PANEL_QUOTE-scoped, so hours for a pair outside it are never revisited: they keep the
+    generation that wrote them while the manifest claims the current one, and a whole-tree read then
+    raises SchemaError on files nobody remembers exist. A matching manifest is not evidence the tree
+    matches it — and unlike every other mixed state, no re-run can repair this one."""
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "BTC/EUR", H)
+    write_meta(panel_root)  # a CURRENT, matching manifest -- the old check passed this happily
+    stray = panel_root / "ETH" / "BTC" / "panel-1s" / "2026" / "07" / "15"
+    stray.mkdir(parents=True)
+    (stray / "09.parquet").write_bytes(b"an hour the EUR-scoped sweep will never revisit")
+
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+
+    assert result.exit_code != 0, result.output
+    assert "ETH" in result.output and "BTC" in result.output, "the refusal must name what to delete"
+    assert "NAS" in result.output, "and that deleting one side leaves the other to be pulled back"
+    final = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet"
+    assert not final.exists(), "refused before writing anything"
+
+
+def test_orphan_sidecars_alone_do_not_look_like_a_populated_tree(tmp_path: Path) -> None:
+    """The guard keys on `*.parquet`, deliberately: a tree holding only `.state.json`/`.sha256`
+    leftovers has no hours, `panel_watermark` is None, and every hour re-materializes correctly. It
+    must bootstrap, not refuse."""
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "BTC/EUR", H)
+    orphans = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "15"
+    orphans.mkdir(parents=True)
+    (orphans / "09.parquet.sha256").write_text("deadbeef  09.parquet\n")
+    (orphans / "09.state.json").write_text("{}")
+
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+
+    assert result.exit_code == 0, result.output
+    assert (panel_root / "panel-meta.json").exists()
+
+
+def test_a_missing_meta_over_an_EMPTY_tree_still_bootstraps(tmp_path: Path) -> None:
+    """The first-ever run must keep working: no meta and no hours is a genuinely fresh tree."""
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "BTC/EUR", H)
+
+    result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+
+    assert result.exit_code == 0, result.output
+    assert (panel_root / "panel-meta.json").exists()
+
+
 # --- the I2 --since/watermark hole guard ---------------------------------------------------------------
 
 
