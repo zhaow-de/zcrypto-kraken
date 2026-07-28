@@ -4,7 +4,7 @@
 
 Scale the ceremony to the change size:
 
-- **Substantive iteration** (a feature, a non-trivial fix, anything multi-file or with design choices): run the full flow — `superpowers:brainstorming` → committed spec, `superpowers:writing-plans` → committed plan, cold spec+plan review, subagent-driven execution, and a `docs/iterations-history-phase<N>.md` closeout entry.
+- **Substantive iteration** (a feature, a non-trivial fix, anything multi-file or with design choices): run the full flow — `superpowers:brainstorming` → committed spec, `superpowers:writing-plans` → committed plan, cold spec+plan review, subagent-driven execution, and closeout through the `iteration-closeout` skill.
 - **Trivial change** (one-file / obvious — e.g. a log-format tweak, a rename/relocation, a doc or rule edit): do **not** commit a spec or plan, and skip the iterations-history entry (see `iterations-history.md`). Brainstorm a short design, get approval, then implement directly. If a written design is genuinely useful, keep it as a **transient scratch file deleted after implementation + testing** — never committed.
 
 **Cold spec+plan review (substantive flow only).** After the plan is committed and before execution starts: dispatch a fresh-context subagent to review the spec+plan **pair** — coverage (every spec requirement has a plan task), internal consistency, whether the planned verification pins the spec's load-bearing properties, and that every deferral sentence in the pair names a registered `T<NNNN>` or an explicit drop. Model floor Opus; **Fable** when the change touches the unbackfillable capture path, the live trade path, or canonical data. Fix findings before Task 1; material ones are folded into the plan, not just noted.
