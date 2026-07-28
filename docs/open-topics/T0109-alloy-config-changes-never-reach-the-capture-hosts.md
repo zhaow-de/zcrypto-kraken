@@ -30,6 +30,22 @@ Both hosts are identical: `sudo grep -c` on the deployed config returns **0** fo
 
 **The ops tier has the identical gate, and it has already cost a series.** `infra/ansible/roles/ops/tasks/main.yml` wraps its Alloy block in the same `when: ops_alloy_digest is defined`, with its config install inside — and `capture-deploys.md` instructs omitting that variable unless Alloy is the subject. Found 2026-07-28 by a reviewer checking a coverage claim: **`node_textfile_mtime_seconds` is admitted on capture but not on ops**, while `zcrypto-ops` runs the textfile collector (`node_scrape_collector_success{collector="textfile"}` = 1) over six `.prom` files. Cloud carries it for `zcrypto` and `zcrypto-red` and **not for `zcrypto-ops`** — so on the host running four timers, the signal that distinguishes *"the timer stopped"* from *"the timer ran and had nothing to report"* is invisible. The sibling `node_textfile_scrape_error` **is** admitted there, which is why nothing looked wrong.
 
+**SECOND LAYER, found 2026-07-28 during the ops converge that fixed the first — and it defeats that fix.** Passing the digest makes the config reach the *host*. It does not make it reach the *process*. All three tiers bind-mount a **single file**:
+
+```yaml
+- ./config.alloy:/etc/alloy/config.alloy:ro
+```
+
+A single-file bind mount binds the **inode**, not the path, and Ansible's `copy` writes atomically — temp file, then rename over the destination — which **replaces** the inode. The container keeps a handle on the old one and never sees another edit for its whole lifetime.
+
+Measured on `zcrypto-ops` immediately after a clean converge: host sha256 `4dc9663f…` against container sha256 `afccfc96…`, host inode `143271091` against container inode `143143831`, `grep -c` for the new term **1 on the host and 0 inside**. Alloy had reloaded successfully in between (`alloy_config_last_load_successful 1`) — re-reading the stale inode.
+
+**Every check said it worked.** Ansible reported `changed` (it did change the host file); `grep` on the host found the new term (it is there); the reload succeeded (it did); the exporter emitted all six `node_textfile_mtime_seconds` series (it always had). Each verification was correct and each measured the wrong side of the mount. Only comparing the host and container hashes exposed it.
+
+**Neither role has a handler** to recreate the container on a config change (`notify` count 0 on both), and a `restart` is not enough — the mount must re-resolve, which needs `docker compose up -d --force-recreate`.
+
+**Status by tier**: ops was *actively* stale and is fixed (container recreated 23:43:12Z; `node_textfile_mtime_seconds{instance=zcrypto-ops}` now reports 6, one per `.prom` file). Capture is *latent* — its containers happen to postdate their last config write, so they are correct today and will go stale the moment a config change ships. The NAS uses the same pattern.
+
 ## Why this matters
 
 **The measurement half of the 2026-07-27 blackout response is invisible in production.** Spec `00073` built `seconds_since_last_book_message` and `venue_status_total` precisely because every existing liveness signal read healthy through a 12-pair blackout. That code now runs on both hosts and emits correctly — and no alert can be written against it, no dashboard can show it, because the series never leaves the host.
@@ -62,6 +78,8 @@ The repo-side sub-items all landed 2026-07-28 on `docs/ops-converge-0728-record`
 
 ## Suggested next steps
 
-- *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs, then confirm **the two series the running image emits** — `zcrypto_capture_seconds_since_last_book_message` and `zcrypto_capture_venue_status_total` — arrive in Cloud. The two resubscribe counters and the logship liveness gauge are **not** expected to appear: none is in the running image (verified — their commits are not ancestors of the converged revision), so they wait on [[T0107]]'s roll. Config change, not a re-pin: no bake owed.
+- *(autonomous, ripe NOW)* **Add a handler that recreates Alloy when the config changes**, on both roles. `force-recreate`, not `restart` — the mount must re-resolve. Without it every future `config.alloy` edit is a silent no-op even when the digest is passed correctly.
+- *(autonomous, ripe NOW)* **Consider mounting the DIRECTORY rather than the file** (`./:/etc/alloy:ro` with the config inside), which removes the inode trap entirely rather than compensating for it with a handler. The NAS compose shares the pattern and would want the same treatment.
+- *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs, **recreate the Alloy container afterwards**, then confirm **the two series the running image emits** — `zcrypto_capture_seconds_since_last_book_message` and `zcrypto_capture_venue_status_total` — arrive in Cloud. The two resubscribe counters and the logship liveness gauge are **not** expected to appear: none is in the running image (verified — their commits are not ancestors of the converged revision), so they wait on [[T0107]]'s roll. Config change, not a re-pin: no bake owed.
 - *(ATTENDED, at the next OPS converge)* Pass `ops_alloy_digest=<currently-running>` so the ops config installs, then confirm `node_textfile_mtime_seconds` appears for `zcrypto-ops` in Cloud. Config change, not a re-pin; no bake owed on the ops tier.
 - *(autonomous, after that converge)* Re-evaluate [[T0105]]'s trigger, which is unsatisfiable until then.
