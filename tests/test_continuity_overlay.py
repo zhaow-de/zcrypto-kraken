@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 
 from cli.archive.settle import hour_path
 
@@ -85,3 +86,92 @@ def test_an_empty_raw_tree_still_prints_the_canonical_section(tmp_path, capsys, 
     assert rc == 1  # the raw report's verdict is still the exit status
     assert "CANONICAL" in out
     assert "ETH/EUR" in out
+
+
+# --- the report's two blind spots (T0097) ---------------------------------------------------------
+
+
+def test_a_window_with_no_data_reports_it_instead_of_dividing_by_zero(tmp_path, capsys, monkeypatch):
+    """`--since` filters per stream, well after the empty-tree guard, so a window that excludes every
+    hour leaves `totals` empty and the TOTAL row divides by zero. Reproduced: the operator got a
+    traceback where a plain "nothing in this window" belongs -- and a traceback from a verification
+    tool reads as "the tool is broken", not as "you asked about a window with no data"."""
+    raw = tmp_path / "raw"
+    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw), "--since", "2026-07-25"])
+
+    rc = continuity.main()
+    out = capsys.readouterr().out
+
+    assert rc != 0, "an answer about no data is not a PASS"
+    assert "no segments" in out
+    assert "EXIT BAR" not in out, "nothing was measured, so nothing may bank a verdict"
+
+
+def _column(out: str, prefix: str, field: str) -> str:
+    """The value under `field` on the row starting with `prefix`, located via the HEADER rather than
+    a fixed index -- so a column reorder is a test failure instead of a silently-passing assertion
+    about whatever now sits in slot N."""
+    lines = out.splitlines()
+    header = next(line for line in lines if field in line)
+    row = next(line for line in lines if line.startswith(prefix))
+    return row.split()[header.split().index(field)]
+
+
+def _two_streams(raw):
+    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    _write_hour(raw, "ADA/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 5)])
+
+
+def test_the_table_prints_the_threshold_that_produced_each_gap(tmp_path, capsys, monkeypatch):
+    """The silence threshold is derived per pair from that pair's own spacing, so a `0.0000%` can
+    mean "no silence" or "the threshold is so wide nothing counts as silence". Printing the number
+    beside the percentage it produced is what lets an operator disbelieve the zero.
+
+    The EXACT derived values are asserted, not "some number above 100": this topic's own failure
+    mode is a threshold so wide that silence stops being detectable, and a `> 100` assertion passes
+    happily with the 5 s floor raised to 5000. These two streams also demonstrate the spread the
+    column exists to show -- same hour, same tool, 6x apart on spacing alone.
+    """
+    raw = tmp_path / "raw"
+    _two_streams(raw)
+    monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw)])
+
+    rc = continuity.main()
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "thresh_s" in out
+    assert float(_column(out, "BTC/EUR", "thresh_s")) == pytest.approx(300.0)  # 30 s spacing
+    assert float(_column(out, "ADA/EUR", "thresh_s")) == pytest.approx(50.0)  # 5 s spacing
+
+
+def test_the_total_row_never_fabricates_a_threshold(tmp_path, capsys, monkeypatch):
+    """The threshold is per pair. Averaging them into the TOTAL row would invent a number that
+    describes no stream -- the same "statistic nobody can disbelieve" shape this column exists to
+    remove -- so that one slot stays blank while every other total is real."""
+    raw = tmp_path / "raw"
+    _two_streams(raw)
+    monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw)])
+
+    continuity.main()
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    header = next(line for line in lines if "thresh_s" in line)
+    total = next(line for line in lines if line.startswith("TOTAL"))
+    lo = header.index("thresh_s")
+
+    assert total[lo : lo + len("thresh_s")].strip() == "", f"the TOTAL row printed a threshold: {total!r}"
+
+
+def test_quiet_mode_drops_the_per_pair_rows_and_keeps_the_total(tmp_path, capsys, monkeypatch):
+    raw = tmp_path / "raw"
+    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw), "--quiet"])
+
+    rc = continuity.main()
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert not any(line.startswith("BTC/EUR") for line in out.splitlines())
+    assert "TOTAL" in out
