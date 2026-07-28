@@ -46,7 +46,7 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 - **Pause the healthchecks.io panel check, time-boxed, and un-pause explicitly** — it pings only on `rc=0`, and it is the timer's only liveness signal. The panel exit-code and ops ERROR-log rules also fire throughout.
 - **Delete both copies** — the NAS pull is `rsync -a` with no `--delete`, so an ops-side delete never propagates.
 - **Delete out-of-scope subtrees too.** The sweep is `PANEL_QUOTE`-scoped, so a pair outside it is never regenerated and never written again — it survives at the old generation beside the new, and `panel-meta.json` then asserts a generation the tree does not have. The manifest check cannot see it.
-- **Stop the timer, then run it inside the unit** so a stray trigger is a no-op, not a second writer.
+- **Stop the timer AFTER the converge, not before** — the role's enable-and-start task turns it back on, so a pre-converge disable is silently undone and the next tick fires into the new binary. Then run the regeneration inside the unit, so a stray trigger is a no-op rather than a second writer.
 - **Regeneration is the point of no return** — the previous image cannot read the new generation and no old tree survives, so rollback is another full rebuild. Take the user's word there, not at the converge.
 
 ## Ansible secrets
