@@ -44,7 +44,7 @@ Fixed in repo 2026-07-28 on `docs/ops-converge-0728-record` — **option (b)**, 
 - Seeded at construction, which **eliminates the third state** this topic recorded: the series is present from startup instead of absent until the first ship.
 - `cli/obs/metrics.py` exports `zcrypto_logship_last_cycle_timestamp_seconds`; admitted in the capture **and** ops keep-regexes in the same change.
 - Three tests pin it: an idle cycle advances it while `last_ship_success_at` stays `None`; a retrying cycle does not advance it; both series are exported distinctly.
-- **The open decision is answered by measurement, not judgement**: no Grafana rule reads the old gauge's freshness — `grep logship infra/grafana/alerts.yaml` returns only the dropped-lines rule — and `tests/test_infra_alert_rules.py`'s exclusion list already records that its staleness is not a fault. Its only consumer was the rollout checklist. A new rule, `zcrypto-logship-worker-stalled` (> 5 min ≈ 300 missed cycles), now carries what that gauge never could.
+- **The open decision is answered by measurement, not judgement**: no Grafana rule reads the old gauge's freshness — before this change, `grep logship infra/grafana/alerts.yaml` returned only the dropped-lines rule (it now also returns the new one added here) — and `tests/test_infra_alert_rules.py`'s exclusion list already records that its staleness is not a fault. Its only consumer was the rollout checklist. A new rule, `zcrypto-logship-worker-stalled` (> 5 min ≈ 300 missed cycles), now carries what that gauge never could.
 
 ## Suggested next steps
 
