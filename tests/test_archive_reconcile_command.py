@@ -974,3 +974,32 @@ def test_a_present_but_empty_final_is_booked_the_intersection_not_the_whole_hour
     ada = sum(w["seconds"] for w in fleet["stream_windows"].get("ADA/EUR", []))
     assert ada == pytest.approx(sum(w["seconds"] for w in fleet["windows"])), f"empty final booked {ada}s"
     assert ada < 3600.0, "the whole hour was booked for a stream we know nothing about"
+
+
+def test_an_unknown_ledger_state_moves_no_counter(tmp_path, monkeypatch):
+    """T0103's parked ledger correction is an appended `state: "correction"` note carrying no counter
+    field, and its whole safety argument is that `_totals` ignores it BY CONSTRUCTION — any record
+    that lowered `healed_gap_seconds_total` would read to Prometheus as a reset and report the
+    post-reset value as fresh healing, louder than the fiction it corrects.
+
+    Nothing pinned that. A refactor giving unknown states a default contribution would silently arm
+    the attended write, months later, with no test between it and the CRITICAL page."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    rec.mkdir(parents=True, exist_ok=True)
+    note = {
+        "state": "correction",
+        "pair": "*",
+        "kind": "book",
+        "hour": H.isoformat(),
+        "measured_healed_seconds": 82.955463,
+        "reason": "the counters over-stated this hour before the splice was measured",
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(note) + "\n")
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    series = _series(tmp_path / "r.prom")
+    for name in ("healed_gap_seconds_total", "residual_gap_seconds_total", "healable_gap_seconds_total"):
+        assert series[f"zcrypto_reconcile_{name}"] == pytest.approx(0.0), f"{name} moved on a note record"

@@ -574,7 +574,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the both_streams_silent / total_loss records behind it."
+      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this."
     labels:
       severity: critical
     notification_settings:
