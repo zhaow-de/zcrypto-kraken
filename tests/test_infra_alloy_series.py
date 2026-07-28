@@ -271,3 +271,63 @@ def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     assert drop_at != -1, f"{path}: no drop block"
     assert keep_at != -1, f"{path}: no keep block"
     assert drop_at < keep_at, f"{path}: the drop block must come before the keep block"
+
+
+# ---------------------------------------------------------------------------
+# The lists above are hand-maintained, which bounds what they can catch: they prove the keep-regex
+# still admits the series someone remembered to list. They cannot see a metric added to the code and
+# to no list -- and since the keep is an allow-list, that metric is dropped at remote_write and any
+# rule watching it reads no data forever, which renders identically to healthy.
+#
+# This guard closes that gap by DERIVING its candidates from the source tree. Two things it must get
+# right, both learned by getting them wrong on 2026-07-28:
+#   1. Membership is MATCHED, not compared -- keep entries are regexes, and the NAS admits the whole
+#      gate family as `zcrypto_gate_.*`. A literal comparison called all ten unadmitted; all are live.
+#   2. The union of all three configs is the bar, since a metric may legitimately be admitted only on
+#      the host that publishes it.
+# It cannot see a host running an older config than the repo -- that is a converge concern, not CI.
+_SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py")
+
+# Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how
+# the trap grows back.
+NOT_A_PUBLISHED_METRIC = {
+    "zcrypto_ed25519",  # the vaulted deploy-key filename in infra/ansible/scripts/run.sh
+    "zcrypto_owned",  # the logger-ownership marker in cli/logging/config.py, never exported
+    # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
+    # adds a `_created` series per Counter by default and `_use_created = False` disables them
+    # process-wide. Confirmed absent from Grafana Cloud, as intended.
+    "zcrypto_engine_orders_created",
+}
+
+
+def _tokens_in_tree() -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for glob in _SOURCE_GLOBS:
+        for path in REPO.glob(glob):
+            for m in re.finditer(r"zcrypto_[a-z0-9_]{4,}", path.read_text()):
+                found.setdefault(m.group(0), set()).add(str(path.relative_to(REPO)))
+    return found
+
+
+# Deliberately a shape match over the whole source, not a scan of definition sites: scanning
+# `MetricFamily(` and `# HELP` misses how cli/engine/command.py, cli/liquidations/coinalyze.py and
+# archive-pull.sh.j2 each publish, and a guard with blind spots is worse than none.
+PUBLISHED_METRIC_NAMES = sorted(n for n in _tokens_in_tree() if n not in NOT_A_PUBLISHED_METRIC)
+
+
+def test_the_not_a_published_metric_list_has_not_gone_stale():
+    """An exclusion naming a token no longer in the tree excuses nothing while the name it was
+    renamed to goes unguarded."""
+    stale = NOT_A_PUBLISHED_METRIC - set(_tokens_in_tree())
+    assert not stale, f"excluded but no longer in the tree (rename? removal?): {sorted(stale)}"
+
+
+@pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
+def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
+    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY)]
+    assert any(k.match(metric) for k in keeps), (
+        f"{metric} is published by this repo but matches no keep-regex on any host, so it is "
+        f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "
+        f"to the keep-regex of the host that publishes it, or -- if it is not a metric -- to "
+        f"NOT_A_PUBLISHED_METRIC with the reason."
+    )
