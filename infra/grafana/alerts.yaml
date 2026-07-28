@@ -1970,7 +1970,7 @@ rules:
       # cycles every second; 5 min is ~300 missed cycles.
       #
       # What it deliberately does NOT catch: a permanently-rejected batch (non-429 4xx -- a revoked
-      # token, a bad URL) still completes a cycle and still advances this gauge, so logs can be
+      # token, a wrong path) still completes a cycle and still advances this gauge, so logs can be
       # discarded at full rate while this reads green. That fault belongs to
       # zcrypto-logship-lines-dropped, which counts exactly those discards. Two questions, two
       # rules -- conflating them is what left last_success unable to answer either.

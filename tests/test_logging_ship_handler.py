@@ -446,10 +446,15 @@ def test_last_cycle_timestamp_stalls_while_the_post_keeps_failing(handler_factor
         # the broken implementation passed it. Spanning several failing cycles is what discriminates.
         handler = _make_handler(url, batch_max=2, ring_capacity=32, backoff_min_s=0.05)
         try:
-            seed = handler.last_cycle_at
             for i in range(2):
                 handler.emit(_make_record(f"m{i}"))
-            assert _wait_until(lambda: len(handler_cls.requests) >= 3)  # several failed cycles elapsed
+            assert _wait_until(lambda: len(handler_cls.requests) >= 1)
+            # Seed AFTER the batch is held, not before: until then the worker is idle and idle cycles
+            # legitimately stamp every flush_interval_s (20 ms here), so any scheduling delay between
+            # a pre-emit seed and the emits made CORRECT code fail this. With a batch held, no idle
+            # cycle can intervene, so every later stamp would be the bug.
+            seed = handler.last_cycle_at
+            assert _wait_until(lambda: len(handler_cls.requests) >= 4)  # several failed cycles elapsed
             assert handler.last_cycle_at == seed, "a retrying cycle must not advance the liveness gauge"
         finally:
             handler_cls.status_code = 200

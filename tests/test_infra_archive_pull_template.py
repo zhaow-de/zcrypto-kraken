@@ -114,6 +114,10 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
         + len('mv "$backfill_textfile.tmp" "$backfill_textfile"')
     ]
     prom = tmp_path / "trade-backfill.prom"
+    # Pre-seed a known total: presence alone does not pin monotonicity. A reviewer moved the
+    # prev_repaired read BELOW the arithmetic (still above the mv, so the order assertion held) and
+    # the counter silently reset to the per-run value every run while every test stayed green.
+    prom.write_text("zcrypto_trade_backfill_hours_repaired_after_loss_total 5\n")
     # A FAILED run with no parseable count -- the case that must still write all four.
     harness = f'set -u\nbackfill_rc=1\nbackfill_repaired=""\n' + block.replace(
         '"{}/trade-backfill.prom"'.format(CONTEXT["ops_textfile_dir"]), f'"{prom}"'
@@ -128,3 +132,7 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
         "zcrypto_trade_backfill_hours_repaired_after_loss_total",
     ):
         assert f"{series} " in written, f"{series} is missing after a FAILED run -- the series is deleted"
+    # The seeded 5 must survive a failed, count-less run: prev + 0 == 5. A read that happens after
+    # the arithmetic, or after the mv, yields 0 here.
+    total = next(ln for ln in written.splitlines() if ln.startswith("zcrypto_trade_backfill_hours_repaired_after_loss_total"))
+    assert total.split()[1] == "5", f"the carried-forward total was lost: {total!r} -- the counter is not monotone"

@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the repo-side half is DONE (rule line, T0107 amendment, and the CI drift guard). What remains is ATTENDED and rides the next capture-host converge for any reason: passing `capture_alloy_digest` so the config installs, after which five currently-undelivered series should arrive in Cloud
+ripe_when: the repo-side half is DONE (rule line, T0107 amendment, CI drift guard). What remains is ATTENDED: pass `capture_alloy_digest` at the next capture converge so the config installs. **That alone delivers only the TWO series the running image already emits** — `seconds_since_last_book_message` and `venue_status_total`. The other three admitted-but-undelivered series need [[T0107]]'s image roll as well, since the running image does not publish them; do not treat this converge as satisfying them
 ---
 
 # Every `config.alloy` change is silently skipped by ordinary capture converges
@@ -52,12 +52,12 @@ Two compounding failures, and the second is the durable one:
 Both repo-side sub-items landed 2026-07-28 on `docs/ops-converge-0728-record`:
 
 - **`capture-deploys.md` records the gate** — one line naming the safe alternative in the same sentence, per `agent-ops.md`'s footgun rule, since "omit the digest" is the surrounding discipline and reads as correct.
-- **[[T0107]] amended** — the Alloy converge is now listed as *required, not optional*, and its post-roll verification covers **five** undelivered series rather than the two resubscribe counters (the fifth is `zcrypto_logship_last_cycle_timestamp_seconds`, added by [[T0106]]'s fix on the same branch).
+- **[[T0107]] amended** — the Alloy converge is now listed as *required, not optional*, and its post-roll verification covers five undelivered series. **Those five are T0107's bar, not this converge's**: an Alloy-config-only converge can deliver at most the two the running image already emits.
 - **The CI drift guard landed** in `tests/test_infra_alloy_series.py`: a source-derived check that fails when a published `zcrypto_*` name matches no host's keep-regex. The pre-existing guards used hand-maintained lists, so a metric nobody listed was invisible to them.
 - **The real lesson is narrower than first recorded, and the first version was wrong.** A first pass reported 18 unadmitted names and blamed an admission surface "split across `config.alloy` files and Ansible host_vars". **There is no such split** — `host_vars/nas/vars.yml` carries no keep-list at all, and its only `zcrypto_gate` mention is a comment. All 18 came from comparing keep-list entries as *literals* when they are *regexes*: `infra/nas/config.alloy` admits the whole gate family as `zcrypto_gate_.*`. Of the 18, **14 are live series** and 3 are non-metrics (`zcrypto_ed25519`, `zcrypto_owned`, a bare `zcrypto_reconcile_` stem); the 4th non-live is `zcrypto_engine_orders_created`, a `_created` series suppressed process-wide. Consulting host_vars would have changed nothing.
 
 
 ## Suggested next steps
 
-- *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs; then confirm all five currently-undelivered series arrive in Cloud. This is a config change, not a digest re-pin — no bake owed, per `capture-deploys.md`'s pair-list precedent.
+- *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs, then confirm **the two series the running image emits** — `zcrypto_capture_seconds_since_last_book_message` and `zcrypto_capture_venue_status_total` — arrive in Cloud. The two resubscribe counters and the logship liveness gauge are **not** expected to appear: none is in the running image (verified — their commits are not ancestors of the converged revision), so they wait on [[T0107]]'s roll. Config change, not a re-pin: no bake owed.
 - *(autonomous, after that converge)* Re-evaluate [[T0105]]'s trigger, which is unsatisfiable until then.

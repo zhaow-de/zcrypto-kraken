@@ -170,7 +170,7 @@ class LokiShipHandler(logging.Handler):
                 with self._ring_lock:
                     self.dropped_total += len(self._held)
                     self._dropped_unannounced += len(self._held)
-                    self.last_cycle_at = time.time()  # a 4xx is still a completed cycle -- see the gauge's HELP
+                    self.last_cycle_at = time.time()  # a non-429 4xx is still a completed cycle -- see the gauge's HELP
                 self._held, backoff = [], self._backoff_min_s
             else:
                 self._stop.wait(backoff)  # interruptible: close() never waits on this

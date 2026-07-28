@@ -139,8 +139,6 @@ OPS_REQUIRED = [
     "ops_verify_replay_exit_code",
     "ops_verified_replay_exit_code",
     "ops_verified_replay_last_success_timestamp",
-    "zcrypto_reconcile_last_success_timestamp_seconds",
-    "zcrypto_reconcile_source_lag_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
     *INTERPOLATED_METRIC_NAMES,
