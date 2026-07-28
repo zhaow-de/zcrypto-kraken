@@ -20,7 +20,7 @@ For that one hour the ledger claims **2,311.536587 s healed** across 11 pairs, e
 | total span of the spliced secondary blocks | 69.997211 s |
 | L2 permanently absent from the canonical archive | **2,437.147792 s** across 12 pairs |
 
-LINK/EUR is the sharpest case: **6 update rows spanning 1.638743 s, booked as 209.493793 s healed.**
+LINK/EUR is the sharpest case: **6 update rows, booked as 209.493793 s healed.** Their spliced block spans 1.638743 s from its single snapshot; the update rows themselves span 0.005246 s across 3 distinct timestamps.
 
 ## Why this matters
 
