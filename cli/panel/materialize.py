@@ -55,7 +55,13 @@ PANEL_SETTLE = timedelta(hours=7)
 # own constant here since that name is module-private and this is generation metadata, not math).
 K_LEVELS: tuple[int, int, int] = (1, 5, 10)
 
-SCHEMA_VERSION = 1
+# 2 (T0104): `stale_seconds` joined PANEL_SCHEMA. A column addition is a GENERATION change under
+# spec 00052 D5 -- polars raises `SchemaError: extra column in file outside of expected schema` on
+# any multi-hour scan mixing 19- and 20-column hours, EVEN when the query touches only old columns,
+# so the documented calibration read over `panel-1s/**/*.parquet` would break the moment one new
+# hour landed. The bump makes `_check_generation` refuse until the tree is regenerated, which is
+# what D5 already prescribes -- a loud stop instead of a silently unreadable panel.
+SCHEMA_VERSION = 2
 
 
 def _pair_dir(root: Path, pair: str) -> Path:
@@ -177,7 +183,7 @@ def _state_path(panel_root: Path, pair: str, hour: datetime) -> Path:
     return d / f"{hour:%H}.state.json"
 
 
-def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook, *, last_msg_ts: datetime | None = None) -> Path:
+def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook, *, last_msg_ts: datetime | None) -> Path:
     """Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
     watermark resume (spec 00052 D3). `str(Decimal)` keys/values round-trip exactly -- a bare JSON
     float would silently reintroduce the precision loss `OrderBook._prune` was written to avoid
@@ -210,10 +216,15 @@ def load_state(panel_root: Path, pair: str, hour: datetime, *, depth: int = 100)
         book = OrderBook(pair, depth)
         book.bids = {Decimal(price): Decimal(qty) for price, qty in data["bids"].items()}
         book.asks = {Decimal(price): Decimal(qty) for price, qty in data["asks"].items()}
-        raw = data.get("last_msg_ts")
-        return book, (datetime.fromisoformat(raw) if raw else None)
     except Exception:  # noqa: BLE001 -- missing/corrupt state must never crash the sweep
         return None, None
+    try:
+        raw = data.get("last_msg_ts")
+        return book, (datetime.fromisoformat(raw) if raw else None)
+    except Exception:  # noqa: BLE001 -- a corrupt CLOCK must not discard an intact BOOK: the hour
+        # still anchors and materializes, reporting unknown staleness until its first message --
+        # exactly what a legacy sidecar does.
+        return book, None
 
 
 def panel_watermark(panel_root: Path, pair: str) -> datetime | None:

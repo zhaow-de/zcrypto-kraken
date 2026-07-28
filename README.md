@@ -215,7 +215,7 @@ The summary line reports what the sweep **found** and, separately, what it **hea
 
 ### `zcrypto panel`<a name="zcrypto-panel"></a>
 
-The 1s L2 primitive panel: materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair.
+The 1s L2 primitive panel: materializes the canonical book archive (reconciled-first) into a 1-second-grid, wide primitive panel — spread/mid/microprice/imbalance, effective-spread-at-size (`fill_bps_*`), and cumulative depth (`depth_qty_*`) — one row per second per pair. Each row also carries `stale_seconds`: seconds since the last message reached the book. The grid is dense, so an archive hole still emits rows — carrying a frozen, carried-forward book that `updates == 0` alone cannot distinguish from a quiet second. **Filter `stale_seconds > 30` to drop those; a null means the staleness is unknown, and is dropped by both `>` and `<=` comparisons.**
 
 ```bash
 zcrypto panel materialize <primary_root> [reconciled_root] --panel-root <path>

@@ -218,7 +218,7 @@ def test_write_state_and_load_state_round_trip_decimals_exactly(tmp_path: Path) 
     book.bids = {Decimal("100.00000000"): Decimal("1.50000000")}
     book.asks = {Decimal("101.10000000"): Decimal("2.25000000")}
 
-    path = write_state(panel_root, "BTC/EUR", H, book)
+    path = write_state(panel_root, "BTC/EUR", H, book, last_msg_ts=None)
 
     assert path == panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.state.json"
     raw = json.loads(path.read_text())
@@ -271,7 +271,7 @@ def test_panel_watermark_ignores_state_sidecars(tmp_path: Path) -> None:
     # A stray state sidecar with no matching parquet final (e.g. an hour that materialized state but
     # never reached write_hour) must not be mistaken for a later panel hour.
     stray_book = OrderBook("BTC/EUR", 10)
-    write_state(panel_root, "BTC/EUR", H + timedelta(hours=5), stray_book)
+    write_state(panel_root, "BTC/EUR", H + timedelta(hours=5), stray_book, last_msg_ts=None)
 
     assert panel_watermark(panel_root, "BTC/EUR") == H
 
@@ -435,7 +435,7 @@ def test_write_meta_writes_the_generation_manifest(tmp_path: Path) -> None:
 
     assert path == panel_root / "panel-meta.json"
     meta = json.loads(path.read_text())
-    assert meta["schema_version"] == 1
+    assert meta["schema_version"] == 2  # T0104 bumped it: stale_seconds is a generation change
     assert meta["grid"] == "1s"
     assert meta["notionals_eur"] == [100.0, 1000.0, 10000.0]
     assert meta["k_levels"] == [1, 5, 10]
@@ -463,16 +463,24 @@ def test_final_fractional_second_messages_reach_the_carried_book(tmp_path: Path)
         {"offset": 3599.5, "type": "update", "bids": [], "asks": [(101.0, 0.0), (150.0, 1.0)], "checksum": 2},
     ]
     msgs_h2 = [
-        {"offset": 0, "type": "update", "bids": [(100.0, 2.0)], "asks": [], "checksum": 3},
+        # deliberately NOT at offset 0: second 0 must sample the CARRIED clock (0.5 s), which a
+        # message on the boundary would mask by resetting it to 0.0.
+        {"offset": 5, "type": "update", "bids": [(100.0, 2.0)], "asks": [], "checksum": 3},
     ]
     path_h = _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, msgs_h))
     path_h2 = _book(primary, "BTC/EUR", h2, _explode("BTC/EUR", h2, msgs_h2))
 
-    frame_h, book_h, _lm = materialize_hour(path_h, "BTC/EUR", H, depth=10)
+    frame_h, book_h, last_h = materialize_hour(path_h, "BTC/EUR", H, depth=10)
+    # T0104: the drained message reaches the carried BOOK, so it must reach the carried CLOCK too --
+    # otherwise H+1's first rows report a 0.5 s-old book as a full hour stale (a ~3600x error, in
+    # the direction that makes honest rows look fabricated and get filtered away).
+    assert last_h == H + timedelta(seconds=3599.5)
     # H's own rows never saw the 3599.5s move (no boundary owns it)...
     assert frame_h["mid"][-1] == pytest.approx((100 + 101) / 2)
     # ...but the carried book did: H+1 opens on mid (100+150)/2.
-    frame_h2, _, _lm2 = materialize_hour(path_h2, "BTC/EUR", h2, depth=10, book=book_h)
+    frame_h2, _, _lm2 = materialize_hour(path_h2, "BTC/EUR", h2, depth=10, book=book_h, last_msg_ts=last_h)
+    # Second 0 of H+1 is 0.5 s after H's drained message -- the carried clock, not a restart.
+    assert frame_h2["stale_seconds"][0] == pytest.approx(0.5)
     assert frame_h2["mid"][0] == pytest.approx((100 + 150) / 2), "final-second message lost from the carry"
 
 
@@ -594,3 +602,59 @@ def test_stale_seconds_is_in_the_schema_and_the_written_hour(tmp_path: Path) -> 
     frame, _b, _l = materialize_hour(path, "BTC/EUR", H, depth=10)
     out = write_hour(tmp_path / "panel", "BTC/EUR", H, frame)
     assert "stale_seconds" in pl.read_parquet(out).columns
+
+
+def test_the_sweep_threads_the_clock_across_a_resumed_run(tmp_path: Path) -> None:
+    """The gap review found: every new test drove `materialize_hour` directly, so THREE separate
+    one-line deletions in the sweep -- dropping `last_msg_ts` from the `write_state` call, from the
+    `materialize_hour` call, or from the first-touch resume -- all survived while producing null
+    exactly where a large number belongs. Production takes the resume path on EVERY run (the hourly
+    timer is a fresh process resuming from the watermark), so those nulls would have headed every
+    hour, and a `> 30` filter drops nulls from BOTH sides of the partition.
+    """
+    primary = tmp_path / "primary"
+    reconciled = tmp_path / "reconciled"
+    panel = tmp_path / "panel"
+    h2 = H + timedelta(hours=1)
+    # Hour H: snapshot at :00, last message at :10, silence to the end.
+    _book(
+        primary,
+        "BTC/EUR",
+        H,
+        _explode(
+            "BTC/EUR",
+            H,
+            [
+                {"offset": 0, "type": "snapshot", "bids": [(100.0, 1.0)], "asks": [(101.0, 1.0)], "checksum": 1},
+                {"offset": 10, "type": "update", "bids": [(100.0, 2.0)], "asks": [], "checksum": 2},
+            ],
+        ),
+    )
+    # Hour H+1 opens with an update 5 s in, so seconds 0..4 continue H's silence.
+    _book(
+        primary,
+        "BTC/EUR",
+        h2,
+        _explode(
+            "BTC/EUR",
+            h2,
+            [
+                {"offset": 5, "type": "update", "bids": [(100.0, 4.0)], "asks": [], "checksum": 3},
+            ],
+        ),
+    )
+
+    # TWO sweeps, deliberately: a single call carries the clock in memory and would pass even with
+    # the sidecar wiring cut. The hourly timer is a FRESH PROCESS every run, so only a real resume
+    # -- sweep 2 reading sweep 1's sidecar -- exercises what production does.
+    settle = timedelta(hours=1)
+    materialize(primary, reconciled, panel, depth=10, settle=settle, now=H + timedelta(hours=1, minutes=30), since=H)
+    assert not (panel / "BTC" / "EUR" / "panel-1s" / f"{h2:%Y}" / f"{h2:%m}" / f"{h2:%d}" / f"{h2:%H}.parquet").exists(), (
+        "hour H+1 must still be unsettled after sweep 1, or this test never resumes"
+    )
+    materialize(primary, reconciled, panel, depth=10, settle=settle, now=h2 + timedelta(hours=12), since=H)
+    frame = pl.read_parquet(panel / "BTC" / "EUR" / "panel-1s" / f"{h2:%Y}" / f"{h2:%m}" / f"{h2:%d}" / f"{h2:%H}.parquet")
+    first = frame.sort("ts").row(0, named=True)
+    assert first["stale_seconds"] == pytest.approx(3590.0), (
+        f"hour H+1 second 0 reports {first['stale_seconds']} -- the clock did not cross the boundary"
+    )

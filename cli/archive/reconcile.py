@@ -224,6 +224,48 @@ def _block(source: str, frame: pl.DataFrame) -> Block:
     return Block(source=source, frame=frame, from_ts=lo, to_ts=hi)
 
 
+def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds: float) -> list[Gap]:
+    """What each gap STILL lacks after the splice — the output, measured, not the input assumed.
+
+    `healed_seconds` used to be the full width of a primary-silence window, admitted on the strength
+    of a single secondary `update` row anywhere inside it (`secondary_covers`). One row admits the
+    window; it does not fill it. Measured on the real 2026-07-27 07:00 hour that read as
+    2,311.536587 s healed against 82.955463 s actually inserted — and the same hour separately
+    booked 2,385.847992 s of `both_streams_silent`, so 2,187.027326 stream-seconds appeared in a
+    "we covered it" counter and a "nobody covered it" counter in the same cycle.
+
+    So: re-run the window arithmetic over the spliced rows. Within each gap, pair consecutive
+    boundaries — the gap's own start, every spliced message inside it, the gap's end — and keep the
+    windows still wider than `min_gap_seconds`. The SAME threshold as `find_book_gaps`, deliberately:
+    a hole too small to be a gap on the way in must not become residual on the way out.
+
+    Boundary ownership is inherited from the gap being measured, so a residual window that reaches
+    an original edge still says who owns it and stays safe to filter with.
+    """
+    if not gaps:
+        return []
+    inside_ts = _message_ts(spliced) if spliced.height else []
+    residual: list[Gap] = []
+    for gap in gaps:
+        marks = [t for t in inside_ts if gap.start <= t <= gap.end]
+        boundaries = [gap.start, *marks, gap.end]
+        for lo, hi in zip(boundaries, boundaries[1:], strict=False):
+            if (hi - lo).total_seconds() <= min_gap_seconds:
+                continue
+            residual.append(
+                Gap(
+                    start=lo,
+                    end=hi,
+                    seconds=(hi - lo).total_seconds(),
+                    # An interior boundary is a spliced message; an outer one keeps the gap's own
+                    # ownership so the result filters exactly like the gap it came from.
+                    start_is_primary_message=gap.start_is_primary_message if lo == gap.start else False,
+                    end_is_primary_message=gap.end_is_primary_message if hi == gap.end else False,
+                )
+            )
+    return residual
+
+
 def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap]) -> list[Block]:
     """Mint the hour as ordered blocks: primary up to each gap, secondary inside it, primary after.
 
