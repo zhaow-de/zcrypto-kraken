@@ -57,9 +57,9 @@ def test_the_repair_count_is_exported_as_a_monotone_total():
     erase the evidence. The exported series must therefore ADD to what the file already holds."""
     r = _rendered()
     assert "zcrypto_trade_backfill_hours_repaired_after_loss_total" in r
-    assert re.search(
-        r"prev_repaired=\$\(awk\s+'/\^zcrypto_trade_backfill_hours_repaired_after_loss_total/", r
-    ), "the previous total must be read back, or the counter resets every run"
+    assert re.search(r"prev_repaired=\$\(awk\s+'/\^zcrypto_trade_backfill_hours_repaired_after_loss_total/", r), (
+        "the previous total must be read back, or the counter resets every run"
+    )
     assert "backfill_repaired_total=$(( ${prev_repaired:-0} + ${backfill_repaired:-0} ))" in r
 
 
