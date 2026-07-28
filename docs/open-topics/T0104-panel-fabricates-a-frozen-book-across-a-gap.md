@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: NOW — the damage is already in the materialized panel (2026-07-27 hour 07, written 14:22 local), the measurement is on disk, and every further blackout adds more. It is also ripe on any decision that would consume `l2-panel` for feature engineering, since the fabricated rows are indistinguishable from quiet ones without this fix
+status: partial
+ripe_when: the re-materialization is ATTENDED and ripe once the stale_seconds image/deploy reaches the panel materializer on the ops node — re-run the affected hours (2026-07-27 07 onward, and the 2026-07-13 event if its panel hours exist) so the already-written frozen rows carry the marker too; writes land on the NAS/ops, never through the soft mount
 ---
 
 # The panel emits a frozen book across a canonical gap, and the hour reads as complete
@@ -37,9 +37,17 @@ Timing note, recorded because it was initially got wrong: a first pass reported 
 - `cli/panel/materialize.py` resets the book on **every** snapshot row, and minted files now carry two snapshots ~7 s apart, so the spliced secondary block is discarded before it can contribute. For this consumer the reconciler's already-small real heal is effectively zeroed. This couples the two topics but the defects are independent.
 - `/mnt/zhao-crypto/l2-panel/BTC/EUR/panel-1s/2026/07/27/` contains hours 00–08; hour 07 is 251,715 bytes with its full 3600 rows.
 
+## Done so far
+
+**The marker is BUILT (2026-07-28, `stale_seconds`).** Owner decision: option (a), an explicit column — not row suppression, since the dense 3600-row grid is what every downstream consumer assumes and a sparse grid moves the failure from wrong values to wrong shape.
+
+- `PANEL_SCHEMA` gains `stale_seconds` (Float64): seconds from the last message **applied to the book** to that boundary. **Null means unknown, never 0.0** — a state sidecar predating the column cannot assert freshness.
+- **Threaded across hours**, with the clock persisted beside the book in `<HH>.state.json` (a legacy sidecar loads with a null time rather than crashing the sweep). This is load-bearing: the 2026-07-13 blackout began at **06:59:59.69**, inside the previous hour, and a within-hour counter would have restarted at exactly the moment the number mattered most. The trailing-drain messages advance the clock too — they reach the carried book, so they must reach its clock.
+- **Verified against the real incident**, not only fixtures. Replaying 2026-07-27 hour 07 from the canonical archive: blackout 212 rows / 2 distinct `mid` / `stale_max` **203.0 s**, against a quiet-second control of 11 rows / 8 distinct `mid` / `stale_max` **1.4 s**. Filtering `stale_seconds > 30` removes **174** fabricated rows and keeps 3,426 honest ones.
+- Five tests cover the mechanism, the cross-hour thread, the null-not-zero rule, the sidecar round trip (including the legacy shape), and that the column reaches the written parquet — a column nothing writes being [[T0100]]'s defect in another costume.
+
 ## Suggested next steps
 
-- **Decide the representation first, then build it.** Options, in rough order of preference: (a) emit an explicit staleness marker column (e.g. `seconds_since_last_update`) so a consumer can filter; (b) suppress rows across a canonical gap above a threshold, leaving the grid genuinely sparse; (c) both. (a) preserves the dense grid every downstream consumer assumes; (b) is safer for a naive consumer but breaks that assumption. **Do not ship (b) without checking every reader of `l2-panel`.**
-- **Add the case to `tests/test_panel_materialize.py`**: a canonical gap longer than the threshold must not produce rows indistinguishable from quiet ones. Assert on the *distinguishing* property — a frozen `mid` across N consecutive rows with `updates == 0` — since that is what a consumer would key on.
+- **(ATTENDED) Re-materialize the hours already written**, once the change reaches the ops node's materializer: the rows on disk today still carry no marker. The inputs are immutable so the replay is deterministic, but it rewrites bytes a manifest may cover — check before rewriting, and never write through the NFS mount.
 - **Decide what to do about the already-materialized hours.** Re-materializing 2026-07-27 hours 07–08 with the fix is cheap and the inputs are immutable, but it changes bytes a manifest may already cover — check before rewriting anything, and never write through the NFS mount.
 - **Sweep for other blackouts already in the panel**: the 2026-07-13 event (2,697.235577 s per-pair total) predates the panel's current frontier and may carry the same signature. Measure before assuming it does not.
