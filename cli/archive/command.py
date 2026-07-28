@@ -41,6 +41,7 @@ from cli.archive.reconcile import (
     union_trades,
 )
 from cli.archive.settle import (
+    containing_dark_window,
     fleet_dark_windows,
     hour_path,
     is_late,
@@ -191,8 +192,13 @@ def _booked_dark(records: list[dict], pair: str, hour: datetime) -> list[tuple[d
     for record in records:
         if record.get("state") != "both_streams_silent" or record.get("hour") != stamp:
             continue
-        if pair in (record.get("pairs") or []):
-            windows += _spans(record.get("windows") or [])
+        if pair not in (record.get("pairs") or []):
+            continue
+        # `stream_windows` is what was actually booked for this stream; `windows` is the
+        # intersection. Records written before the two were split carry only the latter, and there
+        # it WAS what got booked -- so reading either keeps history correctly subtracted.
+        per_stream = (record.get("stream_windows") or {}).get(pair)
+        windows += _spans(per_stream if per_stream is not None else (record.get("windows") or []))
     return windows
 
 
@@ -534,6 +540,7 @@ def reconcile(
         # --- load this hour's book streams once: gap detection AND the dual-silence timeline ----
         books: dict[str, dict[str, pl.DataFrame | None]] = {}
         stamps: list[datetime] = []
+        pair_stamps: dict[str, list[datetime]] = {}  # per stream, BOTH mirrors -- see `containing_dark_window`
         broken = False
         for pair in book_pairs:
             frames: dict[str, pl.DataFrame | None] = {}
@@ -550,6 +557,7 @@ def reconcile(
                     broken = True
                     continue
                 stamps.extend(frames[source]["ts"].to_list())
+                pair_stamps.setdefault(pair, []).extend(frames[source]["ts"].to_list())
             books[pair] = frames
 
         # --- both_streams_silent: unconditional, no witness needed ------------------------------
@@ -560,13 +568,29 @@ def reconcile(
         if present and not broken:
             windows = fleet_dark_windows(stamps, hour_start=hour, hour_end=hour_end, min_seconds=min_gap_seconds)
             if windows and not _decided("*", "book", hour, "both_streams_silent"):
-                # Per dark book stream -- minus whatever that stream's own book record already booked
-                # for the same seconds. Normally none exists yet and this is the full window x count;
-                # after a cycle in which an unreadable segment suppressed this detector, the pairs that
-                # minted in the meantime booked their residual first, and it must not be booked again.
-                spans = [(w.start, w.end) for w in windows]
-                dark_total = sum(w.seconds for w in windows)
-                residual = sum(dark_total - overlap_seconds(_booked_residual(records, p, hour), spans) for p in present)
+                # Book each stream its OWN silence window around each intersection, not the
+                # intersection itself: that window is bounded by whichever stream returned first, so
+                # `intersection x count` charges every stream with the binding one's loss. Measured
+                # 34.243169 s (1.27%) invisible on 2026-07-13 -- in the reassuring direction.
+                #
+                # Deduplicated per stream: two intersections exist only because some OTHER stream
+                # ticked between them, and a stream that did not tick has ONE window containing both.
+                stream_windows: dict[str, list] = {}
+                for p in present:
+                    own: list = []
+                    for w in windows:
+                        c = containing_dark_window(pair_stamps.get(p, []), w, hour_start=hour, hour_end=hour_end)
+                        if c is not None and c not in own:
+                            own.append(c)
+                    stream_windows[p] = own
+                # Minus whatever that stream's own book record already booked for the same seconds:
+                # normally none exists yet, but after a cycle in which an unreadable segment
+                # suppressed this detector, a pair that minted meanwhile booked its residual first.
+                residual = sum(
+                    sum(c.seconds for c in own)
+                    - overlap_seconds(_booked_residual(records, p, hour), [(c.start, c.end) for c in own])
+                    for p, own in stream_windows.items()
+                )
                 logger.error(
                     "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f",
                     hour.isoformat(),
@@ -580,6 +604,12 @@ def reconcile(
                     hour=hour.isoformat(),
                     pairs=present,
                     windows=[{"start": w.start, "end": w.end, "seconds": w.seconds} for w in windows],
+                    # What was ACTUALLY booked, per stream. `_booked_dark` reads this so the healed
+                    # path subtracts the same seconds; `windows` stays as the intersection provenance.
+                    stream_windows={
+                        p: [{"start": c.start, "end": c.end, "seconds": c.seconds} for c in own]
+                        for p, own in stream_windows.items()
+                    },
                     residual_seconds=residual,
                 )
 

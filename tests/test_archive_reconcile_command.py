@@ -831,3 +831,94 @@ def test_the_unwitnessed_finding_is_announced_once_not_every_cycle(tmp_path, mon
 
     announced = [r for r in caplog.records if "unwitnessed" in r.message]
     assert len(announced) == 1, [r.message for r in announced]
+
+
+# --- per-intersection-window booking (T0103) -------------------------------------------------------
+
+
+def _dark_from(pri: Path, sec: Path, hour: datetime, pair: str, *, quiet_from: int, quiet_to: int) -> None:
+    """Both mirrors silent for this pair across [quiet_from, quiet_to); dense either side."""
+    stamps = [float(s) for s in range(0, 3600, 10) if not quiet_from <= s < quiet_to]
+    _write(pri, pair, "book", hour, _book(pair, hour, [(s, "update") for s in stamps]))
+    _write(sec, pair, "book", hour, _book(pair, hour, [(s + 3.0, "update") for s in stamps if s + 3.0 < 3600]))
+
+
+def test_each_stream_is_booked_its_own_window_not_the_intersection(tmp_path, monkeypatch):
+    """BTC returns first, so it binds the intersection; ETH stays dark 200 s longer. Booking the
+    intersection x 2 would charge ETH with BTC's shorter loss and lose the surplus entirely."""
+    pri, sec, rec = _roots(tmp_path)
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    per_stream = {p: sum(w["seconds"] for w in ws) for p, ws in fleet["stream_windows"].items()}
+    # BTC: last stamp 593 (sec) -> first at 1200. ETH: 593 -> 1400.
+    assert per_stream["ETH/EUR"] > per_stream["BTC/EUR"], per_stream
+    assert per_stream["ETH/EUR"] - per_stream["BTC/EUR"] == pytest.approx(200.0)
+    assert fleet["residual_seconds"] == pytest.approx(sum(per_stream.values()))
+
+
+def test_a_streams_window_spanning_two_fleet_windows_is_booked_once(tmp_path, monkeypatch):
+    """Two fleet-dark windows exist because ONE stream ticked between them. The stream that did not
+    tick has a single window containing both, and summing per-window would book it twice."""
+    pri, sec, rec = _roots(tmp_path)
+    # BTC ticks once at 900, splitting the intersection into [600,900) and [900,1500).
+    btc = [float(s) for s in range(0, 3600, 10) if not 600 <= s < 1500] + [900.0]
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(s, "update") for s in sorted(btc)]))
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(s, "update") for s in sorted(btc)]))
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1500)  # silent across both windows
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    eth = fleet["stream_windows"]["ETH/EUR"]
+    assert len(eth) == 1, f"one window, not one per fleet window: {eth}"
+    assert eth[0]["seconds"] < 1000.0, "the hour was not booked twice"
+
+
+def test_the_healed_path_subtracts_the_stream_window_the_fleet_record_actually_booked(tmp_path, monkeypatch):
+    """The attributed-exactly-once invariant. `_booked_dark` must read the per-stream window, not
+    the intersection -- otherwise the wider window is booked fleet-wide and its surplus is booked
+    AGAIN as the pair's own residual."""
+    pri, sec, rec = _roots(tmp_path)
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    booked = sum(w["seconds"] for ws in fleet["stream_windows"].values() for w in ws)
+    total = _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"]
+    assert total == pytest.approx(booked), "every second attributed exactly once across both paths"
+
+
+def test_a_pre_split_fleet_record_still_reads_as_the_intersection(tmp_path, monkeypatch):
+    """The ledger is append-only. Records written before `stream_windows` existed carry only
+    `windows`, and the healed path must still subtract them or it double-books history."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    # The gap must be genuinely UNFILLED or the assertion is vacuous: a fully-healed gap leaves
+    # `unfilled == 0`, and the record reads 0.0 whether or not the legacy window was subtracted.
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+    rec.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        "state": "both_streams_silent",
+        "pair": "*",
+        "kind": "book",
+        "hour": H.isoformat(),
+        "pairs": ["BTC/EUR"],
+        "residual_seconds": 590.0,
+        "windows": [
+            {"start": (H + timedelta(seconds=600)).isoformat(), "end": (H + timedelta(seconds=1190)).isoformat(), "seconds": 590.0}
+        ],
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(legacy) + "\n")
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"][0]
+    assert minted["residual_gaps"], "the gap must be genuinely unfilled or this test asserts nothing"
+    assert minted["residual_seconds"] == pytest.approx(0.0), "the legacy record's 590 s are still subtracted"

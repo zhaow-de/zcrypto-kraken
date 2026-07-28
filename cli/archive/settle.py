@@ -129,6 +129,45 @@ def fleet_dark_windows(
     return windows
 
 
+def containing_dark_window(
+    stamps: Iterable[datetime], window: DarkWindow, *, hour_start: datetime, hour_end: datetime
+) -> DarkWindow | None:
+    """ONE stream's own silence window containing `window` — the fleet-dark intersection.
+
+    The intersection is the window in which EVERY stream was silent, so it is bounded by whichever
+    stream went quiet last and whichever returned first. Booking it × stream count therefore books
+    the binding stream's loss for all of them, and every other stream's surplus is booked nowhere.
+    Measured on 2026-07-13: intersection 266.178874 s against 2,696.031909 s of own windows across
+    10 streams — 34.243169 s (1.27%) invisible, and invisible in the reassuring direction.
+
+    Per-intersection-window, deliberately, rather than "every window this stream was dark for" —
+    but this BOUNDS the thin-market false positive rather than excluding it, and the difference
+    matters. The containing window is still the stream's own undecidable silence: a genuine fleet
+    blip landing inside a thin stream's natural quiet drags that whole quiet window into a monotone
+    counter driving the permanent-loss page. Constructed and measured: a real 31 s blip inside a
+    600 s thin-pair quiet books 976.5 s against a truth of 372 s.
+
+    What makes it safe TODAY is the universe, not the algorithm. Over all 24 hours of 2026-07-26,
+    both mirrors, all 12 pairs: maximum natural silence 11.44 s, p99.9 ≤ 2.6 s, and ZERO windows
+    above the 30 s threshold — so the containing window exceeds the intersection only by about twice
+    the per-stream message spacing. The exposure grows if genuinely thin pairs enter the universe;
+    re-measure that distribution before widening it.
+
+    `stamps` is this stream's own timestamps across BOTH mirrors: a window the secondary witnessed
+    is not this stream's silence, and booking it would double-count against the healed-gap path.
+
+    Returns None when a stamp falls strictly inside `window` — impossible for a true intersection,
+    since it is built from the union of every stream's stamps and such a stamp would have split it.
+    Guarded rather than assumed: the caller must never book a window that does not exist.
+    """
+    inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
+    edges = [hour_start, *inside, hour_end]
+    for a, b in zip(edges, edges[1:], strict=False):
+        if a <= window.start and window.end <= b:
+            return DarkWindow(start=a, end=b, seconds=(b - a).total_seconds())
+    return None
+
+
 def is_total_loss(
     hour: datetime,
     *,
