@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: ripe NOW as a small change, but it carries one genuine design question (below), so it wants a decision rather than a reflex — take it with the next `cli/trades` touch, or when a mint failure is actually observed in the ops backfill logs
+status: resolved
 ---
 
 # Rows fetched for an hour whose mint fails land in no summary bucket
@@ -24,9 +23,11 @@ It is the same shape as [[T0078]] — a real outcome with no bucket — but with
 - `README.md`'s summary sentence claims "every outcome bucket a fetched or existing row can land in". After [[T0078]]'s fix that is true for every path *except* this one, so the sentence is again slightly ahead of the code.
 - The design question, which is why this is not a reflex fix: a fetched-but-unminted row is **retryable** — the next run re-detects the gap and re-fetches. So the honest bucket may be a *transient* counter (`mint_failed`, reset each run) rather than a loss counter, and it must **not** be subtracted in D9's `residual_missing` the way `fetch_error_missing` is, or a genuine post-mint gap would stop tripping the invariant. Getting that backwards would weaken the strongest check in the sweep.
 
-## Suggested next steps
+## Resolution
 
-- **(Decide first)** Whether the new counter participates in the D9 residual arithmetic. Recommended: **no** — count it for the operator, keep D9 blind to it, so a mint failure still trips the invariant loudly. Record the choice in the code comment beside the counter.
-- **(Autonomous, small)** Add the run-level counter beside `fetch_failed`, thread it into both summary sites (the `logger.info` format string in `backfill.py` **and** the `typer.echo` in `cli/archive/command.py` — [[T0078]]'s review showed the second is easy to miss), and pin **both** with tests: a `caplog` assertion for the log line and a CLI assertion for the echo.
-- **(With it)** Extend `README.md`'s bucket sentence so the "every outcome bucket" guarantee is true again.
-- Trivial-change path per `.claude/rules/spec-plan-locations.md`: branch off `develop`, TDD, subagent review, PR into `develop` — no committed spec/plan.
+**Resolved 2026-07-28 by commit `fbfc8fa2`**, on a shared carrier with [[T0043]] — the same defect class (a real outcome with no printed bucket) in the same sweep.
+
+- **The decision, ruled by the owner: the counter does NOT participate in the residual arithmetic.** A fetched-but-unminted row is retryable — the next run re-detects the gap and re-fetches it — so booking it as an explained absence would make the strongest check in the sweep go quiet on exactly the failure it exists for. The reasoning is written beside the counter in `cli/trades/backfill.py`, and `test_a_mint_failure_still_trips_the_accounting_invariant` pins it: the invariant still reports `unaccounted=3` while `mint_failed=3`.
+- **`trades_mint_failed` counts `union.added_from_secondary`** — the same quantity `recovered` uses, so the two are directly comparable — accumulated in the `except` branch that previously only logged and `continue`d. The isolation the topic required is preserved: one bad mint still does not end the sweep.
+- **Both printers pinned**, the `logger.info` format string and `cli/archive/command.py`'s `typer.echo`, because T0078's review found that deleting a bucket from the format string left every test green when only the result object was asserted.
+- **`README.md`'s "every outcome bucket a fetched or existing row can land in" is true again.**

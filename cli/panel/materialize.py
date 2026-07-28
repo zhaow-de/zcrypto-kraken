@@ -55,7 +55,13 @@ PANEL_SETTLE = timedelta(hours=7)
 # own constant here since that name is module-private and this is generation metadata, not math).
 K_LEVELS: tuple[int, int, int] = (1, 5, 10)
 
-SCHEMA_VERSION = 1
+# 2 (T0104): `stale_seconds` joined PANEL_SCHEMA. A column addition is a GENERATION change under
+# spec 00052 D5 -- polars raises `SchemaError: extra column in file outside of expected schema` on
+# any multi-hour scan mixing 19- and 20-column hours, EVEN when the query touches only old columns,
+# so the documented calibration read over `panel-1s/**/*.parquet` would break the moment one new
+# hour landed. The bump makes `_check_generation` refuse until the tree is regenerated, which is
+# what D5 already prescribes -- a loud stop instead of a silently unreadable panel.
+SCHEMA_VERSION = 2
 
 
 def _pair_dir(root: Path, pair: str) -> Path:
@@ -64,8 +70,14 @@ def _pair_dir(root: Path, pair: str) -> Path:
 
 
 def materialize_hour(
-    path: Path, pair: str, hour: datetime, *, depth: int = 100, book: OrderBook | None = None
-) -> tuple[pl.DataFrame, OrderBook]:
+    path: Path,
+    pair: str,
+    hour: datetime,
+    *,
+    depth: int = 100,
+    book: OrderBook | None = None,
+    last_msg_ts: datetime | None = None,
+) -> tuple[pl.DataFrame, OrderBook, datetime | None]:
     """Replay one canonical hour into the 1s-grid wide primitive panel, threading `OrderBook` state
     across hours (spec 00052 D3 correction).
 
@@ -74,8 +86,11 @@ def materialize_hour(
     an update instead continues from the carried `book`, sampling from second 0 with that state; if
     no `book` was carried (`book is None`), the hour cannot anchor and this raises `PanelError` --
     the sweep (`materialize`) categorizes that as `hours_unanchored`, an honest gap, not an error.
-    Returns `(frame, book)`: the sampled frame and the end-of-hour book state, for the caller to
-    persist (`write_state`) and carry into the next hour.
+    Returns `(frame, book, last_msg_ts)`: the sampled frame, the end-of-hour book state, and the
+    time of the last message applied -- all three for the caller to persist (`write_state`) and carry
+    into the next hour. `last_msg_ts` is threaded rather than recomputed per hour because a blackout
+    can span an hour boundary (the 2026-07-13 event began at 06:59:59.69), and a within-hour counter
+    would silently restart at exactly the moment the number matters most (T0104).
 
     Samples at each second boundary `hour+0s .. hour+3599s`: the row at boundary T reflects the book
     state after applying every message with `ts <= T`, and `updates` counts the messages applied in
@@ -110,9 +125,11 @@ def materialize_hour(
                 book.ingest_snapshot(message)
             else:
                 book.ingest_update(message)
+            last_msg_ts = message["ts"]
             updates += 1
             msg_idx += 1
-        row = sample_row(book.bids, book.asks, updates=updates)
+        stale = (boundary - last_msg_ts).total_seconds() if last_msg_ts is not None else None
+        row = sample_row(book.bids, book.asks, updates=updates, stale_seconds=stale)
         updates = 0
         if row is not None:
             row["ts"] = boundary
@@ -127,8 +144,9 @@ def materialize_hour(
             book.ingest_snapshot(message)
         else:
             book.ingest_update(message)
+        last_msg_ts = message["ts"]  # these reach the carried book, so they must reach its clock too
         msg_idx += 1
-    return pl.DataFrame(rows, schema=PANEL_SCHEMA), book
+    return pl.DataFrame(rows, schema=PANEL_SCHEMA), book, last_msg_ts
 
 
 def write_hour(panel_root: Path, pair: str, hour: datetime, frame: pl.DataFrame) -> Path:
@@ -165,7 +183,7 @@ def _state_path(panel_root: Path, pair: str, hour: datetime) -> Path:
     return d / f"{hour:%H}.state.json"
 
 
-def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook) -> Path:
+def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook, *, last_msg_ts: datetime | None) -> Path:
     """Persist `book`'s end-of-hour state as `<HH>.state.json`, next to the hour's parquet, for O(1)
     watermark resume (spec 00052 D3). `str(Decimal)` keys/values round-trip exactly -- a bare JSON
     float would silently reintroduce the precision loss `OrderBook._prune` was written to avoid
@@ -176,6 +194,10 @@ def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook) ->
     state = {
         "bids": {str(price): str(qty) for price, qty in book.bids.items()},
         "asks": {str(price): str(qty) for price, qty in book.asks.items()},
+        # T0104: the staleness clock crosses hours with the book, so it is persisted with it. A
+        # sidecar written before this key still loads -- `load_state` returns None for the time,
+        # which the panel emits as a null `stale_seconds` rather than a fabricated 0.0.
+        "last_msg_ts": last_msg_ts.isoformat() if last_msg_ts is not None else None,
     }
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(state))
@@ -183,19 +205,26 @@ def write_state(panel_root: Path, pair: str, hour: datetime, book: OrderBook) ->
     return path
 
 
-def load_state(panel_root: Path, pair: str, hour: datetime, *, depth: int = 100) -> OrderBook | None:
-    """Load the book state `write_state` persisted for `hour`, or None if the sidecar is missing or
-    corrupt -- never raises: an unreadable state file simply means the resuming hour cannot anchor
-    (the sweep then counts it `hours_unanchored`, an honest gap, not a crash)."""
+def load_state(panel_root: Path, pair: str, hour: datetime, *, depth: int = 100) -> tuple[OrderBook | None, datetime | None]:
+    """Load the book state `write_state` persisted for `hour` as `(book, last_msg_ts)`, or
+    `(None, None)` if the sidecar is missing or corrupt -- never raises: an unreadable state file
+    simply means the resuming hour cannot anchor (the sweep then counts it `hours_unanchored`, an
+    honest gap, not a crash). A sidecar predating T0104's `last_msg_ts` key yields a None time."""
     path = _state_path(panel_root, pair, hour)
     try:
         data = json.loads(path.read_text())
         book = OrderBook(pair, depth)
         book.bids = {Decimal(price): Decimal(qty) for price, qty in data["bids"].items()}
         book.asks = {Decimal(price): Decimal(qty) for price, qty in data["asks"].items()}
-        return book
     except Exception:  # noqa: BLE001 -- missing/corrupt state must never crash the sweep
-        return None
+        return None, None
+    try:
+        raw = data.get("last_msg_ts")
+        return book, (datetime.fromisoformat(raw) if raw else None)
+    except Exception:  # noqa: BLE001 -- a corrupt CLOCK must not discard an intact BOOK: the hour
+        # still anchors and materializes, reporting unknown staleness until its first message --
+        # exactly what a legacy sidecar does.
+        return book, None
 
 
 def panel_watermark(panel_root: Path, pair: str) -> datetime | None:
@@ -278,6 +307,7 @@ def materialize(
     watermarks: dict[str, datetime | None] = {}
     prev_hour: dict[str, datetime | None] = {}
     books: dict[str, OrderBook | None] = {}
+    last_seen: dict[str, datetime | None] = {}  # T0104: the staleness clock, carried with the book
     unanchored_run: dict[str, bool] = {}  # suppresses repeat WARNING logging within one bad run
 
     skipped_pairs: set[str] = set()  # logged once per pair, not per hour
@@ -298,7 +328,10 @@ def materialize(
             watermark = panel_watermark(panel_root, seg_pair)
             watermarks[seg_pair] = watermark
             prev_hour[seg_pair] = watermark
-            books[seg_pair] = load_state(panel_root, seg_pair, watermark, depth=depth) if watermark is not None else None
+            if watermark is not None:
+                books[seg_pair], last_seen[seg_pair] = load_state(panel_root, seg_pair, watermark, depth=depth)
+            else:
+                books[seg_pair], last_seen[seg_pair] = None, None
             unanchored_run[seg_pair] = False
         watermark = watermarks[seg_pair]
         if watermark is not None and hour <= watermark:
@@ -315,21 +348,26 @@ def materialize(
 
         if prev_hour[seg_pair] is None or hour != prev_hour[seg_pair] + timedelta(hours=1):
             books[seg_pair] = None  # a canonical gap -- any carried book can no longer be trusted
+            last_seen[seg_pair] = None  # ...and its staleness clock is meaningless without it
 
         try:
-            hour_frame, book_out = materialize_hour(path, seg_pair, hour, depth=depth, book=books[seg_pair])
+            hour_frame, book_out, last_out = materialize_hour(
+                path, seg_pair, hour, depth=depth, book=books[seg_pair], last_msg_ts=last_seen[seg_pair]
+            )
         except PanelError as exc:
             if not unanchored_run[seg_pair]:
                 logger.warning("panel materialize: pair=%s hour=%s unanchored: %s", seg_pair, hour.isoformat(), exc)
                 unanchored_run[seg_pair] = True
             hours_unanchored += 1
             books[seg_pair] = None
+            last_seen[seg_pair] = None
             prev_hour[seg_pair] = hour
             continue
         except Exception as exc:  # noqa: BLE001 -- one bad hour must not abort the sweep
             logger.exception("panel materialize failed pair=%s hour=%s", seg_pair, hour)
             errors.append((seg_pair, hour, f"{type(exc).__name__}: {exc}"))
             books[seg_pair] = None
+            last_seen[seg_pair] = None
             prev_hour[seg_pair] = hour
             unanchored_run[seg_pair] = False
             continue
@@ -338,13 +376,14 @@ def materialize(
         # between the writes leaves the parquet unpublished (next run re-materializes, overwriting
         # the orphan state) rather than a watermark hour whose missing sidecar would spuriously
         # unanchor its successor.
-        write_state(panel_root, seg_pair, hour, book_out)
+        write_state(panel_root, seg_pair, hour, book_out, last_msg_ts=last_out)
         write_hour(panel_root, seg_pair, hour, hour_frame)
         hours_written += 1
         rows += hour_frame.height
         watermarks[seg_pair] = hour  # advance in-memory so later hours in this same sweep see it
         prev_hour[seg_pair] = hour
         books[seg_pair] = book_out
+        last_seen[seg_pair] = last_out
         unanchored_run[seg_pair] = False
 
     return MaterializeResult(hours_written, hours_skipped, hours_unanchored, hours_unsettled, rows, errors, len(skipped_pairs))

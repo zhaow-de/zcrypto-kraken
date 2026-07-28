@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -531,3 +532,445 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
     assert 'source="primary"} +Inf' in " ".join(lag_lines), f"primary lag not +Inf: {lag_lines}"
     assert 'source="secondary"} 100.0' in " ".join(lag_lines)
     assert " inf" not in text.lower(), f"bare 'inf' would break the whole textfile: {text!r}"
+
+
+# --- the counters describe the OUTPUT, not the input (T0103) --------------------------------------
+#
+# The 2026-07-27 07:00 UTC blackout: both mirrors went dark together and the secondary contributed
+# only its post-resubscribe tail. `healed_seconds` was the full window WIDTH, admitted on one
+# secondary update anywhere inside it, so the ledger claimed 2,311.536587 s healed against
+# 82.955463 s actually spliced -- and the alert that reads it told an operator "every gap was
+# covered" for 24 h. These two tests are that shape, and both fail against the pre-fix wiring.
+
+
+def _outage(pri: Path, sec: Path, hour: datetime, pair: str, *, secondary_dark: bool) -> None:
+    """The primary is silent 600 s -> 1200 s. The secondary either goes dark with it and comes back
+    with a 3-message tail at 1190-1192 (the correlated shape), or stays dense (an ordinary primary
+    gap the secondary really does cover)."""
+    _write(pri, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in range(0, 3600, 10) if not 600 < s < 1200]))
+    if secondary_dark:
+        stamps = sorted([s for s in range(3, 3600, 10) if not 596 < s < 1190] + [1190, 1191, 1192])
+    else:
+        stamps = list(range(3, 3600, 10))
+    _write(sec, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in stamps]))
+
+
+def test_healed_is_what_the_splice_inserted_not_the_window_it_was_admitted_on(tmp_path, monkeypatch):
+    """One pair loses both mirrors while the other keeps recording, so no fleet-dark window exists to
+    absorb the loss: the whole unfilled remainder is this pair's own residual."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["kind"] == "book"]
+    assert len(minted) == 1, [r["state"] for r in _ledger(rec)]
+    record = minted[0]
+    assert record["claimed_seconds"] == pytest.approx(600.0), "the window the gap was admitted on"
+    assert record["healed_seconds"] == pytest.approx(10.0), "only the 10 s after the secondary came back was covered"
+    assert record["residual_seconds"] == pytest.approx(590.0), "the 590 s neither mirror held is permanent loss"
+    assert sum(g["seconds"] for g in record["residual_gaps"]) == pytest.approx(590.0)
+    assert "both_streams_silent" not in _states(rec), "one pair going dark alone is not a fleet outage"
+
+
+def test_a_fleet_dark_window_is_never_booked_as_loss_twice(tmp_path, monkeypatch):
+    """Both pairs lose both mirrors simultaneously. `both_streams_silent` already books that
+    intersection into the loss counter for every stream, so the per-pair residual must book only
+    what is left over -- correcting a heal over-count must not manufacture a loss over-count."""
+    pri, sec, rec = _roots(tmp_path)
+    for pair in PAIRS:
+        _outage(pri, sec, H, pair, secondary_dark=True)
+
+    result = _run(
+        [str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch
+    )
+    assert result.exit_code == 0, result.output
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert len(fleet) == 1 and fleet[0]["residual_seconds"] == pytest.approx(1180.0), fleet  # 590 s x 2 streams
+    minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["kind"] == "book"]
+    assert len(minted) == 2
+    for record in minted:
+        assert record["healed_seconds"] == pytest.approx(10.0)
+        assert record["residual_seconds"] == pytest.approx(0.0), "every one of its 590 s is already in the fleet record"
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(20.0)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
+    # The invariant the two predicates exist to keep: per stream, nothing is claimed twice.
+    assert (20.0 + 1180.0) <= 600.0 * len(PAIRS) + 1e-9
+
+
+def test_the_gap_rate_still_sees_the_full_window_the_secondary_witnessed(tmp_path, monkeypatch):
+    """`healable_gap_seconds_total` is the DEGRADING-PRIMARY signal, so it stays denominated in
+    primary silence -- otherwise a correlated outage, which is not the primary degrading, would make
+    the rate signal quieter than an ordinary one."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=False)
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_healable_gap_seconds_total"] == pytest.approx(600.0)
+    would = [r for r in _ledger(rec) if r["state"] == "would_mint"][0]
+    assert would["healed_seconds"] == pytest.approx(600.0), "a live secondary really does cover the window"
+    assert would["residual_seconds"] == pytest.approx(0.0)
+
+
+def test_the_provenance_sidecar_records_what_the_hour_still_lacks(tmp_path, monkeypatch):
+    """`residual_gaps` was a literal `[]` at every mint call, so every provenance file on the NAS
+    claims a complete hour. The sidecar is the cheapest audit surface there is -- a pure file
+    assertion over data already on disk -- and it is worthless while it always says the same thing."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    sidecar = json.loads(_seg_path(rec, "BTC/EUR", "book", H).with_name("09.provenance.json").read_text())
+    assert sum(g["seconds"] for g in sidecar["residual_gaps"]) == pytest.approx(590.0), sidecar["residual_gaps"]
+    assert sum(g["seconds"] for g in sidecar["gaps_healed"]) == pytest.approx(600.0), "the window it was admitted on"
+
+
+def test_the_gap_rate_still_reads_the_full_window_when_the_heal_was_almost_nothing(tmp_path, monkeypatch):
+    """`claimed_seconds` and `healed_seconds` must stay distinguishable in the shape that separates
+    them: collapsing the rate onto the measured heal would drop the real event's degrading-primary
+    signal from 2,311 s to 83 s."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_healable_gap_seconds_total"] == pytest.approx(600.0)
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(10.0)
+
+
+def test_the_would_mint_to_minted_flip_books_the_permanent_loss_once(tmp_path, monkeypatch):
+    """Both records now carry a MEASURED residual, and the same hour is ledgered twice across the
+    flip. Summed twice, the second step reads to the CRITICAL permanent-loss page as a fresh event --
+    an increase, so that rule's counter-reset guard does not suppress it."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "detect.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "mint.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert _states(rec) == ["would_mint", "minted"]
+    assert _series(tmp_path / "detect.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(590.0)
+    assert _series(tmp_path / "mint.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(590.0)
+
+
+def test_a_pair_whose_mirror_arrives_after_the_fleet_decision_still_books_its_own_loss(tmp_path, monkeypatch):
+    """`both_streams_silent` is decided ONCE, for the pairs present on that cycle. A pair whose files
+    land later was never given a share of it, so subtracting a freshly recomputed dark window from
+    its residual would delete a real loss from a total nobody ever added it to."""
+    pri, sec, rec = _roots(tmp_path)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert fleet[0]["pairs"] == ["BTC/EUR"] and fleet[0]["residual_seconds"] == pytest.approx(590.0)
+
+    _outage(pri, sec, H, "ETH/EUR", secondary_dark=True)  # the second pair's mirrors land a cycle late
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    eth = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "ETH/EUR"][0]
+    assert eth["residual_seconds"] == pytest.approx(590.0), "no fleet record ever booked ETH/EUR's share"
+    assert _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
+
+
+def test_a_pair_that_minted_before_the_fleet_detector_ran_is_not_booked_twice(tmp_path, monkeypatch):
+    """The mirror image: an unreadable segment suppresses the fleet detector for a cycle (an honest
+    timeline cannot be built from it), so a pair that mints meanwhile books its residual FIRST. The
+    fleet record must then book only the streams that have not already booked their own."""
+    pri, sec, rec = _roots(tmp_path)
+    for pair in PAIRS:
+        _outage(pri, sec, H, pair, secondary_dark=True)
+    _seg_path(sec, "ETH/EUR", "book", H).write_bytes(b"not a parquet")
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    btc = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"][0]
+    assert btc["residual_seconds"] == pytest.approx(590.0), "nothing had booked it yet"
+    assert "both_streams_silent" not in _states(rec)
+
+    _outage(pri, sec, H, "ETH/EUR", secondary_dark=True)  # the segment is re-pulled intact
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    assert fleet["residual_seconds"] == pytest.approx(590.0), "BTC/EUR's 590 s was already on its own record"
+    assert _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
+
+
+# --- the pair with the biggest hole and no ledger record at all (T0103) ---------------------------
+#
+# ADA/EUR lost 208.566668 s in the 2026-07-27 blackout -- the largest hole in the canonical archive
+# for that hour -- and produced NO record. Its secondary held 200 rows inside the gap, every one a
+# `snapshot` at a single timestamp and not one an `update`, so `secondary_covers` was False,
+# `find_book_gaps` returned [] and the `if not gaps: continue` path wrote nothing.
+
+
+def _unwitnessed(pri: Path, sec: Path, hour: datetime, pair: str) -> None:
+    """The primary is silent 600 s -> 1200 s; the secondary holds only SNAPSHOT rows inside it, at a
+    single instant -- the post-reconnect re-snapshot, which is full state but never market activity,
+    so it may not testify that anything was lost."""
+    _write(pri, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in range(0, 3600, 10) if not 600 < s < 1200]))
+    stamps = [(float(s), "update") for s in range(3, 3600, 10) if not 600 < s < 1200]
+    stamps += [(900.0, "snapshot")] * 5  # one instant, five level-rows, zero updates
+    _write(sec, pair, "book", hour, _book(pair, hour, sorted(stamps)))
+
+
+def test_a_gap_no_update_witnessed_is_ledgered_instead_of_vanishing(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    records = [r for r in _ledger(rec) if r["state"] == "unwitnessed"]
+    assert len(records) == 1, _states(rec)
+    assert records[0]["pair"] == "BTC/EUR"
+    assert sum(g["seconds"] for g in records[0]["gaps_unwitnessed"]) == pytest.approx(600.0)
+    assert not any(r["state"] == "minted" and r["pair"] == "BTC/EUR" for r in _ledger(rec)), "nothing to splice"
+
+
+def test_an_unwitnessed_gap_moves_no_counter(tmp_path, monkeypatch):
+    """Visibility only. Its seconds are ALREADY booked by `both_streams_silent` whenever the fleet
+    was dark, so feeding a counter here would double-count them -- and when the fleet was NOT dark,
+    a single pair silent on both mirrors is indistinguishable from a quiet market, which is the very
+    ambiguity the fleet-wide intersection exists to resolve. So it is ledgered and never counted."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(0.0)
+    assert series["zcrypto_reconcile_healable_gap_seconds_total"] == pytest.approx(0.0)
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(0.0)
+
+
+def test_a_witnessed_gap_is_not_also_reported_as_unwitnessed(tmp_path, monkeypatch):
+    """The two states partition the primary's silence windows; a window that a secondary update did
+    witness is healed, and must not be double-reported as invisible."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert "unwitnessed" not in _states(rec)
+    assert "minted" in _states(rec)
+
+
+def test_an_unwitnessed_gap_is_reported_in_detect_only_too(tmp_path, monkeypatch):
+    """It is a FINDING about the archive, not a heal, so `--detect-only` must carry it -- that mode
+    is the loss report."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert "unwitnessed" in _states(rec)
+
+
+def test_an_unwitnessed_gap_is_decided_once_not_re_ledgered_every_cycle(tmp_path, monkeypatch):
+    """The hour stays in the trailing window for 48 h. Re-ledgering it each cycle would re-fire the
+    finding hourly for two days about a hole nobody can do anything about."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert [r["state"] for r in _ledger(rec)].count("unwitnessed") == 1
+
+
+def test_a_non_monotonic_secondary_still_fails_the_hour_instead_of_exiting_clean(tmp_path, monkeypatch):
+    """The contract (`--help` and README): exit 1 on an integrity failure, a non-monotonic stream
+    among them. When the unwitnessed split dropped the secondary's monotonicity check, an hour whose
+    only silence was UNWITNESSED reached the end of the cycle, published a textfile and refreshed
+    `last_success_timestamp` -- exit 0 on a stream the archive cannot trust."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+    rows = [(float(s), "update") for s in range(3, 3600, 10) if not 600 < s < 1200]
+    rows = rows[:5] + [(rows[9][0], "update")] + rows[5:]  # a stamp reappearing after a newer one
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, rows))
+
+    result = _run(
+        [str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch
+    )
+
+    assert result.exit_code == 1, result.output
+    assert any(r["state"] == "failed" and "non-monotonic" in r.get("reason", "") for r in _ledger(rec)), _states(rec)
+    assert not (tmp_path / "r.prom").exists(), "no textfile on an integrity failure"
+
+
+def test_the_unwitnessed_finding_is_announced_once_not_every_cycle(tmp_path, monkeypatch, caplog):
+    """The ledger dedupes on its own, so the `_decided` guard's real job is the LOG: the hour stays
+    in the 48 h window, and without the guard the WARNING re-fires hourly for two days about a hole
+    nobody can act on. Asserting only the ledger count would pass with the guard deleted."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
+        _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+        _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    announced = [r for r in caplog.records if "unwitnessed" in r.message]
+    assert len(announced) == 1, [r.message for r in announced]
+
+
+# --- per-intersection-window booking (T0103) -------------------------------------------------------
+
+
+def _dark_from(pri: Path, sec: Path, hour: datetime, pair: str, *, quiet_from: int, quiet_to: int) -> None:
+    """Both mirrors silent for this pair across [quiet_from, quiet_to); dense either side."""
+    stamps = [float(s) for s in range(0, 3600, 10) if not quiet_from <= s < quiet_to]
+    _write(pri, pair, "book", hour, _book(pair, hour, [(s, "update") for s in stamps]))
+    _write(sec, pair, "book", hour, _book(pair, hour, [(s + 3.0, "update") for s in stamps if s + 3.0 < 3600]))
+
+
+def test_each_stream_is_booked_its_own_window_not_the_intersection(tmp_path, monkeypatch):
+    """BTC returns first, so it binds the intersection; ETH stays dark 200 s longer. Booking the
+    intersection x 2 would charge ETH with BTC's shorter loss and lose the surplus entirely."""
+    pri, sec, rec = _roots(tmp_path)
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    per_stream = {p: sum(w["seconds"] for w in ws) for p, ws in fleet["stream_windows"].items()}
+    # BTC: last stamp 593 (sec) -> first at 1200. ETH: 593 -> 1400.
+    assert per_stream["ETH/EUR"] > per_stream["BTC/EUR"], per_stream
+    assert per_stream["ETH/EUR"] - per_stream["BTC/EUR"] == pytest.approx(200.0)
+    assert fleet["residual_seconds"] == pytest.approx(sum(per_stream.values()))
+
+
+def test_a_streams_window_spanning_two_fleet_windows_is_booked_once(tmp_path, monkeypatch):
+    """Two fleet-dark windows exist because ONE stream ticked between them. The stream that did not
+    tick has a single window containing both, and summing per-window would book it twice."""
+    pri, sec, rec = _roots(tmp_path)
+    # BTC ticks once at 900, splitting the intersection into [600,900) and [900,1500).
+    btc = [float(s) for s in range(0, 3600, 10) if not 600 <= s < 1500] + [900.0]
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(s, "update") for s in sorted(btc)]))
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, [(s, "update") for s in sorted(btc)]))
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1500)  # silent across both windows
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    eth = fleet["stream_windows"]["ETH/EUR"]
+    assert len(eth) == 1, f"one window, not one per fleet window: {eth}"
+    assert eth[0]["seconds"] < 1000.0, "the hour was not booked twice"
+
+
+def test_the_healed_path_subtracts_the_stream_window_the_fleet_record_actually_booked(tmp_path, monkeypatch):
+    """The attributed-exactly-once invariant. `_booked_dark` must read the per-stream window, not
+    the intersection -- otherwise the wider window is booked fleet-wide and its surplus is booked
+    AGAIN as the pair's own residual."""
+    pri, sec, rec = _roots(tmp_path)
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    booked = sum(w["seconds"] for ws in fleet["stream_windows"].values() for w in ws)
+    total = _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"]
+    assert total == pytest.approx(booked), "every second attributed exactly once across both paths"
+
+
+def test_a_pre_split_fleet_record_still_reads_as_the_intersection(tmp_path, monkeypatch):
+    """The ledger is append-only. Records written before `stream_windows` existed carry only
+    `windows`, and the healed path must still subtract them or it double-books history."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    # The gap must be genuinely UNFILLED or the assertion is vacuous: a fully-healed gap leaves
+    # `unfilled == 0`, and the record reads 0.0 whether or not the legacy window was subtracted.
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+    rec.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        "state": "both_streams_silent",
+        "pair": "*",
+        "kind": "book",
+        "hour": H.isoformat(),
+        "pairs": ["BTC/EUR"],
+        "residual_seconds": 590.0,
+        "windows": [
+            {"start": (H + timedelta(seconds=600)).isoformat(), "end": (H + timedelta(seconds=1190)).isoformat(), "seconds": 590.0}
+        ],
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(legacy) + "\n")
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"][0]
+    assert minted["residual_gaps"], "the gap must be genuinely unfilled or this test asserts nothing"
+    assert minted["residual_seconds"] == pytest.approx(0.0), "the legacy record's 590 s are still subtracted"
+
+
+# --- the late-mirror trap: a per-stream window is only honest with BOTH mirrors (T0103) ------------
+#
+# `stream_windows` is computed from the mirrors readable THIS cycle, and the record is `_decided`
+# once and never revised -- while the heal path deliberately WAITS for a late mirror. Unsynchronised,
+# a stream whose second mirror lands a cycle later has its entire SINGLE-mirror silence booked as
+# permanent loss, into a monotone counter that cannot be walked back. Reachable by the repo's own
+# mandated pair-add order (primary first, secondary second), which creates single-mirror hours by
+# construction.
+
+
+def test_a_stream_missing_a_mirror_is_booked_the_intersection_not_its_own_window(tmp_path, monkeypatch):
+    """The fallback that bounds the damage: without both mirrors we cannot know the stream's own
+    silence, so book the intersection -- the old, bounded behaviour -- rather than a window the
+    absent mirror would have shortened."""
+    pri, sec, rec = _roots(tmp_path)
+    # ETH has both mirrors and is dark 600->1400; BTC has both and is dark 600->1200, so the
+    # intersection is [600, 1200). ADA has ONLY a primary and is quiet 600->3600.
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+    _write(pri, "ADA/EUR", "book", H, _book("ADA/EUR", H, [(float(s), "update") for s in range(0, 600, 10)]))
+
+    result = _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    per_stream = {p: sum(w["seconds"] for w in ws) for p, ws in fleet["stream_windows"].items()}
+    intersection = sum(w["seconds"] for w in fleet["windows"])
+
+    assert per_stream["ADA/EUR"] == pytest.approx(intersection), (
+        f"single-mirror stream booked {per_stream['ADA/EUR']}s of its own silence instead of the "
+        f"{intersection}s intersection -- an unbounded over-count into the permanent-loss counter"
+    )
+    assert per_stream["ETH/EUR"] > intersection, "a stream WITH both mirrors still gets its own window"
+
+
+def test_a_present_but_empty_final_is_booked_the_intersection_not_the_whole_hour(tmp_path, monkeypatch):
+    """Its file exists, so it evades `total_loss`; it has no stamps, so `containing_dark_window`
+    would hand back the entire hour. Same root cause, same fallback."""
+    pri, sec, rec = _roots(tmp_path)
+    _dark_from(pri, sec, H, "BTC/EUR", quiet_from=600, quiet_to=1200)
+    _dark_from(pri, sec, H, "ETH/EUR", quiet_from=600, quiet_to=1400)
+    for root in (pri, sec):
+        _write(root, "ADA/EUR", "book", H, _book("ADA/EUR", H, []))
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    ada = sum(w["seconds"] for w in fleet["stream_windows"].get("ADA/EUR", []))
+    assert ada == pytest.approx(sum(w["seconds"] for w in fleet["windows"])), f"empty final booked {ada}s"
+    assert ada < 3600.0, "the whole hour was booked for a stream we know nothing about"

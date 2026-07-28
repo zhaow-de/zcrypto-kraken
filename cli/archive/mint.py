@@ -63,8 +63,8 @@ def _check_hour(hour: datetime) -> datetime:
     return hour + timedelta(hours=1)
 
 
-def _check_gaps(gaps: list[Gap], *, hour: datetime, hour_end: datetime, label: str) -> None:
-    """Hold every gap to `Gap`'s boundary-ownership contract, against THIS hour's own bounds.
+def _check_gaps(gaps: list[Gap], *, hour: datetime, hour_end: datetime, label: str, primary_boundaries: bool) -> None:
+    """Hold every gap to this hour's own bounds, and — for a HEALED gap — to `Gap`'s ownership contract.
 
     This is the one guard that catches a caller passing `find_book_gaps` an inclusive `hour_end`
     (09:59:59.999999) where the contract says exclusive (10:00:00). Such an hour yields a tail gap
@@ -74,10 +74,19 @@ def _check_gaps(gaps: list[Gap], *, hour: datetime, hour_end: datetime, label: s
 
     An unowned boundary (`*_is_primary_message=False`) is, by construction, an hour boundary — the
     head/tail edge, or both edges of a wholly-absent primary hour. Anything else is a malformed gap.
+
+    `primary_boundaries=False` drops that ownership half, and only a RESIDUAL gap may pass it: a
+    residual window is measured over the MINTED frame, so its interior edges are spliced secondary
+    messages, owned by neither the primary nor the hour. It drives no row filter — it describes what
+    the hour still lacks — so the ownership rule protects nothing there, while the bounds check, which
+    protects the sidecar from claiming a hole outside its own hour, still applies. Explicit at every
+    call site rather than defaulted: silently relaxing it for a healed gap is the corruption above.
     """
     for gap in gaps:
         if not (hour <= gap.start <= hour_end and hour <= gap.end <= hour_end):
             raise CaptureError(f"{label} {gap.start.isoformat()}->{gap.end.isoformat()} lies outside the {hour:%H}:00 hour")
+        if not primary_boundaries:
+            continue
         if not gap.start_is_primary_message and gap.start != hour:
             raise CaptureError(
                 f"{label} starts at {gap.start.isoformat()}, which owns no primary message and is not "
@@ -117,8 +126,8 @@ def mint_hour(
     reading the existing hour first and unioning it with the recovered rows before minting).
     """
     hour_end = _check_hour(hour)
-    _check_gaps(gaps_healed, hour=hour, hour_end=hour_end, label="a healed gap")
-    _check_gaps(residual_gaps, hour=hour, hour_end=hour_end, label="a residual gap")
+    _check_gaps(gaps_healed, hour=hour, hour_end=hour_end, label="a healed gap", primary_boundaries=True)
+    _check_gaps(residual_gaps, hour=hour, hour_end=hour_end, label="a residual gap", primary_boundaries=False)
 
     d = _hour_dir(root, pair, kind, hour)
     final = d / f"{hour:%H}.parquet"

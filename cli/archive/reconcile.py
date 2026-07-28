@@ -14,6 +14,7 @@ Load-bearing constraints (spec 00050, constraints 1 + 2):
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -161,26 +162,54 @@ def find_book_gaps(
     their outer boundary is the hour boundary, which is nobody's wire message (see `Gap`).
     """
     _validate_hour_bounds(hour_start, hour_end)
-    _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
     _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
+    return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if secondary_covers(secondary, gap)]
 
-    sec_ts = _message_ts(secondary)
-    if not sec_ts:
-        return []
+
+def find_unwitnessed_gaps(
+    primary: pl.DataFrame,
+    secondary: pl.DataFrame,
+    *,
+    min_gap_seconds: float,
+    hour_start: datetime,
+    hour_end: datetime,
+) -> list[Gap]:
+    """The complement of `find_book_gaps`: primary silence the secondary did NOT witness.
+
+    Together the two partition every primary-silence window wider than the threshold, which is the
+    point — before this existed, an unwitnessed window produced no `Gap`, no ledger record and no
+    log line, so the pair with the LARGEST hole in an outage was the one the system had nothing to
+    say about. (2026-07-27: ADA/EUR lost 208.566668 s, the biggest hole of that hour, and its
+    secondary held 200 rows inside the gap — every one a `snapshot` at a single instant, not one an
+    `update`.) A snapshot is full state, never market activity, so it still may not witness; the
+    remedy is to REPORT the window, not to relax what counts as a witness.
+    """
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
+    return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if not secondary_covers(secondary, gap)]
+
+
+def _primary_silence(primary: pl.DataFrame, min_gap_seconds: float, hour_start: datetime, hour_end: datetime) -> list[Gap]:
+    """Every window in which the PRIMARY was silent longer than the threshold, witnessed or not."""
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
 
     pri_ts = _message_ts(primary)
     if not pri_ts:
         # No primary message exists to pair against, so the whole hour is one gap whose boundaries
         # belong to neither side. A file with zero messages is total loss, not quiescence, so
         # `min_gap_seconds` does not apply to it.
-        gap = Gap(
-            start=hour_start,
-            end=hour_end,
-            seconds=(hour_end - hour_start).total_seconds(),
-            start_is_primary_message=False,
-            end_is_primary_message=False,
-        )
-        return [gap] if secondary_covers(secondary, gap) else []
+        return [
+            Gap(
+                start=hour_start,
+                end=hour_end,
+                seconds=(hour_end - hour_start).total_seconds(),
+                start_is_primary_message=False,
+                end_is_primary_message=False,
+            )
+        ]
 
     edges: list[tuple[datetime, bool]] = [(hour_start, False)]
     edges += [(ts, True) for ts in pri_ts]
@@ -191,15 +220,15 @@ def find_book_gaps(
         seconds = (b - a).total_seconds()
         if seconds <= min_gap_seconds:  # silence must be STRICTLY greater than the threshold
             continue
-        gap = Gap(
-            start=a,
-            end=b,
-            seconds=seconds,
-            start_is_primary_message=a_is_pri,
-            end_is_primary_message=b_is_pri,
+        gaps.append(
+            Gap(
+                start=a,
+                end=b,
+                seconds=seconds,
+                start_is_primary_message=a_is_pri,
+                end_is_primary_message=b_is_pri,
+            )
         )
-        if secondary_covers(secondary, gap):
-            gaps.append(gap)
     return gaps
 
 
@@ -222,6 +251,82 @@ def _span(frame: pl.DataFrame) -> tuple[datetime | None, datetime | None]:
 def _block(source: str, frame: pl.DataFrame) -> Block:
     lo, hi = _span(frame)
     return Block(source=source, frame=frame, from_ts=lo, to_ts=hi)
+
+
+def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds: float) -> list[Gap]:
+    """What each gap STILL lacks after the splice — the output, measured, not the input assumed.
+
+    `healed_seconds` used to be the full width of a primary-silence window, admitted on the strength
+    of a single secondary `update` row anywhere inside it (`secondary_covers`). One row admits the
+    window; it does not fill it. Measured on the real 2026-07-27 07:00 hour that read as
+    2,311.536587 s healed against 82.955463 s actually inserted — and the same hour separately
+    booked 2,385.847992 s of `both_streams_silent`, so 2,187.027326 stream-seconds appeared in a
+    "we covered it" counter and a "nobody covered it" counter in the same cycle.
+
+    So: re-run the window arithmetic over the spliced rows. Within each gap, pair consecutive
+    boundaries — the gap's own start, every spliced message inside it, the gap's end — and keep the
+    windows still wider than `min_gap_seconds`. The SAME threshold as `find_book_gaps`, deliberately:
+    a hole too small to be a gap on the way in must not become residual on the way out.
+
+    Boundary ownership is inherited from the gap being measured, so a residual window that reaches
+    an original edge still says who owns it and stays safe to filter with.
+
+    Every spliced message counts as fill here, including a **snapshot** — unlike `secondary_covers`,
+    which refuses to let one witness a gap at all. The asymmetry is deliberate and bounded: a snapshot
+    IS book state at that instant, so the second it lands is genuinely not missing, and each distinct
+    mark can credit at most `min_gap_seconds` of the surrounding window. Admitting the window remains
+    the strict question; measuring what the window still lacks is the lenient one.
+    """
+    if not gaps:
+        return []
+    inside_ts = _message_ts(spliced) if spliced.height else []
+    residual: list[Gap] = []
+    for gap in gaps:
+        marks = [t for t in inside_ts if gap.start <= t <= gap.end]
+        boundaries = [gap.start, *marks, gap.end]
+        for lo, hi in zip(boundaries, boundaries[1:], strict=False):
+            if (hi - lo).total_seconds() <= min_gap_seconds:
+                continue
+            residual.append(
+                Gap(
+                    start=lo,
+                    end=hi,
+                    seconds=(hi - lo).total_seconds(),
+                    # An interior boundary is a spliced message; an outer one keeps the gap's own
+                    # ownership so the result filters exactly like the gap it came from.
+                    start_is_primary_message=gap.start_is_primary_message if lo == gap.start else False,
+                    end_is_primary_message=gap.end_is_primary_message if hi == gap.end else False,
+                )
+            )
+    return residual
+
+
+def overlap_seconds(spans: Iterable[tuple[datetime, datetime]], windows: Iterable[tuple[datetime, datetime]]) -> float:
+    """How much of `spans` lies inside `windows` — the seconds a SECOND record has already booked.
+
+    Permanent loss is booked from two directions. `both_streams_silent` books the fleet-dark
+    intersection as window × dark stream count; a healed hour books whatever its splice left unfilled.
+    A gap straddling the darkness contains the same seconds, so booking both in full counts them
+    twice — correcting a heal over-count by manufacturing a loss over-count in the same counter. Each
+    side subtracts what the LEDGER shows the other already booked, so every second of loss is
+    attributed exactly once regardless of which side decided first.
+
+    Windows are merged before intersecting: two overlapping windows must not subtract the same second
+    twice, which would under-book a loss that really is unbooked.
+    """
+    merged: list[list[datetime]] = []
+    for start, end in sorted(windows):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    total = 0.0
+    for a, b in spans:
+        for lo, hi in merged:
+            span = (min(b, hi) - max(a, lo)).total_seconds()
+            if span > 0:
+                total += span
+    return total
 
 
 def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap]) -> list[Block]:

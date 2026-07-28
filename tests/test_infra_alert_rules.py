@@ -200,3 +200,48 @@ def test_every_fault_signal_metric_is_watched_by_a_rule(metric):
         f"would surface it, since no dashboard panel carries the app-metric families either. Add a "
         f"rule, or add it to NOT_A_FAULT_SIGNAL with the reason."
     )
+
+
+# --- the summary must state the quantity the evaluator actually measures (T0103) -------------------
+
+
+def _rule(uid):
+    return next(r for r in _rules() if r["uid"] == uid)
+
+
+def _threshold(rule):
+    for node in rule["data"]:
+        for cond in node.get("model", {}).get("conditions", []) or []:
+            params = cond.get("evaluator", {}).get("params") or []
+            if params:
+                return params[0]
+    raise AssertionError(f"no evaluator threshold in {rule['uid']}")
+
+
+def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
+    """`zcrypto_reconcile_healable_gap_seconds_total` is summed ACROSS streams, so a bare threshold
+    is in pair-seconds while the summary promises minutes -- at 12 pairs, `600` meant ~50 wall-clock
+    seconds, and it tightened silently every time a pair was added. Dividing by the live pair count
+    makes the threshold wall-clock seconds, which is what the summary already said.
+
+    Pinned because the two halves live in different fields and nothing else compares them: the
+    divisor could be dropped in a cleanup and the summary would keep asserting minutes."""
+    rule = _rule("zcrypto-reconcile-healable-gap-rate")
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+    summary = rule["annotations"]["summary"]
+
+    assert "count by (pair)" in expr, "the threshold must be per-stream, not a cross-stream sum"
+    minutes = _threshold(rule) / 60.0
+    assert f"{minutes:.0f} minutes" in summary, f"summary claims a different quantity than {_threshold(rule)}s implies"
+
+
+def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
+    """It fires on `increase(...)` over a relative range, so the window IS how long the page stays
+    up. At 1h the highest-severity signal for a permanent, unbackfillable condition self-resolved to
+    MissingSeries an hour after firing -- which is how a real 2,437 s loss went quiet unnoticed."""
+    rule = _rule("zcrypto-reconcile-residual-gap")
+    ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+
+    assert max(ranges) >= 86400, f"query range {max(ranges)}s is shorter than a day"
+    assert "[24h]" in expr, "the increase() window must match the query range"

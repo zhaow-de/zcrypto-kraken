@@ -49,6 +49,8 @@ class BackfillResult:
     trades_unrecoverable: int
     trades_deferred: int
     trades_fetch_failed: int  # ids in gaps whose fetch itself raised (T0078) -- totalled, never dropped
+    trades_mint_failed: int  # rows REST served for an hour whose mint raised (T0087) -- retryable, never subtracted
+    hours_repaired_after_loss: int  # settled hours with a book final but NO trades final that this run minted (T0043)
     duplicates_collapsed: int
     duplicates_cross_hour: int
     hours_minted: int
@@ -74,6 +76,30 @@ def _collapse_ranges(ids: list[int]) -> list[list[int]]:
 
 def _floor_hour(ts: dt.datetime) -> dt.datetime:
     return ts.replace(minute=0, second=0, microsecond=0)
+
+
+# A book final's mere EXISTENCE proves only that at least one book event landed somewhere in the
+# hour -- which a capture restart at :45 produces too, and our own image converges restart capture.
+# A witness for "the stream was connected while the trades file should have been written" therefore
+# has to SPAN the hour. At depth 100 the book ticks continuously, so 60 s of slack at each edge
+# tolerates ordinary quiet while excluding a restart or a mid-hour death that cost minutes.
+_BOOK_WITNESS_SLACK = dt.timedelta(seconds=60)
+
+
+def _book_witnesses_hour(path: Path, hour: dt.datetime) -> bool:
+    """True iff `path`'s book final spans `hour` end to end (see `_BOOK_WITNESS_SLACK`).
+
+    False on an unreadable or empty final: the question is whether we can PROVE the stream was
+    connected, and an answer we cannot read is not a proof. Silence is the safe direction here --
+    this witness only ever promotes an absence into a reported loss event.
+    """
+    try:
+        ts = pl.read_parquet(path, columns=["ts"])["ts"]
+    except Exception:  # noqa: BLE001 -- an unreadable witness witnesses nothing
+        return False
+    if ts.len() == 0:
+        return False
+    return ts.min() <= hour + _BOOK_WITNESS_SLACK and ts.max() >= hour + dt.timedelta(hours=1) - _BOOK_WITNESS_SLACK
 
 
 def _read_pair_settled(primary_root: Path, reconciled_root: Path, pair: str, now: dt.datetime) -> dict[dt.datetime, pl.DataFrame]:
@@ -111,10 +137,26 @@ def backfill(
             continue
         hours[p].append((hour, path))
 
-    gaps_found = recovered = unrecoverable = deferred = fetch_failed = 0
-    duplicates_collapsed = duplicates_cross_hour = minted = 0
+    gaps_found = recovered = unrecoverable = deferred = fetch_failed = mint_failed = 0
+    duplicates_collapsed = duplicates_cross_hour = minted = repaired_after_loss = 0
     trades_missing = duplicate_rows_found = 0
     errors: list[tuple[str, str]] = []
+
+    # The book sibling of a trades hour: the witness that the stream was CONNECTED while that hour's
+    # trades file should have been written. `is_total_loss` cannot tell "nobody traded" (ordinary for
+    # a quiet pair -- an hour with no events writes no file at all) from a genuinely lost file, so it
+    # calls both "nobody traded", and this sweep then repairs the second one SILENTLY.
+    #
+    # Skipped in detect-only, which never reaches the mint loop that reads it, and narrowed to the
+    # requested pair. The narrowing bounds what is RETAINED, not the scan: `canonical_segments` takes
+    # no pair argument and still globs `*/*/book/*/*/*/*.parquet` across the whole tree, and book is
+    # the dominant volume of the archive -- so if this ever becomes the cost, the glob is where to
+    # look, not this filter.
+    book_finals: dict[str, dict[dt.datetime, Path]] = {}
+    if not detect_only:
+        for p2, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
+            if pair is None or p2 == pair:
+                book_finals.setdefault(p2, {})[hour] = path
 
     for p, segs in sorted(hours.items()):
         try:
@@ -182,6 +224,8 @@ def backfill(
         touched = existing_dup_hours | set(got_by_hour)
 
         pair_recovered = pair_deferred = pair_dup_collapsed = pair_minted = 0
+        pair_mint_failed = pair_repaired_after_loss = 0
+        pair_repaired_hours: list[dt.datetime] = []
         for h in sorted(touched):
             rest_rows = got_by_hour.get(h, pl.DataFrame([], schema=TRADE_SCHEMA))
             if h + _SETTLE > now:
@@ -210,16 +254,41 @@ def backfill(
             except (CaptureError, OSError) as exc:  # isolate: one bad mint must not end the sweep
                 logger.warning("trade backfill mint failed pair=%s hour=%s: %s", p, h.isoformat(), exc)
                 errors.append((p, str(exc)))
+                # The rows REST really served for this hour, which the mint then dropped. Reported --
+                # never subtracted in D9 below. A fetched-but-unminted row is RETRYABLE (the next run
+                # re-detects the gap and re-fetches it), so booking it as an explained absence would
+                # make the strongest check in the sweep go quiet on exactly the failure it exists for.
+                pair_mint_failed += union.added_from_secondary
                 continue
             # Counted from the UNION result, not the fetch: only rows that actually landed count.
             pair_recovered += union.added_from_secondary
             pair_dup_collapsed += union.deduped_rows
             pair_minted += 1
+            # No trades final for a settled hour, and a book final that SPANS it: the signature of a
+            # real loss that was just repaired. Absent the witness it is an ordinary quiet hour or a
+            # capture outage, and the counter stays 0 rather than inventing an incident. (Rows on the
+            # REST tape are implied, not tested: `h not in frames` excludes `existing_dup_hours`, so
+            # reaching here means `h` came from `got_by_hour`, whose buckets are non-empty.)
+            witness = book_finals.get(p, {}).get(h)
+            if h not in frames and witness is not None and _book_witnesses_hour(witness, h):
+                pair_repaired_after_loss += 1
+                pair_repaired_hours.append(h)
 
         recovered += pair_recovered
         deferred += pair_deferred
         duplicates_collapsed += pair_dup_collapsed
         minted += pair_minted
+        mint_failed += pair_mint_failed
+        repaired_after_loss += pair_repaired_after_loss
+        if pair_repaired_after_loss:
+            logger.warning(
+                "trade backfill pair=%s: %d settled hour(s) had no trades final while a book final "
+                "spanning the same hour did -- a lost trades segment, repaired from the REST tape; "
+                "the archive is whole again but the loss event itself is real. hours=%s",
+                p,
+                pair_repaired_after_loss,
+                ",".join(h.isoformat() for h in pair_repaired_hours),
+            )
 
         # D9 — the manifest is not the check. Re-read this pair's settled canonical view off disk
         # and re-run detect(); every remaining gap/duplicate must be explained by a known bucket.
@@ -241,8 +310,9 @@ def backfill(
 
     logger.info(
         "trade backfill complete pairs=%d gaps=%d trades_missing=%d duplicate_rows_found=%d "
-        "recovered=%d unrecoverable=%d deferred=%d fetch_failed=%d "
-        "duplicates_collapsed=%d duplicates_cross_hour=%d hours_minted=%d errors=%d",
+        "recovered=%d unrecoverable=%d deferred=%d fetch_failed=%d mint_failed=%d "
+        "duplicates_collapsed=%d duplicates_cross_hour=%d hours_minted=%d "
+        "hours_repaired_after_loss=%d errors=%d",
         len(hours),
         gaps_found,
         trades_missing,
@@ -251,9 +321,11 @@ def backfill(
         unrecoverable,
         deferred,
         fetch_failed,
+        mint_failed,
         duplicates_collapsed,
         duplicates_cross_hour,
         minted,
+        repaired_after_loss,
         len(errors),
     )
     return BackfillResult(
@@ -265,6 +337,8 @@ def backfill(
         unrecoverable,
         deferred,
         fetch_failed,
+        mint_failed,
+        repaired_after_loss,
         duplicates_collapsed,
         duplicates_cross_hour,
         minted,

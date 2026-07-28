@@ -316,12 +316,23 @@ def test_resubscribe_book_unsubscribes_then_subscribes():
         connect_fn, _ = _connect_fn_returning(conn)
         client = CaptureClient(["BTC/EUR", "ETH/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=asyncio.sleep)
 
-        async for _ in client.stream():
+        agen = client.stream()
+        async for _ in agen:
             break
+        await agen.aclose()  # close it explicitly: its `finally` clears `_ws`, and we want that
+        # settled BEFORE re-attaching, or the T0102 waiter can find a cleared socket mid-flight and
+        # correctly decline to send (the reconnect resubscribes everything in that real case).
+        client._ws = conn
 
         sent_before = len(conn.sent)
         await client.resubscribe_book("BTC/EUR")
         import json
+
+        # T0102: the subscribe is released by the unsubscribe's ack, not sent back-to-back.
+        await asyncio.sleep(0)
+        req_id = json.loads(conn.sent[sent_before])["req_id"]
+        client.note_reply({"method": "unsubscribe", "success": True, "req_id": req_id})
+        await client.drain_pending_resubscribes(timeout=1.0)
 
         new_frames = [json.loads(f) for f in conn.sent[sent_before:]]
         assert [f["method"] for f in new_frames] == ["unsubscribe", "subscribe"]
@@ -399,3 +410,106 @@ def test_an_ordinary_close_still_reconnects_fast():
     5 s would trade a rare venue restart for a daily cost on the unbackfillable path."""
     msg = json.dumps({"channel": "heartbeat"})
     assert _delays_after_close(1006, messages=[msg]) == [1.0]
+
+
+# --- T0102: req_id-correlated resubscribe (observability + prevention) ---------------------------
+#
+# Recovery sent `unsubscribe` then `subscribe` as two fire-and-forget frames with no correlation to
+# Kraken's replies. Two consequences: the `subscribe` can overtake the `unsubscribe` server-side and
+# be rejected ("Already subscribed"), leaving the pair desynced with the book never re-snapshotted;
+# and a failed attempt left NO trace of its own -- it was inferable only from continued desync.
+#
+# THE DEADLOCK THAT SHAPES THE DESIGN: rung 1 calls `resubscribe_book` from inside the message
+# handler, i.e. from the task that drives `stream()`. Awaiting the ack there would block the very
+# loop that delivers it. So `resubscribe_book` NEVER awaits; it registers the pending req_id and
+# hands the second frame to a short-lived task, which sends `subscribe` on the ack -- or on a
+# timeout, so a lost ack degrades to today's behaviour instead of stranding the pair forever.
+
+
+def test_resubscribe_correlates_both_frames_with_req_ids():
+    async def run():
+        conn = _FakeConnection([])
+        connect_fn, _ = _connect_fn_returning(conn)
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=asyncio.sleep)
+        client._ws = conn
+        await client.resubscribe_book("BTC/EUR")
+        await asyncio.sleep(0)
+        client.note_reply({"method": "unsubscribe", "success": True, "req_id": json.loads(conn.sent[0])["req_id"]})
+        await client.drain_pending_resubscribes(timeout=1.0)
+
+        sent = [json.loads(s) for s in conn.sent]
+        assert [m["method"] for m in sent] == ["unsubscribe", "subscribe"]
+        assert all("req_id" in m for m in sent), "both frames must be correlatable"
+        assert sent[0]["req_id"] != sent[1]["req_id"], "distinct requests need distinct ids"
+
+    asyncio.run(run())
+
+
+def test_the_subscribe_waits_for_the_unsubscribe_ack():
+    """Prevention: the ordering race disappears if the second frame is not sent until the first is
+    acknowledged. Before the ack lands, only the unsubscribe has gone out."""
+
+    async def run():
+        conn = _FakeConnection([])
+        connect_fn, _ = _connect_fn_returning(conn)
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=asyncio.sleep)
+        client._ws = conn
+        await client.resubscribe_book("BTC/EUR")
+        await asyncio.sleep(0)  # let the waiter task start
+
+        assert len(conn.sent) == 1, f"subscribe went out before the ack: {conn.sent}"
+        req_id = json.loads(conn.sent[0])["req_id"]
+        client.note_reply({"method": "unsubscribe", "success": True, "req_id": req_id})
+        await client.drain_pending_resubscribes(timeout=0.2)
+        assert len(conn.sent) == 2, "the ack did not release the subscribe"
+
+    asyncio.run(run())
+
+
+def test_a_lost_ack_still_subscribes_after_the_timeout():
+    """A never-arriving ack must NOT strand the pair: recovery degrades to the old fire-and-forget
+    ordering rather than never re-subscribing. The stranded-pair failure is the one T0008 exists to
+    remove; this must not reintroduce it."""
+
+    async def run():
+        conn = _FakeConnection([])
+        connect_fn, _ = _connect_fn_returning(conn)
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=asyncio.sleep, ack_timeout=0.05)
+        client._ws = conn
+        await client.resubscribe_book("BTC/EUR")
+        await client.drain_pending_resubscribes(timeout=1.0)  # no ack is ever delivered
+
+        assert len(conn.sent) == 2, "a lost ack stranded the pair -- recovery must degrade, not stop"
+        assert client.resubscribe_ack_timeouts_total == 1
+
+    asyncio.run(run())
+
+
+def test_an_error_reply_is_counted_and_does_not_hang():
+    """Observability: an explicit rejection is now a thing to count, where before it was only
+    inferable from continued desync. It must also release the waiter."""
+
+    async def run():
+        conn = _FakeConnection([])
+        connect_fn, _ = _connect_fn_returning(conn)
+        client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake", connect_fn=connect_fn, sleep_fn=asyncio.sleep)
+        client._ws = conn
+        await client.resubscribe_book("BTC/EUR")
+        await asyncio.sleep(0)
+        req_id = json.loads(conn.sent[0])["req_id"]
+        client.note_reply({"method": "unsubscribe", "success": False, "error": "nope", "req_id": req_id})
+        await client.drain_pending_resubscribes(timeout=0.2)
+
+        assert client.resubscribe_errors_total == 1
+        assert len(conn.sent) == 2, "a rejected unsubscribe still tries the subscribe (the old path)"
+
+    asyncio.run(run())
+
+
+def test_note_reply_ignores_uncorrelated_and_unknown_replies():
+    """Kraken's own subscribe acks for the initial subscription carry no req_id of ours. An unknown
+    or absent id must be a no-op, never a KeyError out of the consumer task."""
+    client = CaptureClient(["BTC/EUR"], 100, uri="wss://fake")
+    client.note_reply({"method": "subscribe", "success": True})  # no req_id at all
+    client.note_reply({"method": "subscribe", "success": True, "req_id": 999999})  # not ours
+    assert client.resubscribe_errors_total == 0

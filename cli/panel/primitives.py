@@ -30,6 +30,11 @@ _DEPTH_LEVELS: tuple[int, int, int] = (1, 5, 10)
 PANEL_SCHEMA: dict[str, pl.DataType] = {
     "ts": pl.Datetime("us", "UTC"),
     "updates": pl.Int64,
+    # T0104: seconds from the last message APPLIED to the book to this boundary. `updates == 0` is
+    # ambiguous -- a quiet second and a hole in the archive look identical -- so the panel says which.
+    # Null means "unknown" (a carried state that predates this column); never 0.0, which would
+    # assert a freshness we cannot know.
+    "stale_seconds": pl.Float64,
     "spread": pl.Float64,
     "spread_bps": pl.Float64,
     "mid": pl.Float64,
@@ -78,7 +83,13 @@ def _depth_qty(levels: list[tuple[Decimal, Decimal]], k: int) -> float:
     return float(sum(qty for _, qty in levels[:k]))
 
 
-def sample_row(bids: dict[Decimal, Decimal], asks: dict[Decimal, Decimal], *, updates: int) -> dict | None:
+def sample_row(
+    bids: dict[Decimal, Decimal],
+    asks: dict[Decimal, Decimal],
+    *,
+    updates: int,
+    stale_seconds: float | None = None,
+) -> dict | None:
     """One second's wide primitive row (spec 00052 D2) from `OrderBook` state, or None iff either
     side is empty (no quotable market that second). A crossed/locked book (spread <= 0) is still
     computed honestly -- it happens transiently and is not filtered here. Returns every `PANEL_SCHEMA`
@@ -101,6 +112,7 @@ def sample_row(bids: dict[Decimal, Decimal], asks: dict[Decimal, Decimal], *, up
 
     row: dict[str, float | int | None] = {
         "updates": updates,
+        "stale_seconds": stale_seconds,
         "spread": spread,
         "spread_bps": spread_bps,
         "mid": mid,

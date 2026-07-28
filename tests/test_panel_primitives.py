@@ -21,6 +21,7 @@ from cli.panel.primitives import NOTIONALS_EUR, PANEL_SCHEMA, sample_row
 _EXPECTED_COLUMNS = {
     "ts",
     "updates",
+    "stale_seconds",  # T0104: seconds since the last applied message; null = unknown
     "spread",
     "spread_bps",
     "mid",

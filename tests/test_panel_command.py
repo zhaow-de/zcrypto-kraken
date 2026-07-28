@@ -113,7 +113,7 @@ def test_materialize_end_to_end_writes_the_panel_and_the_meta(tmp_path: Path) ->
     assert pl.read_parquet(final).height == 3600
 
     meta = json.loads((panel_root / "panel-meta.json").read_text())
-    assert meta["schema_version"] == 1
+    assert meta["schema_version"] == 2  # T0104 bumped it: stale_seconds is a generation change
     assert meta["grid"] == "1s"
     assert meta["notionals_eur"] == [100.0, 1000.0, 10000.0]
     assert meta["k_levels"] == [1, 5, 10]

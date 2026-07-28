@@ -75,6 +75,8 @@ class _FakeClient:
         # duck-typed reads succeed against this stand-in exactly as they would against the real class.
         self.reconnects_total = 0
         self.resubscribes_total = 0
+        self.resubscribe_errors_total = 0
+        self.resubscribe_ack_timeouts_total = 0
         _FakeClient.last_instance = self
 
     async def stream(self):
@@ -123,6 +125,8 @@ def test_collector_families_reflect_client_and_writer_state():
     client = CaptureClient(["BTC/EUR"], 100)
     client.reconnects_total = 3
     client.resubscribes_total = 2
+    client.resubscribe_errors_total = 3
+    client.resubscribe_ack_timeouts_total = 1
     writer = _FakeWriter()
     writer.segments_written = 5
     writer.segment_bytes = 12_345
@@ -140,6 +144,10 @@ def test_collector_families_reflect_client_and_writer_state():
     families = _families(collector)
     assert families["zcrypto_capture_reconnects_total"].samples[0].value == 3
     assert families["zcrypto_capture_resubscribes_total"].samples[0].value == 2
+    # T0102 counted these and exported neither, so the topic's "the degradation is visible"
+    # was false: a counter nothing publishes is the same defect as a column nothing writes.
+    assert families["zcrypto_capture_resubscribe_errors_total"].samples[0].value == 3
+    assert families["zcrypto_capture_resubscribe_ack_timeouts_total"].samples[0].value == 1
     assert families["zcrypto_capture_segments_written_total"].samples[0].value == 5
     assert families["zcrypto_capture_segment_bytes_total"].samples[0].value == 12_345
     assert families["zcrypto_capture_rows_held_total"].samples[0].value == 7

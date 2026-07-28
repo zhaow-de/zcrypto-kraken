@@ -26,6 +26,28 @@ The engine runs on the capture primary — everything above applies (the canary 
 - Pre-flight: target port free (`ss -ltnp` — the engine publishes `127.0.0.1:9102`), `/opt/zcrypto-capture/logship-secrets.env` present (absence crash-loops the engine instead of failing the render).
 - Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`. The restart marker is the container's `.State.StartedAt` — never the converge command's return time.
 
+## Ops converges (`zcrypto-ops`)
+
+Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no canary bake owed.
+
+- **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; `daemon.json` must be unchanged (its handler bounces Alloy and the poller). Omit `ops_alloy_digest` unless Alloy is the subject.
+- **Pull the digest on the host first** — every runner is `--pull never` and the role has no pull task; without it every timer exits 125.
+- **Record the running digest in `fleet-pins.md` before converging** — `ops_image_digest` has no repo default, so that row is the only rollback operand.
+- The ops image is the **capture** image repo — never read one service's pin as the other's.
+- **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — the file moves, the container does not, and a later `docker compose up` rolls an unbackfillable stream. End every converge deciding explicitly whether to roll it.
+- **Verify by outcome** at the next tick: `ops_archive_pull_exit_code` / `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, reconcile counters unchanged, `hc_checks_down_total` 0.
+- Rollback = re-converge to the recorded digest. Expect `healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
+
+### Panel generation changes
+
+A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regenerated; regeneration is delete-and-rebuild, never part of a converge.
+
+- **Size the window from the tree** — ~2.1 s per MB of input, single-threaded. Finish clear of the 02:25 UTC auto-reboot; `Type=oneshot` has no start timeout, so only the reboot kills a long run.
+- **Pause the healthchecks.io panel check, time-boxed, and un-pause explicitly** — it pings only on `rc=0`, and it is the timer's only liveness signal. The panel exit-code and ops ERROR-log rules also fire throughout.
+- **Delete both copies** — the NAS pull is `rsync -a` with no `--delete`, so an ops-side delete never propagates.
+- **Stop the timer, then run it inside the unit** so a stray trigger is a no-op, not a second writer.
+- **Regeneration is the point of no return** — the previous image cannot read the new generation and no old tree survives, so rollback is another full rebuild. Take the user's word there, not at the converge.
+
 ## Ansible secrets
 
 - **Never run `ansible-inventory --host` or `--list`.** `infra/ansible/ansible.cfg` sets `vault_password_file`, so both silently decrypt the vault and print every secret (incl. the live Kraken trade key) in cleartext. Use `--graph` / `--list-tags`, or pipe through a key-names-only filter.

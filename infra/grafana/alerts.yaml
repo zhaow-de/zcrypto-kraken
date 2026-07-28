@@ -543,15 +543,20 @@ rules:
       # permanent loss -- paging the highest-severity alert in the system on an artifact of a correction.
       # The `and resets(...) == 0` guard suppresses exactly that: the rule fires only on an increase with
       # NO reset in the window. A genuine new loss is monotone (no reset) and still fires; a correction
-      # (reset) is silenced for one window. Cost: a real loss in the SAME 1h window as a correction is
-      # delayed until the reset ages out -- rare, bounded, and the dashboard panel shows the trend
-      # regardless. `or on() vector(0)` keeps the healthy state an explicit 0 rather than NoData. See T0044.
+      # (reset) is silenced for one window. Cost: a real loss in the same window as a correction is
+      # delayed until the reset ages out -- and that window is now 24h, not 1h, so the blind spot after
+      # any ledger correction or rebuild is a full day. Accepted deliberately, because at 1h the page
+      # self-resolved to MissingSeries an hour after firing on a real 2,437 s loss; the dashboard panel
+      # shows the trend regardless. The other side of the same widening: a SECOND event inside the same
+      # 24h produces no state transition, so this pages once per day rather than once per event -- the
+      # ledger is the per-event record, the page only has to reach a human.
+      # `or on() vector(0)` keeps the healthy state an explicit 0 rather than NoData. See T0044.
       - refId: A
         queryType: ""
-        relativeTimeRange: {from: 3600, to: 0}
+        relativeTimeRange: {from: 86400, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: "(increase(zcrypto_reconcile_residual_gap_seconds_total[1h]) > 0 and resets(zcrypto_reconcile_residual_gap_seconds_total[1h]) == 0) or on() vector(0)"
+          expr: "(increase(zcrypto_reconcile_residual_gap_seconds_total[24h]) > 0 and resets(zcrypto_reconcile_residual_gap_seconds_total[24h]) == 0) or on() vector(0)"
           instant: true
           refId: A
       - refId: C
@@ -637,8 +642,10 @@ rules:
       # seconds the secondary WITNESSED and could cover, in both modes.
       #
       # 600s/24h is a starting threshold, not a measured one: ~10 minutes of primary silence a day that
-      # the secondary had to cover. T0039's soak recalibrates it from the real cross-host distribution --
-      # until then treat a firing as "look at the ledger", not as a verdict.
+      # the secondary had to cover. Divided by the live pair count, so 600 really is 600 WALL-CLOCK
+      # seconds -- undivided it was a cross-stream sum, i.e. ~50 s at 12 pairs, tightening silently with
+      # every pair added. The number itself is re-derived only once the counters carry trustworthy
+      # steady-state history; until then treat a firing as "look at the ledger", not as a verdict.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule, and MORE so
       # here: this window is 24h, so without the guard a ledger correction would false-page for a full
@@ -648,7 +655,7 @@ rules:
         relativeTimeRange: {from: 86400, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: "(increase(zcrypto_reconcile_healable_gap_seconds_total[24h]) > 0 and resets(zcrypto_reconcile_healable_gap_seconds_total[24h]) == 0) or on() vector(0)"
+          expr: "((increase(zcrypto_reconcile_healable_gap_seconds_total[24h]) > 0 and resets(zcrypto_reconcile_healable_gap_seconds_total[24h]) == 0) or on() vector(0)) / scalar(count(count by (pair) (zcrypto_capture_book_desynced)) or vector(1))"
           instant: true
           refId: A
       - refId: C
@@ -1768,6 +1775,56 @@ rules:
     for: 30m
     annotations:
       summary: "A capture host has resubscribed a book more than once in 24h. Post-2026-07-13 these should be rare genuine venue events, so a re-elevating rate suggests a regression or a pair flapping desync/heal. This counter has no pair label -- check zcrypto_capture_book_desynced by pair on that host to find which."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-resubscribe-failing
+    title: "Capture · book resubscribe is failing (recovery degraded)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The recovery ladder's resubscribe leg has an alert for how OFTEN it runs (above) and, until
+      # now, none for whether it WORKS. Both counters mean the ladder is degraded, differently:
+      # a rejected frame (the venue answered subscribe/unsubscribe error, correlated by req_id) means
+      # the desync recovery did not happen at all and the book stays stale; a missing unsubscribe ack
+      # means the subscribe was sent blind into the race the ack exists to close, so the resubscribe
+      # may be silently rejected downstream. Summed because the response is the same -- read the
+      # capture log for which, the lines carry the pair.
+      #
+      # A rejection also logs at ERROR and so already reaches the capture ERROR-log rule; this exists
+      # because the ack TIMEOUT logs at WARNING and reaches nothing, and because a rate is what
+      # distinguishes one venue hiccup from a recovery path that has stopped working.
+      # `increase()` handles the counter reset on container recreate.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'sum(increase(zcrypto_capture_resubscribe_errors_total{host=~"zcrypto|zcrypto-red"}[1d]) + increase(zcrypto_capture_resubscribe_ack_timeouts_total{host=~"zcrypto|zcrypto-red"}[1d]))'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 1.5, not 1: increase() extrapolates a single increment to ~1.0007, so `> 1` would page
+            # on one transient rejection -- the same arithmetic recorded on the resubscribe-rate rule.
+            - evaluator: {type: gt, params: [1.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A capture host's book resubscribe is failing: the venue rejected the frames, or the unsubscribe acks are not arriving. The desync recovery ladder depends on this leg -- while it fails, a desynced book cannot heal and the pair keeps writing from a stale state. Check the capture log for the pair and the venue reply."
     labels:
       severity: warning
     notification_settings:

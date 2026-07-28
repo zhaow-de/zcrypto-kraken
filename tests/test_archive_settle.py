@@ -8,6 +8,8 @@ import polars as pl
 from cli.archive.settle import (
     LATE_MINT_HOURS,
     SETTLE_HOURS,
+    DarkWindow,
+    containing_dark_window,
     fleet_dark_windows,
     hour_path,
     is_late,
@@ -137,6 +139,15 @@ def test_an_hour_with_no_messages_at_all_is_one_whole_dark_window():
 def test_darkness_below_the_threshold_is_not_a_window():
     # a 20 s hole in an otherwise 5 s cadence: under the threshold, so not a fleet-dark window
     stamps = [_at(s) for s in range(0, 3600, 5) if not 600 < s < 620]
+    assert fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0) == []
+
+
+def test_darkness_of_exactly_the_threshold_is_not_a_window():
+    # The predicates must agree: `find_book_gaps` requires silence STRICTLY greater than its
+    # threshold, so a window of exactly 30.0 s is not a gap on the way in. Booking it as residual
+    # here would make it permanent loss that was never healable -- the one asymmetry that lets
+    # `healed + residual` exceed the window it partitions.
+    stamps = [_at(s) for s in range(0, 3600, 5) if not 600 < s < 630]
     assert fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0) == []
 
 
@@ -273,3 +284,53 @@ def test_healable_does_not_double_count_when_a_would_mint_hour_is_later_minted()
 
     assert totals["healable_seconds"] == 120.0, "the same hour measured twice is still one gap"
     assert totals["healed_seconds"] == 120.0, "it WAS minted, so it was genuinely healed"
+
+
+# --- per-intersection-window booking (T0103) -------------------------------------------------------
+#
+# `fleet_dark_windows` finds the INTERSECTION -- the window in which every stream was silent -- and
+# booking it x stream count under-books every stream but the one that returned first. Measured on
+# 2026-07-13: intersection 266.178874 s, sum of each stream's own window 2,696.031909 s over 10
+# streams, so 34.243169 s (1.27%) was booked nowhere.
+
+
+def test_the_containing_window_is_the_streams_own_silence_around_the_fleet_window():
+    """The stream went quiet before the fleet did and came back after: its own window strictly
+    contains the intersection, and that surplus is the loss the intersection cannot see."""
+    stamps = [_at(100), _at(400)]  # this stream: silent 100 -> 400
+    fleet = DarkWindow(start=_at(150), end=_at(300), seconds=150.0)  # the intersection
+
+    own = containing_dark_window(stamps, fleet, hour_start=H, hour_end=HOUR_END)
+
+    assert (own.start, own.end) == (_at(100), _at(400))
+    assert own.seconds == 300.0
+
+
+def test_the_binding_stream_gets_exactly_the_fleet_window():
+    """The stream that returns FIRST defines the intersection's end, so its own window equals it --
+    which is why the old booking was right for exactly one stream and short for all the others."""
+    stamps = [_at(150), _at(300)]
+    fleet = DarkWindow(start=_at(150), end=_at(300), seconds=150.0)
+
+    own = containing_dark_window(stamps, fleet, hour_start=H, hour_end=HOUR_END)
+
+    assert (own.start, own.end, own.seconds) == (_at(150), _at(300), 150.0)
+
+
+def test_the_hour_bounds_are_edges_for_the_containing_window_too():
+    """A stream that never recorded in this hour is dark across the whole of it."""
+    fleet = DarkWindow(start=_at(150), end=_at(300), seconds=150.0)
+
+    own = containing_dark_window([], fleet, hour_start=H, hour_end=HOUR_END)
+
+    assert (own.start, own.end, own.seconds) == (H, HOUR_END, 3600.0)
+
+
+def test_a_stream_that_ticked_inside_the_fleet_window_has_no_containing_window():
+    """Impossible for a true fleet intersection -- the fleet window is built from the union of every
+    stream's stamps, so a stamp inside it would have split it. Guarded rather than assumed: the
+    caller must not silently book a window that does not exist."""
+    stamps = [_at(150), _at(200), _at(300)]
+    fleet = DarkWindow(start=_at(150), end=_at(300), seconds=150.0)
+
+    assert containing_dark_window(stamps, fleet, hour_start=H, hour_end=HOUR_END) is None
