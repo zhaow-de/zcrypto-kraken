@@ -9,6 +9,7 @@ from cli.archive.reconcile import (
     _message_ts,
     find_book_gaps,
     measure_residual,
+    overlap_seconds,
     secondary_covers,
     splice_book,
     union_trades,
@@ -561,3 +562,42 @@ def test_measure_residual_never_exceeds_the_gap_it_measures():
     for g in gaps:
         covered = sum(r.seconds for r in residual if r.start >= g.start and r.end <= g.end)
         assert covered <= g.seconds + 1e-9, f"residual {covered}s exceeds its own {g.seconds}s window"
+
+
+# --- the double-count: the same seconds in both a "covered" and a "nobody covered" counter ---------
+#
+# `both_streams_silent` books the fleet-dark intersection into `residual_gap_seconds_total` as
+# window x stream count. Once a per-pair record books its OWN measured residual, the fleet-dark
+# portion of that gap would land in the same counter twice -- correcting a heal over-count by
+# manufacturing a loss over-count. `overlap_seconds` is what the caller subtracts.
+
+
+def _span(a: int, b: int) -> tuple[datetime, datetime]:
+    h0 = datetime(2026, 7, 27, 7, tzinfo=UTC)
+    return (h0 + timedelta(seconds=a), h0 + timedelta(seconds=b))
+
+
+def test_overlap_seconds_is_the_part_of_the_span_a_window_already_booked():
+    assert overlap_seconds([_span(0, 200)], [_span(10, 190)]) == pytest.approx(180.0)
+
+
+def test_overlap_seconds_clamps_a_window_reaching_outside_the_span():
+    """A fleet-dark window spans the whole hour; only its intersection with this pair's own residual
+    was ever at risk of being counted twice."""
+    assert overlap_seconds([_span(100, 150)], [_span(0, 3600)]) == pytest.approx(50.0)
+
+
+def test_overlap_seconds_counts_overlapping_windows_once():
+    """Merged before intersecting: two windows covering the same second must not subtract it twice,
+    or the correction would under-book a real loss."""
+    assert overlap_seconds([_span(0, 100)], [_span(10, 60), _span(40, 80)]) == pytest.approx(70.0)
+
+
+def test_overlap_seconds_is_zero_without_windows():
+    assert overlap_seconds([_span(0, 100)], []) == 0.0
+
+
+def test_overlap_seconds_ignores_a_window_that_does_not_touch_the_span():
+    """The subtraction must never reach past what it intersects: a dark window elsewhere in the hour
+    is somebody else's loss, and deleting it here would make a real gap vanish from the counter."""
+    assert overlap_seconds([_span(0, 100)], [_span(200, 300)]) == 0.0

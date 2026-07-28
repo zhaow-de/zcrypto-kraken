@@ -14,6 +14,7 @@ Load-bearing constraints (spec 00050, constraints 1 + 2):
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -241,6 +242,12 @@ def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds:
 
     Boundary ownership is inherited from the gap being measured, so a residual window that reaches
     an original edge still says who owns it and stays safe to filter with.
+
+    Every spliced message counts as fill here, including a **snapshot** — unlike `secondary_covers`,
+    which refuses to let one witness a gap at all. The asymmetry is deliberate and bounded: a snapshot
+    IS book state at that instant, so the second it lands is genuinely not missing, and each distinct
+    mark can credit at most `min_gap_seconds` of the surrounding window. Admitting the window remains
+    the strict question; measuring what the window still lacks is the lenient one.
     """
     if not gaps:
         return []
@@ -264,6 +271,34 @@ def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds:
                 )
             )
     return residual
+
+
+def overlap_seconds(spans: Iterable[tuple[datetime, datetime]], windows: Iterable[tuple[datetime, datetime]]) -> float:
+    """How much of `spans` lies inside `windows` — the seconds a SECOND record has already booked.
+
+    Permanent loss is booked from two directions. `both_streams_silent` books the fleet-dark
+    intersection as window × dark stream count; a healed hour books whatever its splice left unfilled.
+    A gap straddling the darkness contains the same seconds, so booking both in full counts them
+    twice — correcting a heal over-count by manufacturing a loss over-count in the same counter. Each
+    side subtracts what the LEDGER shows the other already booked, so every second of loss is
+    attributed exactly once regardless of which side decided first.
+
+    Windows are merged before intersecting: two overlapping windows must not subtract the same second
+    twice, which would under-book a loss that really is unbooked.
+    """
+    merged: list[list[datetime]] = []
+    for start, end in sorted(windows):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    total = 0.0
+    for a, b in spans:
+        for lo, hi in merged:
+            span = (min(b, hi) - max(a, lo)).total_seconds()
+            if span > 0:
+                total += span
+    return total
 
 
 def splice_book(primary: pl.DataFrame, secondary: pl.DataFrame, gaps: list[Gap]) -> list[Block]:

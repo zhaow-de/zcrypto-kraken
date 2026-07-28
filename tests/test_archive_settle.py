@@ -140,6 +140,15 @@ def test_darkness_below_the_threshold_is_not_a_window():
     assert fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0) == []
 
 
+def test_darkness_of_exactly_the_threshold_is_not_a_window():
+    # The predicates must agree: `find_book_gaps` requires silence STRICTLY greater than its
+    # threshold, so a window of exactly 30.0 s is not a gap on the way in. Booking it as residual
+    # here would make it permanent loss that was never healable -- the one asymmetry that lets
+    # `healed + residual` exceed the window it partitions.
+    stamps = [_at(s) for s in range(0, 3600, 5) if not 600 < s < 630]
+    assert fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0) == []
+
+
 def test_a_row_that_leaked_in_from_an_adjacent_hour_never_fabricates_a_window():
     # A late event can carry a `ts` outside its file's hour. Clamping to the hour's bounds keeps the
     # timeline honest; a negative-length window would otherwise be reported as darkness.

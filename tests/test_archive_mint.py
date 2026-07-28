@@ -181,9 +181,33 @@ def test_a_gap_from_another_hour_is_rejected(tmp_path):
         _mint(tmp_path, gaps_healed=[stray])
 
 
-def test_a_residual_gap_is_held_to_the_same_boundary_contract(tmp_path):
-    with pytest.raises(CaptureError, match="hour boundary"):
-        _mint(tmp_path, residual_gaps=[_tail_gap(datetime(2026, 7, 16, 9, 59, 59, 999_999, tzinfo=UTC))])
+def test_a_residual_gap_may_end_on_a_spliced_message_that_owns_no_primary_row(tmp_path):
+    """A residual window is measured over the MINTED frame, so its interior edges are spliced
+    secondary messages -- owned by neither the primary nor the hour. The ownership rule exists to
+    keep `splice_book`'s row filters honest, and a residual gap drives no filter: it describes what
+    the hour still lacks. Held to this contract, an hour could not report its own remaining holes."""
+    interior = Gap(
+        start=H,
+        end=datetime(2026, 7, 16, 9, 19, 50, tzinfo=UTC),
+        seconds=1190.0,
+        start_is_primary_message=False,
+        end_is_primary_message=False,
+    )
+    _mint(tmp_path, residual_gaps=[interior])  # no raise
+
+
+def test_a_residual_gap_from_another_hour_is_still_rejected(tmp_path):
+    """The bounds half of the contract still binds: a sidecar claiming a hole outside its own hour
+    is a lie about which hour is incomplete."""
+    stray = Gap(
+        start=H + timedelta(hours=1, seconds=10),
+        end=H + timedelta(hours=1, seconds=90),
+        seconds=80.0,
+        start_is_primary_message=True,
+        end_is_primary_message=True,
+    )
+    with pytest.raises(CaptureError, match="outside the 09:00 hour"):
+        _mint(tmp_path, residual_gaps=[stray])
 
 
 def test_minting_a_datetime_that_is_not_an_exact_utc_hour_is_rejected(tmp_path):

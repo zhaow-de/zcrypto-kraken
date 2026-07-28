@@ -30,7 +30,7 @@ import typer
 from cli.archive import replay as replay_mod
 from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
-from cli.archive.reconcile import Block, find_book_gaps, splice_book, union_trades
+from cli.archive.reconcile import Block, Gap, find_book_gaps, measure_residual, overlap_seconds, splice_book, union_trades
 from cli.archive.settle import (
     fleet_dark_windows,
     hour_path,
@@ -159,6 +159,91 @@ def _load_ledger(root: Path) -> list[dict]:
     return records
 
 
+def _as_dt(value: datetime | str) -> datetime:
+    """A ledger record appended THIS cycle still holds datetimes; one read back from the JSONL holds
+    the ISO strings `json.dumps(default=str)` wrote. Both reach `_totals` and the lookups below."""
+    return value if isinstance(value, datetime) else datetime.fromisoformat(value)
+
+
+def _spans(items: list[dict]) -> list[tuple[datetime, datetime]]:
+    return [(_as_dt(item["start"]), _as_dt(item["end"])) for item in items]
+
+
+def _booked_dark(records: list[dict], pair: str, hour: datetime) -> list[tuple[datetime, datetime]]:
+    """The fleet-dark windows the ledger has ALREADY booked as loss for `pair`'s stream in `hour`.
+
+    Read from the ledger, never recomputed. `both_streams_silent` is decided ONCE, for the pairs
+    present on that cycle, and a later cycle's inputs differ: a mirror file arriving late adds a pair
+    the fleet record booked no share for, so subtracting a fresh recomputation would delete that
+    pair's loss from a total nobody ever added it to. Both directions of that error were measured.
+    """
+    stamp = hour.isoformat()
+    windows: list[tuple[datetime, datetime]] = []
+    for record in records:
+        if record.get("state") != "both_streams_silent" or record.get("hour") != stamp:
+            continue
+        if pair in (record.get("pairs") or []):
+            windows += _spans(record.get("windows") or [])
+    return windows
+
+
+def _booked_residual(records: list[dict], pair: str, hour: datetime) -> list[tuple[datetime, datetime]]:
+    """The residual windows `pair`'s own book record already booked as loss for `hour`.
+
+    The mirror image of `_booked_dark`, and the reason the attribution is order-independent: an
+    unreadable segment suppresses the fleet detector for a cycle, so a pair that mints in the
+    meantime books its residual first and the fleet record must then book only the rest. Records
+    written before residual was measured carry no `residual_gaps` and booked nothing, so they
+    correctly subtract nothing.
+    """
+    stamp = hour.isoformat()
+    for record in records:
+        if record.get("kind") != "book" or record.get("pair") != pair or record.get("hour") != stamp:
+            continue
+        if record.get("state") in ("minted", "would_mint"):
+            return _spans(record.get("residual_gaps") or [])
+    return []
+
+
+def _book_entry(
+    pair: str, hour: datetime, gaps: list[Gap], residual_gaps: list[Gap], dark: list[tuple[datetime, datetime]]
+) -> dict:
+    """One healed book hour's ledger record, with every second attributed EXACTLY once.
+
+    The three quantities are deliberately separate because they answer three different questions, and
+    collapsing them is what made this record lie about the 2026-07-27 blackout:
+
+      * `claimed_seconds` — the primary silence the gap was ADMITTED on. This is what
+        `healed_seconds` used to be, and the gap-RATE signal still wants it: that rate exists to
+        reveal a degrading primary, and a correlated outage (not the primary degrading) must not make
+        it quieter than an ordinary one.
+      * `healed_seconds` — what the splice actually INSERTED. `secondary_covers` admits a window on
+        one update row anywhere inside it; one row admits a window, it does not fill one. Measured
+        against the minted frame, the real event read 82.955463 s against a claimed 2,311.536587 s.
+      * `residual_seconds` — what the splice did NOT fill, minus whatever the fleet-wide
+        `both_streams_silent` record already booked for the same seconds. Without that subtraction,
+        correcting the heal over-count would manufacture a loss over-count in the same cycle.
+
+    `residual_gaps` stays the FULL measured set: it is this file's provenance, not a counter, and the
+    sidecar must describe the hour rather than the bookkeeping.
+    """
+    claimed = sum(gap.seconds for gap in gaps)
+    unfilled = sum(gap.seconds for gap in residual_gaps)
+    # Both subtractions are bounded by construction -- residual windows are disjoint sub-windows of
+    # the gaps, and each merged dark window is intersected against them -- so neither can go negative.
+    already_booked = overlap_seconds([(g.start, g.end) for g in residual_gaps], dark)
+    return {
+        "pair": pair,
+        "kind": "book",
+        "hour": hour.isoformat(),
+        "claimed_seconds": claimed,
+        "healed_seconds": claimed - unfilled,
+        "gaps_healed": [{"start": g.start, "end": g.end, "seconds": g.seconds} for g in gaps],
+        "residual_gaps": [{"start": g.start, "end": g.end, "seconds": g.seconds} for g in residual_gaps],
+        "residual_seconds": unfilled - already_booked,
+    }
+
+
 def _totals(records: list[dict]) -> dict[str, float]:
     """The exporter's cumulative counters, derived from the WHOLE ledger.
 
@@ -187,7 +272,10 @@ def _totals(records: list[dict]) -> dict[str, float]:
     measured: set[tuple] = set()
     for record in records:
         state = record.get("state")
-        totals["residual_seconds"] += float(record.get("residual_seconds") or 0.0)
+        if state not in _MINT_FAMILY:
+            # both_streams_silent / total_loss / failed are decided once per (pair, hour) and never
+            # re-ledgered, so they add unconditionally.
+            totals["residual_seconds"] += float(record.get("residual_seconds") or 0.0)
         if state == "minted":
             totals["healed_seconds"] += float(record.get("healed_seconds") or 0.0)
             totals["spliced_hours" if record.get("kind") == "book" else "union_hours"] += 1
@@ -196,13 +284,21 @@ def _totals(records: list[dict]) -> dict[str, float]:
             if key in measured:
                 continue
             measured.add(key)
+            # Inside the dedup, for the same reason `healable` is: an hour ledgered `would_mint` in
+            # detect-only and `minted` after the flip carries the SAME measured residual on both
+            # records. Adding both books permanent loss twice, and the second step reads to the
+            # CRITICAL page as a fresh permanent-loss event -- an increase, so the reset guard on that
+            # rule does not suppress it. (Harmless before residual was measured: it was a literal 0.0.)
+            totals["residual_seconds"] += float(record.get("residual_seconds") or 0.0)
             # `healable` is the gap rate, and it must exist in DETECT-ONLY -- minting stays off for the
             # whole T0039 soak, so `healed` (minted only) is pinned at 0 exactly when the signal is most
             # needed. A degrading primary whose every gap the secondary quietly heals trips neither the
             # residual-gap rule nor either dead-man; the rate is the only thing that reveals it. Counted
             # here, inside the per-(pair,kind,hour) dedup, because the flip to --mint re-ledgers the same
             # hour as `minted`: one gap, not two.
-            totals["healable_seconds"] += float(record.get("healed_seconds") or 0.0)
+            # `claimed_seconds` or `healed_seconds`: records written before the two were split
+            # carry only the latter, and there it WAS the claimed window width.
+            totals["healable_seconds"] += float(record.get("claimed_seconds") or record.get("healed_seconds") or 0.0)
             totals["deficit_primary"] += float(record.get("trades_added") or 0)
             totals["deficit_secondary"] += float(record.get("trades_secondary_deficit") or 0)
             totals["dedup_rows"] += float(record.get("trades_deduped") or 0)
@@ -266,7 +362,9 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
     _emit(
         "healed_gap_seconds_total",
         "counter",
-        "Primary book silence covered by a secondary block.",
+        "Primary book silence a secondary block actually FILLED, measured against the minted hour rather "
+        "than the window the gap was admitted on -- one secondary update admits a window, it does not fill "
+        "one.",
         [("", totals["healed_seconds"])],
     )
     _emit(
@@ -282,7 +380,8 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
     _emit(
         "residual_gap_seconds_total",
         "counter",
-        "Silence NO mirror covered: permanent loss (both_streams_silent / total_loss).",
+        "Silence NO mirror covered: permanent loss (both_streams_silent / total_loss, plus whatever a "
+        "healed hour's splice left unfilled and no fleet-wide record already booked).",
         [("", totals["residual_seconds"])],
     )
     _emit(
@@ -450,7 +549,13 @@ def reconcile(
         if present and not broken:
             windows = fleet_dark_windows(stamps, hour_start=hour, hour_end=hour_end, min_seconds=min_gap_seconds)
             if windows and not _decided("*", "book", hour, "both_streams_silent"):
-                residual = sum(w.seconds for w in windows) * len(present)  # seconds x dark book streams
+                # Per dark book stream -- minus whatever that stream's own book record already booked
+                # for the same seconds. Normally none exists yet and this is the full window x count;
+                # after a cycle in which an unreadable segment suppressed this detector, the pairs that
+                # minted in the meantime booked their residual first, and it must not be booked again.
+                spans = [(w.start, w.end) for w in windows]
+                dark_total = sum(w.seconds for w in windows)
+                residual = sum(dark_total - overlap_seconds(_booked_residual(records, p, hour), spans) for p in present)
                 logger.error(
                     "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f",
                     hour.isoformat(),
@@ -498,17 +603,19 @@ def reconcile(
             if not gaps:
                 continue
 
-            healed = sum(gap.seconds for gap in gaps)
-            entry = {
-                "pair": pair,
-                "kind": "book",
-                "hour": hour.isoformat(),
-                "healed_seconds": healed,
-                "gaps_healed": [{"start": g.start, "end": g.end, "seconds": g.seconds} for g in gaps],
-                "residual_seconds": 0.0,
-            }
+            # Detect-only has no minted frame to measure, so it measures the witness that WOULD be
+            # spliced -- the same rows, hence the same arithmetic. The mint path re-measures the
+            # actual output below, because that is what the counters claim to describe.
+            residual_gaps = measure_residual(gaps, secondary, min_gap_seconds=min_gap_seconds)
+            entry = _book_entry(pair, hour, gaps, residual_gaps, _booked_dark(records, pair, hour))
             if not mint:
-                logger.info("archive reconcile: would_mint pair=%s kind=book hour=%s healed_s=%.1f", pair, hour.isoformat(), healed)
+                logger.info(
+                    "archive reconcile: would_mint pair=%s kind=book hour=%s healed_s=%.1f residual_s=%.1f",
+                    pair,
+                    hour.isoformat(),
+                    entry["healed_seconds"],
+                    entry["residual_seconds"],
+                )
                 _ledger(state="would_mint", **entry)
                 continue
 
@@ -518,6 +625,9 @@ def reconcile(
                     _read(primary_root, pair, "book", hour) if frames["primary"] is not None else pl.DataFrame(schema=BOOK_SCHEMA)
                 )
                 blocks = splice_book(full_primary, full_secondary, gaps)
+                minted = pl.concat([b.frame for b in blocks]) if blocks else pl.DataFrame(schema=BOOK_SCHEMA)
+                residual_gaps = measure_residual(gaps, minted, min_gap_seconds=min_gap_seconds)
+                entry = _book_entry(pair, hour, gaps, residual_gaps, _booked_dark(records, pair, hour))
                 mint_hour(
                     reconciled_root,
                     pair,
@@ -525,14 +635,20 @@ def reconcile(
                     hour,
                     blocks,
                     gaps_healed=gaps,
-                    residual_gaps=[],
+                    residual_gaps=residual_gaps,
                     schema=BOOK_SCHEMA,
                     tool_version=version("zcrypto"),
                 )
             except (CaptureError, OSError) as exc:
                 _fail(pair, "book", hour, f"mint failed: {exc}")
                 continue
-            logger.info("archive reconcile: minted pair=%s kind=book hour=%s healed_s=%.1f", pair, hour.isoformat(), healed)
+            logger.info(
+                "archive reconcile: minted pair=%s kind=book hour=%s healed_s=%.1f residual_s=%.1f",
+                pair,
+                hour.isoformat(),
+                entry["healed_seconds"],
+                entry["residual_seconds"],
+            )
             _ledger(state="minted", **entry)
 
         # --- the witness-based heal: trades -----------------------------------------------------

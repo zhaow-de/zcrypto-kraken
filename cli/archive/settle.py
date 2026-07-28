@@ -122,7 +122,9 @@ def fleet_dark_windows(
     windows = [
         DarkWindow(start=a, end=b, seconds=(b - a).total_seconds())
         for a, b in zip(edges, edges[1:], strict=False)
-        if (b - a).total_seconds() >= min_seconds
+        # STRICTLY greater, matching `find_book_gaps`: a window of exactly the threshold is not a
+        # gap on the way in, so booking it as residual here would be loss that was never healable.
+        if (b - a).total_seconds() > min_seconds
     ]
     return windows
 

@@ -531,3 +531,177 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
     assert 'source="primary"} +Inf' in " ".join(lag_lines), f"primary lag not +Inf: {lag_lines}"
     assert 'source="secondary"} 100.0' in " ".join(lag_lines)
     assert " inf" not in text.lower(), f"bare 'inf' would break the whole textfile: {text!r}"
+
+
+# --- the counters describe the OUTPUT, not the input (T0103) --------------------------------------
+#
+# The 2026-07-27 07:00 UTC blackout: both mirrors went dark together and the secondary contributed
+# only its post-resubscribe tail. `healed_seconds` was the full window WIDTH, admitted on one
+# secondary update anywhere inside it, so the ledger claimed 2,311.536587 s healed against
+# 82.955463 s actually spliced -- and the alert that reads it told an operator "every gap was
+# covered" for 24 h. These two tests are that shape, and both fail against the pre-fix wiring.
+
+
+def _outage(pri: Path, sec: Path, hour: datetime, pair: str, *, secondary_dark: bool) -> None:
+    """The primary is silent 600 s -> 1200 s. The secondary either goes dark with it and comes back
+    with a 3-message tail at 1190-1192 (the correlated shape), or stays dense (an ordinary primary
+    gap the secondary really does cover)."""
+    _write(pri, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in range(0, 3600, 10) if not 600 < s < 1200]))
+    if secondary_dark:
+        stamps = sorted([s for s in range(3, 3600, 10) if not 596 < s < 1190] + [1190, 1191, 1192])
+    else:
+        stamps = list(range(3, 3600, 10))
+    _write(sec, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in stamps]))
+
+
+def test_healed_is_what_the_splice_inserted_not_the_window_it_was_admitted_on(tmp_path, monkeypatch):
+    """One pair loses both mirrors while the other keeps recording, so no fleet-dark window exists to
+    absorb the loss: the whole unfilled remainder is this pair's own residual."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["kind"] == "book"]
+    assert len(minted) == 1, [r["state"] for r in _ledger(rec)]
+    record = minted[0]
+    assert record["claimed_seconds"] == pytest.approx(600.0), "the window the gap was admitted on"
+    assert record["healed_seconds"] == pytest.approx(10.0), "only the 10 s after the secondary came back was covered"
+    assert record["residual_seconds"] == pytest.approx(590.0), "the 590 s neither mirror held is permanent loss"
+    assert sum(g["seconds"] for g in record["residual_gaps"]) == pytest.approx(590.0)
+    assert "both_streams_silent" not in _states(rec), "one pair going dark alone is not a fleet outage"
+
+
+def test_a_fleet_dark_window_is_never_booked_as_loss_twice(tmp_path, monkeypatch):
+    """Both pairs lose both mirrors simultaneously. `both_streams_silent` already books that
+    intersection into the loss counter for every stream, so the per-pair residual must book only
+    what is left over -- correcting a heal over-count must not manufacture a loss over-count."""
+    pri, sec, rec = _roots(tmp_path)
+    for pair in PAIRS:
+        _outage(pri, sec, H, pair, secondary_dark=True)
+
+    result = _run(
+        [str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch
+    )
+    assert result.exit_code == 0, result.output
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert len(fleet) == 1 and fleet[0]["residual_seconds"] == pytest.approx(1180.0), fleet  # 590 s x 2 streams
+    minted = [r for r in _ledger(rec) if r["state"] == "minted" and r["kind"] == "book"]
+    assert len(minted) == 2
+    for record in minted:
+        assert record["healed_seconds"] == pytest.approx(10.0)
+        assert record["residual_seconds"] == pytest.approx(0.0), "every one of its 590 s is already in the fleet record"
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(20.0)
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
+    # The invariant the two predicates exist to keep: per stream, nothing is claimed twice.
+    assert (20.0 + 1180.0) <= 600.0 * len(PAIRS) + 1e-9
+
+
+def test_the_gap_rate_still_sees_the_full_window_the_secondary_witnessed(tmp_path, monkeypatch):
+    """`healable_gap_seconds_total` is the DEGRADING-PRIMARY signal, so it stays denominated in
+    primary silence -- otherwise a correlated outage, which is not the primary degrading, would make
+    the rate signal quieter than an ordinary one."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=False)
+
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_healable_gap_seconds_total"] == pytest.approx(600.0)
+    would = [r for r in _ledger(rec) if r["state"] == "would_mint"][0]
+    assert would["healed_seconds"] == pytest.approx(600.0), "a live secondary really does cover the window"
+    assert would["residual_seconds"] == pytest.approx(0.0)
+
+
+def test_the_provenance_sidecar_records_what_the_hour_still_lacks(tmp_path, monkeypatch):
+    """`residual_gaps` was a literal `[]` at every mint call, so every provenance file on the NAS
+    claims a complete hour. The sidecar is the cheapest audit surface there is -- a pure file
+    assertion over data already on disk -- and it is worthless while it always says the same thing."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    sidecar = json.loads(_seg_path(rec, "BTC/EUR", "book", H).with_name("09.provenance.json").read_text())
+    assert sum(g["seconds"] for g in sidecar["residual_gaps"]) == pytest.approx(590.0), sidecar["residual_gaps"]
+    assert sum(g["seconds"] for g in sidecar["gaps_healed"]) == pytest.approx(600.0), "the window it was admitted on"
+
+
+def test_the_gap_rate_still_reads_the_full_window_when_the_heal_was_almost_nothing(tmp_path, monkeypatch):
+    """`claimed_seconds` and `healed_seconds` must stay distinguishable in the shape that separates
+    them: collapsing the rate onto the measured heal would drop the real event's degrading-primary
+    signal from 2,311 s to 83 s."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_healable_gap_seconds_total"] == pytest.approx(600.0)
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(10.0)
+
+
+def test_the_would_mint_to_minted_flip_books_the_permanent_loss_once(tmp_path, monkeypatch):
+    """Both records now carry a MEASURED residual, and the same hour is ledgered twice across the
+    flip. Summed twice, the second step reads to the CRITICAL permanent-loss page as a fresh event --
+    an increase, so that rule's counter-reset guard does not suppress it."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--textfile", str(tmp_path / "detect.prom")], now=SETTLED, monkeypatch=monkeypatch)
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "mint.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert _states(rec) == ["would_mint", "minted"]
+    assert _series(tmp_path / "detect.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(590.0)
+    assert _series(tmp_path / "mint.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(590.0)
+
+
+def test_a_pair_whose_mirror_arrives_after_the_fleet_decision_still_books_its_own_loss(tmp_path, monkeypatch):
+    """`both_streams_silent` is decided ONCE, for the pairs present on that cycle. A pair whose files
+    land later was never given a share of it, so subtracting a freshly recomputed dark window from
+    its residual would delete a real loss from a total nobody ever added it to."""
+    pri, sec, rec = _roots(tmp_path)
+    _outage(pri, sec, H, "BTC/EUR", secondary_dark=True)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert fleet[0]["pairs"] == ["BTC/EUR"] and fleet[0]["residual_seconds"] == pytest.approx(590.0)
+
+    _outage(pri, sec, H, "ETH/EUR", secondary_dark=True)  # the second pair's mirrors land a cycle late
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    eth = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "ETH/EUR"][0]
+    assert eth["residual_seconds"] == pytest.approx(590.0), "no fleet record ever booked ETH/EUR's share"
+    assert _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
+
+
+def test_a_pair_that_minted_before_the_fleet_detector_ran_is_not_booked_twice(tmp_path, monkeypatch):
+    """The mirror image: an unreadable segment suppresses the fleet detector for a cycle (an honest
+    timeline cannot be built from it), so a pair that mints meanwhile books its residual FIRST. The
+    fleet record must then book only the streams that have not already booked their own."""
+    pri, sec, rec = _roots(tmp_path)
+    for pair in PAIRS:
+        _outage(pri, sec, H, pair, secondary_dark=True)
+    _seg_path(sec, "ETH/EUR", "book", H).write_bytes(b"not a parquet")
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    btc = [r for r in _ledger(rec) if r["state"] == "minted" and r["pair"] == "BTC/EUR"][0]
+    assert btc["residual_seconds"] == pytest.approx(590.0), "nothing had booked it yet"
+    assert "both_streams_silent" not in _states(rec)
+
+    _outage(pri, sec, H, "ETH/EUR", secondary_dark=True)  # the segment is re-pulled intact
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
+    assert fleet["residual_seconds"] == pytest.approx(590.0), "BTC/EUR's 590 s was already on its own record"
+    assert _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
