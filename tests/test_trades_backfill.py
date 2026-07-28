@@ -4,7 +4,7 @@ import logging
 import polars as pl
 import pytest
 
-from cli.capture.segment_writer import TRADE_SCHEMA
+from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
 from cli.trades.backfill import backfill
 from cli.trades.errors import TradeBackfillError
 from cli.trades.gaps import detect
@@ -303,3 +303,157 @@ def test_fetch_failed_ids_land_in_their_own_summary_bucket(tmp_path, caplog):
     # `fetch_failed=%d` from the format string left all 20 tests green.
     summary = next(r.message for r in caplog.records if "trade backfill complete" in r.message)
     assert "fetch_failed=4" in summary
+
+
+# --- the two outcomes the summary could not name (T0087, T0043) -----------------------------------
+
+
+def _write_book(root, hour=H, pair="BTC/EUR", first_s=0, last_s=3599):
+    """A book final for the same (pair, hour). The witness is that it SPANS the hour — a final that
+    merely exists proves only that one book event landed somewhere in it, which a capture restart
+    at :45 produces too (and our own image converges restart capture)."""
+    d = root / pair.split("/")[0] / pair.split("/")[1] / "book" / f"{hour:%Y/%m/%d}"
+    d.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(
+        [
+            {
+                "ts": hour + dt.timedelta(seconds=s),
+                "symbol": pair,
+                "type": "snapshot" if s == first_s else "update",
+                "side": "bid",
+                "price": 1.0,
+                "qty": 1.0,
+                "checksum": 1,
+            }
+            for s in (first_s, last_s)
+        ],
+        schema=BOOK_SCHEMA,
+    ).write_parquet(d / f"{hour:%H}.parquet")
+
+
+def test_rows_fetched_for_an_hour_whose_mint_fails_land_in_their_own_bucket(tmp_path, monkeypatch, caplog):
+    """T0087: the mint's `except ... continue` isolates a bad hour but also skips the recovered
+    tally, so rows the REST really served were counted in NO printed bucket -- not `recovered`
+    (they never landed), not `unrecoverable` (REST served them), not `fetch_failed` (the fetch
+    succeeded). The run is never silently clean, but the number was visible only inside the
+    invariant-violation message."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 15, 16])  # 12,13,14 missing
+
+    def exploding_mint(*a, **k):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr("cli.trades.backfill.mint_hour", exploding_mint)
+    with caplog.at_level(logging.INFO, logger="zcrypto.trades.backfill"):
+        res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 13, 14]))
+
+    assert res.trades_mint_failed == 3, "the three rows REST served and the mint dropped"
+    assert res.trades_recovered == 0 and res.trades_unrecoverable == 0 and res.trades_fetch_failed == 0
+    # Two printers, both pinned: T0078's review found that deleting a bucket from the logger's
+    # format string left every test green because only the result object was asserted.
+    summary = next(r.message for r in caplog.records if "trade backfill complete" in r.message)
+    assert "mint_failed=3" in summary
+
+
+def test_a_mint_failure_still_trips_the_accounting_invariant(tmp_path, monkeypatch):
+    """The decision behind the new counter: it is REPORTED but never SUBTRACTED. A fetched-but-
+    unminted row is retryable -- the next run re-detects and re-fetches it -- so treating it as an
+    explained absence would make the strongest check in the sweep go quiet on a real failure."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 15, 16])
+
+    monkeypatch.setattr("cli.trades.backfill.mint_hour", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 13, 14]))
+
+    violations = [msg for _, msg in res.errors if "accounting invariant violated" in msg]
+    assert violations and "unaccounted=3" in violations[0], res.errors
+    assert res.trades_mint_failed == 3, "reported in full while the invariant still trips -- both halves"
+
+
+def test_a_trades_hour_absent_while_its_book_sibling_survived_is_counted_when_repaired(tmp_path, caplog):
+    """T0043: `is_total_loss` classifies a both-mirrors trades loss as "nobody traded" (a quiet pair
+    genuinely prints nothing for an hour), and the REST backfill then repairs it SILENTLY -- so a
+    real infrastructure loss left no operator-visible trace of ever having happened. The signature
+    that distinguishes the two: no trades final, a BOOK final for the same hour proving the
+    connection was alive, and rows the REST tape had for it."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11], hour=H)
+    _write(primary, [20, 21], hour=H + dt.timedelta(hours=2))  # brackets the hole
+    _write_book(primary, hour=H + dt.timedelta(hours=1))  # the book survived the lost hour
+
+    def fake_fetch(pair, since, *, until=None, **kw):
+        return _rows([12, 13], hour=H + dt.timedelta(hours=1))
+
+    with caplog.at_level(logging.INFO, logger="zcrypto.trades.backfill"):
+        res = backfill(primary, overlay, now=NOW, fetch=fake_fetch)
+
+    assert res.hours_repaired_after_loss == 1, "the lost hour was repaired, and now it says so"
+    assert res.hours_minted == 1 and res.trades_recovered == 2
+    summary = next(r.message for r in caplog.records if "trade backfill complete" in r.message)
+    assert "hours_repaired_after_loss=1" in summary
+    assert any("repaired" in r.message and r.levelname == "WARNING" for r in caplog.records), "and it is loud"
+
+
+def test_a_quiet_pair_with_no_book_witness_is_not_a_repaired_loss(tmp_path):
+    """The false positive the signature exists to avoid: an hour with no trades final AND no book
+    final is an ordinary absence with no evidence either way -- it must not be reported as a
+    repaired infrastructure loss."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11], hour=H)
+    _write(primary, [20, 21], hour=H + dt.timedelta(hours=2))
+
+    def fake_fetch(pair, since, *, until=None, **kw):
+        return _rows([12, 13], hour=H + dt.timedelta(hours=1))
+
+    res = backfill(primary, overlay, now=NOW, fetch=fake_fetch)
+
+    assert res.hours_minted == 1 and res.trades_recovered == 2
+    assert res.hours_repaired_after_loss == 0
+
+
+def test_a_book_final_that_starts_mid_hour_is_not_a_witness(tmp_path):
+    """The false positive the mere-existence check could not see, and the one our own operations
+    produce: capture is down for part of the hour and reconnects at :45, so a book final for that
+    hour EXISTS while the pair was simply quiet across the connected part. Nothing was lost, and a
+    counter whose entire purpose is loss attribution must not say otherwise."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11], hour=H)
+    _write(primary, [20, 21], hour=H + dt.timedelta(hours=2))
+    _write_book(primary, hour=H + dt.timedelta(hours=1), first_s=2700, last_s=3599)  # reconnected at :45
+
+    def fake_fetch(pair, since, *, until=None, **kw):
+        return _rows([12, 13], hour=H + dt.timedelta(hours=1))
+
+    res = backfill(primary, overlay, now=NOW, fetch=fake_fetch)
+
+    assert res.hours_minted == 1 and res.trades_recovered == 2
+    assert res.hours_repaired_after_loss == 0, "a mid-hour reconnect witnesses nothing"
+
+
+def test_a_book_final_that_dies_mid_hour_is_not_a_witness(tmp_path):
+    """The mirror shape: the book final starts on the boundary but stops at :10, so the pair could
+    have traded at :30 with nobody recording either stream."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11], hour=H)
+    _write(primary, [20, 21], hour=H + dt.timedelta(hours=2))
+    _write_book(primary, hour=H + dt.timedelta(hours=1), first_s=0, last_s=600)
+
+    def fake_fetch(pair, since, *, until=None, **kw):
+        return _rows([12, 13], hour=H + dt.timedelta(hours=1))
+
+    res = backfill(primary, overlay, now=NOW, fetch=fake_fetch)
+
+    assert res.hours_repaired_after_loss == 0, "a stream that died at :10 witnesses nothing after it"
+
+
+def test_repairing_an_hour_that_already_had_a_trades_final_is_not_a_repaired_loss(tmp_path):
+    """An ordinary gap inside an hour whose file exists is a coalescing/reconnect hole, not a lost
+    file -- the book witness is present for it too, so only the ABSENCE of the trades final
+    separates the two cases."""
+    primary, overlay = tmp_path / "p", tmp_path / "r"
+    _write(primary, [10, 11, 15, 16])
+    _write_book(primary, hour=H)
+
+    res = backfill(primary, overlay, now=NOW, fetch=lambda *a, **k: _rows([12, 13, 14]))
+
+    assert res.trades_recovered == 3 and res.hours_repaired_after_loss == 0
