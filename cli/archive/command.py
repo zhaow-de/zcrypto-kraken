@@ -30,7 +30,16 @@ import typer
 from cli.archive import replay as replay_mod
 from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
-from cli.archive.reconcile import Block, Gap, find_book_gaps, measure_residual, overlap_seconds, splice_book, union_trades
+from cli.archive.reconcile import (
+    Block,
+    Gap,
+    find_book_gaps,
+    find_unwitnessed_gaps,
+    measure_residual,
+    overlap_seconds,
+    splice_book,
+    union_trades,
+)
 from cli.archive.settle import (
     fleet_dark_windows,
     hour_path,
@@ -600,6 +609,39 @@ def reconcile(
             except CaptureError as exc:
                 _fail(pair, "book", hour, str(exc))
                 continue
+
+            # Primary silence NO secondary update witnessed. Ledgered for visibility and counted
+            # nowhere: whenever the fleet was dark those same seconds are already booked by
+            # `both_streams_silent`, so a counter here would double-book them -- and when the fleet
+            # was NOT dark, one pair silent on both mirrors cannot be told from a quiet market,
+            # which is the ambiguity the fleet-wide intersection exists to resolve. Before this, the
+            # pair with the LARGEST hole of an outage was the one that produced no record at all.
+            if not _decided(pair, "book", hour, "unwitnessed"):
+                blind = find_unwitnessed_gaps(
+                    primary,
+                    secondary,
+                    min_gap_seconds=min_gap_seconds,
+                    hour_start=hour,
+                    hour_end=hour_end,
+                )
+                if blind:
+                    logger.warning(
+                        "archive reconcile: unwitnessed pair=%s hour=%s windows=%d seconds=%.1f "
+                        "-- primary silence no secondary update covers; not healable, not counted",
+                        pair,
+                        hour.isoformat(),
+                        len(blind),
+                        sum(g.seconds for g in blind),
+                    )
+                    _ledger(
+                        state="unwitnessed",
+                        pair=pair,
+                        kind="book",
+                        hour=hour.isoformat(),
+                        gaps_unwitnessed=[{"start": g.start, "end": g.end, "seconds": g.seconds} for g in blind],
+                        residual_seconds=0.0,
+                    )
+
             if not gaps:
                 continue
 

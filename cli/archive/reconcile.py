@@ -162,26 +162,52 @@ def find_book_gaps(
     their outer boundary is the hour boundary, which is nobody's wire message (see `Gap`).
     """
     _validate_hour_bounds(hour_start, hour_end)
-    _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
     _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if secondary_covers(secondary, gap)]
 
-    sec_ts = _message_ts(secondary)
-    if not sec_ts:
-        return []
+
+def find_unwitnessed_gaps(
+    primary: pl.DataFrame,
+    secondary: pl.DataFrame,
+    *,
+    min_gap_seconds: float,
+    hour_start: datetime,
+    hour_end: datetime,
+) -> list[Gap]:
+    """The complement of `find_book_gaps`: primary silence the secondary did NOT witness.
+
+    Together the two partition every primary-silence window wider than the threshold, which is the
+    point — before this existed, an unwitnessed window produced no `Gap`, no ledger record and no
+    log line, so the pair with the LARGEST hole in an outage was the one the system had nothing to
+    say about. (2026-07-27: ADA/EUR lost 208.566668 s, the biggest hole of that hour, and its
+    secondary held 200 rows inside the gap — every one a `snapshot` at a single instant, not one an
+    `update`.) A snapshot is full state, never market activity, so it still may not witness; the
+    remedy is to REPORT the window, not to relax what counts as a witness.
+    """
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if not secondary_covers(secondary, gap)]
+
+
+def _primary_silence(primary: pl.DataFrame, min_gap_seconds: float, hour_start: datetime, hour_end: datetime) -> list[Gap]:
+    """Every window in which the PRIMARY was silent longer than the threshold, witnessed or not."""
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
 
     pri_ts = _message_ts(primary)
     if not pri_ts:
         # No primary message exists to pair against, so the whole hour is one gap whose boundaries
         # belong to neither side. A file with zero messages is total loss, not quiescence, so
         # `min_gap_seconds` does not apply to it.
-        gap = Gap(
-            start=hour_start,
-            end=hour_end,
-            seconds=(hour_end - hour_start).total_seconds(),
-            start_is_primary_message=False,
-            end_is_primary_message=False,
-        )
-        return [gap] if secondary_covers(secondary, gap) else []
+        return [
+            Gap(
+                start=hour_start,
+                end=hour_end,
+                seconds=(hour_end - hour_start).total_seconds(),
+                start_is_primary_message=False,
+                end_is_primary_message=False,
+            )
+        ]
 
     edges: list[tuple[datetime, bool]] = [(hour_start, False)]
     edges += [(ts, True) for ts in pri_ts]
@@ -192,15 +218,15 @@ def find_book_gaps(
         seconds = (b - a).total_seconds()
         if seconds <= min_gap_seconds:  # silence must be STRICTLY greater than the threshold
             continue
-        gap = Gap(
-            start=a,
-            end=b,
-            seconds=seconds,
-            start_is_primary_message=a_is_pri,
-            end_is_primary_message=b_is_pri,
+        gaps.append(
+            Gap(
+                start=a,
+                end=b,
+                seconds=seconds,
+                start_is_primary_message=a_is_pri,
+                end_is_primary_message=b_is_pri,
+            )
         )
-        if secondary_covers(secondary, gap):
-            gaps.append(gap)
     return gaps
 
 

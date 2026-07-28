@@ -705,3 +705,91 @@ def test_a_pair_that_minted_before_the_fleet_detector_ran_is_not_booked_twice(tm
     fleet = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"][0]
     assert fleet["residual_seconds"] == pytest.approx(590.0), "BTC/EUR's 590 s was already on its own record"
     assert _series(tmp_path / "r.prom")["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(1180.0)
+
+
+# --- the pair with the biggest hole and no ledger record at all (T0103) ---------------------------
+#
+# ADA/EUR lost 208.566668 s in the 2026-07-27 blackout -- the largest hole in the canonical archive
+# for that hour -- and produced NO record. Its secondary held 200 rows inside the gap, every one a
+# `snapshot` at a single timestamp and not one an `update`, so `secondary_covers` was False,
+# `find_book_gaps` returned [] and the `if not gaps: continue` path wrote nothing.
+
+
+def _unwitnessed(pri: Path, sec: Path, hour: datetime, pair: str) -> None:
+    """The primary is silent 600 s -> 1200 s; the secondary holds only SNAPSHOT rows inside it, at a
+    single instant -- the post-reconnect re-snapshot, which is full state but never market activity,
+    so it may not testify that anything was lost."""
+    _write(pri, pair, "book", hour, _book(pair, hour, [(float(s), "update") for s in range(0, 3600, 10) if not 600 < s < 1200]))
+    stamps = [(float(s), "update") for s in range(3, 3600, 10) if not 600 < s < 1200]
+    stamps += [(900.0, "snapshot")] * 5  # one instant, five level-rows, zero updates
+    _write(sec, pair, "book", hour, _book(pair, hour, sorted(stamps)))
+
+
+def test_a_gap_no_update_witnessed_is_ledgered_instead_of_vanishing(tmp_path, monkeypatch):
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+
+    records = [r for r in _ledger(rec) if r["state"] == "unwitnessed"]
+    assert len(records) == 1, _states(rec)
+    assert records[0]["pair"] == "BTC/EUR"
+    assert sum(g["seconds"] for g in records[0]["gaps_unwitnessed"]) == pytest.approx(600.0)
+    assert not any(r["state"] == "minted" and r["pair"] == "BTC/EUR" for r in _ledger(rec)), "nothing to splice"
+
+
+def test_an_unwitnessed_gap_moves_no_counter(tmp_path, monkeypatch):
+    """Visibility only. Its seconds are ALREADY booked by `both_streams_silent` whenever the fleet
+    was dark, so feeding a counter here would double-count them -- and when the fleet was NOT dark,
+    a single pair silent on both mirrors is indistinguishable from a quiet market, which is the very
+    ambiguity the fleet-wide intersection exists to resolve. So it is ledgered and never counted."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    _run([str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch)
+
+    series = _series(tmp_path / "r.prom")
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] == pytest.approx(0.0)
+    assert series["zcrypto_reconcile_healable_gap_seconds_total"] == pytest.approx(0.0)
+    assert series["zcrypto_reconcile_healed_gap_seconds_total"] == pytest.approx(0.0)
+
+
+def test_a_witnessed_gap_is_not_also_reported_as_unwitnessed(tmp_path, monkeypatch):
+    """The two states partition the primary's silence windows; a window that a secondary update did
+    witness is healed, and must not be double-reported as invisible."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert "unwitnessed" not in _states(rec)
+    assert "minted" in _states(rec)
+
+
+def test_an_unwitnessed_gap_is_reported_in_detect_only_too(tmp_path, monkeypatch):
+    """It is a FINDING about the archive, not a heal, so `--detect-only` must carry it -- that mode
+    is the loss report."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert "unwitnessed" in _states(rec)
+
+
+def test_an_unwitnessed_gap_is_decided_once_not_re_ledgered_every_cycle(tmp_path, monkeypatch):
+    """The hour stays in the trailing window for 48 h. Re-ledgering it each cycle would re-fire the
+    finding hourly for two days about a hole nobody can do anything about."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert [r["state"] for r in _ledger(rec)].count("unwitnessed") == 1
