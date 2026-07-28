@@ -31,7 +31,8 @@ The engine runs on the capture primary — everything above applies (the canary 
 
 Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no canary bake owed.
 
-- **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; `daemon.json` must be unchanged (its handler bounces Alloy and the poller). Omit `ops_alloy_digest` unless Alloy is the subject.
+- **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; `daemon.json` must be unchanged (its handler bounces Alloy and the poller).
+- **Omit `ops_alloy_digest` unless Alloy is the subject — but a `config.alloy` edit MAKES it the subject**: the whole Alloy block is gated `when: ops_alloy_digest is defined`, so an ordinary converge skips the config copy, exits 0, and leaves the host's keep-regex stale; pass the currently-running digest to ship it. Same gate on the capture role.
 - **Pull the digest on the host first** — every runner is `--pull never` and the role has no pull task; without it every timer exits 125.
 - **Record the running digest in `fleet-pins.md` before converging** — `ops_image_digest` has no repo default, so that row is the only rollback operand.
 - The ops image is the **capture** image repo — never read one service's pin as the other's.
