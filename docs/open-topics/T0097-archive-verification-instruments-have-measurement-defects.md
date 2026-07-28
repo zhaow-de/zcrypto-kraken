@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: NOW for the two printout/guard halves (autonomous, no behaviour change); the threshold re-pin needs ≥1 week of the T0092 BTC-quoted streams so the statistic is fitted to real thin-stream spacing rather than guessed; `verify-replay` windowing is ripe the first time `ops_verify_replay_exit_code` pages
+status: partial
+ripe_when: the threshold re-pin needs ≥1 week of the T0092 BTC-quoted streams so the statistic is fitted to real thin-stream spacing rather than guessed; `verify-replay` windowing is ripe the first time `ops_verify_replay_exit_code` pages
 ---
 
 # The archive verification instruments have measurement defects
@@ -25,11 +25,16 @@ All measured by the audit's verifier agents, each reproduced rather than argued.
 - **`archive verify-replay` runs unwindowed, daily, with a CRITICAL alert.** `infra/ansible/roles/ops/templates/verify-replay.sh.j2:32` passes no `--since` and no `--pair`, so it replays the entire canonical archive every day and `cli/archive/command.py:704` exits 1 on a single failed hour → `ops_verify_replay_exit_code` → `alerts.yaml:943-982`, severity **critical**. One bad hour therefore pages every day, forever. The anchoring rule (`cli/archive/replay.py:139-156`) is quote-aware and correct, but any missing hour breaks a pair's chain until the next snapshot — which arrives only on a reconnect or checksum resubscribe.
 - **A trap to avoid in the obvious fix:** the panel sweep catches `PanelError` at `materialize.py:308` and routes it to `hours_unanchored`, which exits **0**. Any new cross-contamination guard must raise something else, or it becomes a check that reports success.
 
+## Done so far
+
+**Both ripe-now halves landed 2026-07-28** on `fix/t0097-continuity-report-legs` — the two that were safe *before* the statistic is re-pinned, since neither changes what counts as a gap:
+
+- **The derived threshold is printed.** `continuity.py`'s table gained a `thresh_s` column, so a `0.0000%` now sits beside the number that produced it. The point is immediately visible on two streams of the same hour: 5 s spacing derives a 50 s threshold, 30 s spacing derives 300 s — a 6× difference from the data alone, which is exactly the thing an operator could not previously see in order to disbelieve a zero. The TOTAL row deliberately prints no threshold: it is per pair, and averaging thresholds would invent a number.
+- **The empty-window `ZeroDivisionError` is guarded.** `--since` filters per stream long after the empty-tree guard, so a window excluding every hour reached the TOTAL row with nothing to divide by. It now prints `no segments in the requested window` and returns non-zero — and prints **no** `EXIT BAR` line, because nothing was measured and nothing may bank a verdict.
+
 ## Suggested next steps
 
 - **(Ripe NOW, doc-only — recorded 2026-07-23)** `continuity.py:106-108` has **no carve-out for a stream's genesis hour**: a newly added pair's first hour begins mid-hour by construction, so `head` is hundreds-to-thousands of seconds ⇒ one truncated hour and up to ~3600 s of booked gap, printed under a footer that says "MUST be 0". This is a *certain* false-RED on deploy day for every new stream, distinct from the thin-stream blinding below (T0092's streams are far clear of that at 0.12–0.14 s spacing, but every stream has a genesis hour). Noted in `capture-deploys.md`'s verify-by-outcome bullet; the durable fix is the boundary-spanning measurement in the next item, which dissolves it.
-- **(Autonomous, ripe NOW — no behaviour change)** Print the derived per-pair `thresh` in `continuity.py`'s table, so a `0.0000%` sits next to the threshold that produced it and an operator can disbelieve the zero. This is the half of the fix that is safe before the statistic is re-pinned.
-- **(Autonomous, ripe NOW)** Guard `continuity.py:135`'s `ZeroDivisionError`: `--since` filters per-stream at `:87` and never re-triggers the empty-tree guard at `:77`, so a window with no data divides by zero. Reproduced. Return non-zero with a clear message instead.
 - **(Needs ≥1 week of T0092's streams)** Re-pin the silence statistic from measured thin-stream spacing — `10 × median` is the current best candidate, but fit it, do not guess it. Then fix the head/tail test by measuring spacing **across** the hour boundary (last row of H−1 → first row of H is just another interval) rather than treating each hour file independently, so boundary truncation falls out as ordinary intra-stream silence while the real T0036 restart-clobber signature is still caught.
 - **(Ripe when it first pages)** Window the daily `verify-replay` (a `--since` of a few days) so one historical bad hour cannot page forever, and decide whether a chain break on a quiet stream should be an error or an honest gap.
 - **(Whenever `capture-deploys.md` is next edited)** Its outcome check currently names `continuity.py` unconditionally; note the thin-stream caveat until the re-pin lands.

@@ -66,7 +66,7 @@ def _canonical_streams(root: Path, overlay_root: Path, kind: str) -> dict[str, l
 
 
 def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.datetime, quiet: bool, show_exit_bar: bool) -> int:
-    """Print the per-pair continuity table + summary. Returns 0, or 1 if `streams` is empty.
+    """Print the per-pair continuity table + summary. Returns 0, or 1 when there is nothing to measure -- `streams` empty, or `--since` excluding every hour of every stream.
 
     `show_exit_bar` gates ONLY the `EXIT BAR (<0.1% gap time): PASS/FAIL` verdict line: the raw
     report always gets it; the `--overlay` canonical report never does, so an overlay run can never
@@ -80,8 +80,11 @@ def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.date
 
     HOUR = dt.timedelta(hours=1)
     worst = 0.0
-    print(f"{'pair':<10} {'hours':>6} {'missing':>8} {'trunc':>6} {'gap_s':>10} {'covered_s':>11} {'gap%':>8}")
-    print("-" * 66)
+    # `thresh_s` is printed because it is DERIVED per pair (see below), not configured: a 0.0000%
+    # means "no silence" or "the threshold is wide enough that nothing counts as silence", and only
+    # the number beside it tells an operator which.
+    print(f"{'pair':<10} {'hours':>6} {'missing':>8} {'trunc':>6} {'thresh_s':>9} {'gap_s':>10} {'covered_s':>11} {'gap%':>8}")
+    print("-" * 75)
     totals = []
     for pair, segs in sorted(streams.items()):
         segs = [(h, p) for h, p in segs if h >= since]
@@ -98,6 +101,7 @@ def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.date
 
         # 2. head/tail truncation, and 3. intra-hour silence
         trunc = 0
+        thresh = 0.0
         all_diffs = []
         per_hour = []
         for h, p in segs:
@@ -125,14 +129,23 @@ def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.date
         worst = max(worst, pct)
         totals.append((pair, span_hours, missing, trunc, gap, covered, pct))
         if not quiet:
-            print(f"{pair:<10} {span_hours:>6} {missing:>8} {trunc:>6} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%")
+            print(f"{pair:<10} {span_hours:>6} {missing:>8} {trunc:>6} {thresh:>9.1f} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%")
 
-    print("-" * 66)
+    if not totals:
+        # `--since` filters per stream at the top of the loop, long after the empty-tree guard, so a
+        # window that excludes every hour reaches the TOTAL row with nothing to divide by. Answering
+        # "nothing here" beats a ZeroDivisionError, which reads as a broken tool rather than an empty
+        # window -- and it must not print an EXIT BAR, because nothing was measured.
+        print("no segments in the requested window")
+        return 1
+
+    print("-" * 75)
     tg = sum(t[4] for t in totals)
     tc = sum(t[5] for t in totals)
     tt = sum(t[3] for t in totals)
     tm = sum(t[2] for t in totals)
-    print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
+    # No threshold on the TOTAL row: it is per pair, and averaging thresholds would invent a number.
+    print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {'':>9} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
     print()
     print(f"  worst single stream : {worst:.4f}%")
     if show_exit_bar:
