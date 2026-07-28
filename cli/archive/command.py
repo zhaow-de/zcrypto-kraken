@@ -390,7 +390,9 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "residual_gap_seconds_total",
         "counter",
         "Silence NO mirror covered: permanent loss (both_streams_silent / total_loss, plus whatever a "
-        "healed hour's splice left unfilled and no fleet-wide record already booked).",
+        "healed hour's splice left unfilled and no fleet-wide record already booked). The `unwitnessed` "
+        # It is literally silence no mirror covered; excluded because the fleet-wide record already books it.
+        "ledger state is deliberately NOT counted here.",
         [("", totals["residual_seconds"])],
     )
     _emit(
@@ -638,8 +640,11 @@ def reconcile(
                         pair=pair,
                         kind="book",
                         hour=hour.isoformat(),
+                        # No `residual_seconds` key AT ALL, deliberately: `_totals` adds that field
+                        # unconditionally for every non-mint-family state, so a 0.0 would be inert
+                        # only by value. Absent, it is inert by construction -- and a literal 0.0 on
+                        # a record whose windows sum to 208 s also reads as "measured zero loss".
                         gaps_unwitnessed=[{"start": g.start, "end": g.end, "seconds": g.seconds} for g in blind],
-                        residual_seconds=0.0,
                     )
 
             if not gaps:

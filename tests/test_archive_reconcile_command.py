@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -793,3 +794,40 @@ def test_an_unwitnessed_gap_is_decided_once_not_re_ledgered_every_cycle(tmp_path
     _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
 
     assert [r["state"] for r in _ledger(rec)].count("unwitnessed") == 1
+
+
+def test_a_non_monotonic_secondary_still_fails_the_hour_instead_of_exiting_clean(tmp_path, monkeypatch):
+    """The contract (`--help` and README): exit 1 on an integrity failure, a non-monotonic stream
+    among them. When the unwitnessed split dropped the secondary's monotonicity check, an hour whose
+    only silence was UNWITNESSED reached the end of the cycle, published a textfile and refreshed
+    `last_success_timestamp` -- exit 0 on a stream the archive cannot trust."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+    rows = [(float(s), "update") for s in range(3, 3600, 10) if not 600 < s < 1200]
+    rows = rows[:5] + [(rows[9][0], "update")] + rows[5:]  # a stamp reappearing after a newer one
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, rows))
+
+    result = _run(
+        [str(pri), str(sec), str(rec), "--mint", "--textfile", str(tmp_path / "r.prom")], now=SETTLED, monkeypatch=monkeypatch
+    )
+
+    assert result.exit_code == 1, result.output
+    assert any(r["state"] == "failed" and "non-monotonic" in r.get("reason", "") for r in _ledger(rec)), _states(rec)
+    assert not (tmp_path / "r.prom").exists(), "no textfile on an integrity failure"
+
+
+def test_the_unwitnessed_finding_is_announced_once_not_every_cycle(tmp_path, monkeypatch, caplog):
+    """The ledger dedupes on its own, so the `_decided` guard's real job is the LOG: the hour stays
+    in the 48 h window, and without the guard the WARNING re-fires hourly for two days about a hole
+    nobody can act on. Asserting only the ledger count would pass with the guard deleted."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _unwitnessed(pri, sec, H, "BTC/EUR")
+
+    with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
+        _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+        _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+
+    announced = [r for r in caplog.records if "unwitnessed" in r.message]
+    assert len(announced) == 1, [r.message for r in announced]

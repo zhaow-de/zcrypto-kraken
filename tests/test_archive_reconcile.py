@@ -8,6 +8,7 @@ from cli.archive.reconcile import (
     _inside,
     _message_ts,
     find_book_gaps,
+    find_unwitnessed_gaps,
     measure_residual,
     overlap_seconds,
     secondary_covers,
@@ -601,3 +602,17 @@ def test_overlap_seconds_ignores_a_window_that_does_not_touch_the_span():
     """The subtraction must never reach past what it intersects: a dark window elsewhere in the hour
     is somebody else's loss, and deleting it here would make a real gap vanish from the counter."""
     assert overlap_seconds([_span(0, 100)], [_span(200, 300)]) == 0.0
+
+
+def test_a_non_monotonic_secondary_is_refused_by_both_detectors():
+    """The check that the unwitnessed-gap split briefly lost. `find_book_gaps` used to call
+    `_message_ts(secondary)` unconditionally, so an out-of-order secondary raised INSIDE the
+    caller's try and became a ledgered `failed` record. Filtering with `secondary_covers` alone
+    reads a non-monotonic frame happily -- and an hour with no witnessed gap would then have exited
+    0 with a published textfile, silently, on a stream the contract says must exit 1."""
+    primary = _rows("BTC/EUR", [(H + timedelta(seconds=s), "update") for s in (0, 3000)])
+    backwards = _rows("BTC/EUR", [(H + timedelta(seconds=s), "update") for s in (100, 200, 150)])
+
+    for finder in (find_book_gaps, find_unwitnessed_gaps):
+        with pytest.raises(CaptureError, match="non-monotonic"):
+            finder(primary, backwards, min_gap_seconds=30.0, hour_start=H, hour_end=HOUR_END)

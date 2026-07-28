@@ -163,6 +163,7 @@ def find_book_gaps(
     """
     _validate_hour_bounds(hour_start, hour_end)
     _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
     return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if secondary_covers(secondary, gap)]
 
 
@@ -186,6 +187,7 @@ def find_unwitnessed_gaps(
     """
     _validate_hour_bounds(hour_start, hour_end)
     _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
     return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if not secondary_covers(secondary, gap)]
 
 
