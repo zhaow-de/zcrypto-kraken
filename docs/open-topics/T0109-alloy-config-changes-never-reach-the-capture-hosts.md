@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: NOW for the repo-side half (the guard test and the rule line); the converge that actually delivers the four series is ATTENDED and rides the next capture-host converge for any reason
 ---
 
@@ -47,11 +47,16 @@ Two compounding failures, and the second is the durable one:
 - `zcrypto_capture_book_desynced` arriving with 24 series proves the pipeline itself is healthy — this is exclusively an allow-list-contents problem.
 - The two undeployed T0102 counters mean [[T0107]]'s payload list is **incomplete**: it names the image roll but not the Alloy converge, so following it exactly would roll the image and still leave the new alert rule reading no data.
 
+## Done so far
+
+Both repo-side sub-items landed 2026-07-28 on `docs/ops-converge-0728-record`:
+
+- **`capture-deploys.md` records the gate** — one line naming the safe alternative in the same sentence, per `agent-ops.md`'s footgun rule, since "omit the digest" is the surrounding discipline and reads as correct.
+- **[[T0107]] amended** — the Alloy converge is now listed as *required, not optional*, and its post-roll verification covers **five** undelivered series rather than the two resubscribe counters (the fifth is `zcrypto_logship_last_cycle_timestamp_seconds`, added by [[T0106]]'s fix on the same branch).
+
 ## Suggested next steps
 
 - *(autonomous, ripe NOW)* **Add the drift guard** — a test failing when a published `zcrypto_*` name is admitted by no keep-list. **Scoped 2026-07-28, and the scoping is the hard part**: the admission surface is split across two file kinds — static `infra/**/config.alloy` **and** Ansible host_vars (`infra/ansible/host_vars/nas/vars.yml` is where the whole `zcrypto_gate_*` family is admitted). A guard reading only the `.alloy` files reports 18 false positives; all 18 were checked against Cloud and 15 are live (`zcrypto_gate_*` 10 series, `zcrypto_trade_backfill_*` 3, plus reconcile/gate singletons), the other 3 being non-metrics (`zcrypto_ed25519`, `zcrypto_owned`, and a bare `zcrypto_reconcile_` prefix fragment). Detection must also be exclusion-based, not definition-site-based: `MetricFamily(` + `# HELP` scanning misses how `cli/engine/command.py`, `cli/liquidations/coinalyze.py`, and `archive-pull.sh.j2` publish.
 - *(finding)* **That split surface is itself why this topic's drift was invisible.** Reviewing "the keep-regex" means reading two unrelated file kinds in two roles, and nothing links them.
-- *(autonomous, ripe NOW)* **Record the gate in `capture-deploys.md`** — one line naming the safe alternative, per `agent-ops.md`'s footgun rule: a `config.alloy` change requires passing `capture_alloy_digest` (the currently-running one) or it does not ship.
-- *(autonomous, ripe NOW)* **Amend [[T0107]]** so its payload names this converge alongside the image roll, and its post-roll verification covers all four series rather than the two resubscribe counters.
 - *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs; then confirm all four series arrive in Cloud. This is a config change, not a digest re-pin — no bake owed, per `capture-deploys.md`'s pair-list precedent.
 - *(autonomous, after that converge)* Re-evaluate [[T0105]]'s trigger, which is unsatisfiable until then.
