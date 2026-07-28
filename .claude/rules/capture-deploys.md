@@ -28,26 +28,25 @@ The engine runs on the capture primary — everything above applies (the canary 
 
 ## Ops converges (`zcrypto-ops`)
 
-The compute tier: archive reconcile/backfill, panel materialize, verify-replay, liquidations. Not the unbackfillable capture path, so no canary bake — but it has its own traps, each of which has bitten or was measured about to.
+Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no canary bake owed.
 
-- **`--limit zcrypto-ops` is mandatory.** The ops play has no `converge_primary` guard; a bare `site.yml` fails the capture hosts closed on their digest assert but **still runs the NAS play**. Preview with `--check --diff` and read it: `daemon.json` must be unchanged, or the handler bounces Alloy and the poller mid-cycle. Omit `ops_alloy_digest` unless Alloy is the subject — leaving it undefined skips that block and its secrets render.
-- **Pre-pull the digest on the host.** Every runner is `docker run --pull never`, and the role has **no pull task** — miss it and every timer exits 125 at the next tick.
-- **Record the running digest in `fleet-pins.md` BEFORE converging.** `ops_image_digest` has no repo default, so that row is the only rollback operand that exists.
-- **The ops image is the CAPTURE image repo.** Never read one service's pin as the other's.
-- **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — after a converge the file points at the new digest while the container runs the old one, until some later `docker compose up -d` silently rolls a stream that is not backfillable. End every converge with an explicit decision to roll it or not; never leave it undecided.
-- **Verify by outcome** at the next tick (:12/:22/:42): `ops_archive_pull_exit_code` and `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, the reconcile counters **unchanged**, `hc_checks_down_total` 0.
-- **Rollback is a re-converge to the recorded digest** — clean, but expect `healable_gap_seconds_total` to fall (old code reads `healed_seconds` where new reads `claimed_seconds`), and a counter decrease suppresses the degrading-primary rule via its own `resets()` guard for a full 24 h.
+- **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; `daemon.json` must be unchanged (its handler bounces Alloy and the poller). Omit `ops_alloy_digest` unless Alloy is the subject.
+- **Pull the digest on the host first** — every runner is `--pull never` and the role has no pull task; without it every timer exits 125.
+- **Record the running digest in `fleet-pins.md` before converging** — `ops_image_digest` has no repo default, so that row is the only rollback operand.
+- The ops image is the **capture** image repo — never read one service's pin as the other's.
+- **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — the file moves, the container does not, and a later `docker compose up` rolls an unbackfillable stream. End every converge deciding explicitly whether to roll it.
+- **Verify by outcome** at the next tick: `ops_archive_pull_exit_code` / `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, reconcile counters unchanged, `hc_checks_down_total` 0.
+- Rollback = re-converge to the recorded digest. Expect `healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
 
 ### Panel generation changes
 
-A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regenerated, and regeneration is a **delete-and-rebuild**, not a step in a converge:
+A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regenerated; regeneration is delete-and-rebuild, never part of a converge.
 
-- **Measured, not estimated: ~2.1 s per MB of input, single-threaded.** Size the window from the actual tree before committing to it; at the 2026-07 universe that was 4,730 hours / 8.8 GB ≈ 5 h 15 m.
-- **Three signals fire throughout** — the panel exit-code rule, the ops ERROR-log rule, and the healthchecks.io panel dead-man, which pings only on `rc=0` and is the timer's ONLY liveness signal. Pause it time-boxed and un-pause explicitly.
-- **Finish clear of the 02:25 UTC auto-reboot.** `Type=oneshot` has no start timeout, so systemd will not kill a long run — the reboot will.
-- **Delete both copies.** The NAS pull is `rsync -a` with no `--delete`, so an ops-side delete never propagates and orphaned hours survive beside the new ones.
-- **Stop the timer first, and run the regeneration inside the unit** (`systemctl start …panel-materialize.service`), so a stray trigger is a no-op rather than a second writer into the same tree.
-- **The regeneration is the point of no return.** The previous image cannot read the new generation and no copy of the old tree survives, so "rollback" is another full rebuild. Take the user's word at that step, not at the converge.
+- **Size the window from the tree** — ~2.1 s per MB of input, single-threaded. Finish clear of the 02:25 UTC auto-reboot; `Type=oneshot` has no start timeout, so only the reboot kills a long run.
+- **Pause the healthchecks.io panel check, time-boxed, and un-pause explicitly** — it pings only on `rc=0`, and it is the timer's only liveness signal. The panel exit-code and ops ERROR-log rules also fire throughout.
+- **Delete both copies** — the NAS pull is `rsync -a` with no `--delete`, so an ops-side delete never propagates.
+- **Stop the timer, then run it inside the unit** so a stray trigger is a no-op, not a second writer.
+- **Regeneration is the point of no return** — the previous image cannot read the new generation and no old tree survives, so rollback is another full rebuild. Take the user's word there, not at the converge.
 
 ## Ansible secrets
 
