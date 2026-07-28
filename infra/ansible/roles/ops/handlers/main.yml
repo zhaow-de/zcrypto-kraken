@@ -1,10 +1,4 @@
 ---
-- name: restart capture service
-  ansible.builtin.systemd_service:
-    name: zcrypto-capture.service
-    daemon_reload: true
-    state: restarted
-
 - name: reload alloy
   # The config is bind-mounted as a DIRECTORY (see the compose template), so the container already
   # sees the new file the moment Ansible writes it -- but Alloy does not watch the file and will
@@ -20,6 +14,6 @@
     url: http://127.0.0.1:12345/-/reload
     method: POST
     status_code: [200, -1]
-  register: capture_alloy_reload
+  register: ops_alloy_reload
   failed_when: false
-  changed_when: capture_alloy_reload.status | default(0) == 200
+  changed_when: ops_alloy_reload.status | default(0) == 200
