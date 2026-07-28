@@ -416,3 +416,52 @@ def test_close_joins_the_worker_thread_no_leak(fake_loki):
     assert worker.is_alive()  # the daemon worker is running
     handler.close()
     assert not worker.is_alive()  # joined -- no leaked thread
+
+
+def test_last_cycle_timestamp_advances_on_an_idle_cycle(fake_loki):
+    """T0106: the abort-signal gauge must mean 'the worker is alive', not 'Loki accepted
+    something'. A healthy capture daemon is quiet, so an empty flush -- the ordinary steady
+    state -- must still advance it, while last_ship_success_at correctly stays put."""
+    url, _ = fake_loki
+    handler = _make_handler(url)
+    try:
+        first = handler.last_cycle_at
+        assert first is not None  # never absent: stamped at construction, so no 'no data' state
+        assert handler.last_ship_success_at is None
+        assert _wait_until(lambda: handler.last_cycle_at > first)  # nothing was emitted
+        assert handler.last_ship_success_at is None  # ... and no ship was claimed
+    finally:
+        handler.close()
+
+
+def test_last_cycle_timestamp_stalls_while_the_post_keeps_failing(handler_factory):
+    """The other half: a shipper whose posts fail is NOT alive for this gauge's purpose, so a
+    retrying cycle must not stamp it -- otherwise the row is green through a real outage."""
+    handler_cls = handler_factory(status_code=500)  # 5xx -> 'retry', the wedged case
+    with FakeLoki(handler_cls) as url:
+        handler = _make_handler(url, batch_max=2, ring_capacity=32, backoff_min_s=5.0)
+        try:
+            for i in range(2):
+                handler.emit(_make_record(f"m{i}"))
+            assert _wait_until(lambda: len(handler_cls.requests) >= 1)
+            stalled = handler.last_cycle_at
+            time.sleep(0.3)  # well inside the 5s backoff: the worker is waiting, not cycling
+            assert handler.last_cycle_at == stalled
+        finally:
+            handler_cls.status_code = 200
+            handler.close()
+
+
+def test_last_cycle_timestamp_is_exported_as_its_own_series(fake_loki):
+    """It is a separate series, not a redefinition of the ship-success gauge -- both are
+    published so a rule can tell 'worker dead' from 'Loki rejecting'."""
+    from cli.obs.metrics import LogshipCollector
+
+    url, _ = fake_loki
+    handler = _make_handler(url)
+    try:
+        names = {m.name for m in LogshipCollector(handler).collect()}
+        assert "zcrypto_logship_last_cycle_timestamp_seconds" in names
+        assert "zcrypto_logship_last_success_timestamp_seconds" not in names  # no ship yet
+    finally:
+        handler.close()
