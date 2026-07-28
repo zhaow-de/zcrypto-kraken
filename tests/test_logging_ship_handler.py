@@ -474,3 +474,25 @@ def test_last_cycle_timestamp_is_exported_as_its_own_series(fake_loki):
         assert "zcrypto_logship_last_success_timestamp_seconds" not in names  # no ship yet
     finally:
         handler.close()
+
+
+def test_a_permanently_rejected_batch_still_advances_the_liveness_gauge(handler_factory):
+    """The drop path IS a completed cycle, and three artifacts now assert it as contract: the
+    gauge's HELP, the rule comment, and the operator-facing summary telling the responder NOT to
+    chase credentials. Nothing tested it -- deleting the stamp from the drop branch passed the
+    whole suite -- so a regression would silently restore the misdirection the summary was
+    rewritten to remove."""
+    handler_cls = handler_factory(status_code=400)  # non-429 4xx -> 'drop', permanently rejected
+    with FakeLoki(handler_cls) as url:
+        handler = _make_handler(url, batch_max=2, ring_capacity=32, flush_interval_s=5.0)
+        try:
+            seed = handler.last_cycle_at
+            for i in range(2):
+                handler.emit(_make_record(f"m{i}"))
+            assert _wait_until(lambda: handler.dropped_total >= 2)  # the batch was rejected
+            # flush_interval_s is 5 s, so no idle cycle can have run in the interim -- any advance
+            # is the drop branch's own stamp, which is the property under test.
+            assert handler.last_cycle_at > seed, "a discarded batch must still count as a completed cycle"
+            assert handler.last_ship_success_at is None, "nothing shipped, so ship-success must not move"
+        finally:
+            handler.close()

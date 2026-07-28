@@ -126,6 +126,18 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
         "zcrypto_trade_backfill_last_success_timestamp 1753700000\n"
     )
     # A FAILED run with no parseable count -- the case that must still write all four.
+    # The slice runs in isolation, so a conditional wrapping the WHOLE block is invisible to it --
+    # a reviewer wrapped `backfill_textfile=` ... `mv` in `if [ "$backfill_rc" -eq 0 ]` and every
+    # test passed while a failed run wrote nothing and left exit_code stale at 0. Balance the slice
+    # structurally so an enclosing `if` shows up as an unmatched `fi` in the surrounding text.
+    before = r[: r.index('backfill_textfile="')]
+    opens = len([ln for ln in before.splitlines() if re.match(r"\s*if\s", ln)])
+    closes = len([ln for ln in before.splitlines() if re.match(r"\s*fi\s*$", ln)])
+    assert opens - closes == 2, (
+        f"the writer block sits at conditional depth {opens - closes}, not the expected 2 (the "
+        f"gate's else, and the daily-stamp if) -- something new wraps it, so a failed run may write "
+        f"nothing at all"
+    )
     target = '"{}/trade-backfill.prom"'.format(CONTEXT["ops_textfile_dir"])
     # str.replace no-ops silently on a miss, and the un-substituted target is the LIVE ops path.
     assert target in block, f"the textfile path did not match {target!r} -- the harness would write to the real path"
@@ -166,3 +178,36 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
     assert _val(prom.read_text(), "zcrypto_trade_backfill_hours_repaired_after_loss_total") == "8", (
         "5 + 3 != 8 -- the total is replaced rather than accumulated on a run that carries a repair"
     )
+
+
+def test_the_outer_cycle_carries_last_success_forward_on_failure(tmp_path):
+    """The sibling of the trade-backfill carry-forward, and the higher-severity one: its series
+    backs a CRITICAL rule (`time() - ops_archive_pull_last_success_timestamp > 10800`,
+    noDataState: Alerting). A literal 0 there makes that expression ~1.79e9 and pages critical
+    forever from the first failed cycle. Fixing the backfill twin left this one unpinned, so a
+    reviewer's `success=0` mutant survived the entire suite."""
+    bash = shutil.which("bash")
+    if bash is None:  # pragma: no cover - bash is present on every image we run
+        pytest.skip("bash not available")
+    r = _rendered()
+    start = r.index("prev_success=$(awk")
+    block = r[start : r.index('mv "$tmp" "$PROM"') + len('mv "$tmp" "$PROM"')]
+    # Structural balance, not substring counts: prose in the comments contains "if".
+    opens = len([ln for ln in block.splitlines() if re.match(r"\s*if\s", ln)])
+    closes = len([ln for ln in block.splitlines() if re.match(r"\s*fi\s*$", ln)])
+    assert opens == closes, f"the slice cuts an if/fi pair ({opens} open, {closes} close)"
+
+    prom = tmp_path / "ops-archive-pull.prom"
+    prom.write_text("ops_archive_pull_last_success_timestamp 1753700000\n")
+    target = '"{}/ops-archive-pull.prom"'.format(CONTEXT["ops_textfile_dir"])
+    # The block reads $PROM, which the rendered script assigns near the top; substitute it here.
+    harness = f'set -u\nrc=1\nnow=1753800000\nPROM="{prom}"\n' + block
+    proc = subprocess.run([bash, "-c", harness], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    written = prom.read_text()
+    val = next(ln for ln in written.splitlines() if ln.startswith("ops_archive_pull_last_success_timestamp")).split()[1]
+    assert val == "1753700000", (
+        f"last_success was not carried forward on a failed cycle (got {val!r}) -- a 0 here pages the "
+        f"CRITICAL staleness rule forever"
+    )
+    assert "ops_archive_pull_exit_code 1" in written, "the failing exit code was not published"

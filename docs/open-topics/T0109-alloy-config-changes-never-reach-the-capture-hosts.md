@@ -52,12 +52,12 @@ Two compounding failures, and the second is the durable one:
 
 ## Done so far
 
-Both repo-side sub-items landed 2026-07-28 on `docs/ops-converge-0728-record`:
+The repo-side sub-items all landed 2026-07-28 on `docs/ops-converge-0728-record`:
 
 - **`capture-deploys.md` records the gate** — one line naming the safe alternative in the same sentence, per `agent-ops.md`'s footgun rule, since "omit the digest" is the surrounding discipline and reads as correct.
 - **[[T0107]] amended** — the Alloy converge is now listed as *required, not optional*, and its post-roll verification covers five undelivered series. **Those five are T0107's bar, not this converge's**: an Alloy-config-only converge can deliver at most the two the running image already emits.
 - **The CI drift guard landed** in `tests/test_infra_alloy_series.py`: a source-derived check that fails when a published `zcrypto_*` name matches no host's keep-regex. The pre-existing guards used hand-maintained lists, so a metric nobody listed was invisible to them.
-- **The real lesson is narrower than first recorded, and the first version was wrong.** A first pass reported 18 unadmitted names and blamed an admission surface "split across `config.alloy` files and Ansible host_vars". **There is no such split** — `host_vars/nas/vars.yml` carries no keep-list at all, and its only `zcrypto_gate` mention is a comment. All 18 came from comparing keep-list entries as *literals* when they are *regexes*: `infra/nas/config.alloy` admits the whole gate family as `zcrypto_gate_.*`. Of the 18, **14 are live series** and 3 are non-metrics (`zcrypto_ed25519`, `zcrypto_owned`, a bare `zcrypto_reconcile_` stem); the 4th non-live is `zcrypto_engine_orders_created`, a `_created` series suppressed process-wide. Consulting host_vars would have changed nothing.
+- **The real lesson is narrower than first recorded, and the first version was wrong.** A first pass reported 18 unadmitted names and blamed an admission surface "split across `config.alloy` files and Ansible host_vars". **There is no such split** — `host_vars/nas/vars.yml` carries no keep-list at all, and its only `zcrypto_gate` mention is a comment. **15 of the 18** came from comparing keep-list entries as *literals* when they are *regexes*: `infra/nas/config.alloy` admits the whole gate family as `zcrypto_gate_.*`. The other 3 — `zcrypto_ed25519`, `zcrypto_owned`, `zcrypto_engine_orders_created` — are admitted by no keep-regex at all and needed the exclusion list, not regex semantics. Of the 18, **14 are live series** and 4 are not — the bare `zcrypto_reconcile_` stem IS admitted, by the `zcrypto_reconcile_.*` wildcard, so regex semantics does explain that one. Consulting host_vars would have changed nothing.
 
 
 ## Suggested next steps
