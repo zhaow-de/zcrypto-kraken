@@ -96,24 +96,35 @@ def test_the_repair_count_parse_matches_what_the_cli_actually_prints():
     assert zero.stdout.strip() == "0"
 
 
-def test_a_failed_run_still_writes_every_series():
+def test_a_failed_run_still_writes_every_series(tmp_path):
     """The file is rewritten whole each run; omitting a line DELETES the series, and the existing
-    staleness rule is noDataState: Alerting -- that shape already paged once (2026-07-17)."""
+    staleness rule is noDataState: Alerting -- that shape already paged once (2026-07-17).
+
+    This RUNS the block rather than inspecting its text. An earlier version asserted each printf sat
+    at the block's own indentation, which a reviewer defeated three ways: a wrapper with the printf
+    left at column 8, an `&&` guard on one line, and -- in the false-positive direction -- a
+    legitimate dedent that failed all four with a message blaming a conditional that was not there.
+    Executing it is the only form that pins the property instead of a formatting convention."""
+    bash = shutil.which("bash")
+    if bash is None:  # pragma: no cover - bash is present on every image we run
+        pytest.skip("bash not available")
     r = _rendered()
-    block = r[r.index('backfill_textfile="') : r.index('mv "$backfill_textfile.tmp"')]
+    block = r[
+        r.index('backfill_textfile="') : r.index('mv "$backfill_textfile.tmp"')
+        + len('mv "$backfill_textfile.tmp" "$backfill_textfile"')
+    ]
+    prom = tmp_path / "trade-backfill.prom"
+    # A FAILED run with no parseable count -- the case that must still write all four.
+    harness = f'set -u\nbackfill_rc=1\nbackfill_repaired=""\n' + block.replace(
+        '"{}/trade-backfill.prom"'.format(CONTEXT["ops_textfile_dir"]), f'"{prom}"'
+    )
+    proc = subprocess.run([bash, "-c", harness], capture_output=True, text=True)
+    assert proc.returncode == 0, f"the writer block aborted on a failed run: {proc.stderr}"
+    written = prom.read_text()
     for series in (
         "zcrypto_trade_backfill_exit_code",
         "zcrypto_trade_backfill_last_run_timestamp",
         "zcrypto_trade_backfill_last_success_timestamp",
         "zcrypto_trade_backfill_hours_repaired_after_loss_total",
     ):
-        emitted = [ln for ln in block.splitlines() if f"printf '{series} " in ln]
-        assert emitted, f"{series} is never written"
-        for ln in emitted:
-            # Presence is not the property. A reviewer wrapped a printf in `if [ "$backfill_rc" -eq 0 ]`
-            # -- the exact 2026-07-17 shape this docstring cites -- and a substring check still passed.
-            # Any enclosing conditional indents the line past the block's own 8, so depth catches it.
-            assert len(ln) - len(ln.lstrip()) == 8, (
-                f"{series} is written at indent {len(ln) - len(ln.lstrip())}, not the block's 8 -- it "
-                f"sits inside a conditional, so a failed run DELETES the series"
-            )
+        assert f"{series} " in written, f"{series} is missing after a FAILED run -- the series is deleted"

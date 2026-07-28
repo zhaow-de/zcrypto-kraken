@@ -107,6 +107,28 @@ NAS_LEGACY_ADMITTED = [
     "zcrypto_reconcile_last_success_timestamp_seconds",
     "zcrypto_trade_backfill_exit_code",
 ]
+# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
+# command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
+# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the nine real
+# names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
+# per-host OPS list: the union bar alone would not catch the realistic drift, since narrowing the
+# wildcard on ops -- the host that actually publishes them -- still leaves NAS's copy satisfying the
+# union. A reviewer measured that: ops-only narrowing flagged 0 of 9.
+INTERPOLATED_METRIC_NAMES = [
+    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all nine, including
+    # last_success_timestamp_seconds, which the scan only ever picked up because an unrelated comment
+    # in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not derivation.
+    "zcrypto_reconcile_last_success_timestamp_seconds",
+    "zcrypto_reconcile_source_lag_seconds",
+    "zcrypto_reconcile_healed_gap_seconds_total",
+    "zcrypto_reconcile_healable_gap_seconds_total",
+    "zcrypto_reconcile_residual_gap_seconds_total",
+    "zcrypto_reconcile_spliced_hours_total",
+    "zcrypto_reconcile_union_hours_total",
+    "zcrypto_reconcile_trade_dedup_rows_total",
+    "zcrypto_reconcile_trade_deficit_rows_total",
+]
+
 OPS_REQUIRED = [
     "up",
     "node_load1",
@@ -121,6 +143,7 @@ OPS_REQUIRED = [
     "zcrypto_reconcile_source_lag_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
+    *INTERPOLATED_METRIC_NAMES,
     # T0043: the repair count, exported as a monotone total by archive-pull.sh.j2. Admitted today
     # only by the `zcrypto_trade_backfill_.*` wildcard — pinned by name so narrowing that wildcard
     # fails here rather than silently dropping the series.
@@ -298,25 +321,6 @@ _SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py
 
 # Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how
 # the trap grows back.
-# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
-# command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
-# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the eight
-# real names are absent from the candidate set entirely. Listed explicitly so narrowing that
-# wildcard fails here instead of taking eight series dark.
-INTERPOLATED_METRIC_NAMES = [
-    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all nine, including
-    # last_success_timestamp_seconds, which the scan only ever picked up because an unrelated comment
-    # in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not derivation.
-    "zcrypto_reconcile_last_success_timestamp_seconds",
-    "zcrypto_reconcile_source_lag_seconds",
-    "zcrypto_reconcile_healed_gap_seconds_total",
-    "zcrypto_reconcile_healable_gap_seconds_total",
-    "zcrypto_reconcile_residual_gap_seconds_total",
-    "zcrypto_reconcile_spliced_hours_total",
-    "zcrypto_reconcile_union_hours_total",
-    "zcrypto_reconcile_trade_dedup_rows_total",
-    "zcrypto_reconcile_trade_deficit_rows_total",
-]
 
 NOT_A_PUBLISHED_METRIC = {
     "zcrypto_ed25519",  # the vaulted deploy-key filename in infra/ansible/scripts/run.sh
