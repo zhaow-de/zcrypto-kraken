@@ -148,7 +148,10 @@ def backfill(
     # calls both "nobody traded", and this sweep then repairs the second one SILENTLY.
     #
     # Skipped in detect-only, which never reaches the mint loop that reads it, and narrowed to the
-    # requested pair: book is the dominant volume of the archive and this is a full-tree glob.
+    # requested pair. The narrowing bounds what is RETAINED, not the scan: `canonical_segments` takes
+    # no pair argument and still globs `*/*/book/*/*/*/*.parquet` across the whole tree, and book is
+    # the dominant volume of the archive -- so if this ever becomes the cost, the glob is where to
+    # look, not this filter.
     book_finals: dict[str, dict[dt.datetime, Path]] = {}
     if not detect_only:
         for p2, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
