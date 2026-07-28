@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the next capture-image rollout — it runs VIA the skill and is the skill's validation (the T0081 pattern); the pending T0008/T0101 capture image is the standing candidate
+status: resolved
 ---
 
 # `/zcrypto-captures-rollout` — wrap the capture-image canary rollout into a skill
@@ -59,6 +58,23 @@ Identical to the Slack T+24h reminder's 7-point checklist (running digest == can
 - The Slack reminder is now scheduled at the **computed gate-open time**, not a fixed T+24 h.
 - **The `capture-deploys.md` shrink landed early** (owner's word, 2026-07-27, same branch): the rule keeps the law — the never-re-pin invariant, the skip-or-degrade approval gate, pair-add ordering, the engine/reboot/vault sections — and points at the skill for every rollout mechanic; net −601 bytes always-loaded. A cold lossless check classified 9 of 11 removals RELOCATED at equal-or-greater precision and caught the one genuinely shared bullet — pre-stage/stop→start also serves engine and pair-add converges, which the skill's scope excludes — restored as a generic bullet.
 
+## Resolution
+
+**Resolved 2026-07-28: the skill ran a real rollout end to end, which was this topic's one remaining step** — secondary `zcrypto-red` converged 2026-07-27T23:58:41Z, primary `zcrypto` 2026-07-28T08:04:29Z, an 8 h 06 m event-coverage bake between them. The run *is* the validation (the T0081 pattern), and it found six defects that only an execution could surface; all six landed in `SKILL.md` in the same change.
+
+**What the run proved.** The event-coverage gate replaced the fixed ≥24 h bake in practice, not just on paper: two complete rotation hours plus the current one, a prune fired on demand rather than waited for, and every abort signal read. Phase 5 came back clean — hour 08 (which spans the primary restart) begins at `08:00:00.014`–`08:00:00.619` on all 12 streams, the NAS pull hash-verified 9,982/9,982 primary and 6,952/6,952 secondary segments at `failed=0`, and `continuity.py` over 9 h × 12 streams reported 0 missing and 0 truncated hours, worst stream 0.0114% against the 0.1% bar. The engine on the same host was never touched (`StartedAt` unchanged), which is the failure mode `capture-deploys.md` warns about.
+
+**The six corrections, each from something that actually went wrong:**
+
+1. **Pre-staging was not gated where it matters.** Phase 0 pulls the candidate on each host, but that runs hours before the gate and nothing re-checks it — the primary was measured *missing* the candidate at Phase 3. A converge that pulls inside its own stop→start window is exactly what pre-staging exists to prevent, so it is now Phase 3's item 0.
+2. **Phase 5 was written as post-primary only**, so the secondary leg had no step telling it to update `fleet-pins.md`. That file then claimed the wrong digest for a live host for eight hours. Phase 5 now runs after *every* converge.
+3. **The Cloud read-back had no operand.** `grafana-push.sh` requires `GRAFANA_SA_TOKEN` in its env and never obtains it, and spec `00043`'s plan documents a method that cannot work on per-variable `!vault` scalars — so the check was improvised, and cost two failed attempts. `infra/scripts/grafana-query.py` now encapsulates it.
+4. **The alloy container is `grafana-alloy`**, not `zcrypto-alloy`; an inspect on the wrong name errors rather than reporting a restart.
+5. **The `<HH>.parquet` boundary check cannot run on a capture host** — no `pyarrow`, no repo CLI, so a book final cannot be opened there at all. It has to read the pulled copy, which the deploy rule already prescribes for a different reason.
+6. **The NAS pull loop is a container, not a systemd unit.** `journalctl -u zcrypto-archive-pull.service` returns empty — which reads as "no pull ran" rather than "wrong place", the exact shape `agent-ops.md` warns about when an empty query is mistaken for an absent event.
+
+**Two degradations, each accepted explicitly by the owner at the step rather than noted afterwards**, which is what the skill demands: the prune ran in the weak form (`deleted=0` — the secondary's archive begins on the cutoff date), and one abort row read red and was discounted because the signal, not the image, is broken ([[T0106]], opened by this run).
+
 ## Suggested next steps
 
-- **(At the next capture-image rollout)** Run it via the skill — the run is the validation, and corrections land in `SKILL.md` in the same change (the T0081 pattern).
+_(none — the skill is built, it has run a real rollout, and that run's corrections are in it. A future rollout that finds more corrections lands them the same way, which is the skill's own instruction rather than an open item here.)_
