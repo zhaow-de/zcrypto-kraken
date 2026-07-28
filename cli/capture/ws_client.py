@@ -24,6 +24,10 @@ _BACKOFF_MAX_SECONDS = 60.0
 _RECONNECT_ERROR_EVERY = 10  # log an ERROR every N consecutive failed reconnect attempts (T0035)
 # Kraken's documented floor for reconnecting after maintenance or extended downtime (T0101).
 _SERVICE_RESTART_MIN_DELAY_SECONDS = 5.0
+# How long a resubscribe waits for its `unsubscribe` ack before sending `subscribe` anyway (T0102).
+# A lost ack must degrade to the old fire-and-forget ordering, never strand the pair -- that is the
+# exact failure T0008's ladder exists to remove.
+_ACK_TIMEOUT_SECONDS = 5.0
 # WebSocket close code 1012 "service restart" -- the venue announcing its own restart. Measured
 # twice in 19.3 days (2026-07-13, 2026-07-27), both times arriving AFTER the silence, not before.
 _WS_CLOSE_SERVICE_RESTART = 1012
@@ -136,6 +140,7 @@ class CaptureClient:
         uri: str = DEFAULT_URI,
         connect_fn: Callable[[str], object] | None = None,
         sleep_fn: Callable[[float], object] | None = None,
+        ack_timeout: float = _ACK_TIMEOUT_SECONDS,
     ) -> None:
         if depth not in ALLOWED_DEPTHS:
             raise CaptureError(f"depth must be one of {ALLOWED_DEPTHS}, got {depth}")
@@ -151,6 +156,17 @@ class CaptureClient:
         # collector reads at scrape time -- never mutated from anywhere but the two sites below.
         self.reconnects_total = 0
         self.resubscribes_total = 0
+        # T0102: req_id correlation. `_pending` maps our own req_id -> the future a waiter task
+        # awaits; `note_reply` resolves it. The waiter exists because rung 1 calls
+        # `resubscribe_book` from the task that drives `stream()` -- awaiting the ack inline would
+        # block the loop that delivers it.
+        self._ack_timeout = ack_timeout
+        self._req_seq = 0
+        self._issued: set[int] = set()  # every id WE minted -- Kraken's own bulk acks carry none
+        self._pending: dict[int, asyncio.Future] = {}
+        self._resub_tasks: set[asyncio.Task] = set()
+        self.resubscribe_errors_total = 0
+        self.resubscribe_ack_timeouts_total = 0
 
     @property
     def connected(self) -> bool:
@@ -216,15 +232,80 @@ class CaptureClient:
         with contextlib.suppress(Exception):
             await ws.close()
 
+    def note_reply(self, msg: dict) -> None:
+        """Route a `subscribe`/`unsubscribe` reply back to the waiter that asked for it (T0102).
+
+        Called from the consumer for every ack/error frame. A reply with no `req_id`, or one we did
+        not issue (Kraken's acks for the initial bulk subscription), is a deliberate no-op — never a
+        KeyError out of the single task the whole daemon runs on.
+        """
+        req_id = msg.get("req_id")
+        if req_id is None or req_id not in self._issued:
+            return
+        self._issued.discard(req_id)
+        if not msg.get("success", False):
+            # An EXPLICIT rejection -- of either frame. Before correlation this left no trace of its
+            # own and was inferable only from the pair staying desynced.
+            self.resubscribe_errors_total += 1
+            logger.error("resubscribe reply rejected: %s", msg)
+        future = self._pending.pop(req_id, None)
+        if future is not None and not future.done():
+            future.set_result(bool(msg.get("success", False)))
+
+    async def _subscribe_after_ack(self, pair: str, future: asyncio.Future) -> None:
+        """Send the `subscribe` once the `unsubscribe` is acknowledged — or once the wait times out.
+
+        Runs as its own task so `resubscribe_book` never blocks its caller: rung 1 fires from inside
+        the message handler, i.e. from the task driving `stream()`, and awaiting there would block
+        the loop that delivers the very ack being waited on.
+        """
+        try:
+            try:
+                await asyncio.wait_for(future, self._ack_timeout)
+            except TimeoutError:
+                self.resubscribe_ack_timeouts_total += 1
+                logger.warning(
+                    "resubscribe: no unsubscribe ack for pair=%s in %.1fs -- subscribing anyway", pair, self._ack_timeout
+                )
+            if self._ws is None:  # the connection went away while we waited; the reconnect resubscribes everything
+                return
+            self._req_seq += 1
+            sub_id = self._req_seq
+            self._issued.add(sub_id)  # nothing awaits this one; it exists so a REJECTED subscribe is counted
+            await self._ws.send(json.dumps(build_subscribe_message("book", [pair], depth=self._depth, req_id=sub_id)))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 -- a bare task: an escaping exception would be silent
+            logger.exception("resubscribe: sending subscribe failed for pair=%s", pair)
+
     async def resubscribe_book(self, pair: str) -> None:
         """Force a fresh `book` snapshot for one pair to recover from a checksum desync without
         dropping the whole connection: **unsubscribe then re-subscribe**. A bare re-`subscribe` of an
         already-active channel is rejected by Kraken ("Already subscribed") and yields no snapshot, so
         the desynced book could never heal — the unsubscribe first is what forces the new snapshot
         (`ingest_snapshot` then rebuilds the book and clears `desynced`). A no-op if not currently
-        connected (the next reconnect resubscribes everything anyway)."""
+        connected (the next reconnect resubscribes everything anyway).
+
+        Both frames carry a `req_id` (T0102), and the `subscribe` is deferred to a waiter task until
+        the `unsubscribe` is acknowledged — closing the race where the subscribe overtakes the
+        unsubscribe server-side and is rejected. This method itself never awaits the reply.
+        """
         if self._ws is None:
             return
-        await self._ws.send(json.dumps(build_unsubscribe_message("book", [pair], depth=self._depth)))
-        await self._ws.send(json.dumps(build_subscribe_message("book", [pair], depth=self._depth)))
+        self._req_seq += 1
+        req_id = self._req_seq
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._issued.add(req_id)
+        self._pending[req_id] = future
+        await self._ws.send(json.dumps(build_unsubscribe_message("book", [pair], depth=self._depth, req_id=req_id)))
         self.resubscribes_total += 1
+
+        task = asyncio.create_task(self._subscribe_after_ack(pair, future))
+        self._resub_tasks.add(task)  # a bare create_task can be garbage-collected mid-flight
+        task.add_done_callback(self._resub_tasks.discard)
+
+    async def drain_pending_resubscribes(self, timeout: float = 10.0) -> None:
+        """Await the in-flight resubscribe waiters (shutdown, and the tests' determinism hook)."""
+        if not self._resub_tasks:
+            return
+        await asyncio.wait(set(self._resub_tasks), timeout=timeout)

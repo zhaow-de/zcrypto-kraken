@@ -265,8 +265,17 @@ async def _consume(
             await _handle_book_message(msg, category, client, books, book_writers, monitor, watermark, recovery, last_seen)
         elif category in ("trade_snapshot", "trade_update"):
             _handle_trade_message(msg, trade_writers, watermark)
-        elif category == "subscribe_error":
-            logger.error("subscribe error: %s", msg)
+        elif category in ("subscribe_ack", "unsubscribe_ack", "subscribe_error", "unsubscribe_error"):
+            # T0102: route every reply back to the resubscribe that asked for it. Correlation is
+            # what releases the deferred `subscribe` (and what makes a rejection countable); a
+            # reply carrying no req_id of ours is a no-op inside `note_reply`.
+            client.note_reply(msg)
+            if category == "subscribe_error":
+                logger.error("subscribe error: %s", msg)
+            elif category == "unsubscribe_error":
+                # the resubscribe recovery's unsubscribe leg was rejected — surface it, since a
+                # silently rejected request is exactly what made the desync incident undiagnosable
+                logger.error("unsubscribe error: %s", msg)
         elif category == "status":
             # RECORDED, not acted on (spec 00073 D1). Kraken pushes this on connect and on every
             # engine-state change, and its planned-downtime form carries an `effectiveTime`. Until
@@ -285,11 +294,7 @@ async def _consume(
                 )
                 if system is not None:
                     venue_status[system] = venue_status.get(system, 0) + 1
-        elif category == "unsubscribe_error":
-            # the resubscribe recovery's unsubscribe leg was rejected — surface it, since a silently
-            # rejected request is exactly what made the desync incident undiagnosable
-            logger.error("unsubscribe error: %s", msg)
-        # heartbeat / subscribe_ack / unsubscribe_ack / other -> nothing to do
+        # heartbeat / other -> nothing to do
 
 
 async def _healthcheck_loop(

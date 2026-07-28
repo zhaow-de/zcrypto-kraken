@@ -194,6 +194,29 @@ def test_a_status_message_without_a_system_field_does_not_crash_the_consumer():
     assert venue_status == {}, f"a status message with no `system` was counted: {venue_status}"
 
 
+def test_the_consumer_routes_replies_back_to_the_client():
+    """T0102's seam. `note_reply` is what RELEASES the deferred subscribe, so a consumer that never
+    calls it leaves every resubscribe waiting out its full ack timeout before recovering -- a
+    mechanism nobody feeds, which is the failure class this project keeps rediscovering."""
+    import asyncio
+
+    from cli.capture.command import _consume
+    from cli.capture.desync_recovery import DesyncRecovery
+
+    seen: list[dict] = []
+
+    class _ReplyClient(_FakeClient):
+        def note_reply(self, msg):
+            seen.append(msg)
+
+        async def stream(self):
+            yield {"method": "unsubscribe", "success": True, "req_id": 7}
+            yield {"method": "subscribe", "success": False, "error": "nope", "req_id": 8}
+
+    asyncio.run(_consume(_ReplyClient(), {}, {}, {}, _StubMonitor(), _StubWatermark(), DesyncRecovery(), {}, {}))
+    assert [m["req_id"] for m in seen] == [7, 8], f"replies never reached the client: {seen}"
+
+
 def test_classifying_status_does_not_disturb_the_existing_categories():
     assert classify({"channel": "book", "type": "snapshot"}) == "book_snapshot"
     assert classify({"channel": "book", "type": "update"}) == "book_update"
