@@ -53,6 +53,7 @@ LOGSHIP_SERIES = [
     "zcrypto_logship_dropped_lines_total",
     "zcrypto_logship_shipped_lines_total",
     "zcrypto_logship_last_success_timestamp_seconds",
+    "zcrypto_logship_last_cycle_timestamp_seconds",
 ]
 CAPTURE_APP_SERIES = [
     "zcrypto_capture_reconnects_total",
@@ -106,6 +107,28 @@ NAS_LEGACY_ADMITTED = [
     "zcrypto_reconcile_last_success_timestamp_seconds",
     "zcrypto_trade_backfill_exit_code",
 ]
+# Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
+# command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
+# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the nine real
+# names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
+# per-host OPS list: the union bar alone would not catch the realistic drift, since narrowing the
+# wildcard on ops -- the host that actually publishes them -- still leaves NAS's copy satisfying the
+# union. A reviewer measured that: ops-only narrowing flagged 0 of 9.
+INTERPOLATED_METRIC_NAMES = [
+    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all nine, including
+    # last_success_timestamp_seconds, which the scan only ever picked up because an unrelated comment
+    # in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not derivation.
+    "zcrypto_reconcile_last_success_timestamp_seconds",
+    "zcrypto_reconcile_source_lag_seconds",
+    "zcrypto_reconcile_healed_gap_seconds_total",
+    "zcrypto_reconcile_healable_gap_seconds_total",
+    "zcrypto_reconcile_residual_gap_seconds_total",
+    "zcrypto_reconcile_spliced_hours_total",
+    "zcrypto_reconcile_union_hours_total",
+    "zcrypto_reconcile_trade_dedup_rows_total",
+    "zcrypto_reconcile_trade_deficit_rows_total",
+]
+
 OPS_REQUIRED = [
     "up",
     "node_load1",
@@ -116,10 +139,17 @@ OPS_REQUIRED = [
     "ops_verify_replay_exit_code",
     "ops_verified_replay_exit_code",
     "ops_verified_replay_last_success_timestamp",
-    "zcrypto_reconcile_last_success_timestamp_seconds",
-    "zcrypto_reconcile_source_lag_seconds",
+    # The "did the timer RUN?" discriminator. Absent from the ops keep-regex until 2026-07-28 while
+    # capture carried it, so on the host running four timers it was published and dropped at
+    # remote-write -- found by a reviewer checking a coverage claim that turned out to be false.
+    "node_textfile_mtime_seconds",
     "zcrypto_trade_backfill_exit_code",
     "zcrypto_trade_backfill_last_success_timestamp",
+    *INTERPOLATED_METRIC_NAMES,
+    # T0043: the repair count, exported as a monotone total by archive-pull.sh.j2. Admitted today
+    # only by the `zcrypto_trade_backfill_.*` wildcard — pinned by name so narrowing that wildcard
+    # fails here rather than silently dropping the series.
+    "zcrypto_trade_backfill_hours_repaired_after_loss_total",
     # T0083: the hc.io watchdog scrape's series. zcrypto-hcio-watchdog alerts on
     # hc_checks_down_total — dropping THAT silently disarms the Grafana half of the mutual
     # watchdog (same failure class as `up` above); hc_check_up is the per-check triage detail
@@ -271,3 +301,78 @@ def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     assert drop_at != -1, f"{path}: no drop block"
     assert keep_at != -1, f"{path}: no keep block"
     assert drop_at < keep_at, f"{path}: the drop block must come before the keep block"
+
+
+# ---------------------------------------------------------------------------
+# The lists above are hand-maintained, which bounds what they can catch: they prove the keep-regex
+# still admits the series someone remembered to list. They cannot see a metric added to the code and
+# to no list -- and since the keep is an allow-list, that metric is dropped at remote_write and any
+# rule watching it reads no data forever, which renders identically to healthy.
+#
+# This guard closes that gap by DERIVING its candidates from the source tree. Two things it must get
+# right, both learned by getting them wrong on 2026-07-28:
+#   1. Membership is MATCHED, not compared -- keep entries are regexes, and the NAS admits the whole
+#      gate family as `zcrypto_gate_.*`. A literal comparison called all ten unadmitted; all are live.
+#   2. The union of all three configs is the bar, since a metric may legitimately be admitted only on
+#      the host that publishes it.
+# It cannot see a host running an older config than the repo -- that is a converge concern, not CI.
+# Scope is `zcrypto_*` only: the ops_*, node_* and hc_* families this infra also publishes are out
+# of range, and an uppercase name would fall out of the token pattern rather than fail. Both are
+# fail-open gaps. The per-host lists above cover them only as far as someone remembered to list the
+# name -- `node_textfile_mtime_seconds` sat outside both this guard and the ops list while ops
+# published it, so do not read those lists as coverage.
+_SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py")
+
+# Name-shaped tokens that are not published metrics. Each states why: an unexamined exclusion is how
+# the trap grows back.
+
+NOT_A_PUBLISHED_METRIC = {
+    "zcrypto_ed25519",  # the vaulted deploy-key filename in infra/ansible/scripts/run.sh
+    "zcrypto_owned",  # the logger-ownership marker in cli/logging/config.py, never exported
+    "zcrypto_reconcile_",  # the f-string STEM, not a series -- the real names are listed above
+    # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
+    # adds a `_created` series per Counter by default and `_use_created = False` disables them
+    # process-wide. Confirmed absent from Grafana Cloud, as intended.
+    "zcrypto_engine_orders_created",
+}
+
+
+def _tokens_in_tree() -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for glob in _SOURCE_GLOBS:
+        for path in REPO.glob(glob):
+            for m in re.finditer(r"zcrypto_[a-z0-9_]{4,}", path.read_text()):
+                found.setdefault(m.group(0), set()).add(str(path.relative_to(REPO)))
+    return found
+
+
+# Deliberately a shape match over the whole source, not a scan of definition sites: scanning
+# `MetricFamily(` and `# HELP` misses how cli/engine/command.py, cli/liquidations/coinalyze.py and
+# archive-pull.sh.j2 each publish, and a guard with blind spots is worse than none.
+PUBLISHED_METRIC_NAMES = sorted({n for n in _tokens_in_tree() if n not in NOT_A_PUBLISHED_METRIC} | set(INTERPOLATED_METRIC_NAMES))
+
+# pytest SKIPS an empty parametrize by default, so a glob that stops matching (a cli/ reorg, a
+# rename) would silently evaporate this guard with the suite still green. The floor is deliberately
+# a real count, not `> 0`: the staleness test below cannot serve as the backstop, since emptying
+# NOT_A_PUBLISHED_METRIC makes it pass vacuously too.
+assert len(PUBLISHED_METRIC_NAMES) >= 30, (
+    f"only {len(PUBLISHED_METRIC_NAMES)} metric names found -- the source globs have drifted and this guard would pass vacuously"
+)
+
+
+def test_the_not_a_published_metric_list_has_not_gone_stale():
+    """An exclusion naming a token no longer in the tree excuses nothing while the name it was
+    renamed to goes unguarded."""
+    stale = NOT_A_PUBLISHED_METRIC - set(_tokens_in_tree())
+    assert not stale, f"excluded but no longer in the tree (rename? removal?): {sorted(stale)}"
+
+
+@pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
+def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
+    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY)]
+    assert any(k.match(metric) for k in keeps), (
+        f"{metric} is published by this repo but matches no keep-regex on any host, so it is "
+        f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "
+        f"to the keep-regex of the host that publishes it, or -- if it is not a metric -- to "
+        f"NOT_A_PUBLISHED_METRIC with the reason."
+    )

@@ -92,6 +92,12 @@ class LokiShipHandler(logging.Handler):
         self.last_ship_success_at: float | None = (
             None  # unix ts of the last "ok" from the main loop; the exit flush (see _run) does not update it
         )
+        # "the worker completed a cycle" -- a different question from
+        # last_ship_success_at's "Loki accepted something", and the one an abort/liveness row
+        # wants (T0106). A healthy capture daemon is quiet, so an idle cycle stamps this too;
+        # a retrying one does not. Seeded here so the series exists from startup rather than
+        # being absent until the first ship -- "no data" and "stale" read differently.
+        self.last_cycle_at: float = time.time()
         self._dropped_unannounced = 0
         self._held: list[tuple[str, str, str]] = []  # the one in-flight batch (part of the memory bound)
         self._auth = "Basic " + base64.b64encode(f"{cfg.username}:{cfg.password}".encode()).decode()
@@ -150,18 +156,21 @@ class LokiShipHandler(logging.Handler):
             if not self._held:
                 self._held = self._drain()
             if not self._held:
+                with self._ring_lock:
+                    self.last_cycle_at = time.time()  # idle is the healthy steady state, not a stall
                 continue
             outcome = self._post(self._held)
             if outcome == "ok":
                 with self._ring_lock:
                     self.shipped_lines_total += len(self._held)
-                    self.last_ship_success_at = time.time()
+                    self.last_ship_success_at = self.last_cycle_at = time.time()
                 self._held, backoff = [], self._backoff_min_s
                 self._announce_recovery()
             elif outcome == "drop":
                 with self._ring_lock:
                     self.dropped_total += len(self._held)
                     self._dropped_unannounced += len(self._held)
+                    self.last_cycle_at = time.time()  # a non-429 4xx is still a completed cycle -- see the gauge's HELP
                 self._held, backoff = [], self._backoff_min_s
             else:
                 self._stop.wait(backoff)  # interruptible: close() never waits on this

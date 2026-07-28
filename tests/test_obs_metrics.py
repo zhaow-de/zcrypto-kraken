@@ -245,7 +245,7 @@ class TestLogshipCollector:
         handler = _make_handler(url)
         try:
             handler.emit(_make_record("hello"))
-            assert _wait_until(lambda: handler.shipped_lines_total >= 1)  # so all three families are due
+            assert _wait_until(lambda: handler.shipped_lines_total >= 1)  # so all four families are due
 
             collector = LogshipCollector(handler)
             done = threading.Event()
@@ -257,6 +257,6 @@ class TestLogshipCollector:
                 assert not done.is_set()  # blocked behind the held lock
             t.join(timeout=1.0)
             assert done.is_set()
-            assert len(families) == 3
+            assert len(families) == 4  # dropped, shipped, last_cycle, last_success
         finally:
             handler.close()

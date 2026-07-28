@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: NOW — the mechanism is read from `cli/logging/ship.py` and confirmed against a live host; nothing waits on an observation. It is deliberately NOT fixed inside the bake it was found in, because changing an abort threshold during a live rollout is the guardrail-weakening this project forbids
+status: partial
+ripe_when: the remainder is the abort-table row, and it is ripe the moment an image carrying `zcrypto_logship_last_cycle_timestamp_seconds` ships — pointing the row at a gauge the running image does not publish would replace a false red with a hard `no data`. Carried as part of [[T0107]]'s payload
 ---
 
 # The rollout's log-shipping freshness signal reads RED whenever logging is quiet
@@ -36,9 +36,17 @@ The same series is scraped into Grafana Cloud (it is in both capture and ops All
 - Not image-specific, so it says nothing about the candidate digest and is not evidence against the current bake.
 - Deliberately not fixed in-place during the bake it was found in: editing an abort threshold mid-rollout is the guardrail-weakening the unattended rules forbid, and `capture-deploys.md` is in the refine-round protected set requiring per-edit sign-off.
 
+## Done so far
+
+Fixed in repo 2026-07-28 on `docs/ops-converge-0728-record` — **option (b)**, the recommended one: a separate series rather than a redefinition.
+
+- `cli/logging/ship.py` publishes `last_cycle_at`, stamped on an idle cycle and on a disposed batch, left alone while pushes are retrying. `last_ship_success_at` keeps its exact former meaning, so no existing consumer shifts under it.
+- Seeded at construction, which **eliminates the third state** this topic recorded: the series is present from startup instead of absent until the first ship.
+- `cli/obs/metrics.py` exports `zcrypto_logship_last_cycle_timestamp_seconds`; admitted in the capture **and** ops keep-regexes in the same change.
+- Three tests pin it: an idle cycle advances it while `last_ship_success_at` stays `None`; a retrying cycle does not advance it; both series are exported distinctly.
+- **The open decision is answered by measurement, not judgement**: no Grafana rule reads the old gauge's freshness — before this change, `grep logship infra/grafana/alerts.yaml` returned only the dropped-lines rule (it now also returns the new one added here) — and `tests/test_infra_alert_rules.py`'s exclusion list already records that its staleness is not a fault. Its only consumer was the rollout checklist. A new rule, `zcrypto-logship-worker-stalled` (> 5 min ≈ 300 missed cycles), now carries what that gauge never could.
+
 ## Suggested next steps
 
-- *(decision)* **Pick the honest liveness signal, then rewrite the row.** Candidates, cheapest first: (a) stamp `last_ship_success_at` on an *empty* flush too, so the gauge means "the worker completed a cycle" — one line, but it changes an existing series' meaning, so any rule reading it must be re-checked; (b) publish a separate `zcrypto_logship_last_cycle_timestamp_seconds` and point the abort row at that, leaving the shipping-success gauge alone; (c) drop the freshness row from the table and rely on `dropped_lines_total` plus Alloy's `samples_failed_total`, accepting that a wholly stalled shipper is then invisible until logs resume. (b) is recommended — it separates "the worker is alive" from "Loki accepted something", which are different questions.
-- *(autonomous, with whichever option is chosen)* Add the test that pins it: a handler with an empty buffer must still advance whatever the abort row reads, and a handler whose post fails must not.
-- *(decision)* **Check whether any Grafana rule reads this series' freshness.** If one does, it has the same false-red and wants the same fix; if none does, record that the only consumer is the rollout checklist.
-- *(autonomous)* Note the third state — the series is *absent*, not stale, before the first successful ship — wherever the row lands, since "no data" and "stale" reach an operator differently.
+- *(ATTENDED, with the image that carries the gauge)* **Rewrite the rollout skill's abort-signal row** to read `zcrypto_logship_last_cycle_timestamp_seconds`, and drop the 120 s threshold that never matched reality. Deliberately not done now: the row describes what an operator reads on a live host, and the running image does not publish this series yet.
+- *(ATTENDED, same roll)* Confirm the new gauge and the `zcrypto-logship-worker-stalled` rule are live — the rule reads no data until both the image and the Alloy config land ([[T0109]]), and Grafana shows `inactive` on absent data, which is indistinguishable from healthy.

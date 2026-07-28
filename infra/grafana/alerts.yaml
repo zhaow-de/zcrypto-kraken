@@ -1956,6 +1956,53 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-logship-worker-stalled
+    title: "Logs · the shipping worker has stopped cycling"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Liveness, and deliberately NOT the ship-success gauge: the worker skips the push when the
+      # buffer is empty, so last_success goes stale whenever logging is merely quiet -- which is
+      # what a healthy capture daemon looks like. This gauge advances on an idle cycle too, and
+      # stalls only while the worker is stuck RETRYING (5xx/429/network) or wedged. The worker
+      # cycles every second; 5 min is ~300 missed cycles.
+      #
+      # What it deliberately does NOT catch: a permanently-rejected batch (non-429 4xx -- a revoked
+      # token, a wrong path) still completes a cycle and still advances this gauge, so logs can be
+      # discarded at full rate while this reads green. That fault belongs to
+      # zcrypto-logship-lines-dropped, which counts exactly those discards. Two questions, two
+      # rules -- conflating them is what left last_success unable to answer either.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - zcrypto_logship_last_cycle_timestamp_seconds'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [300]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The log-shipping worker on the named host has not completed a cycle for over 15 minutes -- either it is stuck retrying a push it cannot complete, or the worker thread is wedged, so logs are queueing and every Loki-based alert on this host is now silent for the wrong reason. Look for a Loki endpoint that is unreachable or erroring, not for rejected credentials: a rejected push still completes a cycle and would leave this rule green, showing up instead as dropped log lines."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-node-collector-failed
     title: "Node · a node-exporter collector is failing"
     ruleGroup: zcrypto-capture

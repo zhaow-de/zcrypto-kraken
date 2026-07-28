@@ -416,3 +416,83 @@ def test_close_joins_the_worker_thread_no_leak(fake_loki):
     assert worker.is_alive()  # the daemon worker is running
     handler.close()
     assert not worker.is_alive()  # joined -- no leaked thread
+
+
+def test_last_cycle_timestamp_advances_on_an_idle_cycle(fake_loki):
+    """T0106: the abort-signal gauge must mean 'the worker is alive', not 'Loki accepted
+    something'. A healthy capture daemon is quiet, so an empty flush -- the ordinary steady
+    state -- must still advance it, while last_ship_success_at correctly stays put."""
+    url, _ = fake_loki
+    handler = _make_handler(url)
+    try:
+        first = handler.last_cycle_at
+        assert first is not None  # never absent: stamped at construction, so no 'no data' state
+        assert handler.last_ship_success_at is None
+        assert _wait_until(lambda: handler.last_cycle_at > first)  # nothing was emitted
+        assert handler.last_ship_success_at is None  # ... and no ship was claimed
+    finally:
+        handler.close()
+
+
+def test_last_cycle_timestamp_stalls_while_the_post_keeps_failing(handler_factory):
+    """The other half: a shipper whose posts fail is NOT alive for this gauge's purpose, so a
+    retrying cycle must not stamp it -- otherwise the row is green through a real outage."""
+    handler_cls = handler_factory(status_code=500)  # 5xx -> 'retry', the wedged case
+    with FakeLoki(handler_cls) as url:
+        # Short backoff, and the baseline captured BEFORE the first emit. The earlier form used a 5 s
+        # backoff and read the baseline after the first request, so a variant that wrongly stamps on
+        # the retry path had already stamped by then and the 0.3 s sleep sat inside the backoff wait
+        # -- it observed a short interval, never a stall, and a reviewer proved both the correct and
+        # the broken implementation passed it. Spanning several failing cycles is what discriminates.
+        handler = _make_handler(url, batch_max=2, ring_capacity=32, backoff_min_s=0.05)
+        try:
+            for i in range(2):
+                handler.emit(_make_record(f"m{i}"))
+            assert _wait_until(lambda: len(handler_cls.requests) >= 1)
+            # Seed AFTER the batch is held, not before: until then the worker is idle and idle cycles
+            # legitimately stamp every flush_interval_s (20 ms here), so any scheduling delay between
+            # a pre-emit seed and the emits made CORRECT code fail this. With a batch held, no idle
+            # cycle can intervene, so every later stamp would be the bug.
+            seed = handler.last_cycle_at
+            assert _wait_until(lambda: len(handler_cls.requests) >= 4)  # several failed cycles elapsed
+            assert handler.last_cycle_at == seed, "a retrying cycle must not advance the liveness gauge"
+        finally:
+            handler_cls.status_code = 200
+            handler.close()
+
+
+def test_last_cycle_timestamp_is_exported_as_its_own_series(fake_loki):
+    """It is a separate series, not a redefinition of the ship-success gauge -- both are
+    published so a rule can tell 'worker dead' from 'Loki rejecting'."""
+    from cli.obs.metrics import LogshipCollector
+
+    url, _ = fake_loki
+    handler = _make_handler(url)
+    try:
+        names = {m.name for m in LogshipCollector(handler).collect()}
+        assert "zcrypto_logship_last_cycle_timestamp_seconds" in names
+        assert "zcrypto_logship_last_success_timestamp_seconds" not in names  # no ship yet
+    finally:
+        handler.close()
+
+
+def test_a_permanently_rejected_batch_still_advances_the_liveness_gauge(handler_factory):
+    """The drop path IS a completed cycle, and three artifacts now assert it as contract: the
+    gauge's HELP, the rule comment, and the operator-facing summary telling the responder NOT to
+    chase credentials. Nothing tested it -- deleting the stamp from the drop branch passed the
+    whole suite -- so a regression would silently restore the misdirection the summary was
+    rewritten to remove."""
+    handler_cls = handler_factory(status_code=400)  # non-429 4xx -> 'drop', permanently rejected
+    with FakeLoki(handler_cls) as url:
+        handler = _make_handler(url, batch_max=2, ring_capacity=32, flush_interval_s=5.0)
+        try:
+            seed = handler.last_cycle_at
+            for i in range(2):
+                handler.emit(_make_record(f"m{i}"))
+            assert _wait_until(lambda: handler.dropped_total >= 2)  # the batch was rejected
+            # flush_interval_s is 5 s, so no idle cycle can have run in the interim -- any advance
+            # is the drop branch's own stamp, which is the property under test.
+            assert handler.last_cycle_at > seed, "a discarded batch must still count as a completed cycle"
+            assert handler.last_ship_success_at is None, "nothing shipped, so ship-success must not move"
+        finally:
+            handler.close()
