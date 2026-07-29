@@ -25,6 +25,16 @@ table inet filter {
 
     # SSH
     tcp dport {{ firewall_ssh_port }} accept
+{% if firewall_extra_tcp_ports %}
+
+    # additional exposed TCP services (per-group, spec 00075: Caddy 80/443 + the SSH relay)
+    tcp dport { {{ firewall_extra_tcp_ports | join(', ') }} } accept
+{% endif %}
+{% if firewall_extra_udp_ports %}
+
+    # additional exposed UDP services (per-group, spec 00075: WireGuard)
+    udp dport { {{ firewall_extra_udp_ports | join(', ') }} } accept
+{% endif %}
 
     # ICMPv4 ping
     icmp type echo-request accept
