@@ -160,6 +160,11 @@ def containing_dark_window(
     since it is built from the union of every stream's stamps and such a stamp would have split it.
     Guarded rather than assumed: the caller must never book a window that does not exist.
     """
+    # KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
+    # stream whose silence began in H-1 is measured from the boundary rather than its true start.
+    # Measured at 0.045% of one event and bounded by min_gap_seconds per stream; closing it costs an
+    # H-1 segment read per pair on every fleet-dark hour. Re-measure the share before changing this:
+    # infra/runbooks/README.md#cross-hour-straddle
     inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
     edges = [hour_start, *inside, hour_end]
     for a, b in zip(edges, edges[1:], strict=False):
