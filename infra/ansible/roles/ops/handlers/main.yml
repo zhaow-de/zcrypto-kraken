@@ -7,13 +7,16 @@
   # renders the Alloy stack and has never owned its lifecycle, and a directory mount makes the
   # heavier option unnecessary.
   #
-  # Tolerant by design: Alloy is started attended, so a converge onto a host where it is not yet
-  # running must not fail. A non-running Alloy has nothing to reload, and the next attended
-  # `docker compose up -d` reads the config fresh anyway.
+  # Tolerant of Alloy being DOWN, and only that: `-1` is what fetch_url reports on a connection
+  # failure, so a host where Alloy is not yet running passes (it is started attended, and the next
+  # `docker compose up -d` reads the config fresh anyway). A 4xx/5xx from a RUNNING Alloy means the
+  # config just shipped does not parse, and that MUST fail the converge -- swallowing it leaves the
+  # host serving the old config, green, and the next run does not re-notify because `copy` reports
+  # `ok`. Note a reload does NOT re-read alloy-secrets.env: env is process-level, so a rotated
+  # credential still needs a container recreate.
   ansible.builtin.uri:
     url: http://127.0.0.1:12345/-/reload
     method: POST
     status_code: [200, -1]
   register: ops_alloy_reload
-  failed_when: false
   changed_when: ops_alloy_reload.status | default(0) == 200
