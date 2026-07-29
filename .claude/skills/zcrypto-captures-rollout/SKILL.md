@@ -45,7 +45,8 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 | Signal | Threshold | Where |
 | --- | --- | --- |
 | `zcrypto_logship_dropped_lines_total` | > 0 (was 0 at converge) | `127.0.0.1:9101/metrics` |
-| `zcrypto_logship_last_success_timestamp_seconds` | stale > ~120 s — **known false red, see [[T0106]]**: the worker skips the post on an empty buffer and stamps the gauge only on a successful *non-empty* ship, so it goes stale whenever logging is quiet, which is what healthy looks like. Corroborate with `shipped_lines_total` advancing before treating it as an abort | same |
+| `zcrypto_logship_last_cycle_timestamp_seconds` | stale > ~120 s | same |
+| ~~`zcrypto_logship_last_success_timestamp_seconds`~~ | **not an abort signal** — it stamps only on a successful *non-empty* ship, so it goes stale whenever logging is quiet, which is what healthy looks like. Measured on a green host during the 2026-07-29 bake: 39 min stale while the cycle gauge above read 0 s. Read it only as corroboration, never as a trip | same |
 | `RestartCount` | > 0 on `zcrypto-capture` or `grafana-alloy` | `docker inspect --format '{{.RestartCount}}'` |
 | capture stdout | any `quarantined` / `ambiguous` / `merge failed` | `docker logs` |
 | newest parquet | `find <data-dir> -name '*.parquet' -mmin -3` returns 0 | host shell |
