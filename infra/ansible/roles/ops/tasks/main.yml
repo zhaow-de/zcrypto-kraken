@@ -426,7 +426,14 @@
       `-e ops_alloy_digest=<currently-running>`, then recreate the container so the new file is
       read. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
     success_msg: "deployed Alloy config matches the repo"
-  when: ops_deployed_alloy_config.stat.exists
+  # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
+  # copy the file, so asserting first would fail the host, drop it from every later task, and
+  # leave the copy unreached -- making a legitimate config change unconvergeable and looping the
+  # fail_msg's own remedy back into this assert. The drift-CAUSING converge is the one that omits
+  # the digest, and that is exactly the case still checked.
+  when:
+    - ops_alloy_digest is not defined
+    - ops_deployed_alloy_config.stat.exists
 
 - name: install the ops telemetry stack — Grafana Alloy (spec 00054 D1; needs the pinned Alloy digest)
   when: ops_alloy_digest is defined
