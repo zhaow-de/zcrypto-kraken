@@ -161,8 +161,11 @@ def containing_dark_window(
     """
     # KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
     # stream whose silence began in H-1 is measured from the boundary rather than its true start.
-    # Measured at 0.045% of one event and bounded by min_gap_seconds per stream; closing it costs an
-    # H-1 segment read per pair on every fleet-dark hour. Re-measure the share before changing this:
+    # Measured at 0.045% of one event. NOT structurally bounded by min_gap_seconds -- H-1 books a
+    # stream's tail only when the FLEET-dark window there clears the threshold, and that is bounded
+    # above by the stream's own, so a thin pair can straddle far wider. What bounds it is the
+    # measured silence distribution above. Closing it costs an H-1 segment read per pair on every
+    # fleet-dark hour. Re-measure the share before changing this:
     # infra/runbooks/README.md#cross-hour-straddle
     inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
     edges = [hour_start, *inside, hour_end]

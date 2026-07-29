@@ -148,8 +148,6 @@ NOT_A_FAULT_SIGNAL = {
     # watchdog. Excluded on purpose -- it exists to be READ so T0105 can fit a paging threshold to a
     # real production distribution; a rule on it before that fitting is the guess this defers.
     "zcrypto_capture_seconds_since_last_book_message",
-    # Venue status by reported system state (T0101): recorded so that "was the outage
-    # announced?" stops being unanswerable. A rule on anything != `online` is the obvious
     # Engine cycle health -- registered under T0095 with `ripe_when: the dashboards/alerting design
     # iteration`. Named here so its absence is a decision, not an oversight.
     "zcrypto_engine_cycle_success",

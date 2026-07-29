@@ -8,9 +8,11 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - **This is not a backlog.** If acting on a section produces work, put it where work lives: something needing a *decision* opens a `T<NNNN>` per `.claude/rules/open-topics.md`; something needing *doing* goes in the memo queue. Deferrals must not accumulate here — a runbook nobody can finish reading is a runbook nobody reads.
 - Every section carries a **Retire when** naming something checkable — a metric that stops existing, a rule absent from `infra/grafana/alerts.yaml`, a line no longer in the code. A retirement condition you have to *judge* is one nobody will act on.
 
-**Split when** this file exceeds ~12 sections, or gains a second subsystem's worth of material: move to `infra/runbooks/<subsystem>.md` and keep the anchors byte-identical, because alert summaries and code comments cite them.
+**Split when** this file exceeds ~12 sections, or gains a second subsystem's worth of material: move to `infra/runbooks/<subsystem>.md` and keep the explicit `<a name=…>` anchors byte-identical, because alert summaries and code comments cite them. They are explicit rather than heading-derived precisely because the `— ALERT` / `— KNOWN LIMITATION` marker would otherwise become part of the slug.
 
 ______________________________________________________________________
+
+<a name="zcrypto-capture-venue-not-online"></a>
 
 ## zcrypto-capture-venue-not-online — ALERT
 
@@ -28,16 +30,18 @@ This does **not** by itself mean data is being lost. A venue in `maintenance` or
 
 ### What to do
 
-1. **Read the value and the lead time.** In Loki, `{container="zcrypto-capture"} |= "venue status"` — take `system` and `effective_time`. A non-null `effective_time` means Kraken announced it in advance.
+1. **Read the value and the lead time.** In Loki, `{host=~"zcrypto|zcrypto-red", container="capture"} |= "venue status"` — take `system` and `effective_time`. A non-null `effective_time` means Kraken announced it in advance.
 2. **Check whether capture actually degraded**, rather than assuming: `zcrypto_capture_seconds_since_last_book_message` per pair, and the reconciler's `zcrypto_reconcile_residual_gap_seconds_total`. A venue state change with no book staleness and no residual growth is an observability event, not a data event.
 3. **Do not converge or restart anything on this signal alone.** Nothing in the capture path reacts to venue status; a restart costs a resubscribe and buys nothing.
-4. **Record the observation** — value, `effective_time`, whether book flow degraded, and for how long. This is the first real sample of a payload shape the fleet had never seen, and it is what [[T0105]]'s parked decision (whether a pre-drain is worth building) has been waiting for. Add it to that topic.
+4. **Record the observation** — value, `effective_time`, whether book flow degraded, and for how long. This is the first real sample of a payload shape the fleet had never seen, and it is what \[[T0105]\]'s parked decision (whether a pre-drain is worth building) has been waiting for. Add it to that topic.
 
 ### Retire when
 
-`zcrypto-capture-venue-not-online` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed. If [[T0105]]'s pre-drain decision lands and changes the response, rewrite *What to do*; the alert itself stays.
+`zcrypto-capture-venue-not-online` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed. If \[[T0105]\]'s pre-drain decision lands and changes the response, rewrite *What to do*; the alert itself stays.
 
 ______________________________________________________________________
+
+<a name="cross-hour-straddle"></a>
 
 ## cross-hour-straddle — KNOWN LIMITATION
 
@@ -49,9 +53,9 @@ You are reading `containing_dark_window` in `cli/archive/settle.py`, or reconcil
 
 `containing_dark_window` clamps to `hour_start`, exactly as `fleet_dark_windows` does. A stream whose silence began in the previous hour is therefore measured from the boundary, not from its true start, so a few seconds before the boundary are attributed to that previous hour's own tail window rather than to this one.
 
-**Measured, not estimated**: 1.203668 s fleet-wide on the 2026-07-13 event (0.002794 s DOT … 0.308901 s ETH) — **0.045%** of that event's 2,696.031909 s. Bounded above by `min_gap_seconds` per stream, because a straddle wider than that is already booked by the previous hour's tail.
+**Measured, not estimated**: 1.203668 s fleet-wide on the 2026-07-13 event (0.002794 s DOT … 0.308901 s ETH) — **0.045%** of that event's 2,696.031909 s. **Not** structurally bounded by `min_gap_seconds`, despite an earlier claim here to that effect: H−1 books a stream's tail only when the *fleet*-dark window there exceeds the threshold, and the fleet tail is bounded above by the stream's own — so a stream quiet from 11:45 while the fleet ticks to 11:59:50 leaves a 10 s fleet tail that is booked nowhere and a straddle far wider than the threshold. What bounds it in practice is the measured silence distribution (max 11.44 s across all 12 pairs, both mirrors, 2026-07-26) — an argument that degrades correctly when a thin pair joins the universe, where the structural one simply fails.
 
-**This is accepted, not outstanding.** Closing it means reading each pair's H−1 segment on every hour carrying a fleet-dark window — real I/O on every cycle, for a fraction of a percent. The decision and its measurement are recorded in [[T0103]].
+**This is accepted, not outstanding.** Closing it means reading each pair's H−1 segment on every hour carrying a fleet-dark window — real I/O on every cycle, for a fraction of a percent. The decision and its measurement are recorded in \[[T0103]\].
 
 ### What to do
 
