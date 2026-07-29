@@ -50,12 +50,15 @@ The assert runs only when a config is already deployed, so a host that has never
 
 | probe | result |
 | --- | --- |
-| host matches repo | `ok=57 changed=0 failed=0` |
-| one line appended to the repo file | `failed=1`, with the remediation message |
+| no drift, no digest | `ok=57 changed=0 failed=0` — the assert runs and passes |
+| drift, no digest | `failed=1` — the drift-*causing* converge is caught |
+| drift, digest passed | `failed=0`, `changed=1`, the config copy reached — the *fixing* converge reconciles |
+
+**The first version of this table proved the wrong thing, and a reviewer caught it.** It recorded only the first two rows and read `failed=1` as success. That row is also the **blocked-deploy** case: with the assert running unconditionally *before* the digest-gated copy, an ordinary config change failed the host, dropped it from every later task, and left the copy unreached — so the `fail_msg`'s own remedy ("re-run with the digest") looped straight back into the same assert, and `--check --diff` previews failed too. The assert is now gated on `<tier>_alloy_digest is not defined`: the converge that *causes* drift is still checked, and the converge that *fixes* it is allowed through. Verifying that a guard fires is half the proof; verifying what happens after it fires is the other half.
 
 **The first implementation was broken and the verification is what caught it.** It compared the remote checksum against `lookup('ansible.builtin.file', …) | hash('sha256')` — and the file lookup **strips the trailing newline**, so the hash never equals the file's real sha256. That version failed on a host whose config was byte-identical to the repo, and would have failed on every converge forever. A permanently-red assert does not get investigated; it gets deleted. Controller-side `stat` hashes the same bytes as the remote one.
 
-**What it still does not cover**: drift that appears without a converge, and the NAS, whose role writes the config from `{{ playbook_dir }}/../nas/config.alloy` rather than a role `files/` dir. Both are accepted — the converge is the only mechanism that creates this drift, and the NAS's apply step already recreates its container.
+**What it still does not cover**: drift that appears without a converge, and the NAS, whose role writes the config from `{{ playbook_dir }}/../nas/config.alloy` rather than a role `files/` dir. The NAS needs no assert for a different reason than first written here: its config copy is **ungated** — that tier has no `<tier>_alloy_digest` gate at all — so this drift cannot survive a converge there. (The earlier claim, that its apply step recreates the container, is wrong: the apply is flag-gated on `nas_apply_compose=true`, and a render-only converge recreates nothing. Right conclusion, wrong reason — and the wrong reason is the one that gets reused if the NAS ever gains a gate.) A hand-edit on a host also creates drift, which the config header warns against; the next converge catches it.
 
 ## Suggested next steps
 

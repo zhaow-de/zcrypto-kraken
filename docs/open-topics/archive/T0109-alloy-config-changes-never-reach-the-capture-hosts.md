@@ -102,10 +102,9 @@ The repo-side sub-items all landed 2026-07-28 on `docs/ops-converge-0728-record`
 
 ## Suggested next steps
 
-*(All discharged — see `## Resolution`. Retained only so the archived file shows what was planned; the detection gap is [[T0110]], also closed here.)*
+*(All discharged — see `## Resolution`. These are the four items this section actually held when the topic was archived; an earlier rewrite substituted a different list under a claim of being verbatim, which is corrected here. The detection gap is [[T0110]], closed in the same branch.)*
 
-- ~~Add the drift guard~~ — landed as a source-derived CI check; the host↔repo direction it does not cover is [[T0110]].
-- ~~Record the gate in `capture-deploys.md`~~ — done.
-- ~~Amend [[T0107]]~~ — done.
-- ~~Pass `<tier>_alloy_digest` at the next converge~~ — done on all three tiers, each followed by a container recreate.
-- ~~Re-evaluate [[T0105]]'s trigger~~ — done; it is now dated and its venue half is armed as an alert.
+- ~~*(ATTENDED, manual — the NAS)* move `config.alloy` into `conf/` and recreate the container by hand~~ — **superseded**: the NAS is Ansible-converged after all (`roles/nas/tasks/main.yml` deploys both compose and config), so it converged like the other tiers on 2026-07-29 with `nas_apply_compose=true`. The "Container-Manager-managed" premise was wrong and had hidden a role/compose mismatch.
+- ~~*(ATTENDED, one more OPS converge — for the STRUCTURAL fix)*~~ — done 2026-07-29, followed by `docker compose up -d`; mount is now `/etc/zcrypto-ops/alloy/conf`.
+- ~~*(ATTENDED, at the next capture converge)* pass `capture_alloy_digest`, recreate Alloy, confirm the series~~ — done with [[T0107]]'s roll on both hosts; the recreate was load-bearing on each, host `fda087ea…` against container `e89f00d1…` on the primary.
+- ~~*(autonomous, after that converge)* re-evaluate [[T0105]]'s trigger~~ — done: its venue half is armed as an alert, its paging half is dated.
