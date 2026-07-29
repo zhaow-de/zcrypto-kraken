@@ -398,9 +398,10 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "residual_gap_seconds_total",
         "counter",
         "Silence NO mirror covered: permanent loss (both_streams_silent / total_loss, plus whatever a "
-        "healed hour's splice left unfilled and no fleet-wide record already booked). The `unwitnessed` "
-        # It is literally silence no mirror covered; excluded because the fleet-wide record already books it.
-        "ledger state is deliberately NOT counted here.",
+        "healed hour's splice left unfilled and no fleet-wide record already booked). A FLOOR, not the "
+        "whole: the `unwitnessed` state -- one pair silent on both mirrors, indistinguishable from a thin "
+        "market -- is deliberately not counted and reaches no counter at all, living in the ledger and the "
+        "WARNING log only.",
         [("", totals["residual_seconds"])],
     )
     _emit(
