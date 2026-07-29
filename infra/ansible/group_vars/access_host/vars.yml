@@ -1,0 +1,15 @@
+# The access tier (spec 00075). Edge host: no docker, no capture, no trade key.
+ansible_user: zcrypto-deploy
+ansible_port: 10022
+# ssh_hardening AllowUsers (D10): no zcrypto-data here — the NAS pull channel does not exist.
+hardening_ssh_allow_users: zcrypto-deploy root
+# D10/D6: the fleet default force-enables ip_forward for Docker hosts; this host runs no
+# containers and no NAT — the CIS default 0 IS the design. Keep only the two kernel keys.
+hardening_extra_sysctl:
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1
+hardening_stale_sshd_dropins: ["10-zaccess-interim.conf"]
+# D8: the four exposed ports beyond sshd. The Linode Cloud Firewall mirrors this list — a
+# future addition must open BOTH layers.
+firewall_extra_tcp_ports: [80, 443, 20022]
+firewall_extra_udp_ports: [51820]
