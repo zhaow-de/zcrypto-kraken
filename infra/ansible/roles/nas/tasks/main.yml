@@ -52,10 +52,24 @@
     mode: "0644"
   register: nas_deploy_compose
 
+# In its OWN directory, which is what compose.yaml bind-mounts. A single-file bind mount binds the
+# inode, and this `copy` writes atomically (temp file + rename), so the inode is replaced and a
+# running container keeps reading the old one -- silently, for its whole lifetime, however many
+# times the converge reports `changed`. Mounting the directory makes the new file visible through
+# the path instead. Its own dir, not the stack dir: that also holds the rendered .env with the
+# image pins, which must not appear inside the container at a second path.
+- name: ensure the alloy config directory exists
+  ansible.builtin.file:
+    path: "{{ nas_stack_dir }}/conf"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: deploy the alloy pipeline config
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../nas/config.alloy"
-    dest: "{{ nas_stack_dir }}/config.alloy"
+    dest: "{{ nas_stack_dir }}/conf/config.alloy"
     owner: root
     group: root
     mode: "0644"

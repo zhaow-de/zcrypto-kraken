@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the sweep RAN 2026-07-28 and returned n=1. The two figures below are both valid and answer different questions, so nothing waits on re-deriving them. Ripe NOW: the same split over any FURTHER `unwitnessed` records, which is a pure ledger read wherever the matching fleet record carries `stream_windows`. The DECISION stays blocked on a population larger than one
+status: resolved
 ---
 
 # Silence outside a fleet-dark window reaches no counter and no alert
@@ -10,7 +9,7 @@ ripe_when: the sweep RAN 2026-07-28 and returned n=1. The two figures below are 
 Split out of [[T0103]] on 2026-07-28, found by an adversarial review of the counter work. Two classes of real primary silence now leave a ledger record but move **no counter and no alert**:
 
 1. **`unwitnessed` gaps.** A pair whose primary went silent and whose secondary held no `update` row inside the window is ledgered `unwitnessed` and logged at WARNING, deliberately feeding no counter (`open-topics.md`-registered ruling: whenever the fleet was dark those seconds are already booked by `both_streams_silent`, and when it was not, one pair silent on both mirrors cannot be told from a quiet market). But that reasoning only holds **inside** a fleet-dark window. A single pair losing both mirrors while the rest of the fleet is healthy produces a record, a warning, and nothing else — `grep -rn unwitnessed infra/` returns zero hits, and only ERROR-level lines page.
-2. **The remainder inside a real blackout.** Measured on 2026-07-27T07:00: ADA/EUR's `unwitnessed` window is 208.566668 s, and the fleet record booked it 198.820666 s — leaving **9.746002 s** that reached no counter. See `## Done so far` for why subtracting these two is legitimate even though they were written by different code generations.
+2. **The remainder inside a real blackout.** Measured on 2026-07-27T07:00: ADA/EUR's `unwitnessed` window is 208.566668 s, and the fleet record booked it 198.820666 s — leaving seconds that reached no counter — **6.821701 s** under the booking that current code applies; see `## Resolution`, which settles which figure applies. See `## Done so far` for why subtracting these two is legitimate even though they were written by different code generations.
 
 ## Why this matters
 
@@ -35,8 +34,35 @@ It is strictly better than what preceded it: before [[T0103]]'s work these windo
 - **[[T0103]] needs no correction.** Its 201.744967 s / 6.821701 s pair is a recomputation under the code as landed, not a ledger read, so the pre-fix provenance of this hour's fleet record does not touch it. An earlier revision here called that pair irreproducible, then withdrew it; both were wrong.
 - **The trigger's premise was wrong, but not in the way this file last said.** It claimed the exposure was "computable from the ledger and the raw mirrors already on disk". For a **post-fix** record it is computable from the ledger *alone* — `stream_windows` records exactly what each stream was booked, so the remainder is `gaps_unwitnessed` minus that. It is only this **pre-fix** record, which lacks the field, that cannot be settled from the ledger. So the raw mirrors are needed for the historical case, not the general one.
 
+## Resolution
+
+**Measured 2026-07-29, decided (a): leave it ledger-only and say so in the counter's HELP.**
+
+A `--detect-only` reconcile over a 400 h window — the full overlap of both mirrors, the secondary's history beginning 2026-07-14 — run with the post-fix code, so every `both_streams_silent` record it produced carries `stream_windows` and the split is a pure ledger read with no mirror access:
+
+| | |
+| --- | --- |
+| unwitnessed events in ~15 days | **1** |
+| ADA/EUR 2026-07-27T07:00, unwitnessed window | 208.566668 s |
+| booked by the fleet-wide record | 201.744967 s |
+| **reaching no counter** | **6.821701 s (3.2708%)** |
+
+**Deciding on n=1 is defensible here, and this file's earlier objection to it needs answering rather than ignoring.** The objection was that one record cannot separate a footnote from a defect. What settles it is not the count but the bound: the sweep covered ~15 days of BOTH mirrors and found one event, whose entire unbooked remainder is 6.821701 s, with zero instances of the isolated-pair class the topic feared most. A defect would have to hide in a population that produced one 6.8-second miss in a fortnight.
+
+**Six point eight seconds in fifteen days is a footnote, not a defect** — which is the question this topic existed to settle. Booking it would move a thin-market false positive into the monotone counter that drives the CRITICAL permanent-loss page, for an exposure three orders of magnitude below the gap the page already reports.
+
+**This also settles the 9.746002 vs 6.821701 dispute this file went back and forth on twice.** Both were correct for their own code generation: 9.746002 s subtracts the raw intersection a pre-fix fleet record booked; 6.821701 s subtracts the containing window current code books, and matches [[T0103]]'s independently derived figure exactly. The live answer is 6.821701 s, and T0103 needed no correction.
+
+`zcrypto_reconcile_residual_gap_seconds_total`'s HELP now states plainly that it does not count the `unwitnessed` state, that those seconds reach no counter at all, that the number is therefore **a floor on permanent loss rather than the whole of it**, and what the measured exposure was.
+
+**A caveat that belongs with the number**: this ran today's code over historical data, so it measures what current booking *would* classify — the right basis for a forward-looking decision, the wrong one for reconstructing what was booked at the time. Reading it the other way is what produced the two earlier contradictory figures.
+
+**A scare that was not real**: the raw sweep ledger showed 47 of 48 keys duplicated exactly twice, including a counter-bearing record. That was two of my own concurrent sweep processes writing one scratch ledger, not the reconciler double-ledgering. Production was never involved. The exactness of the duplication was the tell.
+
 ## Suggested next steps
 
-- *(autonomous, ripe NOW)* **Re-measure over records that share a code generation.** Select `unwitnessed` records whose matching `both_streams_silent` record carries `stream_windows`; for those the split is a ledger read with no mirror access at all. Only records predating that field need the raw mirrors, and those should be reported separately rather than mixed in.
-- *(decision, after that measurement)* Whether an `unwitnessed` window outside any fleet-dark window should book loss. Options: (a) leave it ledger-only and say so in the counter's HELP, (b) book it into a **separate** series so the CRITICAL page is unaffected while the loss is visible, (c) book it into `residual_gap_seconds_total` and accept thin-market false positives. (b) is the only one that surfaces the loss without touching the page's meaning.
-- *(autonomous, small)* Whichever way that goes, `zcrypto_reconcile_residual_gap_seconds_total`'s HELP text should say plainly which classes of loss it does and does not count. It currently reads as though it counts all of them.
+*(All discharged — see `## Resolution`, which decided **(a)**. Retained so the archived file shows the options that were weighed; the recommendation below is superseded.)*
+
+- ~~Measure the exposure before deciding anything~~ — done: 1 event in ~15 days, 6.821701 s reaching no counter.
+- ~~Decide whether an unwitnessed window outside a fleet-dark window should book loss~~ — **decided (a)**: leave it ledger-only. The earlier note preferring (b), a separate series, was written before the exposure was known; at 6.8 s in 15 days a new series is not worth the surface.
+- ~~State plainly in the counter's HELP which classes of loss it does and does not count~~ — done; it now says it is a floor, not the whole.

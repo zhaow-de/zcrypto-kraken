@@ -186,8 +186,10 @@ services:
       # rewrite of config.alloy (atomic write = new inode) leaves this container reading a file no
       # longer in the host tree, silently, for its whole lifetime. Mounting the dir makes each edit
       # visible through the path. Its own dir, not the project dir: the latter holds the rendered
-      # .env with the digest pins. NOTE this host is Container-Manager-managed, not Ansible-
-      # converged -- moving config.alloy into conf/ and recreating the container are manual steps.
+      # .env with the digest pins. The `nas` role writes conf/config.alloy and its
+      # apply tasks run `compose up -d`, which recreates alloy because the volume spec is part of the
+      # service-config hash -- so this is Ansible-converged like the other tiers, contrary to an
+      # earlier note here.
       - ./conf:/etc/alloy:ro
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).

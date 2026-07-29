@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the remainder is the abort-table row, and it is ripe the moment an image carrying `zcrypto_logship_last_cycle_timestamp_seconds` ships — pointing the row at a gauge the running image does not publish would replace a false red with a hard `no data`. Carried as part of [[T0107]]'s payload
+status: resolved
 ---
 
 # The rollout's log-shipping freshness signal reads RED whenever logging is quiet
@@ -46,7 +45,26 @@ Fixed in repo 2026-07-28 on `docs/ops-converge-0728-record` — **option (b)**, 
 - Three tests pin it: an idle cycle advances it while `last_ship_success_at` stays `None`; a retrying cycle does not advance it; both series are exported distinctly.
 - **The open decision is answered by measurement, not judgement**: no Grafana rule reads the old gauge's freshness — before this change, `grep logship infra/grafana/alerts.yaml` returned only the dropped-lines rule (it now also returns the new one added here) — and `tests/test_infra_alert_rules.py`'s exclusion list already records that its staleness is not a fault. Its only consumer was the rollout checklist. A new rule, `zcrypto-logship-worker-stalled` (> 5 min ≈ 300 missed cycles), now carries what that gauge never could.
 
+## Resolution
+
+**Closed 2026-07-29 when the rollout carrying the gauge reached both hosts.**
+
+The remaining sub-item was the abort-signal row, deliberately held until the gauge existed on a host. It now reads `zcrypto_logship_last_cycle_timestamp_seconds`; the old gauge is demoted to corroboration and explicitly marked *not an abort signal*.
+
+**The bake proved the case rather than arguing it.** On `zcrypto-red`, green throughout — 12 pairs flowing, zero errors, `dropped_lines_total` 0 — the two gauges read, at the same instant:
+
+| gauge | staleness |
+| --- | --- |
+| `last_cycle_timestamp_seconds` | **0 s** |
+| `last_success_timestamp_seconds` | **39 min** |
+
+Under the old row that host would have been tripping an abort signal for over half an hour, at a 120 s threshold, while cycling normally every second. That is the false red this topic was opened for, at a magnitude no argument would have conveyed.
+
+Delivered by `sha256:99faf165…ab44` (built from `3540b0bb`): secondary 2026-07-29 00:52:53Z, primary 07:36:13Z. Confirmed arriving in Cloud for both hosts.
+
 ## Suggested next steps
 
-- *(ATTENDED, with the image that carries the gauge)* **Rewrite the rollout skill's abort-signal row** to read `zcrypto_logship_last_cycle_timestamp_seconds`, and drop the 120 s threshold that never matched reality. Deliberately not done now: the row describes what an operator reads on a live host, and the running image does not publish this series yet.
-- *(ATTENDED, same roll)* Confirm the new gauge and the `zcrypto-logship-worker-stalled` rule are live — the rule reads no data until both the image and the Alloy config land ([[T0109]]), and Grafana shows `inactive` on absent data, which is indistinguishable from healthy.
+*(All discharged — see `## Resolution`.)*
+
+- ~~Rewrite the rollout skill's abort-signal row to read `zcrypto_logship_last_cycle_timestamp_seconds`~~ — done 2026-07-29, once the gauge existed on both hosts.
+- ~~Confirm the new gauge and its rule are live~~ — done; the series arrives from both hosts.

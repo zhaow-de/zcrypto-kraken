@@ -89,6 +89,7 @@ repos:
             README\.md|
             infra/README\.md|
             infra/external-systems\.md|
+            infra/runbooks/README\.md|
             docs/open-topics/README\.md|
             docs/research/(?!.*-decisions\.md$).*\.md
         )$

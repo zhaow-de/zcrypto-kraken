@@ -207,6 +207,52 @@
 # digest. This RENDERS the stack only — it never starts Alloy (no systemd unit, no `docker compose
 # up`, no restart handler), mirroring the ops role's render-only Alloy block: the first start is an
 # attended step, not a converge side effect.
+# T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
+# and the reason both capture hosts silently ran a month-old keep-regex while the repo was correct.
+# Every automated check in this repo compares the repo to ITSELF; nothing compared a host to it.
+# This is that check, and it lives OUTSIDE the gate on purpose: inside, it would be skipped by
+# exactly the converge that caused the drift. It asserts only when a config is already deployed, so
+# a host that has never had Alloy (nothing to drift) passes, and the first real deploy creates it.
+- name: read the deployed alloy config's checksum (drift check — never gated on the digest)
+  ansible.builtin.stat:
+    path: "{{ capture_alloy_dir }}/conf/config.alloy"
+    checksum_algorithm: sha256
+    get_checksum: true
+  register: capture_deployed_alloy_config
+
+# On the CONTROLLER, via stat rather than lookup+hash: the file lookup strips the trailing
+# newline, so hashing its result never equals the file's real sha256 and the assert below would
+# fail on every host forever -- a check that cannot pass is worse than none, because it gets
+# disabled. stat on both sides hashes the same bytes.
+- name: read the repo's alloy config checksum (controller-side, same algorithm)
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/config.alloy"
+    checksum_algorithm: sha256
+    get_checksum: true
+  register: capture_repo_alloy_config
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: assert the deployed alloy config matches the repo
+  ansible.builtin.assert:
+    that: "capture_deployed_alloy_config.stat.checksum == capture_repo_alloy_config.stat.checksum"
+    fail_msg: >-
+      The Alloy config on this host does NOT match the repo. A converge that omits
+      `capture_alloy_digest` skips the config copy and still exits 0, so the host can serve a stale
+      keep-regex indefinitely while every other check passes. Re-run this converge with
+      `-e capture_alloy_digest=<currently-running>`, then recreate the container so the new file is
+      read. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
+    success_msg: "deployed Alloy config matches the repo"
+  # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to
+  # copy the file, so asserting first would fail the host, drop it from every later task, and
+  # leave the copy unreached -- making a legitimate config change unconvergeable and looping the
+  # fail_msg's own remedy back into this assert. The drift-CAUSING converge is the one that omits
+  # the digest, and that is exactly the case still checked.
+  when:
+    - capture_alloy_digest is not defined
+    - capture_deployed_alloy_config.stat.exists
+
 - name: install the capture telemetry stack — Grafana Alloy (needs the pinned Alloy digest)
   when: capture_alloy_digest is defined
   block:

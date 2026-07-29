@@ -1956,6 +1956,59 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-venue-not-online
+    title: "Capture · Kraken reports the venue is not online"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Deliberately a NEGATIVE match rather than an enumeration of known states: the payload shape
+      # for a real outage is unobserved, and a rule listing `maintenance|cancel_only|...` would be a
+      # guess that silently misses whatever Kraken actually sends. `!= "online"` cannot miss.
+      # The daemon's counting path IS validated for unseen values -- tests/test_capture_upstream_silence.py
+      # feeds synthetic `maintenance` and `cancel_only` frames and asserts a series per system value.
+      #
+      # PRESENCE, not increase(). The daemon emits a series only for `system` values it has actually
+      # seen, so a non-online series is BORN at 1 -- and Prometheus inserts no implicit zero before a
+      # series' first sample, so increase() over it returns nothing on one sample and 0 on N equal
+      # samples. Kraken pushes `status` on connect and on state change, so a clean online->maintenance
+      # transition is exactly ONE frame per host: an increase() form would sit green through the very
+      # event this rule exists for. The sibling increase() rules work because their counters already
+      # exist at 0 and only step; that idiom does not transfer to a label that materialises on the event.
+      #
+      # This LATCHES: the counter never decreases until the daemon restarts. That is deliberate -- the
+      # point is to capture the first observation of a shape this fleet has never seen, and a
+      # self-resolving rule can retire it before anyone reads the value.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'sum(zcrypto_capture_venue_status_total{system!="online"}) or vector(0)'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "Kraken reported the trading venue is NOT online -- the first time this fleet has seen a status other than `online`. Capture may be unaffected: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-logship-worker-stalled
     title: "Logs · the shipping worker has stopped cycling"
     ruleGroup: zcrypto-capture

@@ -136,9 +136,8 @@ def containing_dark_window(
 
     The intersection is the window in which EVERY stream was silent, so it is bounded by whichever
     stream went quiet last and whichever returned first. Booking it × stream count therefore books
-    the binding stream's loss for all of them, and every other stream's surplus is booked nowhere.
-    Measured on 2026-07-13: intersection 266.178874 s against 2,696.031909 s of own windows across
-    10 streams — 34.243169 s (1.27%) invisible, and invisible in the reassuring direction.
+    the binding stream's loss for all of them, and every other stream's surplus is booked nowhere —
+    invisible, and invisible in the reassuring direction.
 
     Per-intersection-window, deliberately, rather than "every window this stream was dark for" —
     but this BOUNDS the thin-market false positive rather than excluding it, and the difference
@@ -160,6 +159,14 @@ def containing_dark_window(
     since it is built from the union of every stream's stamps and such a stamp would have split it.
     Guarded rather than assumed: the caller must never book a window that does not exist.
     """
+    # KNOWN LIMITATION -- accepted, do not 'fix' incidentally: `edges` starts at hour_start, so a
+    # stream whose silence began in H-1 is measured from the boundary rather than its true start.
+    # Measured at 0.045% of one event. NOT structurally bounded by min_gap_seconds -- H-1 books a
+    # stream's tail only when the FLEET-dark window there clears the threshold, and that is bounded
+    # above by the stream's own, so a thin pair can straddle far wider. What bounds it is the
+    # measured silence distribution above. Closing it costs an H-1 segment read per pair on every
+    # fleet-dark hour. Re-measure the share before changing this:
+    # infra/runbooks/README.md#cross-hour-straddle
     inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
     edges = [hour_start, *inside, hour_end]
     for a, b in zip(edges, edges[1:], strict=False):

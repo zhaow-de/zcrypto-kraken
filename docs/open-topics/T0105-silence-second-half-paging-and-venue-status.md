@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: TWO independent triggers, each covering one half. (a) PAGING — **BLOCKED, not merely unripe**: measured 2026-07-28, the gauge is emitted on both hosts but dropped at remote-write and has zero Cloud history, because the deployed Alloy keep-regex omits it ([[T0109]]). The clock cannot start at the primary re-pin as this trigger originally assumed; it starts when that config converge lands, after which the original condition applies — a full week of production history including a weekend trough on both hosts, which is what the threshold must be fitted to. (b) VENUE STATUS — ripe the first time a `venue status` line reports `system` anything other than `online`, OR carries a non-null `effective_time`. NOT merely the first line seen: Kraken pushes `status` on every connect, so at ~8.2 reconnects/day a first-sighting trigger fires within minutes of deploy on a purely healthy fleet and means nothing
+status: partial
+ripe_when: 2026-08-05 — one week after `zcrypto_capture_seconds_since_last_book_message` began reaching Cloud (2026-07-29, with the capture roll), which covers the weekend trough the threshold must be fitted to. The VENUE-STATUS half is no longer parked here: it is armed as the `zcrypto-capture-venue-not-online` alert with its procedure in `infra/runbooks/README.md`, so the event now pages instead of waiting to be noticed
 ---
 
 # Upstream silence: the paging half, and reacting to the venue's own status
@@ -10,9 +10,9 @@ ripe_when: TWO independent triggers, each covering one half. (a) PAGING — **BL
 The deliberately deferred second half of spec `00073` ([[T0101]]). That spec made a connected-but-silent book stream **observable** — booked as gap, exported as a gauge — and stopped there. Two things it consciously did not do:
 
 1. **Nothing pages.** `gap_monitor.is_healthy()` does not consult the silence window, so the healthchecks.io dead-man still reports green through a total blackout. A repeat of 2026-07-27 is now correctly *counted* and still wakes nobody.
-2. **Nothing reacts to Kraken's `status` channel.** It is classified, logged with its `effectiveTime`, and counted by `system` value; no behaviour and no alert rule keys on any of it.
+2. **Nothing reacted to Kraken's `status` channel** — corrected 2026-07-29. It was classified, logged with its `effectiveTime`, and counted by `system` value, with no behaviour and no rule keyed on any of it. The counter is now watched by `zcrypto-capture-venue-not-online` (`system != "online"`, a negative match so an unobserved payload shape cannot slip past it), with its procedure in `infra/runbooks/README.md`. **The observation is armed; the DECISION below is not** — whether a pre-drain is worth building still waits on a real non-`online` value and the `effective_time` it carries.
 
-Both omissions are recorded in the spec as decisions (D1, D3), not oversights.
+Both omissions were recorded in the spec as decisions (D1, D3), not oversights. D3's half is now closed; D1's — the paging threshold — is the dated item below.
 
 ## Why this matters
 
@@ -31,9 +31,12 @@ The reason for deferring is real and should not be discarded on a later reading:
 - **The booked duration over-reports by up to one 5 s check interval**, and always in that direction. The silence window closes at the pair's `last_seen` as of the closing tick rather than at the first message after the silence, so it absorbs a tick's worth of live traffic (≤ 2.4 % of a 209 s outage). Any threshold fitted from `gap_seconds_total` inherits that bias; fitting from the gauge does not.
 - **The `1012` close frame is not an announcement.** Measured 2026-07-27: silence began 07:01:04.07, the `1012` arrived 07:04:49.35 — **225.28 s later**, at the end of the outage. Anything keyed on it recovers nothing.
 
+## Done so far
+
+- **The venue-status observation is armed (2026-07-29).** `zcrypto-capture-venue-not-online` fires on `system != "online"` — a negative match, chosen because the payload shape for a real outage is unobserved and a rule enumerating known states would be a guess that silently misses whatever Kraken actually sends. The counting path is already validated for unseen values by synthetic `maintenance` / `cancel_only` frames in `tests/test_capture_upstream_silence.py`. Procedure in `infra/runbooks/README.md#zcrypto-capture-venue-not-online`, which instructs the responder to record the value and its `effective_time` **here**, since that is the input the parked decision needs.
+- **`zcrypto_capture_seconds_since_last_book_message` reaches Cloud** from both hosts as of 2026-07-29, after the capture roll and the Alloy config converge ([[T0107]], [[T0109]]). It had been emitted and dropped at remote-write since the day it was built, which is why this topic's paging half could not start its clock until now.
+
 ## Suggested next steps
 
-- **(a, on trigger) Fit the paging threshold from the gauge, then wire it.** Read `max_over_time(zcrypto_capture_seconds_since_last_book_message[7d])` per pair on both hosts; set the threshold from the measured tail of the *thinnest* leg, not the fleet mean. Then choose the surface deliberately: gating `is_healthy()` (dead-man, fleet-wide, blunt) versus a dedicated Grafana rule on the gauge or on `increase(zcrypto_capture_gap_seconds_total[...])` (per-pair, tunable, does not risk the dead-man). **The rule is the safer first move**; gating the dead-man can follow once the rule has run quietly for a while.
-- **(a) When the gate is wired, rewrite the test that forbids it.** `tests/test_capture_upstream_silence.py::test_silence_does_not_gate_the_dead_man_in_this_iteration` asserts the current behaviour deliberately, so the change cannot happen by accident — and spec `00073` D3 must be revised in the same change rather than left contradicting the code.
-- **(b, on trigger) Decide whether to act on it.** The counter and the log line already ship with spec `00073` — `zcrypto_capture_venue_status_total{system}` is live and admitted through the keep-regex, so the cheapest remaining step is a rule on anything ≠ `online`; only then consider behaviour (suppressing a silence alert during an announced window, or pre-emptively marking the gap's reason so [[T0104]]'s panel marker can distinguish announced maintenance from an unexplained hole).
-- **(b) Record the observed lead time.** If a `maintenance` status or an `effectiveTime` ever arrives *before* the data stops, that number is what decides whether a pre-drain is worth building. If it consistently arrives after, close that idea explicitly rather than leaving it implied.
+- *(autonomous, ripe 2026-08-05)* Fit the paging threshold for `zcrypto_capture_seconds_since_last_book_message` from a full week of both hosts' history, weekend trough included, and add the rule.
+- *(decision, ripe only when the alert first fires)* Whether a pre-drain is worth building. The lead time in the status frame's `effective_time` is the deciding number, and the runbook's procedure says to record it here. Until an actual non-`online` value is observed, there is nothing to decide on.
