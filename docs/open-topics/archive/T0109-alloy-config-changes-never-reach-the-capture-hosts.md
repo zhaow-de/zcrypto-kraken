@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: capture and ops are DONE (both tiers converged and their Alloy containers recreated 2026-07-29; all previously-dropped series confirmed in Cloud). What remains is the **NAS**, Container-Manager-managed rather than Ansible-converged: move `config.alloy` into `conf/` and recreate the container by hand. Ripe whenever that host is next touched — nothing waits on it, and its next config edit is a silent no-op until then
+status: resolved
 ---
 
 # Every `config.alloy` change is silently skipped by ordinary capture converges
@@ -81,6 +80,23 @@ The repo-side sub-items all landed 2026-07-28 on `docs/ops-converge-0728-record`
 - **The mount is fixed structurally (2026-07-28).** Both roles, and the NAS compose, now bind-mount the config **directory** (`./conf:/etc/alloy:ro`) instead of the file, so a later edit is visible through the path; a `reload alloy` handler POSTs `/-/reload` so Alloy parses it. `tests/test_infra_compose_templates.py` fails if any of the three regresses to a single-file mount.
 - **This reverses `00071`'s "do not fix this with a handler" deliberately.** That ruling rejected *an automatic restart of Alloy on every converge*. What landed is a **reload**, fired **only when the config changed** — materially lighter, and it leaves the fleet's "roles render Alloy, humans start it" decision intact. The handler fails the converge on a 4xx/5xx (a config that does not parse) and tolerates only Alloy being down.
 - **The delete of the old top-level `config.alloy` was deliberately NOT included.** A missing bind source is recreated as an empty *directory* on the next container start, which crash-loops Alloy — and the ops node auto-reboots at 02:25, so the window is real. It is a follow-up once all three tiers are transitioned.
+
+## Resolution
+
+**All three tiers are on the directory mount as of 2026-07-29**, and every series the gate was dropping now reaches Cloud.
+
+| tier | converged | Alloy recreated | evidence |
+| --- | --- | --- | --- |
+| ops | 01:18 | 01:18:59Z | `node_textfile_mtime_seconds{zcrypto-ops}` = 6 |
+| capture secondary | 00:52 | 00:54:10Z | with [[T0107]]'s roll |
+| capture primary | 07:36 | 07:36:45Z | all five undelivered series arriving |
+| NAS | 08:30 | 08:30 (`nas_apply_compose=true`) | `zcrypto_gate_status{host=nas}` = 1 after the recreate |
+
+**A claim in this topic was wrong, and it hid a second defect.** This file asserted the NAS was "Container-Manager-managed rather than Ansible-converged", so its transition was manual. It is not: `roles/nas/tasks/main.yml` deploys **both** `compose.yaml` and `config.alloy`. Because that was believed, PR #226 changed the NAS compose to mount `./conf` while leaving the role writing the config to the stack dir's top level — so the next NAS converge-and-apply would have mounted a directory Docker creates empty and Alloy would have failed to start. The cold review accepted the framing and never checked the role. Fixed by making the role write into `conf/` before converging.
+
+**The `docker compose up -d` proved load-bearing on every tier, and the drift was visible each time.** On the capture primary, immediately after a clean converge with the digest correctly passed: host `fda087ea…` against container `e89f00d1…`. The handler had POSTed a reload that re-read the stale inode and returned 200. Without the recreate that converge would have reported green and delivered two of five series.
+
+**What the whole topic amounts to**: the trap was already documented in spec `00071`, which chose attended-recreate and warned against a handler. That ruling never reached the operator-facing rules, so it was re-derived the hard way, in production, during the converge that was fixing the layer above it. The fix is structural rather than procedural — mount the directory, reload on change, and a CI guard (`tests/test_infra_compose_templates.py`) that fails if any of the three compose files regresses to a single-file mount.
 
 ## Suggested next steps
 
