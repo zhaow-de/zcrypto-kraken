@@ -122,3 +122,32 @@ def test_engine_logship_guard_moves_environment_and_entrypoint_together():
     assert with_token["environment"]["ZCRYPTO_METRICS_PORT"] == "9102"
     assert with_token["environment"]["ZCRYPTO_LOG_HOST"] == "zcrypto"
     assert with_token["entrypoint"] == ["zcrypto", "--ship-logs", "engine", "run"]
+
+
+# ---------------------------------------------------------------------------
+# The Alloy config is bind-mounted as a DIRECTORY, never as a single file. A single-file bind mount
+# binds the inode, and Ansible's `copy` writes atomically (temp file + rename), so the inode is
+# replaced and a running container keeps reading a file that is no longer in the host tree --
+# indefinitely, while every converge reports `changed`. Measured in production 2026-07-28: host and
+# container sha256 and inode both differed after a clean converge.
+#
+# The NAS is included deliberately even though it is Container-Manager-managed rather than Ansible-
+# rendered: it shares the pattern, so a guard that skipped it would report all-clear on a fleet that
+# is two-thirds fixed.
+ALLOY_COMPOSE_FILES = (
+    REPO / "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2",
+    REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2",
+    REPO / "infra/nas/compose.yaml",
+)
+
+
+@pytest.mark.parametrize("path", ALLOY_COMPOSE_FILES, ids=lambda p: p.parent.name)
+def test_the_alloy_config_is_never_bind_mounted_as_a_single_file(path):
+    text = path.read_text()
+    offenders = [ln.strip() for ln in text.splitlines() if ":/etc/alloy/config.alloy" in ln and not ln.lstrip().startswith("#")]
+    assert not offenders, (
+        f"{path.name} bind-mounts the Alloy config as a single FILE: {offenders}. That binds the "
+        f"inode, which Ansible's atomic write replaces, so the running container reads a file no "
+        f"longer in the host tree and every later config change is a silent no-op. Mount the "
+        f"directory that contains it instead."
+    )

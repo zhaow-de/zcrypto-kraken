@@ -182,7 +182,13 @@ services:
       # requested load / netdev / disk-free) come from the unix exporter's /host mounts, not here.
       # Same shared textfile dir Task 2's archive-pull mounts RW and writes gate.prom into.
       - /volume1/docker/zcrypto-archive/textfile:/textfile:ro
-      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # The DIRECTORY, not the file. A single-file bind mount binds the inode, so any later
+      # rewrite of config.alloy (atomic write = new inode) leaves this container reading a file no
+      # longer in the host tree, silently, for its whole lifetime. Mounting the dir makes each edit
+      # visible through the path. Its own dir, not the project dir: the latter holds the rendered
+      # .env with the digest pins. NOTE this host is Container-Manager-managed, not Ansible-
+      # converged -- moving config.alloy into conf/ and recreating the container are manual steps.
+      - ./conf:/etc/alloy:ro
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
       - ./alloy-data:/var/lib/alloy

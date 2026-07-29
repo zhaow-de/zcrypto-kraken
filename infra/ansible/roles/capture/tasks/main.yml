@@ -279,13 +279,28 @@
 
     # Plain `copy`, not `template` — this file is 100% static (the host label is read at runtime from
     # constants.hostname, not templated); see the file's own header for why `template:` would be wrong.
+    # In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
+    # binds the inode, and this `copy` writes atomically (temp file + rename), so the inode is
+    # replaced and a running container keeps reading the old one -- forever, silently, however many
+    # times the converge reports `changed`. Mounting the directory makes the new file visible
+    # through the path instead. The directory holds ONLY the config: the project dir also carries
+    # alloy-secrets.env, which must not appear inside the container at a second path.
+    - name: ensure the alloy config directory exists
+      ansible.builtin.file:
+        path: "{{ capture_alloy_dir }}/conf"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: install the alloy pipeline config
       ansible.builtin.copy:
         src: config.alloy
-        dest: "{{ capture_alloy_dir }}/config.alloy"
+        dest: "{{ capture_alloy_dir }}/conf/config.alloy"
         owner: root
         group: root
         mode: "0644"
+      notify: reload alloy
 
     # Renders straight from the vault (group_vars/observed/vault.yml) — capture_host is in the
     # `observed` group, so the six GRAFANA_* creds resolve. no_log + diff: false: without both, a

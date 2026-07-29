@@ -60,7 +60,11 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # The DIRECTORY, not the file: a single-file bind mount binds the inode, and Ansible's
+      # atomic write replaces it, so the container would keep reading a file that no longer
+      # exists in the host tree. Mounting the dir makes every later edit visible through the
+      # path; the `reload alloy` handler is what makes Alloy parse it.
+      - ./conf:/etc/alloy:ro
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
       - ./alloy-data:/var/lib/alloy

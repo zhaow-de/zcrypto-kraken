@@ -472,13 +472,28 @@
 
     # Review finding 2: plain `copy`, not `template` -- this file is 100% static (see the file's own
     # header comment for why `template:` would be the wrong tool here).
+    # In its OWN directory, which is what the compose file bind-mounts. A single-file bind mount
+    # binds the inode, and this `copy` writes atomically (temp file + rename), so the inode is
+    # replaced and a running container keeps reading the old one -- forever, silently, however many
+    # times the converge reports `changed`. Mounting the directory makes the new file visible
+    # through the path instead. The directory holds ONLY the config: the project dir also carries
+    # alloy-secrets.env, which must not appear inside the container at a second path.
+    - name: ensure the alloy config directory exists
+      ansible.builtin.file:
+        path: "{{ ops_alloy_dir }}/conf"
+        state: directory
+        owner: zcrypto-deploy
+        group: zcrypto-deploy
+        mode: "0755"
+
     - name: install the alloy pipeline config
       ansible.builtin.copy:
         src: config.alloy
-        dest: "{{ ops_alloy_dir }}/config.alloy"
+        dest: "{{ ops_alloy_dir }}/conf/config.alloy"
         owner: zcrypto-deploy
         group: zcrypto-deploy
         mode: "0644"
+      notify: reload alloy
 
     # Renders straight from the vault (group_vars/observed/vault.yml) -- the NAS's copy is rendered
     # the same way by the `nas` role since T0056, so no hand-placed, out-of-band secrets file
