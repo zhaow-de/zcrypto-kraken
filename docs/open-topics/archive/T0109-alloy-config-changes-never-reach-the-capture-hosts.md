@@ -96,11 +96,16 @@ The repo-side sub-items all landed 2026-07-28 on `docs/ops-converge-0728-record`
 
 **The `docker compose up -d` proved load-bearing on every tier, and the drift was visible each time.** On the capture primary, immediately after a clean converge with the digest correctly passed: host `fda087ea…` against container `e89f00d1…`. The handler had POSTed a reload that re-read the stale inode and returned 200. Without the recreate that converge would have reported green and delivered two of five series.
 
+**One remainder was split out, not dropped**: nothing compares a host's running `config.alloy` to the repo's — every automated check here is repo↔repo, and the digest gate that skips the copy is still in both roles. That is [[T0110]] — registered rather than left in an untracked file, and closed in the same branch: a converge-time assert now compares the deployed config's sha256 against the repo's, outside the digest gate.
+
 **What the whole topic amounts to**: the trap was already documented in spec `00071`, which chose attended-recreate and warned against a handler. That ruling never reached the operator-facing rules, so it was re-derived the hard way, in production, during the converge that was fixing the layer above it. The fix is structural rather than procedural — mount the directory, reload on change, and a CI guard (`tests/test_infra_compose_templates.py`) that fails if any of the three compose files regresses to a single-file mount.
 
 ## Suggested next steps
 
-- *(ATTENDED, manual — the NAS)* `infra/nas/compose.yaml` now specifies the directory mount, but that host is Container-Manager-managed: move `config.alloy` into `conf/` and recreate the container by hand. Until then the NAS keeps the single-file mount and its next config edit is a silent no-op.
-- *(ATTENDED, one more OPS converge — for the STRUCTURAL fix, not the keep-regex)* The keep-regex converge is done; ops currently runs the **old single-file mount** holding correct content, because recreating the container re-resolved the inode. It is right today and goes stale on the next config edit. Landing the directory mount needs one more converge plus one `docker compose up -d`, in the same window.
-- *(ATTENDED, at the next capture converge)* Pass `capture_alloy_digest=<currently-running>` so the config installs, **recreate the Alloy container afterwards**, then confirm **the two series the running image emits** — `zcrypto_capture_seconds_since_last_book_message` and `zcrypto_capture_venue_status_total` — arrive in Cloud. The two resubscribe counters and the logship liveness gauge are **not** expected to appear: none is in the running image (verified — their commits are not ancestors of the converged revision), so they wait on [[T0107]]'s roll. Config change, not a re-pin: no bake owed.
-- *(autonomous, after that converge)* Re-evaluate [[T0105]]'s trigger, which is unsatisfiable until then.
+*(All discharged — see `## Resolution`. Retained only so the archived file shows what was planned; the detection gap is [[T0110]], also closed here.)*
+
+- ~~Add the drift guard~~ — landed as a source-derived CI check; the host↔repo direction it does not cover is [[T0110]].
+- ~~Record the gate in `capture-deploys.md`~~ — done.
+- ~~Amend [[T0107]]~~ — done.
+- ~~Pass `<tier>_alloy_digest` at the next converge~~ — done on all three tiers, each followed by a container recreate.
+- ~~Re-evaluate [[T0105]]'s trigger~~ — done; it is now dated and its venue half is armed as an alert.

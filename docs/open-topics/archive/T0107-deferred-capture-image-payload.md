@@ -27,7 +27,7 @@ The failure this file prevents is the one that already nearly happened: two park
 
 ## Resolution
 
-**The payload rolled 2026-07-29** as `sha256:99faf16514e3…ab44`, built from `3540b0bb`. Secondary `zcrypto-red` 00:52:53Z, primary `zcrypto` 07:36:13Z after a 4 h 44 m bake — three full rotation hours required, prune in the **strong** form (`deleted=210`), every abort signal clear, `continuity.py` on the pulled copy 0 missing / 0 truncated with the worst stream at 0.0123% against the 0.1% bar.
+**The payload rolled 2026-07-29** as `sha256:99faf16514e3…ab44`, built from `3540b0bb`. Secondary `zcrypto-red` 00:52:53Z, primary `zcrypto` 07:36:13Z after a 6 h 43 m bake — three full rotation hours required, prune in the **strong** form (`deleted=210`), every abort signal clear, `continuity.py` on the pulled copy 0 missing / 0 truncated with the worst stream at 0.0123% against the 0.1% bar.
 
 Both payload items were verified **from the image's own surface, never the tag**: [[T0102]]'s `req_id` correlation in `ws_client.py`, and [[T0106]]'s `last_cycle_at` plus its exported gauge.
 
@@ -47,7 +47,9 @@ The economics this topic was opened on held: one bake carried both deferred item
 
 ## Suggested next steps
 
-- *(ATTENDED, at the next capture rollout)* Roll both together. Before the bake, confirm the candidate image contains **both**: T0102's `note_reply` correlation and whichever [[T0106]] fix landed. Verify from the image's own surface, never from the tag.
-- *(ATTENDED, with the roll)* Rewrite the rollout skill's abort-signal row to read `zcrypto_logship_last_cycle_timestamp_seconds` and drop the 120 s threshold — [[T0106]]'s remainder, deliberately held until the gauge exists on the host.
-- *(ATTENDED, with the roll — REQUIRED, not optional)* **Pass `capture_alloy_digest` so the Alloy config actually installs.** Measured 2026-07-28 ([[T0109]]): the Alloy block is gated `when: capture_alloy_digest is defined` and ordinary converges omit it, so the repo's keep-regex has never reached either host. Rolling the image **without** this leaves both resubscribe counters admitted in the repo and dropped in production — the image ships, the series do not, and the new alert rule reads no data exactly as if nothing were wrong.
-- *(ATTENDED, with the roll)* After the primary re-pin, confirm **all five** currently-undelivered series arrive in Grafana Cloud — `zcrypto_capture_resubscribe_errors_total`, `_ack_timeouts_total`, and `zcrypto_logship_last_cycle_timestamp_seconds` from this roll, plus the two it does *not* introduce but the same converge unblocks, `zcrypto_capture_seconds_since_last_book_message` and `zcrypto_capture_venue_status_total`. An unadmitted series is dropped silently at remote-write, and the alert rule watching it stays green forever on no data.
+*(All discharged — see `## Resolution`. The rollout ran 2026-07-29.)*
+
+- ~~Roll both together, verifying the candidate from the image's own surface~~ — done; revision label, T0102's correlation and T0106's gauge all read from the image.
+- ~~Rewrite the rollout skill's abort-signal row~~ — done ([[T0106]]).
+- ~~Pass `capture_alloy_digest` so the Alloy config installs~~ — done, and followed by the container recreate [[T0109]] showed it also needs.
+- ~~Confirm all five undelivered series arrive in Cloud~~ — done; all five present on both hosts.

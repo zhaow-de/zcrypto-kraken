@@ -64,5 +64,7 @@ Delivered by `sha256:99faf165…ab44` (built from `3540b0bb`): secondary 2026-07
 
 ## Suggested next steps
 
-- *(ATTENDED, with the image that carries the gauge)* **Rewrite the rollout skill's abort-signal row** to read `zcrypto_logship_last_cycle_timestamp_seconds`, and drop the 120 s threshold that never matched reality. Deliberately not done now: the row describes what an operator reads on a live host, and the running image does not publish this series yet.
-- *(ATTENDED, same roll)* Confirm the new gauge and the `zcrypto-logship-worker-stalled` rule are live — the rule reads no data until both the image and the Alloy config land ([[T0109]]), and Grafana shows `inactive` on absent data, which is indistinguishable from healthy.
+*(All discharged — see `## Resolution`.)*
+
+- ~~Rewrite the rollout skill's abort-signal row to read `zcrypto_logship_last_cycle_timestamp_seconds`~~ — done 2026-07-29, once the gauge existed on both hosts.
+- ~~Confirm the new gauge and its rule are live~~ — done; the series arrives from both hosts.

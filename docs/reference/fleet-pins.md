@@ -7,7 +7,7 @@ Capture and engine share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) but
 | service | host | digest (sha256, first 12) | since (UTC) | prior |
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `99faf16514e3` | 2026-07-29 07:36 (T0107 payload) | `828128f80cb3` (2026-07-28) |
-| capture | zcrypto-red | `99faf16514e3` | 2026-07-29 00:52 (canary leg) | `828128f80cb3` (2026-07-28) |
+| capture | zcrypto-red | `99faf16514e3` | 2026-07-29 00:52 (canary leg) | `828128f80cb3` (2026-07-27) |
 | engine | zcrypto | `e5a44e1cb138` | 2026-07-26 13:35 (00069 Step 7) | `8574aff805c0` (2026-07-10 build, pre-`cli.obs`) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
 | ops (timers + liquidations) | zcrypto-ops | `0b2fdcfff6e8` | 2026-07-28 15:59 (T0101 remediation: panel `stale_seconds`, reconciler counters, generation guard) | `e5a44e1cb138` |
@@ -15,7 +15,7 @@ Capture and engine share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) but
 
 Full digests:
 
-- **capture current (both hosts)**: `sha256:99faf16514e3ddc30712c8c63fb4892d7e5f3042823b56935cf0617a3cf2ab44`, built from `3540b0bb`. Carries [[T0102]]'s `req_id` correlation and [[T0106]]'s liveness gauge, both verified from the image's own surface rather than the tag. Canary leg `zcrypto-red` 2026-07-29 00:52:53Z; primary 07:36:13Z after a 4 h 44 m bake (three full rotation hours required; prune took the **strong** form, `deleted=210`).
+- **capture current (both hosts)**: `sha256:99faf16514e3ddc30712c8c63fb4892d7e5f3042823b56935cf0617a3cf2ab44`, built from `3540b0bb`. Carries [[T0102]]'s `req_id` correlation and [[T0106]]'s liveness gauge, both verified from the image's own surface rather than the tag. Canary leg `zcrypto-red` 2026-07-29 00:52:53Z; primary 07:36:13Z after a 6 h 43 m bake (three full rotation hours required; prune took the **strong** form, `deleted=210`).
 - capture prior, and the rollback operand — verified still resident on both hosts at the re-pin: `sha256:828128f80cb34a7341394f7aa0bc977207c9b42435b31507b849afc81d4c4224`
 - **ops current**: `sha256:0b2fdcfff6e873b71661fb50cc42c83858394827edc69ca813f5d121deab3d19` (revision `50fc4979`) — the timers converged 2026-07-28 15:59, and the liquidations poller was rolled to match in the same window rather than left armed. **One variable drives two things**: `ops_image_digest` repins the four timer runners *and* the liquidations compose file — which the role renders but never restarts, so after a converge that file points at the new digest while the container still runs the old one, until some later `docker compose up` silently rolls an unbackfillable stream. End every ops converge deciding explicitly whether to roll it. **Verified resident on the host 2026-07-28**, which matters because every ops runner is `--pull never` with no pull task in the role.
 - **ops prior, and the rollback operand — verified still present on `zcrypto-ops` 2026-07-28**: `sha256:e5a44e1cb138bcc0d6291fc8be76d00375ce69512e63da532389d3c4821bd8b7`. Residency is the load-bearing half: every ops runner is `--pull never` and the role has no pull task, so a recorded digest that is no longer on disk is not a rollback path. `ops_image_digest` has no repo default by design, so this row IS the record — it was read from the host because **this file carried no ops row at all until then**, which by its own opening rule meant the operand existed nowhere in the repo.
