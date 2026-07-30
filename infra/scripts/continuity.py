@@ -141,7 +141,14 @@ def _canonical_streams(root: Path, overlay_root: Path, kind: str) -> dict[str, l
     return out
 
 
-def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.datetime, quiet: bool, show_exit_bar: bool) -> int:
+def report(
+    streams: dict[str, list[tuple[dt.datetime, Path]]],
+    *,
+    since: dt.datetime,
+    quiet: bool,
+    show_exit_bar: bool,
+    genesis: dict[str, dt.datetime],
+) -> int:
     """Print the per-pair continuity table + summary. Returns 0, or 1 when there is nothing to measure -- `streams` empty, or `--since` excluding every hour of every stream.
 
     `show_exit_bar` gates ONLY the `EXIT BAR (<0.1% gap time): PASS/FAIL` verdict line: the raw
@@ -149,63 +156,62 @@ def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.date
     bank a T0003 exit-bar PASS (spec 00050, exit-bar isolation). Required, with no default, so a
     future caller must SAY which report it is — a defaulted True would let a forgotten flag silently
     bank an exit bar.
+
+    `genesis` maps each pair to its earliest hour in the UNFILTERED tree, so a `--since` window
+    cannot promote a later hour into D5's free pass.
     """
     if not streams:
         print("no segments found")
         return 1
 
-    HOUR = dt.timedelta(hours=1)
     worst = 0.0
     # `thresh_s` is printed because it is DERIVED per pair (see below), not configured: a 0.0000%
     # means "no silence" or "the threshold is wide enough that nothing counts as silence", and only
     # the number beside it tells an operator which.
-    print(f"{'pair':<10} {'hours':>6} {'missing':>8} {'trunc':>6} {'thresh_s':>9} {'gap_s':>10} {'covered_s':>11} {'gap%':>8}")
-    print("-" * 75)
+    print(
+        f"{'pair':<10} {'hours':>6} {'missing':>8} {'trunc':>6} {'n':>9} {'thresh_s':>12} {'gap_s':>10} {'covered_s':>11} {'gap%':>8}"
+    )
+    print("-" * 88)
     totals = []
+    unmeasured: list[str] = []
     for pair, segs in sorted(streams.items()):
         segs = [(h, p) for h, p in segs if h >= since]
         if not segs:
             continue
         segs.sort()
-        first_hour, last_hour = segs[0][0], segs[-1][0]
-        have = {h for h, _ in segs}
+        tl = stream_timeline(segs, genesis_hour=genesis[pair])
 
-        # 1. missing hours across the observed span
-        span_hours = int((last_hour - first_hour) / HOUR) + 1
-        missing = span_hours - len(have)
-        gap = missing * 3600.0
-
-        # 2. head/tail truncation, and 3. intra-hour silence
+        gap = tl.missing_hours * 3600.0
+        n = len(tl.pool)
+        # D6: below the bound the p99.99 IS the maximum, so the threshold would be 10x the worst
+        # outage. Report the stream as unmeasurable rather than score it against a blind number.
+        measured = n >= MIN_POOL
+        thresh = max(float(tl.pool.quantile(0.9999) or 0) * 10, 5.0) if measured else 0.0
         trunc = 0
-        thresh = 0.0
-        all_diffs = []
-        per_hour = []
-        for h, p in segs:
-            ts = pl.read_parquet(p, columns=["ts"])["ts"]
-            lo, hi = ts.min(), ts.max()
-            head = (lo - h).total_seconds()
-            tail = (h + HOUR - hi).total_seconds()
-            if head > 5:
-                trunc += 1
-            gap += max(head, 0.0) + max(tail - 1.0, 0.0)  # tail: allow the final second
-            d = ts.diff().drop_nulls()
-            per_hour.append(d)
-            all_diffs.append(d)
+        if measured:
+            gap += float(tl.intra.filter(tl.intra > thresh).sum() or 0.0)
+            for secs, _kind in tl.boundaries:
+                if secs > thresh:
+                    gap += secs
+                    trunc += 1
 
-        # threshold from the data, not guessed: p99.99 of inter-row spacing, floored at 5 s
-        if all_diffs:
-            diffs = pl.concat(all_diffs)
-            secs = diffs.dt.total_microseconds() / 1e6
-            thresh = max(float(secs.quantile(0.9999) or 0) * 10, 5.0)
-            silence = float(secs.filter(secs > thresh).sum() or 0.0)
-            gap += silence
+        covered = tl.span_hours * 3600.0
+        if not measured:
+            unmeasured.append(pair)
+            if not quiet:
+                print(
+                    f"{pair:<10} {tl.span_hours:>6} {tl.missing_hours:>8} {'-':>6} {n:>9} {'UNMEASURED':>12} {'':>10} {covered:>11.0f} {'':>8}"
+                )
+            continue
 
-        covered = span_hours * 3600.0
         pct = 100.0 * gap / covered if covered else 0.0
         worst = max(worst, pct)
-        totals.append((pair, span_hours, missing, trunc, gap, covered, pct))
+        totals.append((pair, tl.span_hours, tl.missing_hours, trunc, gap, covered, pct))
         if not quiet:
-            print(f"{pair:<10} {span_hours:>6} {missing:>8} {trunc:>6} {thresh:>9.1f} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%")
+            mark = " genesis" if tl.genesis_skipped else ""
+            print(
+                f"{pair:<10} {tl.span_hours:>6} {tl.missing_hours:>8} {trunc:>6} {n:>9} {thresh:>12.1f} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%{mark}"
+            )
 
     if not totals:
         # `--since` filters per stream at the top of the loop, long after the empty-tree guard, so a
@@ -215,13 +221,13 @@ def report(streams: dict[str, list[tuple[dt.datetime, Path]]], *, since: dt.date
         print("no segments in the requested window")
         return 1
 
-    print("-" * 75)
+    print("-" * 88)
     tg = sum(t[4] for t in totals)
     tc = sum(t[5] for t in totals)
     tt = sum(t[3] for t in totals)
     tm = sum(t[2] for t in totals)
     # No threshold on the TOTAL row: it is per pair, and averaging thresholds would invent a number.
-    print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {'':>9} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
+    print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {'':>9} {'':>12} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
     print()
     print(f"  worst single stream : {worst:.4f}%")
     if show_exit_bar:
@@ -256,7 +262,11 @@ def main() -> int:
     a = build_parser().parse_args()
 
     since = dt.datetime.fromisoformat(a.since).replace(tzinfo=dt.UTC) if a.since else dt.datetime.min.replace(tzinfo=dt.UTC)
-    rc = report(segments(a.root, a.kind), since=since, quiet=a.quiet, show_exit_bar=True)
+    raw = segments(a.root, a.kind)
+    # D5: genesis comes from the UNFILTERED tree -- a --since window must not promote a later hour
+    # into the genesis free pass.
+    genesis = {pair: min(h for h, _ in segs) for pair, segs in raw.items()}
+    rc = report(raw, since=since, quiet=a.quiet, show_exit_bar=True, genesis=genesis)
 
     if a.overlay is not None:
         # Printed even when the raw report came up empty (rc 1): an empty raw mirror is exactly when
@@ -266,7 +276,14 @@ def main() -> int:
         print(
             f"=== CANONICAL VIEW (reconciled-first, healed from {a.overlay}) -- informational only, NOT the exit-bar instrument ==="
         )
-        report(_canonical_streams(a.root, a.overlay, a.kind), since=since, quiet=a.quiet, show_exit_bar=False)
+        canonical = _canonical_streams(a.root, a.overlay, a.kind)
+        report(
+            canonical,
+            since=since,
+            quiet=a.quiet,
+            show_exit_bar=False,
+            genesis={pair: min(h for h, _ in segs) for pair, segs in canonical.items()},
+        )
     return rc
 
 

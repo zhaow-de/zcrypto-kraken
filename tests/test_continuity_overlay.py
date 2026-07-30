@@ -36,6 +36,14 @@ def _write_hour(root: Path, pair: str, kind: str, hour: datetime, *, stamps: lis
     pl.DataFrame({"ts": stamps}).write_parquet(path)
 
 
+def _dense_stream(root: Path, pair: str, kind: str = "book") -> None:
+    """Two full hours at 1 s spacing -- comfortably clears D6's MIN_POOL (5,002 pooled intervals)
+    without asserting a specific threshold value, unlike `_two_streams` below."""
+    _write_hour(root, pair, kind, H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 1)])
+    h1 = H + timedelta(hours=1)
+    _write_hour(root, pair, kind, h1, stamps=[h1 + timedelta(seconds=s) for s in range(0, 3600, 1)])
+
+
 def test_continuity_overlay_is_off_by_default():
     a = argparse.ArgumentParser()
     continuity.add_args(a)
@@ -44,7 +52,7 @@ def test_continuity_overlay_is_off_by_default():
 
 def test_default_invocation_has_no_canonical_section(tmp_path, capsys, monkeypatch):
     raw = tmp_path / "raw"
-    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    _dense_stream(raw, "BTC/EUR")
     monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw)])
 
     rc = continuity.main()
@@ -58,8 +66,10 @@ def test_default_invocation_has_no_canonical_section(tmp_path, capsys, monkeypat
 def test_overlay_mode_adds_a_separate_canonical_section_without_the_exit_bar_verdict(tmp_path, capsys, monkeypatch):
     raw = tmp_path / "raw"
     overlay = tmp_path / "overlay"
-    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
-    # ETH/EUR exists ONLY in the overlay -- a primary hour healed wholesale from the secondary.
+    _dense_stream(raw, "BTC/EUR")
+    # ETH/EUR exists ONLY in the overlay -- a primary hour healed wholesale from the secondary. Left
+    # sparse (120 rows/hour, under MIN_POOL): the canonical view reports it UNMEASURED, but the pair
+    # name still prints on its row -- this test only checks presence, not a measured threshold.
     _write_hour(overlay, "ETH/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
     monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw), "--overlay", str(overlay)])
 
@@ -124,8 +134,18 @@ def _column(out: str, prefix: str, field: str) -> str:
 
 
 def _two_streams(raw):
-    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
-    _write_hour(raw, "ADA/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 5)])
+    """BTC/EUR: 1 s spacing, hour H packed full plus 2,400 rows of H+1 -- 5,999 pooled intervals, all
+    1.0 s apart, so p99.99 == 1.0 and the derived threshold is 10.0. ADA/EUR: 2 s spacing, three FULL
+    hours -- 5,399 pooled intervals, all 2.0 s apart, threshold 20.0. Both clear D6's MIN_POOL (5,002)
+    with margin; the two streams' different spacings are what makes their derived thresholds differ,
+    which is the property this fixture exists to demonstrate."""
+    h1 = H + timedelta(hours=1)
+    h2 = H + timedelta(hours=2)
+    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 1)])
+    _write_hour(raw, "BTC/EUR", "book", h1, stamps=[h1 + timedelta(seconds=s) for s in range(0, 2400, 1)])
+    _write_hour(raw, "ADA/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 2)])
+    _write_hour(raw, "ADA/EUR", "book", h1, stamps=[h1 + timedelta(seconds=s) for s in range(0, 3600, 2)])
+    _write_hour(raw, "ADA/EUR", "book", h2, stamps=[h2 + timedelta(seconds=s) for s in range(0, 3600, 2)])
 
 
 def test_the_table_prints_the_threshold_that_produced_each_gap(tmp_path, capsys, monkeypatch):
@@ -136,7 +156,7 @@ def test_the_table_prints_the_threshold_that_produced_each_gap(tmp_path, capsys,
     The EXACT derived values are asserted, not "some number above 100": this topic's own failure
     mode is a threshold so wide that silence stops being detectable, and a `> 100` assertion passes
     happily with the 5 s floor raised to 5000. These two streams also demonstrate the spread the
-    column exists to show -- same hour, same tool, 6x apart on spacing alone.
+    column exists to show -- same tool, 2x apart on spacing alone, thresholds 2x apart to match.
     """
     raw = tmp_path / "raw"
     _two_streams(raw)
@@ -147,8 +167,8 @@ def test_the_table_prints_the_threshold_that_produced_each_gap(tmp_path, capsys,
 
     assert rc == 0
     assert "thresh_s" in out
-    assert float(_column(out, "BTC/EUR", "thresh_s")) == pytest.approx(300.0)  # 30 s spacing
-    assert float(_column(out, "ADA/EUR", "thresh_s")) == pytest.approx(50.0)  # 5 s spacing
+    assert float(_column(out, "BTC/EUR", "thresh_s")) == pytest.approx(10.0)  # 1 s spacing
+    assert float(_column(out, "ADA/EUR", "thresh_s")) == pytest.approx(20.0)  # 2 s spacing
 
 
 def test_the_total_row_never_fabricates_a_threshold(tmp_path, capsys, monkeypatch):
@@ -171,7 +191,7 @@ def test_the_total_row_never_fabricates_a_threshold(tmp_path, capsys, monkeypatc
 
 def test_quiet_mode_drops_the_per_pair_rows_and_keeps_the_total(tmp_path, capsys, monkeypatch):
     raw = tmp_path / "raw"
-    _write_hour(raw, "BTC/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    _dense_stream(raw, "BTC/EUR")
     monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw), "--quiet"])
 
     rc = continuity.main()
