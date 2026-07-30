@@ -76,11 +76,17 @@ def _segs(root: Path, pair: str, kind: str = "book"):
 
 
 def test_contiguous_crossing_is_pooled_and_classified(tmp_path):
-    # Two adjacent hours, 1 s spacing, the crossing indistinguishable from an ordinary interval.
-    write_stream(tmp_path, "AAA/EUR", {H0: evenly(H0, 3600, 1.0), H1: evenly(H1, 3600, 1.0)})
+    # H0 ends 2 s before its boundary, so the crossing is 2 s -- distinct from the uniform 1 s
+    # intra-hour spacing. `len(pool) == len(intra) + 1` is invariant under double-booking (a
+    # crossing wrongly pooled into `intra` too moves both sides of the relation together), so the
+    # property is pinned directly instead: intra's exact length, and the crossing's value absent
+    # from it.
+    write_stream(tmp_path, "AAA/EUR", {H0: evenly(H0, 3599, 1.0), H1: evenly(H1, 3600, 1.0)})
     tl = continuity.stream_timeline(_segs(tmp_path, "AAA/EUR"), genesis_hour=H0)
     assert tl.missing_hours == 0
-    assert len(tl.pool) == len(tl.intra) + 1  # exactly one crossing joined the sample
+    assert len(tl.intra) == 7197  # 3598 (H0) + 3599 (H1) intra-row diffs, crossing excluded
+    assert 2.0 not in tl.intra  # the 2 s crossing must never land in the silence-booking series
+    assert len(tl.pool) == 7198  # intra's 7197 plus the crossing, exactly once
     kinds = [k for _, k in tl.boundaries]
     assert kinds.count("crossing") == 1
     assert "edge_head" not in kinds  # H0 is the genesis hour (D5)
@@ -102,6 +108,9 @@ def test_missing_hour_books_once_and_its_excess_is_not_pooled(tmp_path):
     # H0's last row sits 10 s before its boundary, H2's first 10 s after its start: 3600 + 20.
     assert excesses[0] == pytest.approx(20.0, abs=0.01)
     assert len(tl.pool) == len(tl.intra)  # the excess never joins the threshold sample
+    # 3 hours span H0..H2 (H1 missing) -- distinct from len(segs) == 2, so a mutant that drops the
+    # `+ 1` or substitutes `len(segs)` for the real span is caught rather than passing by accident.
+    assert tl.span_hours == 3
 
 
 def test_non_genesis_leading_edge_is_measured_and_trailing_edge_always_is(tmp_path):
