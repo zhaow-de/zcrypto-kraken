@@ -2,7 +2,7 @@
 
 ## Project
 
-`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack (spec `00043` / topic T0020), never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
+`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack, never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
 
 ## Repository layout
 
@@ -10,7 +10,7 @@ Standard single-package uv project: `pyproject.toml`, `uv.lock`, `.python-versio
 
 - `cli/` — the application package; run via `uv run python -m cli`.
 - `.claude/rules/`, `.claude/skills/` — repo-specific Claude Code rules and skills.
-- **CLI subcommands**: each is a sibling package `cli/<name>/` with a `command.py` (library packages like `cli/portfolio` carry no command). Single-command ones register in `cli/__main__.py` via `from cli.<name>.command import <fn>` + `app.command(name=...)(...)`; multi-command groups expose a Typer sub-app registered via `app.add_typer(...)`. Loggers are named `get_logger("<package>.<module>")`.
+- **CLI subcommands**: each is a sibling package `cli/<name>/` with a `command.py` (library packages like `cli/portfolio` carry no command). Single-command ones register in `cli/__main__.py` via `app.command(name=...)(...)`; multi-command groups expose a Typer sub-app registered via `app.add_typer(...)`. Loggers are named `get_logger("<package>.<module>")`.
 - `zcrypto.toml` — the app's config, loaded by `cli/config.py`.
 - `docs/` — the knowledge tree, organized into subdirectories: `research/` (master plan + phase reports + phase decisions logs, serial-prefixed and grouped by phase), `reference/` (living cross-phase artifacts that belong to no single phase — fee schedule, data catalogs, the fleet topology + pins maps, the corporate-action ledger, and the append-only `trial-registry.jsonl`), `universe/` (the point-in-time universe's living doc), `open-topics/` (parked follow-ups + index), `specs/` + `plans/` (per `spec-plan-locations.md`). The only Markdown files that live **directly** under `docs/` are the per-phase changelogs `iterations-history-phase<N>.md` (+ the `iterations-history.md` index) and `memo.local.md`. **Do not create new documents directly under `docs/`** — every new doc belongs in a subdirectory (`research/` for phase-specific reports, `reference/` for living reference, `specs/`/`plans/`/`open-topics/` for their kinds).
 - `data/` — the gitignored data root (its own `.gitignore` ignores everything inside): the compiled/canonical datasets plus the engine's transactional dirs (`data/engine-store`, `data/engine-journal`).
@@ -75,7 +75,7 @@ uv run zcrypto [args]            # run the CLI via the installed console script
 uv run pytest                    # run tests
 uv run pytest path/to/test.py::test_name   # run a single test
 
-uv run pre-commit run -a         # full commit gate (ruff + format, yamllint, mdformat, hygiene)
+uv run pre-commit run -a         # full commit gate
 uv add <pkg>            # add new deps
 uv add --dev <pkg>      # add new dev deps
 ```

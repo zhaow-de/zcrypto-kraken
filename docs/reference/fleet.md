@@ -40,7 +40,7 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 
 - Engine cycles are 4-hourly at **00/04/08/12/16/20 UTC** (+ ~90 s settle). Converge discipline (windows, re-run cutoff): `capture-deploys.md` → *Engine converges*.
 - Both app services read Loki push creds from `/opt/zcrypto-capture/logship-secrets.env` (one file per host; the engine reuses the capture role's render); compose marks the env_file `required: false`, so absence never fails the render — the **engine** (compose-baked `--ship-logs`) crash-loops for want of the Loki vars, while **capture** silently starts on stdout only (its ship flag lives inside the file).
-- Capture and engine share the image repo `ghcr.io/zhaow-de/zcrypto-capture` but pin **independent** digests — never read one service's pin as the other's.
+- Capture, engine, ops, and the NAS archive-pull all run the shared image repo `ghcr.io/zhaow-de/zcrypto-capture` with **independent** digests — match the pin to the service, never to the repo.
 
 ## Storage topology
 

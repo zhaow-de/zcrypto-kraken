@@ -31,3 +31,11 @@ Rewriting can weaken an invariant without deleting anything, so the gate covers 
 ## P8 — Memory is the inbox, not an archive
 
 Lessons land in memory first; rounds graduate, keep, or drop them jointly. Graduation stages the file; step 5 deletes it only after verification.
+
+## P9 — A prohibition names a live temptation
+
+Every Never guards something reachable: the tool is installed, the flag exists, the path is in the tree. A guard against something absent from the environment is template residue — delete it, and with it any citation attributing the claim to a rule that never makes it.
+
+## P10 — A mechanized case needs no ambient prose
+
+P6's complement: once a mechanism refuses at the point of use (an Ansible assert, a hook, a CI/pytest guard), the prose shrinks to a pointer — the mechanism is the rule. Prose stays only for what a guard cannot do: warn before a wasted attempt on a slow path, or block the tempting wrong recovery after the guard fires.

@@ -2,7 +2,7 @@
 
 The durable record of the image digest each service runs. For the Alloys on ops/capture hosts the pin is a converge-time-only extra-var with **no repo default**, so this file is its only record. Update at every re-pin/converge, **in the same change** — a pin recorded only on a host is one `docker system prune` from unrecoverable.
 
-Capture and engine share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) but pin **independently** — never read one service's row as the other's.
+Several rows share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) — capture, engine, ops, the NAS archive-pull — each pinned **independently**: match the row to the service, never to the repo.
 
 | service | host | digest (sha256, first 12) | since (UTC) | prior |
 | --- | --- | --- | --- | --- |
