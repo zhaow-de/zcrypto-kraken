@@ -13,15 +13,16 @@ After=wg-quick@zaccess0.service
 
 [Service]
 User=zhaow
-# agentboard's bin is `#!/usr/bin/env node`, and it spawns child node processes -- systemd's minimal
-# PATH has no nvm node, so put the nvm bin dir (which holds both node and agentboard) first, then the
-# system dirs for tmux. Derived from the exec's own dir so it tracks a node-version change with it.
-Environment=PATH={{ access_ops_agentboard_exec | dirname }}:/usr/bin:/bin
 Environment=PORT=4040
 Environment=HOSTNAME=10.99.0.2
 Environment=TMUX_SESSION=agentboard
 Environment=DISCOVER_PREFIXES=zcrypto
-ExecStart={{ access_ops_agentboard_exec }}
+# Resolve node + agentboard at START time, not converge time: source nvm (which prepends the current
+# default node's bin to PATH, holding both `node` and the `agentboard` shim) then exec it. agentboard's
+# `#!/usr/bin/env node` shebang and its child node spawns then find node on that PATH; `tmux` comes
+# from systemd's default PATH (/usr/bin). Consequence: a node upgrade via nvm needs only a
+# `systemctl restart zaccess-agentboard` -- no re-render, no converge (spec 00075 D13).
+ExecStart=/bin/bash -c 'source {{ access_ops_agentboard_nvm_sh }} && exec agentboard'
 Restart=on-failure
 
 [Install]

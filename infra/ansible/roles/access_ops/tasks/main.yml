@@ -47,18 +47,29 @@
 - name: ops-side probe timer enabled
   ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}
 
-- name: >-
-    agentboard, pinned (spec 00075 D13 -- G2 web terminal onto the operator tmux). community.general.npm
-    was considered first, but a user-scope global npm install needs the nvm-managed node's own prefix
-    on PATH, and ansible's non-interactive remote shell does not source nvm.sh the way an interactive
-    login does -- the module has no "source this first" escape hatch. ansible.builtin.command sourcing
-    nvm.sh explicitly is the robust shape; creates: makes it idempotent once access_ops_agentboard_exec
-    holds the owner-confirmed real path (defaults/main.yml)
+# Idempotency is keyed on the pinned version being present under nvm's CURRENT node, not on a
+# hardcoded path (`creates:` would pin the node version into the check). `npm ls` exits non-zero when
+# the exact version is absent -- e.g. after a node upgrade moved the global bin -- which re-triggers
+# the install for the new node. community.general.npm was considered but a user-scope global install
+# needs nvm's node prefix on PATH and the module has no "source nvm.sh first" hook.
+- name: agentboard -- is the pinned version present under nvm's current node? (spec 00075 D13, G2)
   ansible.builtin.command:
     cmd: >-
-      bash -c 'source /home/zhaow/.nvm/nvm.sh &&
+      bash -c 'source {{ access_ops_agentboard_nvm_sh }} &&
+      npm ls -g @gbasin/agentboard@{{ access_ops_agentboard_version }} --depth=0'
+  register: access_ops_agentboard_present
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: zhaow
+
+- name: agentboard -- install the pinned version into nvm's current global bin
+  ansible.builtin.command:
+    cmd: >-
+      bash -c 'source {{ access_ops_agentboard_nvm_sh }} &&
       npm install -g @gbasin/agentboard@{{ access_ops_agentboard_version }}'
-    creates: "{{ access_ops_agentboard_exec }}"
+  when: access_ops_agentboard_present.rc != 0
+  changed_when: true # only runs when the pinned version is absent, and then it installs
   become: true
   become_user: zhaow
 

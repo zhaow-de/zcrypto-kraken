@@ -17,6 +17,8 @@ access_ops_agentboard_version: "0.4.5"
 # stays enabled+started idempotently. false also means the unit is explicitly disabled+stopped on
 # every converge, so a reboot before the spike passes cannot auto-start it via WantedBy=.
 access_ops_agentboard_live: false
-# Measured at the D13 spike 2026-07-30: npm's global bin under the nvm-selected node on the ops box.
-# If nvm's node version changes, `command -v agentboard` gives the new path -- update this value.
-access_ops_agentboard_exec: "/home/zhaow/.nvm/versions/node/v26.5.0/bin/agentboard"
+# nvm's init script. The unit sources it at START time and execs `agentboard` off the resulting PATH
+# (not a converge-time-resolved absolute path), so a node upgrade via nvm -- `nvm install <new>;
+# nvm alias default <new>; npm i -g @gbasin/agentboard@<pin>` -- is picked up by a plain
+# `systemctl restart zaccess-agentboard`, with no codebase change and no re-converge.
+access_ops_agentboard_nvm_sh: "/home/zhaow/.nvm/nvm.sh"
