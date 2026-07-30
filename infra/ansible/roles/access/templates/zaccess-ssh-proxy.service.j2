@@ -1,0 +1,12 @@
+# zaccess-ssh-proxy.service — rendered by the `access` role. Bridgehead-side SSH relay to the
+# ops node (spec 00075 D5) -- systemd-socket-proxyd, no NAT/IP forwarding anywhere. SSH stays
+# end-to-end encrypted through the relay; this one only carries the already-encrypted tunnel traffic.
+[Unit]
+Description=Relay accepted SSH connections to the ops node over the tunnel
+Requires=zaccess-ssh-proxy.socket wg-quick@zaccess0.service
+After=zaccess-ssh-proxy.socket wg-quick@zaccess0.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 10.99.0.2:22
+PrivateTmp=yes
+DynamicUser=yes

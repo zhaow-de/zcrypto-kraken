@@ -68,3 +68,13 @@
   notify: restart wg-quick@zaccess0
 - name: wireguard tunnel enabled
   ansible.builtin.systemd: {name: wg-quick@zaccess0, enabled: true, state: started}
+
+- name: ssh relay socket + service (spec 00075 D5 -- systemd-socket-proxyd, no NAT/forwarding)
+  ansible.builtin.template:
+    src: "zaccess-ssh-proxy.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-ssh-proxy.{{ item }}"
+    mode: '0644'
+  loop: [socket, service]
+  notify: reload systemd
+- name: ssh relay socket enabled
+  ansible.builtin.systemd: {name: zaccess-ssh-proxy.socket, enabled: true, state: started, daemon_reload: true}
