@@ -69,6 +69,18 @@ repos:
         files: '^(infra/|\.ansible-lint$)'
         pass_filenames: false
 
+  # Enforcement for commit-messages.md's one-kind-per-commit rule (violated five times while
+  # written down — the P6 trigger). Only separates claude-kind from everything else; feat/fix
+  # commits legitimately mix cli/ + tests/ + docs. Deliberate exception: SKIP=staged-kind.
+  - repo: local
+    hooks:
+      - id: staged-kind
+        name: claude-kind files not mixed with other kinds
+        entry: bash infra/scripts/staged-kind-check.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
     hooks:
