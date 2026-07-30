@@ -2313,7 +2313,7 @@ rules:
     notification_settings:
       receiver: logs
 
-  # Fleet · Alloy dark (T0079) -- four rules, one per host, all `critical`.
+  # Fleet · Alloy dark (T0079) -- five rules, one per host, all `critical`.
   # Uniform severity is deliberate: the responder's action is identical on every host (SSH, check the
   # container, restart), so a differentiated severity would imply a differentiated response that does
   # not exist. What differs is only what accumulates unseen meanwhile, which the per-host summary
@@ -2527,6 +2527,54 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-alloy-dark-zaccess
+    title: "Fleet · Alloy dark — zaccess"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # Fires on SILENCE: when this host's Alloy stops shipping, its `up` series goes stale and
+          # then absent, `count()` yields no vector, and `or on() vector(0)` supplies the 0 that trips
+          # the threshold. `count()`, not `sum()`: `up` is a scrape-health gauge whose VALUE can be 0
+          # while Alloy is alive and shipping -- presence of the series is the "shipping" signal, and
+          # count() reads presence regardless of value. The fallback (rather than a bare `absent()`)
+          # is what lets noDataState stay Alerting -- a raw `absent()` returns NO data while healthy,
+          # so it would need noDataState: OK and would then park green if the datasource itself went
+          # away.
+          expr: >-
+            count(up{host="zaccess"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # 10m tolerates a deploy restart (Alloy is down for seconds, but the series can gap a minute or
+    # two) while still beating the ~3h the logs dead-man took to notice the 2026-07-15/16 T0048
+    # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
+    for: 10m
+    annotations:
+      summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the WireGuard tunnel handshake-age and edge TLS cert-expiry gauges alongside basic host metrics. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/README.md#zaccess-bridgehead-dark"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
   # T0083 mutual watchdog, Grafana half. Owns two failures in one rule: (a) any healthchecks.io
   # check is DOWN -- a dead-man fired, and hc.io's own notification channel may itself be the
   # broken part, so Grafana pages too (the deliberate double-page is the cross-watchdog); (b) the
@@ -2573,5 +2621,51 @@ rules:
       summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule."
     labels:
       severity: critical
+    notification_settings:
+      receiver: metrics
+
+  # ---- Access bridgehead (zaccess) --------------------------------------------------------------
+  # First content rule for the internet edge (spec 00075). Like the capture/NAS disk rules, this
+  # owns "bad while alive"; zcrypto-alloy-dark-zaccess above owns "this host's telemetry plane is
+  # dark" -- so noDataState stays OK here rather than paging on a transient remote_write gap the
+  # canary already covers.
+  - uid: zaccess-disk-high
+    title: "Access · bridgehead disk high"
+    ruleGroup: zcrypto-access
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The whole host is one small root filesystem (Linode 25 GB) -- everything on it (Alloy,
+      # Caddy's ACME state, the WireGuard config) lives under mountpoint="/", so there is no
+      # separate spool to watch the way the capture hosts' unbackfillable L2 spool needs one.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_avail_bytes{host="zaccess", mountpoint="/"}
+            / node_filesystem_size_bytes{host="zaccess", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.15]}  # < 15% free
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The bridgehead's root filesystem is below 15% free. On a 25 GB VPS running only Alloy, Caddy, and WireGuard, this is most likely accumulated logs or an ACME/cert-renewal artifact rather than data growth. Runbook: infra/runbooks/README.md#zaccess-disk-high"
+    labels:
+      severity: warning
     notification_settings:
       receiver: metrics
