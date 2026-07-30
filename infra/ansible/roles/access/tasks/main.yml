@@ -1,0 +1,60 @@
+# The access role (spec 00075): WireGuard server + relays + Caddy edge + native Alloy.
+- name: wireguard + probe dependencies
+  ansible.builtin.apt: {name: [wireguard-tools], state: present}
+
+- name: grafana apt keyring
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: '0644'
+- name: grafana apt repo
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+    filename: grafana
+- name: alloy, pinned (D11 — native, no docker on the edge; pin recorded in fleet-pins.md)
+  ansible.builtin.apt:
+    name: "alloy={{ access_alloy_version }}"
+    state: present
+    allow_change_held_packages: false
+- name: hold alloy at the pin
+  ansible.builtin.dpkg_selections: {name: alloy, selection: hold}
+
+- name: alloy env — CONFIG_FILE + credentials (the deb's unit reads EnvironmentFile=/etc/default/alloy)
+  ansible.builtin.template:
+    src: alloy-env.j2
+    dest: /etc/default/alloy
+    owner: root
+    group: alloy
+    mode: '0640'
+  no_log: true # renders the Grafana Cloud push credentials — keep them out of --diff output
+  notify: restart alloy
+- name: >-
+    alloy config — UNGATED copy; every converge ships it, so a hand edit cannot outlive the next
+    converge. That is the whole drift remedy: the other tiers carry asserts because their copies
+    are digest-gated and an ordinary converge skips them — this one is not.
+  ansible.builtin.copy:
+    src: config.alloy
+    dest: /etc/alloy/config.alloy
+    owner: root
+    group: alloy
+    mode: '0640'
+  notify: restart alloy
+- name: alloy enabled + started
+  ansible.builtin.systemd: {name: alloy, enabled: true, state: started}
+
+- name: textfile dir for the probe
+  ansible.builtin.file: {path: /var/lib/zaccess-textfiles, state: directory, mode: '0755'}
+- name: probe script
+  ansible.builtin.template:
+    src: zaccess-probe.sh.j2
+    dest: /usr/local/sbin/zaccess-probe
+    mode: '0755'
+- name: probe service + timer
+  ansible.builtin.template:
+    src: "zaccess-probe.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-probe.{{ item }}"
+    mode: '0644'
+  loop: [service, timer]
+  notify: reload systemd
+- name: probe timer enabled
+  ansible.builtin.systemd: {name: zaccess-probe.timer, enabled: true, state: started, daemon_reload: true}

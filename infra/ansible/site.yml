@@ -123,3 +123,28 @@
   roles:
     - role: nas
       tags: [nas]
+
+- name: converge the access bridgehead — the internet edge (spec 00075)
+  hosts: access_host
+  become: true
+  pre_tasks:
+    - name: note — the bridgehead's charter
+      ansible.builtin.debug:
+        msg: >-
+          Internet edge (spec 00075): no trade key, no capture data, no containers. Everything
+          on it is re-issuable (certs re-ACME, keys vaulted) — losing the VPS is re-provisioning,
+          not data loss. Never in engine_host/capture_host; ordinary runs are --limit zaccess.
+      tags: [always]
+  roles:
+    - role: base
+      tags: [base]
+    - role: hardening
+      tags: [hardening]
+    - role: firewall
+      tags: [firewall]
+    - role: fail2ban
+      tags: [fail2ban]
+    - role: chrony
+      tags: [chrony]
+    - role: access
+      tags: [access]

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Rendered by the `access` role at /usr/local/sbin/zaccess-probe — edit the template, not this.
+# Writes zaccess.prom: WireGuard handshake age + edge TLS notAfter per vhost (spec 00075 D11).
+set -euo pipefail
+OUT=/var/lib/zaccess-textfiles/zaccess.prom
+TMP="$(mktemp "${OUT}.XXXX")"; trap 'rm -f "$TMP"' EXIT
+{
+  hs=$(wg show zaccess0 latest-handshakes 2>/dev/null | awk '{print $2}' | head -1 || true)
+  if [ -n "${hs:-}" ] && [ "$hs" -gt 0 ]; then
+    echo "# HELP zaccess_wireguard_handshake_age_seconds Seconds since the tunnel peer's last handshake."
+    echo "# TYPE zaccess_wireguard_handshake_age_seconds gauge"
+    echo "zaccess_wireguard_handshake_age_seconds $(( $(date +%s) - hs ))"
+  fi
+  for t in tmux nas; do
+    na=$(echo | timeout 10 openssl s_client -connect 127.0.0.1:443 -servername "$t.zaccess.zhaow.me" 2>/dev/null \
+         | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || continue
+    [ -n "$na" ] || continue
+    echo "zaccess_tls_not_after_seconds{target=\"$t\"} $(date -d "$na" +%s)"
+  done
+} > "$TMP"
+chmod 0644 "$TMP"   # mktemp makes 0600 and mv preserves it — the collector reads as non-root
+mv "$TMP" "$OUT"

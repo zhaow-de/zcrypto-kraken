@@ -1,0 +1,13 @@
+---
+# Defaults for the `access` role (spec 00075): the internet bridgehead.
+
+# Native Alloy (D11), apt-pinned + held -- no docker on the edge. Current upstream at execution
+# (2026-07-29, apt.grafana.com stable); record beside the caddy pin in fleet-pins.md at Task 11.
+access_alloy_version: "1.18.0-1"
+
+# WireGuard server listen port (Task 6 wires the tunnel itself); firewall_extra_udp_ports
+# (group_vars/access_host/vars.yml) already opens it.
+access_wg_listen_port: 51820
+
+# ACME registration contact (Task 7's Caddy role reads this).
+access_acme_email: zhaow.km@gmail.com

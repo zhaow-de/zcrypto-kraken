@@ -1,0 +1,8 @@
+---
+- name: restart alloy
+  # Stateless -- a restart loses nothing (unlike the ops/capture container path, native Alloy has
+  # no directory-mount reload trick to reach for; systemd owns the process directly).
+  ansible.builtin.systemd: {name: alloy, state: restarted}
+
+- name: reload systemd
+  ansible.builtin.systemd: {daemon_reload: true}
