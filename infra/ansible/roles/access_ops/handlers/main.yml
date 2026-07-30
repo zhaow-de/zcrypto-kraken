@@ -12,3 +12,7 @@
   become_user: zhaow
   changed_when: false # applies live config, not an idempotent resource -- nothing here for Ansible to track
   failed_when: false # no server running = nothing to apply; the file governs the next start
+
+- name: reload sshd
+  # reload, not restart -- keeps live sessions up; the copy task validated with `sshd -t` first.
+  ansible.builtin.service: {name: ssh, state: reloaded}

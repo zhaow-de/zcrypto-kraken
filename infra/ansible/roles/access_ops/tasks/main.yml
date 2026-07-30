@@ -1,5 +1,23 @@
 # The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link -- WG client,
 # the NAS relay, the managed tmux conf (D15), and the ops-side tunnel/cert probe (D11/D12).
+
+# The G1 relay (zaccess:20022 -> 10.99.0.2:22) makes THIS host's sshd internet-reachable, and D6's
+# byte-copy relay rewrites the client source to 10.99.0.1 -- so per-IP throttling is impossible on
+# this path and fail2ban cannot see the real attacker. Password auth here would be unthrottled,
+# source-anonymized internet guessing against the box holding the live session. Force key-only. (The
+# ops node otherwise runs no sshd hardening role by owner choice -- this is the minimum the internet
+# exposure demands, not the full CIS baseline.)
+- name: ops sshd -- key-only, no password auth (the G1 relay exposes :22 to the internet)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-zaccess-ops.conf
+    content: |
+      # Managed by the `access_ops` role (spec 00075 G1) -- do not hand-edit.
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+    mode: '0644'
+    validate: 'sshd -t -f %s'
+  notify: reload sshd
+
 - name: wireguard dependencies (ops needs wg-quick/wg show too -- the access role installs it only on the bridgehead)
   ansible.builtin.apt: {name: [wireguard-tools], state: present}
 
