@@ -6,6 +6,7 @@ assertion is not verification (`.claude/rules/agent-ops.md`).
 
 import datetime as dt
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -131,14 +132,39 @@ def _run(root: Path, capsys, *, since=dt.datetime.min.replace(tzinfo=UTC), kind=
 
 
 def _column(out: str, prefix: str, field: str) -> str:
-    """The value under `field` on the row starting with `prefix`, located via the HEADER rather than
-    a fixed index -- the same helper `tests/test_continuity_overlay.py` uses, and for the same
-    reason: a fixed index silently reads whatever now sits in slot N. Doubly true here, where rows
-    carry a trailing ` genesis` marker that shifts every negative index."""
+    """The value under `field` on the row starting with `prefix`, located by CHARACTER RANGE from the
+    header -- the same helper `tests/test_continuity_overlay.py` uses, and for the same reason:
+    `str.split()` collapses blank cells (an UNMEASURED row's blank thresh_s/gap_s/gap% slots, the
+    TOTAL row's blank n/thresh_s slots), silently shifting every field after the first blank one onto
+    the wrong index instead of reading it as blank. Every column is right-justified to a fixed width
+    behind a single-space separator, so a field's cell always ENDS at the same character offset as its
+    header token, whether the cell holds a value or is blank; the cell STARTS just after the preceding
+    header token ends. Doubly load-bearing here, where rows also carry a trailing ` genesis` marker
+    that would shift every negative index too."""
     lines = out.splitlines()
     header = next(line for line in lines if field in line)
     row = next(line for line in lines if line.startswith(prefix))
-    return row.split()[header.split().index(field)]
+    tokens = list(re.finditer(r"\S+", header))
+    idx = next(i for i, m in enumerate(tokens) if m.group() == field)
+    lo = tokens[idx - 1].end() + 1 if idx > 0 else 0
+    hi = tokens[idx].end()
+    return row[lo:hi].strip()
+
+
+def test_column_reads_blank_cells_on_unmeasured_and_total_rows(tmp_path, capsys):
+    """`_column` is now load-bearing for both continuity test files (T0097 Finding 3): a
+    `str.split()`-based version misreads an UNMEASURED row's blank `gap_s` cell as its NEXT
+    non-blank cell's value, and raises `IndexError` on the TOTAL row (which has two blank cells of
+    its own). AAA/EUR is measured (3 full hours, pool well past MIN_POOL); THIN/EUR is a single
+    sparse hour (120 rows), reported UNMEASURED and excluded from the TOTAL row's totals.
+    """
+    hours = {H0 + dt.timedelta(hours=i): evenly(H0 + dt.timedelta(hours=i), 6000, 0.6) for i in range(3)}
+    write_stream(tmp_path, "AAA/EUR", hours)
+    write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 120, 30.0)})
+    _, out = _run(tmp_path, capsys)
+    assert _column(out, "THIN/EUR", "gap_s") == ""
+    assert _column(out, "THIN/EUR", "thresh_s") == "UNMEASURED"
+    assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(3 * 3600.0)  # THIN/EUR excluded
 
 
 def test_genesis_hour_books_no_gap_and_is_annotated(tmp_path):
@@ -162,8 +188,14 @@ def test_genesis_annotation_and_zero_gap_in_the_report(tmp_path, capsys):
 
 
 def test_identical_outage_counts_the_same_on_dense_and_slow_streams(tmp_path, capsys):
-    """The false-GREEN the topic measured: a 200 s outage counted 200.1 s on a dense stream and
-    0.0 s on a slow one, because the threshold self-calibrated to the outage itself.
+    """For MEASURED streams (n >= MIN_POOL), the booked outage is density-independent: the same 200 s
+    hole is counted the same whether the surrounding stream samples at 0.1 s or 0.6 s spacing. This is
+    a characterization test, not a regression carrier for the thin-stream false-GREEN the topic
+    originally measured (a self-calibrating threshold that swallows the outage on a sparse stream) --
+    that defect class is closed by refusal, not by this test's booking: any stream sparse enough to
+    exhibit it is exactly a stream D6 declares UNMEASURED (see Task 4's UNMEASURED -> FAIL). Confirmed
+    against the pre-Task-3 `report()` too: this same fixture already passes there (DENSE 200.1 /
+    SLOW 201.0, identical to the new code), so both assertions hold under either measurement basis.
 
     ONE outage among four clean hours, so the fixture sits inside D6a's safe regime -- with two
     outages in a ~11k pool the p99.99 lands ON the second one and the slow stream self-inflates by
@@ -194,6 +226,39 @@ def test_identical_outage_counts_the_same_on_dense_and_slow_streams(tmp_path, ca
     slow = float(_column(out, "SLOW/EUR", "gap_s"))
     assert dense == pytest.approx(slow, rel=0.05)
     assert slow > 150  # the 200 s outage is counted on the slow stream, not swallowed
+
+
+def test_trunc_counts_only_boundary_truncations_not_intra_silence(tmp_path, capsys):
+    """`trunc` is the T0036 restart-clobber counter that drives the operator-facing
+    `truncated hours: N -- MUST be 0` line -- it must count only BOUNDARY truncations
+    (edge_head/edge_tail/crossing/excess), never intra-hour silence, or ordinary silence would be
+    reported as restart damage. H1 carries a genuine 50 s intra-hour outage above threshold (booked
+    into `gap_s`); H0/H2 are full hours and every boundary (2 crossings + 1 edge_tail) stays at the
+    ~0.6 s step, far under the derived 6.0 s threshold -- so `trunc` must stay at its boundary-only
+    value (0) while `gap_s` still reflects the outage.
+    """
+
+    def full_hour(h: dt.datetime, step: float) -> list[dt.datetime]:
+        n = int(3600 / step)
+        return [h + dt.timedelta(seconds=j * step) for j in range(n)]
+
+    def full_hour_with_gap(h: dt.datetime, step: float, gap_start: float, gap_len: float) -> list[dt.datetime]:
+        n = int(3600 / step)
+        offsets = [j * step for j in range(n) if not (gap_start <= j * step < gap_start + gap_len)]
+        return [h + dt.timedelta(seconds=o) for o in offsets]
+
+    write_stream(
+        tmp_path,
+        "AAA/EUR",
+        {
+            H0: full_hour(H0, 0.6),
+            H1: full_hour_with_gap(H1, 0.6, 1800.0, 50.0),
+            H2: full_hour(H2, 0.6),
+        },
+    )
+    _, out = _run(tmp_path, capsys)
+    assert _column(out, "AAA/EUR", "trunc") == "0"
+    assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(51.0, rel=0.05)
 
 
 def test_restart_clobber_crossing_is_one_truncation_booked_once(tmp_path, capsys):

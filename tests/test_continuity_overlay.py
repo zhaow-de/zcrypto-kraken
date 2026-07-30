@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -124,13 +125,39 @@ def test_a_window_with_no_data_reports_it_instead_of_dividing_by_zero(tmp_path, 
 
 
 def _column(out: str, prefix: str, field: str) -> str:
-    """The value under `field` on the row starting with `prefix`, located via the HEADER rather than
-    a fixed index -- so a column reorder is a test failure instead of a silently-passing assertion
-    about whatever now sits in slot N."""
+    """The value under `field` on the row starting with `prefix`, located by CHARACTER RANGE from the
+    header -- not `str.split()`, which collapses blank cells (an UNMEASURED row's blank
+    thresh_s/gap_s/gap% slots, the TOTAL row's blank n/thresh_s slots), silently shifting every field
+    after the first blank one onto the wrong index instead of reading it as blank. Every column is
+    right-justified to a fixed width behind a single-space separator, so a field's cell always ENDS at
+    the same character offset as its header token, whether the cell holds a value or is blank; the
+    cell STARTS just after the preceding header token ends."""
     lines = out.splitlines()
     header = next(line for line in lines if field in line)
     row = next(line for line in lines if line.startswith(prefix))
-    return row.split()[header.split().index(field)]
+    tokens = list(re.finditer(r"\S+", header))
+    idx = next(i for i, m in enumerate(tokens) if m.group() == field)
+    lo = tokens[idx - 1].end() + 1 if idx > 0 else 0
+    hi = tokens[idx].end()
+    return row[lo:hi].strip()
+
+
+def test_column_reads_blank_cells_on_unmeasured_and_total_rows(tmp_path, capsys, monkeypatch):
+    """`_column` is now load-bearing for this file too (T0097 Finding 3): a `str.split()`-based
+    version misreads an UNMEASURED row's blank `gap_s` cell as its NEXT non-blank cell's value, and
+    raises `IndexError` on the TOTAL row (which has two blank cells of its own) -- exactly what
+    Task 4's planned TOTAL-row lookups need to not crash on."""
+    raw = tmp_path / "raw"
+    _dense_stream(raw, "BTC/EUR")
+    _write_hour(raw, "THIN/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    monkeypatch.setattr(sys, "argv", ["continuity.py", str(raw)])
+
+    continuity.main()
+    out = capsys.readouterr().out
+
+    assert _column(out, "THIN/EUR", "gap_s") == ""
+    assert _column(out, "THIN/EUR", "thresh_s") == "UNMEASURED"
+    assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(2 * 3600.0)  # THIN/EUR excluded
 
 
 def _two_streams(raw):
