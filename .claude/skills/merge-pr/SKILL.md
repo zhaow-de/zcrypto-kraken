@@ -28,11 +28,11 @@ gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeS
 
 (Omit `<number>` to use the current branch's PR.) Record `number`, `headRefName`, `baseRefName`, and the gate fields below.
 
-Confirm `baseRefName` is `develop`. If it targets `main`, STOP and tell the user (feature work never merges into `main`).
+Base correctness (`develop`, never `main`) is the Step-2 gate's first check.
 
 ## Step 2 — The merge gate (STOP if ANY fails)
 
-GitHub has no single "ready to merge" field like GitLab's `detailed_merge_status`; readiness is spread across several fields. Pipe the Step 1 JSON through this evaluator — it prints `GATE PASSED` or lists every failing gate:
+GitHub has no single ready-to-merge field; readiness is spread across several fields. Pipe the Step 1 JSON through this evaluator — it prints `GATE PASSED` or lists every failing gate:
 
 ```bash
 gh pr view <number> --json number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body \
@@ -76,7 +76,7 @@ print("GATE PASSED — ready to merge")
 What each gate covers:
 
 1. **`state == "OPEN"`** and **`isDraft == false`** — not already merged/closed, not a draft.
-2. **`mergeable == "MERGEABLE"`** — GitHub computed a clean (conflict-free) merge. `CONFLICTING` is a hard stop; `UNKNOWN` means GitHub is still computing — wait a few seconds and re-run, **never merge on `UNKNOWN`**.
+2. **`mergeable == "MERGEABLE"`** — GitHub computed a clean (conflict-free) merge. `CONFLICTING` is a hard stop; `UNKNOWN` means GitHub is still computing — wait a few seconds and re-run (the gate refuses it).
 3. **`mergeStateStatus != "BLOCKED"`** — `BLOCKED` means branch protection is unsatisfied (required review missing or a required check failing). `CLEAN`, `UNSTABLE`, `BEHIND`, and `HAS_HOOKS` are all fine for a merge commit (being behind `develop` is reconciled by the merge; non-required checks don't block).
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` is null and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
 5. **No failing CI** — any `statusCheckRollup` entry in a failing state stops the merge. This repo's `coverage.yml` runs the test suite on **`pull_request` into `develop`/`main`** (only — there is no `push` trigger, so no redundant post-merge run), so a PR **does** report a "Test coverage" check (pytest + a Coveralls upload). Wait for it to finish and be green before merging: the gate above flags a *failing* check but does **not** yet block on a *still-running* one, so don't merge while it is in progress.
@@ -144,7 +144,7 @@ Summarize: PR merged (or which gate stopped you), develop synced (or dirty-workt
 | Mistake | Fix |
 |---|---|
 | Merging and letting GitHub reject if not ready | Run the Step 2 gate FIRST; stop + ask on any failure |
-| Treating `mergeable=UNKNOWN` as ready | GitHub is still computing — wait and re-run; never merge on `UNKNOWN` |
+| Treating `mergeable=UNKNOWN` as ready | GitHub is still computing — wait and re-run |
 | Forgetting the checklist (GitHub doesn't enforce task lists) | Parse the PR body for `- [ ]` |
 | Squashing or rebasing the merge | Always `--merge` (merge commit) — preserves per-commit history and `Co-Authored-By:` trailers |
 | `git checkout develop` on a dirty worktree | `git status --porcelain` first; stop if dirty |

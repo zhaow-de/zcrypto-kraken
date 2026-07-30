@@ -18,7 +18,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 ## Repo specifics
 
 - **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main` (which is release-only per `.claude/rules/branch-workflow.md`). If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
-- The Python application lives at the **repo root** (flat layout). Tests, lint, and the lockfile (`uv.lock`) all live at the root; run `uv` commands from the repo root (no `cd src`).
+- The Python application lives at the **repo root** (flat layout). Tests, lint, and the lockfile (`uv.lock`) all live at the root; run `uv` commands from the repo root.
 - Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.). A push after a hook-driven amend may need re-staging — the loop handles it.
 - Configured ecosystems: `uv` (updates `pyproject.toml` + `uv.lock`), `github-actions` (updates `.github/workflows/*`), and `pre-commit` (updates `.pre-commit-config.yaml`). This skill processes any `dependabot/` PR regardless of ecosystem.
 
@@ -190,8 +190,6 @@ gh pr view <number> --json statusCheckRollup -q '[.statusCheckRollup[].conclusio
 
 ## Notes
 
-- **Use `gh`, never `glab`** (per `.claude/rules/branch-workflow.md` — GitHub is the remote).
-- **Never modify `main` directly.** Dependabot PRs target `develop`; `main` advances only via `/release` (see `.claude/skills/release/`).
-- Commit message subject form is `<type>(<scope>): <subject>` (per `.claude/rules/commit-messages.md`); use `fix(config): …` for auto-fix commits since they're cross-cutting tooling fixes, not component-specific.
-- End every commit with a `Co-Authored-By:` trailer naming the **actual** executing model (e.g. `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`). Always reflect the real model, never a stale example.
+- **`main` is PR-only** (branch protection enforces); it advances only via `/release`. Dependabot PRs target `develop`.
+- Use `fix(config): …` for auto-fix commits — cross-cutting tooling fixes, not component-specific.
 - Prefer separate `uv …` / `git …` lines over composite `(cd X && Y) && Z` commands.
