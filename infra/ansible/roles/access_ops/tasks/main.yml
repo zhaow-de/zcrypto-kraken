@@ -1,0 +1,48 @@
+# The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link -- WG client,
+# the NAS relay, the managed tmux conf (D15), and the ops-side tunnel/cert probe (D11/D12).
+- name: wireguard dependencies (ops needs wg-quick/wg show too -- the access role installs it only on the bridgehead)
+  ansible.builtin.apt: {name: [wireguard-tools], state: present}
+
+- name: wireguard client conf
+  ansible.builtin.template:
+    src: zaccess0.conf.j2
+    dest: /etc/wireguard/zaccess0.conf
+    mode: '0600'
+  no_log: true # renders the WireGuard private key -- keep it out of --diff output
+  notify: restart wg-quick@zaccess0
+- name: wireguard tunnel enabled
+  ansible.builtin.systemd: {name: wg-quick@zaccess0, enabled: true, state: started}
+
+- name: nas relay socket + service (spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding)
+  ansible.builtin.template:
+    src: "zaccess-nas-proxy.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-nas-proxy.{{ item }}"
+    mode: '0644'
+  loop: [socket, service]
+  notify: reload systemd
+- name: nas relay socket enabled
+  ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, enabled: true, state: started, daemon_reload: true}
+
+- name: managed ~/.tmux.conf for zhaow (D15 -- hand edits are overwritten by design)
+  ansible.builtin.template:
+    src: tmux.conf.j2
+    dest: /home/zhaow/.tmux.conf
+    owner: zhaow
+    group: zhaow
+    mode: '0644'
+  notify: source tmux conf
+
+- name: ops-side probe script
+  ansible.builtin.template:
+    src: zaccess-probe-ops.sh.j2
+    dest: /usr/local/sbin/zaccess-probe-ops
+    mode: '0755'
+- name: ops-side probe service + timer
+  ansible.builtin.template:
+    src: "zaccess-probe-ops.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-probe-ops.{{ item }}"
+    mode: '0644'
+  loop: [service, timer]
+  notify: reload systemd
+- name: ops-side probe timer enabled
+  ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}

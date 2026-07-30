@@ -162,6 +162,10 @@ OPS_REQUIRED = [
     *LIQUIDATIONS_APP_SERIES,
     *LOGSHIP_SERIES,
     *PROCESS_FAMILIES,
+    # D11: the ops-side tunnel/cert probe (access_ops role) publishes the SAME two names the
+    # bridgehead does (ACCESS_APP_SERIES below) -- host="ops" vs host="zaccess" tells them apart.
+    "zaccess_wireguard_handshake_age_seconds",
+    "zaccess_tls_not_after_seconds",
 ]
 # The capture host's own alert-bearing families (cold-review Important 2): `Capture · spool disk
 # low` (alerts.yaml:1442-1443) reads node_filesystem_avail_bytes/node_filesystem_size_bytes, and

@@ -105,6 +105,8 @@
       tags: [docker]
     - role: ops
       tags: [ops]
+    - role: access_ops
+      tags: [access]
 
 - name: converge the NAS — the zcrypto payload only (T0056)
   hosts: nas_host

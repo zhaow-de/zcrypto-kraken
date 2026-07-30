@@ -58,3 +58,13 @@
   notify: reload systemd
 - name: probe timer enabled
   ansible.builtin.systemd: {name: zaccess-probe.timer, enabled: true, state: started, daemon_reload: true}
+
+- name: wireguard server conf (spec 00075 D6 -- the bridgehead end of the zaccess0 tunnel)
+  ansible.builtin.template:
+    src: zaccess0.conf.j2
+    dest: /etc/wireguard/zaccess0.conf
+    mode: '0600'
+  no_log: true # renders the WireGuard private key -- keep it out of --diff output
+  notify: restart wg-quick@zaccess0
+- name: wireguard tunnel enabled
+  ansible.builtin.systemd: {name: wg-quick@zaccess0, enabled: true, state: started}

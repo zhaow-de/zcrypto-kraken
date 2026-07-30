@@ -2669,3 +2669,45 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  # Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
+  # tunnel handshakes well under 300s from BOTH sides, so max() (not min()) catches whichever end
+  # went stale first. A fully dark bridgehead is zcrypto-alloy-dark-zaccess's job, not this rule's;
+  # a fully dark ops node is zcrypto-alloy-dark-ops's -- a live-but-stale tunnel keeps reporting a
+  # growing age (wg show's last-handshake timestamp doesn't vanish), so this fires via the normal
+  # threshold path, not NoData.
+  - uid: zaccess-tunnel-stale
+    title: "Access · WireGuard tunnel stale"
+    ruleGroup: zcrypto-access
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: max(zaccess_wireguard_handshake_age_seconds)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [300]}
+    noDataState: OK  # owned by zcrypto-alloy-dark-zaccess / zcrypto-alloy-dark-ops
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The WireGuard tunnel's handshake age has been over 300s on at least one end for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics

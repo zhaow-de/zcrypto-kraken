@@ -6,3 +6,8 @@
 
 - name: reload systemd
   ansible.builtin.systemd: {daemon_reload: true}
+
+- name: restart wg-quick@zaccess0
+  # wg-quick has no reload -- a restart is the only way to apply a changed conf. Brief drop, same
+  # as the alloy restart above: this is the tunnel itself, not a data path.
+  ansible.builtin.systemd: {name: wg-quick@zaccess0, state: restarted}

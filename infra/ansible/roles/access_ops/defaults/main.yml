@@ -1,0 +1,7 @@
+---
+# Defaults for the `access_ops` role (spec 00075): the ops-node end of the zaccess WireGuard link.
+
+# Mirrors access_wg_listen_port in the `access` role's defaults -- same value, a role-prefixed name
+# here (ansible-lint var-naming) -- the client's Endpoint port must match the server's ListenPort;
+# defined here too rather than shared, so this role carries no cross-role variable dependency.
+access_ops_wg_listen_port: 51820
