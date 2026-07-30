@@ -1,0 +1,9 @@
+# Rendered by the `access` Ansible role at /etc/systemd/system/zaccess-probe.service — do not
+# hand-edit on the host, edit infra/ansible/roles/access/templates/zaccess-probe.service.j2
+# instead. Traceability: spec 00075 D11
+[Unit]
+Description=Access-edge probe writing WireGuard and TLS gauges
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zaccess-probe

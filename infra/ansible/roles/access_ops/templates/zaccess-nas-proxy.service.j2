@@ -1,0 +1,12 @@
+# zaccess-nas-proxy.service — rendered by the `access_ops` role. Relays the socket above to the
+# NAS on the home LAN (spec 00075 D6/D7) -- SSH stays end-to-end encrypted through relays of this
+# shape; this one only ever carries the already-TLS'd DSM traffic Caddy forwards over the tunnel.
+[Unit]
+Description=Relay the ops-side NAS socket to the DSM host on the LAN
+Requires=zaccess-nas-proxy.socket wg-quick@zaccess0.service
+After=zaccess-nas-proxy.socket wg-quick@zaccess0.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 192.168.100.5:5001
+DynamicUser=yes
+PrivateTmp=yes

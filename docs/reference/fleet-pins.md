@@ -13,6 +13,14 @@ Capture and engine share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) but
 | ops (timers + liquidations) | zcrypto-ops | `0b2fdcfff6e8` | 2026-07-28 15:59 (T0101 remediation: panel `stale_seconds`, reconciler counters, generation guard) | `e5a44e1cb138` |
 | archive-pull | nas | `620114511f19` (repo pin `nas_capture_image`, same file; running digest unverified) | — | — |
 
+**Bridgehead `zaccess` — apt-pinned native packages, not image digests** (spec `00075`; no Docker on the edge). These are `access_*` role defaults, held with `dpkg --set-selections`; a version bump = unhold → converge with the new pin → the role re-applies the hold.
+
+| package | host | version | since (UTC) | notes |
+| --- | --- | --- | --- | --- |
+| caddy | zaccess | `2.11.4` (upstream cloudsmith `stable`) | 2026-07-30 | the mTLS edge; `verifier leaf` client-cert pinning syntax confirmed against v2.11.4 source |
+| alloy | zaccess | `1.18.0-1` (Grafana apt `stable`) | 2026-07-30 | native (not the containerized `491b0578c049` the other four run); `host="zaccess"` |
+| agentboard | zcrypto-ops | `0.4.5` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-07-30 | **every re-pin is security-relevant** (D2: the mTLS edge is its only auth) — attended, no bake; the unit is spike-gated on `access_ops_agentboard_live` |
+
 Full digests:
 
 - **capture current (both hosts)**: `sha256:99faf16514e3ddc30712c8c63fb4892d7e5f3042823b56935cf0617a3cf2ab44`, built from `3540b0bb`. Carries [[T0102]]'s `req_id` correlation and [[T0106]]'s liveness gauge, both verified from the image's own surface rather than the tag. Canary leg `zcrypto-red` 2026-07-29 00:52:53Z; primary 07:36:13Z after a 6 h 43 m bake (three full rotation hours required; prune took the **strong** form, `deleted=210`).

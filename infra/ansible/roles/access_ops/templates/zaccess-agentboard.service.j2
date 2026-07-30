@@ -1,0 +1,29 @@
+# zaccess-agentboard.service — rendered by the `access_ops` role. Web terminal onto the operator
+# tmux, bound to the tunnel address only (spec 00075 D13, G2). Every converge renders this unit, but
+# whether it is enabled/started is gated on access_ops_agentboard_live -- false (the default) drives
+# it disabled+stopped every converge, so it cannot go live on its own (nor auto-start on a reboot);
+# it goes live only after the owner's D13 spike (a destructive-capability drill against a decoy tmux
+# session) passes and the owner flips that flag true. NO built-in auth on agentboard itself -- the
+# mTLS edge (spec 00075 D2) is the only control, so this unit only ever needs to be reachable over
+# the WireGuard tunnel, never on a public interface.
+[Unit]
+Description=Web terminal bridge onto the operator tmux, tunnel-bound
+Requires=wg-quick@zaccess0.service
+After=wg-quick@zaccess0.service
+
+[Service]
+User=zhaow
+Environment=PORT=4040
+Environment=HOSTNAME=10.99.0.2
+Environment=TMUX_SESSION=agentboard
+Environment=DISCOVER_PREFIXES=zcrypto
+# Resolve node + agentboard at START time, not converge time: source nvm (which prepends the current
+# default node's bin to PATH, holding both `node` and the `agentboard` shim) then exec it. agentboard's
+# `#!/usr/bin/env node` shebang and its child node spawns then find node on that PATH; `tmux` comes
+# from systemd's default PATH (/usr/bin). Consequence: a node upgrade via nvm needs only a
+# `systemctl restart zaccess-agentboard` -- no re-render, no converge (spec 00075 D13).
+ExecStart=/bin/bash -c 'source {{ access_ops_agentboard_nvm_sh }} && exec agentboard'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

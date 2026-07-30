@@ -4,10 +4,11 @@
 # "Include sshd_config.d/*.conf" directive, so the drop-in is orphaned (never read again) the
 # moment this role runs — remove it explicitly too, so the effective config is never shadowed
 # by a stale, misleading file that still claims port 22 is open.
-- name: remove the bootstrap's temporary sshd drop-in (port 22 retires here)
+- name: remove stale sshd drop-ins (orphaned once ssh_hardening owns the whole file)
   ansible.builtin.file:
-    path: /etc/ssh/sshd_config.d/10-zcrypto.conf
+    path: "/etc/ssh/sshd_config.d/{{ item }}"
     state: absent
+  loop: "{{ hardening_stale_sshd_dropins }}"
 
 # Root SSH stays enabled KEY-ONLY (PermitRootLogin prohibit-password) as the operator's break-glass
 # path — decided 2026-07-14 (spec 00050 review). The operator installs the master pubkey

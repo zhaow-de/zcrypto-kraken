@@ -1,0 +1,17 @@
+# Rendered by the `access_ops` Ansible role at /etc/systemd/system/zaccess-probe-ops.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/access_ops/templates/zaccess-probe-ops.timer.j2
+# instead. Traceability: spec 00075 D11
+[Unit]
+Description=Ops-side tunnel and NAS-cert probe cadence — every 5 minutes
+
+[Timer]
+OnCalendar=*:4/5:41
+# Offset from the bridgehead's own probe timer (roles/access/templates/zaccess-probe.timer.j2,
+# *:2/5:11) so the two probes' cycles don't line up. Deliberately NO Persistent=true, same
+# reasoning as that timer: this reports CURRENT state (handshake age computed against `date +%s`
+# at run time, cert notAfter re-read live) -- a cycle missed while the host was down is meaningless
+# to catch up on, and the next slot is at most 5 min away.
+Unit=zaccess-probe-ops.service
+
+[Install]
+WantedBy=timers.target

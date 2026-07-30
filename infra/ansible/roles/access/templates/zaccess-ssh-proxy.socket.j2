@@ -1,0 +1,16 @@
+# zaccess-ssh-proxy.socket — rendered by the `access` role. Bridgehead-side half of the SSH
+# relay (spec 00075 D5): systemd-socket-proxyd, no NAT/IP forwarding anywhere. Dual-family: IPv4
+# and IPv6 clients at the edge.
+[Unit]
+Description=Public SSH relay socket for the access bridgehead
+Requires=wg-quick@zaccess0.service
+After=wg-quick@zaccess0.service
+
+[Socket]
+ListenStream=0.0.0.0:20022
+ListenStream=[::]:20022
+BindIPv6Only=ipv6-only
+Accept=no
+
+[Install]
+WantedBy=sockets.target

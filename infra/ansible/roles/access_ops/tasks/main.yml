@@ -1,0 +1,110 @@
+# The access_ops role (spec 00075): the ops-node end of the zaccess WireGuard link -- WG client,
+# the NAS relay, the managed tmux conf (D15), and the ops-side tunnel/cert probe (D11/D12).
+
+# The G1 relay (zaccess:20022 -> 10.99.0.2:22) makes THIS host's sshd internet-reachable, and D6's
+# byte-copy relay rewrites the client source to 10.99.0.1 -- so per-IP throttling is impossible on
+# this path and fail2ban cannot see the real attacker. Password auth here would be unthrottled,
+# source-anonymized internet guessing against the box holding the live session. Force key-only. (The
+# ops node otherwise runs no sshd hardening role by owner choice -- this is the minimum the internet
+# exposure demands, not the full CIS baseline.)
+- name: ops sshd -- key-only, no password auth (the G1 relay exposes :22 to the internet)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-zaccess-ops.conf
+    content: |
+      # Managed by the `access_ops` role (spec 00075 G1) -- do not hand-edit.
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+    mode: '0644'
+    validate: 'sshd -t -f %s'
+  notify: reload sshd
+
+- name: wireguard dependencies (ops needs wg-quick/wg show too -- the access role installs it only on the bridgehead)
+  ansible.builtin.apt: {name: [wireguard-tools], state: present}
+
+- name: wireguard client conf
+  ansible.builtin.template:
+    src: zaccess0.conf.j2
+    dest: /etc/wireguard/zaccess0.conf
+    mode: '0600'
+  no_log: true # renders the WireGuard private key -- keep it out of --diff output
+  notify: restart wg-quick@zaccess0
+- name: wireguard tunnel enabled
+  ansible.builtin.systemd: {name: wg-quick@zaccess0, enabled: true, state: started}
+
+- name: nas relay socket + service (spec 00075 D6 -- systemd-socket-proxyd, no NAT/forwarding)
+  ansible.builtin.template:
+    src: "zaccess-nas-proxy.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-nas-proxy.{{ item }}"
+    mode: '0644'
+  loop: [socket, service]
+  notify: reload systemd
+- name: nas relay socket enabled
+  ansible.builtin.systemd: {name: zaccess-nas-proxy.socket, enabled: true, state: started, daemon_reload: true}
+
+- name: managed ~/.tmux.conf for zhaow (D15 -- hand edits are overwritten by design)
+  ansible.builtin.template:
+    src: tmux.conf.j2
+    dest: /home/zhaow/.tmux.conf
+    owner: zhaow
+    group: zhaow
+    mode: '0644'
+  notify: source tmux conf
+
+- name: ops-side probe script
+  ansible.builtin.template:
+    src: zaccess-probe-ops.sh.j2
+    dest: /usr/local/sbin/zaccess-probe-ops
+    mode: '0755'
+- name: ops-side probe service + timer
+  ansible.builtin.template:
+    src: "zaccess-probe-ops.{{ item }}.j2"
+    dest: "/etc/systemd/system/zaccess-probe-ops.{{ item }}"
+    mode: '0644'
+  loop: [service, timer]
+  notify: reload systemd
+- name: ops-side probe timer enabled
+  ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}
+
+# Idempotency is keyed on the pinned version being present under nvm's CURRENT node, not on a
+# hardcoded path (`creates:` would pin the node version into the check). `npm ls` exits non-zero when
+# the exact version is absent -- e.g. after a node upgrade moved the global bin -- which re-triggers
+# the install for the new node. community.general.npm was considered but a user-scope global install
+# needs nvm's node prefix on PATH and the module has no "source nvm.sh first" hook.
+- name: agentboard -- is the pinned version present under nvm's current node? (spec 00075 D13, G2)
+  ansible.builtin.command:
+    cmd: >-
+      bash -c 'source {{ access_ops_agentboard_nvm_sh }} &&
+      npm ls -g @gbasin/agentboard@{{ access_ops_agentboard_version }} --depth=0'
+  register: access_ops_agentboard_present
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: zhaow
+
+- name: agentboard -- install the pinned version into nvm's current global bin
+  ansible.builtin.command:
+    cmd: >-
+      bash -c 'source {{ access_ops_agentboard_nvm_sh }} &&
+      npm install -g @gbasin/agentboard@{{ access_ops_agentboard_version }}'
+  when: access_ops_agentboard_present.rc != 0
+  changed_when: true # only runs when the pinned version is absent, and then it installs
+  become: true
+  become_user: zhaow
+
+- name: agentboard unit rendered (spec 00075 D13 -- G2 web terminal, tunnel-bound)
+  ansible.builtin.template:
+    src: zaccess-agentboard.service.j2
+    dest: /etc/systemd/system/zaccess-agentboard.service
+    mode: '0644'
+  notify: reload systemd
+# Gated on access_ops_agentboard_live (D13), not hardcoded: a converge must never bring the web
+# terminal live on its own, but a fixed enabled:true/false would fight whichever state the owner
+# set by hand. Idempotent both ways -- default (false) converges to disabled+stopped every time
+# (so a reboot before the spike passes cannot auto-start it via WantedBy=), and once the owner
+# flips the flag true (after the spike passes), converges keep it enabled+started.
+- name: agentboard unit state — gated on the D13 spike (access_ops_agentboard_live)
+  ansible.builtin.systemd:
+    name: zaccess-agentboard.service
+    enabled: "{{ access_ops_agentboard_live | bool }}"
+    state: "{{ 'started' if (access_ops_agentboard_live | bool) else 'stopped' }}"
+    daemon_reload: true

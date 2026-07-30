@@ -15,6 +15,7 @@ NAS_ALLOY = REPO / "infra/nas/config.alloy"
 # could not find it; the real converge caught that, no syntax check could.
 OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
+ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 
 # The series each host must ship. NAS: Role A/B (gate) + its host metrics. OPS: the four timer
 # textfiles (written since OPS-3/OPS-4 but scraped by nothing until spec 00054 Task 1) plus the
@@ -161,6 +162,10 @@ OPS_REQUIRED = [
     *LIQUIDATIONS_APP_SERIES,
     *LOGSHIP_SERIES,
     *PROCESS_FAMILIES,
+    # D11: the ops-side tunnel/cert probe (access_ops role) publishes the SAME two names the
+    # bridgehead does (ACCESS_APP_SERIES below) -- host="ops" vs host="zaccess" tells them apart.
+    "zaccess_wireguard_handshake_age_seconds",
+    "zaccess_tls_not_after_seconds",
 ]
 # The capture host's own alert-bearing families (cold-review Important 2): `Capture · spool disk
 # low` (alerts.yaml:1442-1443) reads node_filesystem_avail_bytes/node_filesystem_size_bytes, and
@@ -202,6 +207,37 @@ CAPTURE_REQUIRED = [
     *PROCESS_FAMILIES,
 ]
 
+# The bridgehead's own probe-textfile series (zaccess-probe.sh.j2, spec 00075 D11): WireGuard
+# tunnel handshake age + edge TLS cert notAfter, per target.
+ACCESS_APP_SERIES = [
+    "zaccess_wireguard_handshake_age_seconds",
+    "zaccess_tls_not_after_seconds",
+]
+
+# Native Alloy (D11, apt package, no docker) -- no `prometheus.exporter.self "alloy"` component in
+# this config (mirror-the-ops-shape stops at unix exporter + textfile + scrape + keep +
+# remote_write), so unlike NAS/OPS/CAPTURE this host does NOT admit PROCESS_FAMILIES: nothing here
+# publishes them, and admitting an unpublished family is the T0051 trap in the other direction (see
+# the exclusion test below). Every name in this list is spelled out individually in the keep-regex
+# (files/config.alloy) -- no wildcards on this small a host -- so every one of them is pinned here.
+ACCESS_REQUIRED = [
+    "up",
+    "node_load1",
+    "node_cpu_seconds_total",
+    "node_memory_MemAvailable_bytes",
+    "node_memory_MemTotal_bytes",
+    "node_filesystem_avail_bytes",
+    "node_filesystem_size_bytes",
+    "node_network_receive_bytes_total",
+    "node_network_transmit_bytes_total",
+    # The did-the-timer-RUN discriminators (the ops green-when-blind lesson, 2026-07-28): without
+    # them a dead probe timer serves its last gauges forever and the tunnel-stale/cert alerts can
+    # never fire.
+    "node_textfile_mtime_seconds",
+    "node_textfile_scrape_error",
+    *ACCESS_APP_SERIES,
+]
+
 
 def _keep_regex(path: Path) -> re.Pattern:
     """Extract the `keep` write_relabel_config's regex from an Alloy config."""
@@ -233,8 +269,9 @@ def _drop_regex(path: Path) -> re.Pattern:
         (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
         (OPS_ALLOY, OPS_REQUIRED),
         (CAPTURE_ALLOY, CAPTURE_REQUIRED),
+        (ACCESS_ALLOY, ACCESS_REQUIRED),
     ],
-    ids=["nas", "ops", "capture"],
+    ids=["nas", "ops", "capture", "access"],
 )
 def test_keep_regex_admits_every_published_series(path, required):
     keep = _keep_regex(path)
@@ -248,8 +285,9 @@ def test_keep_regex_admits_every_published_series(path, required):
         (NAS_ALLOY, NAS_REQUIRED + NAS_LEGACY_ADMITTED),
         (OPS_ALLOY, OPS_REQUIRED),
         (CAPTURE_ALLOY, CAPTURE_REQUIRED),
+        (ACCESS_ALLOY, ACCESS_REQUIRED),
     ],
-    ids=["nas", "ops", "capture"],
+    ids=["nas", "ops", "capture", "access"],
 )
 def test_drop_regex_does_not_shadow_the_keep_list(path, required):
     """The D4 mechanism this task exists to implement (00069 T6/T7): the drop rule used to discard
@@ -272,8 +310,11 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
         (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES]),
         # Capture/engine run on the capture hosts, not the poller.
         (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
+        # No app daemon runs on the bridgehead, and (D11) no `exporter.self "alloy"` component
+        # either -- none of the app/logship/process families exist there.
+        (ACCESS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES, *PROCESS_FAMILIES]),
     ],
-    ids=["nas", "ops", "capture"],
+    ids=["nas", "ops", "capture", "access"],
 )
 def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
     """T0051, the other direction (00069 T6/T7): admitting a family this host never publishes is
@@ -284,7 +325,7 @@ def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded)
     assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
 
 
-@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])
+@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY], ids=["nas", "ops", "capture", "access"])
 def test_keep_regex_excludes_the_retired_sd_pair(path):
     """00068 D6/D8: discovery.docker is gone fleet-wide (capture T5, ops T6, NAS T8), so admitting
     its series anywhere is the T0051 admitted-but-unpublished trap."""
@@ -292,7 +333,7 @@ def test_keep_regex_excludes_the_retired_sd_pair(path):
     assert not keep.match(_SD_SERIES) and not keep.match(_SD_FAILURES)
 
 
-@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY], ids=["nas", "ops", "capture"])
+@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY], ids=["nas", "ops", "capture", "access"])
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     """Defence in depth, and the ordering matters: the drop must precede the keep."""
     text = path.read_text()
@@ -369,7 +410,7 @@ def test_the_not_a_published_metric_list_has_not_gone_stale():
 
 @pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
 def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
-    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY)]
+    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY)]
     assert any(k.match(metric) for k in keeps), (
         f"{metric} is published by this repo but matches no keep-regex on any host, so it is "
         f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "

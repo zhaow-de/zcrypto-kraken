@@ -1,0 +1,19 @@
+# Rendered by the `access` Ansible role at /etc/default/alloy (spec 00075 D11) -- do not hand-edit
+# on the host, it is overwritten on the next converge. Edit
+# infra/ansible/roles/access/templates/alloy-env.j2 instead. The apt package's alloy.service reads
+# this file as EnvironmentFile=/etc/default/alloy: CONFIG_FILE and CUSTOM_ARGS are the unit's own
+# knobs (the deb's shipped defaults), the GRAFANA_* creds below are consumed by config.alloy's
+# `sys.env(...)` calls. Same six names, straight from group_vars/observed/vault.yml, as
+# roles/ops/templates/alloy-secrets.env.j2 renders for the container variant (the NAS's copy
+# matches too, since T0056) -- no hand-placed out-of-band copy exists anywhere.
+# Names must match config.alloy's `sys.env(...)` calls exactly -- tests/test_infra_alloy_series.py
+# does not check this file, so a rename here silently breaks remote_write with no test failure to
+# catch it.
+CONFIG_FILE="/etc/alloy/config.alloy"
+CUSTOM_ARGS=""
+GRAFANA_PROM_URL={{ grafana_prom_url }}
+GRAFANA_PROM_USERNAME={{ grafana_prom_user }}
+GRAFANA_PROM_PASSWORD={{ grafana_prom_token }}
+GRAFANA_LOKI_URL={{ grafana_loki_url }}
+GRAFANA_LOKI_USERNAME={{ grafana_loki_user }}
+GRAFANA_LOKI_PASSWORD={{ grafana_loki_token }}

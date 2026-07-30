@@ -1,0 +1,18 @@
+---
+- name: restart alloy
+  # Stateless -- a restart loses nothing (unlike the ops/capture container path, native Alloy has
+  # no directory-mount reload trick to reach for; systemd owns the process directly).
+  ansible.builtin.systemd: {name: alloy, state: restarted}
+
+- name: reload systemd
+  ansible.builtin.systemd: {daemon_reload: true}
+
+- name: restart wg-quick@zaccess0
+  # wg-quick has no reload -- a restart is the only way to apply a changed conf. Brief drop, same
+  # as the alloy restart above: this is the tunnel itself, not a data path.
+  ansible.builtin.systemd: {name: wg-quick@zaccess0, state: restarted}
+
+- name: reload caddy
+  # Caddy's reload is graceful (no dropped in-flight connections, unlike a restart) -- the normal
+  # path for a Caddyfile or pinned-leaves change.
+  ansible.builtin.systemd: {name: caddy, state: reloaded}

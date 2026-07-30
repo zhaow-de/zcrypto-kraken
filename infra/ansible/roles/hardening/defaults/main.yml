@@ -1,3 +1,6 @@
+hardening_stale_sshd_dropins:
+  - "10-zcrypto.conf"
+
 hardening_ssh_port: "10022"
 # AllowUsers (spec 00057 D1, T0068): zcrypto-data is the m2m pull user the NAS connects as — sshd
 # gates AllowUsers at session setup BEFORE the forced command, so it must be listed even though the

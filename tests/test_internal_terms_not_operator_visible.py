@@ -145,7 +145,10 @@ def test_python_string_literals_carry_no_internal_vocabulary(path):
 def _systemd_descriptions() -> list[tuple[str, int, str]]:
     out = [
         (str(p.relative_to(REPO)), i, line)
-        for pattern in ("*.service", "*.timer", "*.service.j2", "*.timer.j2")
+        # *.socket/*.socket.j2 (spec 00075's NAS relay -- the repo's first socket-activated units):
+        # a new operator-visible surface joins this list AND the test together, per
+        # .claude/rules/operator-facing-text.md.
+        for pattern in ("*.service", "*.timer", "*.socket", "*.service.j2", "*.timer.j2", "*.socket.j2")
         for p in (REPO / "infra").rglob(pattern)
         for i, line in enumerate(p.read_text().splitlines(), 1)
         if line.startswith("Description=")

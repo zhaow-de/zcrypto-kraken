@@ -1,0 +1,18 @@
+---
+- name: restart wg-quick@zaccess0
+  # wg-quick has no reload -- a restart is the only way to apply a changed conf.
+  ansible.builtin.systemd: {name: wg-quick@zaccess0, state: restarted}
+
+- name: reload systemd
+  ansible.builtin.systemd: {daemon_reload: true}
+
+- name: source tmux conf
+  ansible.builtin.command: tmux source-file /home/zhaow/.tmux.conf
+  become: true
+  become_user: zhaow
+  changed_when: false # applies live config, not an idempotent resource -- nothing here for Ansible to track
+  failed_when: false # no server running = nothing to apply; the file governs the next start
+
+- name: reload sshd
+  # reload, not restart -- keeps live sessions up; the copy task validated with `sshd -t` first.
+  ansible.builtin.service: {name: ssh, state: reloaded}

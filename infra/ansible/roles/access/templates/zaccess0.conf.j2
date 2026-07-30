@@ -1,0 +1,10 @@
+# Rendered by the `access` role at /etc/wireguard/zaccess0.conf — edit the template.
+[Interface]
+Address = 10.99.0.1/24
+ListenPort = {{ access_wg_listen_port }}
+PrivateKey = {{ zaccess_wg_bridgehead_private_key }}
+
+[Peer]
+PublicKey = {{ zaccess_wg_ops_public_key }}
+PresharedKey = {{ zaccess_wg_preshared_key }}
+AllowedIPs = 10.99.0.2/32

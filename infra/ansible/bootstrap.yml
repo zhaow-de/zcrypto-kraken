@@ -73,3 +73,23 @@
       ansible.posix.authorized_key: {user: zcrypto-deploy, key: "{{ deploy_authorized_key }}", state: present, exclusive: true}
     - name: ensure python3 + sudo
       ansible.builtin.apt: {name: [python3, sudo], state: present, update_cache: true}
+
+- name: Bootstrap access bridgehead — zcrypto-deploy user only (sshd stays as the interim drop-in left it)
+  hosts: access_host
+  gather_facts: false
+  vars:
+    ansible_user: root
+    ansible_port: 10022
+  tasks:
+    - name: zcrypto-deploy sudo user
+      ansible.builtin.user: {name: zcrypto-deploy, groups: sudo, shell: /bin/bash, create_home: true}
+    - name: passwordless sudo for zcrypto-deploy (automation)
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/zcrypto-deploy
+        content: "zcrypto-deploy ALL=(ALL) NOPASSWD:ALL\n"
+        mode: '0440'
+        validate: 'visudo -cf %s'
+    - name: install zcrypto-deploy authorized key (exclusive — one key, no drift)
+      ansible.posix.authorized_key: {user: zcrypto-deploy, key: "{{ deploy_authorized_key }}", state: present, exclusive: true}
+    - name: ensure python3 + sudo
+      ansible.builtin.apt: {name: [python3, sudo], state: present, update_cache: true}

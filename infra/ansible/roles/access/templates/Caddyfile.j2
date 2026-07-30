@@ -1,0 +1,33 @@
+# Rendered by the `access` role at /etc/caddy/Caddyfile — edit the template.
+{
+	email {{ access_acme_email }}
+}
+
+(mtls) {
+	tls {
+		client_auth {
+			mode require_and_verify
+			trust_pool file /etc/caddy/zaccess_ca.crt
+			verifier leaf {
+				{% for leaf in access_pinned_leaves %}
+				file /etc/caddy/pinned-leaves/{{ leaf }}
+				{% endfor %}
+			}
+		}
+	}
+}
+
+tmux.zaccess.zhaow.me {
+	import mtls
+	reverse_proxy 10.99.0.2:4040
+}
+
+nas.zaccess.zhaow.me {
+	import mtls
+	reverse_proxy https://10.99.0.2:5001 {
+		transport http {
+			tls_server_name z-home-storage.zhaow.pro
+			tls_trusted_ca_certs /etc/caddy/nas-upstream-ca.pem
+		}
+	}
+}
