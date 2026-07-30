@@ -16,7 +16,7 @@ The ops node runs a Claude Code session inside tmux for autonomous research loop
 | Resources | 1 vCPU · 967 MB RAM · 25 GB disk | 24 cores · 64 GB RAM |
 | Addresses | `172.104.135.227` · `2a01:7e01::2000:7eff:fe6d:e991` | LAN `192.168.100.6` (static) |
 | ISP egress | n/a (public IP) | dynamic residential — the reason D4 chooses WireGuard |
-| sshd | `:10022` (hand-set in the main `sshd_config`); **root now key-only, password auth disabled** — interim drop-in `10-zaccess-interim.conf` hand-placed 2026-07-29 and verified over a fresh connection; the Phase-2 hardening converge supersedes and removes it | `:22`, Debian defaults, home-LAN only |
+| sshd | `:10022` (hand-set in the main `sshd_config`); **root now key-only, password auth disabled** — interim drop-in `10-zaccess-interim.conf` hand-placed 2026-07-29 and verified over a fresh connection; the Phase-2 hardening converge supersedes and removes it | `:22` — was Debian defaults / home-LAN only; once the G1 relay exposed it to the internet, `access_ops` ships a key-only drop-in (`PasswordAuthentication no`) |
 | Firewall | nftables installed, no ruleset loaded; **Linode Cloud Firewall configured** — permits `80`/`443`/`10022`/`20022` tcp, `51820` udp, ICMP. A second filter layer in front of nftables: a future port addition must open both | (managed by this repo already) |
 | Users | none (no uid ≥ 1000) | `zhaow` (uid 1000) · `zcrypto-deploy` |
 | Notable | no docker/nginx/caddy/fail2ban/unattended-upgrades | this repo's `base`/`chrony`/`docker`/`ops` roles converge it |
@@ -54,7 +54,7 @@ Other measured facts:
    ┌───────────────────────────────────────────────────────┐
    │ ops   zcrypto-ops (ops_host)                          │
    │   zaccess0  10.99.0.2/24                              │
-   │   sshd :22                        UNCHANGED           │
+   │   sshd :22                        key-only (G1 hardening)│
    │   agentboard :4040                binds 10.99.0.2     │
    │   zaccess-nas-proxy :5001         socket-proxyd relay │
    │   textfile timer: wg handshake + NAS cert notAfter    │
