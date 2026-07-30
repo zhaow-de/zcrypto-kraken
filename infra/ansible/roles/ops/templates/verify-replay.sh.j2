@@ -15,6 +15,13 @@ set -u
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
 URL="{{ ops_verify_replay_healthcheck_url }}"
 
+# spec 00076 D7: the replay is WINDOWED. Unwindowed, a single historical bad hour exits 1 every
+# day forever behind the CRITICAL exit-code alert -- training an operator to ignore the one alert
+# that means the archive stopped replaying. The window is computed per run, never rendered at
+# converge time (a baked date freezes on the day of the converge and narrows to nothing). Old hours
+# are not left unguarded: the hourly archive-pull hash-verifies every segment against its manifest.
+SINCE=$(date -u -d '{{ ops_verify_replay_window_days }} days ago' +%F)
+
 # T0060: a stable `--name` -- an unnamed `docker run --rm` got a fresh engine-random name each run,
 # and each name minted a brand-new Loki stream, forever, on a backend that bills per stream. That
 # log-shipping rationale is gone now (00068 D6/D8): there is no docker path left to drop anything
@@ -30,7 +37,7 @@ docker run --rm --pull never \
     -v "{{ ops_data_dir }}:/data:ro" \
     --entrypoint zcrypto \
     "{{ ops_image }}@{{ ops_image_digest }}" \
-    archive verify-replay "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"
+    archive verify-replay "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" --since "$SINCE"
 rc=$?
 
 now=$(date -u +%s)
