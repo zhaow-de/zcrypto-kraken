@@ -46,3 +46,36 @@
   notify: reload systemd
 - name: ops-side probe timer enabled
   ansible.builtin.systemd: {name: zaccess-probe-ops.timer, enabled: true, state: started, daemon_reload: true}
+
+- name: >-
+    agentboard, pinned (spec 00075 D13 -- G2 web terminal onto the operator tmux). community.general.npm
+    was considered first, but a user-scope global npm install needs the nvm-managed node's own prefix
+    on PATH, and ansible's non-interactive remote shell does not source nvm.sh the way an interactive
+    login does -- the module has no "source this first" escape hatch. ansible.builtin.command sourcing
+    nvm.sh explicitly is the robust shape; creates: makes it idempotent once access_ops_agentboard_exec
+    holds the owner-confirmed real path (defaults/main.yml)
+  ansible.builtin.command:
+    cmd: >-
+      bash -c 'source /home/zhaow/.nvm/nvm.sh &&
+      npm install -g @gbasin/agentboard@{{ access_ops_agentboard_version }}'
+    creates: "{{ access_ops_agentboard_exec }}"
+  become: true
+  become_user: zhaow
+
+- name: agentboard unit rendered (spec 00075 D13 -- G2 web terminal, tunnel-bound)
+  ansible.builtin.template:
+    src: zaccess-agentboard.service.j2
+    dest: /etc/systemd/system/zaccess-agentboard.service
+    mode: '0644'
+  notify: reload systemd
+# Gated on access_ops_agentboard_live (D13), not hardcoded: a converge must never bring the web
+# terminal live on its own, but a fixed enabled:true/false would fight whichever state the owner
+# set by hand. Idempotent both ways -- default (false) converges to disabled+stopped every time
+# (so a reboot before the spike passes cannot auto-start it via WantedBy=), and once the owner
+# flips the flag true (after the spike passes), converges keep it enabled+started.
+- name: agentboard unit state — gated on the D13 spike (access_ops_agentboard_live)
+  ansible.builtin.systemd:
+    name: zaccess-agentboard.service
+    enabled: "{{ access_ops_agentboard_live | bool }}"
+    state: "{{ 'started' if (access_ops_agentboard_live | bool) else 'stopped' }}"
+    daemon_reload: true

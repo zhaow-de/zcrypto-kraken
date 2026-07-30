@@ -5,3 +5,22 @@
 # here (ansible-lint var-naming) -- the client's Endpoint port must match the server's ListenPort;
 # defined here too rather than shared, so this role carries no cross-role variable dependency.
 access_ops_wg_listen_port: 51820
+
+# agentboard (spec 00075 D13 -- G2, web terminal onto the operator tmux). Pinned + spike-gated: the
+# owner runs the D13 spike (scratch-prefix install, decoy-session destructive-capability drill)
+# before this role is trusted to install/start the real thing; the role installs the pinned version
+# and renders the unit on every converge, but access_ops_agentboard_live below gates whether it is
+# ever enabled or started (see access_ops/tasks/main.yml).
+access_ops_agentboard_version: "0.4.5"
+# D13 gate -- stays false until the owner's spike proves agentboard cannot hibernate/kill/resize a
+# discovered session; the owner sets it true (host_vars or -e) to bring the unit live, and it then
+# stays enabled+started idempotently. false also means the unit is explicitly disabled+stopped on
+# every converge, so a reboot before the spike passes cannot auto-start it via WantedBy=.
+access_ops_agentboard_live: false
+# PLACEHOLDER -- not yet measured. The real path depends on which node version nvm has selected on
+# the ops box (npm's global bin lives under that node version's own prefix, e.g.
+# ~/.nvm/versions/node/<version>/bin/agentboard) -- the owner reads the true path off the spike
+# (e.g. `npm config get prefix` inside the spike's nvm environment) and overwrites this value before
+# the unit is ever started. This is a measured-at-execution value, the repo convention for values a
+# host confirms rather than the repo predicting (see docs/reference/fleet-pins.md).
+access_ops_agentboard_exec: "/home/zhaow/.nvm/versions/node/CONFIRM-AT-SPIKE/bin/agentboard"
