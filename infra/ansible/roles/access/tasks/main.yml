@@ -2,19 +2,19 @@
 - name: wireguard + probe dependencies
   ansible.builtin.apt: {name: [wireguard-tools], state: present}
 
-- name: grafana apt keyring
-  ansible.builtin.get_url:
-    url: https://apt.grafana.com/gpg.key
-    dest: /etc/apt/keyrings/grafana.asc
-    mode: '0644'
-- name: grafana apt repo
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
-    filename: grafana
+- name: add the Grafana apt repository (deb822 format; module fetches + stores the signing key)
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: https://apt.grafana.com/gpg.key
 - name: alloy, pinned (D11 — native, no docker on the edge; pin recorded in fleet-pins.md)
   ansible.builtin.apt:
     name: "alloy={{ access_alloy_version }}"
     state: present
+    update_cache: true
     allow_change_held_packages: false
 - name: hold alloy at the pin
   ansible.builtin.dpkg_selections: {name: alloy, selection: hold}
