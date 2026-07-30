@@ -48,7 +48,9 @@ Non-genesis head offsets max 0.972 s (ETH/BTC) and 1.954 s (SOL/BTC), while the 
 
 **D5 — Genesis hours are annotated, never booked.** A stream's earliest hour *present in the tree* begins mid-hour by construction; its head is neither booked as gap nor pooled into the statistic, and the row is marked in the table. Genesis is determined from the unfiltered tree, **before** `--since` filtering, so a window starting after the genesis hour does not promote a later hour into a free pass. Accepted, documented caveat: on a partial pull whose earliest hour is not the true genesis, that one hour's head gets a free pass — bounded to one hour at the window edge, against today's guaranteed false-RED for every new stream.
 
-**D6 — Below the degeneracy bound a stream is `UNMEASURED`, and an unmeasured stream fails the bar.** With polars' default nearest interpolation, `quantile(0.9999)` returns the element at `round(0.9999·(n−1))`, which is the maximum whenever `n ≤ 5001`; the threshold would then be 10× the worst outage — structurally blind. A stream with fewer than **5002** pooled intervals prints `UNMEASURED` in place of its `thresh_s` and `gap%`, keeping its factual columns (`hours`, `missing`, `n`), and **any unmeasured stream inside the window makes the verdict `EXIT BAR: FAIL (unmeasured streams: N)`**. A bar that silently ignores an unmeasurable stream is the same false-green shape the topic exists about. An unmeasured stream is **excluded from the TOTAL row's aggregation** and reported in its own count: a partial silence term must never be summed into a number that reads as complete. The bound is derived above and is pinned by a test that measures it empirically rather than trusting this paragraph.
+**D6 — Below the degeneracy bound a stream is `UNMEASURED`, and an unmeasured stream fails the bar.** With polars' default nearest interpolation, `quantile(0.9999)` returns the element at `round(0.9999·(n−1))`, which is the maximum whenever `n ≤ 5001`; the threshold would then be 10× the worst outage — structurally blind. A stream with fewer than **5002** pooled intervals prints `UNMEASURED` in place of its `thresh_s` and `gap%`, keeping its factual columns (`hours`, `missing`, `n`), and **any unmeasured stream inside the window makes the verdict `EXIT BAR: FAIL (unmeasured streams: N)`** — including when *every* stream is unmeasured, where the run prints the FAIL verdict and no TOTAL row (`rc` 0: something was read, and the verdict carries the judgement). An empty tree or an empty `--since` window keeps today's `rc` 1 with **no** verdict line: nothing was measured, so nothing may bank one. A bar that silently ignores an unmeasurable stream is the same false-green shape the topic exists about. An unmeasured stream is **excluded from the TOTAL row's aggregation** and reported in its own count: a partial silence term must never be summed into a number that reads as complete. The bound is derived above and is pinned by a test that measures it empirically rather than trusting this paragraph.
+
+**D6a — What `MIN_POOL` does and does not buy, stated exactly.** The bound guarantees only that `p99.99` is not the *maximum* — it protects against **one** outage-scale interval. Protection against `k` of them needs `0.0001·(n−1) ≥ k−0.5`, i.e. `n ≥ 10000k − 5000` (k=2 → 15,001; k=3 → 25,001). Measured margins on the live pools: BTC/EUR 20,491, LINK/EUR 10,508, ETH/BTC 2,197, SOL/BTC 898 — every production stream is orders of magnitude inside the safe regime. **The residual is real and is registered, not waved away**: a stream whose pool sits between 5,002 and ~15,000 intervals *and* which carries two similar outages still self-inflates its threshold and can under-count them. No machinery is built for it here (the robust-quantile alternative was weighed and declined for a regime no production stream occupies), the instrument's own `n` and `thresh_s` columns are the operator's evidence, and it is split out as its own topic rather than left inside a resolved one.
 
 **D7 — The daily `verify-replay` runs windowed at 7 days.** `cli/archive/command.py` already implements `--pair` and `--since`; only the deployed runner (`infra/ansible/roles/ops/templates/verify-replay.sh.j2`) passes neither. The template computes a rolling `--since` at 7 days. Rationale: it matches the T0003 exit bar's own 7-day framing, gives a full week to act on a regression, and bounds a permanent hole to 7 days of paging instead of forever. **A hole found this way must be registered durably when triaged** (ledger record or topic) — an alert that ages out is not a record.
 
@@ -63,21 +65,21 @@ Non-genesis head offsets max 0.972 s (ETH/BTC) and 1.954 s (SOL/BTC), while the 
 - No change to what the exit bar's numeric threshold is (`<0.1 %` gap time) — only to what is measured against it.
 - No change to `--overlay` isolation: the canonical report still never prints a verdict line (spec `00050`).
 - No change to the CLI's `verify-replay` implementation — the flags already exist.
-- No robust-quantile machinery (linear interpolation, outage-exclusion iteration): D6 refuses the small-sample regime where self-inflation materializes, which is cheaper to explain at 3 a.m.
+- No robust-quantile machinery (linear interpolation, outage-exclusion iteration): D6 refuses the regime where a *single* outage sets the threshold, and D6a bounds and registers what remains, which is cheaper to explain at 3 a.m. than an iterative estimator.
 
 ## Verification
 
 **Synthetic fixtures (unit).** Each constructed defect must be seen to trip the instrument before the fix is trusted:
 
 1. Genesis hour: a stream beginning mid-hour books 0 gap and is annotated (today: ~3600 s + a truncation).
-2. Two-density outage: an identical 200 s outage counts equally on a dense and a slow stream (today: 200.1 s vs 0.0 s).
+2. Two-density outage: an identical 200 s outage counts equally on a dense and a slow stream (today: 200.1 s vs 0.0 s). The fixture must sit inside D6a's safe regime — **one** outage among enough clean hours — because two outages in a ~11 k pool reproduce the false-GREEN *by design*, which is D6a's registered residual and not a defect of this fix.
 3. Restart clobber: last row early in H−1 plus first row late in H produces a crossing above the threshold, counted as one truncation and booked once.
 4. Missing hour: `3600` booked, the crossing not double-counted, the crossing not pooled.
 5. Degeneracy bound: `quantile(0.9999) == max` measured to hold at `n = 5001` and to fail at `n = 5002`, pinning D6's constant to observed behavior.
 6. Small sample: a stream under the bound prints `UNMEASURED` and forces `EXIT BAR: FAIL` even when its measured gap is 0.
 7. `--since` leading edge: a non-genesis first in-window hour with a late head is booked; an ordinary one is not (D10).
 8. Empty window and empty tree keep their current returns (regression on the two legs already landed in PR #220).
-9. `verify-replay` windowing: a synthetic canonical tree with one un-replayable hour exits 1 unwindowed and exits 0 when `--since` excludes it.
+Plus two checks that are not unit tests: the pre-existing `tests/test_continuity_overlay.py` fixtures are 120 rows/hour and would every one become `UNMEASURED` under D6 — they are migrated to dense-enough streams **preserving each test's original property**, since they are this instrument's existing regression carriers; and a one-time execution check that a synthetic canonical tree with one un-replayable hour exits 1 unwindowed and exits 0 when `--since` excludes it (D7's premise, exercising a CLI flag that already ships).
 
 **Real-data acceptance (both directions), run against the NFS mirror before and after:**
 
@@ -93,5 +95,6 @@ Non-genesis head offsets max 0.972 s (ETH/BTC) and 1.954 s (SOL/BTC), while the 
 
 - **The instrument's verdict changes on real data by design.** This is the point (a false FAIL becomes an honest PASS), but it means the before/after acceptance run is the load-bearing check, not the unit tests.
 - **D5's free pass** on a partial pull's first hour, as described.
+- **D6a's regime residual** — bounded, measured, registered as its own topic; no production stream is within three orders of magnitude of it.
 - **D7 narrows what is checked daily.** Named and mitigated by D8; the tradeoff is written into the rule text, not left implicit.
 - The change touches the T0003 exit-bar instrument. It does not touch the capture path, the live trade path, or any canonical dataset — the script is read-only over a pulled copy.

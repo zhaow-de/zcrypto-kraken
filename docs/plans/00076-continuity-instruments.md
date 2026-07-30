@@ -17,6 +17,8 @@
 - The exit bar's numeric threshold stays `< 0.1 %`.
 - `UNMEASURED` bound is **5002** pooled intervals (D6) — Task 1 measures the constant before any code depends on it.
 - Every guard added here is proven by constructing the defect it names and watching it trip (`.claude/rules/agent-ops.md`); reading the assertion is not verification.
+- **The PROPERTY each test asserts is the contract; its fixture constants are worked examples.** Row counts, spacings and expected seconds were computed by hand and several were wrong on the first pass (the cold review caught an off-by-one and a same-day `--since`). If a constant does not reproduce, fix the fixture arithmetic and say so — never weaken the assertion, and never let a row spill past its own hour (the real tree partitions by timestamp, so such a fixture tests a shape that cannot exist).
+- **Fixtures must clear `MIN_POOL`.** Anything under 5,002 intervals is `UNMEASURED` by design, which silently turns an assertion about gap booking into an assertion about nothing.
 - Commit after each task. Stage by explicit path, one kind per commit (`.claude/rules/commit-messages.md`; the `staged-kind` hook enforces the claude/non-claude boundary).
 - Run the full gate before each commit: `uv run pre-commit run -a`.
 
@@ -189,12 +191,13 @@ def test_missing_hour_books_once_and_its_excess_is_not_pooled(tmp_path):
     write_stream(
         tmp_path,
         "AAA/EUR",
-        {H0: evenly(H0, 3590, 1.0), H2: evenly(H2, 3590, 1.0, start=10.0)},
+        {H0: evenly(H0, 3591, 1.0), H2: evenly(H2, 3580, 1.0, start=10.0)},
     )
     tl = continuity.stream_timeline(_segs(tmp_path, "AAA/EUR"), genesis_hour=H0)
     assert tl.missing_hours == 1
     excesses = [s for s, k in tl.boundaries if k == "excess"]
     assert len(excesses) == 1
+    # H0's last row sits 10 s before its boundary, H2's first 10 s after its start: 3600 + 20.
     assert excesses[0] == pytest.approx(20.0, abs=0.01)
     assert len(tl.pool) == len(tl.intra)  # the excess never joins the threshold sample
 
@@ -309,6 +312,7 @@ Message: `feat(infra): read a stream's hours as one timeline, not independent fi
 **Files:**
 - Modify: `infra/scripts/continuity.py`
 - Test: `tests/test_infra_continuity.py`
+- **Migrate: `tests/test_continuity_overlay.py`** — its fixtures are 120 rows/hour (`range(0, 3600, 30)`), so under D6 every stream in that file becomes `UNMEASURED` and five of its eight tests break. They are this instrument's existing regression carriers (the PR #220 legs) and must move with the change, in this task's commit.
 
 **Interfaces:**
 - Consumes: `stream_timeline`, `StreamTimeline` (Task 2).
@@ -324,6 +328,17 @@ def _run(root: Path, capsys, *, since=dt.datetime.min.replace(tzinfo=UTC), kind=
     genesis = {pair: min(h for h, _ in segs) for pair, segs in streams.items()}
     rc = continuity.report(streams, since=since, quiet=False, show_exit_bar=True, genesis=genesis)
     return rc, capsys.readouterr().out
+
+
+def _column(out: str, prefix: str, field: str) -> str:
+    """The value under `field` on the row starting with `prefix`, located via the HEADER rather than
+    a fixed index -- the same helper `tests/test_continuity_overlay.py` uses, and for the same
+    reason: a fixed index silently reads whatever now sits in slot N. Doubly true here, where rows
+    carry a trailing ` genesis` marker that shifts every negative index."""
+    lines = out.splitlines()
+    header = next(line for line in lines if field in line)
+    row = next(line for line in lines if line.startswith(prefix))
+    return row.split()[header.split().index(field)]
 
 
 def test_genesis_hour_books_no_gap_and_is_annotated(tmp_path):
@@ -347,24 +362,29 @@ def test_genesis_annotation_and_zero_gap_in_the_report(tmp_path, capsys):
 
 
 def test_identical_outage_counts_the_same_on_dense_and_slow_streams(tmp_path, capsys):
-    # The false-GREEN the topic measured: a 200 s outage counted 200.1 s on a dense stream and
-    # 0.0 s on a slow one, because the threshold self-calibrated to the outage itself.
+    """The false-GREEN the topic measured: a 200 s outage counted 200.1 s on a dense stream and
+    0.0 s on a slow one, because the threshold self-calibrated to the outage itself.
+
+    ONE outage among four clean hours, so the fixture sits inside D6a's safe regime -- with two
+    outages in a ~11k pool the p99.99 lands ON the second one and the slow stream self-inflates by
+    design, which is D6a's registered residual, not a defect this test may hide behind.
+    """
     for pair, step in (("DENSE/EUR", 0.1), ("SLOW/EUR", 0.6)):
-        rows = []
-        for i in range(2):
+        hours = {}
+        for i in range(4):
             h = H0 + dt.timedelta(hours=i)
-            n = int(3400 / step)
+            n = int(3000 / step)
             stamps = evenly(h, n, step)
-            stamps += [stamps[-1] + dt.timedelta(seconds=200.0 + j * step) for j in range(1, 30)]
-            rows.append((h, stamps))
-        write_stream(tmp_path, pair, dict(rows))
+            if i == 1:  # the single outage: a 200 s hole, then the stream resumes inside the hour
+                stamps += [stamps[-1] + dt.timedelta(seconds=200.0 + j * step) for j in range(1, 30)]
+            assert (stamps[-1] - h).total_seconds() < 3600, "rows must stay inside their own hour"
+            hours[h] = stamps
+        write_stream(tmp_path, pair, hours)
     _, out = _run(tmp_path, capsys)
-    counted = {}
-    for line in out.splitlines():
-        if line.startswith(("DENSE", "SLOW")):
-            counted[line.split()[0]] = float(line.split()[-4])
-    assert counted["DENSE/EUR"] == pytest.approx(counted["SLOW/EUR"], rel=0.05)
-    assert counted["SLOW/EUR"] > 300  # both 200 s outages counted, not swallowed
+    dense = float(_column(out, "DENSE/EUR", "gap_s"))
+    slow = float(_column(out, "SLOW/EUR", "gap_s"))
+    assert dense == pytest.approx(slow, rel=0.05)
+    assert slow > 150  # the 200 s outage is counted on the slow stream, not swallowed
 
 
 def test_restart_clobber_crossing_is_one_truncation_booked_once(tmp_path, capsys):
@@ -375,13 +395,12 @@ def test_restart_clobber_crossing_is_one_truncation_booked_once(tmp_path, capsys
         {
             H0: evenly(H0, 5500, 0.6),
             H1: evenly(H1, 5500, 0.6, start=300.0),
-            H2: evenly(H2, 6000, 0.6),
+            H2: evenly(H2, 5999, 0.6),
         },
     )
     _, out = _run(tmp_path, capsys)
-    row = next(line for line in out.splitlines() if line.startswith("AAA/EUR"))
-    assert row.split()[3] == "1"  # trunc column
-    gap = float(row.split()[-4])
+    assert _column(out, "AAA/EUR", "trunc") == "1"
+    gap = float(_column(out, "AAA/EUR", "gap_s"))
     assert gap == pytest.approx(600.0, rel=0.05)  # booked once, not as head+tail as well
     assert "truncated hours: 1" in out
 
@@ -390,22 +409,59 @@ def test_missing_hour_is_not_double_counted(tmp_path, capsys):
     write_stream(
         tmp_path,
         "AAA/EUR",
-        {H0: evenly(H0, 6000, 0.6), H2: evenly(H2, 6000, 0.6, start=10.0)},
+        {H0: evenly(H0, 5999, 0.6), H2: evenly(H2, 5980, 0.6, start=10.0)},
     )
     _, out = _run(tmp_path, capsys)
-    row = next(line for line in out.splitlines() if line.startswith("AAA/EUR"))
-    gap = float(row.split()[-4])
+    gap = float(_column(out, "AAA/EUR", "gap_s"))
     assert gap == pytest.approx(3610.0, rel=0.02)  # 3600 for the hour + the 10 s excess, never 7200
+
+
+def test_since_window_keeps_genesis_from_moving_and_books_a_late_leading_edge(tmp_path, capsys):
+    """D5 + D10 through `main()`, the only path where the unfiltered-genesis defense actually runs.
+
+    The genesis sits on the PREVIOUS day, because `--since` takes a date and cannot split a day:
+    the window opens at 00:00, whose head is 400 s late -- a real restart, which must be booked and
+    counted rather than inheriting genesis's free pass.
+
+    Arithmetic, so the assertions are exact: 0.6 s spacing puts p99.99 at 0.6 and the threshold at
+    max(6.0, 5.0) = 6.0; the head is 400 s (booked, 1 truncation), the crossing 2.6 s and the
+    trailing tail 1.2 s (both under it, booked as nothing).
+    """
+    gen = dt.datetime(2026, 6, 30, 23, tzinfo=UTC)
+    d1h0 = dt.datetime(2026, 7, 1, 0, tzinfo=UTC)
+    d1h1 = dt.datetime(2026, 7, 1, 1, tzinfo=UTC)
+    write_stream(
+        tmp_path,
+        "AAA/EUR",
+        {
+            gen: evenly(gen, 5999, 0.6),
+            d1h0: evenly(d1h0, 5330, 0.6, start=400.0),
+            d1h1: evenly(d1h1, 5999, 0.6),
+        },
+    )
+    argv = ["continuity.py", str(tmp_path), "--since", "2026-07-01"]
+    import sys
+
+    old = sys.argv
+    try:
+        sys.argv = argv
+        continuity.main()
+    finally:
+        sys.argv = old
+    out = capsys.readouterr().out
+    assert _column(out, "AAA/EUR", "trunc") == "1"
+    assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(400.0, rel=0.05)
+    assert "genesis" not in out, "a --since window must not promote H1 into the genesis free pass"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_infra_continuity.py -v`
-Expected: the five new tests FAIL (`report()` has no `genesis` keyword).
+Expected: the six new tests FAIL (`report()` has no `genesis` keyword).
 
 - [ ] **Step 3: Rewrite `report()`'s per-stream body**
 
-Replace the whole `for pair, segs in sorted(streams.items()):` body (from `segs = [(h, p) for h, p in segs if h >= since]` through the `if not quiet:` print) with:
+Delete `report()`'s now-stranded local `HOUR = dt.timedelta(hours=1)` (Task 2 moved it to module level; ruff here selects only `I`, so the gate will not flag it). Then replace the whole `for pair, segs in sorted(streams.items()):` body (from `segs = [(h, p) for h, p in segs if h >= since]` through the `if not quiet:` print) with:
 
 ```python
     for pair, segs in sorted(streams.items()):
@@ -473,7 +529,7 @@ Docstring addition (append to the existing one): `genesis` maps each pair to its
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_infra_continuity.py -v`
-Expected: 11 passed. (`test_min_pool_matches_the_measured_bound` and the Task-2 tests still pass.)
+Expected: the six new Task-3 tests pass alongside Tasks 1-2's. Exact totals are not asserted here -- count what the run reports.
 
 - [ ] **Step 5: Update the two `report()` call sites in `main()`**
 
@@ -504,16 +560,30 @@ def main() -> int:
     return rc
 ```
 
-- [ ] **Step 6: Run the whole suite**
+- [ ] **Step 6: Migrate `tests/test_continuity_overlay.py`'s fixtures — preserving each test's property**
 
-Run: `uv run pytest tests/test_infra_continuity.py -v && uv run pytest -q -k continuity`
-Expected: all pass.
+Run: `uv run pytest tests/test_continuity_overlay.py -v`
+Expected BEFORE the migration: 5 failures — `test_default_invocation_has_no_canonical_section`, `test_overlay_mode_prints_both_reports`, `test_the_table_prints_the_threshold_that_produced_each_gap` (`float("UNMEASURED")` → ValueError), `test_the_total_row_never_fabricates_a_threshold` (StopIteration — no TOTAL row), `test_quiet_mode_drops_the_per_pair_rows_and_keeps_the_total`.
 
-- [ ] **Step 7: Commit**
+That failure list is *correct behavior*, not a regression: 120-row streams are exactly what D6 refuses. Migrate each fixture to clear `MIN_POOL` **while keeping the property the test was written to prove**:
+
+- The `_write_hour(..., stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])` calls become dense enough streams. Keep the *two different densities* wherever a test uses them — `test_the_table_prints_the_threshold_that_produced_each_gap` exists to show two streams of the same hour deriving different thresholds, and it must still do so. Working shapes: 1 s spacing over 2 h (5,999 intervals → thresh 10.0) beside 2 s over 3 h (5,399 intervals → thresh 20.0); adjust the asserted threshold values to whatever those fixtures actually derive, verified by running.
+- `test_empty_window_prints_no_exit_bar` and the empty-tree test keep `rc == 1` and no verdict — D6 does not touch them.
+- Do not delete a test to make the suite green. If a property genuinely cannot survive D6, **stop and report** rather than dropping it.
+
+Run: `uv run pytest tests/test_continuity_overlay.py tests/test_infra_continuity.py -v`
+Expected AFTER: all pass, with no test removed (`git diff --stat` shows edits, not deletions).
+
+- [ ] **Step 7: Run the whole suite**
+
+Run: `uv run pytest -q`
+Expected: the full suite green.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 uv run pre-commit run -a
-git add infra/scripts/continuity.py tests/test_infra_continuity.py
+git add infra/scripts/continuity.py tests/test_infra_continuity.py tests/test_continuity_overlay.py
 git commit
 ```
 Message: `feat(infra): book and count truncation from measured density, not fixed constants`
@@ -540,20 +610,24 @@ def test_small_sample_is_unmeasured_and_fails_the_bar(tmp_path, capsys):
     rc, out = _run(tmp_path, capsys)
     assert "UNMEASURED" in out
     assert "FAIL (unmeasured streams: 1)" in out
-    assert rc == 0  # rc still reports "measured something", the verdict carries the judgement
+    # Every stream unmeasured is still "we read something and judged it" -- rc 0 with a FAIL
+    # verdict. Only an empty tree or an empty window returns 1 with NO verdict (D6).
+    assert rc == 0
+    assert "TOTAL" not in out, "no measured stream may produce a TOTAL row"
 
 
 def test_unmeasured_stream_is_excluded_from_the_total_row(tmp_path, capsys):
     write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 200, 18.0)})
-    write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 6000, 0.6), H1: evenly(H1, 6000, 0.6)})
+    write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 5999, 0.6), H1: evenly(H1, 5999, 0.6)})
     _, out = _run(tmp_path, capsys)
-    total = next(line for line in out.splitlines() if line.startswith("TOTAL"))
-    dense = next(line for line in out.splitlines() if line.startswith("DENSE"))
-    assert float(total.split()[-2]) == pytest.approx(float(dense.split()[-2]))  # covered_s: only the measured stream
+    # covered_s on TOTAL counts only the measured stream -- read via the header, never a fixed
+    # index: the DENSE row carries a trailing ` genesis` marker that shifts every negative index.
+    assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(float(_column(out, "DENSE/EUR", "covered_s")))
+    assert "FAIL (unmeasured streams: 1)" in out
 
 
 def test_all_streams_measured_keeps_the_plain_verdict(tmp_path, capsys):
-    write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 6000, 0.6), H1: evenly(H1, 6000, 0.6)})
+    write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 5999, 0.6), H1: evenly(H1, 5999, 0.6)})
     _, out = _run(tmp_path, capsys)
     assert "unmeasured" not in out
     assert "EXIT BAR (<0.1% gap time): PASS" in out
@@ -578,21 +652,28 @@ Replace the `if show_exit_bar:` block:
             print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
 ```
 
-Also, when `totals` is empty but `unmeasured` is not, the existing `no segments in the requested window` early return would hide them. Guard it:
+Also, when `totals` is empty but `unmeasured` is not, the existing `no segments in the requested window` early return would hide them **and skip the verdict entirely** — the exact false-green D6 forbids. The all-unmeasured case must still print its FAIL:
 
 ```python
     if not totals:
+        # Nothing measurable. Two different situations, and only one of them may stay silent:
+        # streams existed but none could be self-calibrated (D6 -- say so, and FAIL), versus no
+        # segments at all (nothing was measured, so nothing may bank OR fail a verdict).
         if unmeasured:
             print(f"no measurable segments: {len(unmeasured)} stream(s) under the {MIN_POOL}-interval bound")
-            return 1
+            if show_exit_bar:
+                print(f"  EXIT BAR (<0.1% gap time): *** FAIL *** (unmeasured streams: {len(unmeasured)})")
+            return 0
         print("no segments in the requested window")
         return 1
 ```
 
+Note the return value: `0` when streams were read but none measurable (the verdict carries the judgement), `1` only when there was nothing to read at all — matching `test_empty_window_prints_no_exit_bar`'s existing contract.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_infra_continuity.py -v`
-Expected: 14 passed.
+Expected: the three new tests pass alongside every earlier one.
 
 - [ ] **Step 5: Update the module docstring**
 
@@ -765,17 +846,18 @@ Message: `fix(infra): window the daily verify-replay so one bad hour cannot page
 - [ ] **Step 1: Capture the BEFORE numbers from the merge-base**
 
 ```bash
+SCRATCH=<the session scratchpad dir named in your dispatch prompt>   # never /tmp
 git stash list  # expect empty
-git worktree add /tmp/continuity-before $(git merge-base HEAD develop)
-uv run python /tmp/continuity-before/infra/scripts/continuity.py /mnt/zhao-crypto/capture-segments > /tmp/continuity-before.txt
+git worktree add "$SCRATCH/continuity-before" $(git merge-base HEAD develop)
+uv run python "$SCRATCH/continuity-before/infra/scripts/continuity.py" /mnt/zhao-crypto/capture-segments > "$SCRATCH/before.txt"
 ```
 
-Read `/tmp/continuity-before.txt` and record: ETH/BTC's `gap%`, the TOTAL row, the truncated-hours count, the verdict.
+Read `$SCRATCH/before.txt` and record: ETH/BTC's `gap%`, the TOTAL row, the truncated-hours count, the verdict.
 
 - [ ] **Step 2: Capture the AFTER numbers**
 
 ```bash
-uv run python infra/scripts/continuity.py /mnt/zhao-crypto/capture-segments > /tmp/continuity-after.txt
+uv run python infra/scripts/continuity.py /mnt/zhao-crypto/capture-segments > "$SCRATCH/after.txt"
 ```
 
 - [ ] **Step 3: Assert the four acceptance criteria** (spec 00076 *Verification*)
@@ -790,7 +872,7 @@ If any criterion fails, **stop and report with both files** — do not adjust th
 - [ ] **Step 4: Clean up the worktree**
 
 ```bash
-git worktree remove /tmp/continuity-before
+git worktree remove "$SCRATCH/continuity-before"
 ```
 
 - [ ] **Step 5: Commit the record**
@@ -810,7 +892,7 @@ No code changes; the numbers land in the closeout (Task 7). If Step 3 revealed a
 
 - [ ] **Step 1: Resolve and archive T0097**
 
-All three legs are now addressed: the threshold is fitted (Task 3), the head/tail test is boundary-spanning (Tasks 2–3), the verify-replay is windowed (Task 5). Per `.claude/skills/topic-ops/SKILL.md`: flip `status: partial` → `status: resolved`, **delete the `ripe_when:` key**, add a `## Resolution` section naming spec 00076, this plan, the commits and the acceptance numbers, then `git mv` the file into `docs/open-topics/archive/`.
+All three legs are now addressed: the threshold is fitted (Task 3), the head/tail test is boundary-spanning (Tasks 2–3), the verify-replay is windowed (Task 5). Its one surviving residual — D6a's repeat-outage regime — was **split into [[T0112]] before this archive** (already registered and indexed on this branch), so the topic carries no live deferred sub-item, per `.claude/rules/open-topics.md`. Per `.claude/skills/topic-ops/SKILL.md`: flip `status: partial` → `status: resolved`, **delete the `ripe_when:` key**, add a `## Resolution` section naming spec 00076, this plan, the commits, the acceptance numbers and the T0112 split, then `git mv` the file into `docs/open-topics/archive/`.
 
 - [ ] **Step 2: Move its index bullet**
 
