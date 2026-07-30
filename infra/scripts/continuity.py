@@ -153,7 +153,7 @@ def report(
     show_exit_bar: bool,
     genesis: dict[str, dt.datetime],
 ) -> int:
-    """Print the per-pair continuity table + summary. Returns 0, or 1 when there is nothing to measure -- `streams` empty, or `--since` excluding every hour of every stream.
+    """Print the per-pair continuity table + summary. Returns 1 when there is nothing to measure -- `streams` empty, or `--since` excluding every hour of every stream -- with no verdict printed either time; an all-UNMEASURED tree still returns 0, with an `EXIT BAR *** FAIL ***` verdict.
 
     `show_exit_bar` gates ONLY the `EXIT BAR (<0.1% gap time): PASS/FAIL` verdict line: the raw
     report always gets it; the `--overlay` canonical report never does, so an overlay run can never
