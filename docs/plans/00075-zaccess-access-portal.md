@@ -532,7 +532,7 @@ Task block: template (0600, `no_log: true` on the template task), `systemd: {nam
   failed_when: false   # no server running = nothing to apply; the file governs the next start
 ```
 
-Ops probe script: same shape as the bridgehead's, `wg show zaccess0` + `openssl s_client -connect 192.168.100.5:5001 -servername z-home-storage.zhaow.me` → `zaccess_tls_not_after_seconds{target="nas-dsm"}`; writes into the existing ops textfile dir — the operand is the `ops` role's `ops_textfile_dir` variable (the path in `roles/ops/files/config.alloy` is the *container-side* mount, not the host path).
+Ops probe script: same shape as the bridgehead's, `wg show zaccess0` + `openssl s_client -connect 192.168.100.5:5001 -servername z-home-storage.zhaow.pro` → `zaccess_tls_not_after_seconds{target="nas-dsm"}`; writes into the existing ops textfile dir — the operand is the `ops` role's `ops_textfile_dir` variable (the path in `roles/ops/files/config.alloy` is the *container-side* mount, not the host path).
 
 - [ ] **Step 3: wire into site.yml ops play** — `- role: access_ops` + `tags: [access]`; extend ops keep-regex + admission test with `zaccess_.*`. **The ops `config.alloy` edit makes Alloy the subject** — the converge must pass `-e ops_alloy_digest=<currently-running>` (rule in `capture-deploys.md`).
 - [ ] **Step 4: alert + runbook** — `zaccess-tunnel-stale`: `max(zaccess_wireguard_handshake_age_seconds) > 300` for 10m — **either** end reporting stale fires (`max`), and `PersistentKeepalive=25` makes >300 s genuinely wrong; a fully dark bridgehead is the dark alert's job, not this one's. Summary → runbook anchor.
@@ -644,7 +644,7 @@ nas.zaccess.zhaow.me {
 	import mtls
 	reverse_proxy https://10.99.0.2:5001 {
 		transport http {
-			tls_server_name z-home-storage.zhaow.me
+			tls_server_name z-home-storage.zhaow.pro
 		}
 	}
 }
