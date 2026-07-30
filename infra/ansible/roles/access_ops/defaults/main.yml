@@ -17,10 +17,6 @@ access_ops_agentboard_version: "0.4.5"
 # stays enabled+started idempotently. false also means the unit is explicitly disabled+stopped on
 # every converge, so a reboot before the spike passes cannot auto-start it via WantedBy=.
 access_ops_agentboard_live: false
-# PLACEHOLDER -- not yet measured. The real path depends on which node version nvm has selected on
-# the ops box (npm's global bin lives under that node version's own prefix, e.g.
-# ~/.nvm/versions/node/<version>/bin/agentboard) -- the owner reads the true path off the spike
-# (e.g. `npm config get prefix` inside the spike's nvm environment) and overwrites this value before
-# the unit is ever started. This is a measured-at-execution value, the repo convention for values a
-# host confirms rather than the repo predicting (see docs/reference/fleet-pins.md).
-access_ops_agentboard_exec: "/home/zhaow/.nvm/versions/node/CONFIRM-AT-SPIKE/bin/agentboard"
+# Measured at the D13 spike 2026-07-30: npm's global bin under the nvm-selected node on the ops box.
+# If nvm's node version changes, `command -v agentboard` gives the new path -- update this value.
+access_ops_agentboard_exec: "/home/zhaow/.nvm/versions/node/v26.5.0/bin/agentboard"

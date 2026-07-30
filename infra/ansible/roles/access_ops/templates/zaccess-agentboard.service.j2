@@ -13,6 +13,10 @@ After=wg-quick@zaccess0.service
 
 [Service]
 User=zhaow
+# agentboard's bin is `#!/usr/bin/env node`, and it spawns child node processes -- systemd's minimal
+# PATH has no nvm node, so put the nvm bin dir (which holds both node and agentboard) first, then the
+# system dirs for tmux. Derived from the exec's own dir so it tracks a node-version change with it.
+Environment=PATH={{ access_ops_agentboard_exec | dirname }}:/usr/bin:/bin
 Environment=PORT=4040
 Environment=HOSTNAME=10.99.0.2
 Environment=TMUX_SESSION=agentboard

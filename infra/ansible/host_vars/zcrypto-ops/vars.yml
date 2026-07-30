@@ -54,3 +54,10 @@ ops_sync_hot_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/sync_hot_
 # mint ever will be spec 00050 Task 13's Leg-A drill gap, deliberately created and fully observed.
 # Derivation: T0039. To disable: set false (or override -e ops_reconcile_mint=false) + converge.
 ops_reconcile_mint: true
+
+# G2 LIVE 2026-07-30 (after the incident + fix): the fatal defect was `set -g window-size manual` in
+# the managed ~/.tmux.conf crashing tmux 3.5a on new-session -- REMOVED (commit 123c1954 + guard
+# test). agentboard itself is safe on the shared socket: it does not crash the server and refuses to
+# kill a discovered session ("Cannot kill external sessions"); reflow-on-attach is recoverable. This
+# flag enables + starts zaccess-agentboard. spec 00075 D13.
+access_ops_agentboard_live: true

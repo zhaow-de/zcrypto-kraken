@@ -3,10 +3,10 @@
 set -g mouse on
 set -g history-limit 10000
 
-# D13: pin the window size so a differently-sized web client cannot reflow the long-running session.
-# default-size MUST match the current live session's measured dimensions (212x53) -- the source-file
-# handler applies this live on every converge, and window-size manual alone (without a matching
-# default-size) would snap the window to the tmux default 80x24 and reflow the running zcrypto
-# session, a catastrophe for a session nothing can rebuild.
-set -g default-size 212x53
-set -g window-size manual
+# NO `set -g window-size manual` here. It was the D13 resize mitigation, but it CRASHES the tmux 3.5a
+# server ("server exited unexpectedly") the next time a session/window is created -- which is exactly
+# what killed the live zcrypto session on 2026-07-30 when agentboard created its own session on the
+# poisoned server. Verified: `tmux -f <conf-with-window-size-manual> new-session` dies; the same conf
+# without that one line is fine; `set -g default-size` alone is harmless. The reflow-on-attach it was
+# meant to prevent is RECOVERABLE (the operator's real terminal re-attaches at its own size); the
+# crash is not. So the pin is dropped -- never reintroduce `window-size manual` on tmux 3.5a.
