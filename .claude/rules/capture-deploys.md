@@ -14,7 +14,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 - Converges run `site.yml`; `bootstrap.yml` is first-provision only. **Never run the primary un-tagged** (`--tags capture`, `--tags engine`, or `--skip-tags engine`): an untagged `--limit zcrypto` pulls in the engine play (its only host) and its digest assert fails the host closed — "fixing" that with `-e engine_image_digest=…` restarts the LIVE trade engine.
 - **Adding a capture pair (`capture_pairs` in `group_vars/capture_host/vars.yml`): PRIMARY first, secondary second** — the reverse of the image-rollout order (two `--limit` runs; the capture play has no `serial:`). Secondary-first makes the reconciler "heal" the new pair's hours from the secondary into the append-only ledger and flood the gap alert — and the trades half carries no alert rule at all, so that damage lands silently; primary-first short-circuits it at any spacing. A pair-list change is **config, not a digest re-pin** — pass the currently-running digest; no bake owed.
 - Verify by outcome after the next hour boundary: every book stream's `<HH>.parquet` begins at `:00:00.0x`, the NAS archive-pull loop's next pull reports `failed=0` (that IS the manifest verification — it hash-verifies every segment hourly), `infra/scripts/continuity.py` (on a pulled copy, never the live dir) shows no new truncated hours. **Exception — a NEW stream's genesis hour** starts mid-hour by construction: one truncated hour, up to ~3600 s booked gap, first `<HH>.parquet` not at `:00:00.0x` — expected once per new stream, not a failure; `continuity.py` has no genesis carve-out, so read past it.
-- **A `config.alloy` change ships only with `-e capture_alloy_digest=<currently-running>`** — the whole Alloy block is gated `when: capture_alloy_digest is defined`, so an ordinary converge skips the config copy, exits 0, and leaves the host's keep-regex stale; an unadmitted series is then dropped at remote-write and its alert reads no data forever. Config-only, so no bake owed.
+- **A `config.alloy` change ships only with `-e capture_alloy_digest=<currently-running>`** — the whole Alloy block is gated `when: capture_alloy_digest is defined`, so an ordinary converge skips the config copy and the digest-independent drift assert fails it loudly until the digest is passed. Config-only, so no bake owed.
 - `dropping late event` lines right after a restart are healthy (resubscribe replay), not a failure signal.
 
 ## Engine converges
@@ -32,13 +32,13 @@ The engine runs on the capture primary — everything above applies (the canary 
 Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no canary bake owed.
 
 - **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; `daemon.json` must be unchanged (its handler bounces Alloy and the poller).
-- **Omit `ops_alloy_digest` unless Alloy is the subject — but a `config.alloy` edit MAKES it the subject**: the whole Alloy block is gated `when: ops_alloy_digest is defined`, so an ordinary converge skips the config copy, exits 0, and leaves the host's keep-regex stale; pass the currently-running digest to ship it. Same gate on the capture role.
+- **Omit `ops_alloy_digest` unless Alloy is the subject — but a `config.alloy` edit MAKES it the subject**: the whole Alloy block is gated `when: ops_alloy_digest is defined`, so an ordinary converge skips the config copy and the drift assert fails it loudly; pass the currently-running digest to ship it. Same gate + assert on the capture role.
 - **Pull the digest on the host first** — every runner is `--pull never` and the role has no pull task; without it every timer exits 125.
 - **Record the running digest in `fleet-pins.md` before converging** — `ops_image_digest` has no repo default, so that row is the only rollback operand.
 - The ops image is the **capture** image repo — never read one service's pin as the other's.
 - **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — the file moves, the container does not, and a later `docker compose up` rolls an unbackfillable stream. End every converge deciding explicitly whether to roll it.
 - **Verify by outcome** at the next tick: `ops_archive_pull_exit_code` / `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, reconcile counters unchanged, `hc_checks_down_total` 0.
-- Rollback = re-converge to the recorded digest. Expect `healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
+- Rollback = re-converge to the recorded digest. Expect `zcrypto_reconcile_healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
 
 ### Panel generation changes
 

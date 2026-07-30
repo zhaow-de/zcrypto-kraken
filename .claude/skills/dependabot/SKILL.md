@@ -108,9 +108,8 @@ PR_NUMBER=<the number for this PR>
 # Poll CI: every 30s, max 10 minutes.
 # coverage.yml now runs on pull_request into develop/main (dependabot targets develop), so a
 # Dependabot PR DOES report a "Test coverage" check — wait for it, and merge only when green.
-# Caveat: GitHub gives Dependabot-triggered pull_request runs restricted (read-only) secret
-# access, so if that check ever goes red purely on the Coveralls *upload* step (not on pytest),
-# that's a secrets-access artifact, not a real failure — inspect the log before escalating.
+# coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Test
+# coverage" check is always a real pytest failure — never an upload/secrets artifact.
 deadline=$(( $(date +%s) + 600 ))
 state="pending"
 while [ "$(date +%s)" -lt "$deadline" ]; do
