@@ -11,7 +11,7 @@ TMP="$(mktemp "${OUT}.XXXX")"; trap 'rm -f "$TMP"' EXIT
     echo "# TYPE zaccess_wireguard_handshake_age_seconds gauge"
     echo "zaccess_wireguard_handshake_age_seconds $(( $(date +%s) - hs ))"
   fi
-  na=$(echo | timeout 10 openssl s_client -connect 192.168.100.5:5001 -servername z-home-storage.zhaow.me 2>/dev/null \
+  na=$(echo | timeout 10 openssl s_client -connect 192.168.100.5:5001 -servername z-home-storage.zhaow.pro 2>/dev/null \
        | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || true
   if [ -n "${na:-}" ]; then
     echo "zaccess_tls_not_after_seconds{target=\"nas-dsm\"} $(date -d "$na" +%s)"

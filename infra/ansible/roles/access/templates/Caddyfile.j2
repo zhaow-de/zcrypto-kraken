@@ -24,5 +24,10 @@ tmux.zaccess.zhaow.me {
 
 nas.zaccess.zhaow.me {
 	import mtls
-	respond "zaccess: nas edge up (no upstream yet)" 200
+	reverse_proxy https://10.99.0.2:5001 {
+		transport http {
+			tls_server_name z-home-storage.zhaow.pro
+			tls_trusted_ca_certs /etc/caddy/nas-upstream-ca.pem
+		}
+	}
 }

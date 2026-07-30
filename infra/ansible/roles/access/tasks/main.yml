@@ -121,6 +121,14 @@
     mode: '0644'
     directory_mode: '0755'  # the leaves are public certs -- caddy (uid 997, not in group root) just needs to traverse
   notify: reload caddy
+- name: NAS upstream CA (spec 00075 D7 -- the Sectigo intermediate the NAS omits from its chain; pins the ops->NAS TLS leg)
+  ansible.builtin.copy:
+    src: nas-upstream-ca.pem
+    dest: /etc/caddy/nas-upstream-ca.pem
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload caddy
 - name: >-
     Caddyfile -- global block + the (mtls) snippet + the two static vhosts (D14: mTLS proven
     before any upstream exists; Task 9/10 wire the NAS/agentboard upstreams behind this same gate)
