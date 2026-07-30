@@ -326,3 +326,79 @@ def test_since_window_keeps_genesis_from_moving_and_books_a_late_leading_edge(tm
     assert _column(out, "AAA/EUR", "trunc") == "1"
     assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(400.0, rel=0.05)
     assert "genesis" not in out, "a --since window must not promote H1 into the genesis free pass"
+
+
+def test_small_sample_is_unmeasured_and_fails_the_bar(tmp_path, capsys):
+    # 200 rows -> 199 intra intervals, far under MIN_POOL: a clean-looking stream that cannot be
+    # self-calibrated must never bank a PASS.
+    write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 200, 18.0), H1: evenly(H1, 200, 18.0)})
+    rc, out = _run(tmp_path, capsys)
+    assert "UNMEASURED" in out
+    assert "FAIL (unmeasured streams: 1)" in out
+    # Every stream unmeasured is still "we read something and judged it" -- rc 0 with a FAIL
+    # verdict. Only an empty tree or an empty window returns 1 with NO verdict line (D6).
+    assert rc == 0
+    assert "TOTAL" not in out, "no measured stream may produce a TOTAL row"
+
+
+def test_unmeasured_stream_is_excluded_from_the_total_row(tmp_path, capsys):
+    write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 200, 18.0)})
+    write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 5999, 0.6), H1: evenly(H1, 5999, 0.6)})
+    _, out = _run(tmp_path, capsys)
+    # covered_s on TOTAL counts only the measured stream -- read via the header, never a fixed
+    # index: the DENSE row carries a trailing ` genesis` marker that shifts every negative index.
+    assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(float(_column(out, "DENSE/EUR", "covered_s")))
+    assert "FAIL (unmeasured streams: 1)" in out
+
+
+def test_all_streams_measured_keeps_the_plain_verdict(tmp_path, capsys):
+    write_stream(tmp_path, "DENSE/EUR", {H0: evenly(H0, 5999, 0.6), H1: evenly(H1, 5999, 0.6)})
+    _, out = _run(tmp_path, capsys)
+    assert "unmeasured" not in out
+    assert "EXIT BAR (<0.1% gap time): PASS" in out
+
+
+def test_the_thin_stream_false_green_is_now_a_refusal_not_a_zero(tmp_path, capsys):
+    """T0097's headline measured finding: an identical outage counted 200.1 s on a dense stream and
+    0.0 s on a thin one, because the self-calibrating threshold inflated to ~10x the outage itself
+    and swallowed it whole. Reconstructed end-to-end against the OLD (pre-T0097, commit 6f614957)
+    `report()` -- the version that already prints `thresh_s` and survives an empty window, but has
+    neither `StreamTimeline` nor `MIN_POOL` -- via `git show 6f614957:infra/scripts/continuity.py`:
+
+    A THIN/EUR stream, 3 s spacing, 2 hours, with a genuine 204 s outage carved out of hour 0 (the
+    same carve technique `test_trunc_counts_only_boundary_truncations_not_intra_silence` uses:
+    drop the offsets in [1800.0, 2000.0) from an otherwise full hour). Measured directly against the
+    OLD module: 1,133 rows survive in hour 0 (1,132 intra diffs, one of them the 204 s outage),
+    2,332 pooled diffs total across both hours. With nearest interpolation, `quantile(0.9999)` on
+    that small a pool lands ON the outage itself, so `thresh_s` derives to 2040.0 (10x 204) --
+    comfortably above the 204 s hole, which vanishes from the count entirely. All that's left is
+    each hour's ~2 s tail remainder (1,200 samples/hour at 3 s spacing don't reach exactly to the
+    hour boundary): `gap_s = 4.0`, `pct = 0.0556%`, `EXIT BAR: PASS`. The OLD instrument reports a
+    stream with a genuine 204 s outage as clean.
+
+    Under the NEW instrument, the SAME fixture pools to 2,332 intervals -- under MIN_POOL (5,002) --
+    so it is never scored against that self-calibrated number at all: UNMEASURED, and the exit bar
+    FAILS rather than banking the 0.0556% the old code would have reported. This is the assertion
+    that closes T0097's original defect: a stream sparse enough to self-calibrate into blindness is
+    exactly a stream this instrument now refuses to score.
+    """
+
+    def full_hour(h: dt.datetime, step: float) -> list[dt.datetime]:
+        n = int(3600 / step)
+        return [h + dt.timedelta(seconds=j * step) for j in range(n)]
+
+    def full_hour_with_gap(h: dt.datetime, step: float, gap_start: float, gap_len: float) -> list[dt.datetime]:
+        n = int(3600 / step)
+        offsets = [j * step for j in range(n) if not (gap_start <= j * step < gap_start + gap_len)]
+        return [h + dt.timedelta(seconds=o) for o in offsets]
+
+    write_stream(
+        tmp_path,
+        "THIN/EUR",
+        {H0: full_hour_with_gap(H0, 3.0, 1800.0, 200.0), H1: full_hour(H1, 3.0)},
+    )
+    rc, out = _run(tmp_path, capsys)
+    assert _column(out, "THIN/EUR", "thresh_s") == "UNMEASURED"
+    assert "FAIL (unmeasured streams: 1)" in out
+    assert rc == 0
+    assert "TOTAL" not in out, "no measured stream may produce a TOTAL row -- not even a comfortable one"

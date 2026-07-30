@@ -9,10 +9,14 @@ Three kinds of gap, measured per BOOK stream (books update continuously, so a si
 trades legitimately go quiet, so they cannot measure uptime):
 
   1. MISSING hour   -- no segment at all              -> 3600 s
-  2. HEAD/TAIL truncation -- first row late into its hour, or last row early
-                              (this is exactly the T0036 restart-clobber signature)
+  2. BOUNDARY silence -- the interval spanning an hour boundary (last row of H-1 -> first row
+                        of H), judged by the same derived threshold as any other interval;
+                        this is the T0036 restart-clobber signature, and it is what `trunc` counts
   3. INTRA-hour silence   -- consecutive rows further apart than a threshold derived
                               from the data itself (not guessed)
+
+A stream with fewer than MIN_POOL intervals is reported UNMEASURED and FAILS the exit bar: below
+that bound the derived threshold degenerates to 10x the worst outage (see MIN_POOL).
 
 Usage:  uv run python infra/scripts/continuity.py <segments-root> [--since YYYY-MM-DD] [--kind book]
                                                     [--overlay <reconciled-root>]
@@ -214,6 +218,14 @@ def report(
             )
 
     if not totals:
+        # Nothing measurable. Two different situations, and only one of them may stay silent:
+        # streams existed but none could be self-calibrated (D6 -- say so, and FAIL), versus no
+        # segments at all (nothing was measured, so nothing may bank OR fail a verdict).
+        if unmeasured:
+            print(f"no measurable segments: {len(unmeasured)} stream(s) under the {MIN_POOL}-interval bound")
+            if show_exit_bar:
+                print(f"  EXIT BAR (<0.1% gap time): FAIL (unmeasured streams: {len(unmeasured)})")
+            return 0
         # `--since` filters per stream at the top of the loop, long after the empty-tree guard, so a
         # window that excludes every hour reaches the TOTAL row with nothing to divide by. Answering
         # "nothing here" beats a ZeroDivisionError, which reads as a broken tool rather than an empty
@@ -231,7 +243,12 @@ def report(
     print()
     print(f"  worst single stream : {worst:.4f}%")
     if show_exit_bar:
-        print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
+        # D6: an unmeasurable stream must not be silently skipped -- a bar that ignores what it
+        # could not measure is the same false-green the instrument exists to prevent.
+        if unmeasured:
+            print(f"  EXIT BAR (<0.1% gap time): FAIL (unmeasured streams: {len(unmeasured)})")
+        else:
+            print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
     # T0036: the truncated-hour signature this counts.
     print(f"  truncated hours: {tt}  -- MUST be 0 after the fix")
     return 0
