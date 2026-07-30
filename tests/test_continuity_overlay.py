@@ -20,6 +20,11 @@ from cli.archive.settle import hour_path
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "continuity.py"
 _spec = importlib.util.spec_from_file_location("continuity", _SCRIPT)
 continuity = importlib.util.module_from_spec(_spec)
+# Registered in sys.modules before exec: continuity.py's `from __future__ import annotations` makes
+# dataclass field annotations strings, and `dataclasses` resolves those against
+# `sys.modules[cls.__module__]` -- unregistered, that lookup is None and StreamTimeline's
+# decoration crashes (see tests/test_infra_continuity.py's `_load()`, same fix).
+sys.modules[_spec.name] = continuity
 _spec.loader.exec_module(continuity)
 
 H = datetime(2026, 7, 20, 9, tzinfo=UTC)

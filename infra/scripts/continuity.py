@@ -30,6 +30,7 @@ regression bank a "clean" run -- exactly the defect class the bar exists to catc
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import re
 from pathlib import Path
@@ -44,6 +45,74 @@ FINAL = re.compile(r"^\d{2}$")
 # stream is reported UNMEASURED rather than scored. The bound is pinned by
 # tests/test_infra_continuity.py, which measures polars rather than trusting this comment.
 MIN_POOL = 5002
+
+HOUR = dt.timedelta(hours=1)
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamTimeline:
+    """A stream's hours read as ONE timeline (D1), not as independent files.
+
+    `pool` is the threshold sample: intra-row diffs plus the crossings between contiguous hours, so
+    a boundary is judged by the same measured density as any other interval. `intra` books silence;
+    `boundaries` books and counts truncations. A crossing therefore appears in `pool` (for the
+    statistic) and in `boundaries` (for booking) but never in `intra` -- that separation is what
+    keeps it from being booked twice.
+    """
+
+    pool: pl.Series
+    intra: pl.Series
+    boundaries: list[tuple[float, str]]
+    missing_hours: int
+    span_hours: int
+    genesis_skipped: bool
+
+
+def stream_timeline(segs: list[tuple[dt.datetime, Path]], *, genesis_hour: dt.datetime) -> StreamTimeline:
+    """Build the interval model for one stream's (already `--since`-filtered, sorted) segments."""
+    intra_parts: list[pl.Series] = []
+    crossings: list[float] = []
+    boundaries: list[tuple[float, str]] = []
+    missing_hours = 0
+    prev_hi: dt.datetime | None = None
+    prev_hour: dt.datetime | None = None
+
+    for h, p in segs:
+        ts = pl.read_parquet(p, columns=["ts"])["ts"]
+        lo, hi = ts.min(), ts.max()
+        intra_parts.append(ts.diff().drop_nulls().dt.total_microseconds() / 1e6)
+        if prev_hour is None:
+            # D5: the genesis hour begins mid-hour by construction, so its head measures the
+            # stream's birth, not a gap. Any other first-in-window hour IS measurable (D10).
+            if h != genesis_hour:
+                boundaries.append(((lo - h).total_seconds(), "edge_head"))
+        else:
+            missing = int((h - prev_hour) / HOUR) - 1
+            crossing = (lo - prev_hi).total_seconds()
+            if missing == 0:
+                crossings.append(crossing)
+                boundaries.append((crossing, "crossing"))
+            else:
+                # D4: the whole hours are booked at 3600 each; only the excess -- the real tail+head
+                # silence bracketing the hole -- is a measurement, and it never joins the sample.
+                missing_hours += missing
+                boundaries.append((crossing - 3600.0 * missing, "excess"))
+        prev_hi, prev_hour = hi, h
+
+    if prev_hour is not None:
+        boundaries.append(((prev_hour + HOUR - prev_hi).total_seconds(), "edge_tail"))
+
+    intra = pl.concat(intra_parts) if intra_parts else pl.Series([], dtype=pl.Float64)
+    pool = pl.concat([intra, pl.Series(crossings, dtype=pl.Float64)]) if crossings else intra
+    span_hours = int((prev_hour - segs[0][0]) / HOUR) + 1 if segs else 0
+    return StreamTimeline(
+        pool=pool,
+        intra=intra,
+        boundaries=boundaries,
+        missing_hours=missing_hours,
+        span_hours=span_hours,
+        genesis_skipped=bool(segs) and segs[0][0] == genesis_hour,
+    )
 
 
 def segments(root: Path, kind: str) -> dict[str, list[tuple[dt.datetime, Path]]]:
