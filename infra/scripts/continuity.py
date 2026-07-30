@@ -38,6 +38,13 @@ import polars as pl
 
 FINAL = re.compile(r"^\d{2}$")
 
+# D6: with polars' default nearest interpolation, quantile(0.9999) returns the element at
+# round(0.9999*(n-1)) -- which IS the maximum while n <= 5001, so the derived threshold would be
+# 10x the worst outage and the instrument blind by construction. Below this many pooled intervals a
+# stream is reported UNMEASURED rather than scored. The bound is pinned by
+# tests/test_infra_continuity.py, which measures polars rather than trusting this comment.
+MIN_POOL = 5002
+
 
 def segments(root: Path, kind: str) -> dict[str, list[tuple[dt.datetime, Path]]]:
     out: dict[str, list[tuple[dt.datetime, Path]]] = {}
