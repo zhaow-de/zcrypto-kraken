@@ -2,7 +2,7 @@
 
 ## Project
 
-`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack (spec `00043` / topic T0020), never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
+`zcrypto-kraken` is a crypto quant trading project targeting Kraken (spot + spot-margin). The research north star is `docs/research/00.master-plan.md` — the phased master plan. The `cli` package (`cli/__main__.py`) is a Typer app exposed as the `zcrypto` console script. Vocabulary: "observability" means the Grafana Cloud telemetry stack, never the healthchecks.io dead-man switches — those are a separate, independent failure domain.
 
 ## Repository layout
 
@@ -75,7 +75,7 @@ uv run zcrypto [args]            # run the CLI via the installed console script
 uv run pytest                    # run tests
 uv run pytest path/to/test.py::test_name   # run a single test
 
-uv run pre-commit run -a         # full commit gate (ruff + format, yamllint, mdformat, hygiene)
+uv run pre-commit run -a         # full commit gate
 uv add <pkg>            # add new deps
 uv add --dev <pkg>      # add new dev deps
 ```

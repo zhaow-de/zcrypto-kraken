@@ -89,5 +89,3 @@ A stale body matters: the `/merge-pr` gate parses it for unchecked `- [ ]` items
 ## Target branch
 
 Feature and iteration PRs target **`develop`** (see `branch-workflow.md`). Release PRs are opened by the `/release` skill from a `release/<timestamp>` branch **into `main`**, titled `Release v<major>.<minor>.<patch>` — you don't write those by hand.
-
-See `commit-messages.md` for the per-commit convention and `branch-workflow.md` for how PRs are opened.
