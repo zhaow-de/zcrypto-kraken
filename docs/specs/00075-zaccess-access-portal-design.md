@@ -24,7 +24,7 @@ The ops node runs a Claude Code session inside tmux for autonomous research loop
 Other measured facts:
 
 - **tmux on ops**: 3.5a; session `zcrypto` with one client at 212x56 running `claude`; global `window-size` at its default `latest` — the mechanism that would reflow the session when a differently-sized client attaches (D13). `~/.tmux.conf` sets exactly `mouse on` and `history-limit 10000`.
-- **NAS** `192.168.100.5`: `:5000` returns HTTP 200 (no HTTPS redirect); `:5001` presents a real Sectigo wildcard for `*.zhaow.me`, `notAfter` 2027-01-26 — so the ops→NAS leg can be fully verified, not merely encrypted (D7).
+- **NAS** `192.168.100.5`: `:5000` returns HTTP 200 (no HTTPS redirect); `:5001` presents a real Sectigo wildcard for `*.zhaow.pro` (SAN `*.zhaow.pro, zhaow.pro`), `notAfter` 2027-01-26 — so the ops→NAS leg can be fully verified, not merely encrypted (D7). The NAS keeps its pre-existing `*.zhaow.pro` cert (it is not Ansible-managed); the access portal's own names are `.me`, so D7 validates the upstream against `z-home-storage.zhaow.pro` specifically.
 - `zhaow.me` is on Route53; the `zaccess` A record already resolves to the Linode; `z-home-*` names resolve publicly to RFC1918 addresses.
 - Bridgehead ports 80/443/20022 are closed (nothing listening); `51820/udp` unopened.
 - **agentboard v0.4.5**: no built-in authentication ("anyone who can reach the server has full access to your terminal sessions" — its own docs); advertises hibernation/wake for dormant sessions — actively dangerous to a weeks-long run (D13). Runtime ambiguous from packaging (`engines: bun >= 1.3.14` on the main package, `node >= 18` on the platform package) — resolved by the Phase-7 spike, not guessed.
