@@ -598,7 +598,7 @@ Message: `feat(infra): book and count truncation from measured density, not fixe
 
 **Interfaces:**
 - Consumes: `unmeasured` (Task 3).
-- Produces: the verdict line `EXIT BAR (<0.1% gap time): FAIL (unmeasured streams: N)` when any stream is unmeasured.
+- Produces: the verdict line `EXIT BAR (<0.1% gap time): *** FAIL *** (unmeasured streams: N)` when any stream is unmeasured.
 
 - [ ] **Step 1: Write the failing tests**
 

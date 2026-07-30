@@ -87,6 +87,33 @@ def test_overlay_mode_adds_a_separate_canonical_section_without_the_exit_bar_ver
     assert "EXIT BAR" not in canonical_section
 
 
+def test_canonical_report_all_unmeasured_prints_no_exit_bar_verdict(tmp_path, capsys):
+    """Spec 00050 exit-bar isolation, on the ALL-unmeasured path Task 4 added: `report()`'s
+    `if not totals:` branch has its OWN `if show_exit_bar:` guard, separate from the one in the
+    measured-totals branch that `test_overlay_mode_adds_a_separate_canonical_section_without_the_exit_bar_verdict`
+    already exercises (that test's canonical view always contains a dense stream, so `totals` is
+    never empty there -- it never reaches this second site at all). A canonical/overlay report must
+    never print a verdict through EITHER site, even when every stream in it is unmeasured and the
+    informational "no measurable segments" line still prints.
+
+    Calls `report()` directly (not `main()`) with `show_exit_bar=False` on a single sparse THIN/EUR
+    stream (120 rows in one hour, far under MIN_POOL) -- exactly the shape `--overlay` produces for
+    a healed-only stream too thin to self-calibrate.
+    """
+    raw = tmp_path / "raw"
+    _write_hour(raw, "THIN/EUR", "book", H, stamps=[H + timedelta(seconds=s) for s in range(0, 3600, 30)])
+    streams = continuity.segments(raw, "book")
+    genesis = {pair: min(h for h, _ in segs) for pair, segs in streams.items()}
+    rc = continuity.report(streams, since=datetime.min.replace(tzinfo=UTC), quiet=False, show_exit_bar=False, genesis=genesis)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "no measurable segments" in out  # the informational line still prints
+    assert "EXIT BAR" not in out
+    assert "FAIL" not in out
+    assert "unmeasured streams" not in out
+
+
 def test_an_empty_raw_tree_still_prints_the_canonical_section(tmp_path, capsys, monkeypatch):
     # The raw mirror being empty is exactly when the overlay's healed hours matter most; the raw
     # report's own failure (rc 1, "no segments found") must not swallow the canonical view.

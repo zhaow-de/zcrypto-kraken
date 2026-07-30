@@ -334,7 +334,7 @@ def test_small_sample_is_unmeasured_and_fails_the_bar(tmp_path, capsys):
     write_stream(tmp_path, "THIN/EUR", {H0: evenly(H0, 200, 18.0), H1: evenly(H1, 200, 18.0)})
     rc, out = _run(tmp_path, capsys)
     assert "UNMEASURED" in out
-    assert "FAIL (unmeasured streams: 1)" in out
+    assert "*** FAIL *** (unmeasured streams: 1)" in out
     # Every stream unmeasured is still "we read something and judged it" -- rc 0 with a FAIL
     # verdict. Only an empty tree or an empty window returns 1 with NO verdict line (D6).
     assert rc == 0
@@ -348,7 +348,7 @@ def test_unmeasured_stream_is_excluded_from_the_total_row(tmp_path, capsys):
     # covered_s on TOTAL counts only the measured stream -- read via the header, never a fixed
     # index: the DENSE row carries a trailing ` genesis` marker that shifts every negative index.
     assert float(_column(out, "TOTAL", "covered_s")) == pytest.approx(float(_column(out, "DENSE/EUR", "covered_s")))
-    assert "FAIL (unmeasured streams: 1)" in out
+    assert "*** FAIL *** (unmeasured streams: 1)" in out
 
 
 def test_all_streams_measured_keeps_the_plain_verdict(tmp_path, capsys):
@@ -399,6 +399,6 @@ def test_the_thin_stream_false_green_is_now_a_refusal_not_a_zero(tmp_path, capsy
     )
     rc, out = _run(tmp_path, capsys)
     assert _column(out, "THIN/EUR", "thresh_s") == "UNMEASURED"
-    assert "FAIL (unmeasured streams: 1)" in out
+    assert "*** FAIL *** (unmeasured streams: 1)" in out
     assert rc == 0
     assert "TOTAL" not in out, "no measured stream may produce a TOTAL row -- not even a comfortable one"

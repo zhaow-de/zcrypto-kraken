@@ -224,7 +224,7 @@ def report(
         if unmeasured:
             print(f"no measurable segments: {len(unmeasured)} stream(s) under the {MIN_POOL}-interval bound")
             if show_exit_bar:
-                print(f"  EXIT BAR (<0.1% gap time): FAIL (unmeasured streams: {len(unmeasured)})")
+                print(f"  EXIT BAR (<0.1% gap time): *** FAIL *** (unmeasured streams: {len(unmeasured)})")
             return 0
         # `--since` filters per stream at the top of the loop, long after the empty-tree guard, so a
         # window that excludes every hour reaches the TOTAL row with nothing to divide by. Answering
@@ -246,7 +246,7 @@ def report(
         # D6: an unmeasurable stream must not be silently skipped -- a bar that ignores what it
         # could not measure is the same false-green the instrument exists to prevent.
         if unmeasured:
-            print(f"  EXIT BAR (<0.1% gap time): FAIL (unmeasured streams: {len(unmeasured)})")
+            print(f"  EXIT BAR (<0.1% gap time): *** FAIL *** (unmeasured streams: {len(unmeasured)})")
         else:
             print("  EXIT BAR (<0.1% gap time): " + ("PASS" if worst < 0.1 else "*** FAIL ***"))
     # T0036: the truncated-hour signature this counts.
