@@ -1,0 +1,28 @@
+# Rendered by the `access` role at /etc/caddy/Caddyfile — edit the template.
+{
+	email {{ access_acme_email }}
+}
+
+(mtls) {
+	tls {
+		client_auth {
+			mode require_and_verify
+			trust_pool file /etc/caddy/zaccess_ca.crt
+			verifier leaf {
+				{% for leaf in access_pinned_leaves %}
+				file /etc/caddy/pinned-leaves/{{ leaf }}
+				{% endfor %}
+			}
+		}
+	}
+}
+
+tmux.zaccess.zhaow.me {
+	import mtls
+	respond "zaccess: tmux edge up (no upstream yet)" 200
+}
+
+nas.zaccess.zhaow.me {
+	import mtls
+	respond "zaccess: nas edge up (no upstream yet)" 200
+}

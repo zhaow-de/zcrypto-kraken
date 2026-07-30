@@ -11,3 +11,13 @@ access_wg_listen_port: 51820
 
 # ACME registration contact (Task 7's Caddy role reads this).
 access_acme_email: zhaow.km@gmail.com
+
+# Caddy from the upstream apt repo, pinned + held (same pattern as alloy above) -- no docker on
+# the edge. Verified against Cloudsmith's package listing at execution (2026-07-30, bare semver,
+# no debian revision suffix); record beside the alloy pin in fleet-pins.md at Task 11.
+access_caddy_version: "2.11.4"
+
+# Pinned mTLS client leaves (spec 00075 D16): the file's presence in roles/access/files/pinned-leaves/
+# IS the pin; the Caddyfile template loops this list. Sorted -- an unstable glob order would make
+# the rendered Caddyfile flap changed on every converge even with no leaves added or removed.
+access_pinned_leaves: "{{ lookup('ansible.builtin.fileglob', role_path ~ '/files/pinned-leaves/*.pem', wantlist=true) | map('basename') | sort }}"

@@ -13,7 +13,7 @@ TMP="$(mktemp "${OUT}.XXXX")"; trap 'rm -f "$TMP"' EXIT
   fi
   for t in tmux nas; do
     na=$(echo | timeout 10 openssl s_client -connect 127.0.0.1:443 -servername "$t.zaccess.zhaow.me" 2>/dev/null \
-         | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || continue
+         | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || true
     [ -n "$na" ] || continue
     echo "zaccess_tls_not_after_seconds{target=\"$t\"} $(date -d "$na" +%s)"
   done

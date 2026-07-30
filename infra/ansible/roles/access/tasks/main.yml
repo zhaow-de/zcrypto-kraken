@@ -78,3 +78,59 @@
   notify: reload systemd
 - name: ssh relay socket enabled
   ansible.builtin.systemd: {name: zaccess-ssh-proxy.socket, enabled: true, state: started, daemon_reload: true}
+
+- name: add the Caddy apt repository (deb822 format; module fetches + stores the signing key)
+  ansible.builtin.deb822_repository:
+    name: caddy
+    types: [deb]
+    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
+    suites: [any-version]
+    components: [main]
+    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+- name: caddy, pinned (upstream apt, no docker on the edge -- the mTLS gate, spec 00075 Phase 5)
+  ansible.builtin.apt:
+    name: "caddy={{ access_caddy_version }}"
+    state: present
+    update_cache: true
+    allow_change_held_packages: false
+- name: hold caddy at the pin
+  ansible.builtin.dpkg_selections: {name: caddy, selection: hold}
+
+- name: zaccess mTLS CA cert (spec 00075 D16 -- the trust_pool the Caddyfile's mtls snippet reads)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/files/zaccess_ca.crt"
+    dest: /etc/caddy/zaccess_ca.crt
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload caddy
+- name: /etc/caddy/pinned-leaves is traversable by the caddy service user (uid != root)
+  ansible.builtin.file:
+    path: /etc/caddy/pinned-leaves
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  notify: reload caddy
+- name: pinned mTLS client leaves (spec 00075 D16 -- a PEM's presence here IS the pin; absence is revocation)
+  ansible.builtin.copy:
+    src: pinned-leaves/
+    dest: /etc/caddy/pinned-leaves/
+    owner: root
+    group: root
+    mode: '0644'
+    directory_mode: '0755'  # the leaves are public certs -- caddy (uid 997, not in group root) just needs to traverse
+  notify: reload caddy
+- name: >-
+    Caddyfile -- global block + the (mtls) snippet + the two static vhosts (D14: mTLS proven
+    before any upstream exists; Task 9/10 wire the NAS/agentboard upstreams behind this same gate)
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: root
+    mode: '0644'
+    validate: "caddy validate --adapter caddyfile --config %s"
+  notify: reload caddy
+- name: caddy enabled + started
+  ansible.builtin.systemd: {name: caddy, enabled: true, state: started}

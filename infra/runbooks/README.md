@@ -142,3 +142,28 @@ Both ends of the tunnel run a probe timer that writes `zaccess_wireguard_handsha
 ### Retire when
 
 `zaccess-tunnel-stale` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zaccess-cert-expiring"></a>
+
+## zaccess-cert-expiring — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`zaccess-cert-expiring`): the soonest-expiring TLS certificate among the tracked zaccess endpoints has been under 14 days from expiry for at least an hour.
+
+### What it means
+
+Two probe timers write `zaccess_tls_not_after_seconds{target=...}`: the bridgehead's own probe handshakes against each Caddy vhost on `127.0.0.1:443` and writes `target="tmux"`/`target="nas"`; the ops node's probe handshakes against the NAS admin port and writes `target="nas-dsm"`. The rule takes `min()` across every target's series, so whichever certificate is closest to expiry trips it first — it does not say which one without a follow-up query. `tmux` and `nas` are Caddy-managed: Caddy's ACME client renews them automatically, well before 14 days out under normal operation, so either arriving at this threshold usually means renewal has been failing silently rather than an unavoidable expiry. `nas-dsm` is the Synology DSM's own certificate, outside Caddy's control — its renewal (or lack of it) is a DSM-side concern.
+
+### What to do
+
+1. Identify which target tripped it: `uv run python infra/scripts/grafana-query.py 'zaccess_tls_not_after_seconds'` — one value per `target` label; `date -d @<value>` turns it into a calendar date.
+2. **`tmux` or `nas`**: `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; `journalctl -u caddy --no-pager -n 200 | grep -i acme` for renewal failures (a failed HTTP-01 challenge, rate limiting, or a stale ACME account are the usual causes — port 80 must stay reachable for the challenge). `systemctl status caddy` — confirm the unit is up and serving both vhosts.
+3. **`nas-dsm`**: log into the DSM admin console directly and check its own certificate manager — this is DSM's certificate lifecycle, not something either bridgehead role touches.
+4. Confirm recovery: re-run the query in step 1 — the tripped target's value should read comfortably above `time() + 14*86400`.
+
+### Retire when
+
+`zaccess-cert-expiring` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.

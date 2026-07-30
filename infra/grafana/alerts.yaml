@@ -2711,3 +2711,43 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  # min() across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
+  # "nas", written by this host's own probe timer) and the ops node's DSM probe (target="nas-dsm")
+  # -- so whichever certificate is closest to expiry trips it first, regardless of which host
+  # measured it. Same noDataState reasoning as zaccess-tunnel-stale: this metric is multi-host too.
+  - uid: zaccess-cert-expiring
+    title: "Access · edge cert expiring"
+    ruleGroup: zcrypto-access
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: min(zaccess_tls_not_after_seconds) - time()
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1209600]}  # < 14*86400s (14 days)
+    noDataState: OK  # owned by zcrypto-alloy-dark-zaccess / zcrypto-alloy-dark-ops
+    execErrState: Alerting
+    for: 1h
+    annotations:
+      summary: "The soonest-expiring TLS certificate among the tracked zaccess endpoints (the tmux and nas edge vhosts, plus the NAS admin console) is under 14 days from expiry. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
