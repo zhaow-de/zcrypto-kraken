@@ -167,3 +167,31 @@ Two probe timers write `zaccess_tls_not_after_seconds{target=...}`: the bridgehe
 ### Retire when
 
 `zaccess-cert-expiring` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zcrypto-ops-verify-replay-new-breakage"></a>
+<a name="zcrypto-ops-verify-replay-run-broken"></a>
+
+## zcrypto-ops-verify-replay — ALERT
+
+### What you are seeing
+
+Two critical-severity Grafana alerts, both scoped to the ops node's nightly canonical-archive replay:
+
+- **`Ops · verify-replay NEW hours stopped replaying`** (uid `zcrypto-ops-verify-replay-new-breakage`) — a replay hour failed today that did NOT fail in the prior sweep.
+- **`Ops · verify-replay run broken`** (uid `zcrypto-ops-verify-replay-run-broken`) — the sweep itself did not run to completion, so today's per-hour findings are unknown, not clean.
+
+### What it means
+
+The nightly sweep publishes three counters every run: how many hours failed, how many hours it checked in total, and whether it produced a parseable summary at all. The first alert watches the change in the failed-hour count over the last 25 hours — an hour that failed yesterday and still fails today contributes nothing to that change and stays quiet; only an hour that newly starts failing moves it. The second alert watches whether the run produced a summary at all — it goes critical on a crash, an I/O error against the read-only archive mount, a run that never started, or a run that silently found no hours to check (which used to read as healthy and no longer does). A failed hour is logged as a warning, not an error, specifically so it does not also trip the separate ops error-log alert — only a genuinely broken run does that. A companion dead-man ping for this same timer is withheld whenever the run fails to produce a summary, independently of both Grafana rules above.
+
+### What to do
+
+1. **For a new-breakage page**: read the per-hour findings in the run's own log output for today — pair, hour, and which check failed (anchoring, ordering, checksum, or replay itself) — then triage and record the finding somewhere durable. This alert clears itself after 25 hours and is not itself a record of what was found.
+2. **For a run-broken page**: check the timer's own log output for a crash trace or an I/O error against the archive mount, and confirm the archive mount is actually populated rather than silently empty. Re-run the sweep once the underlying cause is fixed and confirm the next run produces a summary again.
+3. **The net-zero caveat, worth internalizing before trusting silence**: if an hour is repaired and a different hour breaks within the same 25-hour window, the two changes cancel on the new-breakage count and neither alert fires. The day after healing a known-bad hour, a quiet new-breakage alert is not evidence that nothing new broke — check the run's own hour counts directly rather than reading silence as a clean bill of health.
+
+### Retire when
+
+`zcrypto-ops-verify-replay-new-breakage` and `zcrypto-ops-verify-replay-run-broken` are both absent from `infra/grafana/alerts.yaml` — i.e. the rules were deliberately removed.
