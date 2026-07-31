@@ -111,15 +111,30 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
     round 3, finding 4). Made executable instead: run the real CLI command through `CliRunner`,
     capture the REAL `logger.info` record via `caplog`, and feed its actual `getMessage()` through
     the same sed -- a rename anywhere in the live call, comment loophole included, then changes
-    what is actually parsed, not just what text sits nearby."""
+    what is actually parsed, not just what text sits nearby.
+
+    BOTH parsed fields are covered, not just `failed=`: round 3's version extracted only the
+    `failed=` expression, so renaming the CLI's `hours=%d` to `total=%d` left every test green
+    while `hours_total` went empty in production -- a valueless printf, which makes node_exporter
+    reject the WHOLE textfile and drop all six series (review round 4). Neither regex is
+    hardcoded here, so template-side drift in either sed fails too."""
     out = _render()
-    sed_expr = next(m.group(1) for m in re.finditer(r"sed -n '([^']*failed=[^']*)'", out))
+    sed_exprs: dict[str, str] = {}
+    for m in re.finditer(r"sed -n '([^']*)'", out):
+        for field in ("failed", "hours"):
+            if f"{field}=" in m.group(1):
+                sed_exprs[field] = m.group(1)
+    assert sorted(sed_exprs) == ["failed", "hours"], f"expected one sed per parsed field, got {sed_exprs}"
+
+    def _sed(expr: str, line: str) -> str:
+        return subprocess.run(["sed", "-n", expr], input=line, capture_output=True, text=True).stdout.strip()
 
     real_line = (
         "2026-07-31 03:41:59,001 INFO zcrypto.archive.command [command.py:912] - verify-replay complete hours=5724 ok=5724 failed=0"
     )
-    got = subprocess.run(["sed", "-n", sed_expr], input=real_line, capture_output=True, text=True).stdout.strip()
-    assert got == "0", f"the template's sed did not extract failed=0 from the CLI's real line, got {got!r}"
+    for field, expected in (("failed", "0"), ("hours", "5724")):
+        got = _sed(sed_exprs[field], real_line)
+        assert got == expected, f"the template's sed did not extract {field}={expected} from the CLI's real line, got {got!r}"
 
     # (2): stub the heavier replay computation (already covered by tests/test_archive_replay.py) so
     # only the CLI's own summary-line formatting is under test, then run the real command.
@@ -154,10 +169,13 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
     summaries = [r for r in caplog.records if r.message.startswith("verify-replay complete")]
     assert len(summaries) == 1, [r.message for r in caplog.records]
     live_line = summaries[0].getMessage()
-    live_got = subprocess.run(["sed", "-n", sed_expr], input=live_line, capture_output=True, text=True).stdout.strip()
-    assert live_got == "0", (
-        f"the template's sed did not extract failed=0 from the CLI's ACTUAL log line {live_line!r}, got {live_got!r}"
-    )
+    # One stubbed result, all ok -> hours=1 ok=1 failed=0. Equality, not truthiness: an empty sed
+    # match must read as a failure, since empty is exactly what production would print.
+    for field, expected in (("failed", "0"), ("hours", "1")):
+        live_got = _sed(sed_exprs[field], live_line)
+        assert live_got == expected, (
+            f"the template's sed did not extract {field}={expected} from the CLI's ACTUAL log line {live_line!r}, got {live_got!r}"
+        )
 
 
 def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
