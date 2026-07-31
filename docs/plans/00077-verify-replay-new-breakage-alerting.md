@@ -253,11 +253,17 @@ Per `agent-ops.md`. Both are edits to the template, reverted after:
 2. Drop `10#` from the carry-forward arithmetic (if any remains) or drop a `printf` for one series → the corresponding test must FAIL. Revert; it passes.
 Record both outputs in the report.
 
+- [ ] **Step 6b: Rewrite the template's own header, which now lies**
+
+`verify-replay.sh.j2`'s header block says the runner "pings the dead-man URL on a clean run only" and twice promises "rc!=0 -> the exit-code alert". After this task and Task 3 both statements are false. The repo's rule is to rewrite a stale narrative in place, never to leave it beside a correction — so update those lines to describe the run_ok gate and the two new rules. This is the one place the task's "change nothing else" instruction does NOT apply.
+
+Also update `infra/ops/README.md`: its line "On a clean run (exit 0) each script GETs its healthchecks.io ping URL … A failed run pings nothing" is now false for this runner, and its series table should list the three new series.
+
 - [ ] **Step 7: Commit**
 
 ```bash
 uv run pre-commit run -a
-git add infra/ansible/roles/ops/templates/verify-replay.sh.j2 tests/test_infra_verify_replay_template.py
+git add infra/ansible/roles/ops/templates/verify-replay.sh.j2 tests/test_infra_verify_replay_template.py infra/ops/README.md
 git commit
 ```
 Message: `feat(infra): publish verify-replay counts and gate the dead-man on run_ok`
@@ -300,6 +306,10 @@ Measured: the ops keep-regex (`infra/ansible/roles/ops/files/config.alloy`) admi
 
 Prove it bites: narrow the wildcard in a scratch copy of the regex and confirm the test fails, then restore.
 
+- [ ] **Step 3c: Fix the dangling comment the deletion leaves**
+
+`infra/grafana/alerts.yaml` has a comment on the panel rule reading "The second half of the verify-replay rule's finding above" — it dangles the moment the rule above is deleted. Rewrite it to stand alone.
+
 - [ ] **Step 4: Commit**
 
 ```bash
@@ -335,8 +345,11 @@ Order matters: converge first so the series start flowing while `exit_code` is s
 3. **Record the new digest in `docs/reference/fleet-pins.md` BEFORE converging** — `ops_image_digest` has no repo default, so that row is the only rollback operand. Keep the outgoing digest as the `prior` value.
 4. Ops converge: `--limit zcrypto-ops`, `--check --diff` first, `daemon.json` unchanged, `ops_alloy_digest` omitted (Alloy is not the subject), the NEW `ops_image_digest` passed.
 5. **Decide the liquidations question explicitly** (spec D10): the same variable re-pins the liquidations compose, which the role never restarts — the file moves, the container does not. Either roll it (`docker compose up -d` in its project dir) or leave it deliberately pinned-but-not-rolled, and record which.
-6. `GRAFANA_SA_TOKEN=… uv run bash infra/scripts/grafana-push.sh`, then read both rules back from the API.
-7. Verify by outcome at the next daily tick: all three series present, `run_ok=1`, and the ERROR-logs rule quiet through a sweep.
+6. `GRAFANA_SA_TOKEN=… uv run bash infra/scripts/grafana-push.sh`. **The push upserts and never deletes** — its own comment: *"a rule removed from alerts.yaml keeps evaluating and emailing forever."* So:
+   a. Read the orphan report and confirm it names **exactly** `zcrypto-ops-verify-replay-exit-nonzero` — if it names anything else, STOP and report; deleting an alert rule is not reversible from the repo.
+   b. Re-run with `GRAFANA_PRUNE=1` to actually delete it.
+   c. Verify: both new rules read back from the API, **and** a GET on the old uid returns 404. "The new rules exist" is not evidence the old one is gone.
+7. Verify by outcome at the next daily tick — **for the whole ops tier, not just verify-replay**, because the moving digest re-ran every runner on a new image (`capture-deploys.md`): `ops_archive_pull_exit_code` and `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, reconcile counters unchanged, `hc_checks_down_total` 0. Then the subject itself: all three new series present, `run_ok=1`, and the ERROR-logs rule quiet through a sweep.
 
 ## Self-review
 
