@@ -300,8 +300,20 @@ def test_cli_verify_replay_failed_hour_logs_at_warning_not_error(tmp_path: Path,
     primary = tmp_path / "primary"
     _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()[1:]))  # not anchored
 
-    with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
-        result = CliRunner().invoke(app, ["archive", "verify-replay", str(primary)])
+    # The CLI's root callback (`cli/__main__.py`) runs `cli.logging.config.configure` on every
+    # invocation, which sets `propagate = False` on the "zcrypto" logger. `caplog` only auto-attaches
+    # its capture handler to a logger that is ALREADY non-propagating when the fixture sets up
+    # (`_pytest.logging.catching_logs`), so a session whose first-ever CLI call is this very test
+    # would otherwise capture nothing. Attach the handler to "zcrypto" directly so the assertion
+    # holds regardless of test order/selection -- Logger.callHandlers always invokes a visited
+    # ancestor's own handlers en route up the chain, independent of that ancestor's own propagate flag.
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
+            result = CliRunner().invoke(app, ["archive", "verify-replay", str(primary)])
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
 
     assert result.exit_code == 1, result.output
     findings = [r for r in caplog.records if "hour failed" in r.message]
