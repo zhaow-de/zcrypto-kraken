@@ -51,11 +51,6 @@ ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 ops_verify_replay_healthcheck_url: ""
 ops_verified_replay_healthcheck_url: ""
 
-# spec 00076 D7 -- the daily replay's window. 7 days matches the T0003 exit bar's own framing and
-# bounds a permanent hole to a week of paging instead of forever; a hole found this way is
-# registered durably when triaged, because an alert that ages out is not a record.
-ops_verify_replay_window_days: 7
-
 # T0083 mutual watchdog: the zcrypto-grafana-watchdog check's ping URL (vaulted per host) and the
 # Grafana health endpoint the pinger probes. Empty URL skips the ping, same semantics as above.
 ops_grafana_watchdog_healthcheck_url: ""
