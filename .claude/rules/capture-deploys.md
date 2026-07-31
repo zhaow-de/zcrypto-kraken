@@ -50,6 +50,13 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 - **Stop the timer BEFORE the converge AND again after** — before, or an in-window tick fires the half-converged unit; again after, because the role's enable-and-start task silently turns it back on. Verify the second stop (`disabled`, `inactive`, absent from `systemctl list-timers`) **before the next tick is due** — read that deadline from `systemctl list-timers`, never assume it is far off. Then run the regeneration inside the unit, so a stray trigger is a no-op rather than a second writer.
 - **Regeneration is the point of no return** — the previous image cannot read the new generation and no old tree survives, so rollback is another full rebuild. Take the user's word there, not at the converge.
 
+## Retiring an alert rule
+
+- **Deleting a rule from `infra/grafana/alerts.yaml` does not retire it** — `grafana-push.sh` upserts and never deletes; the removed rule keeps evaluating and emailing. Retiring needs `GRAFANA_PRUNE=1`, and the orphan report must name exactly the uid you mean before you run it.
+- **Never prune the superseded rule until its replacement has a verified first sample** — the prune is irreversible, and between it and the first post-converge tick nothing covers the signal at all.
+- **Verify that first sample by VALUE, not presence** — `delta()`/`increase()` are blind to a condition already present in a series' first sample, so a fault born in the deploy window is baked into the baseline and never fires. Read the number and triage a nonzero as the page it would otherwise have been.
+- Order every rule-replacing deploy: converge → push → verify the value → prune → confirm the old uid 404s.
+
 ## Ansible secrets
 
 - **Never run `ansible-inventory --host` or `--list`.** `infra/ansible/ansible.cfg` sets `vault_password_file`, so both silently decrypt the vault and print every secret (incl. the live Kraken trade key) in cleartext. Use `--graph` / `--list-tags`, or pipe through a key-names-only filter.
