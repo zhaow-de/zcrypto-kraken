@@ -75,12 +75,15 @@ Each run atomically rewrites its node-exporter textfile in `ops_textfile_dir` (d
 | `<prefix>last_run_timestamp` | Unix time of the last run, clean or not. |
 | `<prefix>last_success_timestamp` | Unix time of the last **clean** run (`0` = never). A failed run carries the previous value forward, so "time since last clean replay" stays directly alertable. |
 | `ops_verified_replay_days_behind` | Days between the replay watermark and yesterday (`0` = fully caught up). Verified-replay family only — the watermark catch-up loop (T0059) is what makes "behind" a meaningful state. |
+| `ops_verify_replay_failed_hours` | Count of hours that failed the last sweep that produced a summary. Verify-replay family only (spec 00077 D2); carried forward when a run breaks before reporting. |
+| `ops_verify_replay_hours_total` | Count of canonical hours in the last sweep that produced a summary. Verify-replay family only (spec 00077 D2); carried forward when a run breaks before reporting. |
+| `ops_verify_replay_run_ok` | `1` iff the last run produced a parseable summary — did the sweep *complete*, regardless of what it found; `0` = crash, EIO, or a container that never started. Verify-replay family only (spec 00077 D2). |
 
 The metric families are new: per the T0034 discipline, arm Grafana alert rules only once the series are visible in the scrape (OPS-4/5 wires the ops node's scraper; do not push rules blind).
 
 ### Dead-man pings
 
-On a clean run (exit 0) each script GETs its healthchecks.io ping URL — role vars `ops_verify_replay_healthcheck_url` / `ops_verified_replay_healthcheck_url`, both defaulting to empty, which **skips** the ping entirely (the CLI's optional `ping_healthcheck` semantics, shell edition: `[ -n "$URL" ] && curl -fsS -m 10 "$URL"`). A failed run pings nothing and alerts by silence.
+`verified-replay` GETs its healthchecks.io ping URL when the run is clean (exit 0) **and** fully caught up (`days_behind <= 0`) — a clean-but-behind run pings nothing; a stalled catch-up must trip the dead man, not feed it. `verify-replay` differs (spec 00077 D5): it pings whenever the sweep *ran* and produced a summary (`run_ok == 1`), not on exit code — once any bad hour exists, `rc` stays 1 forever, so gating on `rc` would withhold the ping (and page through healthchecks.io) forever; a sweep that completed and reported bad hours still ran. Both read role vars `ops_verify_replay_healthcheck_url` / `ops_verified_replay_healthcheck_url`, defaulting to empty, which **skips** the ping entirely (the CLI's optional `ping_healthcheck` semantics, shell edition). A run that fails its own gate (`verified-replay`: non-zero exit or still behind; `verify-replay`: `run_ok == 0`) pings nothing and alerts by silence.
 
 ## Overlay writer + panel (OPS-4/OPS-5, specs 00052/00054; re-plumbed by T0058)
 

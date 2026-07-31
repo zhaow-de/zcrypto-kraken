@@ -218,7 +218,14 @@ prometheus.remote_write "grafana" {
 // instead, so the journal is their only transport too now. "Lossless" for the attached-container
 // case is bounded upstream by journald's own per-service rate limit (Debian default
 // RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
-// them -- our four units emit orders of magnitude less than that, but the claim ends there. The
+// them. Three of our four units emit orders of magnitude less than that; the verify-replay
+// sweep does NOT -- it replays the whole archive and logs a line per hour, ~5,726 today and
+// growing +288/day, so it sits at ~57% of the burst and crosses it around 2026-08-14 (later
+// if journald's free-space burst scaling is in effect -- that only ever raises the ceiling).
+// What it drops is the tail of a (pair, hour)-SORTED stream: the last pairs in sort order --
+// all of their hours, not just recent ones -- plus both summary lines. Alerting is unaffected
+// (the runner parses its own temp file, not the journal); the operator's read of it is not.
+// Tracked in docs/open-topics/T0114-*; the incremental fix there dissolves it. The
 // host keeps a persistent journal (/var/log/journal, verified live), mounted read-only at
 // /host/journal by alloy-compose.yaml.j2.
 //

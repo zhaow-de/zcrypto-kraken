@@ -6,10 +6,23 @@
 # `zcrypto archive verify-replay` in the digest-pinned default-AVX image, reading the primary tree
 # straight from the NAS's read-only NFS export at /nas (T0058 — the local capture mirror is
 # retired) with the ops-written reconciled overlay still local at /data, publishes the outcome as a
-# node-exporter textfile (ops_verify_replay_*), and pings the dead-man URL on a clean run only — an
-# empty URL skips the ping (the CLI's optional `ping_healthcheck` semantics, shell edition).
-# The mount is ro,soft: a hung NAS surfaces EIO, which the CLI treats as a loud integrity fact
-# (rc!=0 -> the exit-code alert), never as absence.
+# node-exporter textfile (ops_verify_replay_*, plus the failed/total hour counts and a run_ok flag,
+# spec 00077 D2/D6), and pings the dead-man URL whenever the sweep RAN and reported, regardless of
+# what it found (spec 00077 D5) — an empty URL skips the ping (the CLI's optional `ping_healthcheck`
+# semantics, shell edition). The mount is ro,soft: a hung NAS surfaces EIO, which the CLI treats as
+# a loud integrity fact, never as absence — surfacing as either a counted failed hour or, if the
+# sweep itself cannot complete, `run_ok=0`, each with its own alert rule (spec 00077 D4). Output is
+# now batched, not streamed (spec 00077 D6) -- three costs, all accepted: `journalctl -f` shows
+# nothing while the sweep runs; a signal-killed run loses the replay output entirely; and journald's
+# RateLimitBurst=10000/RateLimitIntervalSec=30s (infra/ansible/roles/ops/files/config.alloy) drops
+# lines emitted faster than that before Alloy ever sees them -- the sweep's ~5,726 lines (+288/day)
+# cross that threshold around 2026-08-14 at the nominal burst (journald scales the EFFECTIVE burst
+# up with free journal disk space, pushing it later; each failed hour adds a WARNING line, pulling
+# it earlier -- measure, do not trust the date). What drops is the tail of a (pair, hour)-SORTED
+# stream: the LAST PAIRS in sort order lose all their hours, not merely the newest ones, plus both
+# summary lines -- so the trap is one pair going silent entirely while an earlier-sorting pair's
+# record still reads complete and clean. The alerting path is unaffected either way: the counts are
+# parsed from the captured temp file, never from the journal.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
@@ -21,8 +34,13 @@ URL="{{ ops_verify_replay_healthcheck_url }}"
 # by name -- discovery.docker retired fleet-wide -- so this run's stdout ships via the unit's own
 # journal stream regardless of its name (attached, not -d). What the stable name still buys, and
 # the only reason it stays: a leftover container after a dockerd crash makes the NEXT run fail
-# loudly on a name conflict (unit rc!=0 -> the exit-code alert) -- acceptable and self-describing;
-# `--rm` cleans up in every normal path.
+# loudly on a name conflict -- `docker run` itself errors before the CLI prints its summary, so the
+# parse below finds nothing and run_ok=0 (spec 00077 D2), paging the run-broken rule -- acceptable
+# and self-describing; `--rm` cleans up in every normal path.
+# spec 00077 D6: capture rather than stream, so the counts can be read out, then replay the output
+# to the journal unchanged. No pipe on the run itself: this script sets `set -u` but NOT pipefail,
+# so `docker run | tee` would report tee's status and every failure would read as success.
+replay_log="$(mktemp)"
 docker run --rm --pull never \
     --name zcrypto-verify-replay \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
@@ -30,15 +48,45 @@ docker run --rm --pull never \
     -v "{{ ops_data_dir }}:/data:ro" \
     --entrypoint zcrypto \
     "{{ ops_image }}@{{ ops_image_digest }}" \
-    archive verify-replay "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}"
+    archive verify-replay "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" \
+    > "$replay_log" 2>&1
 rc=$?
+cat "$replay_log"
 
 now=$(date -u +%s)
-# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
-# "time since last clean replay" stays directly alertable (same reason the reconcile exporter
-# freezes last_success on a failed cycle).
+
+# spec 00077 D2/D6: the CLI logs `verify-replay complete hours=N ok=X failed=Y` (logfmt) once, via
+# logger.info, at the end of the sweep. Explicit digit class; `tail -1` is defensive rather than
+# load-bearing here -- unlike archive-pull's backfill-trades, this command's twin summary line (the
+# `typer.echo` "replayed N hour(s): X ok, Y failed") has no `=` and never matches the pattern, so
+# only one line ever does today. Empty means the sweep produced no summary at all -- a crash, an
+# EIO from the ro,soft NAS mount, no canonical hours found, or a container that never started (e.g.
+# the T0060 name-conflict case above).
+failed_hours=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+hours_total=$(sed -n 's/.*hours=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+rm -f "$replay_log"
+
+# D2/D3: run_ok is the mode-(iii) signal -- did the sweep COMPLETE, regardless of what it found.
+# failed_hours is CARRIED FORWARD when it did not: a sentinel would make the next good run look
+# like a jump and fire the new-breakage rule falsely.
+prev_failed=$(awk '/^ops_verify_replay_failed_hours/ {print $2}' "$PROM" 2>/dev/null)
+prev_hours=$(awk '/^ops_verify_replay_hours_total/ {print $2}' "$PROM" 2>/dev/null)
+if [ -n "$failed_hours" ]; then
+    run_ok=1
+else
+    run_ok=0
+    failed_hours="${prev_failed:-0}"
+    hours_total="${prev_hours:-0}"
+fi
+
+# A cycle that was not CLEAN must not erase "when did this last succeed" — carry the previous value
+# forward, so "time since last clean replay" stays directly alertable (same reason the reconcile
+# exporter freezes last_success on a failed cycle). Gated on rc AND run_ok (review round 1, finding
+# 2a): rc alone reads clean on the no-canonical-hours case (rc 0, no summary -- e.g. a NAS mount
+# that resolved to an empty directory) and would advance last_success right next to a run_ok=0
+# CRITICAL page. A sweep that never ran cannot have been clean.
 prev_success=$(awk '/^ops_verify_replay_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
-if [ "$rc" -eq 0 ]; then
+if [ "$rc" -eq 0 ] && [ "$run_ok" -eq 1 ]; then
     success=$now
 else
     success="${prev_success:-0}"
@@ -57,10 +105,22 @@ tmp="$PROM.tmp"
     printf '# HELP ops_verify_replay_last_success_timestamp Unix time of the last clean run (0 = never).\n'
     printf '# TYPE ops_verify_replay_last_success_timestamp gauge\n'
     printf 'ops_verify_replay_last_success_timestamp %s\n' "$success"
+    printf '# HELP ops_verify_replay_failed_hours Count of hours that failed the last sweep that produced a summary (carried forward when a run breaks before reporting).\n'
+    printf '# TYPE ops_verify_replay_failed_hours gauge\n'
+    printf 'ops_verify_replay_failed_hours %d\n' "$failed_hours"
+    printf '# HELP ops_verify_replay_hours_total Count of canonical hours in the last sweep that produced a summary (carried forward when a run breaks before reporting).\n'
+    printf '# TYPE ops_verify_replay_hours_total gauge\n'
+    printf 'ops_verify_replay_hours_total %d\n' "$hours_total"
+    printf '# HELP ops_verify_replay_run_ok 1 iff the last run produced a parseable summary -- did the sweep complete, regardless of what it found; 0 = crash, EIO, no canonical hours found (e.g. a NAS mount that silently resolved empty), or a container that never started.\n'
+    printf '# TYPE ops_verify_replay_run_ok gauge\n'
+    printf 'ops_verify_replay_run_ok %s\n' "$run_ok"
 } > "$tmp"
 mv "$tmp" "$PROM"
 
-if [ "$rc" -eq 0 ] && [ -n "$URL" ]; then
+# D5: gate on run_ok, NOT on rc. Once any bad hour exists rc is 1 forever; gating the ping on it
+# withholds the dead-man forever and pages through healthchecks.io indefinitely -- the same defect
+# the exit-code alert had, in a second channel. A sweep that completed and reported bad hours RAN.
+if [ "$run_ok" -eq 1 ] && [ -n "$URL" ]; then
     curl -fsS -m 10 -o /dev/null "$URL" || true
 fi
 exit "$rc"

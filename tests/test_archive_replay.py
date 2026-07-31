@@ -12,10 +12,12 @@ structural throw.
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
@@ -288,3 +290,33 @@ def test_cli_verify_replay_failing_hour_exits_nonzero(tmp_path: Path) -> None:
 
     assert result.exit_code == 1, result.output
     assert "FAILED" in result.output
+
+
+def test_cli_verify_replay_failed_hour_logs_at_warning_not_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A failed hour is a finding about DATA; the sweep reporting it is the program working.
+    `Ops · ERROR logs` fires on any ops ERROR within 15 minutes, so logging findings at ERROR pages
+    nightly, forever, for an hour that is already triaged -- the third channel spec 00077 exists to
+    close. Restoring `logger.error` here silently re-arms that page."""
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()[1:]))  # not anchored
+
+    # The CLI's root callback (`cli/__main__.py`) runs `cli.logging.config.configure` on every
+    # invocation, which sets `propagate = False` on the "zcrypto" logger. `caplog` only auto-attaches
+    # its capture handler to a logger that is ALREADY non-propagating when the fixture sets up
+    # (`_pytest.logging.catching_logs`), so a session whose first-ever CLI call is this very test
+    # would otherwise capture nothing. Attach the handler to "zcrypto" directly so the assertion
+    # holds regardless of test order/selection -- Logger.callHandlers always invokes a visited
+    # ancestor's own handlers en route up the chain, independent of that ancestor's own propagate flag.
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
+            result = CliRunner().invoke(app, ["archive", "verify-replay", str(primary)])
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
+
+    assert result.exit_code == 1, result.output
+    findings = [r for r in caplog.records if "hour failed" in r.message]
+    assert len(findings) == 1, [r.message for r in caplog.records]
+    assert findings[0].levelno == logging.WARNING
+    assert not any(r.levelno == logging.ERROR for r in caplog.records)

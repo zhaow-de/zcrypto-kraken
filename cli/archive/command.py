@@ -897,7 +897,9 @@ def verify_replay(
         typer.echo(line)
         if not result.passed:
             failed += 1
-            logger.error(
+            # spec 00077 D9: a failed hour is a finding about DATA, not the sweep erroring -- WARNING,
+            # not ERROR, so it does not page `Ops · ERROR logs` every night for an already-triaged hour.
+            logger.warning(
                 "archive verify-replay: hour failed pair=%s hour=%s anchored=%s ordered=%s checksum=%s replay=%s error=%s",
                 result.pair,
                 hour_s,

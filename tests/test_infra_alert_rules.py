@@ -240,3 +240,15 @@ def test_the_permanent_loss_page_outlives_a_single_evaluation_hour():
 
     assert max(ranges) >= 86400, f"query range {max(ranges)}s is shorter than a day"
     assert "[24h]" in expr, "the increase() window must match the query range"
+
+
+def test_the_new_breakage_window_matches_its_relative_time_range():
+    """Same coupling as the residual-gap test above, for the rule that is the only one guarding NEW
+    breakage in unbackfillable canonical data: `relativeTimeRange.from` and the `delta()` window must
+    agree, or a future edit shortening one silently truncates what the other reads."""
+    rule = _rule("zcrypto-ops-verify-replay-new-breakage")
+    ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+
+    assert max(ranges) >= 90000, f"query range {max(ranges)}s is shorter than 25h"
+    assert "[25h]" in expr, "the delta() window must match the query range"

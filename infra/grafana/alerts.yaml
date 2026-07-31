@@ -954,25 +954,31 @@ rules:
     notification_settings:
       receiver: metrics
 
-  - uid: zcrypto-ops-verify-replay-exit-nonzero
-    title: "Ops · verify-replay non-zero exit"
+  - uid: zcrypto-ops-verify-replay-new-breakage
+    title: "Ops · verify-replay NEW hours stopped replaying"
     ruleGroup: zcrypto-ops
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
+    # SUPERSEDES `Ops · verify-replay non-zero exit` (uid zcrypto-ops-verify-replay-exit-nonzero,
+    # removed here): ops_verify_replay_exit_code stays 1 forever once any hour has ever failed, so
+    # that rule paged nightly for an already-triaged, unchanged finding exactly as often as for a
+    # real new one. Split into two rules instead (spec 00077 D1/D4): this one owns "a NEW hour
+    # stopped replaying that did not fail in the prior sweep" (mode i); `Ops · verify-replay run
+    # broken` below owns "the sweep itself did not complete" (mode iii). exit_code is deliberately
+    # no longer alerted on -- do not "restore" this rule against it; the two new rules are strictly
+    # more precise than it was.
+    #
+    # A known bad hour is a CONSTANT in ops_verify_replay_failed_hours, so it contributes zero to
+    # the delta; only a new failure moves the count. Same delta-over-a-window shape as `Gate ·
+    # streak reset` above.
     condition: C
     data:
-      # T0060 review finding: archive-pull.sh.j2's T0060 comment promised "unit rc!=0 -> the
-      # exit-code alert" for the named jobs, but only archive-pull and verified-replay HAD one --
-      # this rule (and the panel rule below) makes that claim true for the remaining two timers.
-      # Same shape as the verified-replay exit rule above. Critical: a non-zero here is the daily
-      # CONTINUITY replay failing -- the earliest signal that the journal itself is corrupt, ahead
-      # of anything the verified path derives from it.
       - refId: A
         queryType: ""
-        relativeTimeRange: {from: 600, to: 0}
+        relativeTimeRange: {from: 90000, to: 0}  # 25h, matching the delta window below
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: ops_verify_replay_exit_code
+          expr: delta(ops_verify_replay_failed_hours[25h])
           instant: true
           refId: A
       - refId: C
@@ -985,14 +991,69 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [0]}
-    # OK, not Alerting: same reasoning as the block header's exit-code split -- a brand-new host
-    # must not page for a job that has simply never run yet.
+            - evaluator: {type: gt, params: [0]}  # the failed-hour count went UP == a new hour broke
+    # OK, not Alerting: the dead-man already owns "did the sweep run at all" -- a missing series
+    # here is absence, not breakage. `Ops · verify-replay run broken` below pages on a broken
+    # EVALUATION (the sweep ran but did not report), which is the other half of that distinction.
     noDataState: OK
     execErrState: Alerting
-    for: 5m
+    for: 0s
     annotations:
-      summary: "The last daily continuity replay recorded a non-zero exit code -- the journal failed to replay cleanly, the earliest corruption signal there is."
+      summary: >-
+        The canonical archive replay found hour(s) that failed today which did NOT fail in the prior
+        sweep -- a known bad hour re-failing does not trigger this. Read the per-hour warnings in the
+        run's journal to see which hours, triage them, and record the finding durably: this alert
+        ages out after 25h and is not itself a record.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-new-breakage
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-verify-replay-run-broken
+    title: "Ops · verify-replay run broken"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # Mode (iii): the sweep itself did not complete, regardless of what it found -- a crashed
+    # container, an EIO from the read-only NAS mount, or a container that never started (the T0060
+    # name-conflict case). ops_verify_replay_run_ok is 1 iff the run produced a parseable summary;
+    # on a broken run failed_hours/hours_total are carried forward unchanged (spec 00077 D2/D3), so
+    # this rule -- not the one above -- is what stays loud while a run keeps failing to complete.
+    # exit_code is deliberately no longer alerted on for this timer either (spec 00077 D1/D4).
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_verify_replay_run_ok
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # OK, not Alerting: a missing series is the dead-man's job, not this rule's -- a brand-new host
+    # must not page for a job that has simply never run yet, same reasoning the exit-code split
+    # this supersedes already used.
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: >-
+        The last canonical archive replay sweep did not run to completion, so today's findings are
+        unknown, not clean. Likely causes: the container crashed, or the read-only NAS mount
+        returned an I/O error.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-run-broken
     labels:
       severity: critical
     notification_settings:
@@ -1005,9 +1066,8 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The second half of the verify-replay rule's finding above. Warning, not critical: the
-      # panel is DERIVED data, recomputable from the mirror on the next healthy run -- a failed
-      # materialize costs freshness, not truth.
+      # Warning, not critical: the panel is DERIVED data, recomputable from the mirror on the next
+      # healthy run -- a failed materialize costs freshness, not truth.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
