@@ -345,11 +345,14 @@ Order matters: converge first so the series start flowing while `exit_code` is s
 3. **Record the new digest in `docs/reference/fleet-pins.md` BEFORE converging** — `ops_image_digest` has no repo default, so that row is the only rollback operand. Keep the outgoing digest as the `prior` value.
 4. Ops converge: `--limit zcrypto-ops`, `--check --diff` first, `daemon.json` unchanged, `ops_alloy_digest` omitted (Alloy is not the subject), the NEW `ops_image_digest` passed.
 5. **Decide the liquidations question explicitly** (spec D10): the same variable re-pins the liquidations compose, which the role never restarts — the file moves, the container does not. Either roll it (`docker compose up -d` in its project dir) or leave it deliberately pinned-but-not-rolled, and record which.
-6. `GRAFANA_SA_TOKEN=… uv run bash infra/scripts/grafana-push.sh`. **The push upserts and never deletes** — its own comment: *"a rule removed from alerts.yaml keeps evaluating and emailing forever."* So:
+6. `GRAFANA_SA_TOKEN=… uv run bash infra/scripts/grafana-push.sh` — **push the two new rules, but do NOT prune yet** (the prune is step 8, after the series are proven). **The push upserts and never deletes** — its own comment: *"a rule removed from alerts.yaml keeps evaluating and emailing forever."* So:
    a. Read the orphan report and confirm it names **exactly** `zcrypto-ops-verify-replay-exit-nonzero` — if it names anything else, STOP and report; deleting an alert rule is not reversible from the repo.
-   b. Re-run with `GRAFANA_PRUNE=1` to actually delete it.
-   c. Verify: both new rules read back from the API, **and** a GET on the old uid returns 404. "The new rules exist" is not evidence the old one is gone.
-7. Verify by outcome at the next daily tick — **for the whole ops tier, not just verify-replay**, because the moving digest re-ran every runner on a new image (`capture-deploys.md`): `ops_archive_pull_exit_code` and `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, reconcile counters unchanged, `hc_checks_down_total` 0. Then the subject itself: all three new series present, `run_ok=1`, and the ERROR-logs rule quiet through a sweep.
+   b. Verify both new rules read back from the API. **Leave the old rule live for now** — until the new series have a sample, no metric rule covers verify-replay at all, and the old one is the only cover there is.
+7. Verify by outcome at the next daily tick — **for the whole ops tier, not just verify-replay**, because the moving digest re-ran every runner on a new image (`capture-deploys.md`): `ops_archive_pull_exit_code` and `ops_panel_exit_code` 0, `reconcile.prom` mtime advanced, reconcile counters unchanged, `hc_checks_down_total` 0. Then the subject itself: all three new series present, `run_ok=1`, the ERROR-logs rule quiet through a sweep, **and `ops_verify_replay_failed_hours == 0`**.
+
+   That last check is not decoration and it cannot be deferred. `delta()` cannot see breakage that is already present in a series' **first** sample — a bad hour arising between the last pre-deploy sweep and this first post-deploy one is born into the baseline and the new-breakage rule will never page for it, ever. A nonzero value here must be triaged as the page it would otherwise have been.
+
+8. **Only now prune.** Re-run with `GRAFANA_PRUNE=1`, then confirm a GET on `zcrypto-ops-verify-replay-exit-nonzero` returns 404. "The new rules exist" is not evidence the old one is gone — and deleting it before step 7 would leave a window with no metric cover at all, against an irreversible deletion.
 
 ## Self-review
 
