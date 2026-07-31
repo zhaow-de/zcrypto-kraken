@@ -45,27 +45,36 @@ def test_renders_valid_bash(tmp_path):
     assert subprocess.run([shutil.which("bash"), "-n", str(script)], capture_output=True).returncode == 0
 
 
-@pytest.mark.parametrize("series", [
-    "ops_verify_replay_failed_hours",
-    "ops_verify_replay_hours_total",
-    "ops_verify_replay_run_ok",
-    "ops_verify_replay_exit_code",
-    "ops_verify_replay_last_run_timestamp",
-    "ops_verify_replay_last_success_timestamp",
-])
+@pytest.mark.parametrize(
+    "series",
+    [
+        "ops_verify_replay_failed_hours",
+        "ops_verify_replay_hours_total",
+        "ops_verify_replay_run_ok",
+        "ops_verify_replay_exit_code",
+        "ops_verify_replay_last_run_timestamp",
+        "ops_verify_replay_last_success_timestamp",
+    ],
+)
 def test_every_series_is_emitted_with_help_and_type(series):
     out = _render()
     assert f"# HELP {series} " in out, f"{series} needs a HELP line"
     assert f"# TYPE {series} " in out, f"{series} needs a TYPE line"
-    assert re.search(rf"^{re.escape(series)} ", out, re.M) or f"'{series} %s\\n'" in out
+    # %d (not just %s) is valid: node_exporter rejects the WHOLE file on one blank-value line, so
+    # a count that could be empty prints as %d, which bash coerces to 0.
+    assert re.search(rf"^{re.escape(series)} ", out, re.M) or re.search(rf"'{re.escape(series)} %[sd]\\n'", out)
 
 
 def test_the_ping_gates_on_run_ok_not_on_exit_code():
-    """spec 00077 D5 -- the load-bearing fix. Findings are a data fact; liveness is a run fact."""
+    """spec 00077 D5 -- the load-bearing fix. Findings are a data fact; liveness is a run fact.
+
+    Assert on the literal `if` line that guards `curl`, not a wide substring window around it: the
+    D5 comment and the `ops_verify_replay_run_ok` printf line both contain the word "run_ok", so a
+    loose "run_ok appears somewhere nearby" check is satisfied by prose and never actually inspects
+    the gate -- deleting the gate entirely (`if [ -n "$URL" ]; then`) still passed that shape of
+    assertion (review round 1, finding 1)."""
     out = _render()
-    ping = out[out.index("curl") - 400:out.index("curl") + 80]
-    assert "run_ok" in ping, "the dead-man ping must gate on run_ok"
-    assert not re.search(r'\[\s*"\$rc"\s+-eq\s+0\s*\]', ping), "the ping must NOT gate on rc"
+    assert 'if [ "$run_ok" -eq 1 ] && [ -n "$URL" ]; then' in out, "the dead-man ping must gate on run_ok"
 
 
 def test_the_docker_run_is_captured_not_piped():
@@ -86,10 +95,10 @@ def test_the_parse_matches_the_clis_actual_log_format():
     """Run the template's own sed over a line in the CLI's REAL format, so wording drift on either
     side fails here. Format from cli/archive/command.py's logger.info at the end of verify_replay."""
     out = _render()
-    sed_expr = next(
-        m.group(1) for m in re.finditer(r"sed -n '([^']*failed=[^']*)'", out)
+    sed_expr = next(m.group(1) for m in re.finditer(r"sed -n '([^']*failed=[^']*)'", out))
+    real_line = (
+        "2026-07-31 03:41:59,001 INFO zcrypto.archive.command [command.py:912] - verify-replay complete hours=5724 ok=5724 failed=0"
     )
-    real_line = "2026-07-31 03:41:59,001 INFO zcrypto.archive.command [command.py:912] - verify-replay complete hours=5724 ok=5724 failed=0"
     got = subprocess.run(["sed", "-n", sed_expr], input=real_line, capture_output=True, text=True).stdout.strip()
     assert got == "0", f"the template's sed did not extract failed=0 from the CLI's real line, got {got!r}"
 

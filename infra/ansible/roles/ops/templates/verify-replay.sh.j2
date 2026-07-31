@@ -11,7 +11,9 @@
 # what it found (spec 00077 D5) — an empty URL skips the ping (the CLI's optional `ping_healthcheck`
 # semantics, shell edition). The mount is ro,soft: a hung NAS surfaces EIO, which the CLI treats as
 # a loud integrity fact, never as absence — surfacing as either a counted failed hour or, if the
-# sweep itself cannot complete, `run_ok=0`, each with its own alert rule (spec 00077 D4).
+# sweep itself cannot complete, `run_ok=0`, each with its own alert rule (spec 00077 D4). Output is
+# now batched, not streamed (spec 00077 D6): `journalctl -f` shows nothing while the sweep runs,
+# and a signal-killed run loses the replay output entirely -- same tradeoff archive-pull accepted.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
@@ -43,20 +45,14 @@ rc=$?
 cat "$replay_log"
 
 now=$(date -u +%s)
-# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
-# "time since last clean replay" stays directly alertable (same reason the reconcile exporter
-# freezes last_success on a failed cycle).
-prev_success=$(awk '/^ops_verify_replay_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
-if [ "$rc" -eq 0 ]; then
-    success=$now
-else
-    success="${prev_success:-0}"
-fi
 
-# spec 00077 D2/D6: the CLI logs `verify-replay complete hours=N ok=X failed=Y` (logfmt) at the end
-# of the sweep. Explicit digit class + last match (the CLI prints the summary twice), per
-# archive-pull's precedent. Empty means the sweep produced no summary -- a crash, an EIO from the
-# ro,soft NAS mount, or a container that never started (e.g. the T0060 name-conflict case above).
+# spec 00077 D2/D6: the CLI logs `verify-replay complete hours=N ok=X failed=Y` (logfmt) once, via
+# logger.info, at the end of the sweep. Explicit digit class; `tail -1` is defensive rather than
+# load-bearing here -- unlike archive-pull's backfill-trades, this command's twin summary line (the
+# `typer.echo` "replayed N hour(s): X ok, Y failed") has no `=` and never matches the pattern, so
+# only one line ever does today. Empty means the sweep produced no summary at all -- a crash, an
+# EIO from the ro,soft NAS mount, no canonical hours found, or a container that never started (e.g.
+# the T0060 name-conflict case above).
 failed_hours=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
 hours_total=$(sed -n 's/.*hours=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
 rm -f "$replay_log"
@@ -74,6 +70,19 @@ else
     hours_total="${prev_hours:-0}"
 fi
 
+# A cycle that was not CLEAN must not erase "when did this last succeed" — carry the previous value
+# forward, so "time since last clean replay" stays directly alertable (same reason the reconcile
+# exporter freezes last_success on a failed cycle). Gated on rc AND run_ok (review round 1, finding
+# 2a): rc alone reads clean on the no-canonical-hours case (rc 0, no summary -- e.g. a NAS mount
+# that resolved to an empty directory) and would advance last_success right next to a run_ok=0
+# CRITICAL page. A sweep that never ran cannot have been clean.
+prev_success=$(awk '/^ops_verify_replay_last_success_timestamp/ {print $2}' "$PROM" 2>/dev/null)
+if [ "$rc" -eq 0 ] && [ "$run_ok" -eq 1 ]; then
+    success=$now
+else
+    success="${prev_success:-0}"
+fi
+
 # Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
 # half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
 tmp="$PROM.tmp"
@@ -89,11 +98,11 @@ tmp="$PROM.tmp"
     printf 'ops_verify_replay_last_success_timestamp %s\n' "$success"
     printf '# HELP ops_verify_replay_failed_hours Count of hours that failed the last sweep that produced a summary (carried forward when a run breaks before reporting).\n'
     printf '# TYPE ops_verify_replay_failed_hours gauge\n'
-    printf 'ops_verify_replay_failed_hours %s\n' "$failed_hours"
+    printf 'ops_verify_replay_failed_hours %d\n' "$failed_hours"
     printf '# HELP ops_verify_replay_hours_total Count of canonical hours in the last sweep that produced a summary (carried forward when a run breaks before reporting).\n'
     printf '# TYPE ops_verify_replay_hours_total gauge\n'
-    printf 'ops_verify_replay_hours_total %s\n' "$hours_total"
-    printf '# HELP ops_verify_replay_run_ok 1 iff the last run produced a parseable summary (mode-(iii): did the sweep complete, regardless of what it found); 0 = crash, EIO, or a container that never started.\n'
+    printf 'ops_verify_replay_hours_total %d\n' "$hours_total"
+    printf '# HELP ops_verify_replay_run_ok 1 iff the last run produced a parseable summary -- did the sweep complete, regardless of what it found; 0 = crash, EIO, no canonical hours found (e.g. a NAS mount that silently resolved empty), or a container that never started.\n'
     printf '# TYPE ops_verify_replay_run_ok gauge\n'
     printf 'ops_verify_replay_run_ok %s\n' "$run_ok"
 } > "$tmp"
