@@ -138,6 +138,12 @@ OPS_REQUIRED = [
     "ops_archive_pull_last_success_timestamp",
     "ops_panel_exit_code",
     "ops_verify_replay_exit_code",
+    # spec 00077: failed_hours/hours_total/run_ok are new series, and two of the three are now
+    # alert-bearing. Admitted today only by the `ops_verify_replay_.*` wildcard -- pinned by name
+    # so narrowing that wildcard fails here rather than silently NoData-ing both new rules.
+    "ops_verify_replay_failed_hours",
+    "ops_verify_replay_hours_total",
+    "ops_verify_replay_run_ok",
     "ops_verified_replay_exit_code",
     "ops_verified_replay_last_success_timestamp",
     # The "did the timer RUN?" discriminator. Absent from the ops keep-regex until 2026-07-28 while
