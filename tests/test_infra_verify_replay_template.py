@@ -8,6 +8,7 @@ had, in a second channel. These tests exist to keep that from coming back.
 `trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching
 `test_infra_archive_pull_template.py`."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -93,14 +94,87 @@ def test_the_docker_run_is_captured_not_piped():
 
 def test_the_parse_matches_the_clis_actual_log_format():
     """Run the template's own sed over a line in the CLI's REAL format, so wording drift on either
-    side fails here. Format from cli/archive/command.py's logger.info at the end of verify_replay."""
+    side fails here. Format from cli/archive/command.py's logger.info at the end of verify_replay.
+
+    The hardcoded `real_line` below only catches drift on the TEMPLATE side -- rename the CLI's
+    fields and this test still passes, shipping green and surfacing only the next day as a
+    run-broken CRITICAL (review round 2, finding 4). Following archive-pull's precedent
+    (`test_the_repair_count_parse_matches_what_the_cli_actually_prints`), also assert the emitter
+    source still contains the literal format string the parse depends on."""
     out = _render()
     sed_expr = next(m.group(1) for m in re.finditer(r"sed -n '([^']*failed=[^']*)'", out))
+
+    emitter = REPO / "cli/archive/command.py"
+    assert "verify-replay complete hours=%d ok=%d failed=%d" in emitter.read_text(), (
+        f"{emitter.name} no longer prints the format string this parse depends on"
+    )
+
     real_line = (
         "2026-07-31 03:41:59,001 INFO zcrypto.archive.command [command.py:912] - verify-replay complete hours=5724 ok=5724 failed=0"
     )
     got = subprocess.run(["sed", "-n", sed_expr], input=real_line, capture_output=True, text=True).stdout.strip()
     assert got == "0", f"the template's sed did not extract failed=0 from the CLI's real line, got {got!r}"
+
+
+def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
+    """Spec 00077's Verification promises exactly this: 'failed_hours carries forward when the run
+    breaks; run_ok is 0 exactly when the summary does not parse.' No committed test executed that
+    block -- both were one-time manual proofs (review round 2, finding 5). Simplifying
+    `failed_hours="${prev_failed:-0}"` to a literal `0` passes every OTHER test here and silently
+    re-arms the false-page defect D3 exists to prevent.
+
+    Ports archive-pull's executed-block idiom (`test_a_failed_run_still_writes_every_series`): stub
+    `docker` so the rendered script's OWN `docker run` call produces each shape, and run the real
+    script under bash against a pre-seeded textfile, rather than re-implementing its logic in
+    Python. The healthcheck URL is rendered empty so the ping never attempts a real network call."""
+    bash = shutil.which("bash")
+    if bash is None:  # pragma: no cover - bash is present on every image we run
+        pytest.skip("bash not available")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_stub = bin_dir / "docker"
+    prom = tmp_path / "ops-verify-replay.prom"
+    context = dict(CONTEXT, ops_verify_replay_healthcheck_url="")
+    script = _ENV.from_string(TEMPLATE.read_text()).render(**context)
+    target = '"{}/ops-verify-replay.prom"'.format(CONTEXT["ops_textfile_dir"])
+    # str.replace no-ops silently on a miss, and the un-substituted target is the LIVE ops path.
+    assert target in script, f"the textfile path did not match {target!r} -- the harness would write to the real path"
+    script = script.replace(target, f'"{prom}"')
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+    def _val(text: str, name: str) -> str:
+        return next(ln for ln in text.splitlines() if ln.startswith(name)).split()[1]
+
+    def _run(stub: str, seed: str) -> str:
+        docker_stub.write_text(stub)
+        docker_stub.chmod(0o755)
+        prom.write_text(seed)
+        proc = subprocess.run([bash, "-c", script], capture_output=True, text=True, env=env)
+        assert proc.returncode in (1, 137), f"unexpected script rc, stderr: {proc.stderr}"
+        return prom.read_text()
+
+    # (a) docker (standing in for the whole CLI invocation) produces a parseable summary reporting
+    # 2 bad hours out of 10 -- the CLI's own real exit path when hours failed (rc 1).
+    seed_a = (
+        "ops_verify_replay_failed_hours 3\nops_verify_replay_hours_total 100\nops_verify_replay_last_success_timestamp 1753700000\n"
+    )
+    written_a = _run("#!/usr/bin/env bash\necho 'verify-replay complete hours=10 ok=8 failed=2'\nexit 1\n", seed_a)
+    assert _val(written_a, "ops_verify_replay_run_ok") == "1", "a parsed summary must set run_ok=1"
+    assert _val(written_a, "ops_verify_replay_failed_hours") == "2", "the NEW count must be used, not the seed"
+    assert _val(written_a, "ops_verify_replay_hours_total") == "10"
+    # rc=1 (bad hours exist): the sweep RAN but was not CLEAN -- last_success must not advance.
+    assert _val(written_a, "ops_verify_replay_last_success_timestamp") == "1753700000"
+
+    # (b) docker produces NO output at all -- a crash before the CLI printed anything. Seeded from
+    # (a)'s own output, so this proves carry-forward chains across runs, not just from a fixture.
+    written_b = _run("#!/usr/bin/env bash\nexit 137\n", written_a)
+    assert _val(written_b, "ops_verify_replay_run_ok") == "0", "run_ok must be 0 exactly when the summary is absent"
+    assert _val(written_b, "ops_verify_replay_failed_hours") == "2", "failed_hours was not carried forward"
+    assert _val(written_b, "ops_verify_replay_hours_total") == "10", "hours_total was not carried forward"
+    assert _val(written_b, "ops_verify_replay_last_success_timestamp") == "1753700000", (
+        "last_success was not carried forward on a broken run"
+    )
 
 
 def test_the_design_introduces_no_arithmetic():

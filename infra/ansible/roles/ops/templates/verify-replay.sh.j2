@@ -12,8 +12,13 @@
 # semantics, shell edition). The mount is ro,soft: a hung NAS surfaces EIO, which the CLI treats as
 # a loud integrity fact, never as absence — surfacing as either a counted failed hour or, if the
 # sweep itself cannot complete, `run_ok=0`, each with its own alert rule (spec 00077 D4). Output is
-# now batched, not streamed (spec 00077 D6): `journalctl -f` shows nothing while the sweep runs,
-# and a signal-killed run loses the replay output entirely -- same tradeoff archive-pull accepted.
+# now batched, not streamed (spec 00077 D6) -- three costs, all accepted: `journalctl -f` shows
+# nothing while the sweep runs; a signal-killed run loses the replay output entirely; and journald's
+# RateLimitBurst=10000/RateLimitIntervalSec=30s (infra/ansible/roles/ops/files/config.alloy) drops
+# lines emitted faster than that before Alloy ever sees them -- the sweep's ~5,726 lines (+288/day)
+# cross that threshold around 2026-08-15, dropping the newest hours and both summary lines (exactly
+# what an operator is told to read) from this unit's own journal record. The alerting path is
+# unaffected either way: the counts are parsed from the captured temp file, never from the journal.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
