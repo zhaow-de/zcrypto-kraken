@@ -8,14 +8,21 @@ had, in a second channel. These tests exist to keep that from coming back.
 `trim_blocks=True, lstrip_blocks=False` mirrors Ansible's own Jinja defaults, matching
 `test_infra_archive_pull_template.py`."""
 
+import logging
 import os
 import re
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import jinja2
 import pytest
+from typer.testing import CliRunner
+
+from cli.__main__ import app
+from cli.archive import command as command_mod
+from cli.archive.replay import ReplayResult
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
@@ -92,28 +99,65 @@ def test_the_docker_run_is_captured_not_piped():
     assert '> "$replay_log" 2>&1' in cmd, "the replay command must capture to a file"
 
 
-def test_the_parse_matches_the_clis_actual_log_format():
+def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch):
     """Run the template's own sed over a line in the CLI's REAL format, so wording drift on either
     side fails here. Format from cli/archive/command.py's logger.info at the end of verify_replay.
 
-    The hardcoded `real_line` below only catches drift on the TEMPLATE side -- rename the CLI's
-    fields and this test still passes, shipping green and surfacing only the next day as a
-    run-broken CRITICAL (review round 2, finding 4). Following archive-pull's precedent
-    (`test_the_repair_count_parse_matches_what_the_cli_actually_prints`), also assert the emitter
-    source still contains the literal format string the parse depends on."""
+    Two checks, for two kinds of drift. (1) the TEMPLATE side, over a hardcoded line built from
+    today's known-good format. (2) the CLI side: an earlier version asserted a literal format
+    string was a substring of the emitter's whole source text -- the reviewer proved that
+    satisfiable by prose: rename the live `logger.info` call to something else entirely and leave
+    the OLD literal sitting in an adjacent comment, and the textual check still passed (review
+    round 3, finding 4). Made executable instead: run the real CLI command through `CliRunner`,
+    capture the REAL `logger.info` record via `caplog`, and feed its actual `getMessage()` through
+    the same sed -- a rename anywhere in the live call, comment loophole included, then changes
+    what is actually parsed, not just what text sits nearby."""
     out = _render()
     sed_expr = next(m.group(1) for m in re.finditer(r"sed -n '([^']*failed=[^']*)'", out))
-
-    emitter = REPO / "cli/archive/command.py"
-    assert "verify-replay complete hours=%d ok=%d failed=%d" in emitter.read_text(), (
-        f"{emitter.name} no longer prints the format string this parse depends on"
-    )
 
     real_line = (
         "2026-07-31 03:41:59,001 INFO zcrypto.archive.command [command.py:912] - verify-replay complete hours=5724 ok=5724 failed=0"
     )
     got = subprocess.run(["sed", "-n", sed_expr], input=real_line, capture_output=True, text=True).stdout.strip()
     assert got == "0", f"the template's sed did not extract failed=0 from the CLI's real line, got {got!r}"
+
+    # (2): stub the heavier replay computation (already covered by tests/test_archive_replay.py) so
+    # only the CLI's own summary-line formatting is under test, then run the real command.
+    stub_result = ReplayResult(
+        pair="BTC/EUR",
+        hour=datetime(2026, 7, 14, 2, tzinfo=UTC),
+        rows=1,
+        messages=1,
+        anchored=True,
+        ts_ordered=True,
+        checksum_present=True,
+        replay_ok=True,
+        error=None,
+    )
+    monkeypatch.setattr(command_mod.replay_mod, "verify_replay", lambda *a, **kw: [stub_result])
+
+    # Task 1's ordering hazard: `cli/logging/config.py` flips propagate=False on the "zcrypto"
+    # logger on the CLI's first-ever invocation, and `caplog` only auto-attaches to an ALREADY
+    # non-propagating logger at fixture setup -- so a session whose first CLI call is this very
+    # test would otherwise capture nothing. Attach the handler to "zcrypto" directly so the
+    # assertion holds regardless of test order/selection (same fix as
+    # `test_cli_verify_replay_failed_hour_logs_at_warning_not_error` in test_archive_replay.py).
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.INFO, logger="zcrypto.archive.command"):
+            result = CliRunner().invoke(app, ["archive", "verify-replay", "/unused-primary-root"])
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
+
+    assert result.exit_code == 0, result.output
+    summaries = [r for r in caplog.records if r.message.startswith("verify-replay complete")]
+    assert len(summaries) == 1, [r.message for r in caplog.records]
+    live_line = summaries[0].getMessage()
+    live_got = subprocess.run(["sed", "-n", sed_expr], input=live_line, capture_output=True, text=True).stdout.strip()
+    assert live_got == "0", (
+        f"the template's sed did not extract failed=0 from the CLI's ACTUAL log line {live_line!r}, got {live_got!r}"
+    )
 
 
 def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
@@ -151,7 +195,9 @@ def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
         docker_stub.chmod(0o755)
         prom.write_text(seed)
         proc = subprocess.run([bash, "-c", script], capture_output=True, text=True, env=env)
-        assert proc.returncode in (1, 137), f"unexpected script rc, stderr: {proc.stderr}"
+        # 0 admitted deliberately (review round 3, finding 1): the CLI's own no-canonical-hours path
+        # (case (c) below) is rc 0 with no summary -- not a shape to filter out here.
+        assert proc.returncode in (0, 1, 137), f"unexpected script rc, stderr: {proc.stderr}"
         return prom.read_text()
 
     # (a) docker (standing in for the whole CLI invocation) produces a parseable summary reporting
@@ -174,6 +220,19 @@ def test_a_broken_run_carries_forward_and_flags_run_ok(tmp_path):
     assert _val(written_b, "ops_verify_replay_hours_total") == "10", "hours_total was not carried forward"
     assert _val(written_b, "ops_verify_replay_last_success_timestamp") == "1753700000", (
         "last_success was not carried forward on a broken run"
+    )
+
+    # (c) docker exits 0 with NO parseable summary -- the CLI's own real no-canonical-hours path
+    # (`typer.echo("no canonical book hours found"); return`, rc 0). Review round 3, finding 1: this
+    # is the exact case round 1's `last_success` gate exists for -- an unmounted or empty NAS bind
+    # reads as "no canonical hours", and dropping `&& [ "$run_ok" -eq 1 ]` from that gate (leaving
+    # `rc -eq 0` alone) advances last_success to now right beside the run_ok=0 CRITICAL page.
+    written_c = _run("#!/usr/bin/env bash\necho 'no canonical book hours found'\nexit 0\n", written_b)
+    assert _val(written_c, "ops_verify_replay_run_ok") == "0", "run_ok must be 0 on the no-canonical-hours case"
+    assert _val(written_c, "ops_verify_replay_failed_hours") == "2", "failed_hours was not carried forward"
+    assert _val(written_c, "ops_verify_replay_hours_total") == "10", "hours_total was not carried forward"
+    assert _val(written_c, "ops_verify_replay_last_success_timestamp") == "1753700000", (
+        "last_success advanced on rc=0/no-summary -- the exact defect round 1's gate exists to prevent"
     )
 
 
