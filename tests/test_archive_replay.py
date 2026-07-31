@@ -12,10 +12,12 @@ structural throw.
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
+import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
@@ -288,3 +290,21 @@ def test_cli_verify_replay_failing_hour_exits_nonzero(tmp_path: Path) -> None:
 
     assert result.exit_code == 1, result.output
     assert "FAILED" in result.output
+
+
+def test_cli_verify_replay_failed_hour_logs_at_warning_not_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A failed hour is a finding about DATA; the sweep reporting it is the program working.
+    `Ops · ERROR logs` fires on any ops ERROR within 15 minutes, so logging findings at ERROR pages
+    nightly, forever, for an hour that is already triaged -- the third channel spec 00077 exists to
+    close. Restoring `logger.error` here silently re-arms that page."""
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()[1:]))  # not anchored
+
+    with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
+        result = CliRunner().invoke(app, ["archive", "verify-replay", str(primary)])
+
+    assert result.exit_code == 1, result.output
+    findings = [r for r in caplog.records if "hour failed" in r.message]
+    assert len(findings) == 1, [r.message for r in caplog.records]
+    assert findings[0].levelno == logging.WARNING
+    assert not any(r.levelno == logging.ERROR for r in caplog.records)
