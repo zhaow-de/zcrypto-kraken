@@ -1004,6 +1004,7 @@ rules:
         sweep -- a known bad hour re-failing does not trigger this. Read the per-hour warnings in the
         run's journal to see which hours, triage them, and record the finding durably: this alert
         ages out after 25h and is not itself a record.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-new-breakage
     labels:
       severity: critical
     notification_settings:
@@ -1052,6 +1053,7 @@ rules:
         The last canonical archive replay sweep did not run to completion, so today's findings are
         unknown, not clean. Likely causes: the container crashed, or the read-only NAS mount
         returned an I/O error.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-run-broken
     labels:
       severity: critical
     notification_settings:
