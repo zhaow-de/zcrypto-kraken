@@ -1001,9 +1001,9 @@ rules:
     annotations:
       summary: >-
         The canonical archive replay found hour(s) that failed today which did NOT fail in the prior
-        sweep -- a known bad hour re-failing does not trigger this. Read the failed hours from the
-        run's journal line, triage them, and record the finding durably: this alert ages out after
-        25h and is not itself a record.
+        sweep -- a known bad hour re-failing does not trigger this. Read the per-hour warnings in the
+        run's journal to see which hours, triage them, and record the finding durably: this alert
+        ages out after 25h and is not itself a record.
     labels:
       severity: critical
     notification_settings:
@@ -1049,9 +1049,9 @@ rules:
     for: 15m
     annotations:
       summary: >-
-        The last canonical archive replay sweep did not complete at all -- unlike the rule above,
-        its findings are unknown rather than clean. Likely causes: the container crashed, or the
-        read-only NAS mount returned an I/O error.
+        The last canonical archive replay sweep did not run to completion, so today's findings are
+        unknown, not clean. Likely causes: the container crashed, or the read-only NAS mount
+        returned an I/O error.
     labels:
       severity: critical
     notification_settings:
