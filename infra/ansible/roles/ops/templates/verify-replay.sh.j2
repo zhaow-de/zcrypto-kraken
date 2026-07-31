@@ -16,11 +16,13 @@
 # nothing while the sweep runs; a signal-killed run loses the replay output entirely; and journald's
 # RateLimitBurst=10000/RateLimitIntervalSec=30s (infra/ansible/roles/ops/files/config.alloy) drops
 # lines emitted faster than that before Alloy ever sees them -- the sweep's ~5,726 lines (+288/day)
-# cross that threshold no later than ~2026-08-15 at the nominal burst (journald scales the EFFECTIVE
-# burst up with free journal disk space, so the real crossing can be later, never earlier), dropping
-# the newest hours and both summary lines (exactly what an operator is told to read) from this
-# unit's own journal record. The alerting path is unaffected either way: the counts are parsed from
-# the captured temp file, never from the journal.
+# cross that threshold around 2026-08-14 at the nominal burst (journald scales the EFFECTIVE burst
+# up with free journal disk space, pushing it later; each failed hour adds a WARNING line, pulling
+# it earlier -- measure, do not trust the date). What drops is the tail of a (pair, hour)-SORTED
+# stream: the LAST PAIRS in sort order lose all their hours, not merely the newest ones, plus both
+# summary lines -- so the trap is one pair going silent entirely while an earlier-sorting pair's
+# record still reads complete and clean. The alerting path is unaffected either way: the counts are
+# parsed from the captured temp file, never from the journal.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
