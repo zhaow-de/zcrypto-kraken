@@ -1,0 +1,41 @@
+# TEMPORARY diagnostic — delete with this branch.
+# Chases a SIGABRT (exit 134) that reproduces 2/2 in CI at
+# tests/test_engine_node.py::test_build_shadow_node_with_exec_client_when_enabled
+# but never locally (ruled out: core count, fd cap, memory, deps, 40x stress).
+# The abort prints nothing, so it is a native abort off a non-Python thread.
+name: diag engine-node abort
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONFAULTHANDLER: "1"
+      RUST_BACKTRACE: "full"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.14"
+      - run: uv sync
+      - name: runner shape
+        run: 'nproc; free -m; ulimit -a'
+      # (A) the suspect file ALONE — does the abort need the rest of the suite's timing?
+      - name: A. engine_node alone
+        run: uv run coverage run -m pytest -v tests/test_engine_node.py
+        continue-on-error: true
+      # (B) the suspect file alone, WITHOUT coverage — is the tracer implicated?
+      - name: B. engine_node alone, no coverage
+        run: uv run pytest -v tests/test_engine_node.py
+        continue-on-error: true
+      # (C) this branch's new tests, then the suspect file — the minimal interaction
+      - name: C. new archive tests then engine_node
+        run: uv run coverage run -m pytest -v tests/test_archive_checkpoint.py tests/test_archive_replay_incremental.py tests/test_engine_node.py
+        continue-on-error: true
+      # (D) full suite, verbose only for the suspect file, so we see the exact boundary
+      - name: D. full suite
+        run: uv run coverage run -m pytest -q
+        continue-on-error: true
