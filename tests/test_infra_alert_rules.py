@@ -271,12 +271,23 @@ def test_the_backlog_stuck_rule_exists_and_fits_the_uid_column():
     assert len(_BACKLOG_STUCK) <= _UID_MAX, f"{len(_BACKLOG_STUCK)} chars -- the create call will 400"
 
 
+def _duration_seconds(text: str) -> int:
+    """Grafana durations as they appear in this file: `0s`, `15m`, `27h`."""
+    unit = {"s": 1, "m": 60, "h": 3600}[text[-1]]
+    return int(text[:-1]) * unit
+
+
+def _backlog_window_seconds(rule) -> int:
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+    return int(re.search(r"\[(\d+)h\]", expr).group(1)) * 3600
+
+
 def test_the_backlog_stuck_window_sees_exactly_two_nightly_runs():
-    """26h, and 26h in BOTH fields. Widening this is the tempting edit and it is wrong in a way no
-    test but this one would catch: a 49h window still reaches the pre-bump zeros, so
-    `delta(pending[49h]) >= 0` stays true through night TWO of a perfectly healthy large drain and
-    the rule pages on every one of them. 26h sees the last two runs and nothing older, so night
-    two's decrease drives the delta negative and resets the condition."""
+    """26h, and 26h in BOTH fields. The window's job is to span exactly the last two runs: wide
+    enough that night two's sample is always inside it (24h + slack for a run that starts late),
+    narrow enough that a THIRD run's history never is. Widening to 49h is the tempting edit and it is
+    wrong -- it drags a third and fourth night into the same difference, so the sign of `delta` stops
+    meaning "did the last run make progress"."""
     rule = _rule(_BACKLOG_STUCK)
     expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
     windows = re.findall(r"\[(\d+)h\]", expr)
@@ -286,13 +297,76 @@ def test_the_backlog_stuck_window_sees_exactly_two_nightly_runs():
     assert max(ranges) == 26 * 3600, f"relativeTimeRange {max(ranges)}s does not match the {windows[0]}h delta window"
 
 
-def test_the_backlog_stuck_condition_must_survive_a_whole_nightly_cycle():
-    """`for: 25h` is what makes this rule shape-based rather than threshold-based. A healthy bump
-    night satisfies the condition for ~22h -- shorten the `for` and every deliberate re-verification
-    pages on its first night, which is exactly the alarm fatigue that trains an operator to ignore
-    it. Only a backlog still flat or growing after the NEXT run survives 25h."""
+def test_the_backlog_stuck_for_strictly_exceeds_a_healthy_drains_true_duration():
+    """The invariant that decides this rule, stated as arithmetic rather than as a story.
+
+    `ops_verify_replay_pending_hours` is a PERSISTENT textfile gauge: the runner prints it every run,
+    so it is scraped continuously and holds its value between the daily runs. The condition goes true
+    at the bump night's publish `T1` and CANNOT go false until the window's left edge passes `T1` --
+    before then the window still contains a pre-bump sample, so `delta` stays positive even after
+    night two's decrease has landed. A healthy drain therefore holds the condition true for exactly
+    `max(24h, window)`, and `for` must STRICTLY exceed that or healthy and stuck fire identically.
+
+    This is not hypothetical: `for: 25h` shipped in this rule's first draft against a 26h window --
+    `25h < max(24h, 26h)` -- and paged on every healthy multi-night drain, the exact failure the rule
+    exists to avoid. Equality is not enough either (`for: 26h` trips on a 26h true run)."""
     rule = _rule(_BACKLOG_STUCK)
-    assert rule["for"] == "25h", f"for: {rule['for']!r} -- a healthy drain's bump night would page"
+    hold = max(24 * 3600, _backlog_window_seconds(rule))
+
+    assert _duration_seconds(rule["for"]) > hold, (
+        f"for: {rule['for']} does not strictly exceed the {hold / 3600:g}h a HEALTHY drain holds this "
+        f"condition true -- healthy and stuck would page identically"
+    )
+
+
+def test_a_healthy_drain_stays_quiet_and_a_stuck_one_pages():
+    """The timeline nobody simulated the first time, which is why the wrong `for` shipped green.
+
+    Replays four nightly-gauge histories through the rule's OWN window and `for:` (read from
+    `alerts.yaml`, never restated here, so this fails when the rule changes) and asserts the rule
+    discriminates. The gauge model is the real one: a step function that holds its last published
+    value, with `delta(pending[W])` read as `v(t) - v(t-W)` -- Prometheus extrapolates the edges, but
+    the SIGN of the difference, which is all this rule reads, is unaffected."""
+    rule = _rule(_BACKLOG_STUCK)
+    window, hold_for = _backlog_window_seconds(rule), _duration_seconds(rule["for"])
+
+    day, first_run = 24 * 3600, 3 * 3600 + 41 * 60  # the nightly timer's 03:41 start
+    scenarios = {
+        "steady state, nothing ever stale": [0, 0, 0, 0, 0, 0],
+        "healthy drain, ~1500 hours a night": [4500, 3000, 1500, 0, 0, 0],
+        "stuck flat -- budget zero or drain broken": [3500, 3500, 3500, 3500, 3500, 3500],
+        "growing -- staleness outruns the drain": [1000, 2000, 3000, 4000, 5000, 6000],
+    }
+
+    def fires(published: list[int], hold_for: int) -> bool:
+        events = [(first_run + n * day, v) for n, v in enumerate(published)]
+
+        def value(t):  # the gauge holds its last published value; 0 before the first run
+            return next((v for at, v in reversed(events) if at <= t), 0)
+
+        run = 0
+        for t in range(0, 10 * day, 60):
+            if value(t) > 0 and value(t) - value(t - window) >= 0:
+                run += 60
+                if run >= hold_for:
+                    return True
+            else:
+                run = 0
+        return False
+
+    verdicts = {name: fires(pub, hold_for) for name, pub in scenarios.items()}
+    assert verdicts == {
+        "steady state, nothing ever stale": False,
+        "healthy drain, ~1500 hours a night": False,
+        "stuck flat -- budget zero or drain broken": True,
+        "growing -- staleness outruns the drain": True,
+    }, f"the rule does not discriminate a healthy drain from a stuck one: {verdicts}"
+
+    # And the discrimination is genuinely the `for`'s doing, not an artifact of this simulation: at
+    # the 25h that first shipped, the healthy drain fires too -- indistinguishable from stuck.
+    assert fires(scenarios["healthy drain, ~1500 hours a night"], 25 * 3600), (
+        "the simulation cannot reproduce the defect it exists to prevent -- it is not proving anything"
+    )
 
 
 def test_the_backlog_stuck_rule_needs_both_a_live_backlog_and_a_non_shrinking_one():
@@ -307,6 +381,22 @@ def test_the_backlog_stuck_rule_needs_both_a_live_backlog_and_a_non_shrinking_on
     math = [m for m in by_ref.values() if m.get("type") == "math"]
     assert len(math) == 1, f"expected one math node combining the two halves, got {len(math)}"
     assert math[0]["expression"] == "$A > 0 && $B >= 0", f"the two halves are not both required: {math[0]['expression']!r}"
+
+
+def test_the_backlog_stuck_rule_fires_in_the_direction_it_claims_to():
+    """The whole conjunction is decorative unless the CONDITION reads the node that computes it and
+    compares it the right way round. Two edits leave every other assertion in this file green while
+    making the rule permanently wrong: `condition: A` drops the `delta` half entirely and pages on any
+    nonzero backlog, and a `lt` evaluator can NEVER fire, because the math node emits only 0 or 1 and
+    neither is below 0. A rule that cannot fire is indistinguishable from a healthy fleet."""
+    rule = _rule(_BACKLOG_STUCK)
+    by_ref = {n["refId"]: n.get("model", {}) for n in rule["data"]}
+
+    assert rule["condition"] == "D", f"condition {rule['condition']!r} is not the node that combines both halves"
+    assert by_ref["D"].get("expression") == "C", "the threshold must read the math node, not a raw query"
+    assert by_ref["D"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [0]}, (
+        "the math node emits 0 or 1 -- anything but `gt 0` here makes the rule unable to fire"
+    )
 
 
 def test_the_backlog_stuck_rule_stays_quiet_on_a_host_that_has_never_swept():

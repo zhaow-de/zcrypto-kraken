@@ -1072,12 +1072,19 @@ rules:
     # Hence warning: nothing here says the archive is wrong. This is why spec 00077 D8's "no standing
     # known-bad-hours alert" precedent does not apply.
     #
-    # The shape, and why the obvious widening is wrong. 26h sees EXACTLY the last two nightly runs,
-    # and `for: 25h` makes the condition survive a full cycle before it pages: a healthy bump night is
-    # true for ~22h and resets the instant night two's decrease lands (the delta goes negative), while
-    # a flat or growing backlog stays true through the second run and fires on day two. A 49h window
-    # still reaches the PRE-bump zeros, so `delta >= 0` holds through night two of a healthy large
-    # drain and the rule false-fires on every one of them -- do not widen it (spec 00078 D12).
+    # The shape. 26h spans EXACTLY the last two nightly runs -- wide enough that night two's sample is
+    # always inside it (24h plus slack for a late start), narrow enough that a third night's history
+    # never is, so the sign of `delta` means "did the last run make progress" and nothing else.
+    #
+    # `for: 27h` is arithmetic, not taste, and getting it wrong is how the first draft of this rule
+    # paged on healthy drains. `pending` is a PERSISTENT textfile gauge -- the runner prints it every
+    # run, so it is scraped continuously and holds its value between runs. The condition goes true at
+    # the bump night's publish T1 and CANNOT go false until the window's left edge passes T1: before
+    # then the window still contains a pre-bump sample, so `delta` stays positive even after night
+    # two's decrease has landed. A healthy drain therefore holds this condition true for exactly
+    # max(24h, window) = 26h, and `for` must STRICTLY exceed that -- `for: 25h` fires an hour after
+    # night two, identically to a stuck backlog, and even `for: 26h` trips on a 26h-long true run.
+    # 27h leaves an hour of margin. Do not shorten it, and if you widen the window, widen this too.
     #
     # Two query nodes rather than this file's usual one, because the condition is a conjunction:
     # without `$A > 0` a backlog drained to zero reads `delta == 0` forever and pages permanently on a
@@ -1124,7 +1131,7 @@ rules:
     # the dead-man already owns "did it run" -- same posture as the two rules above.
     noDataState: OK
     execErrState: Alerting
-    for: 25h
+    for: 27h
     annotations:
       summary: >-
         The nightly archive re-verification backlog is not shrinking. The sweep still runs, but hours
