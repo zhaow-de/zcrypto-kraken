@@ -980,15 +980,21 @@ def verify_replay(
 
     if census is not None:
         # Both surfaces carry the census: the runner parses the log line, an operator reads the echo.
+        # `mismatches` is in the line for the runner's sake: on an audit mismatch the summary is
+        # withheld, so `run_ok=0` is the only other signal and it cannot tell a mismatch from a
+        # crash -- the runner publishes this count as its own series to give that condition a metric
+        # trace. It is therefore the ONE census field that stays meaningful on a broken run.
+        mismatches = len(census.audit_mismatches)
         typer.echo(
             f"verify-replay census replayed={census.replayed} reused={census.reused} audited={census.audited} "
-            f"pending={census.pending} evicted={census.evicted} duration_s={int(census.duration_s)}"
+            f"mismatches={mismatches} pending={census.pending} evicted={census.evicted} duration_s={int(census.duration_s)}"
         )
         logger.info(
-            "verify-replay census replayed=%d reused=%d audited=%d pending=%d evicted=%d duration_s=%d",
+            "verify-replay census replayed=%d reused=%d audited=%d mismatches=%d pending=%d evicted=%d duration_s=%d",
             census.replayed,
             census.reused,
             census.audited,
+            mismatches,
             census.pending,
             census.evicted,
             census.duration_s,

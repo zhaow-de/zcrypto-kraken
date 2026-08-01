@@ -122,6 +122,20 @@
     group: "{{ ops_data_user }}"
     mode: "0755"
 
+# spec 00078 D8/D9: the nightly verify-replay checkpoint, bind-mounted at /state as the sweep's only
+# writable mount. Ungated like the data dirs above -- the runner's container is the only writer and
+# it fails loudly (summary withheld, run_ok=0) if this is missing or unwritable, so creating it must
+# not depend on a digest being passed. 0750, owned by the user the container runs as: nothing else
+# on the host reads it, and a world-readable checkpoint would widen the archive's verdict surface
+# for nothing.
+- name: ensure the verify-replay checkpoint directory exists
+  ansible.builtin.file:
+    path: "{{ ops_data_dir }}/{{ ops_verify_replay_state_subdir }}"
+    state: directory
+    owner: "{{ ops_data_user }}"
+    group: "{{ ops_data_user }}"
+    mode: "0750"
+
 # OPS-6 (spec 00056 D2/D4): the hot-out outbox the NAS pulls into its hot/ hub via a new
 # least-privilege `rrsync -ro` forced command (a 4th D9 pull channel -- the three existing roots
 # are exact-subtree pinned, none a parent of hot-out; setup in infra/ops/README.md). Ungated, like

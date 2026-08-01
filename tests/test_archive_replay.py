@@ -384,7 +384,7 @@ def test_census_line_and_frozen_summary_both_emitted(tmp_path: Path) -> None:
     result = _invoke(str(primary), "--state-dir", str(state))
 
     assert result.exit_code == 0, result.output
-    prefix = "verify-replay census replayed=1 reused=0 audited=0 pending=0 evicted=0 duration_s="
+    prefix = "verify-replay census replayed=1 reused=0 audited=0 mismatches=0 pending=0 evicted=0 duration_s="
     lines = result.output.splitlines()
     echoed = [line for line in lines if line.startswith(prefix)]
     logged = [line for line in lines if prefix in line and not line.startswith(prefix)]
@@ -417,7 +417,7 @@ def test_audit_mismatch_withholds_summary_and_exits_2(tmp_path: Path, monkeypatc
 
     assert result.exit_code == 2, result.output
     assert _summary_withheld(result.output)
-    assert "verify-replay census replayed=0 reused=2 audited=2 pending=0 evicted=0 duration_s=1" in result.output
+    assert "verify-replay census replayed=0 reused=2 audited=2 mismatches=2 pending=0 evicted=0 duration_s=1" in result.output
     assert "ETH/EUR 2026-07-14 03:00" in result.output and "BTC/EUR 2026-07-14 02:00" in result.output
     assert result.output.index("BTC/EUR 2026-07-14 02:00") < result.output.index("ETH/EUR 2026-07-14 03:00")
 
@@ -519,7 +519,7 @@ def test_currently_failing_cached_hour_is_still_printed(tmp_path: Path) -> None:
     assert second.exit_code == 1, second.output
     assert "ETH/EUR  2026-07-14 02:00  FAILED" in second.output
     assert "BTC/EUR" not in second.output  # a passing hour prints no line
-    assert "verify-replay census replayed=1 reused=1 audited=1 pending=0 evicted=0 duration_s=" in second.output
+    assert "verify-replay census replayed=1 reused=1 audited=1 mismatches=0 pending=0 evicted=0 duration_s=" in second.output
     assert "verify-replay complete hours=2 ok=1 failed=1" in second.output
 
 

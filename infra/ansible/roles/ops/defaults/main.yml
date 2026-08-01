@@ -46,6 +46,13 @@ ops_research_user: zhaow
 # .prom files into.
 ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 
+# The nightly verify-replay checkpoint (spec 00078 D9), under ops_data_dir: the per-hour raw facts
+# that let the sweep re-replay only what changed. Bind-mounted at /state, the only writable mount the
+# nightly run gets. Deliberately a sibling under ops_data_dir and NOT under any NAS rrsync pin (those are
+# exact-subtree, T0057), so it is never replicated -- a stale replica would certify hours nobody
+# verified. Deleting it is safe and costs one full re-verification.
+ops_verify_replay_state_subdir: verify-replay-state
+
 # healthchecks.io dead-man ping URLs, one per timer. Empty means the ping is simply skipped
 # (mirroring the CLI's optional `ping_healthcheck` semantics).
 ops_verify_replay_healthcheck_url: ""
