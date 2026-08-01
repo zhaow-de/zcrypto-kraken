@@ -106,12 +106,15 @@ def test_the_docker_run_is_captured_not_piped():
 
 
 def test_only_the_checkpoint_dir_is_writable():
-    """The checkpoint needs a `:rw` mount; the archive it certifies must NOT get one.
+    """The checkpoint needs a `:rw` mount; NOTHING this sweep reads may get one.
 
-    `/data` carries the reconciled overlay this sweep verifies -- an instrument that can write to
-    what it audits can heal its own findings away, and the container runs as the same uid that owns
-    the tree. So the state dir gets its OWN narrow mount and `/data` stays `:ro`; widening `/data`
-    to `:rw` (the one-character "fix" for a checkpoint permission error) must fail here.
+    `/nas` is the unbackfillable capture archive and `/data` the reconciled overlay this sweep
+    verifies -- an instrument that can write to what it audits can heal its own findings away, and
+    the container runs as the same uid that owns the overlay. So the state dir gets its OWN narrow
+    mount and both source mounts stay `:ro`; widening either (the one-character "fix" for a
+    checkpoint permission error) must fail here. `/nas` is held read-only by the fstab entry and the
+    DSM export too, so this is the third layer rather than the only one -- but the test's name
+    claims every mount, so it checks every mount.
 
     Asserted on the joined docker-run command, not on the whole render: the mount strings also
     appear in prose, so a substring search over the file passes on a comment alone."""
@@ -119,7 +122,10 @@ def test_only_the_checkpoint_dir_is_writable():
     joined = out.replace("\\\n", " ")
     cmd = next(ln for ln in joined.splitlines() if "archive verify-replay" in ln and not ln.strip().startswith("#"))
     data = CONTEXT["ops_data_dir"]
+    nas = CONTEXT["ops_nas_mount"]
     state = f"{data}/{CONTEXT['ops_verify_replay_state_subdir']}"
+    assert f'-v "{nas}:/nas:ro"' in cmd, f"the capture archive must stay read-only: {cmd}"
+    assert ":/nas:rw" not in cmd, f"/nas must never be writable -- it is the unbackfillable capture archive: {cmd}"
     assert f'-v "{data}:/data:ro"' in cmd, f"the overlay must stay read-only: {cmd}"
     assert ":/data:rw" not in cmd, f"/data must never be writable -- the instrument would be able to edit what it verifies: {cmd}"
     assert f'-v "{state}:/state:rw"' in cmd, f"the checkpoint dir needs its own writable mount: {cmd}"
@@ -151,11 +157,15 @@ def _parse_seds(rendered: str) -> dict[str, str]:
         expr = m.group(1)
         field = re.search(r"s/\.\*([a-z_0-9]+)=\\\(", expr)
         assert field, f"sed expression does not follow the established field idiom, so no field can be derived: {expr!r}"
-        # Case-sensitivity is load-bearing, not incidental: every failing-hour line reads
-        # `FAILED  anchored=...`, so an `I`-flagged `failed=` pattern would start matching hours.
-        assert expr.endswith("/p"), (
-            f"sed expression carries a flag after /p (case-insensitivity would collide with FAILED): {expr!r}"
-        )
+        # Flags after /p are forbidden PROSPECTIVELY, not because one collides today: measured, an
+        # `I`-flagged `failed=` matches nothing extra on the real failing-hour line (`FAILED` is
+        # followed by whitespace, never `FAILED=`). It starts mattering the day any line prints
+        # `Failed=<n>`, which a case-insensitive pattern would then read as the summary. Stating the
+        # true reason matters: a rationale that can be disproved gets the assertion deleted with it.
+        assert expr.endswith("/p"), f"sed expression carries a flag after /p -- keep every pattern case-sensitive: {expr!r}"
+        # Keyed by field, so a SECOND sed for an already-seen field would overwrite the first and
+        # leave the coverage assertion below satisfied while one expression went entirely unproven.
+        assert field.group(1) not in exprs, f"two seds parse {field.group(1)!r}; the later one would be invisible here: {expr!r}"
         exprs[field.group(1)] = expr
     return exprs
 
