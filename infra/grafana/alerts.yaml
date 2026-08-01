@@ -1059,6 +1059,90 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-verify-replay-backlog-stuck
+    title: "Ops · verify-replay backlog stuck"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The incremental sweep (spec 00078) replays hours it has never seen unconditionally and drains
+    # older CHANGED hours under a wall-clock budget; whatever the budget did not reach is reported as
+    # `pending`. A backlog is normal and self-clearing -- a deliberate re-verification creates one by
+    # design. What is not normal is one that stops SHRINKING, which means the instrument is degraded
+    # (budget mis-set to 0, the drain broken, the state dir lost nightly), not that the data is bad.
+    # Hence warning: nothing here says the archive is wrong. This is why spec 00077 D8's "no standing
+    # known-bad-hours alert" precedent does not apply.
+    #
+    # The shape. 26h spans EXACTLY the last two nightly runs -- wide enough that night two's sample is
+    # always inside it (24h plus slack for a late start), narrow enough that a third night's history
+    # never is, so the sign of `delta` means "did the last run make progress" and nothing else.
+    #
+    # `for: 27h` is arithmetic, not taste, and getting it wrong is how the first draft of this rule
+    # paged on healthy drains. `pending` is a PERSISTENT textfile gauge -- the runner prints it every
+    # run, so it is scraped continuously and holds its value between runs. The condition goes true at
+    # the bump night's publish T1 and CANNOT go false until the window's left edge passes T1: before
+    # then the window still contains a pre-bump sample, so `delta` stays positive even after night
+    # two's decrease has landed. A healthy drain therefore holds this condition true for exactly
+    # max(24h, window) = 26h, and `for` must STRICTLY exceed that -- `for: 25h` fires an hour after
+    # night two, identically to a stuck backlog, and even `for: 26h` trips on a 26h-long true run.
+    # 27h leaves an hour of margin. Do not shorten it, and if you widen the window, widen this too.
+    #
+    # Two query nodes rather than this file's usual one, because the condition is a conjunction:
+    # without `$A > 0` a backlog drained to zero reads `delta == 0` forever and pages permanently on a
+    # healthy fleet; without `$B >= 0` every night of a legitimate multi-night drain pages.
+    condition: D
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: ops_verify_replay_pending_hours
+          instant: true
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 93600, to: 0}  # 26h, matching the delta window below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: delta(ops_verify_replay_pending_hours[26h])
+          instant: true
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: math
+          expression: "$A > 0 && $B >= 0"
+          refId: C
+      - refId: D
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "C"
+          refId: D
+          conditions:
+            - evaluator: {type: gt, params: [0]}  # the math node is 1 iff BOTH halves hold
+    # OK, not Alerting: a host that has never run the sweep publishes no pending series at all, and
+    # the dead-man already owns "did it run" -- same posture as the two rules above.
+    noDataState: OK
+    execErrState: Alerting
+    for: 27h
+    annotations:
+      summary: >-
+        The nightly archive re-verification backlog is not shrinking. The sweep still runs, but hours
+        queued for re-verification have not decreased across two nightly runs — the drain budget may
+        be zero, the state directory lost, or the drain broken.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-backlog-stuck
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-panel-exit-nonzero
     title: "Ops · panel non-zero exit"
     ruleGroup: zcrypto-ops

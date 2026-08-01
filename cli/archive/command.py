@@ -28,6 +28,7 @@ import polars as pl
 import typer
 
 from cli.archive import replay as replay_mod
+from cli.archive.checkpoint import CheckpointWriteError
 from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
 from cli.archive.reconcile import (
@@ -851,7 +852,7 @@ def reconcile(
             raise typer.Exit(1) from exc
 
 
-# --- verify-replay (spec 00051 OPS-3) --------------------------------------------------------------
+# --- verify-replay (spec 00051 OPS-3; --state-dir incremental mode spec 00078) ----------------------
 
 
 @archive_app.command(name="verify-replay")
@@ -865,13 +866,46 @@ def verify_replay(
     depth: int = typer.Option(
         100, "--depth", help="Book depth the archive was captured at (capture's default 100); the replayed book prunes to it."
     ),
+    state_dir: Optional[Path] = typer.Option(
+        None,
+        "--state-dir",
+        help="Cache verified hours here and replay only the changed ones on later runs. Reports a census "
+        "and only the hours that are currently failing, instead of a line per hour. Cannot be combined "
+        "with --pair or --since.",
+    ),
+    reverify_all: bool = typer.Option(
+        False,
+        "--reverify-all",
+        help="Replay every hour again and refresh the whole cache, ignoring what it already holds. Requires --state-dir.",
+    ),
+    drain_budget_seconds: float = typer.Option(
+        7200.0,
+        "--drain-budget-seconds",
+        help="Wall-clock budget for re-verifying cached hours whose bytes changed. Whatever does not fit "
+        "is reported as pending and picked up by the next run.",
+    ),
+    audit_sample: int = typer.Option(
+        25,
+        "--audit-sample",
+        help="How many hours served from the cache to replay again and compare against it each run. A disagreement fails the run.",
+    ),
 ) -> None:
     """Continuity-replay every canonical book hour (reconciled-first, primary otherwise) through
     `OrderBook` and report, per hour: anchored (chain-anchored -- opens with a snapshot, or its exact
     predecessor hour was present and itself anchored and error-free), ts-ordered, checksum-present,
     replay-ok. Exits non-zero if any hour errs or fails any of the four checks (mirroring `engine
     replay`'s non-zero-on-drift contract). The stored `checksum` is trusted as capture-time ground
-    truth; no CRC is re-derived (the Float64 archive cannot reproduce it byte-exactly)."""
+    truth; no CRC is re-derived (the Float64 archive cannot reproduce it byte-exactly).
+
+    `--state-dir` switches on the incremental path: an hour whose bytes are unchanged is served from
+    the checkpoint instead of replayed, the whole archive is still reported on, and a census of what
+    was actually done is printed. Only the hours currently FAILING get a line there -- the per-hour
+    `ok` lines are archive-wide and grow without bound.
+
+    Exits 2 -- summary withheld, so the runner's `run_ok` reads 0 and the run-broken rule pages -- when
+    the checkpoint cannot be written, when the enumeration lost more than a tenth of the checkpointed
+    hours (an unmounted mirror, not a real shrink), or when a sampled audit finds an hour disagreeing
+    with the verdict the cache served for it."""
     since_dt = None
     if since is not None:
         try:
@@ -879,14 +913,49 @@ def verify_replay(
         except ValueError as exc:
             raise typer.BadParameter(f"--since {since!r} is not a YYYY-MM-DD date") from exc
 
-    results = replay_mod.verify_replay(primary_root, reconciled_root, pair=pair, since=since_dt, depth=depth)
+    census = None
+    if state_dir is None:
+        if reverify_all:
+            raise typer.BadParameter("--reverify-all requires --state-dir")
+        results = replay_mod.verify_replay(primary_root, reconciled_root, pair=pair, since=since_dt, depth=depth)
+    else:
+        if pair is not None or since is not None:
+            # A scoped run engaging the checkpoint would evict every hour outside the scope, and its
+            # `anchored` verdict is meaningless in a narrowed view anyway (spec 00078 D10).
+            raise typer.BadParameter("--state-dir cannot be combined with --pair or --since")
+        try:
+            results, census = replay_mod.verify_replay_incremental(
+                primary_root,
+                reconciled_root,
+                state_dir=state_dir,
+                depth=depth,
+                drain_budget_s=drain_budget_seconds,
+                audit_k=audit_sample,
+                reverify_all=reverify_all,
+            )
+        except (replay_mod.EvictionRefusedError, CheckpointWriteError) as exc:
+            # No summary line, on purpose: the runner decides "the sweep completed" by whether it can
+            # parse `failed=` out of the output, so a broken run that printed one would publish
+            # run_ok=1 and page nobody.
+            logger.error("archive verify-replay: %s", exc)
+            raise typer.Exit(2) from exc
+
     if not results:
+        # BEFORE any census or summary (spec 00078 D7): an unmounted NAS resolves to an empty
+        # directory, and `hours=0 ok=0 failed=0` parses perfectly -- it would read as a healthy sweep.
         typer.echo("no canonical book hours found")
         return
 
     failed = 0
     for result in results:
         hour_s = f"{result.hour:%Y-%m-%d %H}:00" if result.hour is not None else "?"
+        if not result.passed:
+            failed += 1
+        elif census is not None:
+            # Incremental mode reports only the currently-failing hours (spec 00078 D11): the `ok`
+            # lines are archive-wide, one per hour ever captured, and journald drops the tail of a
+            # burst that size -- which would silently truncate the report rather than shorten it.
+            continue
         line = (
             f"{result.pair}  {hour_s}  {'ok' if result.passed else 'FAILED'}  "
             f"anchored={result.anchored} ordered={result.ts_ordered} "
@@ -896,7 +965,6 @@ def verify_replay(
             line += f"  error={result.error}"
         typer.echo(line)
         if not result.passed:
-            failed += 1
             # spec 00077 D9: a failed hour is a finding about DATA, not the sweep erroring -- WARNING,
             # not ERROR, so it does not page `Ops · ERROR logs` every night for an already-triaged hour.
             logger.warning(
@@ -909,6 +977,42 @@ def verify_replay(
                 result.replay_ok,
                 result.error,
             )
+
+    if census is not None:
+        # Both surfaces carry the census: the runner parses the log line, an operator reads the echo.
+        # `mismatches` is in the line for the runner's sake: on an audit mismatch the summary is
+        # withheld, so `run_ok=0` is the only other signal and it cannot tell a mismatch from a
+        # crash -- the runner publishes this count as its own series to give that condition a metric
+        # trace. It is therefore the ONE census field that stays meaningful on a broken run.
+        mismatches = len(census.audit_mismatches)
+        typer.echo(
+            f"verify-replay census replayed={census.replayed} reused={census.reused} audited={census.audited} "
+            f"mismatches={mismatches} pending={census.pending} evicted={census.evicted} duration_s={int(census.duration_s)}"
+        )
+        logger.info(
+            "verify-replay census replayed=%d reused=%d audited=%d mismatches=%d pending=%d evicted=%d duration_s=%d",
+            census.replayed,
+            census.reused,
+            census.audited,
+            mismatches,
+            census.pending,
+            census.evicted,
+            census.duration_s,
+        )
+        if census.audit_mismatches:
+            # Sorted, not in the order they were sampled: that order is deterministic per seed but
+            # differs across seeds, so two runs over the same lie would otherwise read differently.
+            for label in sorted(census.audit_mismatches):
+                typer.echo(f"AUDIT MISMATCH  {label}  -- the re-replayed hour disagrees with the verdict served from cache")
+            # What was OBSERVED, not what it means: an hour the reconciler rewrote between its
+            # staleness probe and its audit re-replay disagrees without being corrupt. The checkpoint
+            # already self-healed to the fresh verdict; the summary is withheld so the run reads broken.
+            logger.error(
+                "archive verify-replay: %d audited hour(s) disagree with the verdict served from cache; "
+                "their cached rows were refreshed and no summary is emitted",
+                len(census.audit_mismatches),
+            )
+            raise typer.Exit(2)
 
     typer.echo(f"replayed {len(results)} hour(s): {len(results) - failed} ok, {failed} failed")
     logger.info("verify-replay complete hours=%d ok=%d failed=%d", len(results), len(results) - failed, failed)

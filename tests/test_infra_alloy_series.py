@@ -144,6 +144,17 @@ OPS_REQUIRED = [
     "ops_verify_replay_failed_hours",
     "ops_verify_replay_hours_total",
     "ops_verify_replay_run_ok",
+    # spec 00078: the incremental sweep's census. `pending_hours` is alert-bearing (the backlog-stuck
+    # rule) and `duration_seconds` is the runway trend the whole spec exists to make observable --
+    # both admitted today only by the same `ops_verify_replay_.*` wildcard, so narrowing it must fail
+    # here rather than silently NoData-ing the rule and flat-lining the trend.
+    "ops_verify_replay_replayed_hours",
+    "ops_verify_replay_reused_hours",
+    "ops_verify_replay_pending_hours",
+    "ops_verify_replay_duration_seconds",
+    # The audit-mismatch count: on that run the summary is withheld, so run_ok=0 is the only other
+    # trace and it cannot tell a mismatch from a crash.
+    "ops_verify_replay_audit_mismatches",
     "ops_verified_replay_exit_code",
     "ops_verified_replay_last_success_timestamp",
     # The "did the timer RUN?" discriminator. Absent from the ops keep-regex until 2026-07-28 while

@@ -78,6 +78,11 @@ Each run atomically rewrites its node-exporter textfile in `ops_textfile_dir` (d
 | `ops_verify_replay_failed_hours` | Count of hours that failed the last sweep that produced a summary. Verify-replay family only (spec 00077 D2); carried forward when a run breaks before reporting. |
 | `ops_verify_replay_hours_total` | Count of canonical hours in the last sweep that produced a summary. Verify-replay family only (spec 00077 D2); carried forward when a run breaks before reporting. |
 | `ops_verify_replay_run_ok` | `1` iff the last run produced a parseable summary — did the sweep *complete*, regardless of what it found; `0` = crash, EIO, or a container that never started. Verify-replay family only (spec 00077 D2). |
+| `ops_verify_replay_replayed_hours` | Hours actually re-replayed by the last completed sweep. Verify-replay family only (spec 00078 D11); carried forward when a run breaks before reporting. |
+| `ops_verify_replay_reused_hours` | Hours served from the checkpoint instead of being re-replayed by the last completed sweep. Verify-replay family only (spec 00078 D11); carried forward when a run breaks before reporting. |
+| `ops_verify_replay_pending_hours` | Hours still awaiting re-verification after the last completed sweep spent its drain budget. Verify-replay family only (spec 00078 D11/D12 — the backlog-stuck rule reads this); carried forward when a run breaks before reporting. |
+| `ops_verify_replay_duration_seconds` | Wall-clock seconds the last completed sweep took. Verify-replay family only (spec 00078 D11); carried forward when a run breaks before reporting. |
+| `ops_verify_replay_audit_mismatches` | Hours served from the checkpoint that disagreed with a fresh replay in the last sweep that reported one (`0` = none). Verify-replay family only (spec 00078 D6). **The one series NOT gated on `run_ok`**: a disagreement withholds the summary, so it is published even when that run reads broken — otherwise the metric would carry a stale `0` over the only condition it exists to trace. Carried forward only when no census was emitted at all. |
 
 The metric families are new: per the T0034 discipline, arm Grafana alert rules only once the series are visible in the scrape (OPS-4/5 wires the ops node's scraper; do not push rules blind).
 

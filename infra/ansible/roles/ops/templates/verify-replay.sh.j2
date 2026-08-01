@@ -23,6 +23,10 @@
 # summary lines -- so the trap is one pair going silent entirely while an earlier-sorting pair's
 # record still reads complete and clean. The alerting path is unaffected either way: the counts are
 # parsed from the captured temp file, never from the journal.
+#
+# spec 00078: the sweep now runs INCREMENTALLY (`--state-dir`, see the mount comment below), so this
+# script also publishes its census counts beside the 00077 series (D11) -- and journald's threshold
+# above stops being a horizon, since the output is a handful of lines at any archive size.
 set -u
 
 PROM="{{ ops_textfile_dir }}/ops-verify-replay.prom"
@@ -40,15 +44,27 @@ URL="{{ ops_verify_replay_healthcheck_url }}"
 # spec 00077 D6: capture rather than stream, so the counts can be read out, then replay the output
 # to the journal unchanged. No pipe on the run itself: this script sets `set -u` but NOT pipefail,
 # so `docker run | tee` would report tee's status and every failure would read as success.
+#
+# spec 00078: `--state-dir /state` switches the sweep to the incremental path -- an hour whose bytes
+# are unchanged is served from the checkpoint instead of re-replayed, so runtime is (new hours + a
+# fixed drain/audit budget) at any archive size, and the whole archive is still reported on. The
+# checkpoint gets its OWN narrow `:rw` mount and /data stays `:ro`: the instrument must not be able
+# to write to the overlay it certifies, and this container runs as the uid that owns that tree. The
+# state dir lives inside ops_data_dir on the host, so the same bytes are also visible read-only at
+# /data/... -- harmless, and it keeps the dir out of every NAS rrsync pin (those are exact-subtree,
+# spec 00078 D9). A missing or unwritable mount is not silent: the CLI treats a checkpoint it cannot
+# write as fatal and withholds the summary, so run_ok=0 pages (spec 00078 D8).
 replay_log="$(mktemp)"
 docker run --rm --pull never \
     --name zcrypto-verify-replay \
     --user "{{ ops_uid }}:{{ ops_gid }}" \
     -v "{{ ops_nas_mount }}:/nas:ro" \
     -v "{{ ops_data_dir }}:/data:ro" \
+    -v "{{ ops_data_dir }}/{{ ops_verify_replay_state_subdir }}:/state:rw" \
     --entrypoint zcrypto \
     "{{ ops_image }}@{{ ops_image_digest }}" \
     archive verify-replay "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_reconciled_subdir }}" \
+    --state-dir /state \
     > "$replay_log" 2>&1
 rc=$?
 cat "$replay_log"
@@ -56,27 +72,67 @@ cat "$replay_log"
 now=$(date -u +%s)
 
 # spec 00077 D2/D6: the CLI logs `verify-replay complete hours=N ok=X failed=Y` (logfmt) once, via
-# logger.info, at the end of the sweep. Explicit digit class; `tail -1` is defensive rather than
-# load-bearing here -- unlike archive-pull's backfill-trades, this command's twin summary line (the
-# `typer.echo` "replayed N hour(s): X ok, Y failed") has no `=` and never matches the pattern, so
-# only one line ever does today. Empty means the sweep produced no summary at all -- a crash, an
-# EIO from the ro,soft NAS mount, no canonical hours found, or a container that never started (e.g.
-# the T0060 name-conflict case above).
-failed_hours=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
-hours_total=$(sed -n 's/.*hours=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+# logger.info, at the end of the sweep. Both patterns match that WHOLE summary shape, never a bare
+# `failed=`/`hours=`: spec 00078's audit-mismatch path prints the failing-hour lines and then
+# withholds the summary, and a per-hour line's `error=` text is an interpolated exception repr /
+# manifest string, not ours -- so one carrying a literal `failed=<n>` would be the ONLY match left
+# and run_ok would read 1 on exactly the night the run must read as broken. Anchoring is the guard;
+# `tail -1` only ever decided between the two summary twins (the `typer.echo` "replayed N hour(s):
+# X ok, Y failed" has no `=` and matches neither pattern) and stays as a second line of defence.
+# Explicit digit class. Empty means the sweep produced no summary at all -- a crash, an EIO from
+# the ro,soft NAS mount, no canonical hours found, an audit mismatch, or a container that never
+# started (e.g. the T0060 name-conflict case above).
+failed_hours=$(sed -n 's/.*verify-replay complete hours=[0-9][0-9]* ok=[0-9][0-9]* failed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+hours_total=$(sed -n 's/.*verify-replay complete hours=\([0-9][0-9]*\) ok=[0-9][0-9]* failed=[0-9][0-9]*.*/\1/p' "$replay_log" | tail -1)
+
+# spec 00078 D11: the census, logged once beside the summary --
+# `verify-replay census replayed=N reused=N audited=N mismatches=N pending=N evicted=N duration_s=N`.
+# Same idiom, and CASE-SENSITIVE like every sed here -- keep it that way, but for the real reason:
+# measured, an `I` flag matches nothing extra TODAY (each failing-hour line reads `FAILED` followed
+# by whitespace, never `FAILED=`). The guard is prospective -- the day any line prints `Failed=<n>`,
+# a case-insensitive `failed=` starts reading it as the summary. `audited=`/`evicted=` are parsed by
+# nobody -- publishing either is a decision to take deliberately, not a formality.
+replayed_hours=$(sed -n 's/.*replayed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+reused_hours=$(sed -n 's/.*reused=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+pending_hours=$(sed -n 's/.*pending=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+duration_seconds=$(sed -n 's/.*duration_s=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+audit_mismatches=$(sed -n 's/.*mismatches=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
 rm -f "$replay_log"
 
 # D2/D3: run_ok is the mode-(iii) signal -- did the sweep COMPLETE, regardless of what it found.
 # failed_hours is CARRIED FORWARD when it did not: a sentinel would make the next good run look
 # like a jump and fire the new-breakage rule falsely.
+#
+# The census counts ride the SAME gate, deliberately -- never "was a census printed". Measured: an
+# audit mismatch prints a census (and exits 2 with the summary withheld), and that census reads
+# entirely normally (`replayed=0 reused=4 ...`), so publishing it would render a broken night as a
+# small quiet one. A sentinel would be worse still, for D3's reason.
 prev_failed=$(awk '/^ops_verify_replay_failed_hours/ {print $2}' "$PROM" 2>/dev/null)
 prev_hours=$(awk '/^ops_verify_replay_hours_total/ {print $2}' "$PROM" 2>/dev/null)
+prev_replayed=$(awk '/^ops_verify_replay_replayed_hours/ {print $2}' "$PROM" 2>/dev/null)
+prev_reused=$(awk '/^ops_verify_replay_reused_hours/ {print $2}' "$PROM" 2>/dev/null)
+prev_pending=$(awk '/^ops_verify_replay_pending_hours/ {print $2}' "$PROM" 2>/dev/null)
+prev_duration=$(awk '/^ops_verify_replay_duration_seconds/ {print $2}' "$PROM" 2>/dev/null)
 if [ -n "$failed_hours" ]; then
     run_ok=1
 else
     run_ok=0
     failed_hours="${prev_failed:-0}"
     hours_total="${prev_hours:-0}"
+    replayed_hours="${prev_replayed:-0}"
+    reused_hours="${prev_reused:-0}"
+    pending_hours="${prev_pending:-0}"
+    duration_seconds="${prev_duration:-0}"
+fi
+
+# The one census field that is NOT gated on run_ok: the run it has to be visible on is exactly the
+# one where the summary is withheld. `run_ok=0` alone cannot tell an audit mismatch from a crash or
+# an EIO, so gating this would carry a stale 0 over the only condition it exists to trace. Absent
+# census (crash, eviction refusal, checkpoint write error) still carries forward -- zeroing there
+# would read as "the mismatch cleared".
+prev_mismatches=$(awk '/^ops_verify_replay_audit_mismatches/ {print $2}' "$PROM" 2>/dev/null)
+if [ -z "$audit_mismatches" ]; then
+    audit_mismatches="${prev_mismatches:-0}"
 fi
 
 # A cycle that was not CLEAN must not erase "when did this last succeed" — carry the previous value
@@ -111,6 +167,21 @@ tmp="$PROM.tmp"
     printf '# HELP ops_verify_replay_hours_total Count of canonical hours in the last sweep that produced a summary (carried forward when a run breaks before reporting).\n'
     printf '# TYPE ops_verify_replay_hours_total gauge\n'
     printf 'ops_verify_replay_hours_total %d\n' "$hours_total"
+    printf '# HELP ops_verify_replay_replayed_hours Hours actually re-replayed by the last completed sweep (carried forward when a run breaks before reporting).\n'
+    printf '# TYPE ops_verify_replay_replayed_hours gauge\n'
+    printf 'ops_verify_replay_replayed_hours %d\n' "$replayed_hours"
+    printf '# HELP ops_verify_replay_reused_hours Hours served from the checkpoint instead of being re-replayed by the last completed sweep (carried forward when a run breaks before reporting).\n'
+    printf '# TYPE ops_verify_replay_reused_hours gauge\n'
+    printf 'ops_verify_replay_reused_hours %d\n' "$reused_hours"
+    printf '# HELP ops_verify_replay_pending_hours Hours still awaiting re-verification after the last completed sweep spent its drain budget (carried forward when a run breaks before reporting).\n'
+    printf '# TYPE ops_verify_replay_pending_hours gauge\n'
+    printf 'ops_verify_replay_pending_hours %d\n' "$pending_hours"
+    printf '# HELP ops_verify_replay_duration_seconds Wall-clock seconds the last completed sweep took (carried forward when a run breaks before reporting).\n'
+    printf '# TYPE ops_verify_replay_duration_seconds gauge\n'
+    printf 'ops_verify_replay_duration_seconds %d\n' "$duration_seconds"
+    printf '# HELP ops_verify_replay_audit_mismatches Hours served from the checkpoint that disagreed with a fresh replay in the last sweep that reported one -- published even when that run was otherwise broken, since a disagreement withholds the summary (0 = none).\n'
+    printf '# TYPE ops_verify_replay_audit_mismatches gauge\n'
+    printf 'ops_verify_replay_audit_mismatches %d\n' "$audit_mismatches"
     printf '# HELP ops_verify_replay_run_ok 1 iff the last run produced a parseable summary -- did the sweep complete, regardless of what it found; 0 = crash, EIO, no canonical hours found (e.g. a NAS mount that silently resolved empty), or a container that never started.\n'
     printf '# TYPE ops_verify_replay_run_ok gauge\n'
     printf 'ops_verify_replay_run_ok %s\n' "$run_ok"
