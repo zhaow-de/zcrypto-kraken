@@ -55,6 +55,8 @@ verify-replay complete hours=6000 ok=6000 failed=0
 replayed 6000 hour(s): 6000 ok, 0 failed
 ```
 
+*Shipped drift, recorded rather than rewritten: the census ships **seven** fields, not the six above — `mismatches=` sits between `audited=` and `pending=` — and **five** new series, not the four listed below: `ops_verify_replay_audit_mismatches` joins them. D6's audit needed a count of its own, and it is deliberately the one series **not** gated on `run_ok`: an audit mismatch is the only run where it is nonzero and is exactly the run whose summary is withheld, so gating it would publish the previous night's stale value over the sole condition it exists to trace.*
+
 Plus one line per **currently-failing** hour, archive-wide (cached or fresh) — the runbook sends the operator to the journal for failing-hour identities, so a persistently-failing old hour must keep appearing. Normal night ≈ 4 lines: journald flat forever. The per-hour `ok` lines are gone. The `verify-replay complete hours=… ok=… failed=…` logfmt line and counts stay **exactly** as `00077` shipped them: `failed_hours` remains archive-wide, so the `delta()` new-breakage semantics and the existing template parse are untouched. The runner additionally publishes `ops_verify_replay_replayed_hours`, `ops_verify_replay_reused_hours`, `ops_verify_replay_pending_hours`, `ops_verify_replay_duration_seconds` — the duration metric closing T0114's third sub-item (the runway becomes a trended quantity, not a hand-derived one).
 
 **D12 — One new alert: re-verification backlog stuck.** `Ops · verify-replay backlog stuck`, warning: fires when `ops_verify_replay_pending_hours > 0` **and** `delta(ops_verify_replay_pending_hours[26h]) >= 0`, with **`for: 27h`**.
