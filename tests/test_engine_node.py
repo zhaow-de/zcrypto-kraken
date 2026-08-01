@@ -5,8 +5,11 @@ the attended soak is the live smoke; node.build() itself is offline (verified by
 which construct both exec_enabled shapes without credentials or network).
 """
 
-import asyncio
 import functools
+import json
+import os
+import subprocess
+import sys
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,7 +18,7 @@ import pytest
 from nautilus_trader.model.enums import AccountType
 
 from cli.config import EngineConfig
-from cli.engine import ShadowStrategy, build_shadow_node, most_recent_boundary, next_boundary, startup_action
+from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, startup_action
 from cli.engine.cycle import run_cycle
 from cli.engine.errors import EngineError
 from cli.engine.node import _node_config, on_alert_logic, on_start_logic
@@ -297,36 +300,70 @@ def test_node_config_has_no_exec_client_by_default(tmp_path):
     assert list(config.data_clients) == ["KRAKEN"]
 
 
-@pytest.fixture
-def node_event_loop():
-    # TradingNode wants a current event loop, and nautilus refuses to create one under pytest;
-    # the node's dispose() closes it.
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    yield loop
-    asyncio.set_event_loop(None)
-    if not loop.is_closed():
-        loop.close()
+# The node is assembled in a CHILD interpreter, and the child never disposes it. Two reasons, both
+# about teardown rather than about what is asserted:
+#   - TradingNode.dispose() on a never-run node closes the event loop as its LAST act, while the
+#     adapter's Rust machinery is still unwinding on its own threads (measurable: the io_uring
+#     poller thread the build starts outlives dispose() by ~0.5 s). That race is inside the library,
+#     unreachable from here, and when it goes wrong it SIGABRTs the whole pytest process -- 27 green
+#     tests and no traceback, because the abort comes off a non-Python thread.
+#   - Process exit releases strictly more than dispose() would, and os._exit skips interpreter
+#     finalization, so no Rust drop runs while anything else is live. Production never takes this
+#     path anyway: a node that was actually run stops its loop instead of closing it.
+# A native abort in the child can therefore only fail these two tests, never the suite.
+_BUILD_PROBE = """
+import asyncio, json, os, sys
+from pathlib import Path
+
+from cli.config import EngineConfig
+from cli.engine import build_shadow_node
+
+root = Path(sys.argv[1])
+# TradingNode wants a current event loop and nautilus refuses to create one itself.
+asyncio.set_event_loop(asyncio.new_event_loop())
+node = build_shadow_node(
+    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=sys.argv[2] == "1")
+)
+(root / "facts.json").write_text(
+    json.dumps(
+        {
+            "data_clients": [str(c) for c in node.kernel.data_engine.registered_clients],
+            "exec_clients": [str(c) for c in node.kernel.exec_engine.registered_clients],
+            "strategies": [type(s).__name__ for s in node.trader.strategies()],
+        }
+    )
+)
+os._exit(0)
+"""
 
 
-def test_build_shadow_node_without_exec_client(tmp_path, monkeypatch, node_event_loop):
+def _node_build_facts(tmp_path: Path, *, exec_enabled: bool) -> dict:
+    """Assemble the node in a child interpreter and return what it registered. The child gets the
+    credentials stripped from its environment, so the build is proven keyless and offline."""
+    env = os.environ.copy()
+    env.pop("KRAKEN_SPOT_API_KEY", None)
+    env.pop("KRAKEN_SPOT_API_SECRET", None)
+    result = subprocess.run(
+        [sys.executable, "-c", _BUILD_PROBE, str(tmp_path), "1" if exec_enabled else "0"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    facts = tmp_path / "facts.json"
+    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    assert facts.exists(), f"the node build probe produced no result: {detail}"
+    assert result.returncode == 0, f"the node build probe did not exit cleanly: {detail}"
+    return json.loads(facts.read_text())
+
+
+def test_build_shadow_node_without_exec_client(tmp_path):
     # node.build() constructs clients without credentials or network (no connect until run()).
-    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
-    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
-    node = build_shadow_node(_config(tmp_path))
-    try:
-        assert [str(c) for c in node.kernel.data_engine.registered_clients] == ["KRAKEN"]
-        assert list(node.kernel.exec_engine.registered_clients) == []
-        assert [type(s).__name__ for s in node.trader.strategies()] == ["ShadowStrategy"]
-    finally:
-        node.dispose()
+    facts = _node_build_facts(tmp_path, exec_enabled=False)
+    assert facts["data_clients"] == ["KRAKEN"]
+    assert facts["exec_clients"] == []
+    assert facts["strategies"] == ["ShadowStrategy"]
 
 
-def test_build_shadow_node_with_exec_client_when_enabled(tmp_path, monkeypatch, node_event_loop):
-    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
-    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
-    node = build_shadow_node(_config(tmp_path, exec_enabled=True))
-    try:
-        assert [str(c) for c in node.kernel.exec_engine.registered_clients] == ["KRAKEN"]
-    finally:
-        node.dispose()
+def test_build_shadow_node_with_exec_client_when_enabled(tmp_path):
+    assert _node_build_facts(tmp_path, exec_enabled=True)["exec_clients"] == ["KRAKEN"]
