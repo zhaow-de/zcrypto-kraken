@@ -155,8 +155,14 @@ def _parse_seds(rendered: str) -> dict[str, str]:
     exprs: dict[str, str] = {}
     for m in re.finditer(r"sed -n '([^']*)'", rendered):
         expr = m.group(1)
-        field = re.search(r"s/\.\*([a-z_0-9]+)=\\\(", expr)
+        # The parsed field is the one the CAPTURE GROUP sits on, not the first `key=` in the
+        # pattern: the two summary expressions are anchored on the whole `verify-replay complete
+        # hours=N ok=N failed=N` shape, so each carries literal sibling fields it does not parse.
+        field = re.search(r"([a-z_0-9]+)=\\\(\[0-9\]\[0-9\]\*\\\)", expr)
         assert field, f"sed expression does not follow the established field idiom, so no field can be derived: {expr!r}"
+        assert expr.startswith("s/.*") and expr.endswith(".*/" + r"\1" + "/p"), (
+            f"sed expression is not a whole-line substitution capturing exactly one digit run: {expr!r}"
+        )
         # Flags after /p are forbidden PROSPECTIVELY, not because one collides today: measured, an
         # `I`-flagged `failed=` matches nothing extra on the real failing-hour line (`FAILED` is
         # followed by whitespace, never `FAILED=`). It starts mattering the day any line prints
@@ -173,9 +179,15 @@ def _parse_seds(rendered: str) -> dict[str, str]:
 # One production-shaped log: a currently-failing hour, both census twins (echoed then logged), both
 # summary twins (echoed then logged). Every value distinct, so a sed pointed at the wrong field
 # fails on the value rather than passing by coincidence.
+#
+# The failing hour's `error=` carries a literal `failed=7`: that text is an interpolated exception
+# repr / manifest string, never ours, so it can contain anything -- and a summary sed that matched a
+# bare `failed=` would read a per-hour line as the summary.
+_HOSTILE_ERROR = "OrderBookError('checksum batch failed=7 at seq 4211')"
 _REAL_LOG = "\n".join(
     (
-        "ETH/EUR  2026-07-14 03:00  FAILED  anchored=False ordered=True checksum=True replay=True rows=12 msgs=12",
+        "ETH/EUR  2026-07-14 03:00  FAILED  anchored=False ordered=True checksum=True replay=True "
+        f"rows=12 msgs=12  error={_HOSTILE_ERROR}",
         "verify-replay census replayed=288 reused=5712 audited=25 mismatches=0 pending=3 evicted=1 duration_s=1381",
         "2026-08-01 03:41:59,001 INFO zcrypto.archive.command [command.py:988] - verify-replay census "
         "replayed=288 reused=5712 audited=25 mismatches=0 pending=3 evicted=1 duration_s=1381",
@@ -203,6 +215,21 @@ _STUB_RESULT = ReplayResult(
     checksum_present=True,
     replay_ok=True,
     error=None,
+)
+
+# A currently-failing hour whose `error=` carries a literal `failed=7`. Incremental mode echoes and
+# logs a line for exactly the failing hours, so this is what puts the hostile text into a real run's
+# captured output.
+_HOSTILE_RESULT = ReplayResult(
+    pair="ETH/EUR",
+    hour=datetime(2026, 7, 14, 3, tzinfo=UTC),
+    rows=12,
+    messages=12,
+    anchored=False,
+    ts_ordered=True,
+    checksum_present=True,
+    replay_ok=False,
+    error=_HOSTILE_ERROR,
 )
 
 
@@ -287,9 +314,23 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
             f"the template's sed did not extract {field}={expected} from the CLI's ACTUAL output {live_log!r}, got {live_got!r}"
         )
 
+    # Neither summary sed may fire on a per-hour line ALONE. That line is the whole hazard: on the
+    # audit-mismatch path below it is printed and the summary is not, so a pattern matching a bare
+    # `failed=` would make the hostile `error=` text the only match and publish run_ok=1 on the one
+    # night the run must read as broken.
+    per_hour = _REAL_LOG.splitlines()[0]
+    assert _HOSTILE_ERROR in per_hour
+    for field in ("failed", "hours"):
+        assert _sed(sed_exprs[field], per_hour) == "", (
+            f"the {field} sed fired on a per-hour line with no summary present: {per_hour!r} -- "
+            f"anchor it on the summary line's own shape, not on a bare field name"
+        )
+
     # The audit-mismatch shape, live: the census IS printed (with the mismatch count) while the
     # summary is withheld -- which is why `mismatches` is the one census series the runner must NOT
-    # gate on run_ok, and why `run_ok` must keep deriving from the summary alone.
+    # gate on run_ok, and why `run_ok` must keep deriving from the summary alone. A failing hour
+    # carrying the hostile `error=` rides along, so the emptiness asserted below is measured against
+    # the real collision rather than against a conveniently clean log.
     mismatched = Census(
         replayed=0,
         reused=4,
@@ -299,7 +340,9 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
         evicted=0,
         duration_s=12.0,
     )
-    monkeypatch.setattr(command_mod.replay_mod, "verify_replay_incremental", lambda *a, **kw: ([_STUB_RESULT], mismatched))
+    monkeypatch.setattr(
+        command_mod.replay_mod, "verify_replay_incremental", lambda *a, **kw: ([_STUB_RESULT, _HOSTILE_RESULT], mismatched)
+    )
     result, lines = _cli_log_lines(
         caplog, ["archive", "verify-replay", "/unused-primary-root", "--state-dir", str(tmp_path / "state")]
     )
@@ -309,6 +352,9 @@ def test_the_parse_matches_the_clis_actual_log_format(caplog: pytest.LogCaptureF
     assert _sed(sed_exprs["mismatches"], mismatch_log) == "2", (
         f"the mismatch count must be parseable off the CLI's real census line: {mismatch_log!r}"
     )
+    # Not vacuous: the CLI really did emit the hostile `failed=7` text on this run, so the two
+    # emptiness assertions below are measured against the collision, not against its absence.
+    assert "failed=7" in mismatch_log, f"the hostile error text never reached the log: {mismatch_log!r}"
     assert _sed(sed_exprs["failed"], mismatch_log) == "", "the summary must stay withheld, so run_ok reads 0"
     assert _sed(sed_exprs["hours"], mismatch_log) == "", "the summary must stay withheld, so run_ok reads 0"
 

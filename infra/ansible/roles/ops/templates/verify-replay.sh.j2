@@ -72,14 +72,18 @@ cat "$replay_log"
 now=$(date -u +%s)
 
 # spec 00077 D2/D6: the CLI logs `verify-replay complete hours=N ok=X failed=Y` (logfmt) once, via
-# logger.info, at the end of the sweep. Explicit digit class; `tail -1` is defensive rather than
-# load-bearing here -- unlike archive-pull's backfill-trades, this command's twin summary line (the
-# `typer.echo` "replayed N hour(s): X ok, Y failed") has no `=` and never matches the pattern, so
-# only one line ever does today. Empty means the sweep produced no summary at all -- a crash, an
-# EIO from the ro,soft NAS mount, no canonical hours found, or a container that never started (e.g.
-# the T0060 name-conflict case above).
-failed_hours=$(sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
-hours_total=$(sed -n 's/.*hours=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+# logger.info, at the end of the sweep. Both patterns match that WHOLE summary shape, never a bare
+# `failed=`/`hours=`: spec 00078's audit-mismatch path prints the failing-hour lines and then
+# withholds the summary, and a per-hour line's `error=` text is an interpolated exception repr /
+# manifest string, not ours -- so one carrying a literal `failed=<n>` would be the ONLY match left
+# and run_ok would read 1 on exactly the night the run must read as broken. Anchoring is the guard;
+# `tail -1` only ever decided between the two summary twins (the `typer.echo` "replayed N hour(s):
+# X ok, Y failed" has no `=` and matches neither pattern) and stays as a second line of defence.
+# Explicit digit class. Empty means the sweep produced no summary at all -- a crash, an EIO from
+# the ro,soft NAS mount, no canonical hours found, an audit mismatch, or a container that never
+# started (e.g. the T0060 name-conflict case above).
+failed_hours=$(sed -n 's/.*verify-replay complete hours=[0-9][0-9]* ok=[0-9][0-9]* failed=\([0-9][0-9]*\).*/\1/p' "$replay_log" | tail -1)
+hours_total=$(sed -n 's/.*verify-replay complete hours=\([0-9][0-9]*\) ok=[0-9][0-9]* failed=[0-9][0-9]*.*/\1/p' "$replay_log" | tail -1)
 
 # spec 00078 D11: the census, logged once beside the summary --
 # `verify-replay census replayed=N reused=N audited=N mismatches=N pending=N evicted=N duration_s=N`.
