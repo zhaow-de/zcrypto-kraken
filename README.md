@@ -199,8 +199,8 @@ zcrypto archive verify-replay <primary_root> [reconciled_root]
 | `--depth` | Book depth the archive was captured at (default `100`, capture's default); the replayed book prunes to it. |
 | `--state-dir` | Cache verified hours here and replay only the changed ones on later runs. Reports a census and only the currently-failing hours instead of a line per hour. Cannot be combined with `--pair`/`--since`. |
 | `--reverify-all` | Replay every hour again and refresh the whole cache, ignoring what it already holds. Requires `--state-dir`. |
-| `--drain-budget-seconds` | Wall-clock budget for re-verifying cached hours whose bytes changed (default `7200`). Whatever does not fit is reported as `pending` and picked up by the next run. |
-| `--audit-sample` | How many hours served from the cache to replay again and compare against it each run (default `25`). A disagreement fails the run. |
+| `--drain-budget-seconds` | Wall-clock budget for re-verifying cached hours whose bytes changed (default `7200`). Whatever does not fit is reported as `pending` and picked up by the next run. Applies only with `--state-dir`; without it there is no drain and the value is ignored. |
+| `--audit-sample` | How many hours served from the cache to replay again and compare against it each run (default `25`). A disagreement fails the run. Applies only with `--state-dir`; without it nothing is served from cache and the value is ignored. |
 
 One line per hour plus a summary; a bad hour is isolated into its own result (the sweep never aborts). Exits **1** if any hour errs or fails any of the four checks, else **0**.
 
@@ -208,9 +208,12 @@ One line per hour plus a summary; a bad hour is isolated into its own result (th
 
 ```
 verify-replay census replayed=288 reused=5712 audited=25 pending=0 evicted=0 duration_s=1381
-verify-replay complete hours=6000 ok=6000 failed=0
+<ts> INFO zcrypto.archive.command … - verify-replay census replayed=288 reused=5712 audited=25 pending=0 evicted=0 duration_s=1381
 replayed 6000 hour(s): 6000 ok, 0 failed
+<ts> INFO zcrypto.archive.command … - verify-replay complete hours=6000 ok=6000 failed=0
 ```
+
+Four lines, in that order. The logger's handler writes to stdout alongside `echo`, so the census appears twice — verbatim as plain output, then again through the logger — and the summary appears as a pair of differently-worded twins, `replayed N hour(s)` echoed and `verify-replay complete hours=…` logged. The logged forms are the machine-readable ones: the runner parses `hours=`/`failed=` out of `verify-replay complete`, and the census fields out of the logged census line.
 
 Three conditions exit **2 with the summary withheld**, so the runner's `ops_verify_replay_run_ok` reads 0 and the run-broken rule pages rather than the run reading healthy: the checkpoint could not be written, the enumeration lost more than a tenth of the checkpointed hours (an unmounted mirror, not a real shrink — past a *deliberate* mass shrink, delete the state directory and accept the announced rebuild), or a sampled audit found an hour disagreeing with the verdict the cache served for it. An empty enumeration likewise emits neither census nor summary — it takes the existing `no canonical book hours found` path, since `hours=0 ok=0 failed=0` would parse as a healthy sweep of an unmounted NAS.
 
