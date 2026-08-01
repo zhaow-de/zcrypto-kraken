@@ -28,12 +28,16 @@ indistinguishable from corruption without the CRC. The byte-exact CRC replay is 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import random
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import polars as pl
 
+from cli.archive.checkpoint import CheckpointRow, load_checkpoint, save_checkpoint
 from cli.archive.reader import canonical_segments
 from cli.capture.book import OrderBook
 from cli.logging import get_logger
@@ -181,3 +185,238 @@ def verify_replay(
             result = ReplayResult(seg_pair, hour, 0, 0, False, False, False, False, f"{type(exc).__name__}: {exc}")
         results.append(result)
     return _chain_anchor(results)
+
+
+# --- incremental replay (spec 00078) ----------------------------------------------------------------
+#
+# Replays only what changed while still certifying the WHOLE archive: each hour's RAW facts are
+# checkpointed against the sha256 of the bytes replayed, and `_chain_anchor` is refolded over cached
+# and fresh results alike on every run. The chain verdict is NEVER persisted (spec 00078 D1): it is a
+# fold that can only widen, so caching its output would make anchoring irrevocable — an hour chained
+# through a good predecessor would stay green forever after that predecessor is rewritten into a
+# failure, with `failed_hours` reading 0.
+
+VERIFIER_VERSION = 1
+
+# Flush cadence (spec 00078 D8): ~20 min of work at risk, so a rebuild or long drain killed mid-run
+# (the 02:25 reboot, an OOM) resumes instead of restarting.
+_FLUSH_EVERY = 250
+
+# Eviction refusal line (D7): the case this catches is the NFS primary resolving empty while the
+# overlay is present — a nonempty enumeration that would otherwise evict the whole primary.
+_EVICTION_LIMIT = 0.10
+
+_monotonic = time.monotonic  # indirected so tests can drive the drain budget off a controlled clock
+
+
+@dataclass(frozen=True)
+class Census:
+    """What one incremental run did, for the operator-facing census line."""
+
+    replayed: int
+    reused: int
+    audited: int
+    audit_mismatches: tuple[str, ...]  # "PAIR YYYY-MM-DD HH:00" labels
+    pending: int
+    evicted: int
+    duration_s: float
+
+
+class EvictionRefusedError(Exception):
+    """The enumeration lost more than `_EVICTION_LIMIT` of the checkpoint's hours (spec 00078 D7)."""
+
+
+def _sidecar_digest(path: Path) -> str | None:
+    """The first whitespace-delimited token of `<path>.sha256`, or `None` when the sidecar is absent,
+    empty, or unreadable.
+
+    Absent/empty is `verify_manifest`'s own reading (a killed pre-T0036 writer left 0-byte sidecars);
+    unreadable joins them because this probe sits OUTSIDE `replay_segment`'s never-raises contract and
+    a transient EIO from the `ro,soft` NFS mount must stay one failing hour, not a whole-run crash.
+    `None` never equals a cached hash, so such an hour is always replayed and always reported failing.
+    """
+    sidecar = path.with_name(path.name + ".sha256")
+    try:
+        recorded = sidecar.read_text().split()
+    except OSError:
+        return None
+    return recorded[0] if recorded else None
+
+
+def _cached_failure(row: CheckpointRow) -> bool:
+    """Whether `row`'s cached verdict is a FAILURE, which is never trusted from cache (spec 00078 D3):
+    `replay_segment` isolates any exception — including a transient NFS EIO — into `error`, and
+    cache-trusting that would turn a one-off hiccup into a permanently-failing hour that never heals.
+
+    `opens_with_snapshot` is deliberately excluded: it is a raw fact, not a failure (~96% of real
+    hours open with a plain update and are anchored through their predecessor), and including it here
+    would re-replay nearly the whole archive nightly.
+    """
+    return row.error is not None or not (row.ts_ordered and row.checksum_present and row.replay_ok)
+
+
+def _is_stale(row: CheckpointRow, path: Path, *, reverify_all: bool) -> bool:
+    """Whether a checkpointed hour must be replayed again (spec 00078 D3). The sidecar read is the
+    cheap staleness probe; the byte hash itself is recomputed only on the hours actually replayed.
+
+    `polars_version`/`depth` are recorded on the row but deliberately NOT consulted (D5): dependabot
+    bumps polars ~monthly and a full drain takes ~74 nights at year-one size, so invalidating on them
+    would leave the instrument permanently mid-drain with `pending` never reaching zero.
+    """
+    if reverify_all or row.verifier_version != VERIFIER_VERSION or _cached_failure(row):
+        return True
+    return _sidecar_digest(path) != row.byte_hash
+
+
+def _replay_and_checkpoint(pair: str, hour: datetime, path: Path, depth: int) -> tuple[ReplayResult, CheckpointRow]:
+    """Replay one hour and build its checkpoint row.
+
+    Identity is the sha256 of the bytes actually replayed, hashed BEFORE the replay and compared
+    against the sidecar afterwards (spec 00078 D2) — not the sidecar's claim, since both writers
+    publish sidecar-then-final and a crash mid-mint leaves a new sidecar over old bytes. A mismatch,
+    or a missing sidecar, rewrites the verdict into a failure: it violates the archive's manifested
+    invariant, and failures are never cache-trusted, so it re-checks nightly until resolved.
+
+    The row's `opens_with_snapshot` is `replay_segment`'s RAW fact, captured here before any chain
+    derivation — the checkpoint must never see `_chain_anchor`'s output (D1).
+    """
+    try:
+        byte_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        # Outside `replay_segment`'s never-raises contract: isolate it into this hour, as a failure
+        # with no usable identity, and let the run continue.
+        result = ReplayResult(pair, hour, 0, 0, False, False, False, False, f"{type(exc).__name__}: {exc}")
+        byte_hash = ""
+    else:
+        result = replay_segment(path, pair, depth)
+        recorded = _sidecar_digest(path)
+        if recorded is None:
+            manifest_error = "no manifest sidecar"
+        elif recorded != byte_hash:
+            manifest_error = f"manifest mismatch: sidecar {recorded} != replayed bytes {byte_hash}"
+        else:
+            manifest_error = None
+        if manifest_error is not None:
+            error = manifest_error if result.error is None else f"{manifest_error} ({result.error})"
+            result = dataclasses.replace(result, error=error)
+
+    row = CheckpointRow(
+        pair=pair,
+        hour=hour,
+        byte_hash=byte_hash,
+        verifier_version=VERIFIER_VERSION,
+        opens_with_snapshot=result.anchored,  # RAW — `_chain_anchor` has not run yet, and never will here
+        ts_ordered=result.ts_ordered,
+        checksum_present=result.checksum_present,
+        replay_ok=result.replay_ok,
+        error=result.error,
+        rows=result.rows,
+        messages=result.messages,
+        polars_version=pl.__version__,
+        depth=depth,
+        verified_at=datetime.now(UTC),
+    )
+    return result, row
+
+
+def verify_replay_incremental(
+    primary_root: Path,
+    reconciled_root: Path | None,
+    *,
+    state_dir: Path,
+    depth: int,
+    drain_budget_s: float = 7200.0,
+    audit_k: int = 25,
+    reverify_all: bool = False,
+    rng: random.Random | None = None,
+) -> tuple[list[ReplayResult], Census]:
+    """Continuity-replay the canonical archive incrementally, returning the same `(pair, hour)`-ordered
+    verdict list `verify_replay` produces plus a `Census` of what was actually done.
+
+    Hours never seen before are replayed unconditionally — otherwise the sweep falls behind ingest and
+    `hours_total` stops matching the archive. Older stale hours (version bumps, rewrites, cached
+    failures, `reverify_all`) drain oldest-first until `drain_budget_s` is spent; the remainder is
+    `pending` and announced. Everything else is served from the checkpoint, and `_chain_anchor` is
+    refolded over the whole sequence.
+
+    Raises `EvictionRefusedError` when the enumeration lost more than 10% of the checkpoint's hours,
+    and `CheckpointWriteError` when the state dir cannot be written — both before/instead of a
+    summary, so the run reads broken rather than green.
+
+    `audit_k`/`rng` are accepted for the sampled audit and are not consulted yet.
+    """
+    started = _monotonic()
+    segments = list(canonical_segments(primary_root, reconciled_root, kind="book"))
+    if not segments:
+        # An empty enumeration never touches the checkpoint (spec 00078 D7): an unmounted NAS reads as
+        # zero hours, and evicting the archive on that reading would force an unplanned rebuild.
+        return [], Census(0, 0, 0, (), 0, 0, _monotonic() - started)
+
+    checkpoint = load_checkpoint(state_dir) or {}  # absent/corrupt/wrong-schema → every hour is new
+    present = {(pair, hour) for pair, hour, _ in segments}
+    evicted = [key for key in checkpoint if key not in present]
+    if checkpoint and len(evicted) > _EVICTION_LIMIT * len(checkpoint):
+        # Before any replay: a refused run must waste no work.
+        raise EvictionRefusedError(
+            f"refusing to evict {len(evicted)} of {len(checkpoint)} checkpointed hours "
+            f"(over {_EVICTION_LIMIT:.0%}) — the enumeration lost hours it should not have"
+        )
+
+    rows = {key: row for key, row in checkpoint.items() if key in present}
+    mandatory: list[tuple[str, datetime, Path]] = []
+    drain: list[tuple[str, datetime, Path]] = []
+    for pair, hour, path in segments:
+        row = checkpoint.get((pair, hour))
+        if row is None:
+            mandatory.append((pair, hour, path))
+        elif _is_stale(row, path, reverify_all=reverify_all):
+            drain.append((pair, hour, path))
+    drain.sort(key=lambda segment: (segment[1], segment[0]))  # oldest first, `(hour, pair)`
+
+    fresh: dict[tuple[str, datetime], ReplayResult] = {}
+
+    def replay_one(pair: str, hour: datetime, path: Path) -> None:
+        result, row = _replay_and_checkpoint(pair, hour, path, depth)
+        fresh[(pair, hour)] = result
+        rows[(pair, hour)] = row
+        if len(fresh) % _FLUSH_EVERY == 0:
+            save_checkpoint(state_dir, rows.values())
+
+    for pair, hour, path in mandatory:  # already in `(pair, hour)` order
+        replay_one(pair, hour, path)
+
+    pending: set[tuple[str, datetime]] = set()
+    drain_started = _monotonic()
+    for index, (pair, hour, path) in enumerate(drain):
+        if _monotonic() - drain_started >= drain_budget_s:
+            pending = {(drained_pair, drained_hour) for drained_pair, drained_hour, _ in drain[index:]}
+            break
+        replay_one(pair, hour, path)
+
+    results: list[ReplayResult] = []
+    reused = 0
+    for pair, hour, _ in segments:
+        key = (pair, hour)
+        if key in fresh:
+            results.append(fresh[key])
+            continue
+        row = rows[key]
+        results.append(
+            ReplayResult(
+                pair,
+                hour,
+                row.rows,
+                row.messages,
+                row.opens_with_snapshot,  # the RAW fact; the chain verdict is refolded below
+                row.ts_ordered,
+                row.checksum_present,
+                row.replay_ok,
+                row.error,
+            )
+        )
+        if key not in pending:
+            reused += 1
+
+    save_checkpoint(state_dir, rows.values())
+    census = Census(len(fresh), reused, 0, (), len(pending), len(evicted), _monotonic() - started)
+    return _chain_anchor(results), census
