@@ -151,7 +151,7 @@ def verify_replay_incremental(
 ) -> tuple[list[ReplayResult], Census]
 ```
 
-Behavioral contract (each clause is a test below): raw-facts caching; staleness = new ∪ hash-changed ∪ version-changed ∪ cached-failure ∪ `reverify_all`; new hours mandatory, older stale hours drained oldest-first (sorted by `(hour, pair)`) within `drain_budget_s`; sidecar read (`path.with_name(path.name + ".sha256")`, first whitespace token) is the cheap staleness probe; a replayed hour's `byte_hash` is `hashlib.sha256(path.read_bytes()).hexdigest()` computed before the replay, and a mismatch against the sidecar token (or a missing/empty sidecar) rewrites the result to a failure (`error="manifest mismatch: …"` / `"no manifest sidecar"`); refold `_chain_anchor` over cached+fresh in `(pair, hour)` order; empty enumeration returns `([], Census(0,0,0,(),0,0,~0))` **without touching the checkpoint**; eviction of >10% of a nonempty checkpoint raises `EvictionRefusedError` before any replay; the checkpoint is flushed every 250 replayed hours and at the end (fresh rows carry current `VERIFIER_VERSION`; pending rows keep their old ones; evicted keys dropped).
+Behavioral contract (each clause is a test below): raw-facts caching; staleness = new ∪ hash-changed ∪ version-changed ∪ cached-failure ∪ `reverify_all`; new hours mandatory, older stale hours drained oldest-first (sorted by `(hour, pair)`) within `drain_budget_s`; sidecar read (`path.with_name(path.name + ".sha256")`, first whitespace token) is the cheap staleness probe; a replayed hour's `byte_hash` is `hashlib.sha256(path.read_bytes()).hexdigest()` computed before the replay, and a mismatch against the sidecar token (or a missing/empty sidecar) rewrites the result to a failure (`error="manifest mismatch: …"` / `"no manifest sidecar"`); refold `_chain_anchor` over cached+fresh in `(pair, hour)` order; empty enumeration returns `([], Census(0,0,0,(),0,0,~0))` **without touching the checkpoint**; eviction of >10% of a nonempty checkpoint raises `EvictionRefusedError` before any replay; the checkpoint is flushed every 250 replayed hours and at the end (fresh rows carry current `VERIFIER_VERSION`; pending rows keep their old ones; evicted keys dropped). **A *cached failure* is `error != None` or any of `ts_ordered`/`checksum_present`/`replay_ok` false — `opens_with_snapshot` is excluded** (a raw fact, not a failure; including it re-replays ~96% of the archive nightly). **The sidecar probe and the pre-replay `read_bytes()` hash both isolate `OSError` into that hour's failure** (`error=…`, run continues) — they sit outside `replay_segment`'s never-raises contract, and a transient NFS EIO must stay one failing hour, not a whole-run crash.
 
 - [ ] **Step 1: Build the synthetic-tree helper.** Reuse the fixture idiom from `tests/test_archive_replay.py` (it already builds parquet book hours; read it first). Helper `make_tree(tmp_path, pairs, hours, *, snapshot_first_hour=True)` writes canonical layout + a correct `.sha256` sidecar per final (`hashlib.sha256(final.read_bytes()).hexdigest()` + `"  " + name`, matching `verify_manifest`'s token format).
 - [ ] **Step 2: Write the failing tests:**
@@ -207,6 +207,15 @@ def test_eviction_under_ten_percent_proceeds_and_evicts(tmp_path): ...
 def test_flush_every_250_survives_a_kill(tmp_path, monkeypatch): ...
     # monkeypatch the flush interval to 3 and replay_segment to raise SystemExit on the 5th call;
     # rerun -> census.replayed strictly less than the tree size (progress survived)
+
+def test_transient_read_error_is_isolated_to_the_hour(tmp_path, monkeypatch): ...
+    # monkeypatch Path.read_bytes to raise OSError for ONE final only -> run completes,
+    # that hour fails (error set), census emitted, every other hour verdicted (spec D3/F5)
+
+def test_recorded_environment_never_invalidates(tmp_path): ...
+    # doctor polars_version and depth in a cached row -> hour still REUSED (census.reused counts it).
+    # Constructed proof of spec D5's NON-invalidation: accidentally adding these to the stale
+    # predicate passes every other test and ships the permanent-mid-drain pathology.
 ```
 
 - [ ] **Step 3: Run to verify they fail**, then implement. Orchestration order (spec D7): enumerate → empty-guard → load checkpoint (`None` → empty dict; every hour becomes stale) → eviction guard → partition → replay mandatory (in `(pair, hour)` order) → drain oldest-first under `time.monotonic()` budget → assemble raw list (fresh where replayed, cached otherwise, converting `CheckpointRow` → `ReplayResult` with `anchored=opens_with_snapshot`) → `_chain_anchor` → final `save_checkpoint`. Keep the audit out — Task 3 adds it (pass `audit_k=0` through a parameter that Task 3 implements; until then accept and ignore it).
@@ -219,7 +228,7 @@ def test_flush_every_250_survives_a_kill(tmp_path, monkeypatch): ...
 - Modify: `cli/archive/replay.py` (the `audit_k` path inside `verify_replay_incremental`)
 - Test: `tests/test_archive_replay_incremental.py` (append)
 
-**Interfaces:** `Census.audited` / `Census.audit_mismatches` become live; `rng` (default `random.Random()`) drives `rng.sample` over the cache-trusted keys (reused + pending), `min(audit_k, len(...))` of them.
+**Interfaces:** `Census.audited` / `Census.audit_mismatches` become live; `rng` (default `random.Random()`) drives `rng.sample` over the **reused keys ONLY** — never pending, whose rows are known-stale by construction and would mismatch with certainty through every legitimate drain (spec D6/F1) — `min(audit_k, len(reused))` of them.
 
 - [ ] **Step 1: Failing tests:**
 
@@ -241,6 +250,11 @@ def test_audit_k_larger_than_cache_degrades_to_all(tmp_path): ...
 def test_audit_zero_disables_cleanly(tmp_path): ...
 def test_audited_fresh_result_replaces_cached_row(tmp_path): ...
     # after an audit pass, the audited rows' verified_at advanced in the saved checkpoint
+
+def test_audit_never_samples_pending_rows(tmp_path, monkeypatch): ...
+    # warm checkpoint; bump VERIFIER_VERSION and set a budget forcing spillover (pending > 0);
+    # audit_k > 0 -> a clean drain night reports ZERO mismatches (spec D6/F1: sampling pending
+    # would fail every night of a legitimate 74-night drain)
 ```
 
 - [ ] **Step 2: Fail → implement.** Audit runs after the drain: sample, re-replay + re-hash each, compare the full raw tuple `(byte_hash, opens_with_snapshot, ts_ordered, checksum_present, replay_ok, error, rows, messages)`; mismatches → `census.audit_mismatches` labels; fresh results replace the cached rows in both the result list (before the refold) and the saved checkpoint — the checkpoint is still written (self-healing), the **CLI** decides loud failure (Task 4).
@@ -255,7 +269,7 @@ def test_audited_fresh_result_replaces_cached_row(tmp_path): ...
 
 **Interfaces:** new options `--state-dir Path`, `--reverify-all` flag, `--drain-budget-seconds float = 7200.0`, `--audit-sample int = 25`. Help text plain-operator ("cache verified hours here and replay only changed ones on later runs" — no spec/topic tokens).
 
-Behavioral contract: without `--state-dir` the command is **byte-identical to today** (full replay, per-hour lines — the ad-hoc path). With it: refuse `--pair`/`--since` (`typer.BadParameter`); refuse `--reverify-all` without `--state-dir`; call the incremental path; print one line per **currently-failing** hour (existing line format), the census logfmt line, then the frozen echo+logfmt summaries; `EvictionRefusedError`/`CheckpointWriteError` → error line, **no summary**, `raise typer.Exit(2)`; nonempty `audit_mismatches` → per-mismatch line + error line, **no summary** (checkpoint already self-healed), `Exit(2)`; failed hours → summary printed then `Exit(1)` (unchanged).
+Behavioral contract: **an empty result list takes the existing `no canonical book hours found` early return BEFORE any census or summary emission** — printing `hours=0` would make the runner read an unmounted NAS as healthy (`run_ok=1`), re-opening the blind spot `00077` D2 closed. Without `--state-dir` the command is **byte-identical to today** (full replay, per-hour lines — the ad-hoc path). With it: refuse `--pair`/`--since` (`typer.BadParameter`); refuse `--reverify-all` without `--state-dir`; call the incremental path; print one line per **currently-failing** hour (existing line format), the census logfmt line, then the frozen echo+logfmt summaries; `EvictionRefusedError`/`CheckpointWriteError` → error line, **no summary**, `raise typer.Exit(2)`; nonempty `audit_mismatches` → per-mismatch line + error line, **no summary** (checkpoint already self-healed), `Exit(2)`; failed hours → summary printed then `Exit(1)` (unchanged).
 
 - [ ] **Step 1: Failing tests** (follow `tests/test_archive_replay.py`'s existing CliRunner idiom, incl. the `caplog`-handler attachment lesson):
 
@@ -271,6 +285,11 @@ def test_eviction_refusal_withholds_summary_and_exits_2(tmp_path, monkeypatch): 
 def test_currently_failing_cached_hour_is_still_printed(tmp_path): ...
     # a cached-failure hour appears as a line even though this run replayed it from the drain
 def test_without_state_dir_output_is_unchanged(tmp_path): ...  # per-hour lines still present
+def test_empty_tree_with_state_dir_emits_no_census_and_no_summary(tmp_path): ...
+    # empty primary root + --state-dir -> exit 0, 'no canonical book hours found', NO 'census',
+    # NO 'verify-replay complete' line (spec D7/F3)
+def test_state_dir_with_since_is_refused(): ...
+def test_checkpoint_write_error_withholds_summary_and_exits_2(tmp_path, monkeypatch): ...
 ```
 
 - [ ] **Step 2: Fail → implement → green.** Census via `typer.echo` **and** `logger.info("verify-replay census replayed=%d reused=%d audited=%d pending=%d evicted=%d duration_s=%d", ...)` (the runner parses the log; both surfaces carry it).
@@ -284,6 +303,7 @@ def test_without_state_dir_output_is_unchanged(tmp_path): ...  # per-hour lines 
 - Modify: `infra/ansible/roles/ops/tasks/main.yml` (state-dir creation, near the existing textfile-dir task)
 - Modify: `infra/ansible/roles/ops/defaults/main.yml` (`ops_verify_replay_state_subdir: verify-replay-state`)
 - Test: `tests/test_infra_verify_replay_template.py` (append)
+- Test: `tests/test_infra_alloy_series.py` (pin the four new series in `OPS_REQUIRED` — the `00077` precedent: a narrowed keep-wildcard must fail here rather than silently NoData the backlog rule)
 
 Template changes: add `-v "{{ ops_data_dir }}/{{ ops_verify_replay_state_subdir }}:/state:rw"` and pass `--state-dir /state` (both on the `docker run`; `/data` stays `:ro` — assert that in a test); parse the census with the established sed idiom (`replayed=`, `reused=`, `pending=`, `duration_s=` — each `'s/.*<field>=\([0-9][0-9]*\).*/\1/p' | tail -1`); publish `ops_verify_replay_replayed_hours`, `ops_verify_replay_reused_hours`, `ops_verify_replay_pending_hours`, `ops_verify_replay_duration_seconds` — **carried forward on a broken run exactly like `failed_hours`** (same `prev_` idiom, same D3 reasoning); `run_ok` gating and all existing series unchanged. Role: create the state dir `owner/group zcrypto-data, mode 0750` (the container runs as that uid/gid — spec `00057`).
 
@@ -296,9 +316,9 @@ Template changes: add `-v "{{ ops_data_dir }}/{{ ops_verify_replay_state_subdir 
 **Files:**
 - Modify: `infra/grafana/alerts.yaml` (one rule, uid `zcrypto-ops-verify-replay-backlog-stuck`, beside the two `00077` rules)
 - Modify: `infra/runbooks/README.md` (entry anchored like the `00077` pair, cross-linked from the rule's annotation)
-- Test: `tests/test_grafana_alerts.py` (follow the `00077` rules' test shape)
+- Test: `tests/test_infra_alert_rules.py` (follow the `00077` rules' test shape — the pinning idiom `test_the_permanent_loss_page_outlives_a_single_evaluation_hour` lives here)
 
-Rule (spec D12): warning; query A `ops_verify_replay_pending_hours`, query B `delta(ops_verify_replay_pending_hours[49h])`, math `$A > 0 && $B >= 0`, `for: 1h`, `relativeTimeRange from: 176400`, `noDataState: OK`, `execErrState: Alerting`. Summary, self-contained, operator-plain: `The nightly archive re-verification backlog is not shrinking. The sweep still runs, but hours queued for re-verification have not decreased across two nightly runs — the drain budget may be zero, the state directory lost, or the drain broken. Runbook: <anchor>.`
+Rule (spec D12): warning; query A `ops_verify_replay_pending_hours`, query B `delta(ops_verify_replay_pending_hours[26h])`, math `$A > 0 && $B >= 0`, `for: 25h`, `relativeTimeRange from: 93600` — the 26 h window sees exactly two runs and the 25 h `for` outlives a healthy bump night (which resets when night two's decrease lands); a 49 h window would false-fire on nights one and two of every healthy large drain (spec D12/F2), `noDataState: OK`, `execErrState: Alerting`. Summary, self-contained, operator-plain: `The nightly archive re-verification backlog is not shrinking. The sweep still runs, but hours queued for re-verification have not decreased across two nightly runs — the drain budget may be zero, the state directory lost, or the drain broken. Runbook: <anchor>.` The runbook entry also carries the eviction-refusal operator path (spec D7): after a deliberate mass archive shrink, delete the checkpoint dir and accept the announced rebuild.
 
 - [ ] **Step 1: Failing tests:** uid present ≤40 chars; expr/window/`for`/states pinned (the repo has the exact idiom — `test_the_permanent_loss_page_outlives_a_single_evaluation_hour`); summary passes the internal-vocabulary guard (it runs automatically; still assert the rule is *covered* by it); runbook anchor resolves character-for-character (nothing mechanical checks links — assert both sides literally, per the `00077` addendum).
 - [ ] **Step 2: Fail → implement → green → gate. Commit** — `feat(infra): page when the verify-replay re-verification backlog stops draining`.
@@ -314,5 +334,5 @@ Rule (spec D12): warning; query A `ops_verify_replay_pending_hours`, query B `de
 - [ ] **Step 1: Load the `topic-ops` and `iteration-closeout` skills** (orchestrator does this task's dispatching with them loaded; the implementer gets their mechanics in the brief).
 - [ ] **Step 2: Resolve T0114.** All three sub-items close: checkpointing (this branch), windowing re-evaluation (D13 — decided never, with the reasoning), duration/hour-count metrics (D11). `## Resolution` names the spec, the commits, and the D1 near-miss (the cold review's post-chain-anchored finding). Delete `ripe_when:`; move to `archive/`; index bullet moves to `### Resolved` with the archived link.
 - [ ] **Step 3: Iterations-history entry** (phase 6 file), written fresh at branch end against the actual log — never pre-written. It must state: what shipped, the D1 silent-false-pass caught at design review (before a line of code — contrast with `00076` D7 which shipped and reverted same-day), the D5 sustainability reversal (polars out of the invalidation key, and why), and the deploy tail owed.
-- [ ] **Step 4: The attended tail is NOT run by this branch** — the entry and the memo (orchestrator, Edit tool under the read-guard, never a subagent) record it per spec `00078` Deploy: image rebuild → pin recorded → converge `--limit zcrypto-ops` (no `ops_alloy_digest`; liquidations decision, prefer rolling) → push rules (additive, no prune) → verify by value at the first tick (census present, `reused ≈ 0` night one, `pending` draining, `failed_hours` unchanged).
+- [ ] **Step 4: The attended tail is NOT run by this branch** — the entry and the memo (orchestrator, Edit tool under the read-guard, never a subagent) record it per spec `00078` Deploy: image rebuild → pin recorded → converge `--limit zcrypto-ops` (no `ops_alloy_digest`; liquidations decision, prefer rolling) → push rules (additive, no prune) → verify by value at the first tick (census present, `reused ≈ 0` night one, `pending` draining, `failed_hours` unchanged). **Rollback is digest + template together** — the prior image rejects `--state-dir`, so a digest-only rollback yields `run_ok=0` nightly and a dark dead-man (spec Rollback/F6).
 - [ ] **Step 5: Full gate** (`uv run pytest` complete, `uv run pre-commit run -a`), stage by kind, commit — `docs(ops): iter closeout — verify-replay goes incremental (spec 00078, resolves T0114)`.
