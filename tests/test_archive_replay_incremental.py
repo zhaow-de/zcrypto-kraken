@@ -210,6 +210,25 @@ def test_version_bump_drains_oldest_first_within_budget(tmp_path: Path, monkeypa
     assert bumped == sorted(tree.keys(), key=lambda k: (k[1], k[0]))[: census.replayed]
 
 
+def test_reverify_all_marks_every_hour_stale_without_making_it_mandatory(tmp_path: Path) -> None:
+    """`--reverify-all` is the operator's only escape hatch for a deliberate full re-verification, and
+    it must go through the DRAIN, not the mandatory path: a full re-verification that ignored the
+    budget would run the whole archive in one night, which is the runtime this spec exists to bound."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=4)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    _, whole = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0, reverify_all=True)
+    assert (whole.replayed, whole.reused, whole.pending) == (4, 0, 0)
+
+    results, budgeted = verify_replay_incremental(
+        tree.primary, None, state_dir=state, depth=10, audit_k=0, reverify_all=True, drain_budget_s=0.0
+    )
+    # stale, but not NEW: at zero budget every hour defers instead of replaying
+    assert (budgeted.replayed, budgeted.reused, budgeted.pending) == (0, 0, 4)
+    assert len(results) == 4  # the whole archive still gets a verdict, from cache
+
+
 # --- D2/D3: failures and manifest violations are never trusted from cache ---------------------------
 
 
@@ -352,6 +371,24 @@ def test_eviction_over_ten_percent_refuses_before_replaying(tmp_path: Path, monk
 
     assert calls == []  # refused BEFORE any replay: a refused run wastes no work
     assert (state / "checkpoint.parquet").read_bytes() == before
+
+
+def test_eviction_at_exactly_ten_percent_proceeds(tmp_path: Path) -> None:
+    """The refusal is for eviction ABOVE 10%, so the boundary itself must proceed: `0.1 * 20 == 2.0`
+    and `2 > 2.0` is False. Without this, `>` and `>=` are indistinguishable — the two neighbouring
+    tests straddle the boundary without ever landing on it."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR", "ETH/EUR"], hours=10)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    for pair in ("BTC/EUR", "ETH/EUR"):  # exactly 2 of 20
+        tree.delete_hour(pair, 9)
+
+    results, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    assert census.evicted == 2 and census.reused == 18 and len(results) == 18
+    updated = load_checkpoint(state)
+    assert updated is not None and len(updated) == 18
 
 
 def test_eviction_under_ten_percent_proceeds_and_evicts(tmp_path: Path) -> None:
