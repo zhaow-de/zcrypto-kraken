@@ -126,6 +126,13 @@ class Tree:
         a mismatch."""
         _write_final(self.final(pair, index), _explode(pair, self.hour(index), _coherent_messages()[1:3]))
 
+    def write_unordered_hour(self, pair: str, index: int) -> None:
+        """An hour whose `ts` runs BACKWARDS, with a CORRECT sidecar — an honestly broken hour. It
+        verifies as `ts_ordered=False` the first time; doctoring that one fact green in the checkpoint
+        then makes it cache-trusted forever, since a green row matches its (untouched) sidecar."""
+        messages = [dict(msg, offset=offset) for msg, offset in zip(_coherent_messages()[1:], (30, 20, 10), strict=True)]
+        _write_final(self.final(pair, index), _explode(pair, self.hour(index), messages))
+
 
 def make_tree(tmp_path: Path, pairs: list[str], hours: int, *, snapshot_first_hour: bool = True) -> Tree:
     """`pairs` × `hours` contiguous canonical book hours. Hour 0 opens with a snapshot (so the whole
@@ -537,6 +544,55 @@ def test_audit_catches_bytes_rewritten_under_an_unchanged_sidecar(tmp_path: Path
     assert census.audit_mismatches == ("BTC/EUR 2026-07-14 03:00",)
     healed = load_checkpoint(state)
     assert healed is not None and "manifest mismatch" in healed[("BTC/EUR", tree.hour(1))].error
+
+
+def test_audit_heals_the_returned_results_not_only_the_checkpoint(tmp_path: Path) -> None:
+    """The self-heal has two halves, and only one of them is load-bearing TONIGHT.
+
+    Patching just the checkpoint makes the audit report a mismatch while the returned results still
+    read every hour green — `failed_hours` would count 0 over a rotted archive, and `_chain_anchor`
+    would fold the lie forward into every successor. So both are asserted: the audited hour's own
+    verdict must carry the fresh failure, AND its successor — which anchors only through it — must
+    lose its anchor in the refold that runs after the audit."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    tree.rewrite_final_only("BTC/EUR", 1)  # bit rot: new bytes, unchanged sidecar → still reused
+
+    results, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=3, rng=random.Random(3))
+
+    assert census.audit_mismatches == ("BTC/EUR 2026-07-14 03:00",)
+    by_hour = {r.hour: r for r in results}
+    assert by_hour[tree.hour(1)].error is not None and not by_hour[tree.hour(1)].passed
+    assert not by_hour[tree.hour(2)].anchored  # the healed failure re-folds through the chain
+    assert by_hour[tree.hour(0)].passed  # and reaches no further than it should
+
+
+def test_audit_catches_a_broken_hour_doctored_green(tmp_path: Path) -> None:
+    """The lie the audit most needs to catch: an hour the instrument had ALREADY measured as broken,
+    whose row is then doctored green.
+
+    `ts_ordered=False` is a cached failure, so this hour re-replays nightly and heals or re-fails
+    honestly. Flip that one fact to `True` and the row stops being a failure while its bytes — and so
+    its sidecar — never changed: it is reused forever, the instrument certifying an hour it has itself
+    seen to be broken. Nothing in the stale predicate can ever look at it again. Only the audit can."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    tree.write_unordered_hour("BTC/EUR", 1)
+    state = tmp_path / "state"
+
+    honest, _ = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+    assert not {r.hour: r for r in honest}[tree.hour(1)].ts_ordered  # measured broken, honestly
+
+    doctor_checkpoint(state, ("BTC/EUR", tree.hour(1)), ts_ordered=True)
+
+    results, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=3, rng=random.Random(2))
+
+    assert (census.replayed, census.reused, census.audited) == (0, 3, 3)  # never re-replayed: reused
+    assert census.audit_mismatches == ("BTC/EUR 2026-07-14 03:00",)
+    assert not {r.hour: r for r in results}[tree.hour(1)].ts_ordered
+    healed = load_checkpoint(state)
+    assert healed is not None and not healed[("BTC/EUR", tree.hour(1))].ts_ordered
 
 
 def test_audit_compares_every_cached_raw_fact() -> None:
