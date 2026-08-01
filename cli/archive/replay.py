@@ -319,6 +319,27 @@ def _replay_and_checkpoint(pair: str, hour: datetime, path: Path, depth: int) ->
     return result, row
 
 
+def _audit_facts(row: CheckpointRow) -> tuple:
+    """The full RAW tuple the audit compares — every fact the cache serves on a reused hour. A
+    difference in ANY of them is a mismatch. `verified_at`/`polars_version`/`depth` are forensics and
+    `verifier_version` is the run's own, so none of them belong here."""
+    return (
+        row.byte_hash,
+        row.opens_with_snapshot,
+        row.ts_ordered,
+        row.checksum_present,
+        row.replay_ok,
+        row.error,
+        row.rows,
+        row.messages,
+    )
+
+
+def _hour_label(pair: str, hour: datetime) -> str:
+    """`PAIR YYYY-MM-DD HH:00` — how a mismatched hour is named to the operator."""
+    return f"{pair} {hour:%Y-%m-%d %H:00}"
+
+
 def verify_replay_incremental(
     primary_root: Path,
     reconciled_root: Path | None,
@@ -343,7 +364,11 @@ def verify_replay_incremental(
     and `CheckpointWriteError` when the state dir cannot be written — both before/instead of a
     summary, so the run reads broken rather than green.
 
-    `audit_k`/`rng` are accepted for the sampled audit and are not consulted yet.
+    After the drain, `audit_k` cache-trusted REUSED hours are re-replayed and compared against their
+    checkpoint rows (spec 00078 D6) — the only guard that can detect the cache being wrong, since
+    `replayed=288 reused=5712` is otherwise both the healthy signature and the wrong-reuse one. A
+    mismatch is named in `Census.audit_mismatches` and self-heals (the fresh row replaces the cached
+    one, here and in the checkpoint); deciding whether that fails the run loudly is the CLI's.
     """
     started = _monotonic()
     segments = list(canonical_segments(primary_root, reconciled_root, kind="book"))
@@ -394,8 +419,12 @@ def verify_replay_incremental(
         replay_one(pair, hour, path)
 
     results: list[ReplayResult] = []
-    reused = 0
-    for pair, hour, _ in segments:
+    # The reused keys — rows the stale predicate passed THIS run — materialized here because they are
+    # the audit's population: a lie can only live in a row trusted as current (D6).
+    reused_keys: list[tuple[str, datetime]] = []
+    reused_paths: dict[tuple[str, datetime], Path] = {}
+    reused_index: dict[tuple[str, datetime], int] = {}
+    for pair, hour, path in segments:
         key = (pair, hour)
         if key in fresh:
             results.append(fresh[key])
@@ -415,8 +444,27 @@ def verify_replay_incremental(
             )
         )
         if key not in pending:
-            reused += 1
+            reused_keys.append(key)
+            reused_paths[key] = path
+            reused_index[key] = len(results) - 1
+
+    # The sampled audit (D6). Pending rows are NEVER sampled: one is known-stale by construction (its
+    # hash or version already failed the predicate), so auditing it mismatches with certainty and would
+    # fail the run every night of a legitimate large drain — ~74 consecutive nights at year-one size.
+    mismatches: list[str] = []
+    audited = min(audit_k, len(reused_keys)) if audit_k > 0 else 0
+    if audited:
+        sampler = rng if rng is not None else random.Random()
+        for pair, hour in sampler.sample(reused_keys, audited):
+            key = (pair, hour)
+            result, row = _replay_and_checkpoint(pair, hour, reused_paths[key], depth)
+            if _audit_facts(row) != _audit_facts(rows[key]):
+                mismatches.append(_hour_label(pair, hour))
+            # The fresh row replaces the cached one either way — on a mismatch that self-heals the
+            # cache, and on a match it records that this hour was re-verified under today's code.
+            rows[key] = row
+            results[reused_index[key]] = result
 
     save_checkpoint(state_dir, rows.values())
-    census = Census(len(fresh), reused, 0, (), len(pending), len(evicted), _monotonic() - started)
+    census = Census(len(fresh), len(reused_keys), audited, tuple(mismatches), len(pending), len(evicted), _monotonic() - started)
     return _chain_anchor(results), census

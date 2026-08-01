@@ -4,8 +4,8 @@ Every test here is a CONSTRUCTED proof of one clause, not a restatement of it: t
 only RAW per-hour facts and the chain verdict is refolded every run (D1), failures and manifest
 violations are never trusted from cache (D2/D3), new hours are mandatory while older stale hours
 drain oldest-first under a wall-clock budget (D4), the recorded environment does NOT invalidate (D5),
-an empty or shrunken enumeration never destroys state (D7), and mid-run progress survives a kill
-(D8).
+the sampled audit re-verifies cache-trusted hours and never samples pending ones (D6), an empty or
+shrunken enumeration never destroys state (D7), and mid-run progress survives a kill (D8).
 
 The synthetic-tree idiom (per-level fan-out + committed final + `.sha256` sidecar) is
 `tests/test_archive_replay.py`'s, extended with the mutations these tests need.
@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import itertools
+import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,7 +24,7 @@ import polars as pl
 import pytest
 
 from cli.archive import replay as replay_module
-from cli.archive.checkpoint import load_checkpoint, save_checkpoint
+from cli.archive.checkpoint import CheckpointRow, load_checkpoint, save_checkpoint
 from cli.archive.replay import EvictionRefusedError, verify_replay, verify_replay_incremental
 from cli.capture.segment_writer import BOOK_SCHEMA
 
@@ -117,6 +118,13 @@ class Tree:
     def rewrite_final_only(self, pair: str, index: int) -> None:
         """New, still-readable bytes under the OLD sidecar — the manifest-mismatch shape."""
         _write_final(self.final(pair, index), _explode(pair, self.hour(index), _coherent_messages()[:2]), sidecar=False)
+
+    def rewrite_hour_shorter(self, pair: str, index: int) -> None:
+        """Fewer messages, with a MATCHING new sidecar — a legitimately rewritten hour (the
+        reconciler splicing secondary data in). Stale by hash, and its fresh raw tuple differs from
+        the cached one, so an audit that wrongly sampled it while it waits in the drain would report
+        a mismatch."""
+        _write_final(self.final(pair, index), _explode(pair, self.hour(index), _coherent_messages()[1:3]))
 
 
 def make_tree(tmp_path: Path, pairs: list[str], hours: int, *, snapshot_first_hour: bool = True) -> Tree:
@@ -429,3 +437,215 @@ def test_flush_every_250_survives_a_kill(tmp_path: Path, monkeypatch: pytest.Mon
     results, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
 
     assert census.replayed == 5 and census.reused == 3 and len(results) == 8  # the flushed 3 survived
+
+
+# --- D6: the sampled audit — the one guard that can detect the cache being wrong --------------------
+
+
+def doctor_checkpoint(state: Path, key: tuple[str, datetime], **facts: object) -> None:
+    """Plant a lie in one checkpoint row: the thing the audit exists to catch.
+
+    Only `opens_with_snapshot`, `rows`, `messages` (and `byte_hash`, together with its sidecar) can be
+    doctored INTO A REUSED ROW — `_cached_failure` re-replays any row whose
+    `error`/`ts_ordered`/`checksum_present`/`replay_ok` reads as a failure, so a lie there is caught by
+    the stale predicate and never reaches the audit at all."""
+    rows = load_checkpoint(state)
+    assert rows is not None and key in rows
+    rows[key] = dataclasses.replace(rows[key], **facts)
+    save_checkpoint(state, rows.values())
+
+
+class _RecordingRandom(random.Random):
+    """Records every population `rng.sample` is handed, so a test can assert what was SAMPLED FROM
+    rather than inferring it from the mismatches that happened to result."""
+
+    def __init__(self, seed: int) -> None:
+        super().__init__(seed)
+        self.populations: list[list] = []
+
+    def sample(self, population, k, *, counts=None):  # type: ignore[override]
+        self.populations.append(list(population))
+        return super().sample(population, k, counts=counts)
+
+
+def test_audit_trips_on_a_doctored_fact(tmp_path: Path) -> None:
+    """Plant a lie in the checkpoint; the audit must catch it (spec D6: "its own proof is mandatory").
+
+    `opens_with_snapshot` is the fact to lie about. It is deliberately excluded from `_cached_failure`
+    (~96% of real hours open with a plain update), so the stale predicate structurally CANNOT see the
+    lie — and it is the raw fact `_chain_anchor` folds, so a lie there silently greens a broken chain
+    forever. `rows`/`messages` are in neither predicate at all — the shape of a mis-keyed or truncated
+    row. Without the audit, nothing in this instrument would ever notice either one."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=4)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    doctor_checkpoint(state, ("BTC/EUR", tree.hour(2)), opens_with_snapshot=True)  # hour 2 opens with an update
+    doctor_checkpoint(state, ("BTC/EUR", tree.hour(1)), rows=999, messages=999)
+
+    _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=4, rng=random.Random(7))
+
+    assert census.replayed == 0 and census.reused == 4 and census.audited == 4
+    # every offender is named, not just the first one sampled
+    assert set(census.audit_mismatches) == {"BTC/EUR 2026-07-14 04:00", "BTC/EUR 2026-07-14 03:00"}
+    healed = load_checkpoint(state)
+    assert healed is not None
+    assert not healed[("BTC/EUR", tree.hour(2))].opens_with_snapshot  # self-healed
+    assert (healed[("BTC/EUR", tree.hour(1))].rows, healed[("BTC/EUR", tree.hour(1))].messages) == (4, 3)
+
+
+def test_audit_trips_on_a_doctored_byte_hash(tmp_path: Path) -> None:
+    """A lie in the identity itself — checkpoint corruption, or overlay bit rot the manifest sweep
+    cannot see.
+
+    The lie is planted in BOTH the checkpoint row and the sidecar on purpose: `_is_stale` compares
+    exactly those two, so a checkpoint-only lie is caught (and re-replayed) before the audit ever sees
+    the row. A byte-hash lie can only SURVIVE into a cache-trusted row when the sidecar agrees with
+    it — which is precisely the state the audit owns, since it re-hashes the actual bytes."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    lie = "0" * 64
+    doctor_checkpoint(state, ("BTC/EUR", tree.hour(1)), byte_hash=lie)
+    tree.sidecar("BTC/EUR", 1).write_text(f"{lie}  03.parquet\n")
+
+    _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=3, rng=random.Random(1))
+
+    assert census.replayed == 0 and census.audited == 3  # reused, never re-replayed: only the audit can see it
+    assert census.audit_mismatches == ("BTC/EUR 2026-07-14 03:00",)
+    healed = load_checkpoint(state)
+    assert healed is not None
+    real = hashlib.sha256(tree.final("BTC/EUR", 1).read_bytes()).hexdigest()
+    assert healed[("BTC/EUR", tree.hour(1))].byte_hash == real
+
+
+def test_audit_catches_bytes_rewritten_under_an_unchanged_sidecar(tmp_path: Path) -> None:
+    """The real-world shape of the same hole: the bytes changed, the sidecar did not. The cached hash
+    still equals the sidecar, so the stale predicate reads the hour as unchanged and reuses it — every
+    night, indefinitely. The audit re-hashes and re-replays, and the healed row now carries the
+    manifest error, so `_cached_failure` re-replays it tomorrow unaided."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    tree.rewrite_final_only("BTC/EUR", 1)
+
+    _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=3, rng=random.Random(3))
+
+    assert census.replayed == 0 and census.audited == 3
+    assert census.audit_mismatches == ("BTC/EUR 2026-07-14 03:00",)
+    healed = load_checkpoint(state)
+    assert healed is not None and "manifest mismatch" in healed[("BTC/EUR", tree.hour(1))].error
+
+
+def test_audit_compares_every_cached_raw_fact() -> None:
+    """Completeness pin on the compare tuple, by name — because one field in it cannot be pinned
+    behaviourally: `_is_stale` only reuses an hour whose sidecar EQUALS its cached `byte_hash`, so a
+    byte-hash divergence can never reach the audit without the manifest `error` it produces arriving
+    with it. Dropping `byte_hash` from the tuple therefore breaks no test above. This pins it (and
+    every other raw fact) anyway: a fact added to `CheckpointRow` and forgotten here fails this."""
+    forensics = {"pair", "hour", "verifier_version", "polars_version", "depth", "verified_at"}
+    raw = [field.name for field in dataclasses.fields(CheckpointRow) if field.name not in forensics]
+    row = CheckpointRow(
+        pair="BTC/EUR",
+        hour=H,
+        byte_hash="a" * 64,
+        verifier_version=1,
+        opens_with_snapshot=True,
+        ts_ordered=False,
+        checksum_present=True,
+        replay_ok=False,
+        error="boom",
+        rows=7,
+        messages=3,
+        polars_version="1.2.3",
+        depth=10,
+        verified_at=H,
+    )
+
+    assert replay_module._audit_facts(row) == tuple(getattr(row, name) for name in raw)
+
+
+def test_audit_k_larger_than_cache_degrades_to_all(tmp_path: Path) -> None:
+    """`min(audit_k, len(reused))`: a small archive (or a big drain night) must audit everything it
+    has, not raise `ValueError: Sample larger than population`."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=100, rng=random.Random(5))
+
+    assert census.reused == 3 and census.audited == 3 and census.audit_mismatches == ()
+
+
+def test_audit_zero_disables_cleanly(tmp_path: Path) -> None:
+    """`audit_k=0` does no work at all — no sampling, no re-replay (every other test in this file
+    depends on that, and the operator escape hatch is worthless if it still costs 25 replays)."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+    before = load_checkpoint(state)
+    assert before is not None
+
+    calls: list[Path] = []
+    real_replay_segment = replay_module.replay_segment
+
+    def counted(path: Path, symbol: str, depth: int):
+        calls.append(path)
+        return real_replay_segment(path, symbol, depth)
+
+    monkeypatched = pytest.MonkeyPatch()
+    monkeypatched.setattr(replay_module, "replay_segment", counted)
+    try:
+        _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+    finally:
+        monkeypatched.undo()
+
+    assert calls == []
+    assert census.audited == 0 and census.audit_mismatches == () and census.reused == 3
+    after = load_checkpoint(state)
+    assert after is not None
+    assert {key: row.verified_at for key, row in after.items()} == {key: row.verified_at for key, row in before.items()}
+
+
+def test_audited_fresh_result_replaces_cached_row(tmp_path: Path) -> None:
+    """An audited hour's row is REPLACED by the fresh one even when it matched: the checkpoint must
+    record that this hour was re-verified under today's code, not last month's."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=3)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+    before = load_checkpoint(state)
+    assert before is not None
+
+    _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=100, rng=random.Random(11))
+
+    assert census.audited == 3 and census.audit_mismatches == ()
+    after = load_checkpoint(state)
+    assert after is not None
+    assert all(after[key].verified_at > before[key].verified_at for key in before)
+    # the facts themselves are unchanged — a clean audit heals nothing and breaks nothing
+    assert all(dataclasses.replace(after[key], verified_at=before[key].verified_at) == before[key] for key in before)
+
+
+def test_audit_never_samples_pending_rows(tmp_path: Path) -> None:
+    """Spec D6/F1: the audit samples the REUSED keys only. A pending row is known-stale by
+    construction — here, two legitimately rewritten hours the budget deferred — so auditing one
+    mismatches with certainty, failing the run every single night of a legitimate drain (~74
+    consecutive nights at year-one archive size). That is the exact pathology this spec exists to
+    avoid, so the population itself is asserted, not just the (absence of) mismatches it produced."""
+    tree = make_tree(tmp_path, pairs=["BTC/EUR"], hours=6)
+    state = tmp_path / "state"
+    verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=0)
+
+    for index in (4, 5):
+        tree.rewrite_hour_shorter("BTC/EUR", index)
+
+    rng = _RecordingRandom(13)
+    _, census = verify_replay_incremental(tree.primary, None, state_dir=state, depth=10, audit_k=10, rng=rng, drain_budget_s=0.0)
+
+    assert (census.replayed, census.reused, census.pending) == (0, 4, 2)
+    assert census.audited == 4 and census.audit_mismatches == ()  # a clean drain night never self-DoSes
+    deferred = {("BTC/EUR", tree.hour(index)) for index in (4, 5)}
+    assert len(rng.populations) == 1 and set(rng.populations[0]).isdisjoint(deferred)
+    assert set(rng.populations[0]) == {("BTC/EUR", tree.hour(index)) for index in range(4)}
