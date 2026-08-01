@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import polars as pl
 import pytest
 
@@ -108,3 +110,56 @@ def test_unwritable_dir_raises_checkpoint_write_error(tmp_path):
             save_checkpoint(state, [_row()])
     finally:
         state.chmod(0o700)
+
+
+def test_error_string_past_the_default_schema_inference_window_round_trips(tmp_path):
+    """`pl.DataFrame` infers a column's dtype from only its first 100 rows by default. `error` is the
+    only nullable field: >100 leading `error=None` rows followed by a real error string previously blew
+    up `pl.DataFrame([...])` with a `ComputeError` — the ~6,000-row snapshot rewritten whole on every
+    flush is always past that window, so this broke on precisely the nights an error was found."""
+    base = datetime(2026, 8, 1, tzinfo=UTC)
+    healthy = [_row(pair="BTC/EUR", hour=base + timedelta(hours=i)) for i in range(150)]
+    failing = _row(pair="ETH/EUR", error="EIO", replay_ok=False)
+    save_checkpoint(tmp_path, [*healthy, failing])
+    loaded = load_checkpoint(tmp_path)
+    assert loaded is not None and len(loaded) == 151
+    assert loaded[("ETH/EUR", failing.hour)] == failing
+
+
+def test_mkdir_failure_raises_checkpoint_write_error_not_the_raw_oserror(tmp_path):
+    """A distinct failure shape from `test_unwritable_dir_raises_checkpoint_write_error` above: there,
+    `state_dir` already exists (chmod 0o500 read+execute), so `mkdir(exist_ok=True)` succeeds and only
+    the write fails. Here `state_dir` does not exist yet and its parent is wholly inaccessible (chmod
+    000 — the ":rw mount present but inaccessible" shape) so `mkdir` itself fails. That failure must
+    still surface as `CheckpointWriteError`, not an unwrapped `PermissionError` escaping from the
+    cleanup path's own `tmp.unlink()` call (which cannot even stat under an inaccessible parent)."""
+    parent = tmp_path / "locked"
+    parent.mkdir()
+    parent.chmod(0o000)
+    state = parent / "nested" / "state"
+    try:
+        with pytest.raises(CheckpointWriteError):
+            save_checkpoint(state, [_row()])
+    finally:
+        parent.chmod(0o700)
+
+
+def test_empty_rows_is_a_noop(tmp_path):
+    save_checkpoint(tmp_path, [_row()])
+    save_checkpoint(tmp_path, [])  # a no-op run must not clobber the good checkpoint
+    loaded = load_checkpoint(tmp_path)
+    assert loaded is not None and len(loaded) == 1
+
+    absent = tmp_path / "never-created"
+    save_checkpoint(absent, [])  # nor conjure one where none existed
+    assert not absent.exists()
+
+
+def test_naive_hour_and_verified_at_are_rejected(tmp_path):
+    naive_hour = datetime(2026, 8, 1, 3)  # no tzinfo
+    with pytest.raises(ValueError, match="hour"):
+        save_checkpoint(tmp_path, [_row(hour=naive_hour)])
+
+    naive_verified_at = datetime(2026, 8, 1, 4)  # no tzinfo
+    with pytest.raises(ValueError, match="verified_at"):
+        save_checkpoint(tmp_path, [_row(verified_at=naive_verified_at)])
