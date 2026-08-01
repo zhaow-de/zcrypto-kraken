@@ -422,6 +422,35 @@ def test_audit_mismatch_withholds_summary_and_exits_2(tmp_path: Path, monkeypatc
     assert result.output.index("BTC/EUR 2026-07-14 02:00") < result.output.index("ETH/EUR 2026-07-14 03:00")
 
 
+def test_audit_mismatch_outranks_failing_hours(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run holding BOTH a failing hour and an audit mismatch exits 2 with the summary withheld, not
+    1 with it published. The counts a summary carries are derived from a cache the audit has just
+    proven unreliable, so publishing them would set `run_ok=1` over exactly that -- while the failing
+    hour still gets its line, since the runbook sends the operator to the journal for identities."""
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+    failing = ReplayResult("ETH/EUR", H, 0, 0, False, False, False, False, "ComputeError: not a parquet file")
+    census = Census(
+        replayed=1,
+        reused=2,
+        audited=2,
+        audit_mismatches=("BTC/EUR 2026-07-14 02:00",),
+        pending=0,
+        evicted=0,
+        duration_s=1.0,
+    )
+    monkeypatch.setattr(replay_module, "verify_replay_incremental", lambda *a, **k: ([failing], census))
+
+    result = _invoke(str(primary), "--state-dir", str(tmp_path / "state"))
+
+    # The summary is asserted FIRST: it is the signal the runner reads, and the regression this test
+    # exists for -- letting the failing-hour `Exit(1)` win -- publishes it. The exit code is secondary.
+    assert _summary_withheld(result.output), result.output
+    assert result.exit_code == 2, result.output
+    assert "ETH/EUR  2026-07-14 02:00  FAILED" in result.output
+    assert "BTC/EUR 2026-07-14 02:00" in result.output
+
+
 def test_eviction_refusal_withholds_summary_and_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     primary = tmp_path / "primary"
     _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
