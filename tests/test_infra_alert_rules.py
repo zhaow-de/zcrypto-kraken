@@ -252,3 +252,104 @@ def test_the_new_breakage_window_matches_its_relative_time_range():
 
     assert max(ranges) >= 90000, f"query range {max(ranges)}s is shorter than 25h"
     assert "[25h]" in expr, "the delta() window must match the query range"
+
+
+# --- the re-verification backlog rule: its two-night shape IS the rule ---------------------------
+# The incremental sweep announces `pending` -- hours whose bytes changed that the nightly drain
+# budget did not reach. A backlog is normal and self-clearing; one that stops shrinking means the
+# instrument is degraded. Every number below is load-bearing and none of them is checkable by
+# reading the rule, so each gets its own assertion with the failure it prevents written down.
+
+_BACKLOG_STUCK = "zcrypto-ops-verify-replay-backlog-stuck"
+
+
+def test_the_backlog_stuck_rule_exists_and_fits_the_uid_column():
+    """Presence, pinned separately so the shape tests below fail on their own subject rather than on
+    a `StopIteration` from the lookup helper. The 40-char ceiling is the same one that cost an
+    attended round-trip; this uid sits one character under it."""
+    assert _BACKLOG_STUCK in [r["uid"] for r in _rules()], "the re-verification backlog has no alert rule"
+    assert len(_BACKLOG_STUCK) <= _UID_MAX, f"{len(_BACKLOG_STUCK)} chars -- the create call will 400"
+
+
+def test_the_backlog_stuck_window_sees_exactly_two_nightly_runs():
+    """26h, and 26h in BOTH fields. Widening this is the tempting edit and it is wrong in a way no
+    test but this one would catch: a 49h window still reaches the pre-bump zeros, so
+    `delta(pending[49h]) >= 0` stays true through night TWO of a perfectly healthy large drain and
+    the rule pages on every one of them. 26h sees the last two runs and nothing older, so night
+    two's decrease drives the delta negative and resets the condition."""
+    rule = _rule(_BACKLOG_STUCK)
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+    windows = re.findall(r"\[(\d+)h\]", expr)
+
+    assert windows == ["26"], f"expected exactly one 26h range selector, got {windows}"
+    ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
+    assert max(ranges) == 26 * 3600, f"relativeTimeRange {max(ranges)}s does not match the {windows[0]}h delta window"
+
+
+def test_the_backlog_stuck_condition_must_survive_a_whole_nightly_cycle():
+    """`for: 25h` is what makes this rule shape-based rather than threshold-based. A healthy bump
+    night satisfies the condition for ~22h -- shorten the `for` and every deliberate re-verification
+    pages on its first night, which is exactly the alarm fatigue that trains an operator to ignore
+    it. Only a backlog still flat or growing after the NEXT run survives 25h."""
+    rule = _rule(_BACKLOG_STUCK)
+    assert rule["for"] == "25h", f"for: {rule['for']!r} -- a healthy drain's bump night would page"
+
+
+def test_the_backlog_stuck_rule_needs_both_a_live_backlog_and_a_non_shrinking_one():
+    """Two halves, and dropping either one inverts the rule. Without `$A > 0` a drained-to-zero
+    backlog reads `delta == 0` forever and pages permanently on a healthy fleet; without
+    `$B >= 0` any nonzero backlog pages, which is every night of a legitimate multi-night drain."""
+    rule = _rule(_BACKLOG_STUCK)
+    by_ref = {n["refId"]: n.get("model", {}) for n in rule["data"]}
+
+    assert by_ref["A"].get("expr") == "ops_verify_replay_pending_hours"
+    assert by_ref["B"].get("expr") == "delta(ops_verify_replay_pending_hours[26h])"
+    math = [m for m in by_ref.values() if m.get("type") == "math"]
+    assert len(math) == 1, f"expected one math node combining the two halves, got {len(math)}"
+    assert math[0]["expression"] == "$A > 0 && $B >= 0", f"the two halves are not both required: {math[0]['expression']!r}"
+
+
+def test_the_backlog_stuck_rule_stays_quiet_on_a_host_that_has_never_swept():
+    """`noDataState: OK` -- the dead-man owns "did the sweep run at all", so a missing series here is
+    absence, not a stuck backlog, and Alerting on it would page every fresh host. `execErrState:
+    Alerting` because a query that cannot evaluate leaves the backlog unwatched."""
+    rule = _rule(_BACKLOG_STUCK)
+    assert rule["noDataState"] == "OK", "a host with no sweep history would page"
+    assert rule["execErrState"] == "Alerting", "a broken query would leave the backlog silently unwatched"
+
+
+# --- the runbook link an alert sends an operator to must actually exist ---------------------------
+# Nothing mechanically checks these: `grafana-push.sh` ships the summary verbatim, and a renamed or
+# never-written anchor renders as a plain `#fragment` that scrolls nowhere. This repo has already
+# shipped a runbook section that existed but was unreachable from the page it served, which is worth
+# exactly as much as no runbook at all -- the responder is on a phone at 03:00 with nothing open.
+
+RUNBOOK = REPO / "infra/runbooks/README.md"
+# The anchors are explicit `<a name=...>` tags rather than heading slugs precisely so the
+# `-- ALERT` / `-- KNOWN LIMITATION` marker cannot become part of them; match that literal form.
+_RUNBOOK_LINK = re.compile(r"infra/runbooks/README\.md#([A-Za-z0-9._-]+)")
+
+
+def test_every_runbook_link_in_an_alert_summary_resolves():
+    text = RUNBOOK.read_text()
+    cited, broken = [], []
+    for rule in _rules():
+        for anchor in _RUNBOOK_LINK.findall(" ".join((rule.get("annotations") or {}).values())):
+            cited.append(anchor)
+            if f'<a name="{anchor}"></a>' not in text:
+                broken.append((rule["uid"], anchor))
+
+    assert cited, "no rule cites a runbook anchor -- the regex is broken, not the summaries"
+    assert not broken, f"alert summary points at a runbook anchor that does not exist: {broken}"
+
+
+def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
+    """`test_internal_terms_not_operator_visible` joins `annotations.values()` and scans nothing
+    else, so operator text parked anywhere but `annotations` ships unscanned. Pin that this rule's
+    Slack message is inside what that guard reads, and that it is self-contained enough to act on:
+    it names the runbook, so the responder is never left with a fragment and no next step."""
+    rule = _rule(_BACKLOG_STUCK)
+    summary = (rule.get("annotations") or {}).get("summary", "")
+
+    assert summary.strip(), "no annotations.summary -- the vocabulary guard would scan an empty string"
+    assert _RUNBOOK_LINK.search(summary), "the summary names no runbook, so the page carries no next step"
