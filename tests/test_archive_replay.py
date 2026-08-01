@@ -21,7 +21,9 @@ import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.archive.replay import regroup_messages, replay_segment, verify_replay
+from cli.archive import replay as replay_module
+from cli.archive.checkpoint import CheckpointWriteError
+from cli.archive.replay import Census, EvictionRefusedError, ReplayResult, regroup_messages, replay_segment, verify_replay
 from cli.capture.segment_writer import BOOK_SCHEMA
 
 H = datetime(2026, 7, 14, 2, 0, tzinfo=UTC)
@@ -320,3 +322,187 @@ def test_cli_verify_replay_failed_hour_logs_at_warning_not_error(tmp_path: Path,
     assert len(findings) == 1, [r.message for r in caplog.records]
     assert findings[0].levelno == logging.WARNING
     assert not any(r.levelno == logging.ERROR for r in caplog.records)
+
+
+# --- the CLI command: incremental mode (spec 00078) ---------------------------------------------
+
+
+def _invoke(*args: str):
+    return CliRunner().invoke(app, ["archive", "verify-replay", *args])
+
+
+def _summary_withheld(output: str) -> bool:
+    """Neither summary surface present.
+
+    The runner decides "did the sweep complete" by whether it can `sed` a `failed=` out of the
+    output, and BOTH summary lines are in that output (the logger's stdout handler writes into the
+    same stream `typer.echo` does). Printing either on a run that did not genuinely complete makes a
+    broken sweep read as `run_ok=1`, and nothing pages.
+    """
+    return "verify-replay complete" not in output and not any(line.startswith("replayed ") for line in output.splitlines())
+
+
+def test_state_dir_with_pair_is_refused(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+    state = tmp_path / "state"
+
+    result = _invoke(str(primary), "--state-dir", str(state), "--pair", "BTC/EUR")
+
+    assert result.exit_code != 0, result.output
+    assert "--state-dir" in result.output and "--pair" in result.output
+    assert not state.exists()  # refused before anything is enumerated or written
+
+
+def test_state_dir_with_since_is_refused(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+    state = tmp_path / "state"
+
+    result = _invoke(str(primary), "--state-dir", str(state), "--since", "2026-07-14")
+
+    assert result.exit_code != 0, result.output
+    assert "--state-dir" in result.output and "--since" in result.output
+    assert not state.exists()
+
+
+def test_reverify_all_requires_state_dir(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+
+    result = _invoke(str(primary), "--reverify-all")
+
+    assert result.exit_code != 0, result.output
+    assert "--reverify-all" in result.output and "--state-dir" in result.output
+
+
+def test_census_line_and_frozen_summary_both_emitted(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+    state = tmp_path / "state"
+
+    result = _invoke(str(primary), "--state-dir", str(state))
+
+    assert result.exit_code == 0, result.output
+    prefix = "verify-replay census replayed=1 reused=0 audited=0 pending=0 evicted=0 duration_s="
+    lines = result.output.splitlines()
+    echoed = [line for line in lines if line.startswith(prefix)]
+    logged = [line for line in lines if prefix in line and not line.startswith(prefix)]
+    assert len(echoed) == 1, lines
+    assert len(logged) == 1, lines  # the runner parses the LOG line; both surfaces must carry it
+    assert echoed[0].removeprefix(prefix).isdigit()  # duration_s is an integer, never a float repr
+    # The `00077` summary pair, byte-frozen: `failed=`/`hours=` are what the runner seds out.
+    assert "verify-replay complete hours=1 ok=1 failed=0" in result.output
+    assert "replayed 1 hour(s): 1 ok, 0 failed" in result.output
+    assert "anchored=" not in result.output  # the per-hour `ok` lines are gone in incremental mode
+
+
+def test_audit_mismatch_withholds_summary_and_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+    passing = ReplayResult("BTC/EUR", H, 8, 4, True, True, True, True, None)
+    # Sample order, which varies across seeds -- the operator must read the same run twice the same way.
+    census = Census(
+        replayed=0,
+        reused=2,
+        audited=2,
+        audit_mismatches=("ETH/EUR 2026-07-14 03:00", "BTC/EUR 2026-07-14 02:00"),
+        pending=0,
+        evicted=0,
+        duration_s=1.0,
+    )
+    monkeypatch.setattr(replay_module, "verify_replay_incremental", lambda *a, **k: ([passing], census))
+
+    result = _invoke(str(primary), "--state-dir", str(tmp_path / "state"))
+
+    assert result.exit_code == 2, result.output
+    assert _summary_withheld(result.output)
+    assert "verify-replay census replayed=0 reused=2 audited=2 pending=0 evicted=0 duration_s=1" in result.output
+    assert "ETH/EUR 2026-07-14 03:00" in result.output and "BTC/EUR 2026-07-14 02:00" in result.output
+    assert result.output.index("BTC/EUR 2026-07-14 02:00") < result.output.index("ETH/EUR 2026-07-14 03:00")
+
+
+def test_eviction_refusal_withholds_summary_and_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+
+    def _refuse(*args, **kwargs):
+        raise EvictionRefusedError("refusing to evict 9 of 10 checkpointed hours")
+
+    monkeypatch.setattr(replay_module, "verify_replay_incremental", _refuse)
+
+    result = _invoke(str(primary), "--state-dir", str(tmp_path / "state"))
+
+    assert result.exit_code == 2, result.output
+    assert _summary_withheld(result.output)
+    assert "verify-replay census" not in result.output
+    assert "refusing to evict 9 of 10 checkpointed hours" in result.output
+
+
+def test_checkpoint_write_error_withholds_summary_and_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+
+    def _unwritable(*args, **kwargs):
+        raise CheckpointWriteError("failed to write checkpoint to /state: Read-only file system")
+
+    monkeypatch.setattr(replay_module, "verify_replay_incremental", _unwritable)
+
+    result = _invoke(str(primary), "--state-dir", str(tmp_path / "state"))
+
+    assert result.exit_code == 2, result.output
+    assert _summary_withheld(result.output)
+    assert "verify-replay census" not in result.output
+    assert "failed to write checkpoint to /state" in result.output
+
+
+def test_empty_tree_with_state_dir_emits_no_census_and_no_summary(tmp_path: Path) -> None:
+    """spec 00078 D7/F3: an unmounted NAS resolves to an empty directory. A census of `hours=0` there
+    would parse, so the runner would set `run_ok=1` and nobody would be paged."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    state = tmp_path / "state"
+
+    result = _invoke(str(primary), "--state-dir", str(state))
+
+    assert result.exit_code == 0, result.output
+    assert "no canonical book hours found" in result.output
+    assert "verify-replay census" not in result.output
+    assert _summary_withheld(result.output)
+    assert not (state / "checkpoint.parquet").exists()
+
+
+def test_currently_failing_cached_hour_is_still_printed(tmp_path: Path) -> None:
+    """A failing hour must keep appearing every night, archive-wide: the runbook sends the operator to
+    the journal for the failing hours' identities, so an old one must not go quiet just because it is
+    no longer news."""
+    primary = tmp_path / "primary"
+    state = tmp_path / "state"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+    broken = _book(primary, "ETH/EUR", H, _explode("ETH/EUR", H, _coherent_messages()))
+    broken.write_bytes(b"not a parquet file")  # unreadable -> a cached FAILURE, never trusted from cache
+
+    first = _invoke(str(primary), "--state-dir", str(state))
+    assert first.exit_code == 1, first.output
+
+    second = _invoke(str(primary), "--state-dir", str(state))
+
+    assert second.exit_code == 1, second.output
+    assert "ETH/EUR  2026-07-14 02:00  FAILED" in second.output
+    assert "BTC/EUR" not in second.output  # a passing hour prints no line
+    assert "verify-replay census replayed=1 reused=1 audited=1 pending=0 evicted=0 duration_s=" in second.output
+    assert "verify-replay complete hours=2 ok=1 failed=1" in second.output
+
+
+def test_without_state_dir_output_is_unchanged(tmp_path: Path) -> None:
+    """The no-`--state-dir` path is the ad-hoc operator tool and is byte-identical to today."""
+    primary = tmp_path / "primary"
+    _book(primary, "BTC/EUR", H, _explode("BTC/EUR", H, _coherent_messages()))
+
+    result = _invoke(str(primary))
+
+    assert result.exit_code == 0, result.output
+    assert "BTC/EUR  2026-07-14 02:00  ok  anchored=True ordered=True checksum=True replay=True rows=8 msgs=4" in result.output
+    assert "replayed 1 hour(s): 1 ok, 0 failed" in result.output
+    assert "verify-replay complete hours=1 ok=1 failed=0" in result.output
+    assert "census" not in result.output
