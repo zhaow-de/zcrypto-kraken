@@ -14,7 +14,7 @@ vol target 0.10/sqrt(365) lookback 30 on the raw basket, gate applied after -> i
 weights); A1 sleeve = A1-lf weekly v0.12 7-offset-mean positions; both expanded to the 4h calendar
 via expand_daily_positions with close-time-shifted boundaries (daily_ts+1d, h4_ts+4h); A2 sleeve =
 equal-weight per-asset mean of the three adopted arms; fixed 1/3 combination -> per-asset caps
-20%/10% -> the §10 whole-book limits (see _apply_whole_book_limits) -> net-of-cost at 0.006/side ->
+20%/10% -> the §10 whole-book limits (see apply_whole_book_limits) -> net-of-cost at 0.006/side ->
 daily-cadence governor on dense present-day ranks of date(h4_ts[k+1]). All turnover loops start
 from a flat book (prev = 0.0; bar 0 charged full entry).
 
@@ -26,8 +26,8 @@ the net series cover completed bars only, and their figures are identical to a n
 
 P&L convention disclosure: governed_net reproduces the registered trial's returns-overlay cost
 convention — multiplier-transition turnover is deliberately unpriced (record 33's ratified
-governor semantics). A live engine trading final_targets pays fee on |delta(mult x capped)|, which
-exceeds the overlay's mult x fee x |delta capped| on governor engage/disengage days.
+governor semantics). A live engine trading final_targets pays fee on |delta(mult x limited)|, which
+exceeds the overlay's mult x fee x |delta limited| on governor engage/disengage days.
 
 Two callables, one truth: build_crossfreq_system (the verified path above) and
 build_crossfreq_system_fast (the equivalence-gated fast path — same signature, same result type,
@@ -189,14 +189,21 @@ def _block_start(k: int, offset: int) -> int:
     return 0 if k < offset else offset + _A1_CADENCE * ((k - offset) // _A1_CADENCE)
 
 
-def _apply_whole_book_limits(capped: dict[str, list[float]]) -> dict[str, list[float]]:
+def apply_whole_book_limits(capped: dict[str, list[float]]) -> dict[str, list[float]]:
     """The §10 whole-book ceilings on the already per-asset-capped book, at their §10 defaults.
 
     Order: per-asset caps (the caller's) -> gross leverage -> net exposure band -> margin floor, and
     the whole stack sits INSIDE the governor. The governor is a pure returns overlay by design, so
     clamping after it would silently re-scale the multiplier's own effect; per-asset shaping runs
-    first, then the whole-book ceilings apply to the shaped book. The §10 constants are fixed here
-    rather than exposed as config, like every other record-44 parameter.
+    first, then the whole-book ceilings apply to the shaped book. This adds no new config surface:
+    every threshold is the corresponding limit's own default in cli/risk/limits.py, left unpassed.
+
+    Public because every out-of-builder recomputation of the traded book (the engine's stage-identity
+    replay, the soak's live-cost reconstruction) must run this identical stack — a copy of the three
+    calls would drift, and the divergence only surfaces once a limit actually binds.
+
+    Each limit is per-bar independent, so a single-bar book gives the same answer as the whole series
+    indexed at that bar — what lets the engine replay one forming row on its own.
 
     Verdict-neutral on any book that breaches none of them: each limit copies its input and only
     touches the bars it scales, so an unbreached book comes back bit-identical.
@@ -309,7 +316,7 @@ def build_crossfreq_system(
     combined = {a: [third * b_h[a][k] + third * a1_h[a][k] + third * a2_h[a][k] for k in range(n_rows_h)] for a in c.assets}
     capped = apply_position_caps(combined, long_cap=c.long_cap, short_cap=c.short_cap)
     cap_breach_bars = sum(1 for k in range(n_periods) if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in c.assets))
-    limited = _apply_whole_book_limits(capped)
+    limited = apply_whole_book_limits(capped)
 
     noc: list[float] = []
     prev = dict.fromkeys(c.assets, 0.0)
@@ -657,7 +664,7 @@ def build_crossfreq_system_fast(
     combined = {a: [third * b_h[a][k] + third * a1_h[a][k] + third * a2_h[a][k] for k in range(n_rows_h)] for a in c.assets}
     capped = apply_position_caps(combined, long_cap=c.long_cap, short_cap=c.short_cap)
     cap_breach_bars = sum(1 for k in range(n_periods) if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in c.assets))
-    limited = _apply_whole_book_limits(capped)
+    limited = apply_whole_book_limits(capped)
 
     noc: list[float] = []
     prev = dict.fromkeys(c.assets, 0.0)

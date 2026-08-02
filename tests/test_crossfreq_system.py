@@ -254,11 +254,11 @@ def test_whole_book_limits_composition_bites_and_clears_every_ceiling():
     # The §10 stack itself (order + defaults), on a hand-built book the builder's long-only shadow
     # book never reaches: bar 0 breaches gross leverage (2.1 > 1.5) and then the margin floor,
     # bar 1 breaches the net band (1.4 > 1.0). Guards against the wiring being inert code.
-    from cli.portfolio.crossfreq_system import _apply_whole_book_limits
+    from cli.portfolio.crossfreq_system import apply_whole_book_limits
     from cli.risk import apply_gross_leverage_cap, apply_margin_floor, apply_net_exposure_band, margin_level
 
     book = {"BTC": [1.2, 1.4], "ETH": [-0.9, 0.0]}
-    out = _apply_whole_book_limits(book)
+    out = apply_whole_book_limits(book)
     assert out == apply_margin_floor(apply_net_exposure_band(apply_gross_leverage_cap(book)))
     assert out != book  # it bites
     for k in (0, 1):
@@ -268,7 +268,7 @@ def test_whole_book_limits_composition_bites_and_clears_every_ceiling():
         assert margin_level(bar) >= 2.5 - 1e-12  # margin floor
     # an unbreached book comes back bit-identical (the verdict-neutrality the journal replay needs)
     quiet = {"BTC": [0.2, 0.05], "ETH": [-0.1, 0.02]}
-    assert _apply_whole_book_limits(quiet) == quiet
+    assert apply_whole_book_limits(quiet) == quiet
 
 
 @pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
@@ -285,7 +285,7 @@ def test_whole_book_limits_are_wired_between_caps_and_the_governor(grids220, bui
         seen.append({a: list(s) for a, s in capped.items()})
         return {a: [0.5 * p for p in s] for a, s in capped.items()}
 
-    monkeypatch.setattr(mod, "_apply_whole_book_limits", halve)
+    monkeypatch.setattr(mod, "apply_whole_book_limits", halve)
     res = builder(*grids220, config=CFG2)
     assert len(seen) == 1
 

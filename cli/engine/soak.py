@@ -55,6 +55,7 @@ from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
+from cli.portfolio.crossfreq_system import apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
 
 
@@ -289,23 +290,27 @@ def realized_series(
 
 def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[list[float], bool, list[float]]:
     """Recompute a crossfreq-system result's net P&L under the LIVE cost convention: cost charged
-    on `final_targets = mult x capped` turnover instead of the builder's `governed_net` convention
-    (cost on the capped book's own turnover). The gross legs are identical either way, so only the
+    on `final_targets = mult x limited` turnover instead of the builder's `governed_net` convention
+    (cost on the limited book's own turnover). The gross legs are identical either way, so only the
     turnover cost differs -- that difference is exactly the governor's turnover bias:
 
-        net_live[k] = governed_net[k] + mult[k]*fee_builder*turn_capped[k] - fee*turn_final[k]
+        net_live[k] = governed_net[k] + mult[k]*fee_builder*turn_limited[k] - fee*turn_final[k]
 
     `capped` is reconstructed from `result.sleeve_positions` (the 1/3-combined B/A1/A2 sleeves,
     position-capped) rather than read from `final_targets`/`multipliers` directly, since dividing
-    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar. `combined` is
-    built with the builder's own `third = 1 / 3` three-multiply form (`crossfreq_system.py:633-634`),
-    not `/3.0`, so the cap-breach predicate below (threshold 1e-15) never disagrees with the
-    builder's own `cap_breach_bars` on a bit-level rounding difference. Returns (net_live over the
-    n_periods completed bars, reconcile_ok, cap_breach), where reconcile_ok cross-checks that
-    mult[k]*capped[a][k] == final_targets[a][k] for every asset and row (including the forming
-    interval) -- proof the reconstruction faithfully matches the builder's internal capped book --
-    and cap_breach[k] is 1.0 iff any asset's pre-cap `combined` book was clipped at bar k (over the
-    n_periods completed bars), using the same `> 1e-15` predicate as `crossfreq_system.py:636`.
+    final_targets by multipliers is undefined on a governor-disengaged (mult==0) bar; `limited` is
+    that book through the builder's own §10 whole-book stack (`apply_whole_book_limits`), which is
+    what the builder actually costs and multiplies -- reconstructing only as far as the caps would
+    diverge the moment a whole-book limit binds. `combined` is built with the builder's own
+    `third = 1 / 3` three-multiply form, not `/3.0`, so the cap-breach predicate below (threshold
+    1e-15) never disagrees with the builder's own `cap_breach_bars` on a bit-level rounding
+    difference. Returns (net_live over the n_periods completed bars, reconcile_ok, cap_breach),
+    where reconcile_ok cross-checks that mult[k]*limited[a][k] == final_targets[a][k] for every
+    asset and row (including the forming interval) -- proof the reconstruction faithfully matches
+    the builder's internal traded book -- and cap_breach[k] is 1.0 iff any asset's pre-cap
+    `combined` book was clipped at bar k (over the n_periods completed bars). That predicate stops
+    at the PER-ASSET caps on purpose: it mirrors `cap_breach_bars`, which the builder likewise
+    computes before the whole-book limits run.
     """
     n = result.n_periods
     assets = tuple(result.final_targets)
@@ -316,16 +321,17 @@ def _net_live_from_result(result, *, fee_builder: float, fee: float) -> tuple[li
         for a in assets
     }
     capped = apply_position_caps(combined)
+    limited = apply_whole_book_limits(capped)
     mult = result.multipliers
     final_targets = result.final_targets
 
-    reconcile_ok = all(abs(mult[k] * capped[a][k] - final_targets[a][k]) <= 1e-9 for a in assets for k in range(n + 1))
+    reconcile_ok = all(abs(mult[k] * limited[a][k] - final_targets[a][k]) <= 1e-9 for a in assets for k in range(n + 1))
 
     net_live: list[float] = []
     for k in range(n):
-        turn_capped = sum(abs(capped[a][k] - (capped[a][k - 1] if k > 0 else 0.0)) for a in assets)
+        turn_limited = sum(abs(limited[a][k] - (limited[a][k - 1] if k > 0 else 0.0)) for a in assets)
         turn_final = sum(abs(final_targets[a][k] - (final_targets[a][k - 1] if k > 0 else 0.0)) for a in assets)
-        net_live.append(result.governed_net[k] + mult[k] * fee_builder * turn_capped - fee * turn_final)
+        net_live.append(result.governed_net[k] + mult[k] * fee_builder * turn_limited - fee * turn_final)
 
     cap_breach = [1.0 if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) else 0.0 for k in range(n)]
 
@@ -886,11 +892,15 @@ def realized_internals(
     Cap-breach mirrors `crossfreq_system.py`'s own `cap_breach_bars` formula exactly, over all
     `len(h4_ts)` rows: `combined[a][k]` is the 1/3-mean of the B/A1/A2 sleeves (pre-cap, from
     `result.sleeve_positions`), `capped = apply_position_caps(combined)`, and `breach[k]` is True
-    iff any asset's `|capped - combined| > 1e-15` at that row. This is computed from the
-    pre-multiplier sleeves rather than from `final_targets` because `final_targets = mult *
-    capped` is always in-cap by construction (capping happens before the governor multiply) and so
-    can never itself show a breach. `cap_consistent` cross-checks the completed-bar breach count
-    (`breach[:result.n_periods]`) against the rebuild's own `cap_breach_bars`.
+    iff any asset's `|capped - combined| > 1e-15` at that row. It deliberately stops at the
+    per-asset caps and does NOT run `apply_whole_book_limits`: `cap_breach_bars` is the builder's
+    own pre-limits count, so mirroring it means reproducing the same prefix of the chain. This is
+    computed from the pre-multiplier sleeves rather than from `final_targets` because
+    `final_targets = mult * limited` -- and `limited` is itself in-cap by construction (capping
+    happens before the whole-book limits and the governor multiply, and every limit only scales
+    toward zero) -- so `final_targets` can never itself show a breach. `cap_consistent`
+    cross-checks the completed-bar breach count (`breach[:result.n_periods]`) against the
+    rebuild's own `cap_breach_bars`.
 
     Record validation (`validate_record`), assembly, and build (the snapshot read/hash-verify and
     the builder call) DEGRADE the run on any `EngineError` (missing/corrupt snapshots, a
