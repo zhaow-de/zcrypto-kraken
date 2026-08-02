@@ -336,6 +336,12 @@ def test_small_sample_is_unmeasured_and_fails_the_bar(tmp_path, capsys):
     rc, out = _run(tmp_path, capsys)
     assert "UNMEASURED" in out
     assert "*** FAIL *** (unmeasured streams: 1)" in out
+    # D4's attribution, pinned in BOTH directions: the under-bound reason is NAMED, and it is not
+    # misattributed as a steepened tail. A mutant that drops the `n >= MIN_POOL` guard on the
+    # steepened list books every under-bound refusal as a tail refusal, and nothing else in this
+    # file notices -- the steepened-tail tests only assert the under-bound line is ABSENT.
+    assert f"under the {continuity.MIN_POOL}-interval bound" in out
+    assert "steepens more than" not in out
     # Every stream unmeasured is still "we read something and judged it" -- rc 0 with a FAIL
     # verdict. Only an empty tree or an empty window returns 1 with NO verdict line (D6).
     assert rc == 0
@@ -603,3 +609,87 @@ def test_single_carve_control_stays_measured_and_books_the_outage(tmp_path, caps
     _, out = _run(tmp_path, capsys)
     assert float(_column(out, "AAA/EUR", "thresh_s")) == pytest.approx(6.0)
     assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(200.4, abs=0.05)
+
+
+# --- the `tail` depth column, and naming the refusal reason on a MIXED tree -----------------------
+
+
+def _mixed_tree(root: Path) -> None:
+    """One contaminated stream beside one measured stream -- the shape production actually produces.
+
+    AAA/EUR is the CARVED fixture from `test_report_renders_contaminated_stream_unmeasured`
+    (n = 11,332, refused by the tail-steepness gate); DENSE/EUR is the same geometry with nothing
+    carved out, so it is measured and `totals` is non-empty.
+    """
+    write_stream(
+        root,
+        "AAA/EUR",
+        {H0: _full_hour_carved(H0, 0.6, [(1000.0, 200.0), (2400.0, 200.0)]), H1: _full_hour(H1, 0.6)},
+    )
+    write_stream(root, "DENSE/EUR", {H0: _full_hour(H0, 0.6), H1: _full_hour(H1, 0.6)})
+
+
+def test_tail_depth_is_printed_and_correct(tmp_path, capsys):
+    """The `tail` column, over all four of the slots it has to fill at once.
+
+    AAA/EUR: `quantile(0.9999)` lands on the second-largest interval (200.4 s) and exactly TWO
+    intervals reach it -- the visible fragility T0112's second sub-item asked for, printed on the
+    UNMEASURED row, which is exactly where a reader needs it (a refused stream shows no threshold to
+    judge, so the depth is all the transparency there is).
+
+    DENSE/EUR: a synthetic stream whose every interval is the same 0.6 s, so the whole pool ties at
+    p99.99 and the depth is n. That is an artifact of a perfectly uniform fixture, not what real
+    data looks like -- twelve production streams measure depth 25-390 at n = 240k-3.9M -- but it
+    pins that the column prints on MEASURED rows too.
+
+    The TOTAL row's slot stays blank (depth is per pool; summing or averaging it would invent a
+    number, the same reason `thresh_s` is blank there), and both rules widen with the header.
+    """
+    _mixed_tree(tmp_path)
+    _, out = _run(tmp_path, capsys)
+    assert _column(out, "AAA/EUR", "thresh_s") == "UNMEASURED"  # ... and the depth still prints:
+    assert _column(out, "AAA/EUR", "tail") == "2"
+    assert _column(out, "DENSE/EUR", "tail") == "11999"
+    assert _column(out, "TOTAL", "tail") == ""
+    lines = out.splitlines()
+    header = next(line for line in lines if line.startswith("pair"))
+    rules = [line for line in lines if line and set(line) == {"-"}]
+    assert len(rules) == 2 and all(len(r) == len(header) for r in rules)
+
+
+def test_depth_is_provably_not_a_detector():
+    """THE test that documents why depth is not a gate. Anyone promoting depth into a gate must
+    delete this test to do it.
+
+    A clean and a contaminated pool of the SAME size measure the IDENTICAL depth (2): the count of
+    intervals at or above p99.99 is a deterministic function of n (~ the tolerated k, plus one), not
+    a function of contamination. The steepness ratios, measured on the very same two pools, separate
+    them by two orders of magnitude (1.98 vs 111.16) -- which is why the gate is built on those and
+    the depth is transparency only.
+    """
+    rng = random.Random(11)  # pinned: verified to satisfy every assertion below
+    clean = pl.Series(_bursty(11_389, rng))
+    dirty = pl.Series(_bursty(11_387, rng) + [200.0, 200.0])
+    assert len(clean) == len(dirty) == 11_389
+    assert continuity.tail_depth(clean) == continuity.tail_depth(dirty) == 2
+    # ... while the statistic the gate DOES use tells them apart on the same data.
+    assert max(continuity.tail_steepness(clean)) < continuity.TAIL_RATIO_CUT
+    assert max(continuity.tail_steepness(dirty)) >= continuity.TAIL_RATIO_CUT
+
+
+def test_the_refusal_reason_is_named_beside_measured_streams(tmp_path, capsys):
+    """D4's distinguishability, on a MIXED tree -- which is where it has to work.
+
+    Reproduced against Task 1's code, where the note block sat inside `report()`'s `if not totals:`
+    branch: one measured stream beside one contaminated stream printed `n=11332 UNMEASURED` and
+    `*** FAIL *** (unmeasured streams: 1)` and NO reason line anywhere. The reason appeared only on
+    an ALL-unmeasured tree, and in production a contaminated stream almost always sits beside
+    measured ones. The steepened-tail reason is also the less guessable of the two: a huge `n` beside
+    UNMEASURED reads as "not the size bound" only to a reader who knows MIN_POOL.
+    """
+    _mixed_tree(tmp_path)
+    _, out = _run(tmp_path, capsys)
+    assert "TOTAL" in out, "the measured stream must still produce a TOTAL row"
+    assert "*** FAIL *** (unmeasured streams: 1)" in out
+    assert "steepens more than 10x across a decade of quantiles" in out
+    assert f"under the {continuity.MIN_POOL}-interval bound" not in out
