@@ -1,9 +1,17 @@
 import math
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from cli.engine.feeders import CycleStages, cancellation_ratio, replay_stages, stage_grosses
+from cli.engine.feeders import (
+    CycleStages,
+    _render_decompose,
+    cancellation_ratio,
+    decompose_payload,
+    decompose_report,
+    replay_stages,
+    stage_grosses,
+)
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 
 
@@ -118,3 +126,112 @@ def test_replay_stages_reconciles_read_data_against_its_journaled_metadata():
 
     with pytest.raises(Exception, match="disagrees with its own journaled metadata"):
         replay_stages(record, peeking_reader)
+
+
+# --- decompose: the attribution table -----------------------------------------------------------
+
+
+def test_decompose_payload_reports_every_stage_and_the_ratios():
+    stages = [
+        CycleStages(
+            cycle_ts=datetime(2026, 8, 1, 12, tzinfo=UTC),
+            sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.06}, "A2": {"BTC": 0.0}},
+            combined={"BTC": 0.06},
+            capped={"BTC": 0.06},
+            final={"BTC": 0.03},
+            multiplier=0.5,
+            closes={"BTC": 50000.0},
+            cap_bound=False,
+        )
+    ]
+    payload = decompose_payload(stages)
+    row = payload["cycles"][0]
+    assert row["combined_gross"] == pytest.approx(0.06)
+    assert row["capped_gross"] == pytest.approx(0.06)
+    assert row["final_gross"] == pytest.approx(0.03)
+    assert row["multiplier"] == pytest.approx(0.5)
+    assert row["n_active"] == 1
+    # mean sleeve gross = (0.12 + 0.06 + 0.0)/3 = 0.06; combined = 0.06 -> ratio 1.0
+    assert row["cancellation_ratio"] == pytest.approx(1.0)
+    # EXACTLY 1.0, not approx: the caps did not bind, and numerator and denominator are summed off
+    # the same floats. An approx here would pass a mixed-basis ratio reporting gross GROWING
+    # through the caps -- which cannot happen.
+    assert row["capped_ratio"] == 1.0
+    assert row["governed_ratio"] == pytest.approx(0.5)  # == the governor multiplier
+    assert payload["n_cycles"] == 1
+
+
+def _two_asymmetric_cycles() -> list[CycleStages]:
+    """Cycle 1: sleeves agree, governor off. Cycle 2: sleeves cancel, governor halves.
+
+    Chosen so median-of-ratios and ratio-of-medians disagree on BOTH the sleeve->combined and the
+    capped->final ratios; a single-cycle fixture cannot discriminate, since there they coincide.
+    """
+    return [
+        CycleStages(
+            cycle_ts=datetime(2026, 8, 1, 0, tzinfo=UTC),
+            sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.12}, "A2": {"BTC": 0.12}},
+            combined={"BTC": 0.12},
+            capped={"BTC": 0.12},
+            final={"BTC": 0.12},
+            multiplier=1.0,
+            closes={"BTC": 100.0},
+            cap_bound=False,
+        ),
+        CycleStages(
+            cycle_ts=datetime(2026, 8, 1, 4, tzinfo=UTC),
+            sleeve_positions={"B": {"BTC": 0.09}, "A1": {"BTC": -0.09}, "A2": {"BTC": 0.0}},
+            combined={"BTC": 0.0},
+            capped={"BTC": 0.0},
+            final={"BTC": 0.0},
+            multiplier=0.5,
+            closes={"BTC": 100.0},
+            cap_bound=False,
+        ),
+    ]
+
+
+def test_stage_ratios_use_the_median_of_per_cycle_ratios():
+    # Two asymmetric cycles: median-of-ratios and ratio-of-medians differ, so this pins the basis.
+    # A single-cycle fixture cannot -- there the two definitions coincide.
+    payload = decompose_payload(_two_asymmetric_cycles())
+    # per-cycle cancellation ratios are 1.0 and 0.0 -> median 0.5.
+    # ratio-of-medians would be median(combined)/median(mean_sleeve) = 0.06/0.09 = 0.667.
+    assert payload["median"]["cancellation_ratio"] == pytest.approx(0.5)
+    # per-cycle multipliers are 1.0 and 0.5 -> median 0.75.
+    # ratio-of-medians would be median(final)/median(capped) = 0.06/0.06 = 1.0.
+    assert payload["median"]["governed_ratio"] == pytest.approx(0.75)
+    # cycle 1's caps do not bind, so its capped ratio is EXACTLY 1.0 -- the shared-basis pin.
+    assert payload["cycles"][0]["capped_ratio"] == 1.0
+    # cycle 2's combined gross is 0, so its capped ratio is NaN and contributes no evidence about
+    # the caps -- filtered out rather than counted as the 1.0 a flat cycle would fake.
+    assert math.isnan(payload["cycles"][1]["capped_ratio"])
+    assert payload["median"]["capped_ratio"] == 1.0
+
+
+def test_decompose_render_names_each_consecutive_stage_ratio():
+    text = _render_decompose(decompose_payload(_two_asymmetric_cycles()))
+    assert "MEDIAN" in text
+    # Each value pinned to ITS OWN label: asserting the labels alone would pass a summary whose
+    # three ratios were rendered against the wrong lines.
+    for label, value in (("sleeve -> combined", "0.500"), ("combined -> capped", "1.000"), ("capped -> final", "0.750")):
+        line = next(ln for ln in text.splitlines() if label in ln)
+        assert value in line
+    assert "cap-bound cycles: 0 of 2" in text
+
+
+def test_decompose_report_counts_a_record_that_fails_to_replay():
+    # A silently dropped cycle would bias every aggregate: the failure must be named and counted.
+    record = _peeked_h4_record()
+
+    def peeking_reader(entry: SnapshotEntry):
+        if entry.grid == "240":
+            return list(PEEKED_H4_TS), list(H4_CLOSES)
+        return list(DAILY_TS), list(DAILY_CLOSES)
+
+    text, payload = decompose_report([record], peeking_reader)
+    assert payload["n_cycles"] == 0
+    assert payload["n_failed"] == 1
+    assert payload["failures"][0]["cycle_ts"] == CYCLE_TS.isoformat()
+    assert "disagrees with its own journaled metadata" in payload["failures"][0]["error"]
+    assert "failed to replay: 1" in text

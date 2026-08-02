@@ -176,3 +176,147 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
         closes=closes,
         cap_bound=any(abs(capped[a] - combined[a]) > 1e-15 for a in c.assets),
     )
+
+
+def _median(values: list[float]) -> float:
+    """Median of the non-NaN values, NaN when none remain.
+
+    Dropping NaN is deliberate: a flat cycle's ratio is 0/0, and counting it as 1.0 would claim
+    agreement the cycle never demonstrated.
+    """
+    clean = sorted(v for v in values if not math.isnan(v))
+    if not clean:
+        return math.nan
+    mid = len(clean) // 2
+    return clean[mid] if len(clean) % 2 else (clean[mid - 1] + clean[mid]) / 2
+
+
+_MEDIAN_KEYS = (
+    "mean_sleeve_gross",
+    "combined_gross",
+    "cancellation_ratio",
+    "capped_gross",
+    "capped_ratio",
+    "multiplier",
+    "governed_ratio",
+    "final_gross",
+)
+
+
+def decompose_payload(stages: list[CycleStages]) -> dict:
+    """Per-cycle attribution rows plus their aggregates. Pure -- no I/O, no replay.
+
+    Each of the three consecutive-stage ratios is carried PER CYCLE (`cancellation_ratio`,
+    `capped_ratio`, `governed_ratio`) and aggregated as the median of those per-cycle values --
+    never as a ratio of the stage medians. The two differ materially once the governor multiplier
+    varies across the window, and only the per-cycle basis answers "what fraction survives a
+    typical cycle"; a ratio of medians divides two numbers that need not come from the same cycle.
+    """
+    rows = []
+    for s in stages:
+        ratio, combined_gross, mean_sleeve_gross = cancellation_ratio(s.sleeve_positions)
+        capped_gross = sum(abs(v) for v in s.capped.values())
+        # This ratio's denominator is the BUILDER's combined book, not cancellation_ratio's
+        # sleeve-side recomputation: numerator and denominator must be summed off the same floats.
+        # Mixed, an unbound cycle reports 1.0000000000000002 -- gross growing THROUGH the caps,
+        # which cannot happen -- and a book flat in reals but not in floats divides one ulp-scale
+        # gross by another, giving O(1) garbage that the NaN filter cannot catch.
+        combined_gross_builder = sum(abs(v) for v in s.combined.values())
+        rows.append(
+            {
+                "cycle_ts": s.cycle_ts.isoformat(),
+                "sleeve_gross": stage_grosses(s.sleeve_positions),
+                "mean_sleeve_gross": mean_sleeve_gross,
+                "combined_gross": combined_gross,
+                "cancellation_ratio": ratio,
+                "capped_gross": capped_gross,
+                "capped_ratio": capped_gross / combined_gross_builder if combined_gross_builder else math.nan,
+                "multiplier": s.multiplier,
+                "governed_ratio": s.multiplier,  # final = multiplier * capped, exactly (see replay_stages)
+                "final_gross": sum(abs(v) for v in s.final.values()),
+                "n_active": sum(1 for v in s.final.values() if v != 0.0),
+                "cap_bound": s.cap_bound,
+            }
+        )
+
+    return {
+        "n_cycles": len(rows),
+        "cycles": rows,
+        "median": {key: _median([r[key] for r in rows]) for key in _MEDIAN_KEYS},
+    }
+
+
+def _pct(value: float) -> str:
+    return f"{'n/a':>8}" if math.isnan(value) else f"{100 * value:8.3f}"
+
+
+def _ratio(value: float) -> str:
+    return f"{'n/a':>5}" if math.isnan(value) else f"{value:5.3f}"
+
+
+def _render_decompose(payload: dict) -> str:
+    """Fixed-width attribution table: one line per cycle, a median line, then the summary."""
+    header = (
+        f"{'cycle':<16} {'B':>8} {'A1':>8} {'A2':>8} {'combined':>8} {'ratio':>5} "
+        f"{'capped':>8} {'mult':>5} {'final':>8} {'act':>3} {'cap?':>4}"
+    )
+    lines = [
+        "Gross attribution per cycle (gross columns are % of NAV; ratio = combined / mean sleeve gross)",
+        "",
+        header,
+        "-" * len(header),
+    ]
+    for r in payload["cycles"]:
+        g = r["sleeve_gross"]
+        lines.append(
+            f"{r['cycle_ts'][:16]:<16} {_pct(g['B'])} {_pct(g['A1'])} {_pct(g['A2'])} "
+            f"{_pct(r['combined_gross'])} {_ratio(r['cancellation_ratio'])} "
+            f"{_pct(r['capped_gross'])} {_ratio(r['multiplier'])} {_pct(r['final_gross'])} "
+            f"{r['n_active']:>3} {'yes' if r['cap_bound'] else 'no':>4}"
+        )
+    m = payload["median"]
+    lines.append("-" * len(header))
+    lines.append(
+        f"{'MEDIAN':<16} {'':>8} {'':>8} {'':>8} "
+        f"{_pct(m['combined_gross'])} {_ratio(m['cancellation_ratio'])} "
+        f"{_pct(m['capped_gross'])} {_ratio(m['multiplier'])} {_pct(m['final_gross'])} "
+        f"{'':>3} {'':>4}"
+    )
+
+    n_cap_bound = sum(1 for r in payload["cycles"] if r["cap_bound"])
+    lines += [
+        "(every MEDIAN cell is that column's own median, so the ratio cells are medians of the",
+        " per-cycle ratios -- do not divide one median gross by another, they need not share a cycle)",
+        "",
+        f"Where the gross goes, across {payload['n_cycles']} cycles (each ratio is the median of the per-cycle ratios):",
+        f"  median mean sleeve gross  {_pct(m['mean_sleeve_gross'])} % of NAV",
+        f"  sleeve -> combined        {_ratio(m['cancellation_ratio'])}   fraction of the sleeves' average gross left after combining them",
+        f"  combined -> capped        {_ratio(m['capped_ratio'])}   fraction left after the position caps",
+        f"  capped -> final           {_ratio(m['governed_ratio'])}   fraction left by the volatility governor (its multiplier)",
+        f"  cap-bound cycles: {n_cap_bound} of {payload['n_cycles']}",
+    ]
+    if payload.get("n_failed"):
+        lines += ["", f"Cycles failed to replay: {payload['n_failed']} (excluded from every number above)"]
+        lines += [f"  {f['cycle_ts']}  {f['error']}" for f in payload["failures"]]
+    return "\n".join(lines)
+
+
+def decompose_report(
+    records: list[CycleRecord], reader: Reader, *, config: CrossfreqSystemConfig | None = None
+) -> tuple[str, dict]:
+    """Replay every record and render the gross attribution across the pipeline's stages.
+
+    A record whose replay fails is named and counted, never silently dropped -- a missing cycle
+    would bias every aggregate below it with nothing on the page to say so.
+    """
+    stages: list[CycleStages] = []
+    failures: list[dict] = []
+    for record in sorted(records, key=lambda r: r.cycle_ts):
+        try:
+            stages.append(replay_stages(record, reader, config=config))
+        except EngineError as exc:
+            failures.append({"cycle_ts": record.cycle_ts.isoformat(), "error": str(exc)})
+    payload = decompose_payload(stages)
+    payload["n_failed"] = len(failures)
+    payload["failures"] = failures
+    return _render_decompose(payload), payload
