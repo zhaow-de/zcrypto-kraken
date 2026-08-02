@@ -9,6 +9,21 @@ from cli.ohlc.errors import OHLCError
 _BASE_URL = "https://api.kraken.com/0/public/OHLC"
 _TIMEOUT_SECONDS = 15
 
+# The ten EUR-quoted assets of data/ohlc-full, transcribed from the snapshot register
+# (docs/research/01.1.kraken-snapshot-register.md) -- display asset -> Kraken pair key.
+PAIR_KEYS: dict[str, str] = {
+    "BTC": "XXBTZEUR",
+    "ETH": "XETHZEUR",
+    "SOL": "SOLEUR",
+    "XRP": "XXRPZEUR",
+    "ADA": "ADAEUR",
+    "LINK": "LINKEUR",
+    "DOGE": "XDGEUR",
+    "LTC": "XLTCZEUR",
+    "DOT": "DOTEUR",
+    "AVAX": "AVAXEUR",
+}
+
 
 def fetch_ohlc(pair_key: str, interval: int, *, opener=urllib.request.urlopen) -> list[list]:
     """GET Kraken's public OHLC endpoint for `pair_key`/`interval` and return the candle rows.

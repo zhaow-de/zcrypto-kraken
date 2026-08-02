@@ -37,32 +37,16 @@ from pathlib import Path
 
 import polars as pl
 
-# The asset -> Kraken REST pair-key mapping's single source of truth. It lives in the engine store
-# only because that was its first consumer, so this import runs against the dependency direction
-# (`cli/engine/store.py` already imports `cli.ohlc.*`). Two consequences, both deliberate:
-#   - Importing the SUBMODULE does not avoid the package: Python executes `cli.engine.__init__`
-#     first, so the concordance/cycle/journal chain loads either way (measured -- an earlier comment
-#     here claimed otherwise and was wrong). It costs nothing in practice because `cli/__main__.py`
-#     already imports `cli.engine.command` unconditionally.
-#   - `cli/ohlc/__init__.py` must therefore NEVER import this module: `cli.engine.store` imports
-#     `cli.ohlc.dataset`, which would re-enter a half-initialised `cli.ohlc` package.
-# Relocating PAIR_KEYS into `cli/ohlc/` is the real fix and is registered as a follow-up; it is not
-# done here because `cli/engine/store.py` feeds the shadow engine currently mid-Stage-6a-gate.
-from cli.engine.store import PAIR_KEYS
 from cli.logging import get_logger
 from cli.ohlc.dataset import dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
-from cli.ohlc.fetch import fetch_ohlc
+from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
+from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 
 logger = get_logger("ohlc.reach")
 
 # Intervals of the canonical basket (`cli/data/rebuild.py::_OHLC_INTERVALS`), as ints.
 REACH_INTERVALS: tuple[int, ...] = (1440, 240, 60)
-
-# Shared stamps required before a seam counts as verified. Matches the engine store's seed floor:
-# below this the join rests on too few agreeing bars to distinguish "the same series" from
-# "coincidentally equal at the boundary".
-MIN_SEAM_OVERLAP = 6
 
 # Seconds between successive public-API calls. A reach round makes one call per symbol x interval --
 # 30 on the current basket -- and Kraken throttles this family: `cli/trades/rest.py` records 1.5 s
@@ -98,15 +82,6 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _drop_in_progress(frame: pl.DataFrame, interval: int, now: datetime) -> pl.DataFrame:
-    """Drop any row whose interval END lies after `now`.
-
-    Kraken's OHLC response always includes the currently-forming candle as its final row; persisting
-    it would write a bar that is still changing. A row ending exactly at `now` is complete, so kept.
-    """
-    return frame.filter((pl.col("ts") + pl.duration(minutes=interval)) <= now)
-
-
 def _canonical_symbols(canonical_root: Path, interval: int) -> list[str]:
     """Symbols carrying a canonical file for `interval`, in sorted order.
 
@@ -130,6 +105,8 @@ def _merge_or_detach(
     disagreeing close. Both are refusals to publish an unverified join, never a reason to fall back
     to `detached`: a detached write is for an HONEST gap, and quietly detaching a *failed* seam would
     turn a data-integrity error into a silently truncated series.
+
+    Sibling: cli/engine/store.py::_reconcile guards the same seam definition under its own policy -- a safety fix here likely applies there too.
     """
     canonical_tail = canonical["ts"].max()
     rest_head = rest["ts"].min()
@@ -138,8 +115,7 @@ def _merge_or_detach(
         gap_bars = int((rest_head - canonical_tail).total_seconds() // (interval * 60))
         return "detached", rest, 0, gap_bars
 
-    shared = canonical.join(rest, on="ts", how="inner", suffix="_rest")
-    overlap_bars = shared.height
+    overlap_bars, mismatches = seam_overlap(canonical, rest)
     if overlap_bars < MIN_SEAM_OVERLAP:
         raise OHLCError(
             f"reach_round: seam too thin for {symbol}@{interval} -- only {overlap_bars} shared stamp(s) "
@@ -147,7 +123,6 @@ def _merge_or_detach(
             "is receding past the canonical tail, so this series needs an intervening OHLCVT dump"
         )
 
-    mismatches = shared.filter(pl.col("close") != pl.col("close_rest"))
     if mismatches.height:
         stamp = mismatches["ts"][0]
         raise OHLCError(
@@ -195,7 +170,7 @@ def reach_round(
             if fetched:
                 sleep_fn(MIN_REST_INTERVAL_SECONDS)
             fetched += 1
-            rest = _drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+            rest = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
             if rest.is_empty():
                 logger.warning("reach_round: REST returned no completed bars for %s@%d", symbol, interval)
                 continue

@@ -57,6 +57,8 @@ def test_rebuild_refuses_existing_sibling(tmp_path, monkeypatch):
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=tmp_path, stamp="20260718")
     with pytest.raises(DataSyncError, match="already exists"):
         rebuild.rebuild_sets(["ohlc-full"], ctx)
+    with pytest.raises(DataSyncError, match="remove it to retry"):
+        rebuild.rebuild_sets(["ohlc-full"], ctx)
 
 
 def test_rebuild_never_touches_live_dir(tmp_path, monkeypatch):
@@ -78,6 +80,40 @@ def test_rebuild_cleans_up_empty_sibling_on_builder_failure(tmp_path, monkeypatc
     with pytest.raises(RuntimeError, match="network down"):
         rebuild.rebuild_sets(["snapshots"], ctx)
     assert not (tmp_path / "snapshots-20260718").exists()  # retryable same day
+
+
+def test_rebuild_removes_partial_sibling_on_builder_failure(tmp_path, monkeypatch):
+    # A builder that wrote real output before raising must not strand the sibling: the date-stamped
+    # name would turn every same-day retry into "sibling already exists" (T0098 sub-item 1).
+    def _partial(ctx, out):
+        (out / "BTC" / "EUR").mkdir(parents=True)
+        (out / "BTC" / "EUR" / "1440.parquet").write_bytes(b"partial")
+        raise RuntimeError("fetch 7 of 30 failed")
+
+    monkeypatch.setitem(rebuild.REBUILDABLE, "ohlc-full", _partial)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=tmp_path, stamp="20260802")
+    with pytest.raises(RuntimeError, match="fetch 7 of 30"):
+        rebuild.rebuild_sets(["ohlc-full"], ctx)
+    assert not (tmp_path / "ohlc-full-20260802").exists()
+
+    # And the same-day retry now succeeds.
+    monkeypatch.setitem(rebuild.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
+    assert rebuild.rebuild_sets(["ohlc-full"], ctx) == [tmp_path / "ohlc-full-20260802"]
+
+
+def test_rebuild_cleanup_covers_operator_interrupt(tmp_path, monkeypatch):
+    # Ctrl-C during a paced REST round is the likeliest mid-build abort; the handler catches
+    # BaseException so the sibling is removed before the interrupt propagates. This test is the
+    # pin that keeps the handler from being narrowed back to Exception.
+    def _interrupted(ctx, out):
+        (out / "partial").write_text("x")
+        raise KeyboardInterrupt
+
+    monkeypatch.setitem(rebuild.REBUILDABLE, "ohlc-full", _interrupted)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=tmp_path, stamp="20260802")
+    with pytest.raises(KeyboardInterrupt):
+        rebuild.rebuild_sets(["ohlc-full"], ctx)
+    assert not (tmp_path / "ohlc-full-20260802").exists()
 
 
 def test_rebuild_unknown_set_raises(tmp_path):

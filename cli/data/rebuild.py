@@ -6,6 +6,7 @@ a sibling, never overwrites the live set)."""
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -269,16 +270,27 @@ def rebuild_sets(sets: Sequence[str], ctx: RebuildContext) -> list[Path]:
             raise DataSyncError(f"data rebuild: unknown set {name!r}")
         out_root = ctx.data_root / f"{name}-{ctx.stamp}"
         if out_root.exists():
-            raise DataSyncError(f"data rebuild: sibling already exists: {out_root}")
+            raise DataSyncError(
+                f"data rebuild: sibling already exists: {out_root} -- either a completed sibling "
+                "from earlier today, or the leavings of a run killed mid-build (a failed builder "
+                "cleans up after itself, but a hard kill cannot); inspect the directory and "
+                "remove it to retry"
+            )
         out_root.mkdir(parents=True)
         try:
             builder(ctx, out_root)
-        except Exception:
-            # A builder that raises mid-run must not leave an empty sibling behind: the per-day stamp
-            # would then make a same-day retry trip the "already exists" guard forever. Clean up the
-            # dir we just minted (only when still empty -- never delete builder output) and re-raise.
-            if not any(out_root.iterdir()):
-                out_root.rmdir()
+        except BaseException:
+            # A builder that raises mid-run must not strand the sibling: the per-day stamp would
+            # make a same-day retry trip the "already exists" guard forever. Everything under
+            # out_root was written by the builder call that just raised (the exists-guard fired
+            # before mkdir if the dir pre-existed), and every current builder fetches/derives
+            # repeatable input, so deleting the whole tree loses only re-fetch time (which
+            # `build_oi_substrate`'s resume= exists to save, though no builder passes it here).
+            # (A future builder consuming unrepeatable input would need its own protection.)
+            # BaseException on purpose: an operator's Ctrl-C must clean up like a builder error. A hard
+            # kill (SIGKILL, power loss) skips any handler and can still strand -- the
+            # exists-guard message names the remedy.
+            shutil.rmtree(out_root)
             raise
         minted.append(out_root)
     return minted
