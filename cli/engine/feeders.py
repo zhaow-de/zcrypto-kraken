@@ -10,9 +10,11 @@ recomputed from public parts and then PROVEN against the builder's own output (s
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable
 
 from cli.engine.errors import EngineError
@@ -320,3 +322,215 @@ def decompose_report(
     payload["n_failed"] = len(failures)
     payload["failures"] = failures
     return _render_decompose(payload), payload
+
+
+# --- the accumulation drift floor ---------------------------------------------------------------
+
+# One ISO week of 4-hourly cycles: 6 per day x 7 days. A week holding fewer is incomplete, and its
+# mean is not comparable to a full week's -- derived from the count, never from a week number.
+_CYCLES_PER_FULL_WEEK = 6 * 7
+
+
+def _p95(values: list[float]) -> float:
+    """95th percentile by nearest rank -- always an OBSERVED value, never an interpolated one.
+
+    NaN is dropped and an empty input gives NaN, matching `_median`.
+    """
+    clean = sorted(v for v in values if not math.isnan(v))
+    if not clean:
+        return math.nan
+    return clean[math.ceil(0.95 * len(clean)) - 1]
+
+
+def load_minimums(path: Path) -> tuple[dict[str, tuple[float, float]], str]:
+    """Per-asset `(ordermin_base, costmin)` for the EUR book, plus the snapshot's fetched_at stamp.
+
+    Sourced from the snapshot's `universe` block, which is already normalised to base/quote --
+    NOT from `raw.assetpairs`, where Kraken lists DOGE as `XDG/EUR` (there is no `DOGE/EUR`
+    wsname at all) and BTC as `XBT/EUR`, so a `<ASSET>/EUR` match silently loses assets.
+    The `quote == "EUR"` filter is load-bearing: `universe` also carries ETH/BTC and SOL/BTC
+    whose costmin is 0.00002 BTC, and keying by base without it would overwrite ETH's and
+    SOL's EUR floors with a BTC-denominated number read as euros.
+    """
+    payload = json.loads(path.read_text())
+    out: dict[str, tuple[float, float]] = {}
+    for entry in payload["universe"]:
+        if entry.get("quote") != "EUR":
+            continue
+        base = entry["base"]
+        if base in out:
+            raise EngineError(f"duplicate EUR pair for base={base!r} in {path} -- ambiguous minimums")
+        out[base] = (float(entry["ordermin"]), float(entry["costmin"]))
+    return out, payload["fetched_at"]
+
+
+def _weekly_drift(stages: list[CycleStages], rows: list[dict]) -> list[dict]:
+    """Mean drift per ISO week, with each week's cycle count and an incompleteness flag.
+
+    Mean and count only -- deliberately no weekly p95 (spec D6): the window is four ISO weeks, and
+    a p95 over four points is the maximum wearing a percentile's name. This number becomes a
+    live-trading gate band, so the weeks are printed and read individually instead.
+    """
+    buckets: dict[tuple[int, int], list[float]] = {}
+    for stage, row in zip(stages, rows, strict=True):
+        iso = stage.cycle_ts.isocalendar()
+        buckets.setdefault((iso.year, iso.week), []).append(row["drift_bps"])
+    return [
+        {
+            "iso_year": year,
+            "iso_week": week,
+            "n_cycles": len(values),
+            "mean_drift_bps": sum(values) / len(values),
+            "partial": len(values) < _CYCLES_PER_FULL_WEEK,
+        }
+        for (year, week), values in sorted(buckets.items())
+    ]
+
+
+def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[float, float]], navs: list[float]) -> dict:
+    """Replay the accumulate-until-placeable policy at each NAV. Pure -- no I/O, no replay.
+
+    Held state is carried in BASE UNITS, never EUR (spec D4). `ordermin` is natively a quantity, so
+    the floor comparison is direct rather than converted, and mark-to-market falls out for free: a
+    held quantity is simply worth `held_qty * close` at any later cycle. A EUR-denominated held
+    state would instead compare a price-stale "held" against a freshly priced "target", and would
+    report zero drift across a pure price move that placed no order.
+
+    The two floors are INDEPENDENT gates, never a max over mixed units: `ordermin_base` is a
+    quantity (20 ADA, 50 DOGE, 0.00005 BTC) and `costmin` is euros (0.45 across the EUR book).
+
+    NAV is held constant across the window on purpose: this measures the PLACEMENT floor, not P&L,
+    and a drifting NAV would fold return into a number that must be pure venue-minimum.
+    """
+    bad_navs = [n for n in navs if not math.isfinite(n) or n <= 0]
+    if bad_navs:
+        raise EngineError(
+            f"NAV must be finite and positive, got {bad_navs} -- zero divides, and a negative one "
+            "silently signs every drift_bps that the reported median and p95 are read from"
+        )
+    # The policy is state-carrying across cycles, so chronological order is load-bearing, not
+    # cosmetic: an out-of-order stage would accumulate against the wrong held quantity.
+    ordered = sorted(stages, key=lambda s: s.cycle_ts)
+    for s in ordered:
+        missing = sorted(set(s.final) - set(minimums))
+        if missing:
+            raise EngineError(
+                f"no venue minimums for asset(s) {missing} at cycle_ts={s.cycle_ts.isoformat()} -- "
+                "a silently absent floor would place every delta and understate the drift"
+            )
+
+    by_nav: dict[float, dict] = {}
+    for nav in navs:
+        held_qty: dict[str, float] = {a: 0.0 for a in minimums}
+        rows: list[dict] = []
+        for s in ordered:
+            target_qty: dict[str, float] = {}
+            drift_eur = 0.0
+            placed = False
+            for a, weight in s.final.items():
+                close = s.closes[a]
+                target = (weight * nav) / close
+                delta = target - held_qty[a]
+                ordermin_base, costmin = minimums[a]
+                if abs(delta) >= ordermin_base and abs(delta) * close >= costmin:
+                    held_qty[a] = target  # full fill at the journaled close
+                    placed = True
+                target_qty[a] = target
+                # Drift is measured AFTER the decision, so a placing asset contributes exactly 0.
+                drift_eur += abs(target - held_qty[a]) * close
+            rows.append(
+                {
+                    "cycle_ts": s.cycle_ts.isoformat(),
+                    "placed": placed,
+                    "target_qty": target_qty,
+                    "drift_eur": drift_eur,
+                    "drift_bps": 10_000 * drift_eur / nav,
+                }
+            )
+        drift_bps = [r["drift_bps"] for r in rows]
+        by_nav[nav] = {
+            "nav": nav,
+            "cycles": rows,
+            "n_placed": sum(1 for r in rows if r["placed"]),
+            "median_drift_bps": _median(drift_bps),
+            "p95_drift_bps": _p95(drift_bps),
+            "weeks": _weekly_drift(ordered, rows),
+        }
+    return {"n_cycles": len(ordered), "navs": list(navs), "by_nav": by_nav}
+
+
+def _bps(value: float) -> str:
+    return f"{'n/a':>11}" if math.isnan(value) else f"{value:11.1f}"
+
+
+def _render_accumulation(payload: dict) -> str:
+    """Per-NAV drift summary and the per-week table, stamped with the minimums' fetch date."""
+    navs = payload["navs"]
+    lines = [
+        "Accumulation drift floor: what the venue's order minimums cost at each portfolio size",
+        f"Venue minimums read {payload['minimums_fetched_at']} -- these floors move, so a band "
+        "quoted from an older table is stale, not conservative.",
+        "",
+        f"Per cycle, across {payload['n_cycles']} cycles (drift is bps of NAV, measured after the placement decision)",
+        "",
+    ]
+    header = f"{'NAV':>9} {'placed':>10} {'median_bps':>11} {'p95_bps':>11}"
+    lines += [header, "-" * len(header)]
+    for nav in navs:
+        row = payload["by_nav"][nav]
+        placed = f"{row['n_placed']}/{payload['n_cycles']}"
+        lines.append(f"{nav:>9,.0f} {placed:>10} {_bps(row['median_drift_bps'])} {_bps(row['p95_drift_bps'])}")
+
+    lines += [
+        "",
+        "Per ISO week (mean drift, bps of NAV). There is no weekly p95 here and there will not be:",
+        "the window is four ISO weeks, and a p95 over four points is the maximum wearing a",
+        "percentile's name. The weeks are printed with their counts and read individually.",
+        "",
+    ]
+    week_header = f"{'week':<10} {'cycles':>7}" + "".join(f"{nav:>11,.0f}" for nav in navs)
+    lines += [week_header, "-" * len(week_header)]
+    means = {nav: {(w["iso_year"], w["iso_week"]): w["mean_drift_bps"] for w in payload["by_nav"][nav]["weeks"]} for nav in navs}
+    weeks = payload["by_nav"][navs[0]]["weeks"] if navs else []
+    for w in weeks:
+        key = (w["iso_year"], w["iso_week"])
+        cells = "".join(_bps(means[nav][key]) for nav in navs)
+        lines.append(f"{key[0]}-W{key[1]:02d}   {w['n_cycles']:>6}{'*' if w['partial'] else ' '}{cells}")
+    if any(w["partial"] for w in weeks):
+        lines.append(
+            f"* fewer than {_CYCLES_PER_FULL_WEEK} cycles (6 per day x 7 days): a partial week, "
+            "whose mean is not comparable to a full week's."
+        )
+
+    if payload.get("n_failed"):
+        lines += ["", f"Cycles failed to replay: {payload['n_failed']} (excluded from every number above)"]
+        lines += [f"  {f['cycle_ts']}  {f['error']}" for f in payload["failures"]]
+    return "\n".join(lines)
+
+
+def accumulation_report(
+    records: list[CycleRecord],
+    reader: Reader,
+    minimums: dict[str, tuple[float, float]],
+    navs: list[float],
+    *,
+    fetched_at: str,
+    config: CrossfreqSystemConfig | None = None,
+) -> tuple[str, dict]:
+    """Replay every record and render the drift the venue minimums impose, as a function of NAV.
+
+    A record whose replay fails is named and counted, never silently dropped -- a missing cycle
+    would break the accumulation chain below it with nothing on the page to say so.
+    """
+    stages: list[CycleStages] = []
+    failures: list[dict] = []
+    for record in sorted(records, key=lambda r: r.cycle_ts):
+        try:
+            stages.append(replay_stages(record, reader, config=config))
+        except EngineError as exc:
+            failures.append({"cycle_ts": record.cycle_ts.isoformat(), "error": str(exc)})
+    payload = accumulation_payload(stages, minimums, navs)
+    payload["minimums_fetched_at"] = fetched_at
+    payload["n_failed"] = len(failures)
+    payload["failures"] = failures
+    return _render_accumulation(payload), payload

@@ -1,14 +1,19 @@
+import json
 import math
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from cli.engine.feeders import (
     CycleStages,
+    _render_accumulation,
     _render_decompose,
+    accumulation_payload,
     cancellation_ratio,
     decompose_payload,
     decompose_report,
+    load_minimums,
     replay_stages,
     stage_grosses,
 )
@@ -235,3 +240,195 @@ def test_decompose_report_counts_a_record_that_fails_to_replay():
     assert payload["failures"][0]["cycle_ts"] == CYCLE_TS.isoformat()
     assert "disagrees with its own journaled metadata" in payload["failures"][0]["error"]
     assert "failed to replay: 1" in text
+
+
+# --- accumulation: the venue-minimum drift floor -------------------------------------------------
+
+
+def _stage(ts, weight, close):
+    return CycleStages(
+        cycle_ts=ts,
+        sleeve_positions={s: {"BTC": 0.0} for s in ("B", "A1", "A2")},
+        combined={"BTC": 0.0},
+        capped={"BTC": 0.0},
+        final={"BTC": weight},
+        multiplier=1.0,
+        closes={"BTC": close},
+        cap_bound=False,
+    )
+
+
+def test_delta_below_ordermin_is_not_placed_and_accumulates():
+    # target 0.001 BTC/cycle against an ordermin of 0.005: nothing places until it crosses.
+    stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 1000.0) for i, h in enumerate((0, 4, 8, 12, 16, 20))]
+    payload = accumulation_payload(stages, {"BTC": (0.005, 0.45)}, [1000.0])
+    placed = [c["placed"] for c in payload["by_nav"][1000.0]["cycles"]]
+    assert placed[:4] == [False, False, False, False]  # 1..4 units of 0.001 < 0.005
+    assert placed[4] is True  # the 5th crosses the floor
+    assert payload["by_nav"][1000.0]["cycles"][4]["drift_eur"] == pytest.approx(0.0)
+
+
+def test_costmin_refuses_a_delta_that_clears_the_quantity_floor():
+    # target_qty = 0.1*1.0/0.10 = 1.0 unit: clears ordermin 0.5, but is worth EUR 0.10 < costmin.
+    # (An earlier draft used weight=1.0, giving 10 units worth EUR 1.00 -- which places, so the
+    # test was red against correct code. The arithmetic is the test here; check it, don't eyeball.)
+    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.1, 0.10)]
+    payload = accumulation_payload(stages, {"BTC": (0.5, 0.45)}, [1.0])
+    assert payload["by_nav"][1.0]["cycles"][0]["placed"] is False
+
+
+def test_a_price_move_alone_changes_drift_with_no_order_placed():
+    # THE HELD POSITION MUST BE NONZERO or this test proves nothing: at held_qty=0 the drift is
+    # target_qty*close = weight*NAV, the close CANCELS, and a EUR-denominated held state gives
+    # byte-identical output. So: cycle 1 places (held=10.0 units), then the close moves by less
+    # than the floor, so cycle 2 places nothing and its drift is pure re-pricing.
+    stages = [
+        _stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 1.0, 100.0),
+        _stage(datetime(2026, 8, 1, 4, tzinfo=UTC), 1.0, 100.5),
+    ]
+    payload = accumulation_payload(stages, {"BTC": (0.1, 0.0)}, [1000.0])
+    cycles = payload["by_nav"][1000.0]["cycles"]
+    assert cycles[0]["placed"] is True
+    assert cycles[0]["drift_eur"] == pytest.approx(0.0)  # placed -> exactly on target
+    assert cycles[1]["placed"] is False  # |delta| ~ 0.0498 < ordermin 0.1
+    assert cycles[1]["target_qty"]["BTC"] == pytest.approx(1000.0 / 100.5)
+    # held 10.0 units vs target ~9.9502 -> ~0.0498 units * 100.5 ~= EUR 5.00 of pure re-pricing.
+    # A EUR-denominated held state would report 0.0 here: it would carry held_eur = 1000.0 from
+    # cycle 1, meet target_eur = weight*NAV = 1000.0 again, and see no delta at all.
+    assert cycles[1]["drift_eur"] == pytest.approx(5.0, abs=0.05)
+
+
+def test_an_unplaced_asset_cycle_always_sits_below_its_floor():
+    # The true invariant (spec Verification). NAV-monotonicity is NOT one and must not be asserted:
+    # held histories diverge across NAV rungs, so a lower NAV just after placing can beat a higher
+    # one carrying a fresh sub-floor residual.
+    stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 100.0) for i, h in enumerate((0, 4, 8, 12))]
+    payload = accumulation_payload(stages, {"BTC": (0.05, 0.45)}, [1000.0])
+    for cycle in payload["by_nav"][1000.0]["cycles"]:
+        if not cycle["placed"]:
+            assert cycle["drift_eur"] < max(0.05 * 100.0, 0.45)
+
+
+def test_the_accumulation_replays_chronologically_whatever_order_it_is_handed():
+    # The policy carries held_qty across cycles, so the order is load-bearing, not cosmetic. Every
+    # other fixture in this file is already sorted, so nothing else would notice the sort going
+    # missing: reversed input must still produce the forward answer.
+    stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 1000.0) for i, h in enumerate((0, 4, 8, 12, 16, 20))]
+    minimums = {"BTC": (0.005, 0.45)}
+    assert accumulation_payload(list(reversed(stages)), minimums, [1000.0]) == accumulation_payload(stages, minimums, [1000.0])
+
+
+def test_accumulation_refuses_a_zero_nav():
+    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.1, 100.0)]
+    with pytest.raises(Exception, match="finite and positive"):
+        accumulation_payload(stages, {"BTC": (0.05, 0.45)}, [0.0])
+
+
+def test_accumulation_refuses_a_negative_nav():
+    # The worse of the two, because it never raises on its own: a negative NAV signs every
+    # drift_bps, and those are what the reported median and p95 -- the gate band -- are read from.
+    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.1, 100.0)]
+    with pytest.raises(Exception, match="finite and positive"):
+        accumulation_payload(stages, {"BTC": (0.05, 0.45)}, [1000.0, -1000.0])
+
+
+def test_accumulation_raises_when_a_traded_asset_has_no_floor():
+    # A silently absent floor would place every delta and understate the drift to zero.
+    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.1, 100.0)]
+    with pytest.raises(Exception, match="no venue minimums"):
+        accumulation_payload(stages, {"ETH": (0.001, 0.45)}, [1000.0])
+
+
+# --- accumulation: the weekly aggregation --------------------------------------------------------
+
+# 2026-07-13 00:00 is the Monday of ISO week 2026-W29 -- the journal's own first full week.
+WEEK29_MONDAY = datetime(2026, 7, 13, tzinfo=UTC)
+
+
+def _weekly_payload(n_cycles: int) -> dict:
+    stages = [_stage(WEEK29_MONDAY + timedelta(hours=4 * i), 0.0, 100.0) for i in range(n_cycles)]
+    return accumulation_payload(stages, {"BTC": (0.05, 0.45)}, [1000.0])
+
+
+def test_weekly_rows_flag_a_short_week_and_report_no_weekly_p95():
+    # 45 four-hourly cycles from a Monday: 42 fill W29 exactly, 3 spill into W30.
+    weeks = _weekly_payload(45)["by_nav"][1000.0]["weeks"]
+    assert [(w["iso_year"], w["iso_week"], w["n_cycles"]) for w in weeks] == [(2026, 29, 42), (2026, 30, 3)]
+    assert weeks[0]["partial"] is False  # 42 = 6 cycles/day x 7 days: the full complement
+    assert weeks[1]["partial"] is True
+    # The flag is DERIVED from the cycle count, never a hardcoded week number.
+    assert _weekly_payload(41)["by_nav"][1000.0]["weeks"][0]["partial"] is True
+    # No weekly p95: 4 weeks cannot support a percentile, and this number becomes a gate band.
+    assert not any("p95" in key for w in weeks for key in w)
+
+
+def test_per_cycle_median_and_p95_are_reported_over_the_full_window():
+    stages = [_stage(WEEK29_MONDAY + timedelta(hours=4 * i), 0.001 * (i + 1), 100.0) for i in range(20)]
+    nav_payload = accumulation_payload(stages, {"BTC": (0.05, 0.45)}, [1000.0])["by_nav"][1000.0]
+    drifts = sorted(c["drift_bps"] for c in nav_payload["cycles"])
+    assert nav_payload["median_drift_bps"] == pytest.approx((drifts[9] + drifts[10]) / 2)
+    # Nearest rank over 20 points: ceil(0.95*20) = 19 -> the 19th smallest, an OBSERVED value.
+    assert nav_payload["p95_drift_bps"] == pytest.approx(drifts[18])
+
+
+def test_accumulation_render_stamps_the_minimums_and_refuses_a_weekly_p95():
+    payload = _weekly_payload(45)
+    payload["minimums_fetched_at"] = "2026-07-07T03:29:00+00:00"
+    text = _render_accumulation(payload)
+    assert "2026-07-07" in text  # spec D8: the floors move; the table says when it was read
+    assert "2026-W29" in text and "2026-W30" in text
+    assert "no weekly p95" in text
+
+
+# --- accumulation: reading the venue minimums from the snapshot ----------------------------------
+
+CANONICAL_SNAPSHOT = Path(__file__).resolve().parents[1] / "data" / "snapshots" / "kraken-refdata-20260707T032900Z.json"
+
+# The real snapshot's shape, cut to the two traps. The BTC-denominated rows come AFTER their EUR
+# twins, exactly as in the file, so a base-keyed loader without the quote filter OVERWRITES the EUR
+# floors rather than being shadowed by them -- the direction that silently understates the floor.
+TRAP_UNIVERSE = [
+    {"base": "ETH", "quote": "EUR", "ordermin": "0.001", "costmin": "0.45", "wsname": "ETH/EUR"},
+    {"base": "SOL", "quote": "EUR", "ordermin": "0.06", "costmin": "0.45", "wsname": "SOL/EUR"},
+    {"base": "DOGE", "quote": "EUR", "ordermin": "50", "costmin": "0.45", "wsname": "XDG/EUR"},
+    {"base": "ETH", "quote": "BTC", "ordermin": "0.001", "costmin": "0.00002", "wsname": "ETH/XBT"},
+    {"base": "SOL", "quote": "BTC", "ordermin": "0.06", "costmin": "0.00002", "wsname": "SOL/XBT"},
+]
+
+
+def _write_snapshot(tmp_path: Path, universe: list[dict]) -> Path:
+    path = tmp_path / "kraken-refdata.json"
+    path.write_text(json.dumps({"fetched_at": "2026-07-07T03:29:00+00:00", "universe": universe}))
+    return path
+
+
+def test_load_minimums_filters_the_quote_and_does_not_match_on_wsname(tmp_path):
+    minimums, fetched_at = load_minimums(_write_snapshot(tmp_path, TRAP_UNIVERSE))
+    assert fetched_at == "2026-07-07T03:29:00+00:00"
+    # DOGE resolves although Kraken's wsname is XDG/EUR -- there is no DOGE/EUR pair to match on.
+    assert minimums["DOGE"] == (50.0, 0.45)
+    # The EUR costmin survives the BTC-denominated row sharing its base: 0.45 euros, not 0.00002
+    # BTC read as euros, which is four orders of magnitude of understated floor.
+    assert minimums["ETH"] == (0.001, 0.45)
+    assert minimums["SOL"] == (0.06, 0.45)
+
+
+def test_load_minimums_raises_on_two_eur_pairs_for_one_base(tmp_path):
+    universe = [
+        {"base": "ETH", "quote": "EUR", "ordermin": "0.001", "costmin": "0.45"},
+        {"base": "ETH", "quote": "EUR", "ordermin": "0.002", "costmin": "0.45"},
+    ]
+    with pytest.raises(Exception, match="duplicate EUR pair"):
+        load_minimums(_write_snapshot(tmp_path, universe))
+
+
+@pytest.mark.skipif(not CANONICAL_SNAPSHOT.exists(), reason="gitignored snapshots dataset absent")
+def test_load_minimums_against_the_canonical_snapshot():
+    # The numbers the measurement is quoted from, read off the real file rather than a fixture.
+    minimums, fetched_at = load_minimums(CANONICAL_SNAPSHOT)
+    assert fetched_at.startswith("2026-07-07")
+    assert minimums["DOGE"] == (50.0, 0.45)
+    assert minimums["BTC"] == (0.00005, 0.45)
+    assert minimums["ADA"] == (20.0, 0.45)
+    assert minimums["ETH"] == (0.001, 0.45)
+    assert all(costmin == 0.45 for _, costmin in minimums.values())
