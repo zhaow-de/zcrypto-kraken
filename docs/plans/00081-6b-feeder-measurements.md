@@ -106,7 +106,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from cli.engine.errors import EngineError
@@ -184,6 +184,15 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
         ts, closes = reader(entry)
         if snapshot_content_hash(ts, closes) != entry.content_hash:
             raise EngineError(f"content hash mismatch for pair={entry.pair!r} grid={entry.grid!r} -- corrupt evidence")
+        # Metadata-vs-data reconciliation: validate_record pins the metadata and the hash pins the
+        # data, but NOTHING otherwise ties one to the other -- so data ending at the wrong bar, or
+        # extending past cycle_ts (look-ahead), passes both behind honest-looking metadata.
+        if len(ts) != entry.n_bars or ts[0] != entry.first_ts or ts[-1] != entry.last_ts:
+            raise EngineError(
+                f"pair={entry.pair!r} grid={entry.grid!r}: read data disagrees with its own journaled metadata -- "
+                f"n_bars={len(ts)} vs {entry.n_bars!r}, first_ts={ts[0]!r} vs {entry.first_ts!r}, "
+                f"last_ts={ts[-1]!r} vs {entry.last_ts!r}"
+            )
         by_grid[entry.grid][entry.pair] = (ts, closes)
 
     def assemble(grid: str) -> tuple[list[datetime], dict[str, list[float | None]]]:
@@ -201,12 +210,24 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
 
     daily_ts, daily_prices = assemble("1440")
     h4_ts, h4_prices = assemble("240")
-    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
+    # The forming row must BE the cycle's row, re-derived from the data just read rather than
+    # trusted from metadata -- `replay_cycle` enforces the same thing for the same reason.
+    if h4_ts[-1] != record.cycle_ts - timedelta(hours=4):
+        raise EngineError(
+            f"the builder's grid does not contain the cycle_ts interval: h4_ts[-1]={h4_ts[-1]!r} != "
+            f"cycle_ts - 4h ({record.cycle_ts - timedelta(hours=4)!r})"
+        )
+    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=c)
     n = result.n_periods
 
     sleeves = {name: {a: result.sleeve_positions[name][a][n] for a in c.assets} for name in SLEEVES}
     third = 1 / 3
-    combined = {a: sum(third * sleeves[name][a] for name in SLEEVES) for a in c.assets}
+    # CHAINED `+`, never sum(): the builder computes `third*b + third*a1 + third*a2`, and since
+    # Python 3.12 sum() applies Neumaier compensation to floats, so the two disagree by 1 ulp on
+    # ~17% of real triples (measured, 3.14.6). Under the exact `!=` identity below that would raise
+    # on roughly one cycle in five and leave the aggregates computed over the biased subset that
+    # happens to bit-agree. Match the builder's expression exactly.
+    combined = {a: third * sleeves["B"][a] + third * sleeves["A1"][a] + third * sleeves["A2"][a] for a in c.assets}
     capped_series = apply_position_caps({a: [combined[a]] for a in c.assets}, long_cap=c.long_cap, short_cap=c.short_cap)
     capped = {a: capped_series[a][0] for a in c.assets}
     multiplier = result.multipliers[n]
