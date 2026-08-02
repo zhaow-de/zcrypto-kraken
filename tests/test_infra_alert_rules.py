@@ -156,6 +156,12 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_target_weight",
     "zcrypto_engine_orders_total",
     "zcrypto_engine_order_notional_eur",
+    # Per-sleeve gross: a LEVEL, and one whose every value is legitimate -- a long-only sleeve
+    # sitting flat through a downtrend is correct behaviour, not a fault, so no threshold on it
+    # means anything. The event worth paging on is the active-sleeve COUNT stepping, which
+    # zcrypto-engine-sleeve-count-changed owns; this series is the detail that page's responder
+    # reads to see which sleeve moved.
+    "zcrypto_engine_sleeve_gross",
     # Process self-metrics: diagnostic context, no fault semantics of their own.
     "process_cpu_seconds_total",
     "process_max_fds",
@@ -406,6 +412,49 @@ def test_the_backlog_stuck_rule_stays_quiet_on_a_host_that_has_never_swept():
     rule = _rule(_BACKLOG_STUCK)
     assert rule["noDataState"] == "OK", "a host with no sweep history would page"
     assert rule["execErrState"] == "Alerting", "a broken query would leave the backlog silently unwatched"
+
+
+# --- the sleeve-composition rule: `changes`, not `delta`, is the whole rule ------------------------
+
+_SLEEVE_CHANGED = "zcrypto-engine-sleeve-count-changed"
+
+
+def test_the_sleeve_composition_rule_counts_steps_rather_than_netting_them():
+    """`delta()` is the tempting edit here — every sibling rule in this file uses it — and it is
+    wrong for this signal, silently. `zcrypto_engine_active_sleeves` is a non-monotone gauge, so
+    `delta` reads the NET change across the window: a sleeve arming while another goes flat nets to
+    zero, and so does a sleeve arming and going flat again inside one window. Both are exactly the
+    events this rule exists to announce, and both would leave it quiet — indistinguishable from a
+    composition that never moved. `changes()` counts the steps instead, which is why the evaluator
+    can be a plain `gt 0` in either direction."""
+    rule = _rule(_SLEEVE_CHANGED)
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+
+    assert "changes(" in expr, f"the rule must count steps, not net them: {expr!r}"
+    assert "delta(" not in expr, f"delta() nets an arm against a flat and reads zero: {expr!r}"
+    assert _threshold(rule) == 0, "any step is the event -- a higher threshold would ignore single re-armings"
+
+
+def test_the_sleeve_composition_window_matches_its_relative_time_range():
+    """The same coupling the residual-gap and new-breakage rules pin: shortening one field without
+    the other silently truncates what the rule reads."""
+    rule = _rule(_SLEEVE_CHANGED)
+    ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+
+    assert re.findall(r"\[(\d+)h\]", expr) == ["26"], f"expected exactly one 26h range selector: {expr!r}"
+    assert max(ranges) == 26 * 3600, f"relativeTimeRange {max(ranges)}s does not match the 26h changes() window"
+
+
+def test_the_sleeve_composition_rule_stays_quiet_while_the_series_does_not_exist_yet():
+    """`noDataState: OK` is load-bearing twice over: the series does not exist until the engine
+    converge that ships it lands, and it is deliberately left unpublished until the first cycle
+    measures a composition. Alerting on absence would page continuously through both, and the
+    engine going dark is already the dead-man's and the cycle-staleness rule's job."""
+    rule = _rule(_SLEEVE_CHANGED)
+    assert rule["noDataState"] == "OK", "an engine that has not yet published a composition would page"
+    assert rule["execErrState"] == "Alerting", "a broken query would leave the composition silently unwatched"
+    assert rule["labels"]["severity"] == "warning", "this announces a change in the book, not a fault"
 
 
 # --- the runbook link an alert sends an operator to must actually exist ---------------------------

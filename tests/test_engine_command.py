@@ -63,6 +63,7 @@ def _success_result(cycle_ts: datetime, journal_dir: Path) -> CycleResult:
         orders=[{"asset": "BTC", "side": "buy", "quantity": 0.001, "notional_eur": 200.0, "price": 200000.0}],
         reason=None,
         offending_pairs=None,
+        sleeve_gross={"B": 0.0, "A1": 0.0, "A2": 0.32},
     )
 
 
@@ -328,6 +329,7 @@ def test_cycle_failed_result_prints_the_sidecar_summary_and_exits_nonzero(tmp_pa
             orders=None,
             reason="stale_pair",
             offending_pairs=("DOGE",),
+            sleeve_gross=None,
         )
 
     monkeypatch.setattr(command, "run_cycle", fake_run_cycle)
