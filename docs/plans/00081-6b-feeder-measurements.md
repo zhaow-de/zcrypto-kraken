@@ -110,7 +110,7 @@ from datetime import datetime
 from typing import Callable
 
 from cli.engine.errors import EngineError
-from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
+from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, validate_record
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, build_crossfreq_system_fast
 from cli.risk import apply_position_caps
 
@@ -169,13 +169,16 @@ Append to `cli/engine/feeders.py`:
 def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSystemConfig | None = None) -> CycleStages:
     """Rebuild one journaled cycle and return its forming-row book at every pipeline stage.
 
-    `combined` and `capped` are builder-internal, so they are recomputed here from the public
-    `sleeve_positions` -- and then PROVEN: `multiplier * capped[a]` must equal the builder's own
-    `final_targets[a]` exactly, for every asset. That identity is the harness's evidence it
-    reconstructed the builder's intermediate rather than something that merely resembles it; if the
-    builder's combination or cap changes, this raises instead of reporting a wrong attribution.
+    Two identities, both per cycle, because they catch different failures. INTERNAL:
+    `multiplier * capped[a]` must equal the builder's own `final_targets[a]` exactly -- evidence
+    the recomputed intermediate IS the builder's, so a changed combination or cap raises instead of
+    reporting a wrong attribution. JOURNAL: the rebuilt targets must equal the RECORD's own
+    `final_targets` -- which the internal one structurally cannot catch, since a self-consistent
+    rebuild that diverges from what the engine actually traded would agree with itself all the way
+    and both reports would describe a book that never existed.
     """
     c = config or CrossfreqSystemConfig()
+    validate_record(record)  # no-peek + snapshot-boundary discipline, before any snapshot is read
     by_grid: dict[str, dict[str, tuple[list[datetime], list[float | None]]]] = {"1440": {}, "240": {}}
     for entry in record.snapshots:
         ts, closes = reader(entry)
@@ -209,12 +212,20 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
     multiplier = result.multipliers[n]
     final = {a: result.final_targets[a][n] for a in c.assets}
 
-    for a in c.assets:
-        if multiplier * capped[a] != final[a]:
+    _check_stage_identity(multiplier, capped, final, cycle_ts=record.cycle_ts)
+
+    # The journal identity: what we rebuilt must be what the engine actually traded.
+    if set(final) != set(record.final_targets):
+        raise EngineError(
+            f"rebuilt asset set differs from the journaled one at cycle_ts={record.cycle_ts}: "
+            f"{sorted(set(final) ^ set(record.final_targets))}"
+        )
+    for a, journaled in record.final_targets.items():
+        if final[a] != journaled:
             raise EngineError(
-                f"stage identity broken for asset={a!r} at cycle_ts={record.cycle_ts}: "
-                f"multiplier*capped={multiplier * capped[a]!r} != builder final_targets={final[a]!r} -- "
-                "the recomputed combination or cap no longer matches the builder"
+                f"replay disagrees with the journal for asset={a!r} at cycle_ts={record.cycle_ts}: "
+                f"rebuilt={final[a]!r} != journaled={journaled!r} -- this cycle's rebuild does not "
+                "describe the book the engine traded"
             )
 
     closes = {}
@@ -237,25 +248,38 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
     )
 ```
 
-- [ ] **Step 6: Test the identity guard by constructing its defect**
+- [ ] **Step 6: Extract the identity as a pure helper and test it directly**
 
-Add to `tests/test_engine_feeders.py`:
+The comparison is a pure function, so it needs no builder-reaching stub and keeps a committed regression test after the branch-time mutation proof is gone. Add to `cli/engine/feeders.py`:
 
 ```python
-def test_stage_identity_raises_when_the_recomputation_disagrees(monkeypatch):
-    # The guard exists to catch a builder whose combination/cap no longer matches the harness's.
-    # Simulate that by making apply_position_caps return something else, and assert it raises.
-    import cli.engine.feeders as feeders
+def _check_stage_identity(multiplier: float, capped: dict[str, float], final: dict[str, float], *, cycle_ts) -> None:
+    """Raise unless `multiplier * capped[a] == final[a]` exactly, for every asset.
 
-    def _wrong_caps(book, **kwargs):
-        return {a: [v[0] + 1.0] for a, v in book.items()}
-
-    monkeypatch.setattr(feeders, "apply_position_caps", _wrong_caps)
-    with pytest.raises(Exception, match="stage identity broken"):
-        feeders.replay_stages(_stub_record(), _stub_reader())
+    Exact equality is correct here, not float-fragile: the harness reruns the builder's own
+    arithmetic on the builder's own floats in the same order (`sleeve_positions` stores the
+    already-4h-expanded series, and apply_position_caps is a pure per-element clip), so any
+    difference means the recomputation genuinely diverged.
+    """
+    for a, target in final.items():
+        if multiplier * capped[a] != target:
+            raise EngineError(
+                f"stage identity broken for asset={a!r} at cycle_ts={cycle_ts}: "
+                f"multiplier*capped={multiplier * capped[a]!r} != builder final_targets={target!r} -- "
+                "the recomputed combination or cap no longer matches the builder"
+            )
 ```
 
-Build `_stub_record()` / `_stub_reader()` as module-level helpers in the test file: the smallest record + reader pair that reaches the builder. If constructing a builder-reaching stub proves disproportionate, mark this test `@pytest.mark.skip` with a comment saying the identity is instead proven by the Task 4 live mutation — **and say so in your report**; do not silently drop it.
+And its test:
+
+```python
+def test_stage_identity_raises_when_the_recomputation_disagrees():
+    from cli.engine.feeders import _check_stage_identity
+
+    _check_stage_identity(0.5, {"BTC": 0.10}, {"BTC": 0.05}, cycle_ts="t")  # holds, no raise
+    with pytest.raises(Exception, match="stage identity broken"):
+        _check_stage_identity(0.5, {"BTC": 0.10}, {"BTC": 0.06}, cycle_ts="t")
+```
 
 - [ ] **Step 7: Run and commit**
 
@@ -348,7 +372,9 @@ def decompose_payload(stages: list[CycleStages]) -> dict:
     }
 ```
 
-Then `decompose_report(stages) -> tuple[str, dict]` rendering a fixed-width table: one line per cycle with `cycle_ts`, the three sleeve grosses, `combined`, `ratio`, `capped`, `mult`, `final`, `n_active`; then a MEDIAN row; then a short attribution summary naming each consecutive ratio (`sleeve→combined`, `combined→capped`, `capped→final`) so the reader sees which stage the gross is lost at. Plain operator language, no internal tokens.
+Add a per-cycle `capped_ratio` (`capped_gross / combined_gross`, NaN when combined is 0) and `governed_ratio` (`= multiplier`) to each row, and include both in the `median` block — so all three consecutive-stage ratios are **medians of per-cycle ratios**, one basis throughout. Never a ratio of medians: with the multiplier varying across the window the two differ materially in the headline number, which is what the Task 3 two-cycle fixture pins.
+
+Then `decompose_report(stages) -> tuple[str, dict]` rendering a fixed-width table: one line per cycle with `cycle_ts`, the three sleeve grosses, `combined`, `ratio`, `capped`, `mult`, `final`, `n_active`, `cap_bound`; then a MEDIAN row; then a short attribution summary naming each consecutive ratio (`sleeve→combined`, `combined→capped`, `capped→final`) and the count of cap-bound cycles, so the reader sees which stage the gross is lost at. Plain operator language, no internal tokens.
 
 - [ ] **Step 4: Run tests, then commit**
 
@@ -391,28 +417,65 @@ def test_delta_below_ordermin_is_not_placed_and_accumulates():
 
 
 def test_costmin_refuses_a_delta_that_clears_the_quantity_floor():
-    # 1.0 unit clears ordermin=0.5 but is worth EUR 0.10 -- below costmin, so it must not place.
-    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 1.0, 0.10)]
+    # target_qty = 0.1*1.0/0.10 = 1.0 unit: clears ordermin 0.5, but is worth EUR 0.10 < costmin.
+    # (An earlier draft used weight=1.0, giving 10 units worth EUR 1.00 -- which places, so the
+    # test was red against correct code. The arithmetic is the test here; check it, don't eyeball.)
+    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.1, 0.10)]
     payload = accumulation_payload(stages, {"BTC": (0.5, 0.45)}, [1.0])
     assert payload["by_nav"][1.0]["cycles"][0]["placed"] is False
 
 
 def test_a_price_move_alone_changes_drift_with_no_order_placed():
-    # held stays put; the close doubles, so target_qty halves and drift moves. This is the check
-    # that fails under a EUR-denominated held state (spec D4).
-    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 1.0, 100.0), _stage(datetime(2026, 8, 1, 4, tzinfo=UTC), 1.0, 200.0)]
-    payload = accumulation_payload(stages, {"BTC": (1e9, 0.0)}, [1000.0])  # floor so high nothing ever places
-    drifts = [c["drift_eur"] for c in payload["by_nav"][1000.0]["cycles"]]
-    assert drifts[0] == pytest.approx(1000.0)   # target 10 units @100, held 0
-    assert drifts[1] == pytest.approx(1000.0)   # target 5 units @200, held 0 -> still the full NAV
-    assert payload["by_nav"][1000.0]["cycles"][1]["target_qty"]["BTC"] == pytest.approx(5.0)
+    # THE HELD POSITION MUST BE NONZERO or this test proves nothing: at held_qty=0 the drift is
+    # target_qty*close = weight*NAV, the close CANCELS, and a EUR-denominated held state gives
+    # byte-identical output. So: cycle 1 places (held=10.0 units), then the close moves by less
+    # than the floor, so cycle 2 places nothing and its drift is pure re-pricing.
+    stages = [
+        _stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 1.0, 100.0),
+        _stage(datetime(2026, 8, 1, 4, tzinfo=UTC), 1.0, 100.5),
+    ]
+    payload = accumulation_payload(stages, {"BTC": (0.1, 0.0)}, [1000.0])
+    cycles = payload["by_nav"][1000.0]["cycles"]
+    assert cycles[0]["placed"] is True
+    assert cycles[0]["drift_eur"] == pytest.approx(0.0)          # placed -> exactly on target
+    assert cycles[1]["placed"] is False                          # |delta| ~ 0.0498 < ordermin 0.1
+    assert cycles[1]["target_qty"]["BTC"] == pytest.approx(1000.0 / 100.5)
+    # held 10.0 units vs target ~9.9502 -> ~0.0498 units * 100.5 ~= EUR 5.00 of pure re-pricing.
+    assert cycles[1]["drift_eur"] == pytest.approx(5.0, abs=0.05)
 
 
-def test_relative_drift_is_non_increasing_in_nav():
-    stages = [_stage(datetime(2026, 8, 1, 0, tzinfo=UTC), 0.5, 100.0)]
-    payload = accumulation_payload(stages, {"BTC": (1.0, 0.45)}, [100.0, 1000.0, 10000.0])
-    rel = [payload["by_nav"][n]["median_drift_bps"] for n in (100.0, 1000.0, 10000.0)]
-    assert rel == sorted(rel, reverse=True)
+def test_an_unplaced_asset_cycle_always_sits_below_its_floor():
+    # The true invariant (spec Verification). NAV-monotonicity is NOT one and must not be asserted:
+    # held histories diverge across NAV rungs, so a lower NAV just after placing can beat a higher
+    # one carrying a fresh sub-floor residual.
+    stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 100.0) for i, h in enumerate((0, 4, 8, 12))]
+    payload = accumulation_payload(stages, {"BTC": (0.05, 0.45)}, [1000.0])
+    for cycle in payload["by_nav"][1000.0]["cycles"]:
+        if not cycle["placed"]:
+            assert cycle["drift_eur"] < max(0.05 * 100.0, 0.45)
+
+
+def test_stage_ratios_use_the_median_of_per_cycle_ratios():
+    # Two asymmetric cycles: median-of-ratios and ratio-of-medians differ, so this pins the basis.
+    # A single-cycle fixture cannot -- there the two definitions coincide.
+    stages = [
+        CycleStages(
+            cycle_ts=datetime(2026, 8, 1, 0, tzinfo=UTC),
+            sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.12}, "A2": {"BTC": 0.12}},
+            combined={"BTC": 0.12}, capped={"BTC": 0.12}, final={"BTC": 0.12},
+            multiplier=1.0, closes={"BTC": 100.0}, cap_bound=False,
+        ),
+        CycleStages(
+            cycle_ts=datetime(2026, 8, 1, 4, tzinfo=UTC),
+            sleeve_positions={"B": {"BTC": 0.09}, "A1": {"BTC": -0.09}, "A2": {"BTC": 0.0}},
+            combined={"BTC": 0.0}, capped={"BTC": 0.0}, final={"BTC": 0.0},
+            multiplier=0.5, closes={"BTC": 100.0}, cap_bound=False,
+        ),
+    ]
+    payload = decompose_payload(stages)
+    # per-cycle cancellation ratios are 1.0 and 0.0 -> median 0.5.
+    # ratio-of-medians would be median(combined)/median(mean_sleeve) = 0.06/0.09 = 0.667.
+    assert payload["median"]["cancellation_ratio"] == pytest.approx(0.5)
 ```
 
 - [ ] **Step 2: Run them — expect ImportError**
@@ -431,9 +494,38 @@ if placed_a:
 drift_eur_a = abs(target_qty - held_qty[a]) * closes[a]
 ```
 
-Per cycle record `placed` (True iff any asset placed), the per-asset `target_qty`, and `drift_eur = sum(drift_eur_a)`. Per NAV report `median_drift_bps` and `p95_drift_bps` = drift_eur / nav × 10_000, plus the **weekly** aggregation (group cycles by ISO week via `cycle_ts.isocalendar()[:2]`, take each week's mean drift, then report median and p95 across weeks) — that is the shape spec D6 requires because the band is written weekly.
+Per cycle record `placed` (True iff any asset placed), the per-asset `target_qty`, and `drift_eur = sum(drift_eur_a)`. Per NAV report per-cycle `median_drift_bps` and `p95_drift_bps` (= drift_eur / nav × 10_000, meaningful over 136 points).
 
-`load_minimums(path)` reads the canonical snapshot JSON, walks `raw["assetpairs"]`, matches each configured asset to its `<ASSET>/EUR` `wsname` (note Kraken's `XBT/EUR` for BTC), and returns `{asset: (float(ordermin), float(costmin))}` plus the file's `fetched_at` for D8's stamp. Raise on a missing asset — a silently absent floor would understate drift.
+**The weekly aggregation prints every week, and reports NO weekly p95** (spec D6). The journal spans exactly **4 ISO weeks — (2026,28) 12 cycles, (2026,29) 42, (2026,30) 42, (2026,31) 40** (measured), and the first is a 2-day partial. Emit a row per week: `(iso_year, iso_week), n_cycles, mean_drift_bps`, with the partial week flagged — a p95 over 4 points is the maximum wearing a percentile's name, and this number becomes a live-trading gate band.
+
+`load_minimums(path)` reads the canonical snapshot JSON and returns `({asset: (ordermin_base, costmin)}, fetched_at)`.
+
+**Read the `universe` block, NOT `raw["assetpairs"]`, and filter the quote — both traps are measured, and both yield a silently wrong floor rather than an error:**
+
+```python
+def load_minimums(path: Path) -> tuple[dict[str, tuple[float, float]], str]:
+    """Per-asset (ordermin_base, costmin) for the EUR book, plus the snapshot's fetched_at stamp.
+
+    Sourced from the snapshot's `universe` block, which is already normalised to base/quote —
+    NOT from `raw.assetpairs`, where Kraken lists DOGE as `XDG/EUR` (there is no `DOGE/EUR`
+    wsname at all) and BTC as `XBT/EUR`, so a `<ASSET>/EUR` match silently loses assets.
+    The `quote == "EUR"` filter is load-bearing: `universe` also carries ETH/BTC and SOL/BTC
+    whose costmin is 0.00002 BTC, and keying by base without it would overwrite ETH's and
+    SOL's EUR floors with a BTC-denominated number read as euros.
+    """
+    payload = json.loads(path.read_text())
+    out: dict[str, tuple[float, float]] = {}
+    for entry in payload["universe"]:
+        if entry.get("quote") != "EUR":
+            continue
+        base = entry["base"]
+        if base in out:
+            raise EngineError(f"duplicate EUR pair for base={base!r} in {path} -- ambiguous minimums")
+        out[base] = (float(entry["ordermin"]), float(entry["costmin"]))
+    return out, payload["fetched_at"]
+```
+
+The caller raises on any configured asset missing from the returned map — a silently absent floor would understate drift. A test pins that DOGE resolves (ordermin 50) and that ETH's costmin is 0.45, not 0.00002.
 
 - [ ] **Step 4: Run tests, then commit**
 
@@ -456,6 +548,8 @@ In `cli/engine/command.py`, mirroring `soak_check`'s existing shape (`--journal-
 
 - `@engine_app.command(name="decompose")` — options `--journal-dir`, `--since` / `--until` (optional ISO dates), `--json` (emit the payload instead of the table). Help text: "Attribute each journaled cycle's gross across the pipeline stages."
 - `@engine_app.command(name="accum-replay")` — same journal options plus `--minimums` (path, default `data/snapshots/…` resolved from config or the newest `kraken-refdata-*.json`) and `--nav` (repeatable float, default `500, 1000, 2500, 5000, 10000`). Help text: "Measure the position drift the venue's order minimums impose at each portfolio size."
+
+`accumulation_report`'s rendering **prints the minimums' `fetched_at` stamp beside the drift table** (spec D8) — these floors move, and a band quoted at the gate from a stale table is the silent-staleness failure the monthly refresh exists to prevent. A test asserts the stamp appears in the rendered output.
 
 A record that fails to replay is **reported with its cycle_ts and the error, and counted** — never silently skipped (spec Verification).
 
@@ -485,9 +579,15 @@ uv run zcrypto engine accum-replay --journal-dir /mnt/zhao-crypto/engine-journal
 
 ~3.4 min each. Save both outputs to the scratchpad. **Read the numbers, do not just capture them** — in particular whether the multiplier is 0.5 across the whole window or varies, and which consecutive ratio is smallest (that is the answer to "where does 15–20 % die").
 
-- [ ] **Step 6: Prove the D1 identity guard bites, on real data**
+- [ ] **Step 6: Prove BOTH identity guards bite, on real data**
 
-With the tree clean, change the harness's `third = 1 / 3` to `1 / 2`, re-run `decompose` over a single day-dir, and confirm it raises `stage identity broken`. Restore with `git checkout --`, re-run, confirm clean, and confirm `git status --porcelain` is empty. Report the actual error line seen.
+`1 / 3` → `1 / 2` is a **same-length** edit, and the `.pyc` cache key is (mtime-seconds, size) — so a same-second edit runs unmutated code and "the guard didn't bite" would be a false conclusion. Set `PYTHONDONTWRITEBYTECODE=1` for every run below, or clear `cli/engine/__pycache__` before each.
+
+1. Internal identity: change `third = 1 / 3` to `1 / 2`, re-run `decompose` over one day-dir, confirm it raises `stage identity broken`. `git checkout --` to restore.
+2. Journal identity: perturb the rebuilt `final` (e.g. `final[a] * 1.0000001` before the journal comparison), re-run, confirm it raises `replay disagrees with the journal`. Restore.
+3. Re-run clean, confirm no raise, and `git status --porcelain` empty.
+
+Report the actual error lines seen, and which guard produced each — a red exit is not evidence until you have read *which* failure fired.
 
 ---
 
@@ -505,6 +605,8 @@ Each gets a `## Resolution` naming spec `00081`, the commits, and **the measured
 - [ ] **Step 2: Hand the parameters to T0116**
 
 Add to `T0116`'s `## Findings so far`: the measured expected gross for rungs 2–3, and the measured band with its NAV curve. This is the feeder hand-off the whole iteration exists for.
+
+Also carry the **re-derivation trigger** into T0116 rather than leaving it in spec prose: the band is derived from *shadow* targets, so if rung 1/2 execution changes the target series materially, the band wants re-deriving before rung 3's gate reads it. T0116 is its durable home — a caveat living only in a spec is one nobody executing will read.
 
 - [ ] **Step 3: Changelog entry** — `docs/iterations-history-phase6.md`, matching the file's existing format; one bullet per landed piece plus the measurement answers.
 
