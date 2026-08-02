@@ -424,7 +424,7 @@ class _CycleGauges:
     set): `run()` builds one of these on the SAME registry the exporter serves, then installs
     `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure.
     `cycle_success` is registered LAZILY (`seed_cycle_success`), not here -- see that method
-    (cold-review I4)."""
+    (cold-review I4); `active_sleeves` is lazy for the same reason, see its own comment below."""
 
     def __init__(self, registry) -> None:
         self._registry = registry
@@ -452,6 +452,20 @@ class _CycleGauges:
         self.cycle_duration = Gauge(
             "zcrypto_engine_cycle_duration_seconds", "Wall time the most recent cycle took, in seconds.", registry=registry
         )
+        self.sleeve_gross = Gauge(
+            "zcrypto_engine_sleeve_gross",
+            "Latest per-sleeve gross exposure (sum of absolute target weights).",
+            ["sleeve"],
+            registry=registry,
+        )
+        # Lazy for exactly `seed_cycle_success`'s reason, and it is the crux here: `sleeve_gross`
+        # above is LABELLED, so it is honest for free -- a labelled Gauge publishes nothing until
+        # `.labels()` is first called. This one is UNLABELLED, so registering it eagerly would
+        # publish 0.0 from process start, and "no sleeve is carrying exposure" before any cycle has
+        # run is a claim the engine has not measured -- false, and it would also become the
+        # baseline the composition-changed alert reads the first real cycle against. An absent
+        # series is honest; a published 0 is a claim.
+        self.active_sleeves: Gauge | None = None
 
     def seed_cycle_success(self, success: bool) -> None:
         """Register (if not already) and set `zcrypto_engine_cycle_success` (spec 00069 D5,
@@ -477,6 +491,16 @@ class _CycleGauges:
         if result.orders is not None:
             self.orders_total.inc(len(result.orders))
             self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
+        if result.sleeve_gross is not None:  # None on a failed cycle: no build ran, so leave both as they were
+            for sleeve, gross in result.sleeve_gross.items():
+                self.sleeve_gross.labels(sleeve=sleeve).set(gross)
+            if self.active_sleeves is None:
+                self.active_sleeves = Gauge(
+                    "zcrypto_engine_active_sleeves",
+                    "Number of sleeves with non-zero gross in the most recent cycle.",
+                    registry=self._registry,
+                )
+            self.active_sleeves.set(sum(1 for gross in result.sleeve_gross.values() if gross > 0.0))
 
 
 def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:

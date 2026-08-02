@@ -257,6 +257,72 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-engine-sleeve-count-changed
+    title: "Engine · sleeve composition changed"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # NOT `zcrypto-engine-sleeve-composition-changed`, the name this rule is called everywhere else:
+    # that string is 41 chars and Grafana's uid column is varchar(40), so the create call 400s (the
+    # same failure that cost an attended round-trip on 2026-07-20). The uid is immutable once the
+    # rule exists -- do not "restore" the longer spelling later.
+    #
+    # T0124: the deployable combines three sleeves at fixed 1/3 weights, and two of them (B, A1)
+    # have held exactly zero for months -- correct behaviour for long-only sleeves in a sustained
+    # downtrend, but it means the live book is structurally a ONE-sleeve book at a sixth of that
+    # sleeve's gross. The reversal is the event: B or A1 re-arming roughly TRIPLES gross, moves the
+    # placeability arithmetic, and invalidates the drift band derived under the one-sleeve state.
+    # Nothing observed the original transition -- it was found ~9 months later by a measurement
+    # iteration that happened to decompose the book. This rule exists so the next one is announced.
+    #
+    # `changes()` over a 26h window, not `delta()`: the count is not monotone (a sleeve can arm and
+    # go flat again) and the DIRECTION does not matter -- both directions move gross materially, so
+    # any step is the event. 26h spans more than six 4h cycles, wide enough that a change is never
+    # missed between evaluations and narrow enough that the page ages out within a day.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 93600, to: 0}  # 26h, matching the changes() window below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: changes(zcrypto_engine_active_sleeves[26h])
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}  # the active-sleeve count stepped, either way == the event
+    # OK, not Alerting -- the same posture as the verify-replay rules. The series does not exist at
+    # all until the engine converge that ships it lands, and it is deliberately left unpublished
+    # until the first cycle actually measures a composition (an unlabelled Gauge would otherwise
+    # publish 0.0 from process start, i.e. "every sleeve is flat", which is a claim and a false
+    # one). Absence is the dead-man's business: the engine going dark is already owned by the
+    # healthchecks.io switch and the cycle-completed staleness, not by this rule.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: >-
+        The engine's sleeve composition changed — a dormant sleeve armed, or an active one went flat.
+        Portfolio gross moves materially with the number of active sleeves, so re-derive the drift band
+        and re-read order placeability before the next go-live gate reads either of them. Read
+        zcrypto_engine_sleeve_gross to see which sleeve moved.
+        Runbook: infra/runbooks/README.md#zcrypto-engine-sleeve-count-changed
+    # Warning, not critical: this is an announcement, not a fault. Nothing is broken -- the book is
+    # doing what it was built to do; what changed is the object the go-live gate is about to judge.
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas
