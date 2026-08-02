@@ -38,8 +38,12 @@ Three constraints bind *future* iterations and would otherwise be invisible at p
 
 The sole remainder is the **6b executor iteration** — convene when the Stage-6a gate is met. Broken out below because a single paragraph hides both the sequencing and the human touchpoints; every bullet carries whether it is autonomous or a decision.
 
-**The build (constraint 4's scope):**
+**The build (constraint 4's scope, extended 2026-08-02 with the four pieces the placeability audit found missing — the capability map showed each exists in Nautilus or nowhere, with no build item):**
 
+- **(autonomous)** The asset→`InstrumentId` map — none exists; every submission needs it.
+- **(autonomous)** Venue-constraint sizing: `ordermin`/`costmin`/lot/tick handling on every intended order, reading the Cache's live instrument definitions — the layer [[T0119]]'s accumulation deltas pass through.
+- **(autonomous)** The restart→reduce-only policy as code, not just runbook prose — §12's gate drills it, nothing implements it yet.
+- **(autonomous)** Fill/fee/rollover ingestion from the executions WS into the journal — the tracking-error report's real-fill leg and [[T0090]]'s recalibration input both read from it.
 - **(autonomous)** Order submission + the order state machine — the executor's core.
 - **(autonomous)** The reconciliation loop: exchange state vs journalled intent, and what it does on divergence.
 - **(autonomous)** The kill-switch, and the conditions that trip it.
