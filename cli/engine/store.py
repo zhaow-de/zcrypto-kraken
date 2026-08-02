@@ -18,24 +18,9 @@ import polars as pl
 from cli.engine.errors import EngineError
 from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
-from cli.ohlc.fetch import fetch_ohlc
+from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 
 logger = get_logger("engine.store")
-
-# The ten EUR-quoted assets of data/ohlc-full, transcribed from the snapshot register
-# (docs/research/01.1.kraken-snapshot-register.md) -- display asset -> Kraken pair key.
-PAIR_KEYS: dict[str, str] = {
-    "BTC": "XXBTZEUR",
-    "ETH": "XETHZEUR",
-    "SOL": "SOLEUR",
-    "XRP": "XXRPZEUR",
-    "ADA": "ADAEUR",
-    "LINK": "LINKEUR",
-    "DOGE": "XDGEUR",
-    "LTC": "XLTCZEUR",
-    "DOT": "DOTEUR",
-    "AVAX": "AVAXEUR",
-}
 
 GRID_INTERVALS = (1440, 240)
 

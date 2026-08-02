@@ -37,22 +37,10 @@ from pathlib import Path
 
 import polars as pl
 
-# The asset -> Kraken REST pair-key mapping's single source of truth. It lives in the engine store
-# only because that was its first consumer, so this import runs against the dependency direction
-# (`cli/engine/store.py` already imports `cli.ohlc.*`). Two consequences, both deliberate:
-#   - Importing the SUBMODULE does not avoid the package: Python executes `cli.engine.__init__`
-#     first, so the concordance/cycle/journal chain loads either way (measured -- an earlier comment
-#     here claimed otherwise and was wrong). It costs nothing in practice because `cli/__main__.py`
-#     already imports `cli.engine.command` unconditionally.
-#   - `cli/ohlc/__init__.py` must therefore NEVER import this module: `cli.engine.store` imports
-#     `cli.ohlc.dataset`, which would re-enter a half-initialised `cli.ohlc` package.
-# Relocating PAIR_KEYS into `cli/ohlc/` is the real fix and is registered as a follow-up; it is not
-# done here because `cli/engine/store.py` feeds the shadow engine currently mid-Stage-6a-gate.
-from cli.engine.store import PAIR_KEYS
 from cli.logging import get_logger
 from cli.ohlc.dataset import dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
-from cli.ohlc.fetch import fetch_ohlc
+from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 
 logger = get_logger("ohlc.reach")
 
