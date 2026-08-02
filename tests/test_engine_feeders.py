@@ -4,7 +4,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+import cli.engine.command as command
+from cli.__main__ import app
+from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
 from cli.engine.feeders import (
     CycleStages,
     _render_accumulation,
@@ -17,7 +21,7 @@ from cli.engine.feeders import (
     replay_stages,
     stage_grosses,
 )
-from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
+from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
 
 
 def test_stage_grosses_sums_absolute_positions():
@@ -432,3 +436,268 @@ def test_load_minimums_against_the_canonical_snapshot():
     assert minimums["ADA"] == (20.0, 0.45)
     assert minimums["ETH"] == (0.001, 0.45)
     assert all(costmin == 0.45 for _, costmin in minimums.values())
+
+
+# --- the two CLI commands ------------------------------------------------------------------------
+
+runner = CliRunner()
+
+CLI_CYCLE_TS = datetime(2026, 8, 1, 8, tzinfo=UTC)
+
+
+def _patch_config(monkeypatch, tmp_path: Path) -> AppConfig:
+    cfg = AppConfig(
+        data_dir=tmp_path / "data",
+        nfs_mount_dir=Path("/mnt/zhao-crypto"),
+        fetch=FetchConfig(),
+        engine=EngineConfig(store_dir=tmp_path / "store", journal_dir=tmp_path / "journal"),
+        data=DataConfig(),
+    )
+    monkeypatch.setattr(command, "load_config", lambda: cfg)
+    return cfg
+
+
+def _write_unreplayable_record(journal_dir: Path, cycle_ts: datetime = CLI_CYCLE_TS) -> Path:
+    """One schema-valid journaled cycle whose snapshot parquet is ABSENT from the journal tree, so
+    the replay fails inside the reader (the partial-rsync failure mode). The command must name and
+    count it, never drop it -- and the path it names is built from the reader's journal root, which
+    is what pins `--journal-dir` to the reader rather than to the configured journal."""
+    h4 = SnapshotEntry(
+        pair="BTC",
+        grid="240",
+        n_bars=3,
+        first_ts=cycle_ts - timedelta(hours=12),
+        last_ts=cycle_ts - timedelta(hours=4),
+        content_hash="0" * 64,
+        path="absent-240.parquet",
+    )
+    daily = SnapshotEntry(
+        pair="BTC",
+        grid="1440",
+        n_bars=3,
+        first_ts=cycle_ts.replace(hour=0) - timedelta(days=3),
+        last_ts=cycle_ts.replace(hour=0) - timedelta(days=1),
+        content_hash="0" * 64,
+        path="absent-1440.parquet",
+    )
+    record = CycleRecord(
+        schema_version=1,
+        cycle_ts=cycle_ts,
+        snapshots=(h4, daily),
+        final_targets={"BTC": 0.1},
+        started_at=cycle_ts,
+        completed_at=cycle_ts + timedelta(minutes=1),
+        code_version="test",
+        builder_path="fast",
+    )
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    path = day_dir / f"cycle-{cycle_ts:%H}.json"
+    path.write_text(to_json(record) + "\n")
+    return path
+
+
+def _strict_json(text: str) -> dict:
+    """Parse as JSON, refusing the non-standard NaN/Infinity tokens `json.dumps` emits by default.
+
+    Python's own parser accepts them, so a plain `json.loads` would pass against exactly the defect
+    this pins -- `parse_constant` is the only way to make the check strict from Python."""
+
+    def reject(token):
+        raise AssertionError(f"non-standard JSON token {token!r} -- this payload is not valid JSON")
+
+    return json.loads(text, parse_constant=reject)
+
+
+def test_decompose_help_states_what_it_measures():
+    result = runner.invoke(app, ["engine", "decompose", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "Attribute each journaled cycle's gross across the pipeline stages." in " ".join(result.output.split())
+
+
+def test_accum_replay_help_states_what_it_measures():
+    result = runner.invoke(app, ["engine", "accum-replay", "--help"])
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "Measure the position drift the venue's order minimums impose at each portfolio size." in normalized
+
+
+def test_decompose_refuses_an_empty_journal(tmp_path, monkeypatch):
+    # An empty table would read as "nothing to see", which is not what an empty journal means.
+    _patch_config(monkeypatch, tmp_path)
+    empty = tmp_path / "empty-journal"
+    empty.mkdir()
+    result = runner.invoke(app, ["engine", "decompose", "--journal-dir", str(empty)])
+    assert result.exit_code != 0, result.output
+    assert "no cycle records found" in result.output
+
+
+def test_accum_replay_refuses_an_empty_journal(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    empty = tmp_path / "empty-journal"
+    empty.mkdir()
+    result = runner.invoke(app, ["engine", "accum-replay", "--journal-dir", str(empty)])
+    assert result.exit_code != 0, result.output
+    # The journal is the primary input: it must be the thing complained about, not the minimums
+    # snapshot that also happens to be absent under this tmp data dir.
+    assert "no cycle records found" in result.output
+
+
+def test_decompose_names_counts_and_fails_on_a_record_that_cannot_replay(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+
+    result = runner.invoke(app, ["engine", "decompose", "--journal-dir", str(journal)])
+
+    out = result.output
+    assert result.exit_code != 0, out  # a silent skip would render an empty table and exit 0
+    assert "failed to replay: 1" in out
+    assert CLI_CYCLE_TS.isoformat() in out  # the cycle is named, not just tallied
+    # The reader resolves snapshot paths under the --journal-dir root: wiring it to the configured
+    # journal_dir instead would name a path under tmp_path/"journal", not this one.
+    assert str(journal / "absent-240.parquet") in " ".join(out.split())
+
+
+def test_decompose_json_is_strictly_valid_and_maps_non_finite_to_null(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+
+    result = runner.invoke(app, ["engine", "decompose", "--journal-dir", str(journal), "--json"])
+
+    assert result.exit_code != 0, result.output
+    payload = _strict_json(result.output)
+    assert payload["n_cycles"] == 0
+    assert payload["n_failed"] == 1
+    assert payload["failures"][0]["cycle_ts"] == CLI_CYCLE_TS.isoformat()
+    # Every median is 0/0 over an empty window: NaN in the payload, `null` on the wire. Asserting
+    # the KEY IS PRESENT and the value is None is the discriminating pair -- a dropped key would
+    # also parse, and `json.dumps`' bare NaN token would parse under Python but not as JSON.
+    assert "cancellation_ratio" in payload["median"]
+    assert payload["median"]["cancellation_ratio"] is None
+
+
+def test_accum_replay_stamps_the_minimums_and_counts_the_failure(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+    snapshot = _write_snapshot(tmp_path, TRAP_UNIVERSE)
+
+    result = runner.invoke(app, ["engine", "accum-replay", "--journal-dir", str(journal), "--minimums", str(snapshot)])
+
+    out = result.output
+    assert result.exit_code != 0, out
+    assert "2026-07-07" in out  # the floors move; the table says when they were read
+    assert "failed to replay: 1" in out
+
+
+def test_accum_replay_json_keys_the_drift_table_by_nav_string(tmp_path, monkeypatch):
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+    snapshot = _write_snapshot(tmp_path, TRAP_UNIVERSE)
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "accum-replay",
+            "--journal-dir",
+            str(journal),
+            "--minimums",
+            str(snapshot),
+            "--nav",
+            "500",
+            "--nav",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0, result.output
+    payload = _strict_json(result.output)
+    # --nav actually threads through: the five-rung default would give a different list entirely.
+    assert payload["navs"] == [500.0, 2500.0]
+    # The float keys are stringified deliberately, in this exact spelling.
+    assert set(payload["by_nav"]) == {"500.0", "2500.0"}
+    # ...and the numeric NAV stays recoverable from the row itself, so a consumer never has to
+    # parse the key back into a float.
+    assert payload["by_nav"]["2500.0"]["nav"] == 2500.0
+    assert payload["by_nav"]["2500.0"]["median_drift_bps"] is None  # NaN over an empty window
+
+
+def test_the_day_window_excludes_a_cycle_outside_it(tmp_path, monkeypatch):
+    # A no-op filter would replay the record and report it; only a filter that actually filters
+    # leaves nothing to report.
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)  # 2026-08-01
+
+    before = runner.invoke(app, ["engine", "decompose", "--journal-dir", str(journal), "--until", "2026-07-31"])
+    assert before.exit_code != 0 and "no cycle records found" in before.output
+
+    after = runner.invoke(app, ["engine", "decompose", "--journal-dir", str(journal), "--since", "2026-08-02"])
+    assert after.exit_code != 0 and "no cycle records found" in after.output
+
+    # The window's own edges are inclusive -- the same day on both sides still selects the cycle.
+    inside = runner.invoke(
+        app, ["engine", "decompose", "--journal-dir", str(journal), "--since", "2026-08-01", "--until", "2026-08-01"]
+    )
+    assert "no cycle records found" not in inside.output
+    assert "failed to replay: 1" in inside.output
+
+
+def test_a_malformed_cycle_record_aborts_instead_of_being_skipped(tmp_path, monkeypatch):
+    # Skipping it would leave a smaller window reported as if it were the whole one.
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    day_dir = journal / "2026-08-01"
+    day_dir.mkdir(parents=True)
+    (day_dir / "cycle-08.json").write_text("{not json")
+
+    result = runner.invoke(app, ["engine", "decompose", "--journal-dir", str(journal)])
+
+    out = " ".join(result.output.split())
+    assert result.exit_code != 0, out
+    assert "unreadable cycle record" in out
+    assert str(day_dir / "cycle-08.json") in out  # named, so it can be repaired
+
+
+def test_accum_replay_aborts_cleanly_on_a_malformed_minimums_file(tmp_path, monkeypatch):
+    # `"ordermin": null` reaches float(None) inside load_minimums. Malformed evidence must come back
+    # as the module's one-line exit, never as a traceback out of an operator-facing command.
+    _patch_config(monkeypatch, tmp_path)
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+    snapshot = _write_snapshot(tmp_path, [{"base": "ETH", "quote": "EUR", "ordermin": None, "costmin": "0.45"}])
+
+    result = runner.invoke(app, ["engine", "accum-replay", "--journal-dir", str(journal), "--minimums", str(snapshot)])
+
+    out = result.output
+    assert result.exit_code != 0, out
+    # SystemExit, not the raw TypeError: an uncaught one would surface as a traceback and this
+    # message would never be printed at all.
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+    assert "could not read the venue order minimums" in out
+    assert "Traceback" not in out
+
+
+def test_accum_replay_defaults_to_the_newest_venue_snapshot(tmp_path, monkeypatch):
+    # Two snapshots under the configured data dir: the command must read the newer one. Picking the
+    # older would quote the drift band off a superseded floor table -- silently, since both parse.
+    cfg = _patch_config(monkeypatch, tmp_path)
+    snapshots_dir = cfg.data_dir / "snapshots"
+    snapshots_dir.mkdir(parents=True)
+    for stamp, fetched_at in (("20260601T000000Z", "2026-06-01T00:00:00+00:00"), ("20260707T032900Z", "2026-07-07T03:29:00+00:00")):
+        (snapshots_dir / f"kraken-refdata-{stamp}.json").write_text(
+            json.dumps({"fetched_at": fetched_at, "universe": TRAP_UNIVERSE})
+        )
+    journal = tmp_path / "pulled-journal"
+    _write_unreplayable_record(journal)
+
+    result = runner.invoke(app, ["engine", "accum-replay", "--journal-dir", str(journal)])
+
+    out = result.output
+    assert "2026-07-07" in out, out
+    assert "2026-06-01" not in out, out
