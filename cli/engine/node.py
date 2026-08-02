@@ -142,13 +142,19 @@ class ShadowStrategy(Strategy):
 def _node_config(config: EngineConfig) -> TradingNodeConfig:
     """The iter-079-verified adapter configuration: instrument provider load_all, and -- only when
     exec_enabled -- the exec client with MARGIN spot account reporting in ZEUR (the trade key is
-    IP-bound to the VPS, so local runs are keyless)."""
+    IP-bound to the VPS, so local runs are keyless). Positions are reported for the EUR-quoted
+    instruments the book trades; margin summary figures are denominated in EUR."""
     exec_clients = {}
     if config.exec_enabled:
         exec_clients[KRAKEN] = KrakenExecClientConfig(
             instrument_provider=InstrumentProviderConfig(load_all=True),
             spot_account_type=AccountType.MARGIN,
             margin_balance_asset="ZEUR",
+            # Two different currency vocabularies, deliberately: margin_balance_asset is Kraken's
+            # own TradeBalance asset code (ZEUR), while this one is matched against the NAUTILUS
+            # instrument's quote currency code, which the adapter normalizes ZEUR -> EUR. The
+            # adapter default is "USDT", which matches no instrument in a EUR-quoted book.
+            spot_positions_quote_currency="EUR",
         )
     return TradingNodeConfig(
         trader_id=_TRADER_ID,
