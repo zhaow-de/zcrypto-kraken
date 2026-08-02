@@ -432,6 +432,16 @@ def accumulation_payload(stages: list[CycleStages], minimums: dict[str, tuple[fl
                 target = (weight * nav) / close
                 delta = target - held_qty[a]
                 ordermin_base, costmin = minimums[a]
+                # Two caveats for anyone reusing this as EXECUTION logic rather than as a
+                # measurement (the executor's delta formula is the intended reader):
+                #   - these `>=` comparisons are float-exact, so a delta landing precisely on a
+                #     floor is representation-dependent. Harmless when measuring over journaled
+                #     data, where deltas never sit exactly on a floor; not harmless when a venue
+                #     is about to reject or accept the order on that same boundary.
+                #   - an asset key-absent from a later cycle's `final` would freeze its held_qty
+                #     and stop contributing drift. Unreachable here (every journaled cycle carries
+                #     the full universe, and weight-0.0 liquidation is handled correctly), but a
+                #     live book whose universe shrinks mid-run would hit it.
                 if abs(delta) >= ordermin_base and abs(delta) * close >= costmin:
                     held_qty[a] = target  # full fill at the journaled close
                     placed = True
