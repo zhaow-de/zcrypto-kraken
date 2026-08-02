@@ -292,11 +292,13 @@ def test_node_config_mirrors_iter_079_probe_shape(tmp_path):
     assert exec_config.instrument_provider.load_all is True
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
-    # The book is EUR-quoted. This is matched against the Nautilus instrument's quote currency
-    # code (ZEUR normalized to EUR), NOT Kraken's raw asset code -- and the adapter's own default
-    # is "USDT", which matches nothing here. Pinned so an upstream default change cannot silently
-    # empty spot position reporting.
-    assert exec_config.spot_positions_quote_currency == "EUR"
+    # Matched literally against the loaded instrument's `quote_currency.code`. Measured against the
+    # live public Kraken spot instrument set (1592 instruments): 546 carry code "ZEUR" and ZERO
+    # carry "EUR" -- BTC/EUR.KRAKEN, ETH/EUR.KRAKEN, ADA/EUR.KRAKEN et al all report "ZEUR", since
+    # only the instrument ID is normalized, not the quote Currency. So "EUR" would match nothing,
+    # as would the adapter's own "USDT" default. Pinned so neither an upstream default change nor
+    # a plausible-looking "EUR" correction can silently empty spot position reporting.
+    assert exec_config.spot_positions_quote_currency == "ZEUR"
 
 
 def test_node_config_has_no_exec_client_by_default(tmp_path):

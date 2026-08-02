@@ -142,19 +142,26 @@ class ShadowStrategy(Strategy):
 def _node_config(config: EngineConfig) -> TradingNodeConfig:
     """The iter-079-verified adapter configuration: instrument provider load_all, and -- only when
     exec_enabled -- the exec client with MARGIN spot account reporting in ZEUR (the trade key is
-    IP-bound to the VPS, so local runs are keyless). Positions are reported for the EUR-quoted
-    instruments the book trades; margin summary figures are denominated in EUR."""
+    IP-bound to the VPS, so local runs are keyless). Both currency fields read ZEUR: margin summary
+    figures are denominated in it, and spot position reports cover the ZEUR-quoted instruments."""
     exec_clients = {}
     if config.exec_enabled:
         exec_clients[KRAKEN] = KrakenExecClientConfig(
             instrument_provider=InstrumentProviderConfig(load_all=True),
             spot_account_type=AccountType.MARGIN,
             margin_balance_asset="ZEUR",
-            # Two different currency vocabularies, deliberately: margin_balance_asset is Kraken's
-            # own TradeBalance asset code (ZEUR), while this one is matched against the NAUTILUS
-            # instrument's quote currency code, which the adapter normalizes ZEUR -> EUR. The
-            # adapter default is "USDT", which matches no instrument in a EUR-quoted book.
-            spot_positions_quote_currency="EUR",
+            # Matched literally against the loaded instrument's `quote_currency.code`, which for
+            # every EUR pair is "ZEUR" -- Kraken's AssetPairs returns quote "ZEUR" for modern
+            # (ADAEUR) and legacy (XETHZEUR) alike, and the code survives into the Currency object
+            # unchanged. Measured against the live public instrument set: 546 instruments carry
+            # code ZEUR and ZERO carry EUR. Only the instrument ID is normalized (ADA/EUR.KRAKEN),
+            # and that ID-vs-Currency split is the trap -- "EUR" here would match nothing, as would
+            # the adapter's own "USDT" default.
+            # One quote currency only: our ETH/BTC and SOL/BTC pairs quote in XXBT (31 instruments
+            # do), so this field can never cover them alongside the EUR book.
+            # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
+            # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
+            spot_positions_quote_currency="ZEUR",
         )
     return TradingNodeConfig(
         trader_id=_TRADER_ID,
