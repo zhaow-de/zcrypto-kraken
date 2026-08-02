@@ -6,6 +6,7 @@ assertion is not verification (`.claude/rules/agent-ops.md`).
 
 import datetime as dt
 import importlib.util
+import random
 import re
 import sys
 from pathlib import Path
@@ -402,3 +403,203 @@ def test_the_thin_stream_false_green_is_now_a_refusal_not_a_zero(tmp_path, capsy
     assert "*** FAIL *** (unmeasured streams: 1)" in out
     assert rc == 0
     assert "TOTAL" not in out, "no measured stream may produce a TOTAL row -- not even a comfortable one"
+
+
+# --- T0112 / spec 00079: the tail-steepness gate -------------------------------------------------
+#
+# MIN_POOL closes the k=1 case only. At k >= 2 same-scale outages the pool clears the bound, p99.99
+# lands ON an outage, and the derived threshold inflates to 10x it -- the instrument then books
+# 0.0 s over genuinely missing data, which is the false GREEN the whole script exists to prevent.
+
+
+def _bursty(n: int, rng: random.Random) -> list[float]:
+    """T0097's measured spacing shape: same-millisecond bursts, so the pool's median is 0.
+
+    This is the shape that already refuted any median-based statistic, and it is what makes the
+    RATIO_FLOOR_S denominator floor necessary rather than cosmetic.
+    """
+    out: list[float] = []
+    while len(out) < n:
+        b = rng.randint(1, 12)
+        out.extend([0.0] * (b - 1))
+        out.append(rng.expovariate(1 / 0.35))
+    return out[:n]
+
+
+def _bimodal(n: int, rng: random.Random) -> list[float]:
+    """A legitimately two-scale venue: 90 % of updates ~0.05 s apart, 10 % ~2 s apart."""
+    return [rng.expovariate(1 / 0.05) if rng.random() < 0.9 else rng.expovariate(1 / 2.0) for _ in range(n)]
+
+
+def test_founding_defect_k2_is_refused():
+    """Pool-level half of the founding defect: n=11,389 with two 200 s outages.
+
+    The OLD derivation yields thresh = 10 x p99.99 = 2,000.0 from this exact pool, because p99.99
+    lands ON the second outage. Measured here: r1 = 100.83, r2 = 2.05 -- an order of magnitude past
+    the cut, two orders past the 1.05-1.96 the twelve production streams measure.
+
+    The report-level reproduction uses the CARVED fixture in
+    `test_report_renders_contaminated_stream_unmeasured`, NOT this pool: a `_bursty` pool spans only
+    ~17 min of wall time, so through `report()` the old code books the edge_tail and the
+    0.0-booked defect does not reproduce with it.
+    """
+    rng = random.Random(11)  # pinned: verified to satisfy the assertion below
+    pool = pl.Series(_bursty(11_387, rng) + [200.0, 200.0])
+    assert len(pool) == 11_389
+    r1, r2 = continuity.tail_steepness(pool)
+    assert max(r1, r2) >= continuity.TAIL_RATIO_CUT  # the gate condition itself
+
+
+def test_second_ratio_is_load_bearing():
+    """k ~= 0.002*n: p99.99 AND p99.9 both land on outages, so the FIRST ratio reads exactly 1.0 and
+    sees nothing. Only p99.9/p99 still spans the cliff. Measured: r1 = 1.0, r2 = 193.66.
+
+    Dropping the second ratio must fail exactly this test; swapping the tuple's order must fail it
+    too, because the swapped r1 = 193.66 breaks the `r1 < cut` half.
+    """
+    rng = random.Random(12)  # pinned: verified to satisfy both assertions below
+    n, k = 11_389, 23
+    pool = pl.Series(_bursty(n - k, rng) + [200.0] * k)
+    assert len(pool) == n
+    r1, r2 = continuity.tail_steepness(pool)
+    assert r1 < continuity.TAIL_RATIO_CUT
+    assert r2 >= continuity.TAIL_RATIO_CUT
+
+
+def test_legitimate_heavy_tails_stay_measured():
+    """No false positives on legitimate spacing shapes.
+
+    bursty-typical and bimodal are seed-INDEPENDENT properties -- swept over 200 seeds while writing
+    this test they measured 1.661-2.042 and 1.813-2.267 respectively, every seed under the cut, so
+    they are asserted generally over a sample of seeds rather than pinned.
+
+    pareto alpha=1.1 and lognormal sigma=3 are PINNED to named seeds verified below the cut, because
+    these families straddle it BY CONSTRUCTION: the cut IS the per-decade quantile ratio of a Pareto
+    tail at alpha=1, the infinite-mean boundary, and alpha=1.1's theoretical ratio is 10^(1/1.1) =
+    8.1. Swept over 200 seeds, 26 % (pareto) and 45 % (lognormal) of draws exceed the cut -- an
+    unpinned seed here is a lottery that fails HEALTHY code, not a regression signal. Seeds 78 and
+    117 are the widest-margin draws found in that sweep (4.93 and 6.65).
+    """
+    for seed in range(10):
+        for name, sample in (
+            ("bursty-typical", _bursty(20_000, random.Random(seed))),
+            ("bimodal", _bimodal(20_000, random.Random(seed))),
+        ):
+            assert max(continuity.tail_steepness(pl.Series(sample))) < continuity.TAIL_RATIO_CUT, (name, seed)
+
+    rng = random.Random(78)
+    assert max(continuity.tail_steepness(pl.Series([rng.paretovariate(1.1) for _ in range(20_000)]))) < continuity.TAIL_RATIO_CUT
+    rng = random.Random(117)
+    assert max(continuity.tail_steepness(pl.Series([rng.lognormvariate(0, 3) for _ in range(20_000)]))) < continuity.TAIL_RATIO_CUT
+
+
+def test_floor_keeps_ultra_bursty_measured_and_catches_its_outages():
+    """Both arms exercise RATIO_FLOOR_S as the DENOMINATOR.
+
+    An ultra-bursty pool has p99.9 = 0 exactly (same-millisecond bursts), so an unfloored ratio
+    would divide by zero and refuse a healthy stream. The floor is not a new magic number: it is
+    5.0 / 10, the spacing scale below which the existing threshold floor already declares steepness
+    irrelevant. Its deliberate consequence is the second arm -- a sub-millisecond stream with two
+    200 s pauses IS refused, and should be, since the alternative was scoring it against a 2,000 s
+    threshold.
+
+    (Note the max is 200 s in BOTH arms of the contaminated case by construction: a pool with a
+    single 200 s max cannot be reached by p99.99 above MIN_POOL -- that is MIN_POOL's own design,
+    so the refusable case needs two.)
+    """
+    benign = pl.Series([0.0] * 11_378 + [2.0] * 11)  # p99.9 = 0, p99.99 = 2.0
+    r1, _ = continuity.tail_steepness(benign)
+    assert r1 == 2.0 / continuity.RATIO_FLOOR_S == 4.0  # floored, not a ZeroDivisionError
+    assert r1 < continuity.TAIL_RATIO_CUT  # ... and measured
+
+    dirty = pl.Series([0.0] * 11_387 + [200.0] * 2)  # p99.99 lands on an outage
+    r1, _ = continuity.tail_steepness(dirty)
+    assert r1 == 200.0 / continuity.RATIO_FLOOR_S == 400.0
+    assert r1 >= continuity.TAIL_RATIO_CUT  # refused
+
+
+def test_boundary_n_5002_clean_stays_measured():
+    """A pool of exactly MIN_POOL with a clean tail passes BOTH gates independently -- the two gates
+    are conjunctive, so the new one must not silently re-refuse what the bound just admitted.
+    Measured on this seed: r1 = 1.20, r2 = 2.00.
+    """
+    pool = pl.Series(_bursty(continuity.MIN_POOL, random.Random(0)))  # pinned seed, verified below the cut
+    assert len(pool) == continuity.MIN_POOL == 5002
+    r1, r2 = continuity.tail_steepness(pool)
+    assert r1 < continuity.TAIL_RATIO_CUT
+    assert r2 < continuity.TAIL_RATIO_CUT
+
+
+def _full_hour(h: dt.datetime, step: float) -> list[dt.datetime]:
+    n = int(3600 / step)
+    return [h + dt.timedelta(seconds=j * step) for j in range(n)]
+
+
+def _full_hour_carved(h: dt.datetime, step: float, windows: list[tuple[float, float]]) -> list[dt.datetime]:
+    """`full_hour_with_gap`'s idiom, generalised to more than one carved window: drop the offsets
+    inside each window from an otherwise FULL hour, so the only anomaly is the window itself and no
+    unbooked tail hole is left behind (the trap
+    `test_identical_outage_counts_the_same_on_dense_and_slow_streams` documents)."""
+    n = int(3600 / step)
+    offsets = [j * step for j in range(n) if not any(a <= j * step < a + length for a, length in windows)]
+    return [h + dt.timedelta(seconds=o) for o in offsets]
+
+
+def test_report_renders_contaminated_stream_unmeasured(tmp_path, capsys):
+    """End-to-end wiring pin for the gate -- every pool-level test above passes with
+    `tail_steepness` implemented but never wired into `measured`, so this test is what stands
+    between that and shipping.
+
+    The CARVED fixture: two hours at 0.6 s spacing, with two 200 s windows carved out of hour 0.
+    One window is offset-aligned and one is not, so the two holes measure 201.0 s and 200.4 s.
+
+    Reproduced against the CURRENT (pre-fix) code before this test was written: n = 11,332 (well
+    past MIN_POOL), the pool's two largest intervals are 201.0 and 200.4, `quantile(0.9999)` lands
+    on the SECOND-largest (index round(0.9999 x 11,331) = 11,330), so thresh_s derives to
+    2,004.0 -- ten times the outage that produced it. Nothing then exceeds it: intra booked 0.0,
+    gap_s 0.0, `gap% 0.0000%`, `EXIT BAR (<0.1% gap time): PASS`. The old instrument certifies a
+    stream missing 401.4 s of data as perfectly clean.
+
+    The control below (`test_single_carve_control_stays_measured_and_books_the_outage`) is the same
+    geometry with ONE window: n = 11,666, p99.99 = 0.6, thresh_s = 6.0, and the 200.4 s hole is
+    booked in full -- so the refusal here is caused by the contamination, not by the fixture shape.
+
+    Five assertions, jointly the wiring proof. (e) matters as much as the rest: without it a fixture
+    that accidentally landed under MIN_POOL would pass by refusing for the WRONG reason.
+    """
+    write_stream(
+        tmp_path,
+        "AAA/EUR",
+        {
+            H0: _full_hour_carved(H0, 0.6, [(1000.0, 200.0), (2400.0, 200.0)]),
+            H1: _full_hour(H1, 0.6),
+        },
+    )
+    rc, out = _run(tmp_path, capsys)
+    assert rc == 0
+    # (a) the refusal is NOT the old MIN_POOL gate -- the pool is more than twice the bound.
+    assert int(_column(out, "AAA/EUR", "n")) == 11_332 >= continuity.MIN_POOL
+    # (b) it is refused rather than scored against the self-inflated 2,004.0.
+    assert _column(out, "AAA/EUR", "thresh_s") == "UNMEASURED"
+    # (c) and the refusal reaches the verdict instead of being skipped.
+    assert "*** FAIL *** (unmeasured streams: 1)" in out
+    # (d) the operator is told WHICH refusal this is ...
+    assert "steepens more than 10x across a decade of quantiles" in out
+    # (e) ... and it is not the under-bound one.
+    assert f"under the {continuity.MIN_POOL}-interval bound" not in out
+
+
+def test_single_carve_control_stays_measured_and_books_the_outage(tmp_path, capsys):
+    """The k=1 control on the CARVED fixture's exact geometry: one 200 s window, so p99.99 stays in
+    the bulk at 0.6 s, thresh_s derives to 6.0, and the hole is booked in full at 200.4 s. This is
+    what proves the gate refuses CONTAMINATION rather than the fixture's shape -- and it is the
+    regime MIN_POOL was already sized for.
+    """
+    write_stream(
+        tmp_path,
+        "AAA/EUR",
+        {H0: _full_hour_carved(H0, 0.6, [(1000.0, 200.0)]), H1: _full_hour(H1, 0.6)},
+    )
+    _, out = _run(tmp_path, capsys)
+    assert float(_column(out, "AAA/EUR", "thresh_s")) == pytest.approx(6.0)
+    assert float(_column(out, "AAA/EUR", "gap_s")) == pytest.approx(200.4, abs=0.05)
