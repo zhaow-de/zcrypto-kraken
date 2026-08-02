@@ -19,12 +19,12 @@ from cli.engine.errors import EngineError
 from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
+from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 
 logger = get_logger("engine.store")
 
 GRID_INTERVALS = (1440, 240)
 
-_SEED_MIN_OVERLAP = 6
 _REFRESH_MIN_OVERLAP = 1
 
 
@@ -67,13 +67,6 @@ def _store_path(root: Path, asset: str, interval: int) -> Path:
     return root / asset / "EUR" / f"{interval}.parquet"
 
 
-def _drop_in_progress(frame: pl.DataFrame, interval: int, now: datetime) -> pl.DataFrame:
-    """Drop any row whose interval end (stamp + interval minutes) lies after `now` -- Kraken's OHLC
-    response always includes the currently-forming candle as its last row. A row ending exactly at
-    `now` is kept."""
-    return frame.filter((pl.col("ts") + pl.duration(minutes=interval)) <= now)
-
-
 def _reconcile(
     store_frame: pl.DataFrame,
     rest_frame: pl.DataFrame,
@@ -97,16 +90,16 @@ def _reconcile(
 
     `merged_frame` keeps every store row whose `ts` isn't a replaced mismatch, swaps in the REST
     row for each replaced mismatch, and appends REST rows whose `ts` isn't in the store at all.
+
+    Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy -- a safety fix here likely applies there too.
     """
-    shared = store_frame.join(rest_frame, on="ts", how="inner", suffix="_rest")
-    overlap_bars = shared.height
+    overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
     if overlap_bars < min_overlap:
         raise EngineError(
             f"{fn_name}: window shortfall for {pair}@{interval} — only {overlap_bars} shared stamp(s) between "
             f"the store tail and the REST fetch (need >= {min_overlap}); {shortfall_hint}"
         )
 
-    mismatches = shared.filter(pl.col("close") != pl.col("close_rest"))
     if mismatches.height and not allow_replace:
         stamp = mismatches["ts"][0]
         raise EngineError(
@@ -151,7 +144,7 @@ def seed_store(
                 write_parquet(read_parquet(canonical_path), store_path)
 
             store_frame = read_parquet(store_path)
-            rest_frame = _drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+            rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             overlap_bars, replaced, merged = _reconcile(
                 store_frame,
@@ -159,7 +152,7 @@ def seed_store(
                 fn_name="seed_store",
                 pair=pair,
                 interval=interval,
-                min_overlap=_SEED_MIN_OVERLAP,
+                min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
                 shortfall_hint="REST window no longer reaches the tail — use the quarterly OHLCVT dump",
                 mismatch_hint="this is a fresh canonical copy, so a disagreement with REST is a data-integrity error",
@@ -201,7 +194,7 @@ def refresh_store(
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
             store_frame = read_parquet(store_path)
-            rest_frame = _drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+            rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             _, _, merged = _reconcile(
                 store_frame,
