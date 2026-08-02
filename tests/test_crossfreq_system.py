@@ -123,9 +123,10 @@ def base_build(grids220):
 def test_end_to_end_shapes_and_identities(base_build, grids220):
     # The synthetic mini-grid end-to-end: shapes, the hand-checkable day_index structure, and an
     # independent recomputation of every layer downstream of the sleeves (fixed 1/3 combine ->
-    # caps -> costing -> governor -> targets) compared exactly against the builder's output.
+    # caps -> whole-book limits -> costing -> governor -> targets) compared exactly against the
+    # builder's output.
     from cli.portfolio import daily_cadence_governor
-    from cli.risk import apply_position_caps
+    from cli.risk import apply_gross_leverage_cap, apply_margin_floor, apply_net_exposure_band, apply_position_caps
 
     d_prices, d_ts, h_prices, h_ts = grids220
     res = base_build
@@ -161,13 +162,14 @@ def test_end_to_end_shapes_and_identities(base_build, grids220):
         for a in assets
     }
     capped = apply_position_caps(combined, long_cap=0.20, short_cap=0.10)
+    limited = apply_margin_floor(apply_net_exposure_band(apply_gross_leverage_cap(capped)))
     rets = {a: [h_prices[a][k + 1] / h_prices[a][k] - 1 for k in range(n)] for a in assets}
     noc = []
     prev = dict.fromkeys(assets, 0.0)
     for k in range(n):
         gross, turnover = 0.0, 0.0
         for a in assets:
-            p = capped[a][k]
+            p = limited[a][k]
             gross += p * rets[a][k]
             turnover += abs(p - prev[a])
             prev[a] = p
@@ -177,7 +179,11 @@ def test_end_to_end_shapes_and_identities(base_build, grids220):
     assert mult == res.multipliers
     assert [mult[k] * noc[k] for k in range(n)] == res.governed_net
     for a in assets:
-        assert [mult[k] * capped[a][k] for k in range(n + 1)] == res.final_targets[a]
+        assert [mult[k] * limited[a][k] for k in range(n + 1)] == res.final_targets[a]
+    # On CFG2's two assets at 20%/10% no whole-book limit can bind (gross <= 0.40 < 1.50, net in
+    # [-0.20, +0.40], margin level >= 2.5), so the limits are bit-identity here — the property the
+    # journal replay depends on.
+    assert limited == capped
     assert res.cap_breach_bars == sum(1 for k in range(n) if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets))
     assert res.governor_engaged_bars == sum(1 for m in mult[:n] if m < 1.0)
 
@@ -242,6 +248,60 @@ def test_newest_row_dummy_close_insensitivity(base_build, monkeypatch):
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(220)
     perturbed = build_crossfreq_system(d_prices, d_ts, h_prices, h_ts, config=CFG2)
     assert perturbed == base_build
+
+
+def test_whole_book_limits_composition_bites_and_clears_every_ceiling():
+    # The §10 stack itself (order + defaults), on a hand-built book the builder's long-only shadow
+    # book never reaches: bar 0 breaches gross leverage (2.1 > 1.5) and then the margin floor,
+    # bar 1 breaches the net band (1.4 > 1.0). Guards against the wiring being inert code.
+    from cli.portfolio.crossfreq_system import _apply_whole_book_limits
+    from cli.risk import apply_gross_leverage_cap, apply_margin_floor, apply_net_exposure_band, margin_level
+
+    book = {"BTC": [1.2, 1.4], "ETH": [-0.9, 0.0]}
+    out = _apply_whole_book_limits(book)
+    assert out == apply_margin_floor(apply_net_exposure_band(apply_gross_leverage_cap(book)))
+    assert out != book  # it bites
+    for k in (0, 1):
+        bar = {a: out[a][k] for a in out}
+        assert sum(abs(v) for v in bar.values()) <= 1.5 + 1e-12  # gross leverage soft cap
+        assert -0.5 - 1e-12 <= sum(bar.values()) <= 1.0 + 1e-12  # net exposure band
+        assert margin_level(bar) >= 2.5 - 1e-12  # margin floor
+    # an unbreached book comes back bit-identical (the verdict-neutrality the journal replay needs)
+    quiet = {"BTC": [0.2, 0.05], "ETH": [-0.1, 0.02]}
+    assert _apply_whole_book_limits(quiet) == quiet
+
+
+@pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
+def test_whole_book_limits_are_wired_between_caps_and_the_governor(grids220, builder, monkeypatch):
+    # The wiring itself: the limit stack receives the per-asset-capped book and its OUTPUT is what
+    # the governor multiplies into final_targets. A stack returning a visibly different book must
+    # move final_targets, or the call would be decorative.
+    import cli.portfolio.crossfreq_system as mod
+    from cli.risk import apply_position_caps
+
+    seen = []
+
+    def halve(capped):
+        seen.append({a: list(s) for a, s in capped.items()})
+        return {a: [0.5 * p for p in s] for a, s in capped.items()}
+
+    monkeypatch.setattr(mod, "_apply_whole_book_limits", halve)
+    res = builder(*grids220, config=CFG2)
+    assert len(seen) == 1
+
+    third = 1 / 3
+    combined = {
+        a: [
+            third * res.sleeve_positions["B"][a][k]
+            + third * res.sleeve_positions["A1"][a][k]
+            + third * res.sleeve_positions["A2"][a][k]
+            for k in range(res.n_periods + 1)
+        ]
+        for a in CFG2.assets
+    }
+    assert seen[0] == apply_position_caps(combined, long_cap=CFG2.long_cap, short_cap=CFG2.short_cap)
+    for a in CFG2.assets:
+        assert res.final_targets[a] == [res.multipliers[k] * 0.5 * seen[0][a][k] for k in range(res.n_periods + 1)]
 
 
 def assert_results_equivalent(fast: CrossfreqSystemResult, verified: CrossfreqSystemResult, tol: float = 1e-12):

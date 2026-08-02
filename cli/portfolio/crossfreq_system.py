@@ -14,8 +14,9 @@ vol target 0.10/sqrt(365) lookback 30 on the raw basket, gate applied after -> i
 weights); A1 sleeve = A1-lf weekly v0.12 7-offset-mean positions; both expanded to the 4h calendar
 via expand_daily_positions with close-time-shifted boundaries (daily_ts+1d, h4_ts+4h); A2 sleeve =
 equal-weight per-asset mean of the three adopted arms; fixed 1/3 combination -> per-asset caps
-20%/10% -> net-of-cost at 0.006/side -> daily-cadence governor on dense present-day ranks of
-date(h4_ts[k+1]). All turnover loops start from a flat book (prev = 0.0; bar 0 charged full entry).
+20%/10% -> the §10 whole-book limits (see _apply_whole_book_limits) -> net-of-cost at 0.006/side ->
+daily-cadence governor on dense present-day ranks of date(h4_ts[k+1]). All turnover loops start
+from a flat book (prev = 0.0; bar 0 charged full entry).
 
 The newest-row contract (the row the engine trades): a synthetic next boundary + dummy close is
 appended to EACH grid before construction, so every sleeve yields one extra position row — the
@@ -56,7 +57,13 @@ from cli.benchmark.strategies import dynamic_inverse_vol_basket, sma_gate, vol_t
 from cli.portfolio.builder import CombinedSystemConfig, build_combined_system
 from cli.portfolio.crossfreq import daily_cadence_governor, expand_daily_positions
 from cli.portfolio.errors import PortfolioError
-from cli.risk import GovernorConfig, apply_position_caps
+from cli.risk import (
+    GovernorConfig,
+    apply_gross_leverage_cap,
+    apply_margin_floor,
+    apply_net_exposure_band,
+    apply_position_caps,
+)
 
 # Fixed record-44 constants — not knobs (a future adopted record revises the builder under its own
 # trial discipline).
@@ -182,6 +189,21 @@ def _block_start(k: int, offset: int) -> int:
     return 0 if k < offset else offset + _A1_CADENCE * ((k - offset) // _A1_CADENCE)
 
 
+def _apply_whole_book_limits(capped: dict[str, list[float]]) -> dict[str, list[float]]:
+    """The §10 whole-book ceilings on the already per-asset-capped book, at their §10 defaults.
+
+    Order: per-asset caps (the caller's) -> gross leverage -> net exposure band -> margin floor, and
+    the whole stack sits INSIDE the governor. The governor is a pure returns overlay by design, so
+    clamping after it would silently re-scale the multiplier's own effect; per-asset shaping runs
+    first, then the whole-book ceilings apply to the shaped book. The §10 constants are fixed here
+    rather than exposed as config, like every other record-44 parameter.
+
+    Verdict-neutral on any book that breaches none of them: each limit copies its input and only
+    touches the bars it scales, so an unbreached book comes back bit-identical.
+    """
+    return apply_margin_floor(apply_net_exposure_band(apply_gross_leverage_cap(capped)))
+
+
 def build_crossfreq_system(
     daily_prices: dict[str, list[float | None]],
     daily_ts: list[datetime],
@@ -282,18 +304,19 @@ def build_crossfreq_system(
     b_h = expand_daily_positions(b_daily, d_close, h_close)
     a1_h = expand_daily_positions(a1_daily, d_close, h_close)
 
-    # ---- fixed 1/3 combination -> caps -> net-of-cost (completed bars) -> governor ----
+    # ---- fixed 1/3 combination -> caps -> §10 whole-book limits -> net-of-cost (completed bars) -> governor ----
     third = 1 / 3
     combined = {a: [third * b_h[a][k] + third * a1_h[a][k] + third * a2_h[a][k] for k in range(n_rows_h)] for a in c.assets}
     capped = apply_position_caps(combined, long_cap=c.long_cap, short_cap=c.short_cap)
     cap_breach_bars = sum(1 for k in range(n_periods) if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in c.assets))
+    limited = _apply_whole_book_limits(capped)
 
     noc: list[float] = []
     prev = dict.fromkeys(c.assets, 0.0)
     for k in range(n_periods):
         gross, turnover = 0.0, 0.0
         for a in c.assets:
-            p = capped[a][k]
+            p = limited[a][k]
             gross += p * ret_h[a][k]
             turnover += abs(p - prev[a])
             prev[a] = p
@@ -308,7 +331,7 @@ def build_crossfreq_system(
     multipliers = daily_cadence_governor(noc + [0.0], day_index, config=c.governor)
     governed_net = [multipliers[k] * noc[k] for k in range(n_periods)]
     governor_engaged_bars = sum(1 for m in multipliers[:n_periods] if m < 1.0)
-    final_targets = {a: [multipliers[k] * capped[a][k] for k in range(n_rows_h)] for a in c.assets}
+    final_targets = {a: [multipliers[k] * limited[a][k] for k in range(n_rows_h)] for a in c.assets}
 
     return CrossfreqSystemResult(
         final_targets=final_targets,
@@ -593,7 +616,7 @@ def build_crossfreq_system_fast(
     accumulation feeding a threshold keeps the verified path's summation order. Repeated work is
     shared across the A2 arms, and the B sleeve's internal QA comparator (redundant given the
     equivalence gate) is not re-run. Everything downstream of the sleeves (combination, caps,
-    costing, governor, targets) is the verified code verbatim.
+    whole-book limits, costing, governor, targets) is the verified code verbatim.
 
     Measured on the full frozen history (2026-07-10): verified 111.5 s, fast 1.9 s (~58x).
     Production replay policy (spec 00040): engine cycles run this path; at least one cycle per day
@@ -634,13 +657,14 @@ def build_crossfreq_system_fast(
     combined = {a: [third * b_h[a][k] + third * a1_h[a][k] + third * a2_h[a][k] for k in range(n_rows_h)] for a in c.assets}
     capped = apply_position_caps(combined, long_cap=c.long_cap, short_cap=c.short_cap)
     cap_breach_bars = sum(1 for k in range(n_periods) if any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in c.assets))
+    limited = _apply_whole_book_limits(capped)
 
     noc: list[float] = []
     prev = dict.fromkeys(c.assets, 0.0)
     for k in range(n_periods):
         gross, turnover = 0.0, 0.0
         for a in c.assets:
-            p = capped[a][k]
+            p = limited[a][k]
             gross += p * ret_h[a][k]
             turnover += abs(p - prev[a])
             prev[a] = p
@@ -652,7 +676,7 @@ def build_crossfreq_system_fast(
     multipliers = daily_cadence_governor(noc + [0.0], day_index, config=c.governor)
     governed_net = [multipliers[k] * noc[k] for k in range(n_periods)]
     governor_engaged_bars = sum(1 for m in multipliers[:n_periods] if m < 1.0)
-    final_targets = {a: [multipliers[k] * capped[a][k] for k in range(n_rows_h)] for a in c.assets}
+    final_targets = {a: [multipliers[k] * limited[a][k] for k in range(n_rows_h)] for a in c.assets}
 
     return CrossfreqSystemResult(
         final_targets=final_targets,
