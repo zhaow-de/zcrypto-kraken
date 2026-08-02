@@ -94,7 +94,11 @@ def test_canonical_report_all_unmeasured_prints_no_exit_bar_verdict(tmp_path, ca
     already exercises (that test's canonical view always contains a dense stream, so `totals` is
     never empty there -- it never reaches this second site at all). A canonical/overlay report must
     never print a verdict through EITHER site, even when every stream in it is unmeasured and the
-    informational "no measurable segments" line still prints.
+    informational `unmeasured: N stream(s) ...` reason line still prints.
+
+    That reason line is why `"unmeasured streams" not in out` is asserted as the exact two-word
+    phrase and not just `"unmeasured"`: the reason line legitimately carries the single word, while
+    `unmeasured streams` appears ONLY in the exit-bar verdict this report must never emit.
 
     Calls `report()` directly (not `main()`) with `show_exit_bar=False` on a single sparse THIN/EUR
     stream (120 rows in one hour, far under MIN_POOL) -- exactly the shape `--overlay` produces for
@@ -108,7 +112,7 @@ def test_canonical_report_all_unmeasured_prints_no_exit_bar_verdict(tmp_path, ca
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert "no measurable segments" in out  # the informational line still prints
+    assert "unmeasured: 1 stream(s)" in out  # the informational reason line still prints
     assert "EXIT BAR" not in out
     assert "FAIL" not in out
     assert "unmeasured streams" not in out
@@ -158,9 +162,15 @@ def _column(out: str, prefix: str, field: str) -> str:
     after the first blank one onto the wrong index instead of reading it as blank. Every column is
     right-justified to a fixed width behind a single-space separator, so a field's cell always ENDS at
     the same character offset as its header token, whether the cell holds a value or is blank; the
-    cell STARTS just after the preceding header token ends."""
+    cell STARTS just after the preceding header token ends.
+
+    The header row is located by its `pair` prefix, NOT by "the first line containing `field`": the
+    column names are ordinary words that also occur in the post-table reason notes ("... whose
+    spacing **tail** steepens ..."), and a `field in line` lookup silently falls through to a note
+    once the column it names is gone -- measured, `_column(out, "TOTAL", "tail")` then returns `''`
+    and a blank-cell assertion PASSES against a table with no `tail` column at all."""
     lines = out.splitlines()
-    header = next(line for line in lines if field in line)
+    header = next(line for line in lines if line.startswith("pair"))
     row = next(line for line in lines if line.startswith(prefix))
     tokens = list(re.finditer(r"\S+", header))
     idx = next(i for i, m in enumerate(tokens) if m.group() == field)

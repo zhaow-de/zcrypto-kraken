@@ -141,9 +141,15 @@ def _column(out: str, prefix: str, field: str) -> str:
     behind a single-space separator, so a field's cell always ENDS at the same character offset as its
     header token, whether the cell holds a value or is blank; the cell STARTS just after the preceding
     header token ends. Doubly load-bearing here, where rows also carry a trailing ` genesis` marker
-    that would shift every negative index too."""
+    that would shift every negative index too.
+
+    The header row is located by its `pair` prefix, NOT by "the first line containing `field`": the
+    column names are ordinary words that also occur in the post-table reason notes ("... whose
+    spacing **tail** steepens ..."), and a `field in line` lookup silently falls through to a note
+    once the column it names is gone -- measured, `_column(out, "TOTAL", "tail")` then returns `''`
+    and a blank-cell assertion PASSES against a table with no `tail` column at all."""
     lines = out.splitlines()
-    header = next(line for line in lines if field in line)
+    header = next(line for line in lines if line.startswith("pair"))
     row = next(line for line in lines if line.startswith(prefix))
     tokens = list(re.finditer(r"\S+", header))
     idx = next(i for i, m in enumerate(tokens) if m.group() == field)
@@ -655,6 +661,26 @@ def test_tail_depth_is_printed_and_correct(tmp_path, capsys):
     header = next(line for line in lines if line.startswith("pair"))
     rules = [line for line in lines if line and set(line) == {"-"}]
     assert len(rules) == 2 and all(len(r) == len(header) for r in rules)
+
+
+def test_a_one_row_hour_prints_a_blank_tail_instead_of_crashing(tmp_path, capsys):
+    """`n == 0` is reachable, and it is the very signature this instrument exists to measure: an
+    hour clobbered down to a single row (T0036) has no intervals at all, so its pool is empty,
+    `pool.quantile(0.9999)` is None, and an unguarded `tail_depth` raises
+    `TypeError: must be real number, not NoneType` -- taking the whole exit-bar run down with a
+    traceback. Same failure class as
+    `test_a_window_with_no_data_reports_it_instead_of_dividing_by_zero`: a verification tool that
+    dies mid-table reads as broken rather than as an answer about a clobbered hour.
+
+    Deleting the `if n else ""` guard passes every other test in both continuity files; this one is
+    the only thing standing under it.
+    """
+    write_stream(tmp_path, "STUB/EUR", {H0: evenly(H0, 1, 1.0)})
+    rc, out = _run(tmp_path, capsys)
+    assert rc == 0  # judged, not crashed
+    assert int(_column(out, "STUB/EUR", "n")) == 0
+    assert _column(out, "STUB/EUR", "tail") == ""
+    assert _column(out, "STUB/EUR", "thresh_s") == "UNMEASURED"
 
 
 def test_depth_is_provably_not_a_detector():

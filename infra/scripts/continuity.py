@@ -286,13 +286,18 @@ def report(
     # contaminated stream almost always sits beside measured ones, and that is exactly where the
     # reason is least guessable (a huge `n` beside UNMEASURED reads as "not the size bound" only to
     # someone who knows MIN_POOL).
+    #
+    # The prefix is `unmeasured: ` -- the same word the table prints in those rows' `thresh_s` cell,
+    # so the note maps onto its rows at a glance. NOT `unmeasured streams: `: that substring is the
+    # exit-bar-isolation assertion in tests/test_continuity_overlay.py, which requires a canonical
+    # (`--overlay`) report to never emit it.
     if unmeasured:
         under = len(unmeasured) - len(steepened)
         if under:
-            print(f"no measurable segments: {under} stream(s) under the {MIN_POOL}-interval bound")
+            print(f"unmeasured: {under} stream(s) under the {MIN_POOL}-interval bound")
         if steepened:
             print(
-                f"no measurable segments: {len(steepened)} stream(s) whose spacing tail steepens more than "
+                f"unmeasured: {len(steepened)} stream(s) whose spacing tail steepens more than "
                 f"{TAIL_RATIO_CUT:.0f}x across a decade of quantiles -- the threshold sample is not trustworthy"
             )
 
