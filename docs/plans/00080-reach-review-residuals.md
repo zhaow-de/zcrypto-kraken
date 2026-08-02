@@ -15,6 +15,7 @@
 - **Tasks 2–3 must not edit any existing test assertion** — additions only. Task 1 adds assertions to one existing test.
 - The new message in Task 1 is operator-facing runtime output: plain language, no `T<NNNN>`/spec/phase tokens (`tests/test_internal_terms_not_operator_visible.py` walks `cli/` literals).
 - Stage by explicit path (never `git add -A`); Conventional Commits; the branch is `fix/t0098-reach-review-residuals` (exists, spec committed on it).
+- The scripted `git commit -m` blocks show subject lines only: every commit ends with the authoring model's `Co-Authored-By:` trailer and gets a different-agent review before push, per `commit-messages.md` (the SDD machinery supplies both).
 - The soak-check baseline from `develop`'s tip is already saved at `<scratchpad>/soak-check-before.txt` (17 lines, ends `exit=0`); the scratchpad path is in the orchestrator's session context.
 
 ---
@@ -51,12 +52,27 @@ def test_rebuild_removes_partial_sibling_on_builder_failure(tmp_path, monkeypatc
     # And the same-day retry now succeeds.
     monkeypatch.setitem(rebuild.REBUILDABLE, "ohlc-full", lambda ctx, out: (out / "ok").write_text("x"))
     assert rebuild.rebuild_sets(["ohlc-full"], ctx) == [tmp_path / "ohlc-full-20260802"]
+
+
+def test_rebuild_cleanup_covers_operator_interrupt(tmp_path, monkeypatch):
+    # Ctrl-C during a paced REST round is the likeliest mid-build abort; the handler catches
+    # BaseException so the sibling is removed before the interrupt propagates. This test is the
+    # pin that keeps the handler from being narrowed back to Exception.
+    def _interrupted(ctx, out):
+        (out / "partial").write_text("x")
+        raise KeyboardInterrupt
+
+    monkeypatch.setitem(rebuild.REBUILDABLE, "ohlc-full", _interrupted)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=tmp_path, stamp="20260802")
+    with pytest.raises(KeyboardInterrupt):
+        rebuild.rebuild_sets(["ohlc-full"], ctx)
+    assert not (tmp_path / "ohlc-full-20260802").exists()
 ```
 
 - [ ] **Step 2: Run it — it must FAIL against current code**
 
-Run: `uv run pytest tests/test_data_rebuild.py::test_rebuild_removes_partial_sibling_on_builder_failure -v`
-Expected: FAIL at `assert not (...).exists()` — current code removes only *empty* siblings. If it passes, STOP: the defect doesn't reproduce, report instead of proceeding.
+Run: `uv run pytest tests/test_data_rebuild.py::test_rebuild_removes_partial_sibling_on_builder_failure tests/test_data_rebuild.py::test_rebuild_cleanup_covers_operator_interrupt -v`
+Expected: BOTH FAIL at `assert not (...).exists()` — current code removes only *empty* siblings, and `except Exception` doesn't see `KeyboardInterrupt` at all. If either passes, STOP: the defect doesn't reproduce, report instead of proceeding.
 
 - [ ] **Step 3: Implement the whole-tree cleanup**
 
@@ -65,14 +81,16 @@ In `cli/data/rebuild.py`: add `import shutil` beside `import json`. Replace the 
 ```python
         try:
             builder(ctx, out_root)
-        except Exception:
+        except BaseException:
             # A builder that raises mid-run must not strand the sibling: the per-day stamp would
             # make a same-day retry trip the "already exists" guard forever. Everything under
             # out_root was written by the builder call that just raised (the exists-guard fired
             # before mkdir if the dir pre-existed), and every current builder fetches/derives
             # repeatable input, so deleting the whole tree loses nothing. (A future builder
-            # consuming unrepeatable input would need its own protection.) A hard kill skips
-            # this handler and can still strand -- the exists-guard message names the remedy.
+            # consuming unrepeatable input would need its own protection.) BaseException on
+            # purpose: an operator's Ctrl-C must clean up exactly like a builder error. A hard
+            # kill (SIGKILL, power loss) skips any handler and can still strand -- the
+            # exists-guard message names the remedy.
             shutil.rmtree(out_root)
             raise
 ```
@@ -147,11 +165,11 @@ In `cli/engine/store.py`: delete the `PAIR_KEYS: dict[str, str] = {…}` block *
 
 - [ ] **Step 3: Point reach at it and delete the inversion comment**
 
-In `cli/ohlc/reach.py`: delete the entire 12-line comment block beginning `# The asset -> Kraken REST pair-key mapping's single source of truth.` **and** the line `from cli.engine.store import PAIR_KEYS`; change `from cli.ohlc.fetch import fetch_ohlc` to `from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc`.
+In `cli/ohlc/reach.py`: delete the entire comment block beginning `# The asset -> Kraken REST pair-key mapping's single source of truth.` **and** the line `from cli.engine.store import PAIR_KEYS` below it (12 lines deleted in total); change `from cli.ohlc.fetch import fetch_ohlc` to `from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc`.
 
 - [ ] **Step 4: Verify single binding + run the touched suites**
 
-Run: `grep -rn "PAIR_KEYS: dict" cli/` → exactly one hit, in `cli/ohlc/fetch.py`.
+Run: `git grep -n "PAIR_KEYS: dict"` → exactly one hit, in `cli/ohlc/fetch.py`.
 Run: `uv run pytest tests/test_engine_store.py tests/test_engine_cycle.py tests/test_engine_metrics.py tests/test_engine_soak.py tests/test_ohlc_reach.py tests/test_data_rebuild.py -v`
 Expected: all PASS with zero test-file changes.
 
@@ -283,8 +301,8 @@ def test_seam_overlap_clean_seam_has_no_mismatches():
 
 - [ ] **Step 5: Verify single definitions + run the suites**
 
-Run: `grep -rn "def drop_in_progress\|def _drop_in_progress" cli/` → exactly one hit, in `cli/ohlc/seam.py`.
-Run: `grep -rn "MIN_SEAM_OVERLAP = \|_SEED_MIN_OVERLAP" cli/` → exactly one binding, in `cli/ohlc/seam.py`.
+Run: `git grep -nE "def _?drop_in_progress"` → exactly one hit, in `cli/ohlc/seam.py`.
+Run: `git grep -nE "MIN_SEAM_OVERLAP = |_SEED_MIN_OVERLAP"` → exactly one binding, in `cli/ohlc/seam.py` (doc mentions in `docs/` are fine; no `cli/` or `tests/` hit besides the binding and its importers).
 Run: `uv run pytest tests/test_ohlc_seam.py tests/test_ohlc_reach.py tests/test_engine_store.py tests/test_engine_cycle.py tests/test_engine_soak.py -v`
 Expected: all PASS with zero edits to existing test files.
 
@@ -328,6 +346,8 @@ diff <scratchpad>/soak-check-before.txt <scratchpad>/soak-check-after.txt && ech
 
 Expected: `IDENTICAL`. Any diff is a behaviour change — STOP and report it; do not rationalise it.
 
+If the baseline file is gone (lost scratchpad), regenerate it at the branch point first: `git worktree add /tmp/00080-base $(git merge-base develop HEAD)`, run the same soak-check capture there, then `git worktree remove /tmp/00080-base`.
+
 - [ ] **Step 2: Full suite**
 
 Run: `uv run pytest`
@@ -350,3 +370,7 @@ git commit -m "docs(ops): iter closeout -- reach-review residuals closed (spec 0
 ```
 
 (Re-run the gate and re-stage if hooks rewrite; the `git mv` deletion side stages with the archive path.)
+
+- [ ] **Step 6: Memo update (ORCHESTRATOR ONLY — main loop, Edit/Write tools, never staged: the memo is gitignored)**
+
+Per spec D6: record in `docs/memo.local.md` that the next attended engine converge ships this store/soak refactor, and move the T0098 queue item to `DONE ITEMS` with its evidence. Never dispatch this step to a subagent.
