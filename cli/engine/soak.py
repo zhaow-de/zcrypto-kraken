@@ -18,9 +18,10 @@ window-wide identity proof.
 
 Also builds the backtest NULL the realized series is judged against: `build_null` rebuilds the
 same strategy over the full frozen canonical history and derives its P&L under the LIVE cost
-convention (`_net_live_from_result`) -- the builder's `governed_net` charges cost on the capped
-book's turnover, but a live engine trades `final_targets = mult x capped` and pays cost on THAT
-turnover instead, so on a governor multiplier-transition bar the two differ by exactly the
+convention (`_net_live_from_result`) -- the builder's `governed_net` charges cost on the limited
+book's turnover (the per-asset caps AND the §10 whole-book limits, which is what the builder both
+costs and multiplies), but a live engine trades `final_targets = mult x limited` and pays cost on
+THAT turnover instead, so on a governor multiplier-transition bar the two differ by exactly the
 governor's turnover bias. Recasting the null onto the live convention makes that bias cancel in
 the realized-vs-null comparison instead of masquerading as an unrelated mismatch. `windowed_null`
 and `block_bootstrap_null` turn a null series into reference distributions of a chosen window
