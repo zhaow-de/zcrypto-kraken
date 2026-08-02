@@ -19,7 +19,7 @@ from typing import Callable
 
 from cli.engine.errors import EngineError
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, validate_record
-from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, build_crossfreq_system_fast
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, apply_whole_book_limits, build_crossfreq_system_fast
 from cli.risk import apply_position_caps
 
 SLEEVES = ("B", "A1", "A2")
@@ -64,20 +64,25 @@ def cancellation_ratio(sleeve_positions: dict[str, dict[str, float]]) -> tuple[f
     return ratio, combined_gross, mean_sleeve_gross
 
 
-def _check_stage_identity(multiplier: float, capped: dict[str, float], final: dict[str, float], *, cycle_ts) -> None:
-    """Raise unless `multiplier * capped[a] == final[a]` exactly, for every asset.
+def _check_stage_identity(multiplier: float, limited: dict[str, float], final: dict[str, float], *, cycle_ts) -> None:
+    """Raise unless `multiplier * limited[a] == final[a]` exactly, for every asset.
+
+    `limited` is the book AFTER the per-asset caps and the §10 whole-book limits -- the same stack
+    the builder multiplies the governor into. Stopping at the caps would break this identity the
+    first time a whole-book limit binds, i.e. report the engine broken exactly when the risk layer
+    is doing its job.
 
     Exact equality is correct here, not float-fragile: the harness reruns the builder's own
     arithmetic on the builder's own floats in the same order (`sleeve_positions` stores the
-    already-4h-expanded series, and apply_position_caps is a pure per-element clip), so any
-    difference means the recomputation genuinely diverged.
+    already-4h-expanded series, apply_position_caps is a pure per-element clip, and each whole-book
+    limit is a per-bar scale), so any difference means the recomputation genuinely diverged.
     """
     for a, target in final.items():
-        if multiplier * capped[a] != target:
+        if multiplier * limited[a] != target:
             raise EngineError(
                 f"stage identity broken for asset={a!r} at cycle_ts={cycle_ts}: "
-                f"multiplier*capped={multiplier * capped[a]!r} != builder final_targets={target!r} -- "
-                "the recomputed combination or cap no longer matches the builder"
+                f"multiplier*limited={multiplier * limited[a]!r} != builder final_targets={target!r} -- "
+                "the recomputed combination, cap or whole-book limit no longer matches the builder"
             )
 
 
@@ -85,9 +90,9 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
     """Rebuild one journaled cycle and return its forming-row book at every pipeline stage.
 
     Two identities, both per cycle, because they catch different failures. INTERNAL:
-    `multiplier * capped[a]` must equal the builder's own `final_targets[a]` exactly -- evidence
-    the recomputed intermediate IS the builder's, so a changed combination or cap raises instead of
-    reporting a wrong attribution. JOURNAL: the rebuilt targets must equal the RECORD's own
+    `multiplier * limited[a]` must equal the builder's own `final_targets[a]` exactly -- evidence
+    the recomputed intermediate IS the builder's, so a changed combination, cap or whole-book limit
+    raises instead of reporting a wrong attribution. JOURNAL: the rebuilt targets must equal the RECORD's own
     `final_targets` -- which the internal one structurally cannot catch, since a self-consistent
     rebuild that diverges from what the engine actually traded would agree with itself all the way
     and both reports would describe a book that never existed.
@@ -139,12 +144,16 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
     # compensated summation, which differs by an ulp on ~18% of triples -- and the identity
     # below compares exactly, so a sum() here would fire on cycles that are in fact correct.
     combined = {a: third * sleeves["B"][a] + third * sleeves["A1"][a] + third * sleeves["A2"][a] for a in c.assets}
+    # Both stacks take the builder's {asset: series} shape, so the forming row replays as a
+    # one-element series; every whole-book limit is per-bar, so a single bar answers identically.
     capped_series = apply_position_caps({a: [combined[a]] for a in c.assets}, long_cap=c.long_cap, short_cap=c.short_cap)
+    limited_series = apply_whole_book_limits(capped_series)
     capped = {a: capped_series[a][0] for a in c.assets}
+    limited = {a: limited_series[a][0] for a in c.assets}
     multiplier = result.multipliers[n]
     final = {a: result.final_targets[a][n] for a in c.assets}
 
-    _check_stage_identity(multiplier, capped, final, cycle_ts=record.cycle_ts)
+    _check_stage_identity(multiplier, limited, final, cycle_ts=record.cycle_ts)
 
     # The journal identity: what we rebuilt must be what the engine actually traded.
     if set(final) != set(record.final_targets):
@@ -234,7 +243,9 @@ def decompose_payload(stages: list[CycleStages]) -> dict:
                 "capped_gross": capped_gross,
                 "capped_ratio": capped_gross / combined_gross_builder if combined_gross_builder else math.nan,
                 "multiplier": s.multiplier,
-                "governed_ratio": s.multiplier,  # final = multiplier * capped, exactly (see replay_stages)
+                # final = multiplier * the whole-book-LIMITED book (see replay_stages), which equals
+                # multiplier * capped on every cycle where no §10 limit binds -- so far, all of them.
+                "governed_ratio": s.multiplier,
                 "final_gross": sum(abs(v) for v in s.final.values()),
                 "n_active": sum(1 for v in s.final.values() if v != 0.0),
                 "cap_bound": s.cap_bound,

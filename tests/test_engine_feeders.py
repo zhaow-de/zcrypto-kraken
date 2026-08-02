@@ -137,6 +137,101 @@ def test_replay_stages_reconciles_read_data_against_its_journaled_metadata():
         replay_stages(record, peeking_reader)
 
 
+def _two_asset_record(final_targets: dict[str, float]) -> tuple[CycleRecord, object]:
+    """A CycleRecord carrying both grids for BTC and ETH on the module's shared calendars, so
+    `replay_stages`'s hash, metadata and no-peek checks all pass and the builder is the only thing
+    left to fake. Returns (record, reader)."""
+    entries = []
+    for pair in ("BTC", "ETH"):
+        entries.append(
+            SnapshotEntry(
+                pair=pair,
+                grid="240",
+                n_bars=len(H4_TS),
+                first_ts=H4_TS[0],
+                last_ts=H4_TS[-1],
+                content_hash=snapshot_content_hash(H4_TS, H4_CLOSES),
+                path=f"{pair}240",
+            )
+        )
+        entries.append(
+            SnapshotEntry(
+                pair=pair,
+                grid="1440",
+                n_bars=len(DAILY_TS),
+                first_ts=DAILY_TS[0],
+                last_ts=DAILY_TS[-1],
+                content_hash=snapshot_content_hash(DAILY_TS, DAILY_CLOSES),
+                path=f"{pair}1440",
+            )
+        )
+    record = CycleRecord(
+        schema_version=1,
+        cycle_ts=CYCLE_TS,
+        snapshots=tuple(entries),
+        final_targets=final_targets,
+        started_at=CYCLE_TS,
+        completed_at=CYCLE_TS + timedelta(minutes=1),
+        code_version="test",
+        builder_path="fast",
+    )
+
+    def reader(entry: SnapshotEntry):
+        return (list(DAILY_TS), list(DAILY_CLOSES)) if entry.grid == "1440" else (list(H4_TS), list(H4_CLOSES))
+
+    return record, reader
+
+
+def test_replay_stages_identity_holds_when_a_whole_book_limit_binds(monkeypatch):
+    """The forming-row recomputation must run the builder's WHOLE stack -- per-asset caps AND the
+    §10 whole-book limits. Stopping at the caps agrees only while nothing binds; the first cycle a
+    limit does bind, `stage identity broken` fires on a cycle the engine got exactly right, i.e.
+    the alarm inverts and calls the engine broken precisely when the risk layer is doing its job."""
+    import types
+
+    import cli.engine.feeders as feeders
+    from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, apply_whole_book_limits
+    from cli.risk import apply_position_caps
+
+    # Two assets at a 100% per-asset long cap: the caps do NOT clip, so the ONLY thing that can move
+    # the book is the whole-book stack -- gross 2.0 breaches the 1.5x soft cap, then net 1.5
+    # breaches the +1.0 band.
+    cfg = CrossfreqSystemConfig(assets=("BTC", "ETH"), long_cap=1.0, short_cap=0.5)
+    n = 1
+    mult = [1.0, 0.8]
+    sleeves = {name: {a: [1.0] * (n + 1) for a in cfg.assets} for name in ("B", "A1", "A2")}
+
+    third = 1 / 3
+    combined = {
+        a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n + 1)]
+        for a in cfg.assets
+    }
+    capped = apply_position_caps(combined, long_cap=cfg.long_cap, short_cap=cfg.short_cap)
+    limited = apply_whole_book_limits(capped)
+    final_targets = {a: [mult[k] * limited[a][k] for k in range(n + 1)] for a in cfg.assets}
+
+    # The premise: without this the identity below would hold for the wrong reason.
+    assert limited != capped, "the whole-book limits must actually bind, or this test proves nothing"
+    assert capped == combined, "the per-asset caps must NOT clip here, or the limits are not isolated"
+
+    fake = types.SimpleNamespace(
+        final_targets=final_targets,
+        multipliers=mult,
+        sleeve_positions=sleeves,
+        n_periods=n,
+    )
+    monkeypatch.setattr(feeders, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    record, reader = _two_asset_record({a: final_targets[a][n] for a in cfg.assets})
+    stages = replay_stages(record, reader, config=cfg)  # must not raise
+
+    assert stages.final == {a: final_targets[a][n] for a in cfg.assets}
+    assert stages.cap_bound is False  # only the whole-book limits bit
+    # What the caps-only recomputation used to compare against -- it disagrees, which is why the
+    # pre-fix code raised here.
+    assert all(mult[n] * capped[a][n] != stages.final[a] for a in cfg.assets)
+
+
 # --- decompose: the attribution table -----------------------------------------------------------
 
 
