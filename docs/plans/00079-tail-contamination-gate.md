@@ -15,7 +15,7 @@
 - Refusal = `UNMEASURED` + exit-bar FAIL, identical treatment to the `MIN_POOL` refusal; the *reason* is distinguishable in the post-table note only.
 - `continuity.py`'s runtime output is operator-facing (`.claude/rules/operator-facing-text.md`): no `T0112` / `spec 00079` / `D<N>` tokens in printed strings; tokens live in comments only. `tests/test_internal_terms_not_operator_visible.py` may not cover infra scripts automatically — comply regardless.
 - Every guard proven by constructing its defect; assert every mutation anchor occurs exactly once before substituting (`grep -cF`, not ugrep regex); clear `__pycache__` around source mutations — and note `continuity.py` is imported by path in tests, so the stale-`.pyc` hazard from `agent-ops.md` applies doubly: unlink its `__pycache__` before each probe.
-- Real numbers for fixtures (from the spec's measured tables): real streams ratio 1.05–1.96; legit pathological ≤ 4.5; contaminated 88.8–200; founding defect k=2 @ n=11,389 → `thresh_s ≈ 2,006`, books 0.0 s while the dense arm books 400.2 s.
+- Real numbers for fixtures (from the spec's measured tables, cold-review-corrected): real streams ratio 1.05–1.96; stable legit synthetics 1.00–2.18 over 200 seeds; pareto α=1.1 / lognormal σ=3 **straddle the cut by construction** (median 8.7 / 10.1 — pin seeds, never trust one draw); contaminated 88.8–200. Founding defect, pool-level: the `_bursty` k=2 pool derives `thresh = 2,000.0`; report-level: the CARVED fixture gives `n=11,332`, `thresh_s = 2,004`, intra booked `0.0` (k=1 control: `thresh_s = 6.0`, books `200.4 s`).
 - Commit gate `uv run pre-commit run -a`; stage by explicit path; every commit ends `Co-Authored-By: <actual authoring model> <noreply@anthropic.com>`.
 
 ---
@@ -51,9 +51,11 @@ def _bursty(n, rng):   # T0097's measured shape: same-ms bursts, median = 0
     return out[:n]
 
 def test_founding_defect_k2_is_refused():
-    """The 00076 cold-review construction: n=11,389, two ~200 s outages. Pre-change this derives
-    thresh_s ~= 2,006 and books 0.0 s (recorded by running the OLD code — step 2); post-change the
-    stream is UNMEASURED."""
+    """Pool-level half of the founding defect: n=11,389, two 200 s outages -> the OLD derivation
+    yields thresh = 2,000.0 from this exact pool (p99.99 lands ON the outage). The report-level
+    reproduction uses the CARVED fixture below, not this pool -- a _bursty pool spans only ~17 min
+    of wall time, so through report() the old code books the edge_tail and the 0.0-booked defect
+    does not reproduce with it (cold-review finding)."""
     rng = random.Random(11)
     pool = pl.Series(_bursty(11_387, rng) + [200.0, 200.0])
     r1, r2 = tail_steepness(pool)
@@ -69,25 +71,39 @@ def test_second_ratio_is_load_bearing():
     assert r1 < TAIL_RATIO_CUT and r2 >= TAIL_RATIO_CUT
 
 def test_legitimate_heavy_tails_stay_measured():
-    # pareto a=1.1, lognormal sigma=3, bimodal fast/slow, bursty-typical: all ratios < CUT
+    # bursty-typical + bimodal: seed-independent properties (1.00-2.18 over 200 seeds).
+    # pareto a=1.1 / lognormal sigma=3: PINNED to named seeds verified < 10, with a comment that
+    # these families straddle the cut by construction (an unpinned seed fails healthy code ~1 in 3).
     ...
 
 def test_floor_keeps_ultra_bursty_measured_and_catches_its_outages():
-    # p99.9 == 0 with benign p99.99 -> measured; same pool + [200.0] tail -> refused (200/0.5 = 400)
-    ...
+    """Both arms exercise the 0.5 floor as the DENOMINATOR (cold-review corrected: a single 200 s
+    max cannot be reached by p99.99 above MIN_POOL -- that is MIN_POOL's own design)."""
+    benign = pl.Series([0.0] * 11_378 + [2.0] * 11)      # p99.9 = 0, p99.99 = 2.0
+    r1, _ = tail_steepness(benign)
+    assert r1 == 2.0 / RATIO_FLOOR_S == 4.0              # floored, measured
+    dirty = pl.Series([0.0] * 11_387 + [200.0] * 2)      # p99.99 lands on an outage
+    r1, _ = tail_steepness(dirty)
+    assert r1 == 200.0 / RATIO_FLOOR_S == 400.0          # floored, refused
+    assert r1 >= TAIL_RATIO_CUT
 
 def test_boundary_n_5002_clean_stays_measured():
     ...
 
 def test_report_renders_contaminated_stream_unmeasured():
-    # end-to-end via the existing fixture machinery: the k=2 stream renders UNMEASURED, the
-    # verdict line counts it, and the post-table note carries the steepened-tail wording
+    """End-to-end wiring pin, via the CARVED fixture (the existing full_hour_with_gap idiom): two
+    hours filled at 0.6 s spacing with two 200 s windows carved out of hour 0. Old-code behaviour,
+    reproduced in step 2: n=11,332, thresh_s=2,004, intra booked 0.0. Five assertions, jointly the
+    wiring proof: (a) the printed `n` column >= MIN_POOL (the refusal is NOT the old gate);
+    (b) `thresh_s` column == UNMEASURED via _column; (c) `*** FAIL *** (unmeasured streams: 1)`;
+    (d) the steepened-tail note present; (e) the under-bound note ABSENT. A k=1 carve control on
+    the same geometry stays measured with thresh_s=6.0 booking 200.4 s."""
     ...
 ```
 
-- [ ] **Step 2: Run the founding fixture through the CURRENT code first** and record the reproduced defect (`thresh_s ≈ 2,006`, `gap_s = 0.0`) in the test docstring and your report — the defect must be shown real before the fix claims to kill it. Then confirm all new tests fail for the stated reasons.
-- [ ] **Step 3: Implement** (`tail_steepness`, the constants, the `measured` conjunction, the note line). Surgical: the existing `measured = n >= MIN_POOL` site and the notes block are the only touch points.
-- [ ] **Step 4: Green** (`uv run pytest tests/test_infra_continuity.py -q`), then mutation-proofs, each anchor asserted unique: cut → 1000.0 (contamination tests fail); second ratio dropped (its test fails, others pass); floor removed (ultra-bursty test fails). Restore + re-green after each.
+- [ ] **Step 2: Run the CARVED fixture through the CURRENT code first** and record the reproduced defect (`n=11,332`, `thresh_s=2,004`, intra booked `0.0`) plus the k=1 control (`thresh_s=6.0`, books `200.4 s`, measured) in the test docstring and your report — the defect must be shown real before the fix claims to kill it. Then confirm all new tests fail for the stated reasons.
+- [ ] **Step 3: Implement** (`tail_steepness`, the constants, the `measured` conjunction, the note line, **and the D6 residual comment beside the gate** — the spec requires it in the code: blindness begins at k ≈ 0.01·n where p99 itself is contaminated; accepted because that regime is 77–97 % outage by wall time, and the truncated-hours count is NOT a backstop since it uses `secs > thresh`). Surgical: the existing `measured = n >= MIN_POOL` site and the notes block are the only touch points.
+- [ ] **Step 4: Green** (`uv run pytest tests/test_infra_continuity.py -q`), then mutation-proofs, each anchor asserted unique: cut → 1000.0 (contamination tests fail); second ratio dropped (its test fails, others pass); ratio tuple reordered (caught — the swapped r1 ≈ 194 trips the k=23 test's `r1 < CUT` half); floor removed (ultra-bursty test fails); **`measured` reverted to `n >= MIN_POOL` alone (the wiring mutant) → exactly `test_report_renders_contaminated_stream_unmeasured` fails**. Restore + re-green after each.
 - [ ] **Step 5:** `uv run pre-commit run -a` clean → stage explicit paths → commit `fix(infra): continuity.py refuses a contaminated tail instead of trusting it`.
 
 ### Task 2: The tail-depth column
@@ -95,6 +111,8 @@ def test_report_renders_contaminated_stream_unmeasured():
 **Files:**
 - Modify: `infra/scripts/continuity.py`
 - Test: `tests/test_infra_continuity.py` (append)
+
+**Touch points beyond the measured rows** (the `_column`-based tests catch misalignment, but name them): the UNMEASURED row, the TOTAL row, and both `"-" * <width>` separators all gain the new column slot.
 
 **Interfaces:** helper `tail_depth(pool: pl.Series) -> int` = `int((pool >= pool.quantile(0.9999)).sum())`; column `tail` (right-aligned, after `n`) printed for every row with `n > 0` (unmeasured included — fragility is most useful exactly there). Header updated in the same change.
 
