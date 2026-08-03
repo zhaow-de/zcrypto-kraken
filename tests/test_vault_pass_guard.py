@@ -56,3 +56,9 @@ def test_allows_ansible_inventory_graph(tmp_path):
     r = run_under(tmp_path, "ansible-inventory", ["--graph"])
     assert r.returncode == 0
     assert "SOPS-RAN" in r.stdout
+
+
+def test_refuses_ansible_inventory_graph_vars(tmp_path):
+    r = run_under(tmp_path, "ansible-inventory", ["--graph", "--vars"])
+    assert r.returncode == 1
+    assert "SOPS-RAN" not in r.stdout

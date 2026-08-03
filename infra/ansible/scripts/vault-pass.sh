@@ -6,8 +6,8 @@ pid=$$
 while [ "$pid" -gt 1 ] 2>/dev/null; do
   cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
   case "$cmd" in
-    *ansible-inventory*" --host"*|*ansible-inventory*" --list"*)
-      echo "vault password refused: ansible-inventory --host/--list prints every vault secret in cleartext — use --graph, --list-tags, or a key-names-only filter" >&2
+    *ansible-inventory*" --host"*|*ansible-inventory*" --list"*|*ansible-inventory*" --vars"*)
+      echo "vault password refused: ansible-inventory --host/--list/--vars prints every vault secret in cleartext — use --graph, --list-tags, or a key-names-only filter" >&2
       exit 1 ;;
   esac
   pid="$(awk '/^PPid:/{print $2}' "/proc/$pid/status" 2>/dev/null)" || break
