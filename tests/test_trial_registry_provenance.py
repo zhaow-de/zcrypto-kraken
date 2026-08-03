@@ -40,6 +40,12 @@ REGISTRY = REPO / "docs" / "reference" / "trial-registry.jsonl"
 # the exemption may never grow: a new record with an uncommitted run_ref must fail.
 LEGACY_UNCOMMITTED = frozenset(range(33, 47))
 
+# Records 34-35 pin the PRE-amendment sha256 of their spec: the spec was edited after both appends, so
+# no committed spec file hashes to their `spec_hash` and the pin can never be recomputed. Append-only,
+# so unrepairable. Same freeze discipline as above -- a NEW record whose spec_hash matches no committed
+# spec must fail, and this exemption may not grow to cover it.
+LEGACY_SPEC_HASH_ORPHANS = frozenset({34, 35})
+
 
 def _git_tracked() -> frozenset[str]:
     """Every path git tracks, repo-relative. One invocation, not one per candidate path."""
@@ -62,6 +68,20 @@ def _has_committed_provenance(run_ref, tracked: frozenset[str]) -> bool:
 
 def _failing_ids(records: list[dict], tracked: frozenset[str]) -> set[int]:
     return {r["trial_id"] for r in records if not _has_committed_provenance(r.get("run_ref"), tracked)}
+
+
+def _committed_spec_hashes() -> frozenset[str]:
+    """sha256 of every committed spec file. A record's `spec_hash` must equal one of these; the registry
+    carries no spec PATH, so membership is what "the spec this record pins still exists unaltered" means."""
+    return frozenset(
+        __import__("hashlib").sha256((REPO / p).read_bytes()).hexdigest()
+        for p in _git_tracked()
+        if p.startswith("docs/specs/") and p.endswith(".md")
+    )
+
+
+def _spec_hash_orphan_ids(records: list[dict], spec_hashes: frozenset[str]) -> set[int]:
+    return {r["trial_id"] for r in records if r.get("spec_hash") not in spec_hashes}
 
 
 def test_no_record_outside_the_frozen_legacy_set_lacks_committed_provenance():
@@ -141,3 +161,28 @@ def test_both_layers_agree_on_path_spelling():
 
     # and canonicalization must not smuggle an escape back in
     assert run_ref_path_candidates("cli/../../outside.py") == []
+
+
+def test_no_record_outside_the_frozen_orphan_set_has_a_dangling_spec_hash():
+    # A record's spec_hash is its provenance: edit the spec after the append and the pin silently stops
+    # recomputing, with nothing in the commit gate catching it. That has happened twice -- once in Phase 5
+    # (records 34-35, exempted above) and once caught in review before landing.
+    records = _records()
+    assert _spec_hash_orphan_ids(records, _committed_spec_hashes()) - LEGACY_SPEC_HASH_ORPHANS == set()
+
+
+def test_the_spec_hash_orphan_exemption_is_not_vacuous_and_is_frozen():
+    # Both directions, as for the run_ref freeze: every exempted id must genuinely dangle today (so the
+    # exemption covers real breaks rather than decorating passes), and nothing outside it may dangle.
+    orphans = _spec_hash_orphan_ids(_records(), _committed_spec_hashes())
+    assert orphans == LEGACY_SPEC_HASH_ORPHANS
+    assert len(LEGACY_SPEC_HASH_ORPHANS) == 2
+
+
+def test_committed_spec_hash_lookup_is_sane():
+    # Guards the predicate: an empty or bogus hash set would make every record "dangle" and every
+    # exemption look non-vacuous -- a broken check passing for the wrong reason.
+    hashes = _committed_spec_hashes()
+    assert len(hashes) > 50
+    deployable = next(r for r in _records() if r["trial_id"] == 44)
+    assert deployable["spec_hash"] in hashes  # the deployable's own pin must be live, not exempted

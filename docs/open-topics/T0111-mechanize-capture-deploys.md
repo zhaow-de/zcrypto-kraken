@@ -42,6 +42,7 @@ The full classification (guard-already-exists / new-ansible-guard / new-script /
 
 ## Suggested next steps
 
+- **(added 2026-08-03 from the refine round — a wave-1 assert, deliberately NOT rule prose)** Refuse a converge whose **time window has already passed**. A backgrounded converge executed **~3.5 h** after it was launched: aimed at the 00:00–04:00 inter-cycle gap, it ran at 04:45 and landed in the *next* valid gap after a clean cycle — by luck, not design, because every precondition had been verified at launch time and none was re-read at execution time. Prose cannot fix this (the operator did check, and was right when they checked); an assert that re-asserts the window **immediately before acting** can. This is exactly the trade this topic exists to make — a guard instead of another line on the heaviest always-loaded rule.
 - Implement wave 1 as one iteration (spec + plan; each assert TDD'd against a constructed violation per `agent-ops.md`'s guard-proving rule — the named defect built and seen to trip it, failure mode read).
 - Implement wave 2 as a second iteration; `converge.sh` and `zcrypto-panel-regenerate` get drills on the ops host in a maintenance window.
 - Design pass for the two M asserts (digest-parity, fleet-pins recording) — decide override semantics with the owner before building.
