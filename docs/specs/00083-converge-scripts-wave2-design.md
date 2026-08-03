@@ -26,13 +26,13 @@ The delete-and-rebuild flow as one refusing script, replacing the panel-generati
 3. **hc.io gate**: print the pause checklist (the panel check pings only on rc 0 and is the timer's only liveness signal; pause it time-boxed) and require the operator to type `paused` on `/dev/tty`. Anything else aborts with nothing deleted.
 4. **Delete the ops copy**: `rm -rf` of `{{ ops_data_dir }}/{{ ops_panel_subdir }}` — the whole panel root, so out-of-scope subtrees die with it (the `_check_generation` tree-scan refusal otherwise blocks the next materialize).
 5. **Rebuild inside the unit**: `systemctl start --wait zcrypto-panel-materialize.service`. Running AS the unit means a stray timer tick collides with an active unit (no-op) instead of double-writing; the deleted tree took the per-pair watermarks with it, so the run rebuilds everything. `Type=oneshot` has no start timeout — only the (refused-against) reboot kills it. Non-zero unit result → the script reports it and does NOT proceed to step 6's resume line (the tree is now the anomaly to investigate).
-6. **Print the closing checklist**: the NAS-side deletion (ops cannot reach the NAS shell; the `rsync -a` pull has no `--delete`, so the old NAS copy survives until deleted there — print the exact path), the hc.io un-pause, and `systemctl start zcrypto-panel-materialize.timer` to resume the hourly cadence (the script restarts the timer itself only after a clean step 5; on failure the timer stays stopped and the checklist says so).
+6. **Print the closing checklist**: the NAS-side deletion (ops cannot reach the NAS shell; the `rsync -a` pull has no `--delete`, so the old NAS copy survives until deleted there — name the panel subdir on the share), the hc.io un-pause, and `systemctl start zcrypto-panel-materialize.timer` to resume the hourly cadence (the script restarts the timer itself only after a clean step 5; on failure the timer stays stopped and the checklist says so).
 
 **The point of no return stays human**: the script's step-3/4 boundary is where the owner's word is taken (typed `paused` after reading the checklist that names the irreversibility) — the not-mechanizable consent from T0111's classification is the typed gate, not removed by it.
 
 ## D3 — `infra/scripts/ops-postverify.sh`: verify-by-outcome as one command
 
-Wraps `uv run python infra/scripts/grafana-query.py` (workstation-side, vault handled there). Five checks, each printed `PASS`/`FAIL <detail>`; any FAIL → exit 1; `(no series)` is a FAIL for that check, never a zero (agent-ops' empty-query rule, mechanized):
+Wraps `uv run python infra/scripts/grafana-query.py` (workstation-side, vault handled there). Six checks (the counter pair split, one per series), each printed `PASS`/`FAIL <detail>`; any FAIL → exit 1; `(no series)` is a FAIL for that check, never a zero (agent-ops' empty-query rule, mechanized):
 
 1. `ops_archive_pull_exit_code == 0`
 2. `ops_panel_exit_code == 0`

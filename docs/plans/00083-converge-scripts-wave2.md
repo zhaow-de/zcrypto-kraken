@@ -27,7 +27,6 @@
 **Files:**
 - Create: `infra/ansible/scripts/converge.sh` (mode 0755)
 - Test: `tests/test_converge_sh.py`
-- Modify: `tests/test_internal_terms_not_operator_visible.py` (add the script to the enforced list)
 
 **Interfaces:**
 - Consumes: `infra/ansible/scripts/run.sh` (sibling; loads vault keys, execs ansible-playbook).
@@ -227,7 +226,7 @@ fi
 exec "$SD/run.sh" "$PLAYBOOK" "$@"
 ```
 
-- [ ] **Step 4: Add `infra/ansible/scripts/converge.sh` to the surfaces list in `tests/test_internal_terms_not_operator_visible.py`** (follow the file's existing list structure — mutate-probe.sh is already there as the pattern).
+- [ ] **Step 4: Confirm the operator-facing sweep collects the new script** — `tests/test_internal_terms_not_operator_visible.py` auto-globs `infra/**/*.sh` (no list to edit); run it and state in the report that the new file was swept.
 
 - [ ] **Step 5: Run to verify pass** — `uv run pytest tests/test_converge_sh.py tests/test_internal_terms_not_operator_visible.py -q`; expected: all PASS. Also `bash -n infra/ansible/scripts/converge.sh`.
 
@@ -236,7 +235,7 @@ exec "$SD/run.sh" "$PLAYBOOK" "$@"
 - [ ] **Step 7: Commit**
 
 ```bash
-git add infra/ansible/scripts/converge.sh tests/test_converge_sh.py tests/test_internal_terms_not_operator_visible.py
+git add infra/ansible/scripts/converge.sh tests/test_converge_sh.py
 git commit -m "feat(infra): converge.sh — preview-first, typed-limit confirm converge path"
 ```
 
@@ -277,9 +276,13 @@ def make_stub_sops(tmp_path):
 
 
 def run_under(tmp_path, wrapper_name, wrapper_args):
-    """Run vault-pass.sh as a child of a process whose cmdline is `<wrapper_name> <args>`."""
+    """Run vault-pass.sh as a CHILD of a process whose cmdline is `<wrapper_name> <args>`.
+
+    No `exec` in the wrapper — exec would replace the wrapper's process image, so no ancestor
+    would ever carry the banned cmdline and the walk would find nothing (cold-review C1).
+    """
     wrapper = tmp_path / wrapper_name
-    wrapper.write_text(f'#!/usr/bin/env bash\nexec "{SCRIPT}"\n')
+    wrapper.write_text(f'#!/usr/bin/env bash\n"{SCRIPT}"\n')
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
     env = {**os.environ, "ZCRYPTO_SOPS_BIN": str(make_stub_sops(tmp_path))}
     return subprocess.run([str(wrapper), *wrapper_args], capture_output=True, text=True, env=env)
@@ -351,7 +354,6 @@ git commit -m "feat(infra): vault-pass.sh refuses ansible-inventory --host/--lis
 **Files:**
 - Create: `infra/scripts/ops-postverify.sh` (mode 0755)
 - Test: `tests/test_ops_postverify.py`
-- Modify: `tests/test_internal_terms_not_operator_visible.py` (add the script)
 
 **Interfaces:**
 - Consumes: `infra/scripts/grafana-query.py` output shape — per query: a header line, then `  {labels} = <value>` per series, or a `(no series)` marker. Test seam: `ZCRYPTO_GRAFANA_QUERY` replaces the whole query command.
@@ -404,10 +406,15 @@ def run_postverify(tmp_path, overrides):
     return subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env)
 
 
+def check_lines(out, kind):
+    """Count per-check result lines only — the summary line also contains the bare token."""
+    return sum(1 for line in out.splitlines() if line.startswith(f"{kind} "))
+
+
 def test_all_green_passes(tmp_path):
     r = run_postverify(tmp_path, {})
     assert r.returncode == 0
-    assert r.stdout.count("PASS") == 6 and "FAIL" not in r.stdout
+    assert check_lines(r.stdout, "PASS") == 6 and check_lines(r.stdout, "FAIL") == 0
 
 
 def test_nonzero_exit_code_fails(tmp_path):
@@ -445,7 +452,7 @@ def test_query_error_is_a_fail(tmp_path):
     env = {**os.environ, "ZCRYPTO_GRAFANA_QUERY": str(stub)}
     r = subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env)
     assert r.returncode == 1
-    assert r.stdout.count("FAIL") == 6
+    assert check_lines(r.stdout, "FAIL") == 6
 ```
 
 - [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_ops_postverify.py -q`; all FAIL (script absent).
@@ -500,26 +507,30 @@ if [ "$fails" -eq 0 ]; then echo "ops-postverify: ALL PASS"; else echo "ops-post
 def test_counter_names_match_the_exporter():
     """The two increase() queries must name series the reconcile exporter actually publishes.
 
-    The exporter is cli/archive/command.py's _write_textfile (it assembles the zcrypto_reconcile_*
-    names); the Alloy keep-list at infra/ansible/roles/ops/files/config.alloy must admit them too,
-    or the series never reaches Cloud and the check reads (no series) forever.
+    The exporter is cli/archive/command.py's _write_textfile (it assembles zcrypto_reconcile_ +
+    leg); the Alloy keep-list at infra/ansible/roles/ops/files/config.alloy admits series via
+    regex alternations, not literal names (cold-review I4) — so each name must fullmatch one of
+    the keep regexes' alternatives, or it never reaches Cloud and the check reads (no series).
     """
     script = SCRIPT.read_text()
     repo = SCRIPT.parent.parent.parent
     exporter = (repo / "cli" / "archive" / "command.py").read_text()
-    keep_list = (repo / "infra" / "ansible" / "roles" / "ops" / "files" / "config.alloy").read_text()
+    alloy = (repo / "infra" / "ansible" / "roles" / "ops" / "files" / "config.alloy").read_text()
+    alternatives = [alt for k in re.findall(r'regex\s*=\s*"([^"]*)"', alloy) for alt in k.split("|")]
     for name in ("zcrypto_reconcile_residual_gap_seconds_total", "zcrypto_reconcile_healable_gap_seconds_total"):
         assert name in script
-        assert name in keep_list
+        assert any(re.fullmatch(alt, name) for alt in alternatives), f"{name} not admitted by any keep regex"
         assert name.removeprefix("zcrypto_reconcile_") in exporter  # command.py assembles prefix + leg
 ```
 
-- [ ] **Step 5: Add the script to `tests/test_internal_terms_not_operator_visible.py`'s list; run** — `uv run pytest tests/test_ops_postverify.py tests/test_internal_terms_not_operator_visible.py -q`; all PASS; `bash -n infra/scripts/ops-postverify.sh`.
+(`import re` at the top of the test file.)
+
+- [ ] **Step 5: Run** — `uv run pytest tests/test_ops_postverify.py tests/test_internal_terms_not_operator_visible.py -q` (the latter auto-globs `infra/**/*.sh` — no list edit); all PASS; `bash -n infra/scripts/ops-postverify.sh`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add infra/scripts/ops-postverify.sh tests/test_ops_postverify.py tests/test_internal_terms_not_operator_visible.py
+git add infra/scripts/ops-postverify.sh tests/test_ops_postverify.py
 git commit -m "feat(infra): ops-postverify.sh — verify-by-outcome as one command"
 ```
 
@@ -548,8 +559,6 @@ actually ran. /dev/tty gates run under a pty.
 
 import os
 import pty
-import re
-import stat
 import subprocess
 from pathlib import Path
 
@@ -571,7 +580,7 @@ STUB_DATE = """#!/usr/bin/env bash
 case "$*" in
   "-u +%s") echo 1785751200 ;;
   "-u +%F") echo 2026-08-03 ;;
-  *-d*) shift; exec /bin/date "$@" ;;
+  *-d*) exec /bin/date "$@" ;;
 esac
 """
 STUB_SYSTEMCTL = """#!/usr/bin/env bash
@@ -790,7 +799,7 @@ echo "1. Delete the OLD panel copy on the NAS share ({{ ops_panel_subdir }} ther
 echo "2. Un-pause the healthchecks.io panel check (paused time-boxed in step 3)."
 ```
 
-- [ ] **Step 4: Install task** — in `infra/ansible/roles/ops/tasks/main.yml`, beside the block that installs the panel-materialize runner (`/usr/local/sbin/zcrypto-panel-materialize`), add:
+- [ ] **Step 4: Install task** — in `infra/ansible/roles/ops/tasks/main.yml`, at TOP LEVEL (not inside the `ops_image_digest is defined`-gated block — the regenerate script must land on the host regardless of whether this converge re-pins), directly after the block that installs the panel-materialize runner, add:
 
 ```yaml
 - name: install the panel regenerate flow (delete-and-rebuild with its refusals)
@@ -806,7 +815,7 @@ echo "2. Un-pause the healthchecks.io panel check (paused time-boxed in step 3).
 
 ```python
 def test_panel_regenerate_is_installed_by_the_ops_role():
-    tasks = load_tasks(OPS_TASKS)
+    tasks = load_tasks(OPS)
     task = find_task(tasks, "install the panel regenerate flow (delete-and-rebuild with its refusals)")
     assert task["ansible.builtin.template"]["dest"] == "/usr/local/sbin/zcrypto-panel-regenerate"
     assert task["ansible.builtin.template"]["mode"] == "0755"
@@ -835,7 +844,7 @@ git commit -m "feat(infra): zcrypto-panel-regenerate — the panel delete-and-re
 - Consumes: the capture role's parity block (`infra/ansible/roles/capture/tasks/main.yml`, tasks named `probe — the primary's running capture digest (canary scope)` through `canary override accepted — the reason, on the record`) as the mirror source; `canary_override` (shared variable, spec 00083 D5).
 - Produces: task names `probe — the running engine digest (canary scope)`, `probe — the secondary's running capture digest (engine canary parity)`, `engine canary parity — refuse an engine re-pin the secondary has not baked`, `engine canary override accepted — the reason, on the record`.
 
-- [ ] **Step 1: Write the failing tests** (wave-1 substrate; `ENGINE_TASKS` and helpers already exist in the file)
+- [ ] **Step 1: Write the failing tests** (wave-1 substrate; `ENGINE` and helpers already exist in the file)
 
 ```python
 # --- engine canary parity (spec 00083 D5): the capture parity assert, mirrored ------------------
@@ -844,7 +853,7 @@ git commit -m "feat(infra): zcrypto-panel-regenerate — the panel delete-and-re
 # unreachable secondary (empty stdout -> refuse via the override path), and shares canary_override.
 
 def test_engine_parity_refuses_unbaked_digest():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
     v = {
         "engine_image_digest": "sha256:" + "ab" * 32,
@@ -855,7 +864,7 @@ def test_engine_parity_refuses_unbaked_digest():
 
 
 def test_engine_parity_passes_when_secondary_runs_it():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
     d = "sha256:" + "ab" * 32
     v = {
@@ -867,14 +876,14 @@ def test_engine_parity_passes_when_secondary_runs_it():
 
 
 def test_engine_parity_fails_closed_on_unreachable_secondary():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
     v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {}, "canary_override": ""}
     assert not truthy(assert_that(guard), v)  # no stdout at all -> default('') -> refuse
 
 
 def test_engine_parity_reason_override_is_accepted_and_boolean_is_not():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
     v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {"stdout": ""}}
     assert truthy(assert_that(guard), {**v, "canary_override": "rollback to the only digest carrying the fix"})
@@ -882,7 +891,7 @@ def test_engine_parity_reason_override_is_accepted_and_boolean_is_not():
 
 
 def test_engine_parity_probe_skips_when_digest_already_running():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
     d = "sha256:" + "ab" * 32
     v = {"engine_image_digest": d, "engine_running_parity_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
@@ -890,14 +899,14 @@ def test_engine_parity_probe_skips_when_digest_already_running():
 
 
 def test_engine_parity_probe_is_unreachable_tolerant_and_delegated():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
     assert probe.get("ignore_unreachable") is True
     assert "difference(groups['engine_host'])" in probe["delegate_to"]
 
 
 def test_engine_parity_echo_mirrors_the_negated_assert():
-    tasks = load_tasks(ENGINE_TASKS)
+    tasks = load_tasks(ENGINE)
     echo = find_task(tasks, "engine canary override accepted — the reason, on the record")
     v_overridden = {
         "engine_image_digest": "sha256:" + "ab" * 32,
@@ -905,9 +914,7 @@ def test_engine_parity_echo_mirrors_the_negated_assert():
         "canary_override": "rollback to the only digest carrying the fix",
     }
     conds = " and ".join("(%s)" % c for c in when_conditions(echo))
-    # `is not skipped` is a task-result test the fixture can't fake through Templar — evaluate the
-    # remaining conjuncts with the probe replaced by its dict fixture, as the wave-1 echo tests do.
-    conds = conds.replace("engine_secondary_digest_probe is not skipped", "True")
+    # a dict fixture is `not skipped` under Templar — wave-1's echo tests evaluate this directly
     assert truthy(conds, v_overridden)
     assert not truthy(conds, {**v_overridden, "canary_override": "true"})
 ```
@@ -974,7 +981,7 @@ def test_engine_parity_echo_mirrors_the_negated_assert():
 
 - [ ] **Step 4: Run to verify pass** — `uv run pytest tests/test_infra_converge_guards.py -q`; all green (new + wave-1). `uv run pre-commit run -a`; from `infra/ansible/`: `uv run ansible-playbook --syntax-check site.yml`.
 
-- [ ] **Step 5: Prove the mirror is a mirror** — diff the four new tasks against the capture originals modulo the mechanical substitutions (`capture_`→`engine_`, container name, dropped `inventory_hostname` scoping, fail_msg wording); paste the diff in the task report. Any structural divergence beyond those is a defect.
+- [ ] **Step 5: Prove the mirror is a mirror** — diff the four new tasks against the capture originals modulo the mechanical substitutions (`capture_`→`engine_`, container name, dropped `inventory_hostname` scoping, ADDED `engine_image_digest is defined` conjuncts — capture's var is mandatory, engine's is optional — and fail_msg wording); paste the diff in the task report. Any structural divergence beyond those is a defect.
 
 - [ ] **Step 6: Commit**
 
@@ -1006,7 +1013,7 @@ BOUNDARY = 1785744000  # 2026-08-03 08:00:00 UTC, divisible by 14400
 
 
 def _window_guard():
-    tasks = load_tasks(SITE_YML)
+    tasks = load_tasks(SITE)
     return find_task(tasks, "engine window — refuse a converge outside the inter-cycle gap")
 
 
@@ -1075,6 +1082,20 @@ def test_old_floor_still_passes_after_1800_without_journal():
     }
     assert truthy(assert_that(guard), v)
 ```
+
+```python
+def test_journal_probe_path_matches_the_engine_role_default():
+    """site.yml's pre_task cannot see role defaults, so the journal path is a literal — pin it to
+    the engine role's engine_state_dir so a relocation cannot silently turn the floor
+    permanently conservative (probe rc!=0 forever, guard 'working' but never early)."""
+    site_text = SITE.read_text()
+    defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()
+    m = re.search(r"^engine_state_dir:\s*(\S+)", defaults, re.M)
+    assert m, "engine_state_dir vanished from the engine role defaults"
+    assert f"{m.group(1)}/journal/" in site_text
+```
+
+(`SITE` is the test file's existing Path constant for `site.yml`; `import re` if not already there.)
 
 Also update the existing wave-1 window fixtures in this file: they must gain `"engine_cycle_epoch_probe": {"rc": 1, "stdout": ""}` **only if** they fail without it — run them first; the `| default(1)` in the new expression is designed to keep them green untouched. If any needed editing, say so in the task report.
 
@@ -1161,7 +1182,7 @@ git commit -m "feat(config): window floor follows the journaled cycle completion
 # --- guard 4 tightened (spec 00083 D7): only --skip-tags forms naming engine satisfy it ----------
 
 def _untag_guard():
-    tasks = load_tasks(SITE_YML)
+    tasks = load_tasks(SITE)
     return find_task(tasks, "refuse an un-tagged run on the live primary")
 
 
@@ -1185,7 +1206,7 @@ def test_bare_run_still_refused():
     assert not truthy(assert_that(_untag_guard()), v)
 ```
 
-Check the existing wave-1 guard-4 tests: the fixture asserting a non-empty skip-tags PASSES must be inverted or removed — it pinned the exact looseness this task closes. Rewrite it as `test_unrelated_skip_tags_now_refused` (above) and note the replacement in the task report.
+Wave 1 left no fixture pinning the loose any-non-empty-skip-tags pass (that looseness is exactly the registered gap), so nothing existing needs inverting — just add the four tests above and confirm the rest of the guard-4 tests stay green.
 
 - [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_infra_converge_guards.py -q -k "untag or skip_tags"`; new tests FAIL.
 
@@ -1220,12 +1241,12 @@ git commit -m "fix(config): guard 4 accepts only skip-tags forms that actually e
 # --- liquidations rc split (spec 00083 D9): absent file stands down, unreadable file refuses -----
 
 def _liq_readable_guard():
-    tasks = load_tasks(OPS_TASKS)
+    tasks = load_tasks(OPS)
     return find_task(tasks, "liquidations — an unreadable compose file is a fault, never a first-provision skip")
 
 
 def _liq_decision_guard():
-    tasks = load_tasks(OPS_TASKS)
+    tasks = load_tasks(OPS)
     return find_task(tasks, "liquidations — require an explicit roll-after/defer decision on a repin")
 
 
@@ -1261,7 +1282,7 @@ def test_decision_guard_engages_when_file_exists():
     assert not truthy(assert_that(_liq_decision_guard()), v)  # empty stdout + no decision -> refuse
 ```
 
-The existing wave-1 test pinning the decision guard's `rc != 2` stand-down must be rewritten against the stat-based skip (absent → skip; that is `test_absent_file_skips_both_guards` above). Name the replaced test in the report.
+Two existing wave-1 tests need syncing: the one pinning the decision guard's `rc != 2` stand-down is superseded by `test_absent_file_skips_both_guards` (rewrite it away), and `test_liquidations_guard_skips_a_digestless_converge`'s live case must gain the new `ops_liquidations_compose_stat` fixture (`{"stat": {"exists": True, "readable": True}}`) or it fails on the reworked `when:`. Name both in the report.
 
 - [ ] **Step 2: Run to verify failure** — `-k liq`; new tests FAIL.
 
@@ -1324,7 +1345,7 @@ def test_seeding_failure_is_rc8_not_usage(tmp_path):
     target = tmp_path / "mod.py"
     target.write_text("VALUE = 1\n")
     # no commit at all — HEAD is unborn
-    r = run_probe(
+    r = run(
         ["--sandbox", "--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/1/3/", "--", "true"],
         cwd=tmp_path,
     )
@@ -1333,61 +1354,72 @@ def test_seeding_failure_is_rc8_not_usage(tmp_path):
 
 
 def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
-    """Kill the probe mid-run with the target's directory made read-only, so the cleanup cp
-    fails: rc must be 9 and the pristine copy must SURVIVE (it is the only way back)."""
+    """Signal mid-mutation with the TARGET FILE read-only, so the cleanup cp fails: rc must be 9,
+    the stderr must say KEPT, and the pristine copy must SURVIVE (it is the only way back).
+
+    Built on wave-1's slow-probe idiom (cold-review C2): fast on pristine/control content, marker +
+    sleep only on the MUTATED content, so the kill window is unambiguous. `chmod 0444` goes on the
+    FILE — overwriting needs write permission on the file, not its directory. killpg + re-send,
+    exactly like the wave-1 signal test (bash defers trapped signals during foreground commands).
+    Assumes a non-root test run (root ignores file modes)."""
     target = make_repo(tmp_path)
+    marker = tmp_path / "mutated-seen"
     probe = tmp_path / "probe.sh"
-    marker = tmp_path / "started"
-    probe.write_text(f"#!/bin/sh\ntouch {marker}\nif grep -q 'VALUE = 1' mod.py; then sleep 30; fi\n")
+    probe.write_text(
+        "#!/bin/sh\n"
+        f"if grep -q 'VALUE = 9' mod.py; then touch {marker}; sleep 30; fi\n"
+        "grep -q 'VALUE = 1' mod.py\n"
+    )
     probe.chmod(0o755)
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "slow"], check=True)
-    proc = subprocess.Popen(
-        [str(SCRIPT), "--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/VALUE = 1/VALUE = 9/", "--", "./probe.sh"],
-        cwd=tmp_path, stderr=subprocess.PIPE, text=True,
-    )
-    # wait for the MUTATION phase: the marker appears once per probe run; the third run is the
-    # real mutation (baseline, control, mutation). Simpler and race-free: wait until the file
-    # content shows the real mutation applied.
-    for _ in range(200):
-        if target.exists() and "VALUE = 9" in target.read_text():
-            break
-        time.sleep(0.05)
-    else:
-        proc.kill()
-        raise AssertionError("mutation phase never observed")
-    os.chmod(tmp_path, 0o555)  # cleanup cp to $file now fails (dir read-only)
-    try:
-        proc.send_signal(signal.SIGTERM)
-        for _ in range(100):
-            if proc.poll() is not None:
+    stderr_file = tmp_path / "stderr.txt"
+    with stderr_file.open("w") as err:
+        proc = subprocess.Popen(
+            [str(SCRIPT), "--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/",
+             "--mutation", "s/VALUE = 1/VALUE = 9/", "--", "./probe.sh"],
+            cwd=tmp_path, stderr=err, start_new_session=True,
+        )
+        for _ in range(200):
+            if marker.exists():
                 break
             time.sleep(0.05)
-            proc.send_signal(signal.SIGTERM)
-        rc = proc.wait(timeout=5)
-    finally:
-        os.chmod(tmp_path, 0o755)
+        else:
+            proc.kill()
+            raise AssertionError("mutation phase never observed")
+        os.chmod(target, 0o444)  # the cleanup cp to $file now fails
+        try:
+            for _ in range(100):
+                if proc.poll() is not None:
+                    break
+                os.killpg(proc.pid, signal.SIGTERM)
+                time.sleep(0.05)
+            rc = proc.wait(timeout=5)
+        finally:
+            os.chmod(target, 0o644)
     assert rc == 9
-    assert "KEPT" in proc.stderr.read()
-    # the pristine copy survived somewhere under $TMPDIR — the stderr line names it; parse and check
-    # (the message format is asserted, the file's existence is the guarantee)
+    err_text = stderr_file.read_text()
+    assert "KEPT" in err_text
+    kept = re.search(r"KEPT at (\S+)", err_text)
+    assert kept and Path(kept.group(1)).exists()  # the pristine copy genuinely survived
+    Path(kept.group(1)).unlink()  # leave no temp behind
 
 
 def test_noop_control_names_the_control(tmp_path):
     target = make_repo(tmp_path)
-    r = run_probe(["--file", "mod.py", "--control", "s/NO-MATCH/x/", "--mutation", "s/VALUE = 1/VALUE = 9/", "--", "./probe.sh"], cwd=tmp_path)
+    r = run(["--file", "mod.py", "--control", "s/NO-MATCH/x/", "--mutation", "s/VALUE = 1/VALUE = 9/", "--", "./probe.sh"], cwd=tmp_path)
     assert r.returncode == 6
     assert "control sed" in r.stderr
 
 
 def test_noop_mutation_names_the_mutation(tmp_path):
     target = make_repo(tmp_path)
-    r = run_probe(["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/NO-MATCH/x/", "--", "./probe.sh"], cwd=tmp_path)
+    r = run(["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/NO-MATCH/x/", "--", "./probe.sh"], cwd=tmp_path)
     assert r.returncode == 6
     assert "mutation sed" in r.stderr
 ```
 
-(`run_probe`, `make_repo`, `SCRIPT` already exist in the file; `test_noop_mutation_aborts` is superseded by the two named-phase tests — replace it. Import `time`/`signal`/`os` as needed at the top. In `test_cleanup_cp_failure_is_rc9_and_keeps_pristine`, capture stderr to a file rather than a pipe if `proc.stderr.read()` after `wait()` deadlocks — the point is rc 9 + the KEPT message + the pristine file surviving.)
+(`make_repo` and `SCRIPT` already exist in the file, and its probe-runner helper is `run(args, cwd)` — use its real signature, not a new one. `test_noop_mutation_aborts` is superseded by the two named-phase tests — replace it. Import `time`/`signal`/`os`/`re`/`Path` as needed at the top.)
 
 - [ ] **Step 2: Run to verify failure** — `uv run pytest tests/test_mutate_probe.py -q`; the four new/changed tests FAIL.
 
@@ -1459,7 +1491,7 @@ git commit -m "fix(infra): mutate-probe exit codes are hermetic and the no-op ab
 **Interfaces:**
 - Produces: the hook resolves the repo dir from `git -C <dir> mv` and from a leading `cd <dir> &&` prefix; unresolvable dirs (shell variables, command substitution, backticks) emit a one-line NOTE on stderr + exit 2; plain `git mv` keeps process-cwd behavior; commit split claude-kind vs test unchanged from wave 1 (two commits).
 
-- [ ] **Step 1: Write the failing tests** (harness helpers `make_rm_state_repo`, `run_hook` already exist in the file)
+- [ ] **Step 1: Write the failing tests.** The file's existing harness is a `rm_state_repo` FIXTURE and a `run_hook(repo, payload_json_str)` helper — neither fits the new tests as-is (cold-review I5). First, mechanical refactor with the existing 12 tests staying green: extract the fixture's body into a plain function `make_rm_state_repo(path)` (keeping its self-asserting `RM ` premise) and have the fixture call it; extend `run_hook` to `run_hook(payload: dict, cwd: Path)` (JSON-encode inside; adapt the existing call sites). Then add:
 
 ```python
 def test_dash_c_form_warns_against_the_named_repo(tmp_path):
@@ -1584,5 +1616,6 @@ git commit -m "test(config): prove the guard judges the named repo and notes unr
 
 - [ ] The `capture-deploys.md` shrink list (protected set — per-edit owner sign-offs): the `--limit`/preview lines → `converge.sh` pointer; the panel-generation section's mechanized steps → `zcrypto-panel-regenerate` pointer (judgment sentences stay); the ops verify-by-outcome bullet → `ops-postverify.sh` pointer; the Ansible-secrets line gains the vault-pass refusal pointer; the engine-parity "no assert enforces engine parity yet" qualifiers come OUT (D5 landed).
 - [ ] T0111: wave-2 items → `## Done so far` (the genesis item recorded as already-landed, measured); status stays `partial`; remainder = the attended ops-host drills for `converge.sh` + `zcrypto-panel-regenerate`, with `ripe_when:` a maintenance window; index sync.
+- [ ] `agent-ops.md`: offer the owner the grafana-query bullet gaining an `ops-postverify.sh` pointer (spec D12) — an explicit sign-off item beside the capture-deploys list.
 - [ ] Decisions log (phase 6): the three scope/confirm/shrink rulings.
 - [ ] Iterations-history entry (phase 6), numbers measured at branch end, not drafted mid-branch.
