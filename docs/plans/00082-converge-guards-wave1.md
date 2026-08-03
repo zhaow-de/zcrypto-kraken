@@ -4,7 +4,7 @@
 
 **Goal:** every converge hazard spec `00082` classifies as guardable refuses at the point of use — thirteen Ansible guards, one probe-harness script, one Claude hook — each proven against a constructed violation before it counts.
 
-**Architecture:** play-level `pre_tasks` (`tags: [always]`) for the two tag-independent guards; role-level probe→assert blocks (the engine §8-gate idiom) for the rest; `tests/test_infra_converge_guards.py` evaluates each guard's real `that:`/`when:` expressions through Ansible's own `Templar` against violation/pass fixtures — the test boundary is *the expression given probe outcomes*, so fixtures supply registered-var shapes, never mock Ansible itself.
+**Architecture:** play-level `pre_tasks` — the un-tagged-primary refusal at `tags: [always]`, the engine window guard at `tags: [engine]` (cold review I2: always-tagged would refuse `--tags capture` primary runs the rule permits); role-level probe→assert blocks (the engine §8-gate idiom) for the rest; `tests/test_infra_converge_guards.py` evaluates each guard's real `that:`/`when:` expressions through Ansible's own `Templar` against violation/pass fixtures — the test boundary is *the expression given probe outcomes*, so fixtures supply registered-var shapes, never mock Ansible itself.
 
 **Tech Stack:** ansible-core (already a venv dep), Jinja2, pytest, bash. No new dependencies.
 
@@ -52,11 +52,9 @@ ANSIBLE = REPO / "infra" / "ansible"
 
 
 def load_tasks(path: Path) -> list[dict]:
-    docs = yaml.safe_load(path.read_text())
-    # site.yml/bootstrap.yml are play lists; role files are task lists
-    if docs and isinstance(docs[0], dict) and "hosts" in docs[0]:
-        return docs
-    return docs
+    # play lists (site.yml/bootstrap.yml) and role task lists parse identically; find_task recurses
+    # into block/pre_tasks/tasks either way.
+    return yaml.safe_load(path.read_text())
 
 
 def find_task(tasks: list[dict], name: str) -> dict:
@@ -73,10 +71,16 @@ def find_task(tasks: list[dict], name: str) -> dict:
 
 
 def truthy(expr, variables: dict) -> bool:
+    # ansible-core 2.19+ Data-Tagging: a plain str is UNTRUSTED and comes back unrendered -- bool()
+    # of the unrendered template string would be True for every fixture, making every test vacuous.
+    # trust_as_template is mandatory (measured on the locked 2.21.2; cold review C1). Never
+    # re-implement guard logic in Python instead -- the committed expression is the test subject.
+    from ansible.template import trust_as_template
+
     t = Templar(loader=DataLoader(), variables=variables)
     if isinstance(expr, list):
         return all(truthy(e, variables) for e in expr)
-    return bool(t.template("{{ (" + expr + ") | bool }}"))
+    return bool(t.template(trust_as_template("{{ (" + expr + ") | bool }}")))
 
 
 def assert_that(task: dict) -> list[str]:
@@ -171,17 +175,34 @@ def test_pins_recording_semantics(pins_text, override, expected):
   ansible.builtin.assert:
     that: capture_digest_probe.rc == 0
     fail_msg: >-
-      {{ capture_image }}@{{ capture_image_digest }} is not on {{ inventory_hostname }} — the compose
-      tier is pull-never, so the stop→start window would contain a registry pull. Pre-stage it first:
+      {{ capture_image }}@{{ capture_image_digest }} is not on {{ inventory_hostname }} — the unit's
+      ExecStartPre pulls at start, so the stop→start window would contain a registry pull, extending
+      the capture gap. Pre-stage it first:
       sudo docker pull {{ capture_image }}@{{ capture_image_digest }}
 
-- name: probe — the primary's deployed pair list (pair-add order)
+- name: probe — this host's own deployed pair list (does this converge ADD a pair?)
+  ansible.builtin.slurp:
+    src: /opt/zcrypto-capture/compose.yaml
+  register: local_compose_raw
+  when: inventory_hostname not in groups['engine_host']
+  failed_when: false
+  check_mode: false
+
+- name: derive whether new pairs are being added (guard engages only then — I1)
+  ansible.builtin.set_fact:
+    deployed_pairs: >-
+      {{ (local_compose_raw.content | b64decode | regex_search('CAPTURE_PAIRS: \"([^\"]*)\"', '\1') | first).split(',')
+         if local_compose_raw.content is defined else [] }}
+  when: inventory_hostname not in groups['engine_host']
+
+- name: probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)
   ansible.builtin.slurp:
     src: /opt/zcrypto-capture/compose.yaml
   register: primary_compose_raw
   delegate_to: "{{ groups['engine_host'] | first }}"
-  when: inventory_hostname not in groups['engine_host']
-  failed_when: false
+  when: >-
+    inventory_hostname not in groups['engine_host']
+    and capture_pairs | difference(deployed_pairs | default([])) | length > 0
   check_mode: false
 
 - name: derive the primary's pair list
@@ -189,6 +210,8 @@ def test_pins_recording_semantics(pins_text, override, expected):
     primary_pairs: >-
       {{ (primary_compose_raw.content | b64decode | regex_search('CAPTURE_PAIRS: \"([^\"]*)\"', '\1') | first).split(',') }}
   when: inventory_hostname not in groups['engine_host'] and primary_compose_raw.content is defined
+  # no failed_when on the delegated slurp above: an unreachable primary FAILS the play when (and only
+  # when) a new pair is being added — fail-closed is the point (spec D3-7)
 
 - name: pair-add order — refuse a pair the primary does not already carry
   ansible.builtin.assert:
@@ -212,6 +235,7 @@ def test_pins_recording_semantics(pins_text, override, expected):
   register: secondary_digest_probe
   delegate_to: "{{ (groups['capture_host'] | difference(groups['engine_host'])) | first }}"
   failed_when: false
+  ignore_unreachable: true  # I1: an unreachable secondary must reach the assert (empty stdout -> refuse via override), never abort or silently pass
   changed_when: false
   check_mode: false
   when: >-
@@ -231,7 +255,7 @@ def test_pins_recording_semantics(pins_text, override, expected):
       -e canary_override="<why this cannot wait>" (a reason, not a boolean; it lands in this log).
   when: >-
     inventory_hostname in groups['engine_host']
-    and secondary_digest_probe.stdout is defined
+    and secondary_digest_probe is not skipped
 
 - name: probe — the currently-running digest this converge would replace (pins recording)
   ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
@@ -245,10 +269,13 @@ def test_pins_recording_semantics(pins_text, override, expected):
     fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
   when: running_digest_probe.rc == 0
 
+# M3: regex_search yields None (not an error) on a tag-started image ref; default('') then makes the
+# needle empty, '' in text is True -> the guard passes open ONLY for a container with no sha256 digest
+# in its ref, which cannot happen on this digest-pinned fleet; every sha-pinned ref is checked.
 - name: pins recording — refuse to replace a digest fleet-pins.md does not record
   ansible.builtin.assert:
     that: >-
-      ((running_digest_probe.stdout | regex_search('sha256:([0-9a-f]{12})', '\1') | first | default('')) in fleet_pins_text)
+      ((running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in fleet_pins_text)
       or ((pins_override | default('') | string | length > 8)
           and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
     fail_msg: >-
@@ -299,6 +326,8 @@ WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
         (900, "", False),          # completion window [B, B+30min] may still be running
         (13900, "", False),        # within 10 min of the next boundary
         (900, "true", False),      # boolean override refused
+        (900, "yes", False),       # I4: every canonical boolean spelling refused
+        (900, "short", False),     # I4: sub-9-char fragment refused
         (900, "cycle confirmed complete, converging late on purpose", True),
     ],
 )
@@ -309,6 +338,44 @@ def test_engine_window_guard(since_boundary, override, expected):
         "engine_window_override": override,
     }
     assert truthy(assert_that(task), variables) is expected
+```
+
+Also append the when-scoping tests (cold review M4 — the `that:` tests never exercise the scoping, and a mis-scoped guard fires on the wrong host or never):
+
+```python
+def when_conditions(task: dict) -> list[str]:
+    w = task.get("when", [])
+    return w if isinstance(w, list) else [w]
+
+
+def test_untagged_refusal_scopes_to_engine_host_members_only():
+    task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
+    on_primary = {"inventory_hostname": "zcrypto", "groups": {"engine_host": ["zcrypto"]}}
+    on_secondary = {"inventory_hostname": "zcrypto-red", "groups": {"engine_host": ["zcrypto"]}}
+    assert truthy(when_conditions(task), on_primary)
+    assert not truthy(when_conditions(task), on_secondary)
+
+
+def test_canary_probe_activates_only_on_an_actual_repin():
+    task = find_task(load_tasks(ANSIBLE / "roles" / "capture" / "tasks" / "main.yml"),
+                     "probe — the secondary's running capture digest (canary parity)")
+    base = {"inventory_hostname": "zcrypto", "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]}}
+    repin = {**base, "capture_image_digest": "sha256:" + "c" * 64,
+             "primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}}
+    same = {**base, "capture_image_digest": "sha256:" + "0" * 64,
+            "primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}}
+    assert truthy(when_conditions(task), repin)
+    assert not truthy(when_conditions(task), same)
+
+
+def test_pair_add_delegated_probe_engages_only_when_adding_pairs():
+    task = find_task(load_tasks(ANSIBLE / "roles" / "capture" / "tasks" / "main.yml"),
+                     "probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)")
+    base = {"inventory_hostname": "zcrypto-red", "groups": {"engine_host": ["zcrypto"]}}
+    adding = {**base, "capture_pairs": ["BTC/EUR", "XRP/BTC"], "deployed_pairs": ["BTC/EUR"]}
+    unchanged = {**base, "capture_pairs": ["BTC/EUR"], "deployed_pairs": ["BTC/EUR"]}
+    assert truthy(when_conditions(task), adding)
+    assert not truthy(when_conditions(task), unchanged)
 ```
 
 - [ ] **Step 2: Run — FAIL (KeyError).**
@@ -341,7 +408,7 @@ Engine play, after the existing note task:
       changed_when: false
       check_mode: false
       when: not ansible_check_mode
-      tags: [always]
+      tags: [engine]  # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged runs
 
     - name: engine window — refuse a converge outside the inter-cycle gap
       ansible.builtin.assert:
@@ -355,7 +422,7 @@ Engine play, after the existing note task:
           belong to the running cycle, the last 10 min are too close to the next). Wait for the gap,
           or pass -e engine_window_override="<why this cannot wait>" (a reason, not a boolean).
       when: not ansible_check_mode and engine_epoch_probe.stdout is defined
-      tags: [always]
+      tags: [engine]
 ```
 
 - [ ] **Step 4: Run — PASS; `pre-commit run -a` clean.**
@@ -379,6 +446,15 @@ def test_engine_digest_preflight():
     task = find_task(load_tasks(ENGINE), "preflight — refuse a digest the host has not pulled")
     assert not truthy(assert_that(task), {"engine_digest_probe": {"rc": 1}})
     assert truthy(assert_that(task), {"engine_digest_probe": {"rc": 0}})
+
+
+def test_engine_pins_recording_semantics():
+    task = find_task(load_tasks(ENGINE), "pins recording — refuse to replace a digest fleet-pins.md does not record")
+    variables = {"running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "e" * 64, "rc": 0},
+                 "fleet_pins_text": "| engine | zcrypto | `" + "e" * 12 + "` |", "pins_override": ""}
+    assert truthy(assert_that(task), variables)
+    variables["fleet_pins_text"] = "| engine | zcrypto | `" + "f" * 12 + "` |"
+    assert not truthy(assert_that(task), variables)
 
 
 def test_engine_secrets_preflight():
@@ -423,13 +499,32 @@ def test_panel_timer_hold_excludes_only_the_panel_timer():
     tasks = load_tasks(OPS)
     task = find_task(tasks, "enable + start the replay + panel timers")
     loop_expr = task["loop"]
-    held = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": True}).template(loop_expr)
-    live = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": False}).template(loop_expr)
+    from ansible.template import trust_as_template
+
+    held = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": True}).template(trust_as_template(loop_expr))
+    live = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": False}).template(trust_as_template(loop_expr))
     assert "panel-materialize" not in held and "verify-replay" in held and "verified-replay" in held
     assert "panel-materialize" in live
 ```
 
-- [ ] **Step 2: FAIL.** **Step 3: Implement.** Digest preflight + pins guard mirror Task 1 (pins probe source: `grep '@sha256:' {{ ops_compose_dir }}/compose.yaml` — the ops tier's containers are timer-run, so the compose pin is the replaceable record). Liquidations: probe the deployed compose image line → `liquidations_pin_probe`; assert `(ops_image_digest in liquidations_pin_probe.stdout) or (liquidations_decision | default('') in ['roll-after', 'defer'])` with fail_msg naming both choices and the 30 h self-heal bound. Panel hold: change the loop on the existing enable-start task to
+Add the ops digest-preflight test (I4 — it was missing) beside the liquidations tests:
+
+```python
+def test_ops_digest_preflight():
+    task = find_task(load_tasks(OPS), "preflight — refuse a digest the host has not pulled")
+    assert not truthy(assert_that(task), {"ops_digest_probe": {"rc": 1}})
+    assert truthy(assert_that(task), {"ops_digest_probe": {"rc": 0}})
+
+
+@pytest.mark.parametrize("override,expected", [("", False), ("short", False), ("recorded in pins after emergency roll", True)])
+def test_ops_pins_override_semantics(override, expected):
+    task = find_task(load_tasks(OPS), "pins recording — refuse to replace a digest fleet-pins.md does not record")
+    variables = {"running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64, "rc": 0},
+                 "fleet_pins_text": "| ops | zcrypto-ops | `" + "b" * 12 + "` |", "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+```
+
+- [ ] **Step 2: FAIL.** **Step 3: Implement.** Digest preflight + pins guard follow Task 1's YAML shape, with two ops-specific rules: **every ops guard is gated `when: ops_image_digest is defined`** (I3 — the role's own convention: a digestless config/alloy-only converge skips all image-consuming tasks, and a guard must not break it), and **the pins probe reads the `liquidations-poll` CONTAINER** (`docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' liquidations-poll`, probe idiom) — never the compose file, which is exactly the surface the 2026-07-31 incident showed lying while the container was right (spec D3-13; I7). Probe rc ≠ 0 (container absent) skips the pins guard. Liquidations: probe the deployed compose image line → `liquidations_pin_probe`; assert `(ops_image_digest in liquidations_pin_probe.stdout) or (liquidations_decision | default('') in ['roll-after', 'defer'])` with fail_msg naming both choices and the 30 h self-heal bound. Panel hold: change the loop on the existing enable-start task to
   `{{ ['verify-replay', 'verified-replay'] + ([] if ops_panel_timer_hold | default(false) | bool else ['panel-materialize']) }}`
   and add a comment: the silent re-arm after a converge was the recorded trap.
 - [ ] **Step 4: PASS + gate.** **Step 5: Commit** `feat(config): ops-role converge guards — digest, liquidations decision, panel hold, pins`.
@@ -443,7 +538,9 @@ ______________________________________________________________________
 - Modify: `tests/test_infra_converge_guards.py`
 
 - [ ] **Step 1: Failing test** — `daemon.json — refuse an unacknowledged change (its handler bounces dockerd)`: `{"daemon_json_diff": {"rc": 1}, "daemon_json_ack": False}` → refuse; `{"daemon_json_diff": {"rc": 0}, "daemon_json_ack": False}` → pass; `rc: 1` + ack `True` → pass.
-- [ ] **Step 2: FAIL.** **Step 3: Implement**: template `daemon.json.j2` to `/run/zcrypto-daemon-json.probe` (`changed_when: false`, `check_mode: false`), `command: diff /run/zcrypto-daemon-json.probe /etc/docker/daemon.json` → `daemon_json_diff` (probe idiom; rc 2/absent deployed file counts as differing), assert `daemon_json_diff.rc == 0 or daemon_json_ack | default(false) | bool` with fail_msg: *"daemon.json would change and its handler restarts dockerd — under live capture that is a data gap. Review the diff above, then re-run with -e daemon_json_ack=true."* The diff task's output IS the display (leave `failed_when: false` so it prints).
+Include the rc==2 fixture (I5): `{"daemon_json_diff": {"rc": 2}, "daemon_json_ack": False}` → refuse (absent deployed file counts as differing).
+
+- [ ] **Step 2: FAIL.** **Step 3: Implement**: template `daemon.json.j2` to `/run/zcrypto-daemon-json.probe` (`changed_when: false`, `check_mode: false` — **a stated exception to the read-only probe idiom: it writes to /run even under `--check`; tmpfs, no secrets, no service touched**, spec D3-8), `command: diff /run/zcrypto-daemon-json.probe /etc/docker/daemon.json` → `daemon_json_diff` (probe idiom; rc != 0 counts as differing), then **a `debug: var=daemon_json_diff.stdout_lines` task gated `when: daemon_json_diff.rc != 0`** — I5: a failed_when-false command prints nothing under the default callback, so without this the operator acks unseen content and the guard's boolean rationale is void — then assert `daemon_json_diff.rc == 0 or daemon_json_ack | default(false) | bool` with fail_msg: *"daemon.json would change and its handler restarts dockerd — under live capture that is a data gap. Review the diff above, then re-run with -e daemon_json_ack=true."*
 - [ ] **Step 4: PASS + gate.** **Step 5: Commit** `feat(config): docker-role daemon.json change-ack guard`.
 
 ______________________________________________________________________
@@ -451,11 +548,11 @@ ______________________________________________________________________
 ### Task 6: bootstrap.yml re-bootstrap refusal
 
 **Files:**
-- Modify: `infra/ansible/bootstrap.yml` (after the existing primary refusal — this generalizes it to *any* bootstrapped host)
+- Modify: `infra/ansible/bootstrap.yml` — **capture play only** (M2: bootstrap.yml holds three plays; the ops/access plays are LAN-side, get no sshd drop-in, and their fail_msg would be wrong — generalizing them is wave-2 work if wanted, an explicit narrow here, not an oversight). The guard sits after the existing primary refusal and generalizes it to the *secondary*.
 - Modify: `tests/test_infra_converge_guards.py`
 
 - [ ] **Step 1: Failing test** — `refuse to re-bootstrap an already-provisioned host`: `{"deploy_user_probe": {"rc": 0}, "rebootstrap": False}` → refuse; `{"deploy_user_probe": {"rc": 2}}` → pass; rc 0 + `rebootstrap: True` → pass.
-- [ ] **Step 2: FAIL.** **Step 3: Implement** (`gather_facts: false` play — use `ansible.builtin.command: getent passwd zcrypto-deploy`, probe idiom): assert `deploy_user_probe.rc != 0 or rebootstrap | default(false) | bool`, fail_msg names the evidence and the flag: *"zcrypto-deploy already exists on {{ inventory_hostname }} — this host is bootstrapped, and re-running would rewrite its sshd drop-in. Converge with site.yml instead, or pass -e rebootstrap=true if you are genuinely rebuilding it."*
+- [ ] **Step 2: FAIL.** **Step 3: Implement** (`gather_facts: false` play — use `ansible.builtin.command: getent passwd zcrypto-deploy`, probe idiom): assert `deploy_user_probe.rc != 0 or rebootstrap | default(false) | bool`, fail_msg names the evidence and the flag: *"zcrypto-deploy already exists on {{ inventory_hostname }} — this host is bootstrapped, and re-running would rewrite its sshd drop-in. Converge with site.yml instead, or pass -e rebootstrap=true if you are genuinely rebuilding it."* (Scope: the capture play only — see Files note.)
 - [ ] **Step 4: PASS + gate.** **Step 5: Commit** `feat(config): bootstrap re-bootstrap refusal`.
 
 ______________________________________________________________________
@@ -504,9 +601,18 @@ def test_refuses_dirty_worktree(tmp_path):
 
 def test_control_mutation_must_fail_first(tmp_path):
     make_repo(tmp_path)
-    # control that does NOT break the probe => harness must abort before any real probe
-    r = run(["--file", "mod.py", "--control", "s/nonexistent/x/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"], tmp_path)
+    # a control that CHANGES the file but does not break the probe (appends comments) => the
+    # harness must abort before any real probe. (A non-matching sed would instead trip the
+    # no-op guard -- that path has its own test below.)
+    r = run(["--file", "mod.py", "--control", "s/$/ # c/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "./probe.sh"], tmp_path)
     assert r.returncode != 0 and "control" in (r.stdout + r.stderr).lower()
+
+
+def test_noop_mutation_aborts(tmp_path):
+    make_repo(tmp_path)
+    # I6b: a sed that matches nothing must abort loudly, never report SURVIVED on unmutated code
+    r = run(["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/nonexistent/x/", "--", "./probe.sh"], tmp_path)
+    assert r.returncode != 0 and "did not change" in (r.stdout + r.stderr)
 
 
 def test_real_probe_runs_and_restores(tmp_path):
@@ -564,9 +670,30 @@ fi
 
 export PYTHONDONTWRITEBYTECODE=1
 purge() { find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true; }
-restore() { if [[ $sandbox -eq 0 ]]; then git checkout -q -- "$file"; git diff --quiet -- "$file" || { echo "mutate-probe: restore FAILED for $file" >&2; exit 4; }; fi; }
 
-apply() { sed -i "$1" "$file"; purge; }
+# I6a: restore must work in BOTH modes — the sandbox has no .git, so keep a pristine copy and
+# restore from it; in-repo, git is authoritative and the byte-identity check is the proof.
+pristine="$(mktemp)"; cp "$file" "$pristine"
+restore() {
+  if [[ $sandbox -eq 0 ]]; then
+    git checkout -q -- "$file"
+    git diff --quiet -- "$file" || { echo "mutate-probe: restore FAILED for $file" >&2; exit 4; }
+  else
+    cp "$pristine" "$file"
+  fi
+  cmp -s "$pristine" "$file" || { echo "mutate-probe: restore FAILED for $file (differs from pristine copy)" >&2; exit 4; }
+}
+
+# I6b: a sed expression that matches nothing silently no-ops (the str.replace trap) — a probe on
+# unmutated code is a false SURVIVED. Every apply must prove the file actually changed.
+apply() {
+  sed -i "$1" "$file"
+  if cmp -s "$pristine" "$file"; then
+    echo "mutate-probe: mutation '$1' did not change $file — a no-op sed proves nothing. Fix the expression." >&2
+    exit 6
+  fi
+  purge
+}
 
 # 1. control: must FAIL, or the harness is not measuring
 apply "$control"
@@ -592,7 +719,7 @@ ______________________________________________________________________
 - Modify: `.claude/settings.json` (PostToolUse, matcher `Bash`)
 - Create: `tests/test_git_mv_guard.py`
 
-- [ ] **Step 1: Failing tests** — feed the script synthetic hook JSON on stdin with `cwd` pointed at a scratch repo in the `RM` state (edit file → `git mv`); assert stdout warns naming the new path and the fix; a non-`git mv` command exits 0 silently; a clean `git mv` (no prior edit) exits 0 silently.
+- [ ] **Step 1: Failing tests** — feed the script synthetic hook JSON on stdin while the **subprocess cwd** is a scratch repo in the `RM` state (the script uses process cwd; it ignores any `cwd` field in the JSON) (edit file → `git mv`); assert stdout warns naming the new path and the fix; a non-`git mv` command exits 0 silently; a clean `git mv` (no prior edit) exits 0 silently.
 - [ ] **Step 2: FAIL.** **Step 3: Implement** (memo-guard's parsing idiom):
 
 ```bash
