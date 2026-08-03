@@ -12,6 +12,8 @@
 
 - **Operator-facing text** (`.claude/rules/operator-facing-text.md`): every `fail_msg`/`msg` is runtime output from `infra/` — **no `T<NNNN>`, `iter-<N>`, `Phase <N>`, or spec serials in any rendered string**. Serials live in YAML comments only. Every `fail_msg` names the fix in the same sentence.
 - **Probe idiom** (spec D2): probes are `failed_when: false`, `changed_when: false`, `check_mode: false`; asserts follow. The engine window guard alone adds `when: not ansible_check_mode`.
+- **Var naming**: `ansible-lint var-naming[no-role-prefix]` requires role-registered/derived vars to carry the role prefix (`capture_*`, `engine_*`, `ops_*`) — Task 1 was forced into this; every later task uses prefixed names from the start, in guard YAML and test fixtures alike. Play-level `pre_tasks` registers in `site.yml` are outside the rule.
+- **Override echo** (spec D1, second half): every overridable guard is followed by a `debug` task, gated on the override having been ACCEPTED, that prints the reason — the play log must carry the why, or the fail_msg's own promise ("it lands in this log") is false. Applies to canary + pins (Task 1, retrofitted in its fix round), the window guard (Task 2), engine pins (Task 3), ops pins (Task 4).
 - **Override convention** (spec D1): `canary_override` / `pins_override` / `engine_window_override` accept only free text ≥ 9 chars that is not `true`/`false`/`1`/`yes`; canonical Jinja fragment (repeat verbatim wherever used):
   `(X | default('') | string | length > 8) and (X | default('') | string | lower not in ['true', 'false', '1', 'yes'])`
 - **Guard-proving** (`agent-ops.md`): each task writes the failing test first; a guard whose violation fixture does not fail before the guard lands is a broken test, not a passing one. Read WHICH assertion fired.
@@ -28,7 +30,7 @@ ______________________________________________________________________
 - Modify: `infra/ansible/roles/capture/tasks/main.yml` (insert after the existing `fail fast if the pinned image digest was not supplied` assert)
 
 **Interfaces:**
-- Produces: `load_task(role, name)` and `truthy(expr, variables)` helpers every later task's tests reuse; the override fragment as `OVERRIDE_OK(varname)` test-side constructor mirroring the Global-Constraints fragment.
+- Produces: `load_tasks(path)`, `find_task(tasks, name)`, `truthy(expr, variables)`, `assert_that(task)`, `when_conditions(task)` — every later task's tests reuse these; override cases are inlined per guard (no shared constructor).
 
 - [ ] **Step 1: Write the failing tests**
 
