@@ -527,3 +527,16 @@ def test_daemon_json_change_ack(rc, ack, expected):
 def test_daemon_json_diff_is_displayed_only_when_it_would_change(rc, expected):
     task = find_task(load_tasks(DOCKER), "daemon.json — show the pending change before asking for an ack")
     assert truthy(when_conditions(task), {"docker_daemon_json_diff": {"rc": rc}}) is expected
+
+
+# One contract, so one test: probe -> show -> ask -> act. ORDER is the whole of it -- every expression
+# test above still passes with the guard sitting AFTER the template task it exists to protect, at
+# which point dockerd has already been notified and the guard is decorative.
+def test_daemon_json_guard_precedes_the_task_whose_handler_bounces_dockerd():
+    tasks = load_tasks(DOCKER)
+    probe = task_index(tasks, "probe — diff the pending daemon.json against the deployed one")
+    show = task_index(tasks, "daemon.json — show the pending change before asking for an ack")
+    ask = task_index(tasks, DAEMON_JSON_ACK)
+    assert probe < show  # nothing to display until the diff has been registered
+    assert show < ask  # the ack is only meaningful once the operator has seen the diff
+    assert ask < task_index(tasks, "configure the docker daemon (bounded json-file log driver)")
