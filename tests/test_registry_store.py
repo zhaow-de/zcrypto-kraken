@@ -133,6 +133,9 @@ def test_unknown_schema_version_raises(tmp_path):
         TrialRegistry(_write(tmp_path, [line]))
 
 
+COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: run_ref is now required to name one
+
+
 def _append(reg, **over):
     kw = dict(
         iteration="iter-001",
@@ -143,6 +146,7 @@ def _append(reg, **over):
         metrics={"sharpe": 0.3, "dsr": 0.1},
         n_trials_in_family=2,
         verdict="adopt",
+        run_ref=COMMITTED_PATH,
     )
     kw.update(over)
     return reg.append(**kw)
@@ -449,6 +453,37 @@ def test_live_registry_file_loads_clean():
     assert all(r.schema_version == 2 for r in pre_v3)
     assert all(r.variant is None for r in pre_v3)  # pre-v3 records; variant-25..32 lives in `notes` only
     assert all(r.schema_version >= 3 for r in reg.records[32:])  # everything after landed on schema v3+
+
+
+def test_append_records_a_committed_run_ref_end_to_end(tmp_path):
+    p = tmp_path / "t.jsonl"
+    r = _append(TrialRegistry(p), n_trials_in_family=1, run_ref=COMMITTED_PATH)
+    assert r.run_ref == COMMITTED_PATH
+    assert TrialRegistry(p).records[0].run_ref == COMMITTED_PATH  # survives the reload + re-validation
+
+
+def test_append_rejects_unprovenanced_run_ref_before_writing(tmp_path):
+    for bad in ("trial47_run.py (scratchpad)", "cli/registry/no_such_runner.py", "", None):
+        p = tmp_path / f"t{hash(str(bad))}.jsonl"
+        with pytest.raises(RegistryError):
+            _append(TrialRegistry(p), n_trials_in_family=1, run_ref=bad)
+        assert not p.exists() or p.read_text() == ""  # fail rather than be recorded
+
+
+def test_append_requires_run_ref_explicitly(tmp_path):
+    # No default: omitting run_ref is a TypeError at the call, not a silently-recorded null.
+    reg = TrialRegistry(tmp_path / "t.jsonl")
+    with pytest.raises(TypeError):
+        reg.append(
+            iteration="iter-001",
+            family="A1",
+            spec_hash="s",
+            dataset_hash="d",
+            seeds=[0],
+            metrics={"sharpe": 0.3},
+            n_trials_in_family=1,
+            verdict="adopt",
+        )
 
 
 def test_variant_does_not_affect_family_budget_monotonic_check(tmp_path):

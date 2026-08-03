@@ -50,6 +50,9 @@ def test_constants():
     assert SCHEMA_VERSION == 3 and VERDICTS == frozenset({"adopt", "reject", "park"})
 
 
+COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: the only kind of run_ref that now validates
+
+
 def _caller(**over):
     f = dict(
         iteration="iter-001",
@@ -60,6 +63,7 @@ def _caller(**over):
         metrics={"sharpe": 0.3, "dsr": 0.1},
         n_trials_in_family=1,
         verdict="adopt",
+        run_ref=COMMITTED_PATH,
     )
     f.update(over)
     return f
@@ -162,3 +166,89 @@ def test_stored_record_schema_version_variant_compat():
     body_v3_bad = dict(body_v3, variant=42)
     with pytest.raises(RegistryCorruptionError):
         validate_stored_record(dict(body_v3_bad, record_hash=compute_hash(body_v3_bad)), "x")
+
+
+# --- run_ref provenance guard (append-time) ---------------------------------------------------
+
+
+def test_run_ref_naming_an_existing_repo_relative_file_passes():
+    validate_caller_fields(_caller(run_ref=COMMITTED_PATH))
+    # free text mixed with a real path still passes: >=1 path-like token must resolve, not all of them.
+    validate_caller_fields(_caller(run_ref=f"nightly rerun {COMMITTED_PATH} + notes.txt (seeded)"))
+
+
+@pytest.mark.parametrize("bad", [None, "", 5, ["x"]])
+def test_run_ref_must_be_a_non_empty_str(bad):
+    with pytest.raises(RegistryError) as e:
+        validate_caller_fields(_caller(run_ref=bad))
+    assert "non-empty str" in str(e.value)
+
+
+def test_run_ref_is_required_not_merely_optional():
+    f = _caller()
+    del f["run_ref"]
+    with pytest.raises(RegistryError):
+        validate_caller_fields(f)
+
+
+def test_scratchpad_run_ref_is_rejected_with_its_own_distinct_message():
+    # The self-declared form of the defect: it must be diagnosed as such, not as a generic no-path-resolved.
+    with pytest.raises(RegistryError) as scratch:
+        validate_caller_fields(_caller(run_ref="trial47_run.py + trial47_write.py (scratchpad)"))
+    with pytest.raises(RegistryError) as unresolved:
+        validate_caller_fields(_caller(run_ref="trial47_run.py + trial47_write.py"))
+    assert "scratchpad" in str(scratch.value)
+    assert str(scratch.value) != str(unresolved.value)  # distinct diagnosis, not one shared message
+    # ...and a scratchpad marker is rejected even when a real committed path sits beside it.
+    with pytest.raises(RegistryError) as mixed:
+        validate_caller_fields(_caller(run_ref=f"{COMMITTED_PATH} (scratchpad)"))
+    assert "scratchpad" in str(mixed.value)
+
+
+def test_scratchpad_marker_is_case_insensitive():
+    with pytest.raises(RegistryError) as e:
+        validate_caller_fields(_caller(run_ref="trial47_run.py (Scratchpad)"))
+    assert "scratchpad" in str(e.value)
+
+
+def test_run_ref_naming_only_nonexistent_paths_is_rejected():
+    with pytest.raises(RegistryError) as e:
+        validate_caller_fields(_caller(run_ref="cli/registry/no_such_runner.py"))
+    msg = str(e.value)
+    assert "cli/registry/no_such_runner.py" in msg  # names the offending value
+    assert "commit" in msg.lower()  # ...and what would fix it
+
+
+def test_run_ref_with_no_path_like_token_is_rejected():
+    with pytest.raises(RegistryError):
+        validate_caller_fields(_caller(run_ref="ran it locally, looked fine"))
+
+
+def test_run_ref_must_be_inside_the_repo():
+    # An absolute path or a parent escape is not a repo-relative provenance record, however real the file.
+    for outside in ("/etc/hostname", "../../etc/hostname", "cli/../../etc/hostname"):
+        with pytest.raises(RegistryError):
+            validate_caller_fields(_caller(run_ref=outside))
+
+
+def test_run_ref_does_not_accept_a_directory():
+    # A directory is not a runner, and would pass append-time while failing the git-tracked check.
+    with pytest.raises(RegistryError):
+        validate_caller_fields(_caller(run_ref="cli/registry"))
+
+
+def test_stored_record_validation_stays_lenient_about_run_ref():
+    # The registry is append-only: records written before the guard existed must keep LOADING, or the
+    # live file (and everything that reads it) breaks. Provenance over history is asserted by the
+    # repo-level test instead. This is the regression guard for that split.
+    for legacy in (None, "iter-080 crossfreq_run.py + crossfreq_stage2.py (scratchpad)"):
+        body = dict(
+            _caller(),
+            trial_id=1,
+            schema_version=SCHEMA_VERSION,
+            timestamp="2026-07-07T00:00:00+00:00",
+            prev_hash=GENESIS_HASH,
+            run_ref=legacy,
+            notes="",
+        )
+        validate_stored_record(dict(body, record_hash=compute_hash(body)), "x")

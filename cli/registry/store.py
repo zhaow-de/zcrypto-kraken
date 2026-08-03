@@ -129,7 +129,7 @@ class TrialRegistry:
         metrics: dict,
         n_trials_in_family: int,
         verdict: str,
-        run_ref: str | None = None,
+        run_ref: str,  # required: must name a repo-relative path that exists (see _validate_run_ref)
         notes: str = "",
         variant: str | None = None,
     ) -> TrialRecord:
