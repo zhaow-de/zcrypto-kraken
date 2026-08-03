@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the realized window `soak-check` reads — **shadow or live** — reaches ≥30 days of clean cycles, or a dated market-structure event lands inside it. Re-pointed twice: from "a concrete definition exists for regime context" (2026-07-21; circular — only deliberate design work could ever fire it), and from "**6b's** realized window reaches ≈30+ days" (2026-07-23) because the discriminating quantity is the length of the window the instrument reads, and the **shadow** soak alone passes 30 days around 2026-08-10 without 6b having started — the old wording fired roughly two months after the condition it was written to capture
+status: resolved
 ---
 
 # soak-check: wire the secondary block-bootstrap null + `--null`/`--path` options + regime context
@@ -30,6 +29,27 @@ Landed in **iter-111** (spec `00061`, PR into `develop`; see `docs/iterations-hi
 - Tests: the five reconciliation branches, both-nulls-agree on planted-consistent/inconsistent, determinism, the vacuous-band interaction, and the column→construction attribution pinned **positionally** (mutation-tested: swapping the two labels, or attributing a verdict to a construction that never ran, must fail).
 - **First real finding:** on the ops journal mirror `gross` and `net` read windowed `consistent` / bootstrap `weakly-consistent`. The windowed band is 2.25× wider on `gross` (width 0.2899 vs 0.1288), and the same live value sits at the 35.6th percentile under one construction and the 6.5th under the other — the overlapping-window variance understatement, measured rather than assumed.
 
+## Resolution
+
+**Ruled 2026-08-03 (owner): report-shape item 9 is DROPPED, and it was dropped on a measurement rather than a judgement.** The remainder was never code — it was the definition spec `00058` left open: *which* regime variable is worth conditioning a soak verdict on, and *what would a reader do differently* on seeing it. The answer is none, and the experiment that settles it is the one any regime split performs anyway: halve the window.
+
+On the 23.17-day realized window (L = 140), split into contiguous halves of L = 71 and L = 68 — both the **same regime** by every system-internal measure (governor multiplier 0.5 with zero variance, cap-breach 0, one active sleeve throughout):
+
+| metric | full (L=140) | first half (L=71) | second half (L=68) |
+| --- | --- | --- | --- |
+| `governor_engagement` | **inconsistent** | **n/a — no discriminating power** | **n/a — no discriminating power** |
+| `gross` / `net` | indeterminate | **consistent** | **indeterminate** |
+| realized cumulative net | −0.4559 % | **+0.0302 %** | **−0.5514 %** |
+
+*(71 + 68 = 139, not 140: each run independently drops its own newest cycle, which can never score for want of a successor, so the boundary cycle scores only in the full run. For the same reason the halves' P&L does not compose to the full window's — these are three separate runs, not a partition of one.)*
+
+- **Conditioning destroys the only discrimination the instrument makes.** `governor_engagement` is the single metric outside its band at full window; at half window its null band spans the full [0, 1] on *both* halves. Every split does this, whichever variable is chosen.
+- **Two windows in the same regime already disagree** — different verdicts on `gross`/`net`, opposite-signed P&L. So a regime section cannot separate a regime effect from sampling variation, and would invite a reader to see structure in noise. That is exactly the failure this topic's own test names: unactionable context reads as evidence.
+
+**The honest residue already ships**, so nothing is lost: `soak-check` states regime state without conditioning any verdict on it — *"realized multiplier was 0.5 on all 140 scored cycles (no variance)"*, the same for cap-breach, and sleeve occupancy now has its own gauge and alert ([[T0124]]). Deferring a third time was rejected: a discriminating split needs roughly the full-window bar count *per cell*, and the regimes are not alternating — the governor has been ×0.5 for the whole soak and both dormant sleeves have been flat ~9 months, so the trigger would not fire on any horizon that matters. This topic had already been re-pointed **twice** for triggers that could not fire.
+
+The drop is recorded in `docs/specs/00058-soak-check-oos-report-design.md` with the measurement, so the spec no longer reads as owing a section.
+
 ## Suggested next steps
 
-- **(Autonomous, but blocked on a definition — this is the whole remainder)** Add the report's "regime context" section (spec `00058` report-shape item 9). It is deferred rather than dropped because `00058` **named** the section without specifying its content, and inventing a definition inside an implementation iteration would bake an arbitrary choice into a go/no-go instrument. Before building it, answer: *which* regime variable is worth conditioning a soak verdict on (realized vol, trend state, funding regime, or a dated market-structure event), and *what would a reader do differently* on seeing it? A section that adds context nobody acts on is width, not honesty — and on this instrument, unactionable context reads as evidence. If the answer is "nothing", the honest outcome is to drop report-shape item 9 from `00058` explicitly rather than implement it.
+_(none — resolved. The secondary null, `--null`/`--path` and the severity reconciliation landed in iter-111; report-shape item 9 is dropped with its measurement recorded in spec `00058`.)_

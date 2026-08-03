@@ -42,7 +42,7 @@ At `L ≈ 84` 4h cycles (14 days × 6/day) a Sharpe/return statistic has near-ze
 
 ## Report shape (D5/D6 rendered)
 
-Text block (echoed like `report`), lines in order: (1) honesty **banner** (bare fact verbatim); (2) window provenance (first/last `cycle_ts`, `L`, days, gaps/sidecars, dropped tail); (3) self-tests (instrument/identity/reconciliation → VOID on fail); (4) degeneracy gate; (5) structural fingerprint table + multiplicity line; (6) governor/cap block with n≈14 caveat + transition count; (7) D4 gap + ACTIVE/INACTIVE; (8) non-gating P&L block (both nulls, near-vacuous label, caveated Sharpe; "indeterminate (instrument-fragile)" if the two nulls disagree); (9) regime context; (10) honesty footer ("consistent ≠ validated; overfit strategies land in-band most of the time at L≈84").
+Text block (echoed like `report`), lines in order: (1) honesty **banner** (bare fact verbatim); (2) window provenance (first/last `cycle_ts`, `L`, days, gaps/sidecars, dropped tail); (3) self-tests (instrument/identity/reconciliation → VOID on fail); (4) degeneracy gate; (5) structural fingerprint table + multiplicity line; (6) governor/cap block with n≈14 caveat + transition count; (7) D4 gap + ACTIVE/INACTIVE; (8) non-gating P&L block (both nulls, near-vacuous label, caveated Sharpe; "indeterminate (instrument-fragile)" if the two nulls disagree); (9) ~~regime context~~ **— DROPPED 2026-08-03, measured rather than judged (see below)**; (10) honesty footer ("consistent ≠ validated; overfit strategies land in-band most of the time at L≈84").
 
 CLI options: `--journal-dir` (default `config.journal_dir`, accepts a pulled VPS journal), `--store-dir` (default `config.store_dir`), `--canonical-dir` (default `data/ohlc-full`), `--fee-per-side` (0.006), `--band` (0.90), `--floor` (30), `--null [windows|block-bootstrap|both]` (both), `--path [fast|verified]` (fast), `--json PATH` (atomic `.tmp`+`os.replace`, dumps every number). Exit 0 on emit; non-zero only on operational failure or a VOID self-test.
 
@@ -55,3 +55,28 @@ CLI options: `--journal-dir` (default `config.journal_dir`, accepts a pulled VPS
 ## Test list (TDD — the plan expands each)
 
 1. **off-by-one forward-return-join guard** — synthetic store+journal with hand-computed net; correct join matches, an injected off-by-one makes the snapshot-close cross-check FAIL (guard bites). 2. planted-consistent (a real interior backtest slice replayed as a fake journal → in-band → "consistent"). 3. planted-inconsistent (a metric 3× the band → outside `[p5,p95]` → "INCONSISTENT"). 4. zero-exposure degeneracy → "INDETERMINATE — DEGENERATE WINDOW", no "consistent". 5. flat/zero cycle → exactly zero net. 6. reconciliation VOID on perturbed `capped`. 7. identity VOID on tampered targets. 8. gap segmentation (longest clean segment, no stale-prev span). 9. forward-realizability drops the newest cycle. 10. asset-set drift aborts. 11. flat-start null normalization (first-bar prev=0). 12. vocabulary lock (no "validated/…", banner always present). 13. band-width + effective-n disclosure (incl. governor n≈days). 14. multiplicity summary line present.
+
+______________________________________________________________________
+
+## Report-shape item 9 ("regime context") — DROPPED 2026-08-03
+
+This spec **named** the section without specifying its content, which is why it was deferred rather than built: inventing a definition inside an implementation iteration would have baked an arbitrary choice into a go/no-go instrument. The question it left open was *which regime variable is worth conditioning a soak verdict on*, and the test it had to pass was *what would a reader do differently on seeing it* — because on this instrument, unactionable context reads as evidence.
+
+**It is dropped on a measurement, not a preference.** A two-cell regime split's *smaller* cell holds at most half the bars, and the balanced split is precisely the one that **maximizes that minimum** — so halving the window measures the **best case** available to any split. An unbalanced split is no escape: its majority cell merely reproduces the full-window verdict while its minority cell has even less power, which is not a comparison. On the 23.17-day realized window (L = 140 scored bars), split into two contiguous halves of L = 71 and L = 68 — both of which are the **same regime** by every system-internal measure (governor multiplier 0.5 with zero variance, cap-breach 0, one active sleeve throughout):
+
+| metric | full (L=140) | first half (L=71) | second half (L=68) |
+| --- | --- | --- | --- |
+| `governor_engagement` | **inconsistent** | **n/a — no discriminating power** | **n/a — no discriminating power** |
+| `gross` / `net` | indeterminate | **consistent** | **indeterminate** |
+| realized cumulative net | −0.4559 % | **+0.0302 %** | **−0.5514 %** |
+
+*(71 + 68 = 139, not 140: each run independently drops its own newest cycle, which can never score for want of a successor, so the boundary cycle scores only in the full run. For the same reason the halves' P&L does not compose to the full window's — these are three separate runs, not a partition of one.)*
+
+Two conclusions, and the second is the decisive one:
+
+- **Conditioning destroys the only discrimination the instrument makes.** `governor_engagement` is the single metric that reads outside its band at full window; at half window its null band spans the full [0, 1] on *both* halves, so the test has no power at all. Every regime split does this, whichever variable is chosen.
+- **Two windows in the same regime already disagree.** `gross`/`net` land on different verdicts and the P&L on opposite signs, with no regime difference between them. So a regime-conditioned section cannot separate a regime effect from sampling variation at any window length this instrument will plausibly read — it would present a split like the one above and invite a reader to see structure in noise.
+
+**The honest residue already ships**, which is why nothing is lost. `soak-check` already states regime state without conditioning any verdict on it: *"realized multiplier was 0.5 on all 140 scored cycles (no variance)"*, *"realized cap-breach was 0 on all 140 scored cycles (no variance)"*, and the sleeve-occupancy count now has its own gauge and alert. That is regime context in the only form that adds information rather than width.
+
+Deferring again was rejected — but on the right leg, and the distinction matters. The measurement only **brackets** the power threshold in (≈70, 140]: it shows cells of ~70 are powerless and does *not* show that the ~90-bar cells a ≥30-day window would give are. The rejection therefore rests on the regimes **not alternating**, which no amount of window length fixes: the governor has been at ×0.5 for the entire soak, carried from the 2025 drawdown, and both dormant sleeves have been flat ~9 months — so a split on either variable leaves **one cell empty at any horizon**, and an empty cell is not a comparison at any L.
