@@ -10,6 +10,25 @@
 # error, it is T0034: "first datasource of each type" once silently repointed all 7 rules at the
 # wrong data while still reporting health=ok. Override only to target a different stack.
 #   GRAFANA_SA_TOKEN           (REQUIRED) service-account token: dashboards + alerting-provisioning write
+#                              Obtain it from the vault -- the value only ever lives in this env var,
+#                              never echoed, never written to a file:
+#                                export GRAFANA_SA_TOKEN=$(cd infra/ansible && uv run python -c "
+#                                import subprocess
+#                                from ansible.parsing.dataloader import DataLoader
+#                                from ansible.parsing.vault import VaultSecret, VaultSecretsContext
+#                                pw=subprocess.run(['scripts/vault-pass.sh'],capture_output=True,text=True).stdout.strip()
+#                                s=[('default',VaultSecret(pw.encode()))]; VaultSecretsContext.initialize(VaultSecretsContext(s))
+#                                l=DataLoader(); l.set_vault_secrets(s); print(str(l.load_from_file('group_vars/all/vault.yml')['grafana_sa_token']))
+#                                " 2>/dev/null)
+#                                [ -n "$GRAFANA_SA_TOKEN" ] || { echo 'no token'; exit 1; }
+#                              Three parts are load-bearing and have each cost a failed attempt:
+#                              `cd infra/ansible` (vault-pass.sh is resolved relative to ansible.cfg);
+#                              vault_password_file names an EXECUTABLE to RUN, not a password to read;
+#                              and a !vault scalar needs VaultSecretsContext.initialize before str().
+#                              The 2>/dev/null and the emptiness guard are a PAIR -- silencing vault
+#                              stderr is what makes a silent failure possible.
+#                              For a PromQL read-back do not use this at all: infra/scripts/grafana-query.py
+#                              encapsulates both footguns and never prints the token.
 #   GRAFANA_URL                default https://zcrypto2026.grafana.net
 #   GRAFANA_PROM_DS_UID        default grafanacloud-prom   (NOT grafanacloud-usage / -alert-state-history)
 #   GRAFANA_LOKI_DS_UID        default grafanacloud-logs
