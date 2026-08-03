@@ -9,6 +9,12 @@ cmd="$(printf '%s' "$input" | python3 -c 'import json,sys; print(json.load(sys.s
 case "$cmd" in *"git mv"*) ;; *) exit 0 ;; esac
 rm_lines="$(git status --porcelain 2>/dev/null | grep -E '^RM ' || true)"
 [[ -z "$rm_lines" ]] && exit 0
-echo "git-mv-guard: WARNING — rename staged but the worktree still differs (the staged rename carries the PRE-edit content):"
-echo "$rm_lines"
-echo "Fix: git add <newpath> for each line above, then verify against the COMMITTED tree (git show :<path>), never the working tree."
+# stderr + exit 2, not stdout + exit 0: a PostToolUse hook's plain stdout is transcript-only, so the
+# agent that just ran `git mv` never reads it. Exit 2 is the one channel Claude Code feeds back to the
+# model. On PostToolUse it cannot block the already-run command -- warn-only is exactly the intent.
+{
+  echo "git-mv-guard: WARNING — rename staged but the worktree still differs (the staged rename carries the PRE-edit content):"
+  echo "$rm_lines"
+  echo "Fix: git add <newpath> for each line above, then verify against the COMMITTED tree (git show :<path>), never the working tree."
+} >&2
+exit 2
