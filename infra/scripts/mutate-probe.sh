@@ -23,9 +23,22 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$file" && -n "$control" && -n "$mutation" && $# -gt 0 ]] || { echo "usage: mutate-probe.sh [--sandbox] --file F --control SED --mutation SED -- CMD..." >&2; exit 2; }
 
+# ONE trap for both temporaries — the sandbox dir (sandbox mode only) and the pristine copy (both
+# modes). A second `trap ... EXIT` would REPLACE this one rather than add to it, leaking whichever
+# it displaced on every run.
+work=""; pristine=""
+cleanup() {
+  if [[ -n "$work" ]]; then rm -rf "$work"; fi
+  if [[ -n "$pristine" ]]; then rm -f "$pristine"; fi
+}
+trap cleanup EXIT
+
 if [[ $sandbox -eq 1 ]]; then
+  # Substring match, so a probe merely NAMED like pytest (or any argument under a .../pytest/... path)
+  # is refused too. Deliberate: over-refusing costs a rename, under-refusing silently measures
+  # unmutated code.
   for w in "$@"; do case "$w" in *pytest*) echo "mutate-probe: REFUSING pytest in --sandbox — the editable install's .pth resolves cli/tests to the REPO, so the verdict measures unmutated code. Mutate in-repo on a committed tree instead." >&2; exit 3 ;; esac; done
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+  work="$(mktemp -d)"
   git archive HEAD | tar -x -C "$work"
   cd "$work"
 else
