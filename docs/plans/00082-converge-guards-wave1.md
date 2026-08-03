@@ -452,17 +452,17 @@ def test_engine_digest_preflight():
 
 def test_engine_pins_recording_semantics():
     task = find_task(load_tasks(ENGINE), "pins recording — refuse to replace a digest fleet-pins.md does not record")
-    variables = {"running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "e" * 64, "rc": 0},
-                 "fleet_pins_text": "| engine | zcrypto | `" + "e" * 12 + "` |", "pins_override": ""}
+    variables = {"engine_running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "e" * 64, "rc": 0},
+                 "engine_fleet_pins_text": "| engine | zcrypto | `" + "e" * 12 + "` |", "pins_override": ""}
     assert truthy(assert_that(task), variables)
-    variables["fleet_pins_text"] = "| engine | zcrypto | `" + "f" * 12 + "` |"
+    variables["engine_fleet_pins_text"] = "| engine | zcrypto | `" + "f" * 12 + "` |"
     assert not truthy(assert_that(task), variables)
 
 
 def test_engine_secrets_preflight():
     task = find_task(load_tasks(ENGINE), "preflight — refuse to restart the engine without its logship secrets")
-    assert not truthy(assert_that(task), {"logship_secrets_stat": {"stat": {"exists": False}}})
-    assert truthy(assert_that(task), {"logship_secrets_stat": {"stat": {"exists": True}}})
+    assert not truthy(assert_that(task), {"engine_logship_secrets_stat": {"stat": {"exists": False}}})
+    assert truthy(assert_that(task), {"engine_logship_secrets_stat": {"stat": {"exists": True}}})
 ```
 
 - [ ] **Step 2: FAIL.** **Step 3: Implement** (probe idiom; `docker image inspect` for `{{ engine_image }}@{{ engine_image_digest }}` → `engine_digest_probe`; `ansible.builtin.stat` on `/opt/zcrypto-capture/logship-secrets.env` → `logship_secrets_stat`; assert exists with fail_msg *"absence crash-loops the engine instead of failing the render — the capture role renders it; run the capture play on this host first"*; plus an `ss -ltnp` probe of `:9102` registered and echoed via `debug` — recorded, not asserted, per spec: the holder is evidence for the operator, not a refusal condition). Pins-recording guard for the engine container mirrors Task 1's, probing `zcrypto-engine`.
