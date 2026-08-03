@@ -1,7 +1,12 @@
 """mutate-probe.sh: the guard-proving rule as executable form (spec 00082 D4)."""
 
+import os
+import signal
 import subprocess
+import time
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "mutate-probe.sh"
 
@@ -215,3 +220,92 @@ def test_temporaries_are_removed_on_every_exit_path(tmp_path):
         )
         leaked = [p.name for p in tmpdir.iterdir()]
         assert not leaked, f"{mode or ['in-repo']} + {mutation} leaked {leaked}"
+
+
+def _signal_mid_probe(script, repo, target, tmpdir, args, before, marker, sig=signal.SIGTERM):
+    """Start a cycle, wait until the probe is genuinely running, then signal the whole process group.
+
+    Two things here are load-bearing against flakiness, both found by running this 20x:
+
+    * Wait on a marker the PROBE itself writes, not merely on the mutated content. The mutation is
+      visible on disk while `apply` is still finishing, before the probe is spawned at all.
+    * Re-send the signal until the process actually exits. Group delivery is what an interactive
+      Ctrl-C does, but bash defers a *trapped* signal until the running foreground command returns --
+      so a signal landing just before `sleep` spawns leaves bash blocked for the probe's full
+      duration. Re-signalling reaches the now-existing child. Safe because `cleanup` is idempotent.
+    """
+    marker.unlink(missing_ok=True)
+    env = {**os.environ, "TMPDIR": str(tmpdir)}
+    p = subprocess.Popen(
+        [str(script), *args],
+        cwd=repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if marker.exists():
+            break
+        time.sleep(0.02)
+    else:
+        p.kill()
+        p.wait(timeout=10)
+        pytest.fail("the probe never started -- nothing to signal mid-probe")
+    assert target.read_bytes() != before, "the probe ran without the mutation applied"
+
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(os.getpgid(p.pid), sig)
+        except ProcessLookupError:
+            break
+        try:
+            return p.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            continue
+    pytest.fail("the script never exited after repeated signals")
+
+
+def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
+    """A signal lands with the mutation applied; cleaning first would delete the only way back."""
+    repo = tmp_path / "repo"
+    target = make_repo(repo)
+    before = target.read_bytes()
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    # the marker lives OUTSIDE the repo and outside TMPDIR, so it disturbs neither the worktree-clean
+    # assertion nor the temp-leak one
+    marker = tmp_path / "probe-started"
+    slow = repo / "slow-probe.sh"
+    slow.write_text(f"#!/bin/sh\ntouch {marker}\nsleep 30\n")  # long enough to always be mid-probe
+    slow.chmod(0o755)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slow probe"], check=True)
+    args = [
+        "--file",
+        "mod.py",
+        "--control",
+        "s/VALUE = 1/VALUE = 9/",
+        "--mutation",
+        "s/VALUE = 1/VALUE = 2/",
+        "--",
+        "./slow-probe.sh",
+    ]
+
+    rc = _signal_mid_probe(SCRIPT, repo, target, tmpdir, args, before, marker)
+    assert rc == 143, f"expected the TERM handler's exit code, got {rc}"
+    assert target.read_bytes() == before, "the target was left MUTATED on disk after a signal"
+    status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout
+    assert status == "", f"worktree left dirty after a signal: {status!r}"
+    assert not list(tmpdir.iterdir()), "temporaries leaked on the signal path"
+
+    # an interactive Ctrl-C must take the same path -- same restoration, its own exit code
+    rc_int = _signal_mid_probe(SCRIPT, repo, target, tmpdir, args, before, marker, sig=signal.SIGINT)
+    assert rc_int == 130, f"expected the INT handler's exit code, got {rc_int}"
+    assert target.read_bytes() == before, "the target was left MUTATED on disk after Ctrl-C"
+
+    # bite: drop the restore-before-clean line and the same signal strands the mutation on disk
+    no_restore = mutated_script(tmp_path, "s|^  if \\[\\[ \\$mutated -eq 1 .*|  :|")
+    _signal_mid_probe(no_restore, repo, target, tmpdir, args, before, marker)
+    assert target.read_bytes() != before, "restore-on-signal removed but the file came back -- unproven"
