@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the next attended converge window — the gauge is BUILT and merged but dark until it ships (engine image ≥ this merge, capture keep-list, rules push). Ripe now in the sense that nothing gates it but a window; it is a rung-3 precondition, so rung 3 cannot open while this remains open
+status: resolved
 ---
 
 # The deployable is operating as a one-sleeve book, and no document says so
@@ -35,7 +34,25 @@ Three consequences, none of which the go/no-go currently sees:
 
 - **The gauge is BUILT (2026-08-02, commit `193b2043`) — it did not need to wait for [[T0018]].** The plan had it riding the executor's metrics families; in fact the engine already serves `/metrics` with its own instrument set, so it shipped standalone the same day the ruling landed. What exists: `zcrypto_engine_sleeve_gross{sleeve}` and `zcrypto_engine_active_sleeves`, set from the builder result every cycle; the keep-list entry (guard-proven — without it the published-vs-admitted test fails naming both families); alert `zcrypto-engine-sleeve-count-changed` (`changes(...[26h])`, warning, `noDataState: OK`) with its runbook section. Two honesty properties are structural, not incidental: **zero series are published before the first cycle** (the labelled family is silent until `.labels()`, the unlabelled one registers lazily — a fresh Gauge's `0.0` would claim "no sleeves active", which is a claim, not an absence), and a failed cycle leaves both families untouched rather than zeroing them. Review proved the cycle path cannot be broken by this (the builder's own arithmetic already consumes every value the extraction reads) and caught that the extraction had **no end-to-end coverage** — a wrong row index passed all 81 tests and would have shipped a false "book is flat"; now pinned with a negative sleeve position so the index *and* the `abs()` both discriminate.
 
-## Suggested next steps
+## Resolution
 
-- **(attended — the RUNG 3 PRECONDITION is not discharged until this runs)** Ship the gauge: an engine converge from an image built at or after this merge (which also discharges spec `00080`'s standing flag — see the memo), a capture-play converge carrying the keep-list with `capture_alloy_digest=<currently-running>`, and the rules push. **Verify the first sample BY VALUE, not presence**: `zcrypto_engine_active_sleeves` must read exactly **1** — any other number is itself the finding this gauge exists to surface, and reading "the series appeared" as success would repeat the failure the whole feature is aimed at.
-- *(known and accepted, recorded so nobody re-derives it)* The alert watches the sleeve **count**, not gross — a live sleeve doubling while staying non-zero fires nothing. Deliberate: no per-sleeve level threshold is meaningful, and the count is what changes the ⅓-divisor arithmetic. `sleeve_gross` is not journaled either, so its history lives only in Grafana Cloud.
+**Shipped and verified by value, 2026-08-03. The rung-3 precondition is discharged.**
+
+The gauge went live on the engine converge to `c7ed09020fe1` (2026-08-03 04:45:41Z, read from the container's `.State.StartedAt`, not the converge command's return time). The image was canary-baked as *capture* on `zcrypto-red` first — there is no engine secondary, so that bake is the engine's gate — with the prune taking the **strong** form (`deleted=720`), 36 of 36 book streams beginning at `:00:00.0x` across three rotation hours, and red's RSS settling **below** its own old-image steady state (136.4 MB vs 150.0 MB, −9.1 %). The naive comparison would have triggered a false rollback: against the cold baseline of 107.1 MB taken one minute after restart, the three-hour-warm readings of 138.5 MB (host scrape) and 136.4 MB (Cloud scrape, moments apart) look like a +29.3 % / +27.3 % climb.
+
+**The first sample, read BY VALUE on both surfaces after the 08:00Z cycle** (`cycle-08.json` completed 08:01:40.845Z, inside `[08:00, 08:30]`; engine unrestarted since the converge):
+
+| series | host `127.0.0.1:9102` | Grafana Cloud |
+| --- | --- | --- |
+| `zcrypto_engine_active_sleeves` | **1.0** | **1** |
+| `zcrypto_engine_sleeve_gross{sleeve="B"}` | 0.0 | 0 |
+| `zcrypto_engine_sleeve_gross{sleeve="A1"}` | 0.0 | 0 |
+| `zcrypto_engine_sleeve_gross{sleeve="A2"}` | 0.10002169357501955 | 0.10002169357501955 |
+
+**Exactly 1** — the value this topic predicted, not merely a series that appeared. Reading presence as success would have repeated the very failure the gauge exists to catch. B and A1 at float-exact zero with A2 alone carrying the book confirms the one-sleeve state live, matching all 136 journaled shadow cycles.
+
+**The silence before that first cycle was correct, not a fault.** Both families published nothing between the 04:45 converge and the 08:00 cycle, by construction: the labelled family stays silent until `.labels()` and the unlabelled one registers lazily, because a fresh Gauge's `0.0` would *claim* "no sleeves active" rather than be absent.
+
+Two operational notes the converge produced, recorded so they are not re-derived: the Alloy keep-list lives in the **capture** role, so an engine-only converge (`--tags engine`) would have published these families while leaving them unadmitted — the by-value check would have had nothing to read; and the primary's capture was deliberately **not** re-pinned, since the payload is engine-side and restarting live capture would spend risk on the unbackfillable path for nothing.
+
+*(Known and accepted, recorded so nobody re-derives it)* The alert watches the sleeve **count**, not gross — a live sleeve doubling while staying non-zero fires nothing. Deliberate: no per-sleeve level threshold is meaningful, and the count is what changes the ⅓-divisor arithmetic. `sleeve_gross` is not journaled either, so its history lives only in Grafana Cloud.
