@@ -10,10 +10,10 @@ fails=0
 check() {
   local name="$1" q="$2" mode="$3" limit="${4:-0}" out vals bad
   if ! out=$(timeout 60 $QUERY "$q" 2>&1); then
-    echo "FAIL $name — query error: $(printf '%s' "$out" | head -1)"
+    echo "FAIL $name — query error: $(printf '%s' "$out" | tail -1)"
     fails=$((fails + 1)); return
   fi
-  vals=$(printf '%s\n' "$out" | sed -n 's/.*= //p')
+  vals=$(printf '%s\n' "$out" | sed -n 's/^  .*= //p')
   if [ -z "$vals" ]; then
     echo "FAIL $name — no series (an empty query is not a zero)"
     fails=$((fails + 1)); return

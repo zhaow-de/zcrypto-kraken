@@ -92,6 +92,19 @@ def test_query_error_is_a_fail(tmp_path):
     assert check_lines(r.stdout, "FAIL") == 6
 
 
+def test_header_containing_comparison_cannot_mint_a_value(tmp_path):
+    """A header line containing `== ` must never be mistaken for a series value.
+
+    grafana-query.py echoes the PromQL as the header line at column 0; a future query
+    containing `== ` (e.g. `increase(x[2h]) == 0`) must not let the extraction pick up a
+    phantom value from that header when there is no indented series line beneath it — that
+    would turn a genuine `(no series)` into a false ALL PASS.
+    """
+    r = run_postverify(tmp_path, {"RESIDUAL_OUT": "query with increase(x[2h]) == 0\n  (no series)"})
+    assert r.returncode == 1
+    assert "no series" in r.stdout
+
+
 def test_counter_names_match_the_exporter():
     """The two increase() queries must name series the reconcile exporter actually publishes.
 
