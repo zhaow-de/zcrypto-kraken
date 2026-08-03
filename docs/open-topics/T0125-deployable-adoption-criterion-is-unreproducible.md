@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: the forward guard is ripe NOW and independent of the past gap — it prevents the next occurrence and needs nothing from this one. The acceptance is due before the go/no-go, which is the decision that inherits an adoption criterion nobody can re-examine
+status: partial
+ripe_when: before the go/no-go — that decision inherits an adoption criterion nobody can re-examine, and it must be accepted knowingly rather than by nobody noticing. The forward guard is DONE; what remains is a ruling, not work
 ---
 
 # The deployable's ADOPT criterion rests on a trial nobody can rebuild
@@ -31,9 +31,18 @@ The asymmetry is the whole point: **trial 44 IS reproducible from committed code
 - The registry's `spec_hash` is *identical* for trials 43 and 44 (`a25d7102…`), because the spec did not change — only the weighting rule did, and that lived in the uncommitted runner. So the hash chain does not detect this either.
 - Everything downstream of record 44 that has been re-derived since has reproduced exactly, so there is no evidence of a second, hidden discrepancy — the gap is bounded to the 43-vs-44 comparison.
 
+## Done so far
+
+- **The forward guard is BUILT (2026-08-03, commit `dbe27e0b`) — the only part of this topic that could be fixed.** It is two layers, and the split is deliberate:
+  - **Append time** (`cli/registry/record.py::validate_caller_fields`, which `TrialRegistry.append` calls *before* opening the file): `run_ref` is now **required** — a `None` run_ref is strictly worse than a scratchpad one — and must name at least one repo-relative path that **exists**. A `scratchpad` marker raises its own distinct error, because it is the self-declared form of the defect and deserves a precise diagnosis rather than a generic "no path resolved". Absolute paths and `..` escapes are rejected: provenance means a path *inside* the repo. No git and no subprocess here, since this runs on every append.
+  - **Repo level** (`tests/test_trial_registry_provenance.py`, where git is guaranteed): every record's `run_ref` must name a **git-tracked** path — the check that actually means "committed".
+- **The legacy set is frozen, and the exemption is asserted in BOTH directions.** Trials **33–46** (14 ids, contiguous) are exempt because the registry is append-only and hash-chained, so those records can never be repaired. The test asserts that no record *outside* the set fails **and** that every member genuinely fails today — so the pin cannot quietly decorate a pass and absorb a regression behind it. Widening the frozenset makes a test fail rather than silently pass.
+- **The scope is wider than this topic first stated, and the measurement is the finding.** Of 46 records: **14 name scratchpads (33–46, every trial from 33 onward)**, and the other 32 name a `docs/research/*.md` **write-up** rather than the code that produced the run. **Zero records have ever named a committed `.py` runner** — the convention never required one. So this was never about trial 43 specifically; trial 43 is where it first cost something.
+- **A trap found in review and closed before it could fire.** The two layers resolved paths differently — the filesystem normalizes `./cli/x.py`, `git ls-files` does not — so a record naming a genuinely committed file in a non-canonical spelling would have passed the append guard and then failed the provenance test **forever**, with no remedy, because an append-only record cannot be edited. Extraction now canonicalizes and a test pins that both layers accept every spelling of the same path.
+- **The stored-record path stays lenient on purpose**, and the reason is stronger than "old records must still load": `append` re-validates every stored record under lock, so a strict load path would have bricked **all future appends** to the live registry, not merely reads. Provenance over history is asserted by the repo-level test instead, which operates on the file rather than the API — so even a hand-appended record is caught.
+
 ## Suggested next steps
 
-- **(autonomous — ripe now, independent of the past gap)** Make the next occurrence impossible: a registry entry whose `run_ref` names an uncommitted path should fail a check rather than be recorded. The `run_ref` should resolve to a committed revision plus a path that exists at it. Small, mechanical, and it is the only part of this topic that can actually be fixed.
-- **(autonomous)** Record in the trial registry's own documentation which registered records are reproducible from committed code and which are not, so a future reader learns the boundary from the artifact rather than by re-discovering it mid-investigation as happened here.
+- **(autonomous)** Record in the trial registry's own documentation which registered records are reproducible from committed code and which are not, so a future reader learns the boundary from the artifact rather than by re-discovering it mid-investigation as happened here. The boundary is now measured and pinned in the provenance test, so this is transcription rather than research.
 - **(decision — before the go/no-go, and it must be explicit)** Accept that record 44's adoption criterion cannot be re-examined. The go/no-go already inherits [[T0064]]'s out-of-time-evidence ruling; this is a second inherited limitation of the same kind, and it should be accepted **knowingly** rather than by nobody noticing. The honest framing for that decision: record 44's *own* figures are reproducible and have survived every re-derivation; what is unavailable is the counterfactual that it was chosen against.
 - **(explicitly NOT a next step, recorded so it is not proposed later)** Reconstructing trial 43. See *Why this matters* — an unvalidatable rebuild is worse than an acknowledged gap, because it would restore false confidence in a comparison nobody can check.
