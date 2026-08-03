@@ -137,7 +137,16 @@ class SoakError(EngineError):
 class RealizedSeries:
     """The realized forward-return observation built from a clean run of journal cycles: each
     scored cycle's decided weights and the forward 4h return those weights actually earned,
-    joined against the price store by timestamp (never by list index -- see `realized_series`)."""
+    joined against the price store by timestamp (never by list index -- see `realized_series`).
+
+    The last four fields answer WHAT BOUNDED THE WINDOW -- `dropped_tail` alone says how many
+    cycles did not score but never why, so a window truncated 15 days early by a stale store read
+    exactly like a healthy one. `window_bound` is `"journal"` (the window ran to the end of the
+    clean segment -- the expected, benign case), `"store"` (the price store ran out first), or
+    `"clock"` (the trailing cycles' successors postdate `now`). `store_last_ts` is the newest
+    stamp at which EVERY asset has a finite close; `journal_last_cycle_ts` is the clean segment's
+    last cycle; `store_bound_cycles` counts the trailing cycles the store cost. See
+    `realized_series` for the exact rule."""
 
     cycle_ts: list[datetime]
     weights: list[dict[str, float]]
@@ -148,6 +157,10 @@ class RealizedSeries:
     assets: tuple[str, ...]
     chain_ok: bool
     implausible: bool
+    window_bound: str
+    store_last_ts: datetime | None
+    journal_last_cycle_ts: datetime | None
+    store_bound_cycles: int
 
 
 def select_clean_segment(records: list[CycleRecord]) -> list[CycleRecord]:
@@ -202,6 +215,18 @@ def _chain_consistent(scored_ts: list[datetime], closes_by_asset: dict[str, dict
     return True
 
 
+def _store_last_usable(closes_by_asset: dict[str, dict[datetime, float]]) -> datetime | None:
+    """The newest store stamp at which EVERY asset has a finite close -- the last timestamp the
+    realizability gate could actually score against. Intersected across assets rather than taken
+    per-asset: one asset's series ending early bounds the window just as hard as all of them
+    ending early. `None` when no such stamp exists (an empty or fully-null store)."""
+    common: set[datetime] | None = None
+    for closes in closes_by_asset.values():
+        usable = {ts for ts, v in closes.items() if v is not None and math.isfinite(v)}
+        common = usable if common is None else common & usable
+    return max(common) if common else None
+
+
 def realized_series(
     records: list[CycleRecord],
     store_dir: Path,
@@ -218,6 +243,20 @@ def realized_series(
     whose asset closes aren't all present/finite at both boundary stamps, is also skipped and
     counted in `dropped_tail`. `chain_ok` cross-checks the forward join wasn't shifted by a bar --
     see `_chain_consistent`.
+
+    WHAT BOUNDED THE WINDOW (`window_bound`). The rule is STRUCTURAL, not a count threshold: look
+    only at the CANDIDATE cycles that fall AFTER the last scored one (candidates being every clean
+    cycle but the last, which can never score), and take the reason they were skipped. Any of them
+    skipped for absent/non-finite store closes => `"store"` -- the price store ran out before the
+    journal did, and the window is stale by however much journal it could not reach; else any of
+    them skipped because its successor postdates `now` => `"clock"`; else `"journal"` -- the window
+    ran to the end of the clean segment, the expected case.
+
+    Being structural, this cannot false-positive on the benign drop: when the only unscored cycle
+    is the last clean one, there is NO trailing candidate at all, so `dropped_tail == 1` always
+    reads `"journal"` regardless of its value. Interior drops (a hole mid-store, one cycle the
+    realizability gate skipped) do not truncate the window and are excluded for the same reason --
+    they inflate `dropped_tail` but leave the window's END where the journal put it.
     """
     clean = select_clean_segment(records)
     if not clean:
@@ -236,6 +275,10 @@ def realized_series(
     net: list[float] = []
     implausible = False
     prev_weights: dict[str, float] = dict.fromkeys(assets, 0.0)
+    # Why each candidate cycle was skipped, keyed by its cycle_ts -- read after the loop to decide
+    # what bounded the window. Recording it here rather than re-deriving it afterwards keeps the
+    # answer tied to the gate that actually fired.
+    skipped_because: dict[datetime, str] = {}
 
     for i in range(len(clean) - 1):
         rec, nxt = clean[i], clean[i + 1]
@@ -248,6 +291,7 @@ def realized_series(
             raise SoakError(f"cycle {nxt.cycle_ts!r}: 240 snapshot last_ts {h4_next.last_ts!r} != {t!r}")
 
         if nxt.cycle_ts > now:
+            skipped_because[t] = "clock"
             continue
         start_ts, end_ts = t - timedelta(hours=4), t
         if not all(
@@ -259,6 +303,7 @@ def realized_series(
             and math.isfinite(closes[a][end_ts])
             for a in assets
         ):
+            skipped_because[t] = "store"
             continue
 
         r_fwd = {a: closes[a][end_ts] / closes[a][start_ts] - 1.0 for a in assets}
@@ -276,6 +321,16 @@ def realized_series(
         net.append(bar_gross - fee * bar_turnover)
         prev_weights = dict(q)
 
+    # Only the candidates AFTER the last scored cycle can have bounded the window (see docstring).
+    trailing = [rec.cycle_ts for rec in clean[:-1] if not cycle_ts or rec.cycle_ts > cycle_ts[-1]]
+    store_bound_cycles = sum(1 for t in trailing if skipped_because.get(t) == "store")
+    if store_bound_cycles:
+        window_bound = "store"
+    elif any(skipped_because.get(t) == "clock" for t in trailing):
+        window_bound = "clock"
+    else:
+        window_bound = "journal"
+
     return RealizedSeries(
         cycle_ts=cycle_ts,
         weights=weights,
@@ -286,6 +341,10 @@ def realized_series(
         assets=assets,
         chain_ok=_chain_consistent(cycle_ts, closes),
         implausible=implausible,
+        window_bound=window_bound,
+        store_last_ts=_store_last_usable(closes),
+        journal_last_cycle_ts=clean[-1].cycle_ts,
+        store_bound_cycles=store_bound_cycles,
     )
 
 
@@ -1438,6 +1497,10 @@ def _fmt_flag(value: bool | None) -> str:
     return "ok" if value else "FAILED"
 
 
+def _fmt_ts(value: datetime | None) -> str:
+    return "none" if value is None else value.isoformat()
+
+
 def _render_lines(lines: list[str]) -> str:
     """Join `lines` and strip EACH rendered line's trailing whitespace --
     the fingerprint table's last column is left-justified, so a label shorter than its column's
@@ -1487,8 +1550,11 @@ def render_report(
     path: str = "fast",
 ) -> str:
     """Render a soak-check analysis to a text report. Section order: BANNER (verbatim, every run),
-    the null-construction/builder-path line, provenance, self-tests, the NO-VERDICT gate (suppresses
-    every downstream section -- the structural fingerprint table, disclosures, D4 gap, P&L -- the
+    the null-construction/builder-path line, provenance (incl. `realized.window_bound` and, when
+    that is `"store"`, the STORE-BOUND WINDOW warning naming both bounds and the cycles they cost
+    -- it sits in the window block itself, ABOVE the NO-VERDICT gate and the disclosures, because a
+    stale window's numbers are read top-down and a caveat below them arrives after the damage),
+    self-tests, the NO-VERDICT gate (suppresses every downstream section -- the structural fingerprint table, disclosures, D4 gap, P&L -- the
     moment `void_reasons` is non-empty, so a short/untrustworthy run never prints a per-metric
     conclusion), then the 7-row fingerprint table + multiplicity line, DISCLOSURES (when
     `analysis.disclosures` is non-empty), the D4 gap, non-gating P&L, and an honesty footer. When
@@ -1541,6 +1607,22 @@ def render_report(
         lines.append(f"  chain_ok       : {realized.chain_ok}")
     else:
         lines.append("  no realized series available")
+    # What bounded the window -- rendered whenever a series exists at all, including the
+    # zero-scored-bars case above, since a window the store closed to nothing is exactly when the
+    # reader most needs to know the store closed it.
+    if realized is not None:
+        lines.append(f"  window_bound   : {realized.window_bound}")
+        lines.append(f"  store last bar : {_fmt_ts(realized.store_last_ts)}")
+        lines.append(f"  journal last   : {_fmt_ts(realized.journal_last_cycle_ts)}")
+        if realized.window_bound == "store":
+            lines.append("")
+            lines.append("  !! STORE-BOUND WINDOW -- the price store, not the journal, ended this window.")
+            lines.append(f"     store's last usable bar : {_fmt_ts(realized.store_last_ts)}")
+            lines.append(f"     journal's last cycle    : {_fmt_ts(realized.journal_last_cycle_ts)}")
+            lines.append(f"     cycles this cost        : {realized.store_bound_cycles}")
+            lines.append("     Everything below is a read on a STALE window, not on the journal's current")
+            lines.append("     extent. Re-run against a store that covers the journal before reading it as")
+            lines.append("     the present state of the evidence.")
     lines.append("")
 
     lines.append("SELF-TESTS")
@@ -1719,6 +1801,15 @@ def _json_payload(
             "span_days": (realized.cycle_ts[-1] - realized.cycle_ts[0]).total_seconds() / 86400.0,
             "dropped_tail": realized.dropped_tail,
             "chain_ok": realized.chain_ok,
+            # What bounded the window: "journal" (benign), "store" (stale -- the store ran out
+            # first), or "clock". A machine consumer gates on this the way a reader gates on the
+            # text report's STORE-BOUND WINDOW warning.
+            "window_bound": realized.window_bound,
+            "store_last_ts": None if realized.store_last_ts is None else realized.store_last_ts.isoformat(),
+            "journal_last_cycle_ts": (
+                None if realized.journal_last_cycle_ts is None else realized.journal_last_cycle_ts.isoformat()
+            ),
+            "store_bound_cycles": realized.store_bound_cycles,
         }
     else:
         payload["provenance"] = None

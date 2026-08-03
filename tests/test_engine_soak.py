@@ -1,5 +1,7 @@
+import json
 import math
 import types
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -85,9 +87,10 @@ def _store_path(root, asset, interval):
     return root / asset / "EUR" / f"{interval}.parquet"
 
 
-def _mk_records_and_store(tmp_path, closes_by_label):
+def _mk_records_and_store(tmp_path, closes_by_label, n_cycles=3):
     """closes_by_label: {label_ts: close}. Builds a BTC 240 store parquet with those bars, and
-    3 contiguous cycles at 00:00, 04:00, 08:00 on 2026-07-16, final_targets BTC=1.0 each.
+    `n_cycles` contiguous cycles from 00:00 on 2026-07-16 (default 3: 00:00, 04:00, 08:00),
+    final_targets BTC=1.0 each.
     Each cycle's 240 SnapshotEntry has last_ts == cycle_ts-4h with a matching content_hash."""
     asset = "BTC"
     labels = sorted(closes_by_label)
@@ -125,8 +128,8 @@ def _mk_records_and_store(tmp_path, closes_by_label):
         )
 
     base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
-    records = [_cycle(base + timedelta(hours=4 * k)) for k in range(3)]
-    now = datetime(2026, 7, 17, 0, 0, tzinfo=UTC)  # well past all boundaries
+    records = [_cycle(base + timedelta(hours=4 * k)) for k in range(n_cycles)]
+    now = records[-1].cycle_ts + timedelta(hours=16)  # well past all boundaries
     return records, store_dir, now
 
 
@@ -199,6 +202,81 @@ def test_realized_series_empty_clean_segment_raises_soak_error(tmp_path):
     indexing clean[0]."""
     with pytest.raises(SoakError):
         realized_series([], tmp_path, now=datetime(2026, 7, 16, tzinfo=UTC))
+
+
+# --- what bounded the realized window (store-bound vs journal-bound) ---------------------------------
+
+_WINDOW_BASE = datetime(2026, 7, 16, tzinfo=UTC)
+
+
+def _full_closes(n_cycles):
+    """Store labels covering every boundary stamp `n_cycles` cycles from `_WINDOW_BASE` can need:
+    the entry stamp of the first cycle (base-4h) through the last cycle's own stamp."""
+    return {_WINDOW_BASE + timedelta(hours=4 * k): 100.0 * (1.01 ** (k + 1)) for k in range(-1, n_cycles)}
+
+
+def test_realized_series_journal_bound_on_benign_tail_drop(tmp_path):
+    """A store that covers the whole journal: the ONLY unscored cycle is the last one (no successor),
+    so dropped_tail is 1 -- and that benign drop must read journal-bound, never store-bound."""
+    records, store_dir, now = _mk_records_and_store(tmp_path, _full_closes(6), n_cycles=6)
+
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    assert len(rs.net) == 5  # 6 cycles, the last never scores
+    assert rs.dropped_tail == 1
+    assert rs.window_bound == "journal"
+    assert rs.store_bound_cycles == 0
+    assert rs.journal_last_cycle_ts == _WINDOW_BASE + timedelta(hours=20)
+    assert rs.store_last_ts == _WINDOW_BASE + timedelta(hours=20)
+
+
+def test_realized_series_store_bound_when_store_ends_before_journal(tmp_path):
+    """The measured defect: the journal runs on but the store's last bar predates it, so every
+    later cycle silently fails the realizability gate and the window is pinned in the past."""
+    cutoff = _WINDOW_BASE + timedelta(hours=4)
+    closes = {ts: v for ts, v in _full_closes(6).items() if ts <= cutoff}
+    records, store_dir, now = _mk_records_and_store(tmp_path, closes, n_cycles=6)
+
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    # cycles 00:00 and 04:00 score; 08:00/12:00/16:00 have no store close at their exit stamp
+    assert len(rs.net) == 2
+    assert rs.dropped_tail == 4
+    assert rs.window_bound == "store"
+    assert rs.store_bound_cycles == 3
+    assert rs.store_last_ts == cutoff
+    assert rs.journal_last_cycle_ts == _WINDOW_BASE + timedelta(hours=20)
+
+
+def test_realized_series_interior_store_hole_is_not_store_bound(tmp_path):
+    """A hole in the MIDDLE of the store inflates dropped_tail without truncating the window --
+    the window still ends where the journal put it, so the rule (trailing candidates only) must
+    keep reading journal-bound. Guards the obvious wrong rule, `dropped_tail > 1`."""
+    closes = _full_closes(6)
+    records, store_dir, now = _mk_records_and_store(tmp_path, closes, n_cycles=6)
+    hole = _WINDOW_BASE + timedelta(hours=8)  # exit stamp of cycle 08:00, entry stamp of cycle 12:00
+    p = _store_path(store_dir, "BTC", 240)
+    df = read_parquet(p).with_columns(pl.when(pl.col("ts") == pl.lit(hole)).then(None).otherwise(pl.col("close")).alias("close"))
+    write_parquet(df, p)
+
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    assert rs.dropped_tail == 3  # the tail cycle plus the two the hole cost
+    assert rs.cycle_ts[-1] == _WINDOW_BASE + timedelta(hours=16)  # the window still reaches the journal's end
+    assert rs.window_bound == "journal"
+    assert rs.store_bound_cycles == 0
+
+
+def test_realized_series_clock_bound_is_not_reported_as_store_bound(tmp_path):
+    """Trailing cycles whose successor postdates `now` are not a stale store -- they are cycles the
+    clock has not caught up with. The store branch must not swallow them."""
+    records, store_dir, _ = _mk_records_and_store(tmp_path, _full_closes(6), n_cycles=6)
+
+    rs = realized_series(records, store_dir, fee=0.006, now=_WINDOW_BASE + timedelta(hours=12))
+
+    assert len(rs.net) == 3  # 00:00, 04:00, 08:00 -- 12:00/16:00 need a successor that postdates now
+    assert rs.window_bound == "clock"
+    assert rs.store_bound_cycles == 0
 
 
 def test_chain_consistent_detects_gap():
@@ -749,6 +827,10 @@ def _mk_realized(weights_per_bar, nets):
         assets=("BTC", "ETH"),
         chain_ok=True,
         implausible=False,
+        window_bound="journal",
+        store_last_ts=datetime(2026, 7, 16, tzinfo=UTC) + timedelta(hours=4 * L),
+        journal_last_cycle_ts=datetime(2026, 7, 16, tzinfo=UTC) + timedelta(hours=4 * L),
+        store_bound_cycles=0,
     )
 
 
@@ -765,6 +847,10 @@ def _mk_realized_ts(cycle_ts, weights_per_bar, nets):
         assets=("BTC", "ETH"),
         chain_ok=True,
         implausible=False,
+        window_bound="journal",
+        store_last_ts=cycle_ts[-1] if cycle_ts else None,
+        journal_last_cycle_ts=cycle_ts[-1] if cycle_ts else None,
+        store_bound_cycles=0,
     )
 
 
@@ -1326,6 +1412,62 @@ def test_render_report_banner_and_vocabulary_lock():
     assert "expected by chance" in low  # multiplicity line present
     for m in ("gross", "net", "active_frac", "turnover", "hhi"):
         assert m in text  # the 5 gating rows
+
+
+def test_render_report_store_bound_window_warns_naming_both_bounds(tmp_path):
+    """End-to-end on a real truncated store: the warning must fire, name the store's last usable
+    bar AND the journal's last cycle, and say how many cycles the gap cost."""
+    cutoff = _WINDOW_BASE + timedelta(hours=4)
+    closes = {ts: v for ts, v in _full_closes(6).items() if ts <= cutoff}
+    records, store_dir, now = _mk_records_and_store(tmp_path, closes, n_cycles=6)
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    text = render_report(None, rs, None, None, void_reasons=["L=2 < floor=30"], band=0.90)
+
+    assert "STORE-BOUND WINDOW" in text
+    assert rs.store_last_ts.isoformat() in text  # the store's bound, named
+    assert rs.journal_last_cycle_ts.isoformat() in text  # the journal's bound, named
+    cost_line = next(line for line in text.splitlines() if "cycles this cost" in line)
+    assert cost_line.strip().endswith(": 3")
+    assert "window_bound   : store" in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+
+
+def test_render_report_store_bound_warning_precedes_the_verdict_table():
+    """Placement is the whole point: a caveat rendered below the numbers arrives after the reader
+    has already taken them as current. The warning sits in the window block, above everything."""
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15, "ETH": 0.15}] * 200
+    realized = replace(
+        _mk_realized(rw, [0.001] * 6),
+        window_bound="store",
+        store_last_ts=datetime(2026, 7, 19, tzinfo=UTC),
+        journal_last_cycle_ts=datetime(2026, 8, 3, tzinfo=UTC),
+        store_bound_cycles=86,
+    )
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90)
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=True, reconcile_ok=True, messages=())
+
+    text = render_report(analysis, realized, null, self_test, void_reasons=[], band=0.90)
+
+    assert text.index("STORE-BOUND WINDOW") < text.index("STRUCTURAL FINGERPRINT")
+    assert "2026-07-19T00:00:00+00:00" in text and "2026-08-03T00:00:00+00:00" in text
+
+
+def test_render_report_benign_tail_drop_renders_no_warning(tmp_path):
+    """The false-positive proof: a store covering the journal drops exactly one cycle (the last,
+    which never scores) and the report must stay silent about a store bound."""
+    records, store_dir, now = _mk_records_and_store(tmp_path, _full_closes(6), n_cycles=6)
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+    assert rs.dropped_tail == 1
+
+    text = render_report(None, rs, None, None, void_reasons=["L=5 < floor=30"], band=0.90)
+
+    assert "STORE-BOUND" not in text.upper()
+    assert "window_bound   : journal" in text
 
 
 def test_render_report_void_suppresses_verdict():
@@ -1969,6 +2111,31 @@ def test_json_context_note_is_mode_aware(null_mode, must_contain, must_not_conta
         assert word in note, f"null_mode={null_mode}: expected {word!r} in note {note!r}"
     for word in must_not_contain:
         assert word not in note, f"null_mode={null_mode}: unexpected {word!r} in note {note!r}"
+
+
+def test_json_provenance_carries_what_bounded_the_window(tmp_path):
+    """A machine consumer must be able to tell a store-bound (stale) window from a journal-bound
+    one without parsing the text report -- the same distinction, beside `dropped_tail`."""
+    cutoff = _WINDOW_BASE + timedelta(hours=4)
+    truncated = {ts: v for ts, v in _full_closes(6).items() if ts <= cutoff}
+    now = datetime(2026, 7, 18, tzinfo=UTC)
+
+    records, store_dir, run_now = _mk_records_and_store(tmp_path / "stale", truncated, n_cycles=6)
+    stale = soak._json_payload(
+        None, realized_series(records, store_dir, fee=0.006, now=run_now), None, None, void_reasons=[], band=0.90, now=now
+    )
+    records, store_dir, run_now = _mk_records_and_store(tmp_path / "fresh", _full_closes(6), n_cycles=6)
+    fresh = soak._json_payload(
+        None, realized_series(records, store_dir, fee=0.006, now=run_now), None, None, void_reasons=[], band=0.90, now=now
+    )
+
+    assert stale["provenance"]["window_bound"] == "store"
+    assert stale["provenance"]["store_bound_cycles"] == 3
+    assert stale["provenance"]["store_last_ts"] == cutoff.isoformat()
+    assert stale["provenance"]["journal_last_cycle_ts"] == (_WINDOW_BASE + timedelta(hours=20)).isoformat()
+    assert fresh["provenance"]["window_bound"] == "journal"
+    assert fresh["provenance"]["store_bound_cycles"] == 0
+    json.dumps(stale)  # the new fields must survive the --json write
 
 
 def test_json_payload_carries_null_mode_path_and_dual_verdicts():
