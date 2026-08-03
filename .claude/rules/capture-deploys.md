@@ -4,7 +4,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 
 ## Canary rule
 
-- **Never re-pin the primary to a capture-image digest whose secondary bake gate has not passed.** The capture role now refuses this mechanically — a primary re-pin whose digest the secondary is not running fails the play (emergency bypass `-e canary_override="<reason>"`, reason-required). The gate is event-coverage, sized to the smallest window between the two re-pins (supersedes the fixed ≥24 h bake in older docs). Events, abort signals, checklists, the gate-open Slack reminder, and rollback are the `zcrypto-captures-rollout` skill (`.claude/skills/zcrypto-captures-rollout/SKILL.md`) — load it for every capture-image re-pin; the file is readable even where skill invocation is blocked.
+- **Never re-pin the primary to a capture-image digest whose secondary bake gate has not passed.** The capture role now refuses this mechanically for **capture** re-pins — a primary re-pin whose digest the secondary is not running fails the play (emergency bypass `-e canary_override="<reason>"`, reason-required); an **engine** re-pin has no mechanical parity check yet — for it, this prose IS the gate. The gate is event-coverage, sized to the smallest window between the two re-pins (supersedes the fixed ≥24 h bake in older docs). Events, abort signals, checklists, the gate-open Slack reminder, and rollback are the `zcrypto-captures-rollout` skill (`.claude/skills/zcrypto-captures-rollout/SKILL.md`) — load it for every capture-image re-pin; the file is readable even where skill invocation is blocked.
 - Skipping **or degrading** the gate (any event unmet, or the prune only in weak `deleted=0` form) requires the user's explicit approval — never silently.
 
 ## Deploys
@@ -19,7 +19,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 
 ## Engine converges
 
-The engine runs on the capture primary — everything above applies (the canary gate is the digest running as *capture* on the secondary; there is no engine secondary), plus:
+The engine runs on the capture primary — everything above applies (the canary gate is the digest running as *capture* on the secondary; there is no engine secondary, and **no assert enforces engine parity yet** — that gate is prose), plus:
 
 - **Converge only inside the 4-hourly inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC) — `site.yml` re-asserts the window at task execution time (bypass `-e engine_window_override="<reason>"`), so a backgrounded converge can no longer land late. A boundary with no journal artifact, or `completed_at` outside `[B, B+30 min]`, zeroes the gate streak; a restart re-runs a missed boundary only within `[B, B+25 min]`, never later.
 - **Converge only from a tree whose rendered engine config matches the fleet** — verify with `--check --diff`; an exit code cannot catch converging to the wrong state.
@@ -31,7 +31,7 @@ The engine runs on the capture primary — everything above applies (the canary 
 
 Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no canary bake owed.
 
-- **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; a `daemon.json` diff now refuses to apply without `-e daemon_json_ack=true` — the docker role renders to a probe path and shows the diff before asking (its handler bounces Alloy and the poller).
+- **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Preview `--check --diff`; a `daemon.json` diff now refuses to apply without `-e daemon_json_ack=true` — the docker role renders to a probe path and shows the diff before asking (its handler bounces Alloy and the poller); the docker role is shared, so the same ack gates capture-host converges too.
 - **Omit `ops_alloy_digest` unless Alloy is the subject — a `config.alloy` edit MAKES it the subject**: pass the currently-running digest; the drift assert refuses otherwise (same on capture).
 - **Pull the digest on the host first** — every runner is `--pull never`; the ops role's digest preflight refuses a digest the host has not pulled.
 - **Record the running digest in `fleet-pins.md` before converging** — the pins assert refuses otherwise; that row is the only rollback operand (`ops_image_digest` has no repo default).
