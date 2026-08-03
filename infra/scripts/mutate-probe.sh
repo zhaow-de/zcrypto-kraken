@@ -5,6 +5,10 @@
 #     install's .pth resolves cli/tests to the repo, so every verdict would measure unmutated code)
 #   * PYTHONDONTWRITEBYTECODE=1 + __pycache__ purge (a same-second same-length mutation re-runs a
 #     stale .pyc otherwise)
+#   * the probe must PASS on the UNMUTATED target before anything is mutated (exit 7) -- an
+#     always-failing probe command (wrong path, broken invocation) makes the control "fail" for a
+#     reason unrelated to the mutation, and then scores every real mutation KILLED with "control
+#     proven" attached to the lie
 #   * the CONTROL mutation must FAIL the probe before any real probe counts -- an unproven harness
 #     proves nothing (the guard-proving rule as code)
 # Usage: mutate-probe.sh [--sandbox] --file <path> --control <sed-expr> --mutation <sed-expr> -- <probe-cmd...>
@@ -85,6 +89,15 @@ apply() {
   fi
   purge
 }
+
+# 0. baseline: the probe must PASS on UNMUTATED code, or the control's failure says nothing about the
+# control. Run it under the SAME conditions as the real probes -- bytecode export set, caches purged --
+# or the baseline is not comparable to what follows.
+purge
+if ! "$@" >/dev/null 2>&1; then
+  echo "mutate-probe: baseline failed — the probe must pass on unmutated code. Fix the probe command (or the tree) before any verdict here means anything." >&2
+  exit 7
+fi
 
 # 1. control: must FAIL, or the harness is not measuring
 apply "$control"

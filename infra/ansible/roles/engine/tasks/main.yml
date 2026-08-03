@@ -199,9 +199,9 @@
     engine_fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
   when: engine_running_digest_probe.rc == 0
 
-# M3: regex_search yields None (not an error) on a tag-started image ref; default('') then makes the
-# needle empty, '' in text is True -> the guard passes open ONLY for a container with no sha256 digest
-# in its ref, which cannot happen on this digest-pinned fleet; every sha-pinned ref is checked.
+# M3: regex_search yields None (not an error) on a tag-started image ref. default('') does NOT catch
+# that -- None is defined, so the filter passes it through -- and replace() stringifies it, making the
+# needle the literal 'None', which no pins row carries. Measured: such a ref fails CLOSED, never open.
 - name: pins recording — refuse to replace a digest fleet-pins.md does not record
   ansible.builtin.assert:
     that: >-
