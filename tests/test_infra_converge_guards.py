@@ -516,6 +516,13 @@ def test_panel_timer_hold_excludes_only_the_panel_timer():
     assert "panel-materialize" in unset
 
 
+def test_panel_regenerate_is_installed_by_the_ops_role():
+    tasks = load_tasks(OPS)
+    task = find_task(tasks, "install the panel regenerate flow (delete-and-rebuild with its refusals)")
+    assert task["ansible.builtin.template"]["dest"] == "/usr/local/sbin/zcrypto-panel-regenerate"
+    assert task["ansible.builtin.template"]["mode"] == "0755"
+
+
 OPS_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"
 # The probe behind this is `docker inspect` of the liquidations-poll CONTAINER, never the compose
 # file: the recorded incident had the file pinning one digest while the container ran another.

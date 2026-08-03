@@ -517,6 +517,17 @@
         state: started
       loop: "{{ ['verify-replay', 'verified-replay'] + ([] if ops_panel_timer_hold | default(false) | bool else ['panel-materialize']) }}"
 
+# Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
+# systemd and rm), and the operator needs it on the host regardless of whether the converge that
+# put it there re-pinned anything -- a digestless config-only converge must still land it.
+- name: install the panel regenerate flow (delete-and-rebuild with its refusals)
+  ansible.builtin.template:
+    src: panel-regenerate.sh.j2
+    dest: /usr/local/sbin/zcrypto-panel-regenerate
+    mode: "0755"
+    owner: root
+    group: root
+
 # T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
 # and the reason both capture hosts silently ran a month-old keep-regex while the repo was correct.
 # Every automated check in this repo compares the repo to ITSELF; nothing compared a host to it.
