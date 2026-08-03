@@ -363,9 +363,9 @@ def test_canary_probe_activates_only_on_an_actual_repin():
                      "probe — the secondary's running capture digest (canary parity)")
     base = {"inventory_hostname": "zcrypto", "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]}}
     repin = {**base, "capture_image_digest": "sha256:" + "c" * 64,
-             "primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}}
+             "capture_primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}}
     same = {**base, "capture_image_digest": "sha256:" + "0" * 64,
-            "primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}}
+            "capture_primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}}
     assert truthy(when_conditions(task), repin)
     assert not truthy(when_conditions(task), same)
 
@@ -374,8 +374,8 @@ def test_pair_add_delegated_probe_engages_only_when_adding_pairs():
     task = find_task(load_tasks(ANSIBLE / "roles" / "capture" / "tasks" / "main.yml"),
                      "probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)")
     base = {"inventory_hostname": "zcrypto-red", "groups": {"engine_host": ["zcrypto"]}}
-    adding = {**base, "capture_pairs": ["BTC/EUR", "XRP/BTC"], "deployed_pairs": ["BTC/EUR"]}
-    unchanged = {**base, "capture_pairs": ["BTC/EUR"], "deployed_pairs": ["BTC/EUR"]}
+    adding = {**base, "capture_pairs": ["BTC/EUR", "XRP/BTC"], "capture_deployed_pairs": ["BTC/EUR"]}
+    unchanged = {**base, "capture_pairs": ["BTC/EUR"], "capture_deployed_pairs": ["BTC/EUR"]}
     assert truthy(when_conditions(task), adding)
     assert not truthy(when_conditions(task), unchanged)
 ```
