@@ -16,7 +16,23 @@ weights and the seven SPA bootstraps dominate). The book comes from the fast pat
 committed full-history equivalence gate holds elementwise-equal to the verified path.
 
 Two conventions spec 00038 left unwritten are pinned here by reproduction rather than by choice —
-see `SPA_GRID` and `calendar_year_slices` for which registered figure each is answerable to.
+see `SPA_GRID` and `calendar_year_slices` for which registered figure each is answerable to:
+
+  * The SPA grid's HEADLINE cell is (mean_block 30, seed 42). Its full-window reading is the
+    registry's `spa_p_full` and its decisive reading `spa_p_decisive` — which is why no
+    `spa_grid_b30_s42` key exists, a gap that otherwise reads as a missing cell. The five
+    `spa_grid_*` keys are the DECISIVE readings of the other cells; four of those five match the
+    decisive and not the full window, which is what identifies it. (102, 42) reads the same on
+    both at 1/2001 granularity and so does not discriminate.
+  * The benchmark-relative WORST-SLICE test runs on the governed net over FULL history, with each
+    bar's year taken from its CLOSE stamp. On the decisive window the book's worst slice moves
+    2022 -> 2014, contradicting record 44's registered note — which is what makes this a recovered
+    convention rather than a fitted one.
+
+These live here and NOT in spec 00038 on purpose. Registry records 43 and 44 store
+`spec_hash a25d7102…`, which is the sha256 of that spec file — appending to it silently breaks the
+pin that verifies the ratified record. A spec named by a registry `spec_hash` is immutable; the
+durable home for a recovered convention is committed, runnable code like this module.
 """
 
 from __future__ import annotations

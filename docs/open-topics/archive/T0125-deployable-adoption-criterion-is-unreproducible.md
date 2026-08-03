@@ -60,13 +60,15 @@ The asymmetry is the whole point: **trial 44 IS reproducible from committed code
 | `worst_slice_relative_pass` | 1 | 1 |
 | `cap_breach_bars` / `governor_engaged_bars` | 1318 / 7302 | **exact** |
 
-Cost-stress (×1.5 → 1.3029, ×2.0 → 1.2106) was reproduced the same day in [[T0090]]'s instrument validation, and the drawdown figures are pinned byte-exactly by the frozen-figure regression. Margin over the reproduced benchmark: **+0.3481 full / +0.3136 decisive**.
+Cost-stress (×1.5 → 1.3029, ×2.0 → 1.2106) was reproduced the same day in [[T0090]]'s instrument validation, and the drawdown figures are pinned by the frozen-figure regression at its own 4-dp tolerance — not byte-exactly, which the first draft of this line claimed. Margin over the reproduced benchmark: **+0.3481 full / +0.3136 decisive**.
 
 **Why this re-derivation is legitimate where rebuilding trial 43 is not** — the distinction is the whole point of this topic. Every primitive here is **committed** (`cli/validation/spa.py`, `dsr.py`, `bootstrap.py`, `cli/alpha/killbar.py`, the record-44 builder), and the benchmark's construction was **specified in advance** in the phase-4 history before anything was run — a first attempt using the *wrong* construction missed by 0.06 Sharpe and was discarded rather than adjusted. Trial 43 has neither property: no committed code, and no specification to reproduce against, so a rebuild could only be tuned until it matched.
 
 **The re-derivation is committed, not a scratchpad** — `cli/portfolio/record44_legs.py` with `tests/test_record44_legs.py`, runnable by anyone. Given that this topic exists *because* a scratchpad vanished, landing the answer in another one would have been self-defeating.
 
-**Two details spec `00038` never pinned are now written down there** (recovered by re-derivation, each proved discriminating by mutation): the SPA grid's headline cell is `(mean_block 30, seed 42)`, whose full and decisive readings became `spa_p_full`/`spa_p_decisive` — which is why no `spa_grid_b30_s42` key exists; and the worst-slice test runs on the **governed net over full history**, year taken from each bar's **close** stamp.
+**A near-miss worth recording, because it was caused by this very closeout.** The two recovered conventions were first appended to spec `00038` — and review caught that registry records 43 and 44 store `spec_hash a25d7102…`, which is the **sha256 of that spec file**. The append changed it to `914c9fc4…`, silently breaking the pin that verifies the ratified record, inside a commit whose entire subject is the verifiability of that record. Reverted; the conventions live in the committed re-derivation module instead. **A spec named by a registry `spec_hash` is immutable** — the durable home for a recovered convention is runnable code, not the pinned document.
+
+**Two details spec `00038` never pinned are recorded in `cli/portfolio/record44_legs.py`** (recovered by re-derivation, each proved discriminating by mutation): the SPA grid's headline cell is `(mean_block 30, seed 42)`, whose full and decisive readings became `spa_p_full`/`spa_p_decisive` — which is why no `spa_grid_b30_s42` key exists; and the worst-slice test runs on the **governed net over full history**, year taken from each bar's **close** stamp.
 
 **What remains permanently lost, stated plainly:** the counterfactual. Nobody can ever re-read the 43-vs-44 ordering, including at the taker end where the registry itself discloses that the ordering reverses at ×2.0. The re-grounding does not recover that — it makes the gate not depend on it.
 

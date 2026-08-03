@@ -25,15 +25,3 @@ The fold-in mixes bar frequencies (a 4h sleeve beside two daily sleeves), which 
 ## Out of scope
 
 Running the trial (next loop's first package — compute ≈ 2 h); any governor-constant rescaling to 4h (would re-derive unratified constants); touching record 33 or the deployed system before the trial verdicts.
-
-______________________________________________________________________
-
-## Two ratified-bar details this spec left unpinned — recovered and written down 2026-08-03
-
-Both were recovered by re-derivation, not chosen: each was fixed by requiring it to reproduce record 44's *registered* figures, and each was shown to be discriminating rather than a fit (mutating it breaks the reproduction). They are recorded here because the spec named the legs without specifying these details, and a detail that lives only in a vanished runner is exactly the failure [[T0125]] exists to prevent.
-
-**The SPA grid's headline cell is `(mean_block 30, seed 42)`.** That pair's *full-window* reading is stored as `spa_p_full` and its *decisive-window* reading as `spa_p_decisive` — which is why the registry carries no `spa_grid_b30_s42` key, a gap that otherwise reads as a missing cell. The five `spa_grid_*` keys are the **decisive**-window readings of the remaining cells: (30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234). Four of the five match the decisive reading and **not** the full one, which is what identifies the window; (102, 42) reads identically on both at 1/2001 granularity and so does not discriminate.
-
-**The benchmark-relative worst-slice test** is `benchmark_relative_worst_slice(...)["beats_benchmark_worst"]` in `cli/alpha/killbar.py` — calendar-year slices, 2013 and 2026 stubs excluded, per-period Sharpe fixed by the kill-bar ratification. What the spec left open is **which series and which window**: it is the **governed net over full history**, with each bar's year taken from its **close** stamp. That reproduces record 44's registered notes exactly — book worst slice 2022 at −0.02898802673890783, benchmark worst 2014 at −0.0797494372250268, book smaller drawdown in 6 of 12 slices, none skipped. It is discriminating: on the decisive window the book's worst slice moves to 2014, contradicting the registered note.
-
-The re-derivation itself is committed at `cli/portfolio/record44_legs.py` with tests, so these are re-runnable rather than described.
