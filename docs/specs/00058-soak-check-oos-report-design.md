@@ -62,13 +62,15 @@ ______________________________________________________________________
 
 This spec **named** the section without specifying its content, which is why it was deferred rather than built: inventing a definition inside an implementation iteration would have baked an arbitrary choice into a go/no-go instrument. The question it left open was *which regime variable is worth conditioning a soak verdict on*, and the test it had to pass was *what would a reader do differently on seeing it* — because on this instrument, unactionable context reads as evidence.
 
-**It is dropped on a measurement, not a preference.** Any regime split halves the realized window, so the experiment is to split it and read what happens. On the 23.17-day realized window (L = 140 scored bars), split into two contiguous halves of L = 71 and L = 68 — both of which are the **same regime** by every system-internal measure (governor multiplier 0.5 with zero variance, cap-breach 0, one active sleeve throughout):
+**It is dropped on a measurement, not a preference.** A two-cell regime split's *smaller* cell holds at most half the bars, and the balanced split is precisely the one that **maximizes that minimum** — so halving the window measures the **best case** available to any split. An unbalanced split is no escape: its majority cell merely reproduces the full-window verdict while its minority cell has even less power, which is not a comparison. On the 23.17-day realized window (L = 140 scored bars), split into two contiguous halves of L = 71 and L = 68 — both of which are the **same regime** by every system-internal measure (governor multiplier 0.5 with zero variance, cap-breach 0, one active sleeve throughout):
 
 | metric | full (L=140) | first half (L=71) | second half (L=68) |
 | --- | --- | --- | --- |
 | `governor_engagement` | **inconsistent** | **n/a — no discriminating power** | **n/a — no discriminating power** |
 | `gross` / `net` | indeterminate | **consistent** | **indeterminate** |
 | realized cumulative net | −0.4559 % | **+0.0302 %** | **−0.5514 %** |
+
+*(71 + 68 = 139, not 140: each run independently drops its own newest cycle, which can never score for want of a successor, so the boundary cycle scores only in the full run. For the same reason the halves' P&L does not compose to the full window's — these are three separate runs, not a partition of one.)*
 
 Two conclusions, and the second is the decisive one:
 
@@ -77,4 +79,4 @@ Two conclusions, and the second is the decisive one:
 
 **The honest residue already ships**, which is why nothing is lost. `soak-check` already states regime state without conditioning any verdict on it: *"realized multiplier was 0.5 on all 140 scored cycles (no variance)"*, *"realized cap-breach was 0 on all 140 scored cycles (no variance)"*, and the sleeve-occupancy count now has its own gauge and alert. That is regime context in the only form that adds information rather than width.
 
-Deferring again was rejected: making a split discriminate needs roughly the full-window bar count *per regime cell*, and the regimes are not alternating — the governor has been at ×0.5 for the whole soak, carried from the 2025 drawdown, and both dormant sleeves have been flat for ~9 months. The trigger would not fire on any horizon that matters.
+Deferring again was rejected — but on the right leg, and the distinction matters. The measurement only **brackets** the power threshold in (≈70, 140]: it shows cells of ~70 are powerless and does *not* show that the ~90-bar cells a ≥30-day window would give are. The rejection therefore rests on the regimes **not alternating**, which no amount of window length fixes: the governor has been at ×0.5 for the entire soak, carried from the 2025 drawdown, and both dormant sleeves have been flat ~9 months — so a split on either variable leaves **one cell empty at any horizon**, and an empty cell is not a comparison at any L.

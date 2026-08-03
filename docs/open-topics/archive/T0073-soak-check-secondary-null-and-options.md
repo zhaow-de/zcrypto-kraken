@@ -41,6 +41,8 @@ On the 23.17-day realized window (L = 140), split into contiguous halves of L = 
 | `gross` / `net` | indeterminate | **consistent** | **indeterminate** |
 | realized cumulative net | −0.4559 % | **+0.0302 %** | **−0.5514 %** |
 
+*(71 + 68 = 139, not 140: each run independently drops its own newest cycle, which can never score for want of a successor, so the boundary cycle scores only in the full run. For the same reason the halves' P&L does not compose to the full window's — these are three separate runs, not a partition of one.)*
+
 - **Conditioning destroys the only discrimination the instrument makes.** `governor_engagement` is the single metric outside its band at full window; at half window its null band spans the full [0, 1] on *both* halves. Every split does this, whichever variable is chosen.
 - **Two windows in the same regime already disagree** — different verdicts on `gross`/`net`, opposite-signed P&L. So a regime section cannot separate a regime effect from sampling variation, and would invite a reader to see structure in noise. That is exactly the failure this topic's own test names: unactionable context reads as evidence.
 
