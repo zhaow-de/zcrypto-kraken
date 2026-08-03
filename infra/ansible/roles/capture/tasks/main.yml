@@ -31,6 +31,156 @@
       -e capture_image_digest=sha256:<...> (see the job summary of
       .github/workflows/capture-image.yml for the digest of the latest push).
 
+# --- spec 00082 converge guards (wave 1). Probe idiom: probes never fail or change; the assert
+# --- refuses with the fix in the message. Tests: tests/test_infra_converge_guards.py.
+- name: probe — is the pinned digest already on this host
+  ansible.builtin.command: docker image inspect "{{ capture_image }}@{{ capture_image_digest }}"
+  register: capture_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: preflight — refuse a digest the host has not pulled
+  ansible.builtin.assert:
+    that: capture_digest_probe.rc == 0
+    fail_msg: >-
+      {{ capture_image }}@{{ capture_image_digest }} is not on {{ inventory_hostname }} — the unit's
+      ExecStartPre pulls at start, so the stop→start window would contain a registry pull, extending
+      the capture gap. Pre-stage it first:
+      sudo docker pull {{ capture_image }}@{{ capture_image_digest }}
+
+- name: probe — this host's own deployed pair list (does this converge ADD a pair?)
+  ansible.builtin.slurp:
+    src: /opt/zcrypto-capture/compose.yaml
+  register: capture_local_compose_raw
+  when: inventory_hostname not in groups['engine_host']
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: derive whether new pairs are being added (guard engages only then — I1)
+  ansible.builtin.set_fact:
+    capture_deployed_pairs: >-
+      {{ (capture_local_compose_raw.content | b64decode | regex_search('CAPTURE_PAIRS: \"([^\"]*)\"', '\1') | first).split(',')
+         if capture_local_compose_raw.content is defined else [] }}
+  when: inventory_hostname not in groups['engine_host']
+
+- name: probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)
+  ansible.builtin.slurp:
+    src: /opt/zcrypto-capture/compose.yaml
+  register: capture_primary_compose_raw
+  delegate_to: "{{ groups['engine_host'] | first }}"
+  changed_when: false
+  when: >-
+    inventory_hostname not in groups['engine_host']
+    and capture_pairs | difference(capture_deployed_pairs | default([])) | length > 0
+  check_mode: false
+
+- name: derive the primary's pair list
+  ansible.builtin.set_fact:
+    capture_primary_pairs: >-
+      {{ (capture_primary_compose_raw.content | b64decode | regex_search('CAPTURE_PAIRS: \"([^\"]*)\"', '\1') | first).split(',') }}
+  when: inventory_hostname not in groups['engine_host'] and capture_primary_compose_raw.content is defined
+  # no failed_when on the delegated slurp above: an unreachable primary FAILS the play when (and only
+  # when) a new pair is being added — fail-closed is the point (spec D3-7)
+
+- name: pair-add order — refuse a pair the primary does not already carry
+  ansible.builtin.assert:
+    that: capture_pairs | difference(capture_primary_pairs) | length == 0
+    fail_msg: >-
+      {{ capture_pairs | difference(capture_primary_pairs) | join(', ') }} not deployed on the primary —
+      a secondary-first pair add poisons the reconciler's append-only ledger. Add the pair on the
+      PRIMARY first (two --limit runs, primary then secondary), then re-run this converge.
+  when: inventory_hostname not in groups['engine_host'] and capture_primary_pairs is defined
+
+- name: probe — the primary's running capture digest (canary scope)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
+  register: capture_primary_running_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: inventory_hostname in groups['engine_host']
+
+- name: probe — the secondary's running capture digest (canary parity)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
+  register: capture_secondary_digest_probe
+  delegate_to: "{{ (groups['capture_host'] | difference(groups['engine_host'])) | first }}"
+  failed_when: false
+  ignore_unreachable: true  # I1: an unreachable secondary must reach the assert (empty stdout -> refuse via override), never abort or silently pass
+  changed_when: false
+  check_mode: false
+  when: >-
+    inventory_hostname in groups['engine_host']
+    and capture_primary_running_probe.stdout is defined
+    and capture_image_digest not in capture_primary_running_probe.stdout
+
+- name: canary parity — refuse a primary re-pin the secondary has not baked
+  ansible.builtin.assert:
+    that: >-
+      (capture_image_digest in capture_secondary_digest_probe.stdout | default(''))
+      or ((canary_override | default('') | string | length > 8)
+          and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The secondary does not run {{ capture_image_digest }} — the primary's canary gate is that digest
+      running as capture on the secondary. Converge the secondary first and let it bake, or pass
+      -e canary_override="<why this cannot wait>" (a reason, not a boolean; it lands in this log).
+  when: >-
+    inventory_hostname in groups['engine_host']
+    and capture_secondary_digest_probe is not skipped
+
+# spec 00082 D1 (second half): an ACCEPTED override lands its reason in the play log — the assert
+# above literally promises "it lands in this log". Gated on the override having been ACCEPTED (the
+# fragment true AND the parity check failing), never on the override merely being PRESENT: the
+# latter would print a "why" on runs that overrode nothing.
+- name: canary override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "canary_override accepted: {{ canary_override }}"
+  when: >-
+    inventory_hostname in groups['engine_host']
+    and capture_secondary_digest_probe is not skipped
+    and not (capture_image_digest in capture_secondary_digest_probe.stdout | default(''))
+    and (canary_override | default('') | string | length > 8)
+    and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
+- name: probe — the currently-running digest this converge would replace (pins recording)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
+  register: capture_running_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read fleet-pins.md from the controller tree
+  ansible.builtin.set_fact:
+    capture_fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
+  when: capture_running_digest_probe.rc == 0
+
+# M3: regex_search yields None (not an error) on a tag-started image ref. default('') does NOT catch
+# that -- None is defined, so the filter passes it through -- and replace() stringifies it, making the
+# needle the literal 'None', which no pins row carries. Measured: such a ref fails CLOSED, never open.
+- name: pins recording — refuse to replace a digest fleet-pins.md does not record
+  ansible.builtin.assert:
+    that: >-
+      ((capture_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in capture_fleet_pins_text)
+      or ((pins_override | default('') | string | length > 8)
+          and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The digest this converge replaces ({{ capture_running_digest_probe.stdout }}) is not recorded in
+      docs/reference/fleet-pins.md — an unrecorded pin is one docker-prune from an unrecoverable
+      rollback. Record the CURRENT digest there first (or pass -e pins_override="<reason>" and
+      record it immediately after).
+  when: capture_running_digest_probe.rc == 0 and capture_fleet_pins_text is defined
+
+# spec 00082 D1 (second half), same shape as the canary echo above: the reason reaches the play log
+# only when the override was actually ACCEPTED, i.e. the replaced digest is genuinely unrecorded.
+- name: pins override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "pins_override accepted: {{ pins_override }}"
+  when: >-
+    capture_running_digest_probe.rc == 0 and capture_fleet_pins_text is defined
+    and not ((capture_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in capture_fleet_pins_text)
+    and (pins_override | default('') | string | length > 8)
+    and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 - name: ensure the capture data directory exists
   ansible.builtin.file:
     path: "{{ capture_data_dir }}"

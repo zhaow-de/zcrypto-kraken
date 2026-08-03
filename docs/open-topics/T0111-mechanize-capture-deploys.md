@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # Mechanize capture-deploys — converge discipline moves into role asserts and scripts
@@ -40,10 +40,20 @@ The full classification (guard-already-exists / new-ansible-guard / new-script /
 
 **Not mechanizable (prose stays):** the bake gate's event-coverage judgment, "mean it" wrong-recovery clauses, regeneration's point-of-no-return consent, post-hoc verify-by-outcome timing.
 
+## Done so far
+
+- **Wave 1 landed in full — spec `00082`, iter-124** (branch `feat/t0111-wave1-converge-guards`): all nine wave-1 role asserts plus both M-asserts (canary digest-parity, fleet-pins recording — controller-tree read) across the capture/engine/ops/docker roles, `site.yml`, and `bootstrap.yml`, each TDD'd against a constructed violation through Ansible's own Templar (82 tests). Override semantics per the owner's ruling: reason-required free text (`-e <name>_override="<reason>"`, ≥9 chars, boolean-like values refused, accepted reason echoed into the play log).
+- **The window re-assert** (the 2026-08-03 backgrounded-converge lesson) is in: `site.yml` reads the clock at task execution time and refuses outside `[B+30 min, next−10 min]`, `tags: [engine]` so capture-only primary runs are unaffected.
+- **`infra/scripts/mutate-probe.sh`** collapsed four `agent-ops.md` mutation bullets into one enforced script (11 tests: sandbox seeding, pytest-refusal, stale-`.pyc` purge, unmutated-baseline gate, mandatory failing control, no-op abort, signal-safe restore).
+- **The `git mv` PostToolUse hook** (`.claude/hooks/git-mv-guard.sh`) warns the moment the RM-state trap forms; the network-timeout hook was considered and dropped by the owner.
+- The corresponding `capture-deploys.md` lines shrank to pointers in the same PR (per-edit owner sign-offs).
+
 ## Suggested next steps
 
-- **(added 2026-08-03 from the refine round — a wave-1 assert, deliberately NOT rule prose)** Refuse a converge whose **time window has already passed**. A backgrounded converge executed **~3.5 h** after it was launched: aimed at the 00:00–04:00 inter-cycle gap, it ran at 04:45 and landed in the *next* valid gap after a clean cycle — by luck, not design, because every precondition had been verified at launch time and none was re-read at execution time. Prose cannot fix this (the operator did check, and was right when they checked); an assert that re-asserts the window **immediately before acting** can. This is exactly the trade this topic exists to make — a guard instead of another line on the heaviest always-loaded rule.
-- Implement wave 1 as one iteration (spec + plan; each assert TDD'd against a constructed violation per `agent-ops.md`'s guard-proving rule — the named defect built and seen to trip it, failure mode read).
-- Implement wave 2 as a second iteration; `converge.sh` and `zcrypto-panel-regenerate` get drills on the ops host in a maintenance window.
-- Design pass for the two M asserts (digest-parity, fleet-pins recording) — decide override semantics with the owner before building.
-- **Every guard's landing PR shrinks the corresponding `capture-deploys.md` line to a pointer in the same PR** (protected-set edits: owner sign-off per edit) — the rule file shrinks as the guards land, never before.
+- Implement wave 2 as a second iteration — `converge.sh`, `zcrypto-panel-regenerate`, `infra/scripts/ops-postverify.sh`, `continuity.py` genesis annotation, `vault-pass.sh` ancestor check; `converge.sh` and `zcrypto-panel-regenerate` get drills on the ops host in a maintenance window.
+- Wave-2 candidates recorded during wave-1 execution: the window guard's floor holds to B+30 even when the cycle finished early (probe the journal's `completed_at` instead of the fixed floor); guard 4 accepts any non-empty `--skip-tags` (tighten to name engine/capture explicitly).
+- Wave-2 candidates recorded at wave-1's final whole-branch review — each a gap in what wave 1 actually mechanized:
+  - **Engine re-pin canary parity.** The parity assert lives in the capture role and fires on capture re-pins only, so an engine-only converge — or a combined `--tags capture,engine` run — carrying a new `engine_image_digest` gets no mechanical parity check against the secondary's bake. M-1's mechanization narrowed the guard's reach without saying so; `capture-deploys.md`'s prose (the gate is that digest running as *capture* on the secondary, there being no engine secondary) is the only thing covering engine re-pins until wave 2 mirrors the assert in the engine role.
+  - **`mutate-probe.sh` exit-code hermeticity.** A seeding failure (`git archive` / `tar`) surfaces as the pipeline's own status, colliding with the usage code 2; a failing `cp` inside `restore`/`cleanup` both leaks the temporaries and reports a code that does not name what went wrong; the no-op-abort message says "mutation" even when the control sed is the one that failed to match.
+  - **The liquidations pin-probe's rc classification.** `grep` answers 2 for an absent compose file *and* for a present-but-unreadable one, so the guard's `rc != 2` gate takes the "first provision, nothing deployed to repin" stand-down on a permission fault too — the one state it must not skip silently. Only rc 1 (file there, no `@sha256:` line) is distinguished today.
+  - **The `git mv` hook's coverage limits.** It matches the `git mv` route only, so a `mv` + `git add` sequence forms the same `RM` state unwatched; and it reads the hook process's cwd, not the cwd the guarded call itself ran in, so a `git -C <dir> mv` or a `cd`-prefixed command is judged against the wrong repo.

@@ -21,6 +21,33 @@
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]
 
+    # Generalises the primary refusal above to the SECONDARY: bootstrap is first-provision only, and
+    # re-running it on any already-provisioned host rewrites the sshd drop-in below. The deploy user
+    # is the evidence that provisioning already happened.
+    #
+    # Capture play only, deliberately: the ops and access plays are LAN-side, write no sshd drop-in,
+    # and the fail_msg's "would rewrite its sshd drop-in" would simply be false there. An explicit
+    # narrow, not an oversight.
+    - name: probe — the zcrypto-deploy user (re-bootstrap refusal)
+      ansible.builtin.command: getent passwd zcrypto-deploy
+      register: bootstrap_deploy_user_probe
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      tags: [always]
+
+    # A BOOLEAN flag is deliberate here (unlike the free-text overrides on the digest guards, which
+    # substitute for absent evidence): the refusal names concrete shown state — the existing user — so
+    # the flag acknowledges something the operator has been told, not something they must assert.
+    - name: refuse to re-bootstrap an already-provisioned host
+      ansible.builtin.assert:
+        that: bootstrap_deploy_user_probe.rc != 0 or rebootstrap | default(false) | bool
+        fail_msg: >-
+          zcrypto-deploy already exists on {{ inventory_hostname }} — this host is bootstrapped, and
+          re-running would rewrite its sshd drop-in. Converge with site.yml instead, or pass
+          -e rebootstrap=true if you are genuinely rebuilding it.
+      tags: [always]
+
     - name: zcrypto-deploy sudo user
       ansible.builtin.user: {name: zcrypto-deploy, groups: sudo, shell: /bin/bash, create_home: true}
     - name: passwordless sudo for zcrypto-deploy (automation)

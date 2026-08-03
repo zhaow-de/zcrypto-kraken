@@ -248,6 +248,114 @@
     ops_uid: "{{ ansible_facts['getent_passwd'][ops_data_user][1] }}"
     ops_gid: "{{ ansible_facts['getent_passwd'][ops_data_user][2] }}"
 
+# --- spec 00082 converge guards (wave 1). Probe idiom: probes never fail or change; the assert
+# --- refuses with the fix in the message. Tests: tests/test_infra_converge_guards.py.
+#
+# Every guard below is gated on `ops_image_digest is defined` — this role's own convention (see
+# defaults/main.yml: that variable has NO default). A config- or Alloy-only converge legitimately
+# carries no digest and skips every image-consuming task, so a guard that fired there would refuse
+# exactly the runs it has nothing to say about. Placed after the account/directory groundwork the
+# probes read, and before the first digest-gated block.
+- name: probe — is the pinned digest already on this host
+  ansible.builtin.command: docker image inspect "{{ ops_image }}@{{ ops_image_digest }}"
+  register: ops_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: ops_image_digest is defined
+
+- name: preflight — refuse a digest the host has not pulled
+  ansible.builtin.assert:
+    that: ops_digest_probe.rc == 0
+    fail_msg: >-
+      {{ ops_image }}@{{ ops_image_digest }} is not on {{ inventory_hostname }} — every ops runner
+      starts the image with `--pull never` and this role has no pull task, so an unpulled digest is
+      not a slow start but a silent outage: every timer exits 125 from its next tick on. Pre-stage
+      it first: sudo docker pull {{ ops_image }}@{{ ops_image_digest }}
+  when: ops_image_digest is defined
+
+# The liquidations compose file is the ONE artifact this converge repins that the role never
+# restarts — the file moves, the container does not — so the repin sits armed until some later
+# `docker compose up` rolls it unobserved. The guard refuses to leave that decision implicit; it
+# reads the FILE deliberately, because the pin the file carries is its whole subject (the pins
+# guard below reads the container instead, and the comment there says why).
+- name: probe — the digest the deployed liquidations compose file pins
+  ansible.builtin.command: grep -E '@sha256:' {{ ops_compose_dir }}/compose.yaml
+  register: ops_liquidations_pin_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: ops_image_digest is defined
+
+- name: liquidations — require an explicit roll-after/defer decision on a repin
+  ansible.builtin.assert:
+    that: >-
+      (ops_image_digest in ops_liquidations_pin_probe.stdout | default(''))
+      or (liquidations_decision | default('') in ['roll-after', 'defer'])
+    fail_msg: >-
+      This converge repins the liquidations compose file to {{ ops_image_digest }}, which it does
+      not currently carry — and nothing here restarts the poller, so the file and the running
+      container would disagree until someone else runs `docker compose up`. Decide now:
+      -e liquidations_decision=roll-after (preferred — the poller re-fetches a 30 h window every
+      cycle, so a converge-length restart self-heals within one cycle) or
+      -e liquidations_decision=defer (accepting that the file points at the new digest while the
+      container keeps running the old one). If the deployed file turns out to carry no
+      digest-pinned image line at all, that is the anomaly to investigate first — a hand-edited or
+      truncated compose file — not something either decision fixes.
+  # rc != 2, not rc == 0: grep answers 2 for a missing file (first provision — nothing deployed to
+  # repin, the only legitimate skip) but 1 for a file that is THERE and carries no `@sha256:` line,
+  # which is an anomalous on-host state. On rc 1 the probe's stdout is empty, so the first disjunct
+  # is false and this guard refuses — fail-closed, like every other guard here, instead of standing
+  # down on exactly the host whose compose file cannot be read as a pin.
+  when: ops_image_digest is defined and ops_liquidations_pin_probe.rc != 2
+
+# Reads the liquidations-poll CONTAINER, never the compose file the guard above reads: a converge
+# that passed the wrong digest once left that file naming a digest the container was not running, so
+# the file is not evidence of what this converge would replace. rc != 0 (no such container — first
+# provision) skips the guard: there is nothing being replaced.
+- name: probe — the currently-running digest this converge would replace (pins recording)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' liquidations-poll
+  register: ops_running_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: ops_image_digest is defined
+
+- name: read fleet-pins.md from the controller tree
+  ansible.builtin.set_fact:
+    ops_fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
+  when: ops_image_digest is defined and ops_running_digest_probe.rc == 0
+
+# M3: regex_search yields None (not an error) on a tag-started image ref. default('') does NOT catch
+# that -- None is defined, so the filter passes it through -- and replace() stringifies it, making the
+# needle the literal 'None', which no pins row carries. Measured: such a ref fails CLOSED, never open.
+- name: pins recording — refuse to replace a digest fleet-pins.md does not record
+  ansible.builtin.assert:
+    that: >-
+      ((ops_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in ops_fleet_pins_text)
+      or ((pins_override | default('') | string | length > 8)
+          and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The digest this converge replaces ({{ ops_running_digest_probe.stdout }}) is not recorded in
+      docs/reference/fleet-pins.md — ops_image_digest has no repo default, so that row is the only
+      rollback operand this host has. Record the CURRENT digest there first (or pass
+      -e pins_override="<reason>" and record it immediately after).
+  when: ops_image_digest is defined and ops_running_digest_probe.rc == 0 and ops_fleet_pins_text is defined
+
+# spec 00082 D1 (second half), same shape as the capture and engine roles' pins echo: the reason
+# reaches the play log only when the override was actually ACCEPTED, i.e. the replaced digest is
+# genuinely unrecorded. Gating on the override merely being PRESENT would print a "why" on runs that
+# overrode nothing. The negated clause below is the assert's own first disjunct character-for-
+# character, so a future edit to one that is not mirrored in the other shows up as a textual mismatch.
+- name: pins override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "pins_override accepted: {{ pins_override }}"
+  when: >-
+    ops_image_digest is defined and ops_running_digest_probe.rc == 0 and ops_fleet_pins_text is defined
+    and not ((ops_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in ops_fleet_pins_text)
+    and (pins_override | default('') | string | length > 8)
+    and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 # Corrects a one-time ownership mismatch left behind by the NOW-REMOVED NAS pull of this tree
 # (spec 00054 D2): capture-reconciled arrived here via `rsync -a` run by a root systemd unit, and
 # `-a` preserves NUMERIC ownership, so every file/dir under it still carries the NAS's uid/gid 1000
@@ -395,13 +503,19 @@
 
     # Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
     # too would run both replays on every boot (same rationale as the capture prune timer).
+    #
+    # The silent re-arm is the recorded trap: this task's enable-and-start turns the panel timer
+    # back on after the operator stopped it, so a converge inside a panel-regeneration window fires
+    # a materialize against a half-rebuilt tree. `-e ops_panel_timer_hold=true` drops ONLY
+    # panel-materialize from the loop, leaving it stopped for the length of that window; the two
+    # replay timers are unaffected. Opt-in: an ordinary converge still arms all three.
     - name: enable + start the replay + panel timers
       ansible.builtin.systemd_service:
         name: "zcrypto-{{ item }}.timer"
         daemon_reload: true
         enabled: true
         state: started
-      loop: [verify-replay, verified-replay, panel-materialize]
+      loop: "{{ ['verify-replay', 'verified-replay'] + ([] if ops_panel_timer_hold | default(false) | bool else ['panel-materialize']) }}"
 
 # T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
 # and the reason both capture hosts silently ran a month-old keep-regex while the repo was correct.

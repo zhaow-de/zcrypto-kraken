@@ -10,7 +10,7 @@
     # accident: touching the primary requires saying so.
     #
     #   secondary only : ./scripts/run.sh site.yml --limit zcrypto-red -e capture_image_digest=...
-    #   primary        : ./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e ...
+    #   primary        : ./scripts/run.sh site.yml --limit zcrypto --tags capture -e converge_primary=true -e ...
     #   engine only    : ./scripts/run.sh site.yml --tags engine -e converge_primary=true -e engine_image_digest=...
     #
     # It is a per-host assert, so a bare run fails ONLY the primary and still converges the rest --
@@ -38,6 +38,18 @@
           .claude/rules/capture-deploys.md first. To converge ONLY the secondary: `--limit zcrypto-red`.
         success_msg: "converge_primary=true — this run WILL restart the primary's live capture and/or engine."
       when: inventory_hostname in groups['engine_host'] | default([])
+      tags: [always]
+
+    # spec 00082 guard 4: even with converge_primary granted, an UN-TAGGED run on the primary pulls
+    # in the engine play, whose digest assert fails the host closed — and "fixing" that with
+    # -e engine_image_digest=... restarts the LIVE trade engine. Tags must be named explicitly.
+    - name: refuse an un-tagged run on the live primary
+      ansible.builtin.assert:
+        that: ansible_run_tags != ['all'] or ansible_skip_tags | length > 0
+        fail_msg: >-
+          This run names no tags — on the live primary that sweeps in every play, including the
+          engine play. Scope it explicitly: --tags capture, --tags engine, or --skip-tags engine.
+      when: inventory_hostname in groups['engine_host']
       tags: [always]
 
     - name: note — assumes bootstrap.yml already ran
@@ -78,6 +90,50 @@
           capture_host without the key ever landing on it. Adding a host here is a
           deliberate act — never a side effect of adding a capture host.
       tags: [always]
+
+    # spec 00082 guard 5: the inter-cycle window, re-read from the TARGET's clock at execution time
+    # (chrony-disciplined) — a converge backgrounded for hours re-asserts the window when it fires,
+    # by construction. Skipped under check mode so --check --diff previews run at any hour.
+    - name: probe — the engine host's clock (window guard)
+      ansible.builtin.command: date +%s
+      register: engine_epoch_probe
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+      tags: [engine]  # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged runs
+
+    - name: engine window — refuse a converge outside the inter-cycle gap
+      ansible.builtin.assert:
+        that: >-
+          (((engine_epoch_probe.stdout | int) % 14400 >= 1800)
+           and (14400 - ((engine_epoch_probe.stdout | int) % 14400) >= 600))
+          or ((engine_window_override | default('') | string | length > 8)
+              and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+        fail_msg: >-
+          Outside the engine's inter-cycle gap (boundaries 00/04/08/12/16/20 UTC: the first 30 min
+          belong to the running cycle, the last 10 min are too close to the next). Wait for the gap,
+          or pass -e engine_window_override="<why this cannot wait>" (a reason, not a boolean).
+      when: not ansible_check_mode and engine_epoch_probe.stdout is defined
+      tags: [engine]
+
+    # spec 00082 D1 (second half), same shape as the capture role's two override echoes: an ACCEPTED
+    # override lands its reason in the play log. Gated on acceptance — the assert's own scoping AND
+    # the window condition NEGATED (its first disjunct, character-for-character — the odd
+    # continuation indent below is what keeps the two folded texts byte-identical) AND the override
+    # fragment — never on the override merely being PRESENT, which would print a "why" on runs that
+    # overrode nothing. The scoping half is load-bearing, not decoration: under --check the probe is
+    # skipped, so `.stdout` is undefined and an unscoped `when:` would error instead of skipping.
+    - name: engine window override accepted — the reason, on the record
+      ansible.builtin.debug:
+        msg: "engine_window_override accepted: {{ engine_window_override }}"
+      when: >-
+        not ansible_check_mode and engine_epoch_probe.stdout is defined
+        and not (((engine_epoch_probe.stdout | int) % 14400 >= 1800)
+         and (14400 - ((engine_epoch_probe.stdout | int) % 14400) >= 600))
+        and (engine_window_override | default('') | string | length > 8)
+        and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+      tags: [engine]
   roles:
     - role: engine
       tags: [engine]

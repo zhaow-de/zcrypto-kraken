@@ -124,6 +124,111 @@
       {{ engine_gate_sshd.stdout_lines | select("match", "^(allowusers|allowgroups|denyusers|denygroups|permitrootlogin|passwordauthentication)") | list }};
       stderr: {{ engine_gate_sshd.stderr | default("") | trim }}
 
+# --- 1b. spec 00082 converge guards (wave 1), immediately after the §8 gate and before anything is
+# --- written to the host. Probe idiom: probes never fail or change; the assert refuses with the fix
+# --- in the message. Tests: tests/test_infra_converge_guards.py.
+#
+# Hoisted out of §7 (the compose render it originally guarded) so the TARGETED message comes first:
+# engine_image_digest defaults to "", and the residency preflight below would otherwise answer a
+# forgotten -e with a `docker pull` of a ref ending in a bare `@`, losing the pointer to where the
+# digest comes from. Same order as the capture role.
+- name: fail fast if the pinned engine image digest was not supplied
+  ansible.builtin.assert:
+    that: engine_image_digest | length > 0
+    fail_msg: >-
+      engine_image_digest is empty — pass the built image's digest, e.g.
+      -e engine_image_digest=sha256:<...> (see the job summary of
+      .github/workflows/capture-image.yml — the engine reuses the capture image).
+
+- name: probe — is the pinned digest already on this host
+  ansible.builtin.command: docker image inspect "{{ engine_image }}@{{ engine_image_digest }}"
+  register: engine_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: preflight — refuse a digest the host has not pulled
+  ansible.builtin.assert:
+    that: engine_digest_probe.rc == 0
+    fail_msg: >-
+      {{ engine_image }}@{{ engine_image_digest }} is not on {{ inventory_hostname }} — the unit's
+      ExecStartPre pulls at start, so the stop→start window would contain a registry pull, and that
+      window must hold only stop → migration-if-any → start inside the inter-cycle gap. Pre-stage it
+      first: sudo docker pull {{ engine_image }}@{{ engine_image_digest }}
+
+- name: probe — the logship secrets file the engine's compose reads at start
+  ansible.builtin.stat:
+    path: /opt/zcrypto-capture/logship-secrets.env
+  register: engine_logship_secrets_stat
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: preflight — refuse to restart the engine without its logship secrets
+  ansible.builtin.assert:
+    that: engine_logship_secrets_stat.stat.exists
+    fail_msg: >-
+      /opt/zcrypto-capture/logship-secrets.env is missing on {{ inventory_hostname }} — its absence
+      crash-loops the engine instead of failing the render (the compose mount is required:false, so
+      the container starts and then dies for want of the Loki env vars). The capture role renders
+      it; run the capture play on this host first, then re-run this converge.
+
+# The :9102 holder is RECORDED, never asserted (spec 00082 D3-6): on every re-converge the engine's
+# own container legitimately holds the port, so a refusal would refuse every normal run. What the
+# operator needs before a stop→start is WHO holds it, in the play log.
+- name: probe — who currently holds the engine's metrics port
+  ansible.builtin.command: ss -ltnp sport = :9102
+  register: engine_port_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: record the current metrics-port holder (evidence for the operator, not a refusal)
+  ansible.builtin.debug:
+    msg: "listeners on 127.0.0.1:9102 before this converge: {{ engine_port_probe.stdout | default('') | trim }}"
+
+- name: probe — the currently-running digest this converge would replace (pins recording)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-engine
+  register: engine_running_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read fleet-pins.md from the controller tree
+  ansible.builtin.set_fact:
+    engine_fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
+  when: engine_running_digest_probe.rc == 0
+
+# M3: regex_search yields None (not an error) on a tag-started image ref. default('') does NOT catch
+# that -- None is defined, so the filter passes it through -- and replace() stringifies it, making the
+# needle the literal 'None', which no pins row carries. Measured: such a ref fails CLOSED, never open.
+- name: pins recording — refuse to replace a digest fleet-pins.md does not record
+  ansible.builtin.assert:
+    that: >-
+      ((engine_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in engine_fleet_pins_text)
+      or ((pins_override | default('') | string | length > 8)
+          and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The digest this converge replaces ({{ engine_running_digest_probe.stdout }}) is not recorded in
+      docs/reference/fleet-pins.md — an unrecorded pin is one docker-prune from an unrecoverable
+      rollback. Record the CURRENT digest there first (or pass -e pins_override="<reason>" and
+      record it immediately after).
+  when: engine_running_digest_probe.rc == 0 and engine_fleet_pins_text is defined
+
+# spec 00082 D1 (second half), same shape as the capture role's pins echo: the reason reaches the
+# play log only when the override was actually ACCEPTED, i.e. the replaced digest is genuinely
+# unrecorded. Gating on the override merely being PRESENT would print a "why" on runs that overrode
+# nothing. The negated clause below is the assert's own first disjunct character-for-character, so a
+# future edit to one that is not mirrored in the other shows up as a textual mismatch.
+- name: pins override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "pins_override accepted: {{ pins_override }}"
+  when: >-
+    engine_running_digest_probe.rc == 0 and engine_fleet_pins_text is defined
+    and not ((engine_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in engine_fleet_pins_text)
+    and (pins_override | default('') | string | length > 8)
+    and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 # --- 2. The zcrypto-engine service account — created by this role itself, deliberately unlike
 # zcrypto-data (which the base role creates on capture hosts; renamed from kraken-capture, spec
 # 00057): in-role creation keeps `--tags engine` self-sufficient on first deploy.
@@ -245,15 +350,8 @@
     mode: "0644"
   notify: restart engine service
 
-# --- 7. The compose file (secret-free — the key material stays in engine.env).
-- name: fail fast if the pinned engine image digest was not supplied
-  ansible.builtin.assert:
-    that: engine_image_digest | length > 0
-    fail_msg: >-
-      engine_image_digest is empty — pass the built image's digest, e.g.
-      -e engine_image_digest=sha256:<...> (see the job summary of
-      .github/workflows/capture-image.yml — the engine reuses the capture image).
-
+# --- 7. The compose file (secret-free — the key material stays in engine.env). The empty-digest
+# fail-fast that used to open this section now runs up in §1b, above the residency preflight.
 - name: render the engine compose file
   ansible.builtin.template:
     src: compose.yaml.j2
