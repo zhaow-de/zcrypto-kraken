@@ -53,6 +53,12 @@ def assert_that(task: dict) -> list[str]:
     return that if isinstance(that, list) else [that]
 
 
+def when_conditions(task: dict) -> list[str]:
+    # a `when:` list is ANDed by Ansible, which is exactly what truthy() does with a list.
+    when = task.get("when", [])
+    return when if isinstance(when, list) else [when]
+
+
 CAPTURE = ANSIBLE / "roles" / "capture" / "tasks" / "main.yml"
 
 DIGEST_OK = {"capture_digest_probe": {"rc": 0}}
@@ -120,3 +126,51 @@ def test_pins_recording_semantics(pins_text, override, expected):
     task = find_task(load_tasks(CAPTURE), "pins recording — refuse to replace a digest fleet-pins.md does not record")
     variables = {**PINS_BASE, "capture_fleet_pins_text": pins_text, "pins_override": override}
     assert truthy(assert_that(task), variables) is expected
+
+
+# --- spec D1's second half: an ACCEPTED override must reach the play log, or the canary fail_msg's
+# own promise ("it lands in this log") is false. The echo's `when:` is the assert's scoping AND the
+# override fragment AND the primary condition NEGATED -- an echo that fires whenever the override is
+# merely PRESENT would log a "why" on runs that overrode nothing, which is the failure these cover.
+CANARY_ECHO_BASE = {
+    "inventory_hostname": "zcrypto",
+    "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]},
+    "capture_image_digest": "sha256:" + "c" * 64,
+}
+CANARY_STALE = {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64}
+CANARY_BAKED = {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "c" * 64}
+CANARY_REASON = "secondary down, rolling back after incident"
+
+
+@pytest.mark.parametrize(
+    ("probe", "override", "expected"),
+    [
+        (CANARY_STALE, CANARY_REASON, True),  # override accepted over a failing parity -> echo the why
+        (CANARY_STALE, "", False),  # no override -> the assert refused; there is no why to echo
+        (CANARY_BAKED, CANARY_REASON, False),  # parity passes -> nothing was overridden
+    ],
+)
+def test_canary_override_echo_fires_only_on_an_accepted_override(probe, override, expected):
+    task = find_task(load_tasks(CAPTURE), "canary override accepted — the reason, on the record")
+    variables = {**CANARY_ECHO_BASE, "capture_secondary_digest_probe": probe, "canary_override": override}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+PINS_ECHO_BASE = {
+    "capture_running_digest_probe": {"rc": 0, "stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64},
+}
+PINS_REASON = "emergency: pins file unreachable, recorded after"
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (PINS_FILE_WITHOUT, PINS_REASON, True),  # override accepted over an unrecorded pin -> echo the why
+        (PINS_FILE_WITHOUT, "", False),  # no override -> the assert refused; there is no why to echo
+        (PINS_FILE_WITH, PINS_REASON, False),  # the pin IS recorded -> nothing was overridden
+    ],
+)
+def test_pins_override_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(CAPTURE), "pins override accepted — the reason, on the record")
+    variables = {**PINS_ECHO_BASE, "capture_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected

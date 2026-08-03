@@ -55,6 +55,7 @@
   register: capture_local_compose_raw
   when: inventory_hostname not in groups['engine_host']
   failed_when: false
+  changed_when: false
   check_mode: false
 
 - name: derive whether new pairs are being added (guard engages only then — I1)
@@ -126,6 +127,20 @@
     inventory_hostname in groups['engine_host']
     and capture_secondary_digest_probe is not skipped
 
+# spec 00082 D1 (second half): an ACCEPTED override lands its reason in the play log — the assert
+# above literally promises "it lands in this log". Gated on the override having been ACCEPTED (the
+# fragment true AND the parity check failing), never on the override merely being PRESENT: the
+# latter would print a "why" on runs that overrode nothing.
+- name: canary override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "canary_override accepted: {{ canary_override }}"
+  when: >-
+    inventory_hostname in groups['engine_host']
+    and capture_secondary_digest_probe is not skipped
+    and not (capture_image_digest in capture_secondary_digest_probe.stdout | default(''))
+    and (canary_override | default('') | string | length > 8)
+    and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 - name: probe — the currently-running digest this converge would replace (pins recording)
   ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
   register: capture_running_digest_probe
@@ -153,6 +168,17 @@
       rollback. Record the CURRENT digest there first (or pass -e pins_override="<reason>" and
       record it immediately after).
   when: capture_running_digest_probe.rc == 0 and capture_fleet_pins_text is defined
+
+# spec 00082 D1 (second half), same shape as the canary echo above: the reason reaches the play log
+# only when the override was actually ACCEPTED, i.e. the replaced digest is genuinely unrecorded.
+- name: pins override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "pins_override accepted: {{ pins_override }}"
+  when: >-
+    capture_running_digest_probe.rc == 0 and capture_fleet_pins_text is defined
+    and not ((capture_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in capture_fleet_pins_text)
+    and (pins_override | default('') | string | length > 8)
+    and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
 - name: ensure the capture data directory exists
   ansible.builtin.file:
