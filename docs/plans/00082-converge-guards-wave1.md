@@ -491,7 +491,7 @@ def test_liquidations_repin_decision(decision, pin_differs, expected):
     deployed = "sha256:" + ("d" * 64 if pin_differs else "e" * 64)
     variables = {
         "ops_image_digest": "sha256:" + "e" * 64,
-        "liquidations_pin_probe": {"stdout": "    image: \"ghcr.io/zhaow-de/zcrypto-capture@" + deployed + "\""},
+        "ops_liquidations_pin_probe": {"stdout": "    image: \"ghcr.io/zhaow-de/zcrypto-capture@" + deployed + "\""},
         "liquidations_decision": decision,
     }
     assert truthy(assert_that(task), variables) is expected
@@ -521,8 +521,8 @@ def test_ops_digest_preflight():
 @pytest.mark.parametrize("override,expected", [("", False), ("short", False), ("recorded in pins after emergency roll", True)])
 def test_ops_pins_override_semantics(override, expected):
     task = find_task(load_tasks(OPS), "pins recording — refuse to replace a digest fleet-pins.md does not record")
-    variables = {"running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64, "rc": 0},
-                 "fleet_pins_text": "| ops | zcrypto-ops | `" + "b" * 12 + "` |", "pins_override": override}
+    variables = {"ops_running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64, "rc": 0},
+                 "ops_fleet_pins_text": "| ops | zcrypto-ops | `" + "b" * 12 + "` |", "pins_override": override}
     assert truthy(assert_that(task), variables) is expected
 ```
 
