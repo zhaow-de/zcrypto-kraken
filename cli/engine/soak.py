@@ -389,7 +389,7 @@ def build_null(
     else:
         raise SoakError(f"path must be 'fast' or 'verified', got {path!r}")
 
-    net_live, reconcile_ok, cap_breach = _net_live_from_result(result, fee_builder=config.spot_fee_per_side, fee=fee)
+    net_live, reconcile_ok, cap_breach = _net_live_from_result(result, fee_builder=config.cost_per_side, fee=fee)
     assets = tuple(result.final_targets)
     n = result.n_periods
     weights = [{a: result.final_targets[a][k] for a in assets} for k in range(n)]

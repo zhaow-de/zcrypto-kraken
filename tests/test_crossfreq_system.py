@@ -51,9 +51,12 @@ def synthetic_grids(n_days: int, *, n_extra_h4: int = 0):
         {"assets": ("BTC", "BTC")},  # duplicate
         {"assets": ("BTC", "")},  # empty name
         {"assets": "BTC"},  # not a tuple
-        {"spot_fee_per_side": 0.0},
-        {"spot_fee_per_side": float("nan")},
-        {"spot_fee_per_side": True},  # bool is not a fee
+        {"fee_per_side": 0.0},
+        {"fee_per_side": float("nan")},
+        {"fee_per_side": True},  # bool is not a fee
+        {"spread_per_side": 0.0},
+        {"spread_per_side": float("nan")},
+        {"spread_per_side": True},  # bool is not a spread
         {"long_cap": -0.2},
         {"long_cap": True},  # bool is not a cap
         {"short_cap": 0.0},
@@ -118,6 +121,33 @@ def grids220():
 @pytest.fixture(scope="module")
 def base_build(grids220):
     return build_crossfreq_system(*grids220, config=CFG2)
+
+
+def test_default_cost_basis_is_the_registered_006():
+    # The fee/spread split is a renaming, NOT a re-pricing: the two defaults must keep summing to
+    # bit-exactly the 0.006/side basis every registered record-44 figure was measured at. `==`, not
+    # approx — an edit to either default that moves the basis must fail here rather than silently
+    # invalidate the frozen figures below.
+    assert CrossfreqSystemConfig().cost_per_side == 0.006
+    assert CrossfreqSystemConfig().fee_per_side == 0.0040
+    assert CrossfreqSystemConfig().spread_per_side == 0.0020
+
+
+@pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
+@pytest.mark.parametrize("field", ["fee_per_side", "spread_per_side"])
+def test_each_cost_term_is_read(grids220, base_build, builder, field):
+    # A split whose second term is never read would be worse than no split: each field ALONE must
+    # move the net series. Raise one term by 10 bps holding the other, and require the net series to
+    # change in the only direction cost can push it. What is pinned here is DIRECTION, not magnitude:
+    # the quotient below is the implied per-bar turnover, and it is only asserted non-negative and
+    # somewhere positive — a half- or double-charging defect is caught by the data-gated frozen-figure
+    # regression, not here. base_build is the verified build for both builders — the two paths are
+    # bit-identical, pinned separately by test_fast_path_equivalence_mini_grid.
+    cfg = CrossfreqSystemConfig(**{"assets": CFG2.assets, field: getattr(CFG2, field) + 0.001})
+    bumped = builder(*grids220, config=cfg)
+    assert bumped.ungoverned_net != base_build.ungoverned_net
+    turnover = [(base_build.ungoverned_net[k] - bumped.ungoverned_net[k]) / 0.001 for k in range(base_build.n_periods)]
+    assert min(turnover) >= 0.0 and max(turnover) > 0.0  # cost only ever subtracts, and it bit
 
 
 def test_end_to_end_shapes_and_identities(base_build, grids220):
