@@ -20,6 +20,8 @@ def run(args, cwd, env_extra=None, script=SCRIPT):
 
 def make_repo(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
     target = tmp_path / "mod.py"
     target.write_text("VALUE = 1\n")
     probe = tmp_path / "probe.sh"
