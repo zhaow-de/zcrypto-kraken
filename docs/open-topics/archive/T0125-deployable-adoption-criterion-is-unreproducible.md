@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: before the go/no-go — that decision inherits an adoption criterion nobody can re-examine, and it must be accepted knowingly rather than by nobody noticing. The forward guard is DONE; what remains is a ruling, not work
+status: resolved
 ---
 
 # The deployable's ADOPT criterion rests on a trial nobody can rebuild
@@ -41,8 +40,38 @@ The asymmetry is the whole point: **trial 44 IS reproducible from committed code
 - **A trap found in review and closed before it could fire.** The two layers resolved paths differently — the filesystem normalizes `./cli/x.py`, `git ls-files` does not — so a record naming a genuinely committed file in a non-canonical spelling would have passed the append guard and then failed the provenance test **forever**, with no remedy, because an append-only record cannot be edited. Extraction now canonicalizes and a test pins that both layers accept every spelling of the same path.
 - **The stored-record path stays lenient on purpose**, and the reason is stronger than "old records must still load": `append` re-validates every stored record under lock, so a strict load path would have bricked **all future appends** to the live registry, not merely reads. Provenance over history is asserted by the repo-level test instead, which operates on the file rather than the API — so even a hand-appended record is caught.
 
+## Resolution
+
+**Ruled 2026-08-03 (owner): RE-GROUND the go/no-go on the benchmark-relative basis, and re-derive the remaining legs so the whole basis is measured rather than registry-asserted.** Both were done the same day.
+
+**The re-grounding.** Record 44's registered verdict is ADOPT *vs incumbent trial 43*, and that comparison is gone for good. But it was never the only thing holding the record up: record 44 also carries **benchmark-relative** legs, and those are reproducible. §12 now states that the gate rests on them. What the missing incumbent removes is the answer to *why this candidate rather than that one*; what it does not touch is *whether this candidate clears the bar* — and the second is what the gate reads.
+
+**The whole kill bar is now MEASURED, not asserted** — re-derived end to end from committed code, with the instrument validated before any leg counted:
+
+| leg | re-derived | registered |
+| --- | --- | --- |
+| `ann_sharpe_noc` full / decisive | 1.560907676587497 / 1.5583341567194398 | 1.5609 / 1.5583 |
+| `bench4h_sharpe` full / decisive | 1.2128451567638199 / 1.2446890489958136 | 1.2128 / 1.2447 |
+| `spa_p_full` / `spa_p_decisive` | 0.001999000499750125 / 0.004497751124437781 | **bit-identical** |
+| the five `spa_grid_*` cells | all five | **bit-identical** |
+| `var_trials_4h` | 1.3058096692086857e-05 | **bit-identical** |
+| `per_period_sharpe_4h` | 0.03335455562889141 | **bit-identical** |
+| `dsr` | 0.9999994822040257 | 1.0 — the registry stored it rounded |
+| `worst_slice_relative_pass` | 1 | 1 |
+| `cap_breach_bars` / `governor_engaged_bars` | 1318 / 7302 | **exact** |
+
+Cost-stress (×1.5 → 1.3029, ×2.0 → 1.2106) was reproduced the same day in [[T0090]]'s instrument validation, and the drawdown figures are pinned by the frozen-figure regression at its own 4-dp tolerance — not byte-exactly, which the first draft of this line claimed. Margin over the reproduced benchmark: **+0.3481 full / +0.3136 decisive**.
+
+**Why this re-derivation is legitimate where rebuilding trial 43 is not** — the distinction is the whole point of this topic. Every primitive here is **committed** (`cli/validation/spa.py`, `dsr.py`, `bootstrap.py`, `cli/alpha/killbar.py`, the record-44 builder), and the benchmark's construction was **specified in advance** in the phase-4 history before anything was run — a first attempt using the *wrong* construction missed by 0.06 Sharpe and was discarded rather than adjusted. Trial 43 has neither property: no committed code, and no specification to reproduce against, so a rebuild could only be tuned until it matched.
+
+**The re-derivation is committed, not a scratchpad** — `cli/portfolio/record44_legs.py` with `tests/test_record44_legs.py`, runnable by anyone. Given that this topic exists *because* a scratchpad vanished, landing the answer in another one would have been self-defeating.
+
+**A near-miss worth recording, because it was caused by this very closeout.** The two recovered conventions were first appended to spec `00038` — and review caught that registry records 43 and 44 store `spec_hash a25d7102…`, which is the **sha256 of that spec file**. The append changed it to `914c9fc4…`, silently breaking the pin that verifies the ratified record, inside a commit whose entire subject is the verifiability of that record. Reverted; the conventions live in the committed re-derivation module instead. **A spec named by a registry `spec_hash` is immutable** — the durable home for a recovered convention is runnable code, not the pinned document.
+
+**Two details spec `00038` never pinned are recorded in `cli/portfolio/record44_legs.py`** (recovered by re-derivation, each proved discriminating by mutation): the SPA grid's headline cell is `(mean_block 30, seed 42)`, whose full and decisive readings became `spa_p_full`/`spa_p_decisive` — which is why no `spa_grid_b30_s42` key exists; and the worst-slice test runs on the **governed net over full history**, year taken from each bar's **close** stamp.
+
+**What remains permanently lost, stated plainly:** the counterfactual. Nobody can ever re-read the 43-vs-44 ordering, including at the taker end where the registry itself discloses that the ordering reverses at ×2.0. The re-grounding does not recover that — it makes the gate not depend on it.
+
 ## Suggested next steps
 
-- **(autonomous)** Record in the trial registry's own documentation which registered records are reproducible from committed code and which are not, so a future reader learns the boundary from the artifact rather than by re-discovering it mid-investigation as happened here. The boundary is now measured and pinned in the provenance test, so this is transcription rather than research.
-- **(decision — before the go/no-go, and it must be explicit)** Accept that record 44's adoption criterion cannot be re-examined. The go/no-go already inherits [[T0064]]'s out-of-time-evidence ruling; this is a second inherited limitation of the same kind, and it should be accepted **knowingly** rather than by nobody noticing. The honest framing for that decision: record 44's *own* figures are reproducible and have survived every re-derivation; what is unavailable is the counterfactual that it was chosen against.
-- **(explicitly NOT a next step, recorded so it is not proposed later)** Reconstructing trial 43. See *Why this matters* — an unvalidatable rebuild is worse than an acknowledged gap, because it would restore false confidence in a comparison nobody can check.
+_(none — resolved. The forward guard is built (`dbe27e0b`), the go/no-go is re-grounded on a reproducible basis, and every leg of that basis is re-derived and committed. The lost counterfactual is not recoverable and is recorded as such.)_
