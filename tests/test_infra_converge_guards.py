@@ -174,3 +174,108 @@ def test_pins_override_echo_fires_only_on_an_accepted_override(pins_text, overri
     task = find_task(load_tasks(CAPTURE), "pins override accepted — the reason, on the record")
     variables = {**PINS_ECHO_BASE, "capture_fleet_pins_text": pins_text, "pins_override": override}
     assert truthy(when_conditions(task), variables) is expected
+
+
+SITE = ANSIBLE / "site.yml"
+
+
+def test_untagged_primary_refusal():
+    task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
+    refuse = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
+    tagged = {"ansible_run_tags": ["capture"], "ansible_skip_tags": []}
+    skip_scoped = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]}
+    assert not truthy(assert_that(task), refuse)
+    assert truthy(assert_that(task), tagged)
+    assert truthy(assert_that(task), skip_scoped)
+
+
+WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
+
+
+@pytest.mark.parametrize(
+    ("since_boundary", "override", "expected"),
+    [
+        (1900, "", True),  # inside the gap
+        (900, "", False),  # completion window [B, B+30min] may still be running
+        (13900, "", False),  # within 10 min of the next boundary
+        (900, "true", False),  # boolean override refused
+        (900, "yes", False),  # I4: every canonical boolean spelling refused
+        (900, "short", False),  # I4: sub-9-char fragment refused
+        (900, "cycle confirmed complete, converging late on purpose", True),
+    ],
+)
+def test_engine_window_guard(since_boundary, override, expected):
+    task = find_task(load_tasks(SITE), WINDOW)
+    variables = {
+        "engine_epoch_probe": {"stdout": str(1754265600 + since_boundary)},  # 1754265600 % 14400 == 0
+        "engine_window_override": override,
+    }
+    assert truthy(assert_that(task), variables) is expected
+
+
+# --- when-scoping (cold review M4): the `that:` tests never exercise the scoping, and a mis-scoped
+# guard fires on the wrong host or never.
+def test_untagged_refusal_scopes_to_engine_host_members_only():
+    task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
+    on_primary = {"inventory_hostname": "zcrypto", "groups": {"engine_host": ["zcrypto"]}}
+    on_secondary = {"inventory_hostname": "zcrypto-red", "groups": {"engine_host": ["zcrypto"]}}
+    assert truthy(when_conditions(task), on_primary)
+    assert not truthy(when_conditions(task), on_secondary)
+
+
+def test_canary_probe_activates_only_on_an_actual_repin():
+    task = find_task(load_tasks(CAPTURE), "probe — the secondary's running capture digest (canary parity)")
+    base = {
+        "inventory_hostname": "zcrypto",
+        "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]},
+    }
+    repin = {
+        **base,
+        "capture_image_digest": "sha256:" + "c" * 64,
+        "capture_primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64},
+    }
+    same = {
+        **base,
+        "capture_image_digest": "sha256:" + "0" * 64,
+        "capture_primary_running_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "0" * 64},
+    }
+    assert truthy(when_conditions(task), repin)
+    assert not truthy(when_conditions(task), same)
+
+
+def test_pair_add_delegated_probe_engages_only_when_adding_pairs():
+    task = find_task(
+        load_tasks(CAPTURE),
+        "probe — the primary's deployed pair list (pair-add order; fail-CLOSED on unreachable, a new pair is the hazard)",
+    )
+    base = {"inventory_hostname": "zcrypto-red", "groups": {"engine_host": ["zcrypto"]}}
+    adding = {**base, "capture_pairs": ["BTC/EUR", "XRP/BTC"], "capture_deployed_pairs": ["BTC/EUR"]}
+    unchanged = {**base, "capture_pairs": ["BTC/EUR"], "capture_deployed_pairs": ["BTC/EUR"]}
+    assert truthy(when_conditions(task), adding)
+    assert not truthy(when_conditions(task), unchanged)
+
+
+# --- spec D1's second half for the overridable window guard, same shape as the two capture echoes
+# above: the echo's `when:` is the assert's scoping AND the window condition NEGATED AND the override
+# fragment. An echo that fires whenever the override is merely PRESENT would log a "why" on runs that
+# overrode nothing, which is the failure these cover.
+WINDOW_ECHO = "engine window override accepted — the reason, on the record"
+WINDOW_REASON = "cycle confirmed complete, converging late on purpose"
+
+
+@pytest.mark.parametrize(
+    ("since_boundary", "override", "expected"),
+    [
+        (900, WINDOW_REASON, True),  # override accepted over a closed window -> echo the why
+        (900, "", False),  # no override -> the assert refused; there is no why to echo
+        (1900, WINDOW_REASON, False),  # the window is open -> nothing was overridden
+    ],
+)
+def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary, override, expected):
+    task = find_task(load_tasks(SITE), WINDOW_ECHO)
+    variables = {
+        "ansible_check_mode": False,
+        "engine_epoch_probe": {"stdout": str(1754265600 + since_boundary)},
+        "engine_window_override": override,
+    }
+    assert truthy(when_conditions(task), variables) is expected
