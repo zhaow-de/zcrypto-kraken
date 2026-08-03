@@ -96,11 +96,30 @@ def _clock(step: timedelta = timedelta(seconds=10)) -> _SteppingClock:
     return _SteppingClock(CYCLE_TS + timedelta(seconds=90), step)
 
 
+# The forming-row position the fake builder plants per sleeve, per asset -- deliberately shaped so
+# that BOTH halves of run_cycle's extraction are discriminated (every value is exactly representable
+# in binary, so the expectations below are equalities, not approximations):
+#   - the ROW INDEX: every completed period is 0.0 and only the forming row is non-zero, so an
+#     off-by-one reads 0.0 for all three sleeves -- exactly the false "the book is flat" claim these
+#     gauges exist to prevent, and one that would poison the alert's baseline.
+#   - the abs(): two sleeves carry a NEGATIVE leg, so an extraction that summed raw positions would
+#     read A1 as -0.5 and A2 as 0.125 rather than 0.5 and 0.375.
+# B is flat, mirroring the measured dormant state; A1/A2 carry the book.
+SLEEVE_FORMING = {
+    "B": dict.fromkeys(ASSETS, 0.0),
+    "A1": {**dict.fromkeys(ASSETS, 0.0), ASSETS[0]: -0.5},
+    "A2": {**dict.fromkeys(ASSETS, 0.0), ASSETS[0]: 0.25, ASSETS[1]: -0.125},
+}
+SLEEVE_GROSS_EXPECTED = {"B": 0.0, "A1": 0.5, "A2": 0.375}
+
+
 def _fake_builder(targets: dict[str, float]):
     def builder(daily_prices, daily_ts, h4_prices, h4_ts, *, config=None):
         n_periods = len(h4_ts) - 1
         final = {a: [0.0] * n_periods + [targets[a]] for a in h4_prices}
-        return types.SimpleNamespace(final_targets=final, n_periods=n_periods)
+        # The real builder's three fixed-weight sleeves; run_cycle reads the forming row of each.
+        sleeves = {name: {a: [0.0] * n_periods + [SLEEVE_FORMING[name][a]] for a in h4_prices} for name in ("B", "A1", "A2")}
+        return types.SimpleNamespace(final_targets=final, n_periods=n_periods, sleeve_positions=sleeves)
 
     return builder
 
@@ -144,6 +163,39 @@ def test_sink_called_on_success_with_completed_at_and_duration(tmp_path, monkeyp
     assert completed_at == record.completed_at
     assert duration_seconds == pytest.approx((record.completed_at - record.started_at).total_seconds())
     assert duration_seconds > 0
+
+
+def test_run_cycle_extracts_each_sleeves_forming_row_gross(tmp_path, monkeypatch):
+    # THE end-to-end pin on the extraction itself. Every other sleeve test in this file drives
+    # `_CycleGauges.update` with a hand-built CycleResult, so none of them can see run_cycle reading
+    # the WRONG ROW out of the builder: mutating `[result.n_periods]` to `[result.n_periods - 1]`
+    # left all of them green. That mutation ships sleeve_gross={0,0,0} and active_sleeves=0 -- the
+    # book reported permanently flat, and the composition-changed alert baselined on a lie, so the
+    # eventual fix deploy fires a spurious page.
+    config = _env(tmp_path, monkeypatch)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(_store_rows()), clock=_clock())
+
+    assert result.status == "success"
+    assert result.sleeve_gross == SLEEVE_GROSS_EXPECTED
+    # The fixture genuinely discriminates, asserted rather than assumed: a wrong row index reads
+    # 0.0 for every sleeve (so the two non-zero expectations bite), and a dropped abs() reads the
+    # signed sums below (so the negative legs bite).
+    assert SLEEVE_GROSS_EXPECTED["A1"] > 0.0 and SLEEVE_GROSS_EXPECTED["A2"] > 0.0
+    signed = {name: sum(book.values()) for name, book in SLEEVE_FORMING.items()}
+    assert signed != SLEEVE_GROSS_EXPECTED, "no sleeve carries a negative leg -- abs() would be unpinned"
+
+
+def test_run_cycle_leaves_sleeve_gross_none_on_a_failed_cycle(tmp_path, monkeypatch):
+    # The other half of the contract the gauges depend on: a cycle that never reached the build has
+    # no composition, so the gauges must hold their previous values rather than read as "all flat".
+    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    config = _env(tmp_path, monkeypatch, rows_by=store_rows)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(store_rows), clock=_clock(step=timedelta(minutes=5)))
+
+    assert result.status == "failed"
+    assert result.sleeve_gross is None
 
 
 def test_sink_called_on_a_failed_cycle_with_the_sidecars_own_timing(tmp_path, monkeypatch):
@@ -227,6 +279,7 @@ def test_cycle_gauges_update_sets_all_gauges_and_increments_counters():
         ],
         reason=None,
         offending_pairs=None,
+        sleeve_gross={"B": 0.0, "A1": 0.0, "A2": 0.32},
     )
 
     gauges.update(result, completed_at, (completed_at - started_at).total_seconds())
@@ -256,6 +309,7 @@ def test_cycle_gauges_weight_series_count_matches_the_pinned_asset_universe():
         orders=[],
         reason=None,
         offending_pairs=None,
+        sleeve_gross={"B": 0.0, "A1": 0.0, "A2": 0.32},
     )
     gauges.update(result, CYCLE_TS, 1.0)
     families = _families(registry)
@@ -274,6 +328,7 @@ def test_cycle_gauges_update_on_failure_sets_success_zero_and_skips_targets_and_
         orders=None,
         reason="stale_pair",
         offending_pairs=("BTC",),
+        sleeve_gross=None,
     )
     gauges.update(result, CYCLE_TS + timedelta(minutes=2), 120.0)
 
@@ -285,6 +340,97 @@ def test_cycle_gauges_update_on_failure_sets_success_zero_and_skips_targets_and_
     # cannot appear in `_families()` (nothing to key by), so find it directly among the families.
     target_weight_family = next(family for family in registry.collect() if family.name == "zcrypto_engine_target_weight")
     assert target_weight_family.samples == []
+
+
+# --- command.py: sleeve occupancy (T0124's rung-3 precondition) ------------------------------------
+# The deployable combines three sleeves at fixed 1/3 weights and two of them have been flat for
+# months. Nothing observed that, and nothing would observe them RE-ARMING either -- which roughly
+# triples portfolio gross. These two series make the composition, and any change to it, visible.
+
+SLEEVE_GROSS = {"B": 0.0, "A1": 0.0, "A2": 0.32}
+
+
+def _sleeve_result(sleeve_gross: dict[str, float] | None, *, status: str = "success") -> CycleResult:
+    return CycleResult(
+        status=status,
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json") if status == "success" else None,
+        sidecar_path=None if status == "success" else Path("failed-cycle-08.json"),
+        targets=dict(TARGETS) if status == "success" else None,
+        orders=[] if status == "success" else None,
+        reason=None if status == "success" else "stale_pair",
+        offending_pairs=None if status == "success" else ("BTC",),
+        sleeve_gross=sleeve_gross,
+    )
+
+
+def test_active_sleeves_publishes_no_series_before_the_first_cycle():
+    # THE lazy-registration pin, the same reasoning as `zcrypto_engine_cycle_success` (cold-review
+    # I4): a labelled Gauge is naturally honest -- it publishes nothing until `.labels()` is first
+    # called -- but `zcrypto_engine_active_sleeves` is UNLABELLED, and a freshly-registered
+    # unlabelled Gauge publishes 0.0 immediately. "Zero sleeves are carrying exposure" is a claim,
+    # and before any cycle has run it is a false one -- it would read as the whole book having gone
+    # flat for up to the 4h until the next cycle, and (worse) it becomes the baseline the
+    # composition-changed alert measures the first real cycle against. An absent series is honest.
+    registry = CollectorRegistry()
+    _CycleGauges(registry)
+    assert [f for f in registry.collect() if f.name == "zcrypto_engine_active_sleeves"] == []
+
+
+def test_cycle_gauges_publish_per_sleeve_gross_and_the_active_count():
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+
+    gauges.update(_sleeve_result(dict(SLEEVE_GROSS)), CYCLE_TS, 1.0)
+
+    families = _families(registry)
+    gross = {sample.labels["sleeve"]: sample.value for sample in families["zcrypto_engine_sleeve_gross"].samples}
+    assert gross == SLEEVE_GROSS
+    assert len(families["zcrypto_engine_sleeve_gross"].samples) == 3  # one series per sleeve, always
+    # The one-sleeve book as measured across every journaled cycle: only A2 carries exposure.
+    assert families["zcrypto_engine_active_sleeves"].samples[0].value == 1.0
+
+
+def test_a_re_armed_sleeve_moves_the_active_count():
+    # The reversal the alert exists to announce -- B coming back from flat is a 1 -> 2 step, which
+    # is what `changes(zcrypto_engine_active_sleeves[26h])` reads.
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+
+    gauges.update(_sleeve_result(dict(SLEEVE_GROSS)), CYCLE_TS, 1.0)
+    gauges.update(_sleeve_result({"B": 0.28, "A1": 0.0, "A2": 0.32}), CYCLE_TS + timedelta(hours=4), 1.0)
+
+    families = _families(registry)
+    assert families["zcrypto_engine_active_sleeves"].samples[0].value == 2.0
+    gross = {sample.labels["sleeve"]: sample.value for sample in families["zcrypto_engine_sleeve_gross"].samples}
+    assert gross == {"B": 0.28, "A1": 0.0, "A2": 0.32}
+
+
+def test_a_cycle_without_sleeve_gross_leaves_both_series_untouched():
+    # A failed cycle carries sleeve_gross=None. Publishing 0/absent-of-3 there would read exactly
+    # like every sleeve going flat and would step the active count -- firing the
+    # composition-changed alert on a refresh timeout, twice (once down, once back).
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+    gauges.update(_sleeve_result(dict(SLEEVE_GROSS)), CYCLE_TS, 1.0)
+
+    gauges.update(_sleeve_result(None, status="failed"), CYCLE_TS + timedelta(hours=4), 1.0)
+
+    families = _families(registry)
+    assert families["zcrypto_engine_active_sleeves"].samples[0].value == 1.0
+    gross = {sample.labels["sleeve"]: sample.value for sample in families["zcrypto_engine_sleeve_gross"].samples}
+    assert gross == SLEEVE_GROSS
+
+
+def test_a_failed_first_cycle_still_leaves_active_sleeves_absent():
+    # The lazy registration must survive a failure-first startup too: a node whose very first cycle
+    # times out has no composition to report, and 0 would be a claim it never measured.
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+
+    gauges.update(_sleeve_result(None, status="failed"), CYCLE_TS, 1.0)
+
+    assert [f for f in registry.collect() if f.name == "zcrypto_engine_active_sleeves"] == []
 
 
 # --- command.py: startup seeding -------------------------------------------------------------------

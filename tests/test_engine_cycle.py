@@ -97,7 +97,9 @@ def _fake_builder(targets: dict[str, float], calls: list | None = None):
             calls.append((daily_prices, daily_ts, h4_prices, h4_ts))
         n_periods = len(h4_ts) - 1
         final = {a: [0.0] * n_periods + [targets[a]] for a in h4_prices}
-        return types.SimpleNamespace(final_targets=final, n_periods=n_periods)
+        # The real builder's three fixed-weight sleeves; run_cycle reads the forming row of each.
+        sleeves = {name: {a: [0.0] * n_periods + [targets[a]] for a in h4_prices} for name in ("B", "A1", "A2")}
+        return types.SimpleNamespace(final_targets=final, n_periods=n_periods, sleeve_positions=sleeves)
 
     return builder
 

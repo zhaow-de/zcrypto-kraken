@@ -10,23 +10,25 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import threading
 import time
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import typer
 from prometheus_client import Counter, Gauge
 
-from cli.config import ConfigError, EngineConfig, load_config
+from cli.config import AppConfig, ConfigError, EngineConfig, load_config
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
+from cli.engine.feeders import accumulation_report, decompose_report, load_minimums
 from cli.engine.gate_cache import (
     GateCache,
     due_for_reverification,
@@ -46,6 +48,8 @@ from cli.ohlc.dataset import read_parquet
 logger = get_logger("engine.command")
 
 CANONICAL_DIR = Path("data/ohlc-full")
+DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
+_REFDATA_GLOB = "kraken-refdata-*.json"
 _WATCHDOG_SLACK_SECS = 30.0
 _urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-export healthcheck ping
 
@@ -72,11 +76,15 @@ def _abort(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
-def _load_engine_config() -> EngineConfig:
+def _load_app_config() -> AppConfig:
     try:
-        return load_config().engine
+        return load_config()
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
+
+
+def _load_engine_config() -> EngineConfig:
+    return _load_app_config().engine
 
 
 def _parse_at(raw: str) -> datetime:
@@ -416,7 +424,7 @@ class _CycleGauges:
     set): `run()` builds one of these on the SAME registry the exporter serves, then installs
     `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure.
     `cycle_success` is registered LAZILY (`seed_cycle_success`), not here -- see that method
-    (cold-review I4)."""
+    (cold-review I4); `active_sleeves` is lazy for the same reason, see its own comment below."""
 
     def __init__(self, registry) -> None:
         self._registry = registry
@@ -444,6 +452,20 @@ class _CycleGauges:
         self.cycle_duration = Gauge(
             "zcrypto_engine_cycle_duration_seconds", "Wall time the most recent cycle took, in seconds.", registry=registry
         )
+        self.sleeve_gross = Gauge(
+            "zcrypto_engine_sleeve_gross",
+            "Latest per-sleeve gross exposure (sum of absolute target weights).",
+            ["sleeve"],
+            registry=registry,
+        )
+        # Lazy for exactly `seed_cycle_success`'s reason, and it is the crux here: `sleeve_gross`
+        # above is LABELLED, so it is honest for free -- a labelled Gauge publishes nothing until
+        # `.labels()` is first called. This one is UNLABELLED, so registering it eagerly would
+        # publish 0.0 from process start, and "no sleeve is carrying exposure" before any cycle has
+        # run is a claim the engine has not measured -- false, and it would also become the
+        # baseline the composition-changed alert reads the first real cycle against. An absent
+        # series is honest; a published 0 is a claim.
+        self.active_sleeves: Gauge | None = None
 
     def seed_cycle_success(self, success: bool) -> None:
         """Register (if not already) and set `zcrypto_engine_cycle_success` (spec 00069 D5,
@@ -469,6 +491,16 @@ class _CycleGauges:
         if result.orders is not None:
             self.orders_total.inc(len(result.orders))
             self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
+        if result.sleeve_gross is not None:  # None on a failed cycle: no build ran, so leave both as they were
+            for sleeve, gross in result.sleeve_gross.items():
+                self.sleeve_gross.labels(sleeve=sleeve).set(gross)
+            if self.active_sleeves is None:
+                self.active_sleeves = Gauge(
+                    "zcrypto_engine_active_sleeves",
+                    "Number of sleeves with non-zero gross in the most recent cycle.",
+                    registry=self._registry,
+                )
+            self.active_sleeves.set(sum(1 for gross in result.sleeve_gross.values() if gross > 0.0))
 
 
 def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:
@@ -883,3 +915,174 @@ def gate_export(
         gate_healthy = status.streak > 0 or status.last_failure is None
         clean = gate_healthy and lag is not None and lag <= lag_fail_seconds
         _gate_ping(healthcheck_url, clean)
+
+
+# --- the two sizing measurements (spec 00081): gross attribution + the venue-minimum drift floor --
+
+
+def _parse_day(raw: str | None, flag: str) -> date | None:
+    if raw is None:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise _abort(f"{flag} {raw!r} is not a YYYY-MM-DD date") from exc
+
+
+def _window_records(journal_root: Path, since: str | None, until: str | None) -> list[CycleRecord]:
+    """Every journaled success record whose boundary falls in the inclusive [--since, --until] UTC
+    day window.
+
+    An unreadable record ABORTS rather than being skipped. Both measurements aggregate across the
+    whole window, so a quietly dropped cycle biases every number below it with nothing on the page
+    to say so -- and unlike a record that parses but fails to replay (which the reports name and
+    count), one that will not parse cannot even be named per cycle downstream. --since/--until are
+    the escape hatch for a journal carrying a known-bad day."""
+    since_day = _parse_day(since, "--since")
+    until_day = _parse_day(until, "--until")
+    records: list[CycleRecord] = []
+    for boundary, path in _journal_artifacts(journal_root, "*", "cycle-*.json"):
+        if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
+            continue
+        try:
+            records.append(from_json(path.read_text()))
+        except EngineJournalError as exc:
+            raise _abort(
+                f"unreadable cycle record {path}: {exc} -- every number here aggregates the whole window, so "
+                "skipping it would silently bias the result; repair the record or exclude its day with --since/--until"
+            ) from exc
+    if not records:
+        raise _abort(f"no cycle records found under {journal_root} in the requested window")
+    return records
+
+
+def _resolve_minimums(flag_value: Path | None) -> Path:
+    """`--minimums`, else the newest venue reference-data snapshot under the configured data dir.
+
+    Newest BY FILENAME: the stamp is fixed-width UTC, so lexicographic order is chronological."""
+    if flag_value is not None:
+        return flag_value
+    snapshots_dir = (_load_app_config().data_dir or Path("data")) / "snapshots"
+    candidates = sorted(snapshots_dir.glob(_REFDATA_GLOB))
+    if not candidates:
+        raise _abort(
+            f"no {_REFDATA_GLOB} found under {snapshots_dir} -- pass --minimums <path> to name the venue "
+            "snapshot the order minimums are read from"
+        )
+    return candidates[-1]
+
+
+def _payload_json(payload: dict) -> str:
+    """The report payload as STRICTLY valid JSON: every non-finite float becomes `null`, and every
+    mapping key becomes a string.
+
+    Both are deliberate. A NaN is a legitimate value in these payloads -- a flat cycle's 0/0
+    cancellation ratio, which must not masquerade as 1.0 -- and `json.dumps` writes it as the bare
+    token `NaN`, which the JSON grammar has no room for and most non-Python parsers reject outright;
+    emitting invalid JSON from a `--json` flag is worse than losing the NaN/None distinction, and
+    nothing else in either payload is ever None, so `null` reads unambiguously as "not a number".
+    The drift payload is also keyed by NAV, a float: the key spelling is written here and pinned by
+    a test rather than left to `json.dumps`' internal coercion, and the numeric NAVs stay
+    recoverable from the payload's own `navs` list and each row's `nav` field."""
+
+    def convert(value):
+        if isinstance(value, dict):
+            return {str(key): convert(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [convert(item) for item in value]
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
+
+    # allow_nan=False makes the conversion self-checking: a non-finite that escaped it raises here
+    # rather than being emitted as an invalid token.
+    return json.dumps(convert(payload), indent=2, sort_keys=True, allow_nan=False)
+
+
+def _emit_report(text: str, payload: dict, *, as_json: bool) -> None:
+    """Print the report, then exit non-zero if any record failed to replay.
+
+    A failed replay means one of the two identity guards fired -- the recomputed stages no longer
+    match the builder, or the rebuild no longer matches what the engine actually traded -- so the
+    aggregates above it describe a smaller window than was asked for. The failures are named in the
+    rendered text and in the payload; the exit code is what a script notices."""
+    typer.echo(_payload_json(payload) if as_json else text)
+    if payload["n_failed"]:
+        raise typer.Exit(code=1)
+
+
+@engine_app.command(name="decompose")
+def decompose(
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
+    since: Optional[str] = typer.Option(None, "--since", help="Only cycles on or after this UTC day (YYYY-MM-DD)."),
+    until: Optional[str] = typer.Option(None, "--until", help="Only cycles on or before this UTC day (YYYY-MM-DD)."),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the full payload as JSON on stdout instead of the table. A non-finite value (a flat cycle's "
+        "0/0 cancellation ratio) is emitted as null.",
+    ),
+) -> None:
+    """Attribute each journaled cycle's gross across the pipeline stages."""
+    config = _load_engine_config()
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    records = _window_records(journal_root, since, until)
+    try:
+        text, payload = decompose_report(records, _snapshot_reader(journal_root))
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+    _emit_report(text, payload, as_json=json_out)
+
+
+@engine_app.command(name="accum-replay")
+def accum_replay(
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
+    since: Optional[str] = typer.Option(None, "--since", help="Only cycles on or after this UTC day (YYYY-MM-DD)."),
+    until: Optional[str] = typer.Option(None, "--until", help="Only cycles on or before this UTC day (YYYY-MM-DD)."),
+    minimums: Optional[Path] = typer.Option(
+        None,
+        "--minimums",
+        help=f"Venue reference-data snapshot the per-asset order minimums are read from. Defaults to the newest "
+        f"{_REFDATA_GLOB} under the configured data dir's snapshots/ directory.",
+    ),
+    nav: Optional[list[float]] = typer.Option(
+        None,
+        "--nav",
+        help="Portfolio size in EUR to measure the drift at; repeatable, e.g. --nav 1000 --nav 5000. Defaults to "
+        + ", ".join(f"{value:,.0f}" for value in DEFAULT_NAVS)
+        + ".",
+    ),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the full payload as JSON on stdout instead of the tables. A non-finite value is emitted as "
+        "null, and the per-size drift table's keys are strings.",
+    ),
+) -> None:
+    """Measure the position drift the venue's order minimums impose at each portfolio size."""
+    config = _load_engine_config()
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    records = _window_records(journal_root, since, until)
+    minimums_path = _resolve_minimums(minimums)
+    try:
+        floors, fetched_at = load_minimums(minimums_path)
+    # TypeError belongs in here beside the others: a snapshot carrying `"ordermin": null` reaches
+    # float(None), and a non-dict `universe` entry reaches .get() on a str -- both are malformed
+    # evidence, and this module answers those with a clean one-line exit, never a traceback.
+    except (OSError, KeyError, TypeError, ValueError, EngineError) as exc:
+        raise _abort(f"could not read the venue order minimums from {minimums_path}: {exc}") from exc
+    try:
+        text, payload = accumulation_report(
+            records,
+            _snapshot_reader(journal_root),
+            floors,
+            list(nav) if nav else list(DEFAULT_NAVS),
+            fetched_at=fetched_at,
+        )
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+    _emit_report(text, payload, as_json=json_out)

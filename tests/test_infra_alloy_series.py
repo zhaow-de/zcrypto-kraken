@@ -81,6 +81,13 @@ ENGINE_APP_SERIES = [
     "zcrypto_engine_cycle_success",
     "zcrypto_engine_cycle_completed_at_seconds",
     "zcrypto_engine_cycle_duration_seconds",
+    # T0124: the shadow book combines three sleeves at fixed 1/3 weights and two have been flat for
+    # months. `active_sleeves` is alert-bearing (zcrypto-engine-sleeve-count-changed), so
+    # dropping it from the keep-regex would leave that rule permanently NoData -- indistinguishable
+    # from a composition that never changes. `sleeve_gross` is the per-sleeve detail the page's
+    # responder reads to see WHICH sleeve moved.
+    "zcrypto_engine_sleeve_gross",
+    "zcrypto_engine_active_sleeves",
 ]
 LIQUIDATIONS_APP_SERIES = [
     "zcrypto_liquidations_polls_total",

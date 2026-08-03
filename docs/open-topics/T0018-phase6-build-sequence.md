@@ -38,12 +38,16 @@ Three constraints bind *future* iterations and would otherwise be invisible at p
 
 The sole remainder is the **6b executor iteration** — convene when the Stage-6a gate is met. Broken out below because a single paragraph hides both the sequencing and the human touchpoints; every bullet carries whether it is autonomous or a decision.
 
-**The build (constraint 4's scope):**
+**The build (constraint 4's scope, extended 2026-08-02 with the four pieces the placeability audit found missing — the capability map showed each exists in Nautilus or nowhere, with no build item):**
 
+- **(autonomous)** The asset→`InstrumentId` map — none exists; every submission needs it.
+- **(autonomous)** Venue-constraint sizing: `ordermin`/`costmin`/lot/tick handling on every intended order, reading the Cache's live instrument definitions — the layer [[T0119]]'s accumulation deltas pass through.
+- **(autonomous)** The restart→reduce-only policy as code, not just runbook prose — §12's gate drills it, nothing implements it yet.
+- **(autonomous)** Fill/fee/rollover ingestion from the executions WS into the journal — the tracking-error report's real-fill leg and [[T0090]]'s recalibration input both read from it.
 - **(autonomous)** Order submission + the order state machine — the executor's core.
 - **(autonomous)** The reconciliation loop: exchange state vs journalled intent, and what it does on divergence.
 - **(autonomous)** The kill-switch, and the conditions that trip it.
-- **(autonomous)** **Emit order/position/PnL as first-class `/metrics` families as the state machine is built — not bolted on afterward.** Gauges for position/PnL state, counters for orders/fills, inside the active-series budget, and admit every new family through the Alloy keep-lists **in the same change** (both directions of the T0051 trap: published-but-unadmitted, and admitted-but-unpublished). Inherited from [[T0095]] at its 2026-07-28 resolution, which also recorded the standing owner ruling that trading-data egress to Grafana Cloud is **accepted, live trading included** — no redaction gate. The dashboard side of that work is [[T0020]]'s, and depends on these families existing.
+- **(autonomous)** **Emit order/position/PnL as first-class `/metrics` families as the state machine is built — not bolted on afterward.** Gauges for position/PnL state, counters for orders/fills, inside the active-series budget, and admit every new family through the Alloy keep-lists **in the same change** (both directions of the T0051 trap: published-but-unadmitted, and admitted-but-unpublished). Inherited from [[T0095]] at its 2026-07-28 resolution, which also recorded the standing owner ruling that trading-data egress to Grafana Cloud is **accepted, live trading included** — no redaction gate. The dashboard side of that work is [[T0020]]'s, and depends on these families existing. *(**[[T0124]]'s sleeve-occupancy gauge did NOT need to wait for this** — the engine already serves `/metrics` with its own instrument set, so `zcrypto_engine_sleeve_gross` / `zcrypto_engine_active_sleeves` shipped standalone 2026-08-02, commit `193b2043`. They are already in the capture keep-list, so this iteration's families join an engine block that has them; do not re-add.)*
 - **(autonomous)** §12's weekly tracking-error report **in full**: fills, fees, rollover accrual, slippage vs the cost model.
 - **(autonomous)** Cost-model recalibration from real fills — feeds [[T0090]]'s re-quote.
 

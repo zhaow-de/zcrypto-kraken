@@ -39,6 +39,7 @@ from cli.engine.soak import (
     windowed_null,
 )
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
+from cli.portfolio.crossfreq_system import apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
 
 
@@ -214,15 +215,17 @@ def test_chain_consistent_detects_gap():
 
 def _fake_result(*, n_periods, sleeve_B, sleeve_A1, sleeve_A2, multipliers, governed_net):
     """All sleeves/mult carry n_periods+1 rows; governed_net carries n_periods. Single asset 'BTC'.
-    final_targets/cap_breach_bars mirror the real builder exactly (crossfreq_system.py ~line
-    636/655): capped = apply_position_caps(combined), final_targets = mult * capped -- caps clip
-    BEFORE the governor multiply, so a sleeve combo that breaches 0.20/0.10 still yields an
-    in-cap final_targets (existing callers keep the synthetic values inside the caps, where
-    capped == combined, so this is a no-op for them)."""
+    final_targets/cap_breach_bars mirror the real builder's chain: capped = apply_position_caps(
+    combined), limited = apply_whole_book_limits(capped), final_targets = mult * limited -- both
+    shaping stages run BEFORE the governor multiply, so a sleeve combo that breaches 0.20/0.10
+    still yields an in-cap final_targets. `cap_breach_bars` stays the PRE-limits count, as the
+    builder's own does. On one asset capped at 20%/10% no whole-book limit can bind, so `limited`
+    is bit-identical to `capped` for every caller here."""
     assets = ("BTC",)
     combined = [(sleeve_B[k] + sleeve_A1[k] + sleeve_A2[k]) / 3.0 for k in range(n_periods + 1)]
     capped = apply_position_caps({"BTC": combined})["BTC"]
-    final_targets = {"BTC": [multipliers[k] * capped[k] for k in range(n_periods + 1)]}
+    limited = apply_whole_book_limits({"BTC": capped})["BTC"]
+    final_targets = {"BTC": [multipliers[k] * limited[k] for k in range(n_periods + 1)]}
     cap_breach_bars = sum(1 for k in range(n_periods) if abs(capped[k] - combined[k]) > 1e-15)
     return types.SimpleNamespace(
         final_targets=final_targets,
@@ -280,6 +283,45 @@ def test_net_live_reconcile_false_on_inconsistent_result():
     r.final_targets["BTC"][0] += 0.05  # break the identity
     _net_live, ok, _cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
     assert ok is False
+
+
+def test_net_live_reconciles_when_a_whole_book_limit_binds():
+    """The live-cost reconstruction must rerun the builder's WHOLE shaping chain. Ten assets each
+    at the 20% long cap gives gross 2.0 (breaching the 1.5x soft cap) and then net 1.5 (breaching
+    the +1.0 band), so `limited` is half of `capped`. A reconstruction stopping at the caps reports
+    reconcile_ok False -- the soak calling the engine's book broken on the very cycles where the
+    §10 limits did their job -- and mis-costs the turnover leg on top."""
+    n, n_assets = 2, 10
+    assets = tuple(f"A{i}" for i in range(n_assets))
+    third = 1 / 3
+    sleeves = {name: {a: [0.20] * (n + 1) for a in assets} for name in ("B", "A1", "A2")}
+    combined = {
+        a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n + 1)]
+        for a in assets
+    }
+    capped = apply_position_caps(combined)
+    limited = apply_whole_book_limits(capped)
+    # The premise: the whole-book stack must actually move the book, and the per-asset caps must
+    # not, or the assertions below would pass for the wrong reason.
+    assert limited != capped
+    assert capped == combined
+
+    mult = [1.0, 0.5, 1.0]
+    r = types.SimpleNamespace(
+        final_targets={a: [mult[k] * limited[a][k] for k in range(n + 1)] for a in assets},
+        governed_net=[0.0] * n,
+        ungoverned_net=[0.0] * n,
+        multipliers=mult,
+        sleeve_positions=sleeves,
+        cap_breach_bars=0,
+        governor_engaged_bars=0,
+        day_index=[0] * (n + 1),
+        n_periods=n,
+    )
+    _net_live, ok, cap_breach = _net_live_from_result(r, fee_builder=0.006, fee=0.006)
+    assert ok is True
+    # The cap-breach predicate deliberately stays pre-limits, mirroring the builder's own count.
+    assert cap_breach == [0.0] * n
 
 
 def test_null_cap_breach_series_sums_to_cap_breach_bars():

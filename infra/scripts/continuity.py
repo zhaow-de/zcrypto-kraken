@@ -16,7 +16,10 @@ trades legitimately go quiet, so they cannot measure uptime):
                               from the data itself (not guessed)
 
 A stream with fewer than MIN_POOL intervals is reported UNMEASURED and FAILS the exit bar: below
-that bound the derived threshold degenerates to 10x the worst outage (see MIN_POOL).
+that bound the derived threshold degenerates to 10x the worst outage (see MIN_POOL). A stream whose
+pool CLEARS that bound but whose tail steepens more than TAIL_RATIO_CUT per decade of quantiles is
+refused the same way -- that is the same degeneracy arriving from repeat outages instead of from a
+small sample (see TAIL_RATIO_CUT).
 
 Usage:  uv run python infra/scripts/continuity.py <segments-root> [--since YYYY-MM-DD] [--kind book]
                                                     [--overlay <reconciled-root>]
@@ -50,7 +53,51 @@ FINAL = re.compile(r"^\d{2}$")
 # tests/test_infra_continuity.py, which measures polars rather than trusting this comment.
 MIN_POOL = 5002
 
+# MIN_POOL only tolerates ONE outage-scale interval. From two similar outages upward the pool clears
+# the bound while p99.99 lands ON an outage, so the derived threshold inflates to 10x the outage and
+# the instrument books 0.0 s over genuinely missing data -- the false GREEN this script exists to
+# prevent. A contaminated tail is therefore refused rather than trusted, judged by how steeply the
+# pool's tail rises per decade of quantiles.
+#
+# 10.0 is the per-decade quantile ratio of a Pareto tail at alpha = 1 -- the infinite-mean boundary
+# no physical spacing distribution crosses. Twelve production streams measure 1.05-1.96 against it;
+# contamination from same-scale repeat outages measures 88.8-200.
+TAIL_RATIO_CUT = 10.0
+# The ratios' denominator floor, and not a new magic number: it is 5.0 / 10, the spacing scale below
+# which the threshold floor above already declares steepness irrelevant. Needed because an
+# ultra-bursty pool legitimately has p99.9 = 0 (same-millisecond bursts), which would otherwise
+# refuse a healthy stream.
+RATIO_FLOOR_S = 0.5
+
 HOUR = dt.timedelta(hours=1)
+
+
+def tail_steepness(pool: pl.Series) -> tuple[float, float]:
+    """(p99.99/p99.9, p99.9/p99), each denominator floored at RATIO_FLOOR_S.
+
+    Nearest interpolation, the same basis as the threshold itself. Two chained decades because one
+    does not cover the range: the first ratio catches p99.99 landing on an outage, but once the
+    outage count reaches ~0.001x the pool p99.9 is contaminated too and reads ~1 -- from there only
+    the second ratio still spans the cliff.
+    """
+    q99 = float(pool.quantile(0.99) or 0.0)
+    q999 = float(pool.quantile(0.999) or 0.0)
+    q9999 = float(pool.quantile(0.9999) or 0.0)
+    return q9999 / max(q999, RATIO_FLOOR_S), q999 / max(q99, RATIO_FLOOR_S)
+
+
+def tail_depth(pool: pl.Series) -> int:
+    """How many pooled intervals reach p99.99 -- i.e. how many data points the threshold rests on.
+
+    00079/D5: TRANSPARENCY ONLY, never a gate. Depth is provably not a contamination detector:
+    measured at n = 11,389, a clean pool and one carrying two 200 s outages both have depth 2,
+    because the count at or above p99.99 is a deterministic function of n (~ the tolerated k, plus
+    one) rather than of contamination. `tests/test_infra_continuity.py` pins that equality, so
+    anyone promoting depth into a gate has to delete the test that disproves it first. What it IS
+    good for: depth 2 beside n = 11,332 says out loud that two intervals set this stream's
+    threshold, where real streams measure 25-390 at n = 240k-3.9M.
+    """
+    return int((pool >= pool.quantile(0.9999)).sum())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -172,12 +219,15 @@ def report(
     # `thresh_s` is printed because it is DERIVED per pair (see below), not configured: a 0.0000%
     # means "no silence" or "the threshold is wide enough that nothing counts as silence", and only
     # the number beside it tells an operator which.
+    # `tail` is the count of pooled intervals reaching p99.99 -- how many data points the derived
+    # threshold rests on. Diagnostic only (see `tail_depth`); the gate is `tail_steepness`.
     print(
-        f"{'pair':<10} {'hours':>6} {'missing':>8} {'trunc':>6} {'n':>9} {'thresh_s':>12} {'gap_s':>10} {'covered_s':>11} {'gap%':>8}"
+        f"{'pair':<10} {'hours':>6} {'missing':>8} {'trunc':>6} {'n':>9} {'tail':>6} {'thresh_s':>12} {'gap_s':>10} {'covered_s':>11} {'gap%':>8}"
     )
-    print("-" * 88)
+    print("-" * 95)
     totals = []
     unmeasured: list[str] = []
+    steepened: list[str] = []
     for pair, segs in sorted(streams.items()):
         segs = [(h, p) for h, p in segs if h >= since]
         if not segs:
@@ -189,7 +239,18 @@ def report(
         n = len(tl.pool)
         # D6: below the bound the p99.99 IS the maximum, so the threshold would be 10x the worst
         # outage. Report the stream as unmeasurable rather than score it against a blind number.
-        measured = n >= MIN_POOL
+        #
+        # 00079/D1: above the bound the same blindness returns from k >= 2 similar outages, so a
+        # tail that steepens more than TAIL_RATIO_CUT per decade is refused too. Accepted residual
+        # (00079/D6, a conscious drop rather than a deferral): at k >= ~0.01*n, p99 itself is
+        # contaminated, both ratios read ~1, and this gate goes blind -- but that regime needs the
+        # window to be 77-97 % outage by wall time, so `n` printed beside the span is the eyeball
+        # check. The truncated-hours count is explicitly NOT a backstop: it tests `secs > thresh`,
+        # so the same contaminated threshold blinds it as well.
+        measured = n >= MIN_POOL and max(tail_steepness(tl.pool)) < TAIL_RATIO_CUT
+        # Printed on UNMEASURED rows too -- a refused stream shows no threshold to judge, so the
+        # depth is the only fragility signal left on that row. An empty pool has no quantile.
+        depth: int | str = tail_depth(tl.pool) if n else ""
         thresh = max(float(tl.pool.quantile(0.9999) or 0) * 10, 5.0) if measured else 0.0
         trunc = 0
         if measured:
@@ -202,9 +263,11 @@ def report(
         covered = tl.span_hours * 3600.0
         if not measured:
             unmeasured.append(pair)
+            if n >= MIN_POOL:
+                steepened.append(pair)  # cleared the bound, refused by the tail-steepness gate
             if not quiet:
                 print(
-                    f"{pair:<10} {tl.span_hours:>6} {tl.missing_hours:>8} {'-':>6} {n:>9} {'UNMEASURED':>12} {'':>10} {covered:>11.0f} {'':>8}"
+                    f"{pair:<10} {tl.span_hours:>6} {tl.missing_hours:>8} {'-':>6} {n:>9} {depth:>6} {'UNMEASURED':>12} {'':>10} {covered:>11.0f} {'':>8}"
                 )
             continue
 
@@ -214,15 +277,36 @@ def report(
         if not quiet:
             mark = " genesis" if tl.genesis_skipped else ""
             print(
-                f"{pair:<10} {tl.span_hours:>6} {tl.missing_hours:>8} {trunc:>6} {n:>9} {thresh:>12.1f} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%{mark}"
+                f"{pair:<10} {tl.span_hours:>6} {tl.missing_hours:>8} {trunc:>6} {n:>9} {depth:>6} {thresh:>12.1f} {gap:>10.1f} {covered:>11.0f} {pct:>7.4f}%{mark}"
+            )
+
+    # 00079/D4: two refusal reasons, named separately -- "too small to calibrate" and "calibrated on
+    # a tail that is probably the outage" are different problems with different next actions.
+    # Printed whenever ANY stream was refused, not only when NOTHING was measurable: in production a
+    # contaminated stream almost always sits beside measured ones, and that is exactly where the
+    # reason is least guessable (a huge `n` beside UNMEASURED reads as "not the size bound" only to
+    # someone who knows MIN_POOL).
+    #
+    # The prefix is `unmeasured: ` -- the same word the table prints in those rows' `thresh_s` cell,
+    # so the note maps onto its rows at a glance. NOT `unmeasured streams: `: that substring is the
+    # exit-bar-isolation assertion in tests/test_continuity_overlay.py, which requires a canonical
+    # (`--overlay`) report to never emit it.
+    if unmeasured:
+        under = len(unmeasured) - len(steepened)
+        if under:
+            print(f"unmeasured: {under} stream(s) under the {MIN_POOL}-interval bound")
+        if steepened:
+            print(
+                f"unmeasured: {len(steepened)} stream(s) whose spacing tail steepens more than "
+                f"{TAIL_RATIO_CUT:.0f}x across a decade of quantiles -- the threshold sample is not trustworthy"
             )
 
     if not totals:
         # Nothing measurable. Two different situations, and only one of them may stay silent:
-        # streams existed but none could be self-calibrated (D6 -- say so, and FAIL), versus no
-        # segments at all (nothing was measured, so nothing may bank OR fail a verdict).
+        # streams existed but none could be self-calibrated (D6 -- the reason is named above, and
+        # FAIL), versus no segments at all (nothing was measured, so nothing may bank OR fail a
+        # verdict).
         if unmeasured:
-            print(f"no measurable segments: {len(unmeasured)} stream(s) under the {MIN_POOL}-interval bound")
             if show_exit_bar:
                 print(f"  EXIT BAR (<0.1% gap time): *** FAIL *** (unmeasured streams: {len(unmeasured)})")
             return 0
@@ -233,13 +317,14 @@ def report(
         print("no segments in the requested window")
         return 1
 
-    print("-" * 88)
+    print("-" * 95)
     tg = sum(t[4] for t in totals)
     tc = sum(t[5] for t in totals)
     tt = sum(t[3] for t in totals)
     tm = sum(t[2] for t in totals)
-    # No threshold on the TOTAL row: it is per pair, and averaging thresholds would invent a number.
-    print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {'':>9} {'':>12} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
+    # No threshold and no tail depth on the TOTAL row: both are per pair, and summing or averaging
+    # either would invent a number that describes no stream.
+    print(f"{'TOTAL':<10} {'':>6} {tm:>8} {tt:>6} {'':>9} {'':>6} {'':>12} {tg:>10.1f} {tc:>11.0f} {100.0 * tg / tc:>7.4f}%")
     print()
     print(f"  worst single stream : {worst:.4f}%")
     if show_exit_bar:

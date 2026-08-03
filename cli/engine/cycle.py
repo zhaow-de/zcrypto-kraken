@@ -104,8 +104,8 @@ def _ping_healthcheck(success: bool) -> None:
 
 @dataclass(frozen=True)
 class CycleResult:
-    """run_cycle's outcome: a success carries record_path/targets/orders; a failure carries
-    sidecar_path/reason/offending_pairs."""
+    """run_cycle's outcome: a success carries record_path/targets/orders/sleeve_gross; a failure
+    carries sidecar_path/reason/offending_pairs."""
 
     status: str  # "success" | "failed"
     cycle_ts: datetime
@@ -115,6 +115,10 @@ class CycleResult:
     orders: list[dict] | None  # [{asset, side, quantity, notional_eur, price}]
     reason: str | None  # "stale_pair" | "refresh_deadline"
     offending_pairs: tuple[str, ...] | None
+    # Per-sleeve gross ("B"/"A1"/"A2" -> sum of absolute positions) at the forming row, for the
+    # occupancy gauges. Deliberately NOT part of the journal record: schema v1 is validated and
+    # replayed, and this is derivable from the snapshots any replay already reads.
+    sleeve_gross: dict[str, float] | None
 
 
 def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
@@ -333,6 +337,7 @@ def _failed(
         orders=None,
         reason=reason,
         offending_pairs=offending,
+        sleeve_gross=None,  # no build ran, so the book's composition this boundary is unknown
     )
     _update_metrics(result, completed_at, (completed_at - started_at).total_seconds())
     return result
@@ -381,6 +386,12 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
     h4_ts, h4_prices = aligned[240]
     result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
     targets = {asset: series[result.n_periods] for asset, series in result.final_targets.items()}
+    # The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
+    # is actually carrying exposure. Two have been flat for months, so a re-arming roughly triples
+    # gross -- the occupancy gauges exist so that is announced rather than discovered.
+    sleeve_gross = {
+        name: sum(abs(book[asset][result.n_periods]) for asset in book) for name, book in result.sleeve_positions.items()
+    }
 
     # 5. Intended orders vs the most recent successfully journaled targets.
     orders = _append_orders(config, day_dir, cycle_ts, targets, {a: h4_prices[a][-1] for a in h4_prices})
@@ -411,6 +422,7 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
         orders=orders,
         reason=None,
         offending_pairs=None,
+        sleeve_gross=sleeve_gross,
     )
     _update_metrics(cycle_result, completed_at, (completed_at - started_at).total_seconds())
     return cycle_result
