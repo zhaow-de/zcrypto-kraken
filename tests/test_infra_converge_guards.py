@@ -540,3 +540,46 @@ def test_daemon_json_guard_precedes_the_task_whose_handler_bounces_dockerd():
     assert probe < show  # nothing to display until the diff has been registered
     assert show < ask  # the ack is only meaningful once the operator has seen the diff
     assert ask < task_index(tasks, "configure the docker daemon (bounded json-file log driver)")
+
+
+# --- bootstrap re-bootstrap refusal. Deliberately scoped to the CAPTURE play: bootstrap.yml holds
+# three plays, and only this one writes an sshd drop-in, which is the damage the refusal names. The
+# ack is a BOOLEAN (like the daemon.json one, unlike the D1 free-text overrides): the refusal cites
+# concrete shown evidence -- the existing user -- rather than substituting for absent evidence.
+BOOTSTRAP = ANSIBLE / "bootstrap.yml"
+REBOOTSTRAP = "refuse to re-bootstrap an already-provisioned host"
+REBOOTSTRAP_PROBE = "probe — the zcrypto-deploy user (re-bootstrap refusal)"
+PRIMARY_REFUSAL = "refuse to bootstrap the live primary unless explicitly asked"
+
+
+def capture_play_tasks() -> list[dict]:
+    # load_tasks on bootstrap.yml returns a PLAY list, and task_index is top-level-flat by design, so
+    # the ordering assertion has to index inside one play's own task list. Selecting the play by
+    # `hosts` also pins the guard's deliberate narrow -- it belongs to the capture play, not ops/access.
+    play = next(p for p in load_tasks(BOOTSTRAP) if p["hosts"] == "capture_host")
+    return play["tasks"]
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        ({"bootstrap_deploy_user_probe": {"rc": 0}, "rebootstrap": False}, False),  # provisioned, no flag -> refuse
+        ({"bootstrap_deploy_user_probe": {"rc": 2}}, True),  # getent found no such user -> first provision
+        ({"bootstrap_deploy_user_probe": {"rc": 0}, "rebootstrap": True}, True),  # genuine rebuild
+    ],
+)
+def test_rebootstrap_refusal(variables, expected):
+    task = find_task(capture_play_tasks(), REBOOTSTRAP)
+    assert truthy(assert_that(task), variables) is expected
+
+
+# ORDER is a property of its own: the assert reads `bootstrap_deploy_user_probe`, so a probe placed
+# after it leaves the fact undefined, and both guards must precede the provisioning tasks they gate.
+def test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe():
+    tasks = capture_play_tasks()
+    primary = task_index(tasks, PRIMARY_REFUSAL)
+    probe = task_index(tasks, REBOOTSTRAP_PROBE)
+    refusal = task_index(tasks, REBOOTSTRAP)
+    assert primary < probe  # the narrower primary refusal still speaks first
+    assert probe < refusal  # nothing to assert on until the probe has registered
+    assert refusal < task_index(tasks, "zcrypto-deploy sudo user")
