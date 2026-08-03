@@ -491,3 +491,39 @@ def test_ops_pins_override_echo_fires_only_on_an_accepted_override(pins_text, ov
     task = find_task(load_tasks(OPS), "pins override accepted — the reason, on the record")
     variables = {**OPS_PINS_BASE, "ops_fleet_pins_text": pins_text, "pins_override": override}
     assert truthy(when_conditions(task), variables) is expected
+
+
+# --- docker-role guard. The docker role is SHARED by every play, but the hazard is capture-specific:
+# its daemon.json template task notifies `restart docker`, and bouncing dockerd under live capture is
+# an unbackfillable data gap. `docker_daemon_json_diff` carries the role prefix ansible-lint's
+# var-naming[no-role-prefix] forces; `daemon_json_ack` is an operator `-e` var, unprefixed like
+# `pins_override`. The ack is a BOOLEAN here, unlike the D1 free-text overrides: the debug task
+# displays the diff first, so the ack acknowledges specific shown content rather than substituting
+# for absent evidence.
+DOCKER = ANSIBLE / "roles" / "docker" / "tasks" / "main.yml"
+DAEMON_JSON_ACK = "daemon.json — refuse an unacknowledged change (its handler bounces dockerd)"
+
+
+@pytest.mark.parametrize(
+    ("rc", "ack", "expected"),
+    [
+        (1, False, False),  # rendered output differs, nothing acked -> refuse
+        (0, False, True),  # identical render -> no handler fires, no ack owed
+        (1, True, True),  # differs, operator acked the displayed diff -> proceed
+        # rc 2 is diff's "trouble" exit, which on this host means /etc/docker/daemon.json is ABSENT
+        # (first provision). That is a change the handler would act on, so it must refuse, not pass.
+        (2, False, False),
+    ],
+)
+def test_daemon_json_change_ack(rc, ack, expected):
+    task = find_task(load_tasks(DOCKER), DAEMON_JSON_ACK)
+    variables = {"docker_daemon_json_diff": {"rc": rc}, "daemon_json_ack": ack}
+    assert truthy(assert_that(task), variables) is expected
+
+
+# A `failed_when: false` command prints nothing under the default callback, so without this debug the
+# operator would ack unseen content -- which is the whole rationale for the boolean ack above.
+@pytest.mark.parametrize(("rc", "expected"), [(1, True), (0, False)])
+def test_daemon_json_diff_is_displayed_only_when_it_would_change(rc, expected):
+    task = find_task(load_tasks(DOCKER), "daemon.json — show the pending change before asking for an ack")
+    assert truthy(when_conditions(task), {"docker_daemon_json_diff": {"rc": rc}}) is expected

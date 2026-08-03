@@ -53,6 +53,50 @@
     groups: docker
     append: true
 
+# --- daemon.json change-ack (spec 00082 D3 guard 8). This role is shared by every play, but the
+# hazard is capture-specific: the template task below notifies `restart docker`, and bouncing dockerd
+# under live capture is an unbackfillable data gap. So render to a probe path, diff it against what is
+# deployed, SHOW the operator the difference, and refuse until they ack it.
+#
+# The probe render is a deliberate, stated EXCEPTION to the read-only probe idiom: `check_mode: false`
+# means it writes /run/zcrypto-daemon-json.probe even under `--check`. That is safe -- /run is tmpfs,
+# the file carries no secrets, and no service reads or is touched by it.
+- name: probe — render daemon.json to a scratch path (writes under --check; tmpfs, no secrets, no service touched)
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /run/zcrypto-daemon-json.probe
+    owner: root
+    group: root
+    mode: "0644"
+  changed_when: false
+  check_mode: false
+
+# rc != 0 counts as differing, and that deliberately folds in diff's rc 2 (/etc/docker/daemon.json
+# absent, i.e. first provision): the handler would fire there too, so it owes an ack like any change.
+- name: probe — diff the pending daemon.json against the deployed one
+  ansible.builtin.command: diff /run/zcrypto-daemon-json.probe /etc/docker/daemon.json
+  register: docker_daemon_json_diff
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# Without this the operator would ack unseen content: a `failed_when: false` command prints nothing
+# under the default callback, which would void the boolean ack's own rationale below.
+- name: daemon.json — show the pending change before asking for an ack
+  ansible.builtin.debug:
+    var: docker_daemon_json_diff.stdout_lines
+  when: docker_daemon_json_diff.rc != 0
+
+# A boolean ack is deliberate HERE (unlike the free-text overrides on the digest guards, which
+# substitute for absent evidence): the diff is displayed immediately above, so this acknowledges
+# specific shown content.
+- name: daemon.json — refuse an unacknowledged change (its handler bounces dockerd)
+  ansible.builtin.assert:
+    that: docker_daemon_json_diff.rc == 0 or daemon_json_ack | default(false) | bool
+    fail_msg: >-
+      daemon.json would change and its handler restarts dockerd — under live capture that is a data
+      gap. Review the diff above, then re-run with -e daemon_json_ack=true.
+
 - name: configure the docker daemon (bounded json-file log driver)
   ansible.builtin.template:
     src: daemon.json.j2
