@@ -70,6 +70,7 @@
     src: /opt/zcrypto-capture/compose.yaml
   register: capture_primary_compose_raw
   delegate_to: "{{ groups['engine_host'] | first }}"
+  changed_when: false
   when: >-
     inventory_hostname not in groups['engine_host']
     and capture_pairs | difference(capture_deployed_pairs | default([])) | length > 0
