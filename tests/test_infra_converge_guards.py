@@ -59,6 +59,15 @@ def when_conditions(task: dict) -> list[str]:
     return when if isinstance(when, list) else [when]
 
 
+def task_index(tasks: list[dict], name: str) -> int:
+    # Positional, top-level only -- ORDER is the property under test, and find_task's recursion into
+    # block/pre_tasks would return a task whose index says nothing about the role's own sequence.
+    for i, t in enumerate(tasks):
+        if t.get("name") == name:
+            return i
+    raise KeyError(name)
+
+
 CAPTURE = ANSIBLE / "roles" / "capture" / "tasks" / "main.yml"
 
 DIGEST_OK = {"capture_digest_probe": {"rc": 0}}
@@ -291,6 +300,22 @@ def test_engine_digest_preflight():
     task = find_task(load_tasks(ENGINE), "preflight — refuse a digest the host has not pulled")
     assert not truthy(assert_that(task), {"engine_digest_probe": {"rc": 1}})
     assert truthy(assert_that(task), {"engine_digest_probe": {"rc": 0}})
+
+
+# The empty-digest fail-fast must be reached FIRST in both roles: `*_image_digest` defaults to "",
+# so a forgotten `-e` would otherwise be caught by the residency preflight, whose message names a
+# `docker pull` of a ref ending in a bare `@` instead of pointing at the digest's source. Fail-closed
+# either way; this pins WHICH message the operator gets, on both sides of the mirror.
+def test_engine_empty_digest_failfast_precedes_residency_preflight():
+    tasks = load_tasks(ENGINE)
+    failfast = task_index(tasks, "fail fast if the pinned engine image digest was not supplied")
+    assert failfast < task_index(tasks, "preflight — refuse a digest the host has not pulled")
+
+
+def test_capture_empty_digest_failfast_precedes_residency_preflight():
+    tasks = load_tasks(CAPTURE)
+    failfast = task_index(tasks, "fail fast if the pinned image digest was not supplied")
+    assert failfast < task_index(tasks, "preflight — refuse a digest the host has not pulled")
 
 
 def test_engine_secrets_preflight():

@@ -127,6 +127,19 @@
 # --- 1b. spec 00082 converge guards (wave 1), immediately after the §8 gate and before anything is
 # --- written to the host. Probe idiom: probes never fail or change; the assert refuses with the fix
 # --- in the message. Tests: tests/test_infra_converge_guards.py.
+#
+# Hoisted out of §7 (the compose render it originally guarded) so the TARGETED message comes first:
+# engine_image_digest defaults to "", and the residency preflight below would otherwise answer a
+# forgotten -e with a `docker pull` of a ref ending in a bare `@`, losing the pointer to where the
+# digest comes from. Same order as the capture role.
+- name: fail fast if the pinned engine image digest was not supplied
+  ansible.builtin.assert:
+    that: engine_image_digest | length > 0
+    fail_msg: >-
+      engine_image_digest is empty — pass the built image's digest, e.g.
+      -e engine_image_digest=sha256:<...> (see the job summary of
+      .github/workflows/capture-image.yml — the engine reuses the capture image).
+
 - name: probe — is the pinned digest already on this host
   ansible.builtin.command: docker image inspect "{{ engine_image }}@{{ engine_image_digest }}"
   register: engine_digest_probe
@@ -337,15 +350,8 @@
     mode: "0644"
   notify: restart engine service
 
-# --- 7. The compose file (secret-free — the key material stays in engine.env).
-- name: fail fast if the pinned engine image digest was not supplied
-  ansible.builtin.assert:
-    that: engine_image_digest | length > 0
-    fail_msg: >-
-      engine_image_digest is empty — pass the built image's digest, e.g.
-      -e engine_image_digest=sha256:<...> (see the job summary of
-      .github/workflows/capture-image.yml — the engine reuses the capture image).
-
+# --- 7. The compose file (secret-free — the key material stays in engine.env). The empty-digest
+# fail-fast that used to open this section now runs up in §1b, above the residency preflight.
 - name: render the engine compose file
   ansible.builtin.template:
     src: compose.yaml.j2
