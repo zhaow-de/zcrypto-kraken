@@ -70,19 +70,23 @@ def rm_state_repo(tmp_path: Path) -> Path:
 
 def test_hook_warns_on_rm_state_after_a_git_mv(rm_state_repo: Path):
     result = run_hook(rm_state_repo, hook_json("git mv old.txt new.txt"))
-    assert result.returncode == 0  # a guard that breaks the Bash call is worse than the trap
-    assert "WARNING" in result.stdout
-    assert "new.txt" in result.stdout  # the operand of the fix must be named
-    assert "git add" in result.stdout  # the fix itself
-    assert "COMMITTED" in result.stdout  # verify against the committed tree, never the working tree
+    # stderr + rc 2 is the ONLY channel a PostToolUse hook reaches the model on: plain stdout with
+    # exit 0 is transcript-only, so the agent that just ran `git mv` would never read the warning --
+    # a guard nobody receives. On PostToolUse exit 2 cannot block the already-run command, which is
+    # what keeps this warn-only.
+    assert result.returncode == 2
+    assert "WARNING" in result.stderr
+    assert "new.txt" in result.stderr  # the operand of the fix must be named
+    assert "git add" in result.stderr  # the fix itself
+    assert "COMMITTED" in result.stderr  # verify against the committed tree, never the working tree
 
 
 def test_hook_fires_on_a_git_mv_buried_in_a_compound_command(rm_state_repo: Path):
     # The hazard is the command CONTAINING `git mv`, not being exactly it -- a `&&` chain is the
     # common shape, and a guard that only matched a bare invocation would miss the real cases.
     result = run_hook(rm_state_repo, hook_json("mkdir -p docs && git mv old.txt new.txt && echo done"))
-    assert result.returncode == 0
-    assert "WARNING" in result.stdout
+    assert result.returncode == 2
+    assert "WARNING" in result.stderr
 
 
 def test_hook_is_silent_for_a_command_without_git_mv(rm_state_repo: Path):
