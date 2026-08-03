@@ -410,6 +410,26 @@ def test_liquidations_guard_skips_a_digestless_converge():
     assert not truthy(when_conditions(task), probed)
 
 
+# grep's two non-zero answers are NOT the same fact: 2 = no such file (first provision, nothing
+# deployed to repin -- the only legitimate stand-down), 1 = the file is there and carries no
+# `@sha256:` line at all, an anomalous on-host state the guard must refuse rather than skip.
+@pytest.mark.parametrize(("rc", "expected"), [(1, True), (2, False)])
+def test_liquidations_guard_engages_on_a_compose_file_without_a_digest_line(rc, expected):
+    task = find_task(load_tasks(OPS), LIQUIDATIONS)
+    variables = {"ops_image_digest": "sha256:" + "e" * 64, "ops_liquidations_pin_probe": {"rc": rc}}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+def test_liquidations_refuses_a_compose_file_without_a_digest_line():
+    task = find_task(load_tasks(OPS), LIQUIDATIONS)
+    variables = {
+        "ops_image_digest": "sha256:" + "e" * 64,
+        "ops_liquidations_pin_probe": {"rc": 1, "stdout": ""},
+        "liquidations_decision": "",
+    }
+    assert not truthy(assert_that(task), variables)
+
+
 def test_panel_timer_hold_excludes_only_the_panel_timer():
     from ansible.template import trust_as_template
 

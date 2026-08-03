@@ -299,8 +299,15 @@
       -e liquidations_decision=roll-after (preferred — the poller re-fetches a 30 h window every
       cycle, so a converge-length restart self-heals within one cycle) or
       -e liquidations_decision=defer (accepting that the file points at the new digest while the
-      container keeps running the old one).
-  when: ops_image_digest is defined and ops_liquidations_pin_probe.rc == 0
+      container keeps running the old one). If the deployed file turns out to carry no
+      digest-pinned image line at all, that is the anomaly to investigate first — a hand-edited or
+      truncated compose file — not something either decision fixes.
+  # rc != 2, not rc == 0: grep answers 2 for a missing file (first provision — nothing deployed to
+  # repin, the only legitimate skip) but 1 for a file that is THERE and carries no `@sha256:` line,
+  # which is an anomalous on-host state. On rc 1 the probe's stdout is empty, so the first disjunct
+  # is false and this guard refuses — fail-closed, like every other guard here, instead of standing
+  # down on exactly the host whose compose file cannot be read as a pin.
+  when: ops_image_digest is defined and ops_liquidations_pin_probe.rc != 2
 
 # Reads the liquidations-poll CONTAINER, never the compose file the guard above reads: a converge
 # that passed the wrong digest once left that file naming a digest the container was not running, so
