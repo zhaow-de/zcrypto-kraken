@@ -279,3 +279,62 @@ def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary,
         "engine_window_override": override,
     }
     assert truthy(when_conditions(task), variables) is expected
+
+
+# --- engine-role guards. Fixture keys carry the `engine_` prefix ansible-lint's
+# var-naming[no-role-prefix] forces on every role-registered var -- the keys ARE the guard's
+# variable names, so they cannot diverge from the committed YAML.
+ENGINE = ANSIBLE / "roles" / "engine" / "tasks" / "main.yml"
+
+
+def test_engine_digest_preflight():
+    task = find_task(load_tasks(ENGINE), "preflight — refuse a digest the host has not pulled")
+    assert not truthy(assert_that(task), {"engine_digest_probe": {"rc": 1}})
+    assert truthy(assert_that(task), {"engine_digest_probe": {"rc": 0}})
+
+
+def test_engine_secrets_preflight():
+    task = find_task(load_tasks(ENGINE), "preflight — refuse to restart the engine without its logship secrets")
+    assert not truthy(assert_that(task), {"engine_logship_secrets_stat": {"stat": {"exists": False}}})
+    assert truthy(assert_that(task), {"engine_logship_secrets_stat": {"stat": {"exists": True}}})
+
+
+ENGINE_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"
+ENGINE_PINS_BASE = {
+    "engine_running_digest_probe": {"rc": 0, "stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "e" * 64},
+}
+ENGINE_PINS_WITH = "| engine | zcrypto | `" + "e" * 12 + "` |"
+ENGINE_PINS_WITHOUT = "| engine | zcrypto | `" + "f" * 12 + "` |"
+ENGINE_PINS_REASON = "rollback in progress, pins recorded immediately after"
+
+
+def test_engine_pins_recording_semantics():
+    task = find_task(load_tasks(ENGINE), ENGINE_PINS)
+    variables = {**ENGINE_PINS_BASE, "engine_fleet_pins_text": ENGINE_PINS_WITH, "pins_override": ""}
+    assert truthy(assert_that(task), variables)
+    variables["engine_fleet_pins_text"] = ENGINE_PINS_WITHOUT
+    assert not truthy(assert_that(task), variables)
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [("", False), ("short", False), ("true", False), (ENGINE_PINS_REASON, True)],
+)
+def test_engine_pins_override_semantics(override, expected):
+    task = find_task(load_tasks(ENGINE), ENGINE_PINS)
+    variables = {**ENGINE_PINS_BASE, "engine_fleet_pins_text": ENGINE_PINS_WITHOUT, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (ENGINE_PINS_WITHOUT, ENGINE_PINS_REASON, True),  # override accepted over an unrecorded pin -> echo the why
+        (ENGINE_PINS_WITHOUT, "", False),  # no override -> the assert refused; there is no why to echo
+        (ENGINE_PINS_WITH, ENGINE_PINS_REASON, False),  # the pin IS recorded -> nothing was overridden
+    ],
+)
+def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(ENGINE), "pins override accepted — the reason, on the record")
+    variables = {**ENGINE_PINS_BASE, "engine_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
