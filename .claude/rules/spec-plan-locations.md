@@ -11,6 +11,8 @@ Scale the ceremony to the change size:
 
 Trivial still keeps the non-negotiables: a feature branch off `develop`, TDD where there's code, **mandatory subagent review before push** (`commit-messages.md`), a `README.md` update if user-facing (`readme-usage.md`), and a PR into `develop`. Only the committed spec/plan/iterations-history ceremony is dropped.
 
+**A spec whose sha256 is stored as a registry record's `spec_hash` is immutable** — appending to it, even a dated addendum, breaks the pin that verifies that record and nothing in the gate catches it; a recovered convention's durable home is committed, runnable code.
+
 **A spec or decisions-log entry that rules on how operations must be performed lands the imperative on the operating surface — the owning rule, runbook, or skill — in the same change**: a ruling recorded only in a spec is invisible at execution time.
 
 ## Locations
