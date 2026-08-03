@@ -72,6 +72,28 @@ def test_sandbox_refuses_pytest(tmp_path):
     assert r.returncode != 0 and "pytest" in (r.stdout + r.stderr).lower()
 
 
+def test_baseline_failure_refuses_before_anything_is_mutated(tmp_path):
+    """A probe that cannot pass on unmutated code makes every verdict below it meaningless.
+
+    Without this gate an always-failing probe command sails through the control phase (the control
+    "failed", as required) and then scores every real mutation KILLED with "control proven" attached
+    -- the one-directional hole the control check alone leaves open.
+    """
+    target = make_repo(tmp_path)
+    before = target.read_text()
+    r = run(
+        # a control sed that matches NOTHING: reaching the control phase at all would exit 6, so the
+        # 7 below is positive proof the refusal landed before any mutation was applied
+        ["--file", "mod.py", "--control", "s/nonexistent/x/", "--mutation", "s/VALUE = 1/VALUE = 2/", "--", "false"],
+        tmp_path,
+    )
+    assert r.returncode == 7, f"expected the baseline refusal, got {r.returncode}: {r.stdout}{r.stderr}"
+    assert "baseline" in (r.stdout + r.stderr).lower()
+    assert target.read_text() == before
+    status = subprocess.run(["git", "-C", str(tmp_path), "status", "--porcelain"], capture_output=True, text=True).stdout
+    assert status == "", f"worktree touched despite the pre-mutation refusal: {status!r}"
+
+
 # --------------------------------------------------------------------------------------------------
 # The three properties the tests above leave unproven: sandbox seeding, the bytecode export, and the
 # __pycache__ purge each SURVIVED mutation of the script. Each test below asserts BOTH directions --
@@ -121,12 +143,12 @@ def test_sandbox_seeds_from_committed_head_not_the_worktree(tmp_path):
     assert "KILLED" in r.stdout or "SURVIVED" in r.stdout
     assert target.read_text() == "VALUE = 9\n"  # the real worktree is never written
 
-    # cp -a would seed the DIRTY `VALUE = 9`, so the control sed matches nothing and the no-op guard
-    # fires -- this is the mutation the property exists to kill
+    # cp -a would seed the DIRTY `VALUE = 9`, so the probe cannot even pass on the seeded tree and the
+    # baseline gate refuses -- this is the mutation the property exists to kill
     cp_a = mutated_script(tmp_path, 's|^  git archive HEAD .*|  cp -a . "$work"|')
     r2 = run(args, repo, script=cp_a)
-    assert r2.returncode == 6, f"cp -a seeding must be caught: {r2.returncode} {r2.stdout}{r2.stderr}"
-    assert "did not change" in (r2.stdout + r2.stderr)
+    assert r2.returncode == 7, f"cp -a seeding must be caught: {r2.returncode} {r2.stdout}{r2.stderr}"
+    assert "baseline" in (r2.stdout + r2.stderr).lower()
 
 
 def test_probe_runs_with_bytecode_writing_disabled(tmp_path):
@@ -155,10 +177,12 @@ def test_probe_runs_with_bytecode_writing_disabled(tmp_path):
     assert r.returncode == 5, f"expected the control-did-not-fail abort: {r.returncode} {r.stdout}{r.stderr}"
     assert "control" in (r.stdout + r.stderr).lower()
 
-    # with the export removed the probe sees the inherited 0, fails, and the cycle runs to a verdict
+    # with the export removed the probe sees the inherited 0 and fails -- on the very first (baseline)
+    # run, which is the earliest point the missing property is observable
     no_export = mutated_script(tmp_path, "s|^export PYTHONDONTWRITEBYTECODE=1$|export MUTPROBE_UNSET=1|")
     r2 = run(args, repo, env_extra=env, script=no_export)
-    assert r2.returncode == 0 and "KILLED" in r2.stdout, f"{r2.returncode} {r2.stdout}{r2.stderr}"
+    assert r2.returncode == 7, f"{r2.returncode} {r2.stdout}{r2.stderr}"
+    assert "baseline" in (r2.stdout + r2.stderr).lower()
 
 
 def test_purge_removes_a_pre_existing_pycache(tmp_path):
@@ -185,8 +209,8 @@ def test_purge_removes_a_pre_existing_pycache(tmp_path):
         "./cache-probe.sh",
     ]
 
-    # purge runs inside apply(), before the probe: the dir is gone, the probe succeeds, and the
-    # control therefore cannot fail -- that abort is the proof the purge happened
+    # purge runs before the baseline probe and again inside apply(): the dir is gone, both probes
+    # succeed, and the control therefore cannot fail -- that abort is the proof the purge happened
     r = run(args, repo)
     assert r.returncode == 5, f"expected the control-did-not-fail abort: {r.returncode} {r.stdout}{r.stderr}"
     assert not cache.exists()
@@ -196,7 +220,9 @@ def test_purge_removes_a_pre_existing_pycache(tmp_path):
     (cache / "mod.cpython-314.pyc").write_bytes(b"stale")
     no_purge = mutated_script(tmp_path, "s|^purge() { find . -name __pycache__.*$|purge() { :; }|")
     r2 = run(args, repo, script=no_purge)
-    assert r2.returncode == 0 and "KILLED" in r2.stdout, f"{r2.returncode} {r2.stdout}{r2.stderr}"
+    # the stale dir survives, so the probe fails on the FIRST run -- the baseline gate is where the
+    # missing purge now surfaces
+    assert r2.returncode == 7, f"{r2.returncode} {r2.stdout}{r2.stderr}"
     assert cache.exists()  # survived, as the mutation intends
 
 
@@ -278,7 +304,9 @@ def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
     # assertion nor the temp-leak one
     marker = tmp_path / "probe-started"
     slow = repo / "slow-probe.sh"
-    slow.write_text(f"#!/bin/sh\ntouch {marker}\nsleep 30\n")  # long enough to always be mid-probe
+    # The baseline probe must return fast and WITHOUT the marker, or the wait below would fire on the
+    # unmutated baseline run and signal a cycle with nothing applied. Only a mutated file goes slow.
+    slow.write_text(f"#!/bin/sh\ngrep -q 'VALUE = 1' mod.py && exit 0\ntouch {marker}\nsleep 30\n")
     slow.chmod(0o755)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slow probe"], check=True)

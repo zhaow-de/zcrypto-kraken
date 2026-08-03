@@ -117,6 +117,47 @@ def test_canary_parity_passes_when_secondary_runs_the_candidate():
     assert truthy(assert_that(task), ok)
 
 
+# An UNREACHABLE secondary is the whole reason the probe carries `ignore_unreachable: true` (I1): the
+# result is REGISTERED but carries no `stdout`. Two independent halves make that refuse, and each is
+# pinned below, because either one written differently passes the re-pin open:
+#   * the assert's `when:` is `is not skipped` -- the natural-looking `stdout is defined` would SKIP
+#     the guard on exactly the host it cannot read;
+#   * the parity expression's `| default('')` supplies the empty string there is nothing to match in.
+CANARY_PARITY = "canary parity — refuse a primary re-pin the secondary has not baked"
+CANARY_UNREACHABLE = {"unreachable": True, "msg": "Failed to connect to the host via ssh"}
+CANARY_SKIPPED = {"skipped": True, "skip_reason": "Conditional result was False"}
+# the `when:` reads host membership, so the scoping vars belong in these fixtures too
+CANARY_HOST = {
+    "inventory_hostname": "zcrypto",
+    "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]},
+    "capture_image_digest": "sha256:" + "c" * 64,
+}
+
+
+def test_canary_parity_refuses_an_unreachable_secondary():
+    task = find_task(load_tasks(CAPTURE), CANARY_PARITY)
+    variables = {**CANARY_HOST, "capture_secondary_digest_probe": CANARY_UNREACHABLE, "canary_override": ""}
+    assert truthy(when_conditions(task), variables), "the probe RAN (unreachable is not skipped) -- the assert must evaluate"
+    assert not truthy(assert_that(task), variables), "an unreadable secondary must refuse, never pass open"
+
+
+def test_canary_parity_gate_stands_down_only_on_a_genuinely_skipped_probe():
+    # The converse of the test above: a probe that never ran (not a re-pin) leaves the assert with no
+    # subject, and `is not skipped` is what tells the two states apart.
+    task = find_task(load_tasks(CAPTURE), CANARY_PARITY)
+    variables = {**CANARY_HOST, "capture_secondary_digest_probe": CANARY_SKIPPED, "canary_override": ""}
+    assert not truthy(when_conditions(task), variables)
+
+
+def test_canary_parity_unreachable_secondary_still_routes_through_the_override():
+    # Fail-closed must not mean unbypassable: the documented escape is the reason-required override,
+    # the same one a stale secondary uses -- no separate unreachable-only path.
+    task = find_task(load_tasks(CAPTURE), CANARY_PARITY)
+    base = {**CANARY_HOST, "capture_secondary_digest_probe": CANARY_UNREACHABLE}
+    assert not truthy(assert_that(task), {**base, "canary_override": "true"})
+    assert truthy(assert_that(task), {**base, "canary_override": "secondary unreachable, incident rollback"})
+
+
 PINS_BASE = {"capture_running_digest_probe": {"stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64}}
 PINS_FILE_WITH = "| capture | zcrypto | `" + "a" * 12 + "` | 2026-08-02 | prior |"
 PINS_FILE_WITHOUT = "| capture | zcrypto | `" + "b" * 12 + "` | 2026-08-02 | prior |"
@@ -218,6 +259,28 @@ def test_engine_window_guard(since_boundary, override, expected):
     variables = {
         "engine_epoch_probe": {"stdout": str(1754265600 + since_boundary)},  # 1754265600 % 14400 == 0
         "engine_window_override": override,
+    }
+    assert truthy(assert_that(task), variables) is expected
+
+
+# The two floors ARE the guard -- 1800 s (the cycle-completion window [B, B+30 min] may still be
+# running) and 600 s (a stop→start begun inside 10 min of the next boundary risks straddling it).
+# Every fixture above sits far from both, so a weakening edit (1800 -> 1000, 600 -> 100) passes them
+# all unchanged. These sit ON the comparison boundary, which is the only place a constant is pinned.
+@pytest.mark.parametrize(
+    ("since_boundary", "expected"),
+    [
+        (1799, False),  # one second short of the floor
+        (1800, True),  # the floor itself is open: `>= 1800`
+        (13800, True),  # until_next == 600 exactly -- inclusive on that side too: `>= 600`
+        (13801, False),  # until_next == 599
+    ],
+)
+def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary, expected):
+    task = find_task(load_tasks(SITE), WINDOW)
+    variables = {
+        "engine_epoch_probe": {"stdout": str(1754265600 + since_boundary)},
+        "engine_window_override": "",
     }
     assert truthy(assert_that(task), variables) is expected
 
@@ -368,15 +431,24 @@ def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text,
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
 # The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
 # that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
-# here carries `when: ops_image_digest is defined`, and the two skip tests below pin that, since a
-# guard that refuses a legitimate alloy-only converge is a broken role, not a strict one.
+# here carries `when: ops_image_digest is defined`, and the three skip tests below pin that (one per
+# guard), since a guard that refuses a legitimate alloy-only converge is a broken role, not a strict one.
 OPS = ANSIBLE / "roles" / "ops" / "tasks" / "main.yml"
+OPS_DIGEST_PREFLIGHT = "preflight — refuse a digest the host has not pulled"
 
 
 def test_ops_digest_preflight():
-    task = find_task(load_tasks(OPS), "preflight — refuse a digest the host has not pulled")
+    task = find_task(load_tasks(OPS), OPS_DIGEST_PREFLIGHT)
     assert not truthy(assert_that(task), {"ops_digest_probe": {"rc": 1}})
     assert truthy(assert_that(task), {"ops_digest_probe": {"rc": 0}})
+
+
+def test_ops_digest_preflight_skips_a_digestless_converge():
+    # Without this, an alloy-only converge (no `-e ops_image_digest`) would hit `ops_digest_probe.rc`
+    # from a probe that was itself skipped, and refuse the run this role explicitly supports.
+    task = find_task(load_tasks(OPS), OPS_DIGEST_PREFLIGHT)
+    assert truthy(when_conditions(task), {"ops_image_digest": "sha256:" + "e" * 64})
+    assert not truthy(when_conditions(task), {})
 
 
 LIQUIDATIONS = "liquidations — require an explicit roll-after/defer decision on a repin"
