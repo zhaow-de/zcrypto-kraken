@@ -83,7 +83,12 @@ class CrossfreqSystemConfig:
     """Record 44's frozen parameters as defaults; validated on use (PortfolioError on bad values)."""
 
     assets: tuple[str, ...] = ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP")
-    spot_fee_per_side: float = 0.006
+    fee_per_side: float = 0.0040  # Kraken tier-1 MAKER, schedule effective 2026-07-09
+    # DO NOT "correct" this to the T0014-measured spread (2.11 bps/side at EUR 1k). The default
+    # deliberately keeps the pre-measurement headroom so registry record 44's figures reproduce:
+    # 0.0040 + 0.0020 is bit-exactly the registered 0.006 basis. The measured spread is what the
+    # go/no-go quote uses; re-pricing the builder default would invalidate every registered figure.
+    spread_per_side: float = 0.0020
     long_cap: float = 0.20
     short_cap: float = 0.10
     a2_arms: tuple[tuple[tuple[int, int, int], float], ...] = (
@@ -92,6 +97,13 @@ class CrossfreqSystemConfig:
         ((60, 120, 240), 0.12),
     )
     governor: GovernorConfig = GovernorConfig()
+
+    @property
+    def cost_per_side(self) -> float:
+        """The one effective per-side cost every net-of-cost site charges — a fee-tier change and a
+        spread re-calibration are separate events, but they are summed in exactly one place here so
+        no call site can accumulate a 1-ulp difference of its own."""
+        return self.fee_per_side + self.spread_per_side
 
 
 @dataclass(frozen=True)
@@ -118,7 +130,12 @@ def _validate_config(c: CrossfreqSystemConfig) -> None:
             raise PortfolioError(f"assets must be non-empty strings, got {a!r}")
     if "BTC" not in c.assets:
         raise PortfolioError("assets must include 'BTC' (the A-sleeve books and the ffill feed require it)")
-    for name, value in (("spot_fee_per_side", c.spot_fee_per_side), ("long_cap", c.long_cap), ("short_cap", c.short_cap)):
+    for name, value in (
+        ("fee_per_side", c.fee_per_side),
+        ("spread_per_side", c.spread_per_side),
+        ("long_cap", c.long_cap),
+        ("short_cap", c.short_cap),
+    ):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise PortfolioError(f"{name} must be a finite number > 0, got {value!r}")
     if not isinstance(c.a2_arms, tuple) or not c.a2_arms:
@@ -224,6 +241,7 @@ def build_crossfreq_system(
     _validate_config(c)
     _validate_grid("daily", daily_prices, daily_ts, c.assets)
     _validate_grid("h4", h4_prices, h4_ts, c.assets)
+    cost = c.cost_per_side  # summed once; every net-of-cost site below charges this same float
 
     # Newest-row contract: append a synthetic next boundary + dummy close to EACH grid so every
     # sleeve computes one extra position row — the interval forming at the snapshot's last close.
@@ -267,7 +285,7 @@ def build_crossfreq_system(
             p = b_daily[a][k]
             turnover += abs(p - prev[a])
             prev[a] = p
-        noc_b.append(bench_gross[k] - turnover * c.spot_fee_per_side)
+        noc_b.append(bench_gross[k] - turnover * cost)
     bench = build_combined_system(
         d_prices,
         config=CombinedSystemConfig(
@@ -277,7 +295,9 @@ def build_crossfreq_system(
             vol_lookback=_B_VOL_LOOKBACK,
             max_leverage=_B_MAX_LEVERAGE,
             periods_per_year=_PPY_DAILY,
-            spot_fee_per_side=c.spot_fee_per_side,
+            # record 33's frozen benchmark construction takes the summed cost — its interface is
+            # unchanged by this split.
+            spot_fee_per_side=cost,
         ),
     ).benchmark_net_of_cost
     drift = max(abs(noc_b[k] - bench[k]) for k in range(n_rows_d))
@@ -327,7 +347,7 @@ def build_crossfreq_system(
             gross += p * ret_h[a][k]
             turnover += abs(p - prev[a])
             prev[a] = p
-        noc.append(gross - turnover * c.spot_fee_per_side)
+        noc.append(gross - turnover * cost)
 
     # Dense present-day ranks of date(h4_ts[k+1]) over the extended grid; the forming interval's
     # multiplier comes from appending a zero return for its day (value-insensitive by the
@@ -633,6 +653,7 @@ def build_crossfreq_system_fast(
     _validate_config(c)
     _validate_grid("daily", daily_prices, daily_ts, c.assets)
     _validate_grid("h4", h4_prices, h4_ts, c.assets)
+    cost = c.cost_per_side  # summed once; every net-of-cost site below charges this same float
 
     d_ts = list(daily_ts) + [daily_ts[-1] + timedelta(days=1)]
     h_ts = list(h4_ts) + [h4_ts[-1] + timedelta(hours=4)]
@@ -675,7 +696,7 @@ def build_crossfreq_system_fast(
             gross += p * ret_h[a][k]
             turnover += abs(p - prev[a])
             prev[a] = p
-        noc.append(gross - turnover * c.spot_fee_per_side)
+        noc.append(gross - turnover * cost)
 
     dates = [h_ts[k + 1].date() for k in range(n_rows_h)]
     seen: dict = {}
