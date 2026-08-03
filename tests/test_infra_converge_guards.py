@@ -363,3 +363,111 @@ def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text,
     task = find_task(load_tasks(ENGINE), "pins override accepted — the reason, on the record")
     variables = {**ENGINE_PINS_BASE, "engine_fleet_pins_text": pins_text, "pins_override": override}
     assert truthy(when_conditions(task), variables) is expected
+
+
+# --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
+# The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
+# that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
+# here carries `when: ops_image_digest is defined`, and the two skip tests below pin that, since a
+# guard that refuses a legitimate alloy-only converge is a broken role, not a strict one.
+OPS = ANSIBLE / "roles" / "ops" / "tasks" / "main.yml"
+
+
+def test_ops_digest_preflight():
+    task = find_task(load_tasks(OPS), "preflight — refuse a digest the host has not pulled")
+    assert not truthy(assert_that(task), {"ops_digest_probe": {"rc": 1}})
+    assert truthy(assert_that(task), {"ops_digest_probe": {"rc": 0}})
+
+
+LIQUIDATIONS = "liquidations — require an explicit roll-after/defer decision on a repin"
+
+
+@pytest.mark.parametrize(
+    ("decision", "pin_differs", "expected"),
+    [
+        ("", True, False),  # a repin with no decision -> refuse
+        ("yes", True, False),  # a boolean-ish answer is not one of the two decisions
+        ("roll-after", True, True),
+        ("defer", True, True),
+        ("", False, True),  # the file already pins this digest -> not a repin, nothing to decide
+    ],
+)
+def test_liquidations_repin_decision(decision, pin_differs, expected):
+    task = find_task(load_tasks(OPS), LIQUIDATIONS)
+    deployed = "sha256:" + ("d" * 64 if pin_differs else "e" * 64)
+    variables = {
+        "ops_image_digest": "sha256:" + "e" * 64,
+        "ops_liquidations_pin_probe": {"stdout": '    image: "ghcr.io/zhaow-de/zcrypto-capture@' + deployed + '"'},
+        "liquidations_decision": decision,
+    }
+    assert truthy(assert_that(task), variables) is expected
+
+
+def test_liquidations_guard_skips_a_digestless_converge():
+    task = find_task(load_tasks(OPS), LIQUIDATIONS)
+    probed = {"ops_liquidations_pin_probe": {"rc": 0}}
+    assert truthy(when_conditions(task), {**probed, "ops_image_digest": "sha256:" + "e" * 64})
+    assert not truthy(when_conditions(task), probed)
+
+
+def test_panel_timer_hold_excludes_only_the_panel_timer():
+    from ansible.template import trust_as_template
+
+    task = find_task(load_tasks(OPS), "enable + start the replay + panel timers")
+    loop_expr = task["loop"]
+    held = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": True}).template(trust_as_template(loop_expr))
+    live = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": False}).template(trust_as_template(loop_expr))
+    # the hold is OPT-IN: an ordinary converge (variable unset) must still arm the panel timer.
+    unset = Templar(loader=DataLoader(), variables={}).template(trust_as_template(loop_expr))
+    assert "panel-materialize" not in held and "verify-replay" in held and "verified-replay" in held
+    assert "panel-materialize" in live
+    assert "panel-materialize" in unset
+
+
+OPS_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"
+# The probe behind this is `docker inspect` of the liquidations-poll CONTAINER, never the compose
+# file: the recorded incident had the file pinning one digest while the container ran another.
+OPS_PINS_BASE = {
+    "ops_image_digest": "sha256:" + "c" * 64,
+    "ops_running_digest_probe": {"rc": 0, "stdout": "ghcr.io/zhaow-de/zcrypto-capture@sha256:" + "a" * 64},
+}
+OPS_PINS_WITH = "| ops | zcrypto-ops | `" + "a" * 12 + "` |"
+OPS_PINS_WITHOUT = "| ops | zcrypto-ops | `" + "b" * 12 + "` |"
+OPS_PINS_REASON = "recorded in pins after emergency roll"
+
+
+def test_ops_pins_recording_passes_a_recorded_pin():
+    task = find_task(load_tasks(OPS), OPS_PINS)
+    variables = {**OPS_PINS_BASE, "ops_fleet_pins_text": OPS_PINS_WITH, "pins_override": ""}
+    assert truthy(assert_that(task), variables)
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [("", False), ("short", False), (OPS_PINS_REASON, True)],
+)
+def test_ops_pins_override_semantics(override, expected):
+    task = find_task(load_tasks(OPS), OPS_PINS)
+    variables = {**OPS_PINS_BASE, "ops_fleet_pins_text": OPS_PINS_WITHOUT, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+
+
+def test_ops_pins_guard_skips_a_digestless_converge():
+    task = find_task(load_tasks(OPS), OPS_PINS)
+    live = {**OPS_PINS_BASE, "ops_fleet_pins_text": OPS_PINS_WITH}
+    assert truthy(when_conditions(task), live)
+    assert not truthy(when_conditions(task), {k: v for k, v in live.items() if k != "ops_image_digest"})
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (OPS_PINS_WITHOUT, OPS_PINS_REASON, True),  # override accepted over an unrecorded pin -> echo the why
+        (OPS_PINS_WITHOUT, "", False),  # no override -> the assert refused; there is no why to echo
+        (OPS_PINS_WITH, OPS_PINS_REASON, False),  # the pin IS recorded -> nothing was overridden
+    ],
+)
+def test_ops_pins_override_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(OPS), "pins override accepted — the reason, on the record")
+    variables = {**OPS_PINS_BASE, "ops_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
