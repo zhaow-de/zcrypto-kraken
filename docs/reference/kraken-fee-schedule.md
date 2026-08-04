@@ -1,4 +1,12 @@
-# Kraken Fee Schedule — Reference (⏱ 2026-07-07)
+# Kraken Fee Schedule — Reference (⏱ last account-confirmed 2026-07-07)
+
+> **How this file stays current.** Its numbers come from the **logged-in** Kraken Pro → Fee tab, so
+> nothing automated can refresh them. The re-read is the attended half of the monthly
+> `zcrypto-refdata-sweep` (owner ruling, 2026-08-04): the owner reports tier + 30-day volume, and the
+> result — confirmed, corrected, or **not re-read** — lands in the re-confirmation log of
+> `kraken-snapshot-register.md`. Before this, the only trigger lived in `T0000`, which is archived,
+> so the ⏱ marker below had no mechanism behind it. **If the tier changes, say what it invalidates:**
+> `cli/costs/fees.py` encodes this ladder verbatim, so every quoted figure that reads it re-prices.
 
 Reference for the cost model. This supersedes the master-plan §14 fee snapshot (0.25%/0.40% base), which was the schedule live **through July 8, 2026 only**. A **new schedule takes effect July 9, 2026** and is recorded below. ⏱ — reconfirm on the logged-in **Kraken Pro → Fee tab** (authoritative; the public fee-schedule page still showed the old schedule when this was captured). Verified 2026-07-07 against Kraken's official "Cross-platform fee tier changes" article + the margin-trading page.
 
@@ -74,4 +82,13 @@ Plus: standard spot trade fees on **both** the open and close of a margin positi
 
 ## Provenance & cost-model note
 
-Sources: Kraken "Cross-platform fee tier changes (July 2026)" support article; kraken.com/features/margin-trading; kraken.com/features/fee-schedule; "How trading fees work on Kraken". **Cost-model action:** the Phase-2 explicit-cost model must adopt this July-9 schedule (base taker **0.80%**, maker **0.40%**), not the master-plan §1/§4/§14 snapshot (0.25%/0.40%). The change *reinforces* the plan's thesis — maker-first execution, no fast taker mean-reversion at our size — with worse absolute numbers. All values ⏱: reconfirm on the live Fee tab and the margin order form at Phase 0 and go-live.
+Sources: Kraken "Cross-platform fee tier changes (July 2026)" support article; kraken.com/features/margin-trading; kraken.com/features/fee-schedule; "How trading fees work on Kraken".
+
+**This file is the fee source of truth; the snapshot register is not.** `kraken-snapshot-register.md`
+renders the fee ladder Kraken's public `AssetPairs` endpoint reports, and that endpoint was still
+serving the **pre-2026-07-09** schedule (0.25 %/0.40 % base, breaks at \$10k/\$50k) when checked on
+2026-08-04 — nearly a month after this schedule took effect. Those columns are kept there as a
+**drift detector on the endpoint**, explicitly not as a costing anchor: the day they move is the day
+the API propagated a change, and the reconciliation runs back to this file. The register's borrow
+and margin columns do agree with the table above and need no such caveat. The re-confirmation
+routine for both files is the `zcrypto-refdata-sweep` skill. **Cost-model action:** the Phase-2 explicit-cost model must adopt this July-9 schedule (base taker **0.80%**, maker **0.40%**), not the master-plan §1/§4/§14 snapshot (0.25%/0.40%). The change *reinforces* the plan's thesis — maker-first execution, no fast taker mean-reversion at our size — with worse absolute numbers. All values ⏱: reconfirm on the live Fee tab and the margin order form at Phase 0 and go-live.
