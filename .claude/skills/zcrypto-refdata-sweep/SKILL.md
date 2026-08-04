@@ -10,7 +10,7 @@ disable-model-invocation: false
 
 The master plan marks fees, fee tiers, borrow-rollover rates, pair lists, MiCA status, tax rules and data pricing as **externally owned** — third-party facts that move without notice, where a stale one is **silent**. This sweep re-confirms the machine-readable subset and stamps the result, so "re-confirmed, identical" is always distinguishable from "never re-run".
 
-Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it (that run belongs to `T0085`).
+Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier (step 5) — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it (that run belongs to `T0085`).
 
 ## The one rule that makes the verdict meaningful
 
@@ -43,7 +43,14 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
 
 4. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
 
-5. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
+5. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
+   - **Unchanged** → note it in the register's log row (`account tier` column) and bump nothing else. The confirmation is the point; an unbumped stamp is indistinguishable from a skipped read.
+   - **Changed** → correct `kraken-fee-schedule.md` *and* say what it invalidates: `cli/costs/fees.py` encodes that ladder verbatim, so a tier move re-prices every quoted figure that reads it — name `T0090`'s cost basis and the deployable's quoted band explicitly.
+   - **Owner unavailable** → record the row as `not re-read`, never as unchanged. A blank is honest; a false confirmation is the failure this whole routine exists to prevent.
+
+   At \$0 30-day volume the tier *cannot* move, so this step is cheap today and becomes load-bearing the moment RUNG 1 puts real fills through — that is also when the endpoint's own drift detector starts mattering.
+
+6. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
 
 ## What this sweep does and does not cover
 
