@@ -342,6 +342,74 @@ def test_cycle_gauges_update_on_failure_sets_success_zero_and_skips_targets_and_
     assert target_weight_family.samples == []
 
 
+# --- command.py: cycle_duration lazy registration + target_weight retirement (spec 00084 D4) -------
+
+
+def test_cycle_duration_is_absent_before_the_first_cycle():
+    # Same reasoning as cycle_success/active_sleeves (cold-review I4): a freshly-registered Gauge
+    # defaults to 0.0, and "the last cycle took 0 seconds" before any cycle has run is a claim the
+    # engine has not measured -- false. An absent series is honest; a published 0 is a claim.
+    registry = CollectorRegistry()
+    _CycleGauges(registry)
+    assert registry.get_sample_value("zcrypto_engine_cycle_duration_seconds") is None
+
+
+def test_cycle_duration_registers_on_first_cycle():
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+    result = CycleResult(
+        status="failed",
+        cycle_ts=CYCLE_TS,
+        record_path=None,
+        sidecar_path=Path("failed-cycle-08.json"),
+        targets=None,
+        orders=None,
+        reason="stale_pair",
+        offending_pairs=("BTC",),
+        sleeve_gross=None,
+    )
+
+    gauges.update(result, CYCLE_TS, 12.5)
+
+    assert registry.get_sample_value("zcrypto_engine_cycle_duration_seconds") == 12.5
+
+
+def test_a_dropped_asset_stops_publishing_its_target_weight():
+    # A weight that persists after the asset leaves the book over-reports for the life of the process.
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+    first = CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json"),
+        sidecar_path=None,
+        targets={"BTC": 0.6, "ETH": 0.4},
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+    )
+    second = CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS + timedelta(hours=4),
+        record_path=Path("cycle-12.json"),
+        sidecar_path=None,
+        targets={"BTC": 1.0},
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+    )
+
+    gauges.update(first, CYCLE_TS, 1.0)
+    gauges.update(second, CYCLE_TS + timedelta(hours=4), 1.0)
+
+    assert registry.get_sample_value("zcrypto_engine_target_weight", {"asset": "BTC"}) == 1.0
+    assert registry.get_sample_value("zcrypto_engine_target_weight", {"asset": "ETH"}) is None, (
+        "a dropped asset must go ABSENT, not to zero -- zero and not-in-the-book are different states"
+    )
+
+
 # --- command.py: sleeve occupancy (T0124's rung-3 precondition) ------------------------------------
 # The deployable combines three sleeves at fixed 1/3 weights and two of them have been flat for
 # months. Nothing observed that, and nothing would observe them RE-ARMING either -- which roughly
@@ -623,9 +691,11 @@ def test_run_metrics_port_set_serves_process_and_engine_series_seeded_at_startup
         "zcrypto_engine_orders_total",
         "zcrypto_engine_order_notional_eur",
         "zcrypto_engine_cycle_success",
-        "zcrypto_engine_cycle_duration_seconds",
     ):
         assert name in body, f"{name} missing from /metrics: {body}"
+    # cycle_duration is NOT in the list above: it is lazy (spec 00084 D4) and this test never runs
+    # a real cycle (node.run() is a no-op stub), so it must stay absent -- the false-0 this task fixes.
+    assert "zcrypto_engine_cycle_duration_seconds" not in body
 
 
 def test_run_with_an_empty_journal_leaves_cycle_success_unpublished(tmp_path, monkeypatch):

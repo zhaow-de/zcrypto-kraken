@@ -424,13 +424,15 @@ class _CycleGauges:
     set): `run()` builds one of these on the SAME registry the exporter serves, then installs
     `.update` as `cycle.py`'s metrics sink -- called after every cycle, success or failure.
     `cycle_success` is registered LAZILY (`seed_cycle_success`), not here -- see that method
-    (cold-review I4); `active_sleeves` is lazy for the same reason, see its own comment below."""
+    (cold-review I4); `active_sleeves` and `cycle_duration` are lazy for the same reason, see
+    their own comments below."""
 
     def __init__(self, registry) -> None:
         self._registry = registry
         self.target_weight = Gauge(
             "zcrypto_engine_target_weight", "Latest per-asset target portfolio weight.", ["asset"], registry=registry
         )
+        self._last_weight_assets: set[str] = set()  # last cycle's label set, so a dropped asset can be `.remove()`d
         self.orders_total = Counter(
             "zcrypto_engine_orders_total", "Intended orders emitted, across every cycle.", registry=registry
         )
@@ -449,9 +451,13 @@ class _CycleGauges:
         self.cycle_completed_at = Gauge(
             "zcrypto_engine_cycle_completed_at_seconds", "Unix timestamp the most recent cycle completed at.", registry=registry
         )
-        self.cycle_duration = Gauge(
-            "zcrypto_engine_cycle_duration_seconds", "Wall time the most recent cycle took, in seconds.", registry=registry
-        )
+        # Lazy for exactly `seed_cycle_success`'s reason: a freshly-registered Gauge defaults to
+        # 0.0, and "the last cycle took 0 seconds" before any cycle has run (or completed since a
+        # restart) is a claim the engine has not measured -- false. Not seeded at startup like
+        # `cycle_completed_at`/`cycle_success`: the journal artifact is not confirmed to persist a
+        # duration, so `update()` is the only place this is ever known. An absent series is
+        # honest; a published 0 is a claim.
+        self.cycle_duration: Gauge | None = None
         self.sleeve_gross = Gauge(
             "zcrypto_engine_sleeve_gross",
             "Latest per-sleeve gross exposure (sum of absolute target weights).",
@@ -484,10 +490,22 @@ class _CycleGauges:
     def update(self, result: CycleResult, completed_at: datetime, duration_seconds: float) -> None:
         self.seed_cycle_success(result.status == "success")
         self.cycle_completed_at.set(completed_at.timestamp())
+        if self.cycle_duration is None:
+            self.cycle_duration = Gauge(
+                "zcrypto_engine_cycle_duration_seconds",
+                "Wall time the most recent cycle took, in seconds.",
+                registry=self._registry,
+            )
         self.cycle_duration.set(duration_seconds)
         if result.targets is not None:
             for asset, weight in result.targets.items():
                 self.target_weight.labels(asset=asset).set(weight)
+            # Retire assets that left the target set: a weight left behind keeps publishing its last
+            # value for the life of the process. remove(), not set(0) -- a zero weight and a
+            # not-in-the-book asset are different states and the executor must tell them apart.
+            for asset in self._last_weight_assets - set(result.targets):
+                self.target_weight.remove(asset)
+            self._last_weight_assets = set(result.targets)
         if result.orders is not None:
             self.orders_total.inc(len(result.orders))
             self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
