@@ -315,8 +315,10 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
 
 
 # --- window floor from the boundary cycle's completion (spec 00083 D6) --------------------------
-# When the boundary's cycle-HH.json already carries completed_at, the floor drops from B+1800 to
-# completed_at+300. Absent probe, failed probe, or garbage stdout -> the CONSERVATIVE B+1800 floor.
+# When the boundary's cycle-HH.json already carries completed_at, the floor BECOMES completed_at+300
+# in place of B+1800 -- usually earlier, but LATER when the cycle itself ran long (the last two tests
+# in this section pin that direction, which no fixture below covers).
+# Absent probe, failed probe, or garbage stdout -> the CONSERVATIVE B+1800 floor.
 
 BOUNDARY = 1785744000  # 2026-08-03 08:00:00 UTC, divisible by 14400
 
