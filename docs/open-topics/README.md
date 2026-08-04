@@ -107,7 +107,7 @@ Topics worth follow-up are parked here, one file per topic. See `.claude/rules/o
 
 - [T0123 — how a newly validated sleeve enters the live book](T0123-sleeve-promotion-path.md) — no document defines promotion: new record via Phase-5 assembly, builder-contract bump, shadow re-gate scope, ramp re-entry. Undefined, research and the live book never reconnect — or promotion improvises around the gates that made record 44 trustworthy (ripe when: a post-deploy family reaches an ADOPT verdict — the first real candidate).
 
-- [T0126 — vault password rotation decision](T0126-vault-password-rotation-decision.md) — rotate or consciously accept after iter-125's contained red-phase exposure (the vault password reached one local subagent transcript; nothing committed, no new trust boundary — full containment evidence in the topic); one attended answer disposes of it (ripe when: now).
+- [T0126 — vault password rotation decision](T0126-vault-password-rotation-decision.md) — rotate or consciously accept after iter-125's red-phase exposure (the vault password reached local subagent transcript(s) and scrollback; nothing committed — containment evidence and the PGP-key caveat in the topic); one attended answer disposes of it (ripe when: now).
 
 ### Partially done<a name="partially-done-1"></a>
 
