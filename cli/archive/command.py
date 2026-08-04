@@ -267,7 +267,7 @@ def _totals(records: list[dict]) -> dict[str, float]:
     that exported only its own cycle's numbers would reset every counter to zero on the next quiet
     hour, and the "residual gap increased" rule — the permanent-loss page — would fire on the reset.
     The ledger is append-only and each (pair, kind, hour, state) is written at most once, so summing
-    it is monotonic by construction.
+    it is monotonic by construction -- plus `ledger_records`, the gauge that must be able to fall.
 
     Trade deficits are counted from the FIRST decision per (pair, kind, hour) only: an hour ledgered
     `would_mint` during T0039's soak and then `minted` after the flip is one measurement, not two.
