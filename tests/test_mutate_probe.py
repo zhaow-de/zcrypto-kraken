@@ -1,6 +1,7 @@
 """mutate-probe.sh: the guard-proving rule as executable form (spec 00082 D4)."""
 
 import os
+import re
 import signal
 import subprocess
 import time
@@ -48,13 +49,24 @@ def test_control_mutation_must_fail_first(tmp_path):
     assert r.returncode != 0 and "control" in (r.stdout + r.stderr).lower()
 
 
-def test_noop_mutation_aborts(tmp_path):
-    make_repo(tmp_path)
-    # I6b: a sed that matches nothing must abort loudly, never report SURVIVED on unmutated code
+# I6b: a sed that matches nothing must abort loudly, never report SURVIVED on unmutated code -- and
+# the abort must name WHICH sed no-oped, or the operator re-reads both expressions to find out.
+def test_noop_control_names_the_control(tmp_path):
+    target = make_repo(tmp_path)
     r = run(
-        ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 9/", "--mutation", "s/nonexistent/x/", "--", "./probe.sh"], tmp_path
+        ["--file", "mod.py", "--control", "s/NO-MATCH/x/", "--mutation", "s/VALUE = 1/VALUE = 9/", "--", "./probe.sh"], cwd=tmp_path
     )
-    assert r.returncode != 0 and "did not change" in (r.stdout + r.stderr)
+    assert r.returncode == 6
+    assert "control sed" in r.stderr
+
+
+def test_noop_mutation_names_the_mutation(tmp_path):
+    target = make_repo(tmp_path)
+    r = run(
+        ["--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/NO-MATCH/x/", "--", "./probe.sh"], cwd=tmp_path
+    )
+    assert r.returncode == 6
+    assert "mutation sed" in r.stderr
 
 
 def test_real_probe_runs_and_restores(tmp_path):
@@ -72,6 +84,23 @@ def test_sandbox_refuses_pytest(tmp_path):
     make_repo(tmp_path)
     r = run(["--sandbox", "--file", "mod.py", "--control", "s/a/b/", "--mutation", "s/c/d/", "--", "pytest", "-q"], tmp_path)
     assert r.returncode != 0 and "pytest" in (r.stdout + r.stderr).lower()
+
+
+def test_seeding_failure_is_rc8_not_usage(tmp_path):
+    """A repo with no commits makes `git archive HEAD` fail — that must be rc 8, distinct from
+    usage (rc 2), and must not leave a temp dir behind."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    target = tmp_path / "mod.py"
+    target.write_text("VALUE = 1\n")
+    # no commit at all — HEAD is unborn
+    r = run(
+        ["--sandbox", "--file", "mod.py", "--control", "s/VALUE = 1/VALUE = 2/", "--mutation", "s/1/3/", "--", "true"],
+        cwd=tmp_path,
+    )
+    assert r.returncode == 8
+    assert "seeding" in r.stderr.lower()
 
 
 def test_baseline_failure_refuses_before_anything_is_mutated(tmp_path):
@@ -147,7 +176,9 @@ def test_sandbox_seeds_from_committed_head_not_the_worktree(tmp_path):
 
     # cp -a would seed the DIRTY `VALUE = 9`, so the probe cannot even pass on the seeded tree and the
     # baseline gate refuses -- this is the mutation the property exists to kill
-    cp_a = mutated_script(tmp_path, 's|^  git archive HEAD .*|  cp -a . "$work"|')
+    # swap the seeding command inside its own rc-8 guard, so the mutant stays valid bash and differs
+    # from the real script in exactly one thing: where the sandbox's contents come from
+    cp_a = mutated_script(tmp_path, 's|^  if ! git archive HEAD .*|  if ! cp -a . "$work"; then|')
     r2 = run(args, repo, script=cp_a)
     assert r2.returncode == 7, f"cp -a seeding must be caught: {r2.returncode} {r2.stdout}{r2.stderr}"
     assert "baseline" in (r2.stdout + r2.stderr).lower()
@@ -335,7 +366,71 @@ def test_signal_during_probe_restores_the_target_before_cleaning(tmp_path):
     assert rc_int == 130, f"expected the INT handler's exit code, got {rc_int}"
     assert target.read_bytes() == before, "the target was left MUTATED on disk after Ctrl-C"
 
-    # bite: drop the restore-before-clean line and the same signal strands the mutation on disk
-    no_restore = mutated_script(tmp_path, "s|^  if \\[\\[ \\$mutated -eq 1 .*|  :|")
+    # bite: neutralise the restoring cp -- the clean below it still runs, so the same signal strands
+    # the mutation on disk AND deletes the pristine copy that was the only way back
+    no_restore = mutated_script(tmp_path, "s|^    if ! cp .*|    if ! true; then|")
     _signal_mid_probe(no_restore, repo, target, tmpdir, args, before, marker)
     assert target.read_bytes() != before, "restore-on-signal removed but the file came back -- unproven"
+
+
+def test_cleanup_cp_failure_is_rc9_and_keeps_pristine(tmp_path):
+    """Signal mid-mutation with the TARGET FILE read-only, so the cleanup cp fails: rc must be 9,
+    the stderr must say KEPT, and the pristine copy must SURVIVE (it is the only way back).
+
+    Built on wave-1's slow-probe idiom (cold-review C2): fast on pristine/control content, marker +
+    sleep only on the MUTATED content, so the kill window is unambiguous. `chmod 0444` goes on the
+    FILE — overwriting needs write permission on the file, not its directory. killpg + re-send,
+    exactly like the wave-1 signal test (bash defers trapped signals during foreground commands).
+    Assumes a non-root test run (root ignores file modes)."""
+    # The repo is nested one level down so the marker and the captured stderr live OUTSIDE it: both
+    # are created before the script starts, and an untracked file in the repo trips the dirty-worktree
+    # refusal (rc 3) before anything is ever mutated. Same reason wave-1's signal test nests its repo.
+    repo = tmp_path / "repo"
+    target = make_repo(repo)
+    marker = tmp_path / "mutated-seen"
+    probe = repo / "probe.sh"
+    probe.write_text(f"#!/bin/sh\nif grep -q 'VALUE = 9' mod.py; then touch {marker}; sleep 30; fi\ngrep -q 'VALUE = 1' mod.py\n")
+    probe.chmod(0o755)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slow"], check=True)
+    stderr_file = tmp_path / "stderr.txt"
+    with stderr_file.open("w") as err:
+        proc = subprocess.Popen(
+            [
+                str(SCRIPT),
+                "--file",
+                "mod.py",
+                "--control",
+                "s/VALUE = 1/VALUE = 2/",
+                "--mutation",
+                "s/VALUE = 1/VALUE = 9/",
+                "--",
+                "./probe.sh",
+            ],
+            cwd=repo,
+            stderr=err,
+            start_new_session=True,
+        )
+        for _ in range(200):
+            if marker.exists():
+                break
+            time.sleep(0.05)
+        else:
+            proc.kill()
+            raise AssertionError("mutation phase never observed")
+        os.chmod(target, 0o444)  # the cleanup cp to $file now fails
+        try:
+            for _ in range(100):
+                if proc.poll() is not None:
+                    break
+                os.killpg(proc.pid, signal.SIGTERM)
+                time.sleep(0.05)
+            rc = proc.wait(timeout=5)
+        finally:
+            os.chmod(target, 0o644)
+    assert rc == 9
+    err_text = stderr_file.read_text()
+    assert "KEPT" in err_text
+    kept = re.search(r"KEPT at (\S+)", err_text)
+    assert kept and Path(kept.group(1)).exists()  # the pristine copy genuinely survived
+    Path(kept.group(1)).unlink()  # leave no temp behind
