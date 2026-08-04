@@ -31,7 +31,7 @@ d = None
 if m.group(1):
     d = unquote(m.group(1))
 else:
-    cds = re.findall(r"(?:^|&&|;)\s*cd\s+(\"[^\"]*\"|\x27[^\x27]*\x27|\S+)", cmd[: m.start()])
+    cds = re.findall(r"(?:^|&&|;)\s*cd\s+(\"[^\"]*\"|\x27[^\x27]*\x27|[^\s;&|]+)", cmd[: m.start()])
     if cds:
         d = unquote(cds[-1])
 if d is None:
