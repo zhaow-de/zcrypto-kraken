@@ -47,4 +47,4 @@ Feasibility confirmed at kickoff: `GET https://api.kraken.com/0/public/AssetPair
 
 ## Closeout (planned)
 
-On merge: append an `iter-002` entry to `docs/iterations-history.md`; add `docs/reference/kraken-snapshot-register.md` to the mdformat allowlist in the same change.
+On merge: append an `iter-002` entry to `docs/iterations-history.md`; add the register to the mdformat allowlist in the same change. *(Historical: that instruction was correct while the artifact lived under `docs/research/`, which the allowlist covers by glob. It moved to `docs/reference/` on 2026-08-04 — deliberately outside the allowlist, where files format by hand — so the allowlist step no longer applies.)*

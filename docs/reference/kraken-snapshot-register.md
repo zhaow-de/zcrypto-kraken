@@ -53,25 +53,28 @@ SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `As
 > sees them change should reconcile against `kraken-fee-schedule.md` rather than adopt them. Read
 > the level from the account; read the *change* from here.
 
-| Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow rate (base asset) | Collateral value | Margin call | Margin stop | Long limit | Short limit |
-|---|---|---|---|---|---|---|---|---|---|
-| BTC/EUR | 0.4 | 0.25 | 12 | 0.01 | 0.99 | 80 | 40 | 130 | 100 |
-| ETH/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.99 | 80 | 40 | 2300 | 2300 |
-| SOL/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 16000 | 16000 |
-| XRP/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.95 | 80 | 40 | 1400000 | 1400000 |
-| ADA/EUR | 0.4 | 0.25 | 12 | 0.04 | 0.925 | 80 | 40 | 4400000 | 3100000 |
-| LINK/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.9 | 80 | 40 | 63000 | 32000 |
-| DOGE/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 18000000 | 11000000 |
-| LTC/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 17000 | 11000 |
-| DOT/EUR | 0.4 | 0.25 | 12 | 0.024 | 0.925 | 80 | 40 | 390000 | 340000 |
-| AVAX/EUR | 0.4 | 0.25 | 12 | 0.03 | 0.9 | 80 | 40 | 79000 | 29000 |
-| ETH/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.99 | 80 | 40 | 1000 | 800 |
-| SOL/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 6900 | 5100 |
+| Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow: base (shorts) | Borrow: quote (longs) | Collateral value | Margin call | Margin stop | Long limit | Short limit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| BTC/EUR | 0.4 | 0.25 | 12 | 0.01 | 0.02 | 0.99 | 80 | 40 | 130 | 100 |
+| ETH/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.99 | 80 | 40 | 2300 | 2300 |
+| SOL/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 16000 | 16000 |
+| XRP/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.95 | 80 | 40 | 1400000 | 1400000 |
+| ADA/EUR | 0.4 | 0.25 | 12 | 0.04 | 0.02 | 0.925 | 80 | 40 | 4400000 | 3100000 |
+| LINK/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.9 | 80 | 40 | 63000 | 32000 |
+| DOGE/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 18000000 | 11000000 |
+| LTC/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.02 | 0.925 | 80 | 40 | 17000 | 11000 |
+| DOT/EUR | 0.4 | 0.25 | 12 | 0.024 | 0.02 | 0.925 | 80 | 40 | 390000 | 340000 |
+| AVAX/EUR | 0.4 | 0.25 | 12 | 0.03 | 0.02 | 0.9 | 80 | 40 | 79000 | 29000 |
+| ETH/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.01 | 0.99 | 80 | 40 | 1000 | 800 |
+| SOL/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.01 | 0.925 | 80 | 40 | 6900 | 5100 |
 
 Borrow and margin columns carry no such caveat and **agree** with the account-confirmed figures:
-`margin_rate` is the per-4h rollover rate on the extended currency, and the endpoint's per-asset
+`margin_rate` is the per-4h rollover rate on the **extended** currency, and the endpoint's per-asset
 point values sit inside `kraken-fee-schedule.md`'s ranges (BTC 0.01 vs its 0.01–0.02 %; alts
-0.02–0.04 vs its 0.02–0.04 %). That agreement is worth keeping, because the borrow rate is the term
+0.02–0.04 vs its 0.02–0.04 %). **Both sides are rendered because they price opposite trades**: a
+SHORT sells the borrowed base, so the base column prices it; a **LONG on margin buys with borrowed
+quote currency**, so the quote column is the one that prices the book's long leg — rendering only
+the base side left that leg unpriced while the table looked complete. That agreement is worth keeping, because the borrow rate is the term
 that makes alt shorts ~2× BTC shorts and drives the short-BTC-only thesis.
 
 Added at sweep #1 (2026-08-04) to close a gap the sweep's review found: the register re-confirmed
@@ -80,8 +83,8 @@ on the *asset*, not the pair. Rendered as base tier plus ladder depth; the full 
 in the snapshot JSON so a future diff can name *which* tier moved.
 
 **Still account-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
-live account — parked in `T0000` and recorded in `kraken-fee-schedule.md` (tier 1, \$0 volume, as of
-2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
+live account. It is re-read as the **attended half of the monthly sweep** and recorded in the log above;
+`kraken-fee-schedule.md` holds the standing value (tier 1, \$0 volume, as of 2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
 re-reads at the go/no-go.
 
 ## Symbol-alias ledger
@@ -132,6 +135,8 @@ are unchanged in status — no live account action has been taken, so they remai
 
 Kraken's public endpoints do not carry the live maker/taker fee tier, the July-9-2026 Assets-on-Platform (AoP)
 qualification rule, or the observed margin opening/rollover bands on majors — those require the live Kraken account.
-They remain parked in **T0000**
-(`docs/open-topics/T0000-phase0-account-actions.md`) pending the human account actions listed there; once confirmed,
-they should be recorded into a future revision of this register.
+**They are no longer "pending".** `T0000` collected them on 2026-07-07 and is **resolved and archived**
+(`docs/open-topics/archive/T0000-phase0-account-actions.md`); the values live in
+`docs/reference/kraken-fee-schedule.md`, and `cli/costs/fees.py` encodes that ladder verbatim. What
+remains is keeping them current, which is the **attended half of the monthly sweep** (`/zcrypto-refdata-sweep`
+step 5) — the re-read that lost its trigger when T0000 was archived, and now has one again.
