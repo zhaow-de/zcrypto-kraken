@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: anytime before the final go-live — picked up manually by the human, never auto-triggered (drills deliberately break production paths, so execution still needs attended maintenance windows per capture-deploys.md); flipped from "the final go-live preparation" at the 2026-07-21 grooming
 ---
 
