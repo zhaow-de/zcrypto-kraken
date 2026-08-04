@@ -47,7 +47,8 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
 
 ## What this sweep does and does not cover
 
-- **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, the volume-tiered **fee ladders**, per-asset **`margin_rate`** and `collateral_value`, `margin_call`/`margin_stop`, position limits.
+- **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, per-asset **`margin_rate`** (the per-4h rollover rate) and `collateral_value`, `margin_call`/`margin_stop`, position limits.
+- **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint was still serving the **pre-2026-07-09** schedule when checked on 2026-08-04, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
 - **Does not cover** (account-gated, parked in `T0000`): the account's own realised fee **tier**, AoP qualification, observed margin/rollover bands. The register's public base tier is the right anchor for a funded account at zero 30-day volume and the **wrong** one the moment volume climbs.
 - **Does not cover** (no endpoint): MiCA status, tax rules, market-data pricing — human re-reads, and they belong to the go/no-go run.
 
@@ -55,4 +56,5 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
 
 - **A changed hash reported as a changed fact.** See the rule above.
 - **Reading `margin_rate` off the pair.** It is a property of the **asset**; the pair carries no such field, so a pair-side lookup yields `None` for every row and looks like "no borrow data" rather than a bug.
+- **Costing off the register's fee columns.** They are the *endpoint's* view and were a month stale at sweep #1 — a reader who anchors a cost model to them adopts a superseded schedule that happens to look authoritative because it came from an API.
 - **Trusting an "UNCHANGED" verdict for fields the register does not extract.** It renders what `derive_universe` extracts and nothing more. If a decision starts leaning on a field outside that set, extend the extraction first — sweep #1's review found `margin_rate` and `short_position_limit` moving inside one hour while the then-current table was blind to both.
