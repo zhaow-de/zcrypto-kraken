@@ -292,16 +292,27 @@
 # "present but unreadable" (a permission fault on the very file whose pin this converge would
 # move). The stat probe splits them: absent skips, unreadable refuses. `follow: true` on the probe
 # resolves symlinks, so a dangling compose.yaml reads as absent rather than as a permission fault.
+#
+# A FOURTH shape is the stat module's own failure — an unreadable PARENT dir stats EACCES, not
+# ENOENT — which registers `{failed: false, msg: "Permission denied"}` with NO `stat` key
+# (measured; `failed_when: false` rewrites the flag, so nothing can arm on `.failed` and the absent
+# key is the only signal). Read through `stat.exists | default(false)` it is indistinguishable from
+# "absent", which stood BOTH guards down and let the repin proceed undecided on the very file whose
+# pin it moves. Hence the `stat is not defined` arm below: a failed probe REACHES this assert, and
+# `stat.readable | default(false)` is false on that shape, so it refuses. Absent still registers
+# `stat: {exists: false}` — key present — and still stands down.
 - name: liquidations — an unreadable compose file is a fault, never a first-provision skip
   ansible.builtin.assert:
     that: ops_liquidations_compose_stat.stat.readable | default(false)
     fail_msg: >-
       {{ ops_compose_dir }}/compose.yaml exists but cannot be read — a permission fault on the very
-      file whose pin this converge would move. Fix its ownership/mode first; neither roll-after nor
-      defer addresses an unreadable pin.
+      file whose pin this converge would move — or the probe itself could not stat the path (an
+      unreadable parent directory does that). Either way, fix the filesystem fault first; neither
+      roll-after nor defer addresses an unreadable pin.
   when: >-
     ops_image_digest is defined
-    and ops_liquidations_compose_stat.stat.exists | default(false)
+    and ((ops_liquidations_compose_stat.stat is not defined)
+         or (ops_liquidations_compose_stat.stat.exists | default(false)))
 
 - name: probe — the digest the deployed liquidations compose file pins
   ansible.builtin.command: grep -E '@sha256:' {{ ops_compose_dir }}/compose.yaml
