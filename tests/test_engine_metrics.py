@@ -355,6 +355,9 @@ def test_cycle_duration_is_absent_before_the_first_cycle():
 
 
 def test_cycle_duration_registers_on_first_cycle():
+    # A failed CycleResult, deliberately: this is the one place in the file that pins duration
+    # being published on a failed cycle too, not just a successful one -- not redundant with the
+    # "is absent before the first cycle" test above even though both pass pre-fix.
     registry = CollectorRegistry()
     gauges = _CycleGauges(registry)
     result = CycleResult(
@@ -408,6 +411,42 @@ def test_a_dropped_asset_stops_publishing_its_target_weight():
     assert registry.get_sample_value("zcrypto_engine_target_weight", {"asset": "ETH"}) is None, (
         "a dropped asset must go ABSENT, not to zero -- zero and not-in-the-book are different states"
     )
+
+
+def test_a_failed_cycle_leaves_the_last_target_weights_standing():
+    # targets=None on a failed cycle: retiring the book there would blank both weight panels and
+    # the gross line for a full 4h gap, reading as "the engine holds nothing" -- the same
+    # absence-versus-value confusion this pair of fixes exists to remove.
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+    success = CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json"),
+        sidecar_path=None,
+        targets={"BTC": 0.6, "ETH": 0.4},
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+    )
+    failed = CycleResult(
+        status="failed",
+        cycle_ts=CYCLE_TS + timedelta(hours=4),
+        record_path=None,
+        sidecar_path=Path("failed-cycle-12.json"),
+        targets=None,
+        orders=None,
+        reason="stale_pair",
+        offending_pairs=("BTC",),
+        sleeve_gross=None,
+    )
+
+    gauges.update(success, CYCLE_TS, 1.0)
+    gauges.update(failed, CYCLE_TS + timedelta(hours=4), 1.0)
+
+    assert registry.get_sample_value("zcrypto_engine_target_weight", {"asset": "BTC"}) == 0.6
+    assert registry.get_sample_value("zcrypto_engine_target_weight", {"asset": "ETH"}) == 0.4
 
 
 # --- command.py: sleeve occupancy (T0124's rung-3 precondition) ------------------------------------

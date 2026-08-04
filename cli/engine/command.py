@@ -453,10 +453,11 @@ class _CycleGauges:
         )
         # Lazy for exactly `seed_cycle_success`'s reason: a freshly-registered Gauge defaults to
         # 0.0, and "the last cycle took 0 seconds" before any cycle has run (or completed since a
-        # restart) is a claim the engine has not measured -- false. Not seeded at startup like
-        # `cycle_completed_at`/`cycle_success`: the journal artifact is not confirmed to persist a
-        # duration, so `update()` is the only place this is ever known. An absent series is
-        # honest; a published 0 is a claim.
+        # restart) is a claim the engine has not measured -- false. Deliberately not seeded from
+        # the journal either, unlike `cycle_completed_at`/`cycle_success`: the artifact does carry
+        # the endpoints (started_at/attempted_at + completed_at), but a previous process's
+        # duration is not this process's, so `update()` is the only place it is honestly known.
+        # An absent series is honest; a published 0 is a claim.
         self.cycle_duration: Gauge | None = None
         self.sleeve_gross = Gauge(
             "zcrypto_engine_sleeve_gross",
