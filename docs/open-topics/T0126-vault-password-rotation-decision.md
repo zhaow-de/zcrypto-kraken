@@ -7,11 +7,11 @@ ripe_when: now — the decision is the work; one attended answer disposes of it
 
 ## Context — what
 
-During iter-125's vault-pass.sh guard work (2026-08-04), the TDD red phase ran the then-unguarded script once with the real sops path, decrypting the vault password into the implementer subagent's local session transcript under `~/.claude/`. An independent review swept every branch commit, workspace file, and cache with entropy and context patterns: nothing committed carries secret material, the branch was not on the remote at the time, and the workstation already holds the sops age key — so no new trust boundary was crossed. The exposure surface is exactly one local transcript file.
+During iter-125's vault-pass.sh guard work (2026-08-04), the TDD red phase ran the then-unguarded script with the real sops path — four failing tests displayed decrypted bytes in their pytest failure diffs, plus one deliberately output-discarded verification run — putting the vault password into the implementer subagent's local session transcript under `~/.claude/`. An independent review swept every branch commit, workspace file, and cache with entropy and context patterns: nothing committed carries secret material and the branch was not on the remote at the time. The exposure surface is the local transcript file(s) and any terminal scrollback that streamed those diffs, on this workstation only; the exact extent was taken from the implementer's account, not independently exhumed.
 
 ## Why this matters
 
-The vault password decrypts every fleet secret including the live Kraken trade key. A defense-in-depth posture would rotate it after any exposure event, however contained; the counter-argument is that the transcript lives on the same workstation as the sops key itself, so rotation buys nothing against an attacker who can read that file. This is the owner's risk call, not an autonomous one.
+The vault password decrypts every fleet secret including the live Kraken trade key. A defense-in-depth posture would rotate it after any exposure event, however contained; the weight of the counter-argument depends on the sops backend's key protection: the vault uses a **PGP** recipient, so if that key is passphrase- or hardware-protected, file-read access does NOT decrypt the vault — the plaintext transcript is then strictly weaker-protected than the vault itself, which strengthens the rotation case rather than weakening it. Only if the PGP key is usable without a passphrase on this workstation does "rotation buys little" hold. This is the owner's risk call, not an autonomous one.
 
 ## Findings so far
 
