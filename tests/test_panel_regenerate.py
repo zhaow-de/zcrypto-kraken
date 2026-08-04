@@ -135,15 +135,33 @@ def test_eta_over_deadline_refuses_and_restarts_timer(tmp_path):
     assert calls(log) == [*STEP1, TIMER_RESTART]
 
 
-def test_boolean_override_refused(tmp_path):
+@pytest.mark.parametrize("boolish", ["true", "TRUE", "false", "1", "yes"])
+def test_boolean_override_refused(boolish, tmp_path):
+    # Parametrized because a single value pins only its own arm: dropping the false/1/yes clauses
+    # left the suite green (measured), so each refusal carries its own case.
     script, env, panel, log = render(tmp_path, STUB_DU_HUGE)
     r = subprocess.run(
-        ["setsid", str(script), "--override", "true"], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
+        ["setsid", str(script), "--override", boolish], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
     )
     assert r.returncode == 2
     assert panel.exists()
     # Argument validation precedes step 1: a refused override must not have disturbed the timer.
     assert calls(log) == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "expect_rc"),
+    [("12345678", 2), ("123456789", 3)],  # 8 chars refused; 9 accepted, so the run reaches the tty gate
+)
+def test_override_length_boundary_is_behavioural(reason, expect_rc, tmp_path):
+    # The 8/9 boundary was pinned only by a literal string match on the guard line, so an offset
+    # typo (:1, :9, :20) failed nothing but that assert. This runs the rendered script instead.
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    r = subprocess.run(
+        ["setsid", str(script), "--override", reason], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
+    )
+    assert r.returncode == expect_rc
+    assert panel.exists()
 
 
 @pytest.mark.parametrize("failing", ["capture-segments", "capture-reconciled"])
@@ -301,11 +319,13 @@ def test_failed_rebuild_leaves_timer_stopped(tmp_path):
     assert "investigate" in out
 
 
-# --- the defect the str.replace harness above cannot see -------------------------------------
-# Every test above renders by string substitution, which never invokes Jinja — so a Jinja SYNTAX
-# error is invisible to all of them. One shipped: bash's string-length expansion opens with a
-# brace-hash pair, which Jinja reads as a comment tag, and the template failed to render on the
-# first real converge while this file was fully green. These two tests close that blind spot.
+# --- what the render path itself must guarantee ----------------------------------------------
+# Two defects shipped here, both invisible to the harness of their day. First: bash's string-length
+# expansion opens with a brace-hash pair, which Jinja reads as a comment tag — the template did not
+# render at all, caught only by a real converge, because the harness then rendered by str.replace.
+# Second: the raw-block fix rendered fine under a bare jinja2.Environment and installed BROKEN shell,
+# because Ansible sets trim_blocks=True and ate the newline after the closing tag. Hence the rule
+# these tests enforce: render through Ansible's own engine, then check the result is valid bash.
 
 
 def ansible_render(source, **values):
@@ -340,8 +360,9 @@ def test_template_renders_to_valid_shell_through_ansible():
 def test_every_ansible_template_is_parseable_jinja():
     """Repo-wide: a template that cannot parse never installs, whatever its tests say."""
     jinja2 = pytest.importorskip("jinja2")
-    # trim_blocks/lstrip_blocks mirror Ansible's environment — the defaults differ and that
-    # difference is what shipped broken shell twice.
+    # Settings mirror Ansible's, though for PARSING they are inert: trim_blocks changes rendered
+    # whitespace, not what parses. This sweep therefore catches the comment-tag class only — the
+    # weld class needs a render, which tests/test_infra_shell_templates_render.py provides.
     env = jinja2.Environment(trim_blocks=True, lstrip_blocks=False)
     root = TEMPLATE.resolve().parent.parent.parent.parent  # infra/ansible
     templates = sorted(root.rglob("*.j2"))
