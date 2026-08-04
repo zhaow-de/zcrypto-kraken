@@ -144,14 +144,12 @@ NOT_A_FAULT_SIGNAL = {
     # Spec 00073 makes the silence observable; alerting on it is deliberately deferred to T0105,
     # since an unfitted threshold in `is_healthy()` darkens the dead-man fleet-wide on both hosts.
     "zcrypto_capture_gap_seconds_total",
-    # Seconds since the last book message (spec 00073 D4): the proof-it-runs gauge for the staleness
-    # watchdog. Excluded on purpose -- it exists to be READ so T0105 can fit a paging threshold to a
-    # real production distribution; a rule on it before that fitting is the guess this defers.
-    "zcrypto_capture_seconds_since_last_book_message",
-    # Engine cycle health -- registered under T0095 with `ripe_when: the dashboards/alerting design
-    # iteration`. Named here so its absence is a decision, not an oversight.
-    "zcrypto_engine_cycle_success",
-    "zcrypto_engine_cycle_completed_at_seconds",
+    # Engine intent and execution LEVELS, plus the cycle's own duration. Every value any of them can
+    # take is legitimate -- a weight that moved, an order that was placed, a cycle that ran long -- so
+    # no threshold on them means anything; they are the detail read on the engine board once something
+    # else has paged. The engine's two genuine fault signals, cycle liveness and the last cycle's
+    # outcome, are NOT excluded: zcrypto-engine-cycle-stale and zcrypto-engine-cycle-failed watch them,
+    # and this test is what keeps that true.
     "zcrypto_engine_cycle_duration_seconds",
     "zcrypto_engine_target_weight",
     "zcrypto_engine_orders_total",

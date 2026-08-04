@@ -2257,8 +2257,8 @@ rules:
         One capture book stream has delivered nothing for over 15 minutes while its siblings keep
         flowing — the single-stuck-stream shape, which no other rule catches: the dead-man still pings,
         the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
-        healthy pair. The `pair` label names the stream and the `host` label the box. Check whether that
-        pair's resubscribe went through; restarting the capture daemon re-establishes every stream.
+        healthy pair. The `pair` label names the stuck stream. Check whether that pair's resubscribe went
+        through; restarting the capture daemon re-establishes every stream.
     labels:
       severity: warning
     notification_settings:
@@ -2421,18 +2421,19 @@ rules:
       # still cannot miss an unobserved payload shape, presence-not-increase() is unchanged, and the
       # latch is unchanged. The host scope every sibling capture rule carries is added at the same time.
       #
-      # One consequence of the grouping, recorded so it is not "corrected" later: `or vector(0)`
-      # produces an UNLABELLED element, so once the left arm returns labelled series the two no longer
-      # share a signature and both ride through -- the 0 becomes a permanent extra series rather than a
-      # mutually-exclusive fallback. It evaluates Normal against `> 0`, so it never pages and never
-      # renders this summary with an empty `system`; it still supplies the 0 that keeps a clean fleet
-      # out of NoData, which is the only job it ever had.
+      # The grouping is also why the fallback carries `on()`, and dropping it is the tempting edit:
+      # `vector(0)` produces an UNLABELLED element, so a bare `or vector(0)` suppresses it only while
+      # the left arm is unlabelled too. Once `by (host, system)` gives the left arm labels the two stop
+      # sharing a signature, and the 0 rides through as a permanent extra series beside the real one
+      # instead of being a mutually-exclusive fallback. `on()` matches on the empty label set, which
+      # every element has, so the fallback is dropped whenever the left arm is non-empty and supplied
+      # when it is empty -- keeping a clean fleet out of NoData, which is the only job it ever had.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'sum by (host, system) (zcrypto_capture_venue_status_total{host=~"zcrypto|zcrypto-red", system!="online"}) or vector(0)'
+          expr: 'sum by (host, system) (zcrypto_capture_venue_status_total{host=~"zcrypto|zcrypto-red", system!="online"}) or on() vector(0)'
           instant: true
           refId: A
       - refId: C
@@ -3156,7 +3157,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes as measured from the `{{ $labels.host }}` end -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This now fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
     labels:
       severity: warning
     notification_settings:
