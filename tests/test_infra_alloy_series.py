@@ -135,6 +135,7 @@ INTERPOLATED_METRIC_NAMES = [
     "zcrypto_reconcile_union_hours_total",
     "zcrypto_reconcile_trade_dedup_rows_total",
     "zcrypto_reconcile_trade_deficit_rows_total",
+    "zcrypto_reconcile_ledger_records",
 ]
 
 OPS_REQUIRED = [
