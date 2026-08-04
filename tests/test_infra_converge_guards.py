@@ -784,6 +784,23 @@ def test_unreadable_compose_refuses():
     assert not truthy(assert_that(_liq_readable_guard()), v)
 
 
+# The stat MODULE's own failure is a fourth shape, distinct from the three the rc split names.
+# Measured on the locked ansible-core: an EACCES on the path (an unreadable PARENT dir stats
+# EACCES, not ENOENT) registers {"failed": false, "msg": "Permission denied"} with NO `stat` key --
+# `failed_when: false` rewrites the flag, so nothing can arm on `.failed`, and the ABSENT KEY is the
+# only signal there is. Read through `stat.exists | default(false)` that shape is indistinguishable
+# from "absent", so both guards stood down and the repin proceeded undecided on the one file whose
+# pin it moves. The when-chain now engages on the missing key, and the `that:` refuses there.
+def test_a_failed_stat_probe_reaches_the_refusal():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"failed": False, "msg": "Permission denied"},
+    }
+    conds = " and ".join("(%s)" % c for c in when_conditions(_liq_readable_guard()))
+    assert truthy(conds, v), "a failed probe must REACH the assert, never skip it"
+    assert not truthy(assert_that(_liq_readable_guard()), v)
+
+
 def test_readable_compose_passes_the_readability_guard():
     v = {
         "ops_image_digest": "sha256:" + "ab" * 32,
