@@ -1,6 +1,6 @@
 # Spec 00083 — T0111 wave 2: converge scripts, the engine parity mirror, and the wave-1 gap closures
 
-**Goal:** finish mechanizing `capture-deploys.md`'s converge discipline — the five wave-2 scripts, the three guard gaps wave-1's final review surfaced, and the three tooling-polish items — so the remaining rule prose shrinks to pointers and T0111's only open remainder is the attended ops-host drills.
+**Goal:** finish mechanizing `capture-deploys.md`'s converge discipline — the five wave-2 scripts, the three guard gaps wave 1 left registered (the engine parity mirror, from its final whole-branch review; the window-floor journal probe and the skip-tags tightening, from its execution), and the three tooling-polish items that same review raised — so the remaining rule prose shrinks to pointers and T0111's only open remainder is the attended ops-host drills.
 
 Owner rulings (2026-08-03, attended): scope = all eleven registered items; `converge.sh` uses an interactive type-the-limit-back confirm; `converge.sh` becomes the documented converge path with the rule shrink at closeout (per-edit sign-offs, protected set). Override convention throughout: wave 1's D1 — `-e <name>_override="<reason>"`, refused when empty/boolean-like/<9 chars, accepted reason echoed.
 
