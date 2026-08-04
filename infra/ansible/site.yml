@@ -9,9 +9,9 @@
     # whatever role changes were written for the secondary. This guard makes that impossible to do by
     # accident: touching the primary requires saying so.
     #
-    #   secondary only : ./scripts/run.sh site.yml --limit zcrypto-red -e capture_image_digest=...
-    #   primary        : ./scripts/run.sh site.yml --limit zcrypto --tags capture -e converge_primary=true -e ...
-    #   engine only    : ./scripts/run.sh site.yml --tags engine -e converge_primary=true -e engine_image_digest=...
+    #   secondary only : ./scripts/converge.sh site.yml --limit zcrypto-red -e capture_image_digest=...
+    #   primary        : ./scripts/converge.sh site.yml --limit zcrypto --tags capture -e converge_primary=true -e ...
+    #   engine only    : ./scripts/converge.sh site.yml --limit zcrypto --tags engine -e converge_primary=true -e engine_image_digest=...
     #
     # It is a per-host assert, so a bare run fails ONLY the primary and still converges the rest --
     # loud and safe rather than aborting the fleet. Keep it after the embargo lifts: the flag costs
@@ -45,7 +45,7 @@
     # -e engine_image_digest=... restarts the LIVE trade engine. Tags must be named explicitly.
     - name: refuse an un-tagged run on the live primary
       ansible.builtin.assert:
-        that: ansible_run_tags != ['all'] or ansible_skip_tags | length > 0
+        that: ansible_run_tags != ['all'] or 'engine' in ansible_skip_tags
         fail_msg: >-
           This run names no tags — on the live primary that sweeps in every play, including the
           engine play. Scope it explicitly: --tags capture, --tags engine, or --skip-tags engine.
@@ -103,33 +103,72 @@
       when: not ansible_check_mode
       tags: [engine]  # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged runs
 
+    # spec 00083 D6: when the boundary's cycle already completed, the fixed B+30 floor is
+    # conservative for no reason — the running cycle it protects is over. The probe computes the
+    # boundary and reads its journal artifact ON the engine host; any failure (missing file, parse
+    # error) lands rc!=0 and the guard keeps the conservative floor. Journal day-dirs are %Y-%m-%d,
+    # files cycle-%H.json, field completed_at (cli/engine/cycle.py's own naming).
+    - name: probe — the boundary cycle's completion time (window floor)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import datetime, json, time
+            b = int(time.time()) // 14400 * 14400
+            d = datetime.datetime.fromtimestamp(b, datetime.timezone.utc)
+            p = "/var/lib/zcrypto-engine/journal/%s/cycle-%02d.json" % (d.strftime("%Y-%m-%d"), d.hour)
+            c = json.load(open(p))["completed_at"]
+            t = datetime.datetime.fromisoformat(c.replace("Z", "+00:00"))
+            print(int(t.timestamp()))
+      register: engine_cycle_epoch_probe
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+      tags: [engine]
+
     - name: engine window — refuse a converge outside the inter-cycle gap
       ansible.builtin.assert:
         that: >-
-          (((engine_epoch_probe.stdout | int) % 14400 >= 1800)
+          (((engine_epoch_probe.stdout | int) >= (
+              ((engine_cycle_epoch_probe.stdout | default('') | trim | int) + 300)
+              if ((engine_cycle_epoch_probe.rc | default(1)) == 0
+                  and ((engine_cycle_epoch_probe.stdout | default('') | trim) | regex_search('^[0-9]{10}$')))
+              else ((((engine_epoch_probe.stdout | int) // 14400) * 14400) + 1800)
+            ))
            and (14400 - ((engine_epoch_probe.stdout | int) % 14400) >= 600))
           or ((engine_window_override | default('') | string | length > 8)
               and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
         fail_msg: >-
           Outside the engine's inter-cycle gap (boundaries 00/04/08/12/16/20 UTC: the first 30 min
-          belong to the running cycle, the last 10 min are too close to the next). Wait for the gap,
-          or pass -e engine_window_override="<why this cannot wait>" (a reason, not a boolean).
+          belong to the running cycle — or, when the boundary cycle has journaled its completion,
+          until 5 min past that completion, whichever the journal shows — and the last 10 min are
+          too close to the next). Wait for the gap, or pass
+          -e engine_window_override="<why this cannot wait>" (a reason, not a boolean).
       when: not ansible_check_mode and engine_epoch_probe.stdout is defined
       tags: [engine]
 
     # spec 00082 D1 (second half), same shape as the capture role's two override echoes: an ACCEPTED
     # override lands its reason in the play log. Gated on acceptance — the assert's own scoping AND
-    # the window condition NEGATED (its first disjunct, character-for-character — the odd
-    # continuation indent below is what keeps the two folded texts byte-identical) AND the override
-    # fragment — never on the override merely being PRESENT, which would print a "why" on runs that
-    # overrode nothing. The scoping half is load-bearing, not decoration: under --check the probe is
-    # skipped, so `.stdout` is undefined and an unscoped `when:` would error instead of skipping.
+    # the window condition NEGATED (its first disjunct, character-for-character — a folded scalar
+    # keeps both the break and the EXTRA indent of every more-indented line, so the mirror below
+    # shifts each line 2 columns left, preserving its indent RELATIVE to its own block key, which is
+    # what keeps the two folded texts byte-identical) AND the override fragment — never on the
+    # override merely being PRESENT, which would print a "why" on runs that overrode nothing. The
+    # scoping half is load-bearing, not decoration: under --check the probe is skipped, so `.stdout`
+    # is undefined and an unscoped `when:` would error instead of skipping.
     - name: engine window override accepted — the reason, on the record
       ansible.builtin.debug:
         msg: "engine_window_override accepted: {{ engine_window_override }}"
       when: >-
         not ansible_check_mode and engine_epoch_probe.stdout is defined
-        and not (((engine_epoch_probe.stdout | int) % 14400 >= 1800)
+        and not (((engine_epoch_probe.stdout | int) >= (
+            ((engine_cycle_epoch_probe.stdout | default('') | trim | int) + 300)
+            if ((engine_cycle_epoch_probe.rc | default(1)) == 0
+                and ((engine_cycle_epoch_probe.stdout | default('') | trim) | regex_search('^[0-9]{10}$')))
+            else ((((engine_epoch_probe.stdout | int) // 14400) * 14400) + 1800)
+          ))
          and (14400 - ((engine_epoch_probe.stdout | int) % 14400) >= 600))
         and (engine_window_override | default('') | string | length > 8)
         and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-panel-regenerate — do not
+# hand-edit on the host; edit infra/ansible/roles/ops/templates/panel-regenerate.sh.j2 and
+# re-converge instead. Traceability: spec 00083 D2.
+#
+# Delete-and-rebuild of the L2 panel tree as one refusing flow: timer stopped first, window sized
+# from the input tree (~2.1 s/MB, x1.2 margin) against the 02:25 UTC auto-reboot, the dead-man
+# pause taken as a TYPED gate (the point of no return stays human), delete, rebuild INSIDE the
+# materialize unit (a stray timer tick collides with an active unit instead of double-writing),
+# then the operator checklist for the halves this host cannot reach (NAS copy, un-pause).
+# rc 2 usage/bad override | rc 3 refused, timer restarted, nothing deleted | rc 4 rebuild failed.
+set -euo pipefail
+
+PANEL_ROOT="{{ ops_data_dir }}/{{ ops_panel_subdir }}"
+CANONICAL="{{ ops_nas_mount }}/{{ ops_capture_subdir }}"
+OVERLAY="{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
+
+# Render guard, before anything is touched: this script's payload is `rm -rf "$PANEL_ROOT"`, and
+# PANEL_ROOT is TWO rendered halves -- either one empty aims it somewhere it must never point. An
+# empty ops_panel_subdir makes it the ops data root itself (the reconciled overlay, the liquidations
+# tree and the textfile dir would go with the panel); an empty ops_data_dir makes it "/<subdir>", a
+# path at the filesystem root, outside anything this host's data layout owns. `set -u` cannot catch
+# either (each var IS set, to a string with an empty component) and Ansible refuses only UNDEFINED
+# vars, not empty ones, so the check belongs here.
+if [ -z "{{ ops_data_dir }}" ] || [ -z "{{ ops_panel_subdir }}" ]; then
+  echo "refusing: the panel root rendered from an empty half ('{{ ops_data_dir }}' + '{{ ops_panel_subdir }}'), which would aim rm -rf at the whole data root or the filesystem root" >&2
+  exit 2
+fi
+
+override=""
+if [ "$#" -gt 0 ]; then
+  if [ "$1" = "--override" ] && [ "$#" -eq 2 ]; then
+    override="$2"
+  else
+    echo 'usage: zcrypto-panel-regenerate [--override "<reason>"]' >&2
+    exit 2
+  fi
+fi
+if [ -n "$override" ]; then
+  low=$(printf '%s' "$override" | tr '[:upper:]' '[:lower:]')
+  if [ "${#override}" -le 8 ] || [ "$low" = "true" ] || [ "$low" = "false" ] || [ "$low" = "1" ] || [ "$low" = "yes" ]; then
+    echo "refusing: --override needs a reason (more than 8 chars, not a boolean)" >&2
+    exit 2
+  fi
+fi
+
+echo "== step 1: stopping the hourly timer =="
+systemctl stop zcrypto-panel-materialize.timer
+echo "timer stopped. Reminder: a converge re-arms it unless -e ops_panel_timer_hold=true is passed."
+
+# Stopping the TIMER does not stop a run already under way, and step 4's `rm -rf` beneath a live
+# materialize half-deletes a tree that process believes it owns. Read the STATE STRING, never
+# `is-active --quiet`'s exit code: this unit is Type=oneshot, so an hourly run in flight sits in
+# `activating` for its entire runtime, and is-active exits 0 only for active/reloading -- the
+# exit-code form walks straight past exactly the case this refuses.
+unit_state=$(systemctl is-active zcrypto-panel-materialize.service || true)
+case "$unit_state" in
+  active | activating | reloading)
+    echo "refusing: an hourly materialize run is in flight (state: $unit_state); re-run once it completes. Timer restarted, nothing deleted." >&2
+    systemctl start zcrypto-panel-materialize.timer
+    exit 3
+    ;;
+esac
+
+echo "== step 2: sizing the rebuild =="
+# One assignment per input, never both inside one arithmetic expansion: there the assignment takes
+# only the LAST substitution's status and an empty operand parses as unary plus, so a failing du on
+# the NFS-side canonical tree is swallowed and the ETA is sized from the overlay alone -- the
+# central refusal neutralized exactly when the NAS mount is what is broken (measured). Split, either
+# failure is its own statement and `set -e` + `pipefail` abort here, with the timer left stopped:
+# the hourly materialize must not resume against a tree this host cannot stat, and the dead-man
+# check is still armed at this point, so the missed ping pages.
+canon_mb=$(du -sm "$CANONICAL" | cut -f1)
+overlay_mb=$(du -sm "$OVERLAY" | cut -f1)
+mb=$(( canon_mb + overlay_mb ))
+eta=$(awk -v m="$mb" 'BEGIN{printf "%d", m * 2.1 * 1.2}')
+now=$(date -u +%s)
+deadline=$(date -u -d "$(date -u +%F) 02:25" +%s)
+[ "$now" -ge "$deadline" ] && deadline=$(( deadline + 86400 ))
+echo "input ${mb} MB -> ETA ~$(( eta / 60 )) min incl. margin; auto-reboot deadline epoch $deadline"
+if [ $(( now + eta )) -ge "$deadline" ]; then
+  if [ -n "$override" ]; then
+    echo "override accepted: $override"
+  else
+    echo "refusing: the rebuild would still be running at the 02:25 UTC auto-reboot (a oneshot unit has no timeout — only that reboot kills it). Re-run earlier in the day, or pass --override \"<reason>\"." >&2
+    systemctl start zcrypto-panel-materialize.timer
+    echo "timer restarted (nothing was deleted)."
+    exit 3
+  fi
+fi
+
+if ! { : < /dev/tty; } 2>/dev/null; then
+  echo "no controlling terminal — the pause gate needs an attended session; timer restarted, nothing deleted" >&2
+  systemctl start zcrypto-panel-materialize.timer
+  exit 3
+fi
+echo "== step 3: pause the dead-man check =="
+echo "The panel healthcheck pings only on a clean run and is this timer's only liveness signal."
+echo "Pause it now, TIME-BOXED, on healthchecks.io (the panel materialize check)."
+printf 'Type "paused" to continue (anything else aborts, nothing deleted): ' > /dev/tty
+IFS= read -r reply < /dev/tty || reply=""
+if [ "$reply" != "paused" ]; then
+  systemctl start zcrypto-panel-materialize.timer
+  echo "aborted — nothing deleted; timer restarted." >&2
+  exit 3
+fi
+
+echo "== step 4: deleting the ops-side panel tree =="
+rm -rf "$PANEL_ROOT"
+echo "deleted $PANEL_ROOT (the per-pair watermarks went with it — the rebuild covers everything, out-of-scope subtrees included)"
+
+echo "== step 5: rebuilding inside the unit =="
+if ! systemctl start --wait zcrypto-panel-materialize.service; then
+  echo "rebuild FAILED (the unit reported non-zero). The tree is now partial — investigate before anything else. The timer stays STOPPED and the closing checklist is NOT owed yet." >&2
+  exit 4
+fi
+echo "rebuild complete."
+systemctl start zcrypto-panel-materialize.timer
+echo "timer restarted."
+
+echo "== step 6: your remaining checklist =="
+echo "1. Delete the OLD panel copy on the NAS share ({{ ops_panel_subdir }} there) — the hourly pull has no --delete, so it survives until deleted there."
+echo "2. Un-pause the healthchecks.io panel check (paused time-boxed in step 3)."

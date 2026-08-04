@@ -156,6 +156,60 @@
       window must hold only stop → migration-if-any → start inside the inter-cycle gap. Pre-stage it
       first: sudo docker pull {{ engine_image }}@{{ engine_image_digest }}
 
+# spec 00083 D5: the capture role's canary parity, mirrored. There is no engine secondary — the
+# secondary's CAPTURE bake is the engine's canary gate (fleet-pins.md records it in those words) —
+# so an engine re-pin is refused until the new digest runs as capture on the secondary. This play
+# targets the engine host only, so the mirror drops the capture block's inventory_hostname scoping;
+# everything else mirrors modulo the engine_ prefix. canary_override is deliberately SHARED with
+# the capture assert: one gate concept, one override, and the echo below lands the reason either way.
+- name: probe — the running engine digest (canary scope)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-engine
+  register: engine_running_parity_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: engine_image_digest is defined
+
+- name: probe — the secondary's running capture digest (engine canary parity)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-capture
+  register: engine_secondary_digest_probe
+  delegate_to: "{{ (groups['capture_host'] | difference(groups['engine_host'])) | first }}"
+  failed_when: false
+  ignore_unreachable: true  # mirror of the capture probe: an unreachable secondary must reach the assert (empty stdout -> refuse via override), never abort or silently pass
+  changed_when: false
+  check_mode: false
+  when: >-
+    engine_image_digest is defined
+    and engine_running_parity_probe.stdout is defined
+    and engine_image_digest not in engine_running_parity_probe.stdout
+
+- name: engine canary parity — refuse an engine re-pin the secondary has not baked
+  ansible.builtin.assert:
+    that: >-
+      (engine_image_digest in engine_secondary_digest_probe.stdout | default(''))
+      or ((canary_override | default('') | string | length > 8)
+          and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The secondary does not run {{ engine_image_digest }} as capture — there is no engine
+      secondary, so that bake IS the engine's canary gate. Converge the secondary's capture first
+      and let it bake, or pass -e canary_override="<why this cannot wait>" (a reason, not a
+      boolean; it lands in this log).
+  when: >-
+    engine_image_digest is defined
+    and engine_secondary_digest_probe is not skipped
+
+# An ACCEPTED override lands its reason in the play log — gated on acceptance (the parity check
+# failing AND the fragment true), never on mere presence, same as every wave-1 echo.
+- name: engine canary override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "canary_override accepted: {{ canary_override }}"
+  when: >-
+    engine_image_digest is defined
+    and engine_secondary_digest_probe is not skipped
+    and not (engine_image_digest in engine_secondary_digest_probe.stdout | default(''))
+    and (canary_override | default('') | string | length > 8)
+    and (canary_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 - name: probe — the logship secrets file the engine's compose reads at start
   ansible.builtin.stat:
     path: /opt/zcrypto-capture/logship-secrets.env

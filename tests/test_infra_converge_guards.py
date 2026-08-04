@@ -5,6 +5,7 @@ never a re-implementation of the logic. `load_task` reads the committed YAML; a 
 expression is edited drifts here immediately.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -239,6 +240,34 @@ def test_untagged_primary_refusal():
     assert truthy(assert_that(task), skip_scoped)
 
 
+# --- guard 4 tightened (spec 00083 D7): only --skip-tags forms naming engine satisfy it ----------
+
+
+def _untag_guard():
+    tasks = load_tasks(SITE)
+    return find_task(tasks, "refuse an un-tagged run on the live primary")
+
+
+def test_unrelated_skip_tags_now_refused():
+    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["something-else"]}
+    assert not truthy(assert_that(_untag_guard()), v)
+
+
+def test_skip_tags_engine_passes():
+    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]}
+    assert truthy(assert_that(_untag_guard()), v)
+
+
+def test_explicit_tags_still_pass():
+    v = {"ansible_run_tags": ["capture"], "ansible_skip_tags": []}
+    assert truthy(assert_that(_untag_guard()), v)
+
+
+def test_bare_run_still_refused():
+    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
+    assert not truthy(assert_that(_untag_guard()), v)
+
+
 WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
 
 
@@ -283,6 +312,138 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
         "engine_window_override": "",
     }
     assert truthy(assert_that(task), variables) is expected
+
+
+# --- window floor from the boundary cycle's completion (spec 00083 D6) --------------------------
+# When the boundary's cycle-HH.json already carries completed_at, the floor BECOMES completed_at+300
+# in place of B+1800 -- usually earlier, but LATER when the cycle itself ran long (the last two tests
+# in this section pin that direction, which no fixture below covers).
+# Absent probe, failed probe, or garbage stdout -> the CONSERVATIVE B+1800 floor.
+
+BOUNDARY = 1785744000  # 2026-08-03 08:00:00 UTC, divisible by 14400
+
+
+def _window_guard():
+    tasks = load_tasks(SITE)
+    return find_task(tasks, "engine window — refuse a converge outside the inter-cycle gap")
+
+
+def test_floor_drops_to_completion_plus_300():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},  # B+500: inside old refusal window
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 108)},  # completed 08:01:48
+        "engine_window_override": "",
+    }
+    assert truthy(assert_that(guard), v)  # 500 >= 108+300 -> allowed early
+
+
+def test_floor_still_refuses_before_completion_plus_300():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 300)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 108)},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)  # 300 < 408
+
+
+def test_failed_probe_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},
+        "engine_cycle_epoch_probe": {"rc": 1, "stdout": ""},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)  # rc!=0 -> floor stays B+1800
+
+
+def test_garbage_stdout_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": "Traceback (most recent call last)"},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+# The `{10}` in the stdout regex is what the fixture above is blind to: measured by flipping the
+# committed expression's `^[0-9]{10}$` to `^[0-9]+$`, the Traceback fixture still passes while THIS
+# one flips to allowed -- a short all-digit token becomes a floor in the distant past, i.e. no floor.
+def test_short_all_digit_stdout_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": "99"},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+# The floor FOLLOWS the journal in both directions — it is not a monotone relaxation of B+1800.
+# A cycle that itself ran long (completed_at = B+1700) puts the floor at B+2000, ABOVE the fixed
+# one: the 5 min of post-completion clearance is unconditional, and refusing at B+1900 there is the
+# point, not a bug. Every fixture above has completed_at early enough that a `min(completion+300,
+# B+1800)` expression — the reading the old fail_msg's "when that is sooner" promised — would agree
+# with the committed one, so nothing else in this file can tell the two apart.
+def test_a_long_running_cycle_raises_the_floor_above_the_fixed_1800():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 1900)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 1700)},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)  # 1900 >= 1800, but 1900 < 1700+300 -> refuse
+
+
+def test_the_raised_floor_opens_at_completion_plus_300_exactly():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 2000)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 1700)},
+        "engine_window_override": "",
+    }
+    assert truthy(assert_that(guard), v)  # inclusive on the raised floor too: `>=`
+
+
+def test_undefined_probe_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {"engine_epoch_probe": {"stdout": str(BOUNDARY + 500)}, "engine_window_override": ""}
+    assert not truthy(assert_that(guard), v)
+
+
+def test_ceiling_unchanged():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 14400 - 300)},  # last 5 min
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 108)},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+def test_old_floor_still_passes_after_1800_without_journal():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 1800)},
+        "engine_cycle_epoch_probe": {"rc": 1, "stdout": ""},
+        "engine_window_override": "",
+    }
+    assert truthy(assert_that(guard), v)
+
+
+def test_journal_probe_path_matches_the_engine_role_default():
+    """The journal path is a LITERAL in site.yml — the probe stays self-contained, readable without
+    resolving what the engine role happens to default to (a statically-listed role's defaults ARE
+    play-wide on this ansible-core, so the literal is a choice, not a necessity). This test is the
+    drift pin that choice owes: a relocation of engine_state_dir cannot silently turn the floor
+    permanently conservative (probe rc!=0 forever, guard 'working' but never early)."""
+    site_text = SITE.read_text()
+    defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()
+    m = re.search(r"^engine_state_dir:\s*(\S+)", defaults, re.M)
+    assert m, "engine_state_dir vanished from the engine role defaults"
+    assert f"{m.group(1)}/journal/" in site_text
 
 
 # --- when-scoping (cold review M4): the `that:` tests never exercise the scoping, and a mis-scoped
@@ -428,6 +589,123 @@ def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text,
     assert truthy(when_conditions(task), variables) is expected
 
 
+# --- engine canary parity (spec 00083 D5): the capture parity assert, mirrored ------------------
+# The engine has no secondary; the secondary's CAPTURE bake is the engine's canary gate. The mirror
+# engages only when engine_image_digest differs from the running engine digest, fails CLOSED on an
+# unreachable secondary (empty stdout -> refuse via the override path), and shares canary_override.
+
+
+def test_engine_parity_refuses_unbaked_digest():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_secondary_digest_probe": {"stdout": "ghcr.io/x/y@sha256:" + "cd" * 32},
+        "canary_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+def test_engine_parity_passes_when_secondary_runs_it():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    d = "sha256:" + "ab" * 32
+    v = {
+        "engine_image_digest": d,
+        "engine_secondary_digest_probe": {"stdout": f"ghcr.io/x/y@{d}"},
+        "canary_override": "",
+    }
+    assert truthy(assert_that(guard), v)
+
+
+def test_engine_parity_fails_closed_on_unreachable_secondary():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {}, "canary_override": ""}
+    assert not truthy(assert_that(guard), v)  # no stdout at all -> default('') -> refuse
+
+
+def test_engine_parity_reason_override_is_accepted_and_boolean_is_not():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {"stdout": ""}}
+    assert truthy(assert_that(guard), {**v, "canary_override": "rollback to the only digest carrying the fix"})
+    assert not truthy(assert_that(guard), {**v, "canary_override": "true"})
+
+
+def test_engine_parity_probe_skips_when_digest_already_running():
+    tasks = load_tasks(ENGINE)
+    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
+    d = "sha256:" + "ab" * 32
+    v = {"engine_image_digest": d, "engine_running_parity_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
+    assert not truthy(" and ".join("(%s)" % c for c in when_conditions(probe)), v)
+
+
+def test_engine_parity_probe_is_unreachable_tolerant_and_delegated():
+    tasks = load_tasks(ENGINE)
+    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
+    assert probe.get("ignore_unreachable") is True
+    assert "difference(groups['engine_host'])" in probe["delegate_to"]
+
+
+def test_engine_parity_echo_mirrors_the_negated_assert():
+    tasks = load_tasks(ENGINE)
+    echo = find_task(tasks, "engine canary override accepted — the reason, on the record")
+    v_overridden = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_secondary_digest_probe": {"stdout": ""},
+        "canary_override": "rollback to the only digest carrying the fix",
+    }
+    conds = " and ".join("(%s)" % c for c in when_conditions(echo))
+    # a dict fixture is `not skipped` under Templar — wave-1's echo tests evaluate this directly
+    assert truthy(conds, v_overridden)
+    assert not truthy(conds, {**v_overridden, "canary_override": "true"})
+    # The third case every sibling echo test carries: the gate is ACCEPTANCE, not presence. Parity
+    # PASSES here, so the reason overrode nothing and printing a "why" would be a false record.
+    d = "sha256:" + "ab" * 32
+    baked = {**v_overridden, "engine_secondary_digest_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
+    assert not truthy(conds, baked)
+
+
+# --- fix round 1 (cold review M1): the mirror's original 7 tests never read the assert's/probe's
+# `when:` side, so a fail-open rewrite of `is not skipped` or a typo'd register name left all 90
+# green while the gate silently stood down. These three pin exactly what wave-1's own when-side
+# tests pin for the capture block (test_canary_parity_refuses_an_unreachable_secondary and
+# test_canary_probe_activates_only_on_an_actual_repin).
+ENGINE_UNREACHABLE = {"unreachable": True, "msg": "Failed to connect to the host via ssh"}
+
+
+def test_engine_parity_when_reaches_the_refusal_on_an_unreachable_secondary():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_secondary_digest_probe": ENGINE_UNREACHABLE,
+        "canary_override": "",
+    }
+    assert truthy(when_conditions(guard), v), "the probe RAN (unreachable is not skipped) -- the assert must evaluate"
+    # pins the fail-closed MECHANISM textually: `stdout is defined` would also reach a "true" when
+    # here (wrongly) once the unreachable fixture happens to lack `stdout` -- the mechanism, not just
+    # the outcome, must be `is not skipped`.
+    assert "is not skipped" in guard["when"]
+
+
+def test_engine_parity_probe_engages_on_an_actual_repin():
+    tasks = load_tasks(ENGINE)
+    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
+    v = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_running_parity_probe": {"stdout": "ghcr.io/x/y@sha256:" + "cd" * 32},
+    }
+    assert truthy(when_conditions(probe), v)
+
+
+def test_engine_parity_when_references_the_correct_probe_register_name():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    assert "engine_secondary_digest_probe" in guard["when"]
+
+
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
 # The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
 # that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
@@ -477,19 +755,95 @@ def test_liquidations_repin_decision(decision, pin_differs, expected):
 
 def test_liquidations_guard_skips_a_digestless_converge():
     task = find_task(load_tasks(OPS), LIQUIDATIONS)
-    probed = {"ops_liquidations_pin_probe": {"rc": 0}}
+    probed = {
+        "ops_liquidations_pin_probe": {"rc": 0},
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": True}},
+    }
     assert truthy(when_conditions(task), {**probed, "ops_image_digest": "sha256:" + "e" * 64})
     assert not truthy(when_conditions(task), probed)
 
 
-# grep's two non-zero answers are NOT the same fact: 2 = no such file (first provision, nothing
-# deployed to repin -- the only legitimate stand-down), 1 = the file is there and carries no
-# `@sha256:` line at all, an anomalous on-host state the guard must refuse rather than skip.
-@pytest.mark.parametrize(("rc", "expected"), [(1, True), (2, False)])
-def test_liquidations_guard_engages_on_a_compose_file_without_a_digest_line(rc, expected):
-    task = find_task(load_tasks(OPS), LIQUIDATIONS)
-    variables = {"ops_image_digest": "sha256:" + "e" * 64, "ops_liquidations_pin_probe": {"rc": rc}}
-    assert truthy(when_conditions(task), variables) is expected
+# --- liquidations rc split (spec 00083 D9): absent file stands down, unreadable file refuses -----
+
+
+def _liq_readable_guard():
+    tasks = load_tasks(OPS)
+    return find_task(tasks, "liquidations — an unreadable compose file is a fault, never a first-provision skip")
+
+
+def _liq_decision_guard():
+    tasks = load_tasks(OPS)
+    return find_task(tasks, LIQUIDATIONS)
+
+
+def test_unreadable_compose_refuses():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": False}},
+    }
+    assert not truthy(assert_that(_liq_readable_guard()), v)
+
+
+# The stat MODULE's own failure is a fourth shape, distinct from the three the rc split names.
+# Measured on the locked ansible-core: an EACCES on the path (an unreadable PARENT dir stats
+# EACCES, not ENOENT) registers {"failed": false, "msg": "Permission denied"} with NO `stat` key --
+# `failed_when: false` rewrites the flag, so nothing can arm on `.failed`, and the ABSENT KEY is the
+# only signal there is. Read through `stat.exists | default(false)` that shape is indistinguishable
+# from "absent", so both guards stood down and the repin proceeded undecided on the one file whose
+# pin it moves. The when-chain now engages on the missing key, and the `that:` refuses there.
+def test_a_failed_stat_probe_reaches_the_refusal():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"failed": False, "msg": "Permission denied"},
+    }
+    conds = " and ".join("(%s)" % c for c in when_conditions(_liq_readable_guard()))
+    assert truthy(conds, v), "a failed probe must REACH the assert, never skip it"
+    assert not truthy(assert_that(_liq_readable_guard()), v)
+
+
+def test_readable_compose_passes_the_readability_guard():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": True}},
+    }
+    assert truthy(assert_that(_liq_readable_guard()), v)
+
+
+def test_absent_file_skips_both_guards():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": False}},
+    }
+    for guard in (_liq_readable_guard(), _liq_decision_guard()):
+        conds = " and ".join("(%s)" % c for c in when_conditions(guard))
+        assert not truthy(conds, v)
+
+
+def test_decision_guard_engages_when_file_exists():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": True}},
+        "ops_liquidations_pin_probe": {"rc": 1, "stdout": ""},
+        "liquidations_decision": "",
+    }
+    conds = " and ".join("(%s)" % c for c in when_conditions(_liq_decision_guard()))
+    assert truthy(conds, v)
+    assert not truthy(assert_that(_liq_decision_guard()), v)  # empty stdout + no decision -> refuse
+
+
+def test_stat_probe_resolves_symlinks():
+    # Textual pin, not a Templar fixture: without `follow: true` the real stat module lstats a
+    # dangling compose.yaml symlink as exists=True, readable=False, tripping the readability guard's
+    # chmod/chown fail_msg on a target that was never a permission fault. `follow: true` restores
+    # spec D9's `test -e`/`test -r` semantics (both resolve symlinks), so a dangling link reads as
+    # absent -> stand-down, matching the old grep behavior.
+    task = find_task(load_tasks(OPS), "probe — the deployed liquidations compose file (existence vs readability)")
+    assert task["ansible.builtin.stat"]["follow"] is True
+    # Spec D9 also specifies `failed_when: false`, which every sibling probe in this role carries: a
+    # stat MODULE failure (an unreadable PARENT dir stats EACCES, not ENOENT) would otherwise abort
+    # the play — dropping the host from every later play — instead of letting the two guards below
+    # decide from what the probe registered.
+    assert task["failed_when"] is False
 
 
 def test_liquidations_refuses_a_compose_file_without_a_digest_line():
@@ -514,6 +868,19 @@ def test_panel_timer_hold_excludes_only_the_panel_timer():
     assert "panel-materialize" not in held and "verify-replay" in held and "verified-replay" in held
     assert "panel-materialize" in live
     assert "panel-materialize" in unset
+
+
+def test_panel_regenerate_is_installed_by_the_ops_role():
+    tasks = load_tasks(OPS)
+    name = "install the panel regenerate flow (delete-and-rebuild with its refusals)"
+    task = find_task(tasks, name)
+    assert task["ansible.builtin.template"]["dest"] == "/usr/local/sbin/zcrypto-panel-regenerate"
+    assert task["ansible.builtin.template"]["mode"] == "0755"
+    # TOP-LEVEL and ungated is the load-bearing half, and find_task recurses into `block:` -- so the
+    # assertions above stay green with this task moved back inside the digest gate, which is exactly
+    # the regression that stops the script landing on a digestless converge. Scan the top level.
+    assert name in [t.get("name") for t in tasks]
+    assert "when" not in task
 
 
 OPS_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"
