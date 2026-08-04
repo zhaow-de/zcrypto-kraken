@@ -38,7 +38,20 @@ missing and none have lost margin eligibility since the master plan was drafted.
 2–10× on the ten EUR-quoted majors, and a lower 2–4×/2–5× band on the two BTC-quoted relative-value legs (ETH/BTC,
 SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `AssetPairs` as ground truth" note.
 
-## Fee schedule, borrow rate & margin bands
+## Endpoint-reported fee ladder, borrow rate & margin bands
+
+> **The fee columns here are NOT the fee source of truth — `kraken-fee-schedule.md` is.**
+> Kraken's public `AssetPairs` still serves the **pre-2026-07-09 schedule**: base 0.25 % maker /
+> 0.40 % taker with tier breaks at \$10k/\$50k. The schedule actually in force since 2026-07-09 is
+> **0.40 % maker / 0.80 % taker** at tier 1, with breaks at \$2.5k/\$10k/\$25k — account-confirmed on
+> the logged-in Fee tab and recorded in `kraken-fee-schedule.md`, which supersedes these columns for
+> every costing purpose. That file predicted exactly this: *"the public fee-schedule page still
+> showed the old schedule when this was captured."*
+>
+> **What these columns are for, then:** a **drift detector on the endpoint itself**. The day they
+> move is the day Kraken finally propagated a new schedule into the public API, and a sweep that
+> sees them change should reconcile against `kraken-fee-schedule.md` rather than adopt them. Read
+> the level from the account; read the *change* from here.
 
 | Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow rate (base asset) | Collateral value | Margin call | Margin stop | Long limit | Short limit |
 |---|---|---|---|---|---|---|---|---|---|
@@ -55,32 +68,21 @@ SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `As
 | ETH/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.99 | 80 | 40 | 1000 | 800 |
 | SOL/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 6900 | 5100 |
 
-Added at sweep #1 (2026-08-04), closing a gap the sweep's own review found: the register re-confirmed
-status, margin, leverage and minimums while capturing **none** of the ⏱ cost facts the master plan
-names as externally owned. The fee ladder and `margin_rate` are public and were available all along —
-`margin_rate` **is** the borrow/rollover rate, and it lives on the *asset*, not the pair. Rendered as
-base tier plus ladder depth; the full 12-tier ladders live in the snapshot JSON so a future diff can
-name *which* tier moved.
+Borrow and margin columns carry no such caveat and **agree** with the account-confirmed figures:
+`margin_rate` is the per-4h rollover rate on the extended currency, and the endpoint's per-asset
+point values sit inside `kraken-fee-schedule.md`'s ranges (BTC 0.01 vs its 0.01–0.02 %; alts
+0.02–0.04 vs its 0.02–0.04 %). That agreement is worth keeping, because the borrow rate is the term
+that makes alt shorts ~2× BTC shorts and drives the short-BTC-only thesis.
 
-**What sweep #1 measures:** taker **0.40 %** / maker **0.25 %** at the base tier, uniform across all
-twelve pairs (12 tiers each); borrow rates spread 0.01–0.04 by asset (BTC cheapest, ADA dearest);
-margin call 80 / stop 40 uniform; position limits varying by three orders of magnitude.
+Added at sweep #1 (2026-08-04) to close a gap the sweep's review found: the register re-confirmed
+status, margin, leverage and minimums while capturing none of the ⏱ cost facts. `margin_rate` lives
+on the *asset*, not the pair. Rendered as base tier plus ladder depth; the full 12-tier ladders live
+in the snapshot JSON so a future diff can name *which* tier moved.
 
-**An open question this raises about the cost model, stated rather than resolved.**
-`CrossfreqSystemConfig.fee_per_side = 0.0040` is commented *"Kraken tier-1 MAKER, schedule effective
-2026-07-09"* — but today's public tier-1 **maker** is 0.0025, and 0.0040 is today's **taker**. Either
-the label always misidentified which side it is, or the schedule moved between 2026-07-09 and now.
-**Sweep #0 cannot arbitrate, because it never captured fees** — which is precisely the gap this
-section closes, and from sweep #2 onward the question is answerable by diff. Two things do not
-change on either reading: the constant itself must stay frozen (record 44's figures reproduce only
-at `0.0040 + 0.0020 = 0.006`, and its own comment says so), and [[T0090]]'s ruling does not depend on
-the label, because it re-quoted maker and taker as separate bases rather than trusting one constant.
-If the resolution turns out to be "the schedule moved", the affected downstream number is the
-registered cost basis, and the honest read is the one T0090 already gives: a range, not a point.
-
-**Still account-gated:** the *account's own* fee tier depends on 30-day volume and needs the live
-account. This section is the **public schedule at the base tier** — the right anchor for a funded
-account starting at zero volume, and the wrong one the moment volume climbs.
+**Still account-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
+live account — parked in `T0000` and recorded in `kraken-fee-schedule.md` (tier 1, \$0 volume, as of
+2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
+re-reads at the go/no-go.
 
 ## Symbol-alias ledger
 
