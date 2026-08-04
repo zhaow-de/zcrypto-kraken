@@ -94,3 +94,18 @@ def test_absent_symbol_carries_the_new_fields_as_empty_not_missing():
     assert row.fees_taker == () and row.fees_maker == ()
     assert row.fee_taker_base is None and row.base_margin_rate is None
     assert row.margin_call is None and row.short_position_limit is None
+
+
+def test_quote_borrow_rate_is_extracted_because_it_prices_LONGS():
+    """A margin long borrows the QUOTE currency, so the base-side rate never prices it.
+
+    kraken-fee-schedule.md: "A LONG on margin buys with borrowed fiat → the quote/fiat is
+    extended → the fiat leg's rate". Rendering only the base rate left the book's long side
+    unpriced by this register while looking complete.
+    """
+    rows = derive_universe(ASSETPAIRS, ASSETS, ["BTC/EUR", "ETH/BTC"])
+    eur_quoted, btc_quoted = _by_symbol(rows, "BTC/EUR"), _by_symbol(rows, "ETH/BTC")
+    # EUR leg vs BTC leg: distinct values, so a base/quote mix-up cannot pass by coincidence
+    assert eur_quoted.quote_margin_rate == 0.02  # ZEUR
+    assert btc_quoted.quote_margin_rate == 0.01  # XXBT
+    assert btc_quoted.base_margin_rate == 0.02  # XETH — base and quote genuinely differ here

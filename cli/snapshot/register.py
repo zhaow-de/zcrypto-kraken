@@ -73,8 +73,8 @@ def render_markdown(snapshot: dict) -> str:
         "",
         "## Fee schedule, borrow rate & margin bands",
         "",
-        "| Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow rate (base asset) | Collateral value | Margin call | Margin stop | Long limit | Short limit |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow: base (shorts) | Borrow: quote (longs) | Collateral value | Margin call | Margin stop | Long limit | Short limit |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in universe:
 
@@ -85,7 +85,7 @@ def render_markdown(snapshot: dict) -> str:
         tiers = len(row.get("fees_taker") or ())
         lines.append(
             f"| {row['symbol']} | {_f('fee_taker_base')} | {_f('fee_maker_base')} | {tiers or '-'} "
-            f"| {_f('base_margin_rate')} | {_f('base_collateral_value')} | {_f('margin_call')} "
+            f"| {_f('base_margin_rate')} | {_f('quote_margin_rate')} | {_f('base_collateral_value')} | {_f('margin_call')} "
             f"| {_f('margin_stop')} | {_f('long_position_limit')} | {_f('short_position_limit')} |"
         )
 

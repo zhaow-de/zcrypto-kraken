@@ -47,6 +47,10 @@ class PairSnapshot:
     fee_maker_base: float | None
     base_margin_rate: float | None
     base_collateral_value: float | None
+    # The QUOTE side's borrow rate prices margin LONGS: a long buys with borrowed quote currency,
+    # so the base rate never touches it. Rendering only the base side left the book's long leg
+    # unpriced while the table looked complete.
+    quote_margin_rate: float | None
     margin_call: int | None
     margin_stop: int | None
     long_position_limit: int | None
@@ -95,6 +99,7 @@ def _not_found(symbol: str, base: str, quote: str) -> PairSnapshot:
         fee_maker_base=None,
         base_margin_rate=None,
         base_collateral_value=None,
+        quote_margin_rate=None,
         margin_call=None,
         margin_stop=None,
         long_position_limit=None,
@@ -146,6 +151,7 @@ def derive_universe(assetpairs_result: dict, assets_result: dict, symbols: list[
                 # off the pair would silently yield None for every row.
                 base_margin_rate=_asset_field(assets_result, pair.get("base"), "margin_rate"),
                 base_collateral_value=_asset_field(assets_result, pair.get("base"), "collateral_value"),
+                quote_margin_rate=_asset_field(assets_result, pair.get("quote"), "margin_rate"),
                 margin_call=pair.get("margin_call"),
                 margin_stop=pair.get("margin_stop"),
                 long_position_limit=pair.get("long_position_limit"),
