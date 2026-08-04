@@ -323,6 +323,117 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-engine-cycle-stale
+    title: "Engine · cycles have stopped"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The larger of the two engine holes this file used to carry: NOTHING watched
+      # `zcrypto_engine_cycle_completed_at_seconds`. The only engine rule was the sleeve-composition
+      # one above, which is about composition, not liveness -- and a crash-looping engine leaves
+      # `active_sleeves` frozen at its last published value, so no page ever fired while cycles
+      # silently stopped.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 16500 s is cadence arithmetic, not a generic staleness number: boundaries are
+            # 00/04/08/12/16/20 UTC and a completion lands inside [B, B+30 min], so the worst
+            # HEALTHY age is 4h30m = 16200 s, reached legitimately just before the next cycle
+            # lands. 16500 leaves five minutes of margin; a flat 1h/2h bar would sit red through
+            # most of every inter-cycle gap.
+            - evaluator: {type: gt, params: [16500]}
+    # Alerting, and it is the only rule on this subject that takes that posture. The gauge is seeded
+    # at engine startup from the newest journal artifact (falling back to process start), so it is
+    # never legitimately absent while the engine runs -- absence means the engine container is gone,
+    # and nothing else owns that: `Fleet · Alloy dark — Capture primary` reads `count(up{host=...})`,
+    # which stays >= 1 while Alloy is up and the engine target merely scrapes `up = 0`. Accepted cost,
+    # named rather than discovered: a genuine Alloy-dark event on the primary double-pages.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: >-
+        The trading engine has not completed a cycle in over 4h35m — the 4-hourly loop has stopped
+        turning. A healthy cycle completes within 30 minutes of its boundary, so the worst legitimate
+        age is 4h30m and anything past that is a stopped or crash-looping engine, not a slow one.
+        This also fires when the metric vanishes entirely, which means the engine container is gone:
+        the gauge is seeded at startup from the newest journal artifact and is never legitimately
+        absent while the engine runs. Check the engine container on the capture primary, then its
+        newest cycle journal artifact for how far the last cycle got.
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-cycle-failed
+    title: "Engine · the last cycle failed"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Liveness cannot cover this, and the reason is load-bearing: the metrics sink runs after every
+      # cycle, success OR failure, and it refreshes `cycle_completed_at` unconditionally -- so an
+      # engine whose every cycle fails on schedule keeps the staleness rule above silent forever.
+      # Two questions, two rules.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_engine_cycle_success{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}  # the gauge is 1 on success, 0 on failure
+    # OK, not Alerting: this gauge is DELIBERATELY left unregistered until an outcome is actually
+    # known (an unlabelled Gauge would otherwise publish 0.0 from process start, i.e. "the last cycle
+    # failed", which is a claim and a false one), so a fresh deploy or an unreadable journal must not
+    # page. Absence is the staleness rule above's business.
+    noDataState: OK
+    execErrState: Alerting
+    # 35m is arithmetic, not a comfort margin: a restart re-runs a missed boundary only within
+    # [B, B+25 min], so 35 minutes after a failed completion the boundary's outcome is FINAL and a
+    # recovered retry would already have flipped the gauge back to 1.
+    for: 35m
+    annotations:
+      summary: >-
+        The engine's most recent cycle finished UNSUCCESSFULLY and the outcome is now final — a restart
+        re-runs a missed boundary only within 25 minutes of it, so a recovered retry would already have
+        flipped this back. The cycle-staleness rule cannot see this: the metrics sink refreshes the
+        completion timestamp after a FAILED cycle too, so that rule stays green while every cycle fails.
+        Read the engine log and the newest cycle journal artifact for which step failed.
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas
@@ -2040,6 +2151,119 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-all-streams-silent
+    title: "Capture · every book stream on a host is silent"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The blackout class, and it is measured rather than imagined: on 2026-07-27 all 12 pairs went
+      # silent for ~209 s on BOTH hosts while the WS reported connected, the keepalive completed >=11
+      # round trips, and the cumulative gap counter read 0.0 -- so the dead-man, the desync rule and
+      # the gap counter all sat green through a total blackout.
+      #
+      # The MINIMUM across pairs is the discriminator, and that is the whole design: one thin leg
+      # being quiet is normal at any hour, all twelve simultaneously is not, and no natural cause
+      # produces it -- so the bar can be tight here where a per-pair bar cannot be. The gauge reads
+      # 0 for every pair at process start, so a restart cannot false-fire it either.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min by (host) (zcrypto_capture_seconds_since_last_book_message{host=~"zcrypto|zcrypto-red"})'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [60]}
+    # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
+    # capture rule here.
+    noDataState: OK
+    execErrState: Alerting
+    for: 2m
+    annotations:
+      summary: >-
+        EVERY book stream on this capture host has been silent for over 60 seconds — not one message on
+        any pair, so this is the whole feed rather than one quiet leg. The last time this happened the
+        socket still reported connected, the keepalive kept completing round trips, and the cumulative
+        gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
+        permanent loss: check the capture container on the named host and restart the daemon if the
+        streams do not resume on their own.
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-stream-silent
+    title: "Capture · a book stream has stopped delivering"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The single-stuck-stream class, which nothing else catches: the resubscribe path failed for one
+      # pair while every other stream keeps flowing, so the dead-man pings, the all-streams rule above
+      # reads its minimum off a healthy pair, and the desync rule sees no checksum failure.
+      #
+      # Deliberately NOT aggregated: Grafana raises one instance per (host, pair) with both labels
+      # intact, which is what lets the page name the stream. That is also why this rule can raise many
+      # instances at once during a wide event -- the all-streams rule above is the one that says
+      # "everything", this one says "which".
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_capture_seconds_since_last_book_message{host=~"zcrypto|zcrypto-red"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # PROVISIONAL, and it must not reach a push in this state. 900 is a starting bar of the
+            # same standing this file gives the reconciler's 600, not a measured one: the daemon's
+            # own `is_healthy()` docstring records that silence was booked first and thresholding
+            # waits until the exported gauge shows a production distribution worth thresholding.
+            # That distribution now exists. DERIVE the bar from
+            # `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host
+            # and set it above the binding pair's natural maximum with the same ~2.4x margin the
+            # daemon's own 30 s constant uses -- then update the summary's stated duration with it,
+            # since the two must move together.
+            - evaluator: {type: gt, params: [900]}
+    # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
+    # capture rule here.
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: >-
+        One capture book stream has delivered nothing for over 15 minutes while its siblings keep
+        flowing — the single-stuck-stream shape, which no other rule catches: the dead-man still pings,
+        the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
+        healthy pair. The `pair` label names the stream and the `host` label the box. Check whether that
+        pair's resubscribe went through; restarting the capture daemon re-establishes every stream.
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-capture-watermark-breached
     title: "Capture · disk watermark breached -- DISCARDING data"
     ruleGroup: zcrypto-capture
@@ -2190,12 +2414,25 @@ rules:
       # This LATCHES: the counter never decreases until the daemon restarts. That is deliberate -- the
       # point is to capture the first observation of a shape this fleet has never seen, and a
       # self-resolving rule can retire it before anyone reads the value.
+      #
+      # `by (host, system)`, not a bare sum(): collapsing `system` discarded the one label the
+      # responder acts on -- `maintenance` (planned, wait) versus `cancel_only`/`post_only` (degraded,
+      # act) demand opposite responses. Grouping preserves every property above: the negative match
+      # still cannot miss an unobserved payload shape, presence-not-increase() is unchanged, and the
+      # latch is unchanged. The host scope every sibling capture rule carries is added at the same time.
+      #
+      # One consequence of the grouping, recorded so it is not "corrected" later: `or vector(0)`
+      # produces an UNLABELLED element, so once the left arm returns labelled series the two no longer
+      # share a signature and both ride through -- the 0 becomes a permanent extra series rather than a
+      # mutually-exclusive fallback. It evaluates Normal against `> 0`, so it never pages and never
+      # renders this summary with an empty `system`; it still supplies the 0 that keeps a clean fleet
+      # out of NoData, which is the only job it ever had.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'sum(zcrypto_capture_venue_status_total{system!="online"}) or vector(0)'
+          expr: 'sum by (host, system) (zcrypto_capture_venue_status_total{host=~"zcrypto|zcrypto-red", system!="online"}) or vector(0)'
           instant: true
           refId: A
       - refId: C
@@ -2213,7 +2450,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "Kraken reported the trading venue is NOT online -- the first time this fleet has seen a status other than `online`. Capture may be unaffected: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      summary: "Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online` -- the first time this fleet has seen it. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
     labels:
       severity: warning
     notification_settings:
@@ -2426,7 +2663,7 @@ rules:
   # SINGLE-host query -- a `sum by(host)` would fire only when BOTH hosts go dark and miss a single
   # host's outage.
   - uid: zcrypto-capture-log-dead-primary
-    title: "Capture · log pipeline dead — primary (zcrypto)"
+    title: "Capture · log pipeline dead — Capture primary"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2470,14 +2707,14 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the capture PRIMARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
     labels:
       severity: critical
     notification_settings:
       receiver: logs
 
   - uid: zcrypto-capture-log-dead-secondary
-    title: "Capture · log pipeline dead — secondary (zcrypto-red)"
+    title: "Capture · log pipeline dead — Capture secondary"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2517,7 +2754,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the capture SECONDARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
     labels:
       severity: critical
     notification_settings:
@@ -2594,7 +2831,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-ops
-    title: "Fleet · Alloy dark — ops"
+    title: "Fleet · Alloy dark — Ops"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2642,7 +2879,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-capture-primary
-    title: "Fleet · Alloy dark — capture primary (zcrypto)"
+    title: "Fleet · Alloy dark — Capture primary"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2690,7 +2927,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-capture-secondary
-    title: "Fleet · Alloy dark — capture secondary (zcrypto-red)"
+    title: "Fleet · Alloy dark — Capture secondary"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2738,7 +2975,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-zaccess
-    title: "Fleet · Alloy dark — zaccess"
+    title: "Fleet · Alloy dark — Edge"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2882,7 +3119,10 @@ rules:
 
   # Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
   # tunnel handshakes well under 300s from BOTH sides, so max() (not min()) catches whichever end
-  # went stale first. A fully dark bridgehead is zcrypto-alloy-dark-zaccess's job, not this rule's;
+  # went stale first. `by (host)` because this family is published by BOTH ends (the bridgehead's own
+  # probe and the ops-side probe): a bare max() collapses them, so the page could not name which end
+  # lost the link -- the first question asked. Grouping raises one instance per end instead, and the
+  # summary names it. A fully dark bridgehead is zcrypto-alloy-dark-zaccess's job, not this rule's;
   # a fully dark ops node is zcrypto-alloy-dark-ops's -- a live-but-stale tunnel keeps reporting a
   # growing age (wg show's last-handshake timestamp doesn't vanish), so this fires via the normal
   # threshold path, not NoData.
@@ -2898,7 +3138,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: max(zaccess_wireguard_handshake_age_seconds)
+          expr: max by (host) (zaccess_wireguard_handshake_age_seconds)
           instant: true
           refId: A
       - refId: C
@@ -2916,16 +3156,22 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The WireGuard tunnel's handshake age has been over 300s on at least one end for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes as measured from the `{{ $labels.host }}` end -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
     labels:
       severity: warning
     notification_settings:
       receiver: metrics
 
-  # min() across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
+  # min across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
   # "nas", written by this host's own probe timer) and the ops node's DSM probe (target="nas-dsm")
   # -- so whichever certificate is closest to expiry trips it first, regardless of which host
   # measured it. Same noDataState reasoning as zaccess-tunnel-stale: this metric is multi-host too.
+  #
+  # `by (host, target)`, not a bare min(): collapsing both labels told the operator that A certificate
+  # was expiring and not WHICH, across three tracked endpoints. Grouping makes each certificate its
+  # own alert instance and the summary names it. Consequence, stated: instance cardinality rises from
+  # 1 to up to 3, and the label change resolves the existing instance and re-fires under new labels at
+  # push time.
   - uid: zaccess-cert-expiring
     title: "Access · edge cert expiring"
     ruleGroup: zcrypto-access
@@ -2938,7 +3184,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: min(zaccess_tls_not_after_seconds) - time()
+          expr: min by (host, target) (zaccess_tls_not_after_seconds) - time()
           instant: true
           refId: A
       - refId: C
@@ -2956,7 +3202,7 @@ rules:
     execErrState: Alerting
     for: 1h
     annotations:
-      summary: "The soonest-expiring TLS certificate among the tracked zaccess endpoints (the tmux and nas edge vhosts, plus the NAS admin console) is under 14 days from expiry. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+      summary: "The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry. Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is now its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
     labels:
       severity: warning
     notification_settings:
