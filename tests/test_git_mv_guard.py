@@ -176,6 +176,22 @@ def test_cd_prefix_form_warns_against_the_named_repo(tmp_path):
     assert "new.txt" in r.stderr
 
 
+def test_unspaced_cd_separator_form_warns_against_the_named_repo(tmp_path):
+    """`cd <dir>;git mv` -- no space before the separator, which a shell accepts and people write.
+
+    A dir class of "any non-space" swallows the `;` into the path, so the guard resolves a
+    directory that does not exist and falls silent: a MISSED warning, not a wrong one.
+    """
+    other = tmp_path / "other-repo"
+    other.mkdir()
+    make_rm_state_repo(other)
+    clean_cwd = tmp_path / "clean"
+    clean_cwd.mkdir()
+    r = run_hook({"tool_input": {"command": f"cd {other};git mv old.txt new.txt"}}, cwd=clean_cwd)
+    assert r.returncode == 2
+    assert "new.txt" in r.stderr
+
+
 def test_unresolvable_dir_notes_instead_of_wrong_repo(tmp_path):
     clean_cwd = tmp_path / "clean"
     clean_cwd.mkdir()
