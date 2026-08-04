@@ -7,7 +7,9 @@ actually ran. /dev/tty gates run under a pty.
 
 import os
 import pty
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -30,9 +32,18 @@ case "$*" in
   *-d*) exec /bin/date "$@" ;;
 esac
 """
+# `is-active` mirrors REAL systemd: it prints the state and exits 0 only for active/reloading --
+# `activating` prints and exits 3. That is not a detail: the materialize unit is Type=oneshot, so an
+# hourly run in flight sits in `activating` for its whole duration, and a guard written as
+# `systemctl is-active --quiet` (exit code only) is blind to exactly the case it exists to catch.
 STUB_SYSTEMCTL = """#!/usr/bin/env bash
 echo "systemctl $*" >> "$CALL_LOG"
-case "$*" in *--wait*) exit ${FAKE_UNIT_RC:-0} ;; esac
+case "$*" in
+  is-active*) s="${FAKE_UNIT_ACTIVE:-inactive}"
+              echo "$s"
+              case "$s" in active|reloading) exit 0 ;; *) exit 3 ;; esac ;;
+  *--wait*) exit ${FAKE_UNIT_RC:-0} ;;
+esac
 exit 0
 """
 STUB_DU_SMALL = '#!/usr/bin/env bash\necho -e "1\\t$2"\n'
@@ -47,7 +58,7 @@ echo -e "1\\t$2"
 """
 
 
-def render(tmp_path, du_stub, panel_subdir="l2-panel"):
+def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     text = TEMPLATE.read_text()
     data = tmp_path / "data"
     nas = tmp_path / "nas"
@@ -55,7 +66,10 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel"):
     (data / "l2-panel" / "row.parquet").write_text("x")
     (data / "capture-reconciled").mkdir()
     (nas / "capture-segments").mkdir(parents=True)
-    for var, val in {**VARS, "ops_panel_subdir": panel_subdir}.items():
+    overrides = {"ops_panel_subdir": panel_subdir}
+    if data_dir is not None:
+        overrides["ops_data_dir"] = data_dir
+    for var, val in {**VARS, **overrides}.items():
         text = text.replace("{{ %s }}" % var, val.format(data=data, nas=nas))
     assert "{{" not in text, "unrendered template var left behind"
     script = tmp_path / "zcrypto-panel-regenerate"
@@ -73,6 +87,15 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel"):
 
 def calls(log):
     return log.read_text().splitlines() if log.exists() else []
+
+
+# Step 1 is two calls, not one: the timer stop, then the in-flight check the stop does NOT cover
+# (stopping a timer never touches a run already under way).
+STEP1 = [
+    "systemctl stop zcrypto-panel-materialize.timer",
+    "systemctl is-active zcrypto-panel-materialize.service",
+]
+TIMER_RESTART = "systemctl start zcrypto-panel-materialize.timer"
 
 
 def run_tty(script, env, replies, args=()):
@@ -106,10 +129,7 @@ def test_eta_over_deadline_refuses_and_restarts_timer(tmp_path):
     # the deadline comparison can be deleted outright and the test still passes (measured).
     assert "02:25 UTC auto-reboot" in r.stderr
     assert panel.exists()  # nothing deleted
-    assert calls(log) == [
-        "systemctl stop zcrypto-panel-materialize.timer",
-        "systemctl start zcrypto-panel-materialize.timer",
-    ]
+    assert calls(log) == [*STEP1, TIMER_RESTART]
 
 
 def test_boolean_override_refused(tmp_path):
@@ -137,7 +157,7 @@ def test_a_failing_du_refuses_at_the_sizing_step(failing, tmp_path):
     assert "no controlling terminal" not in r.stderr
     # Timer deliberately left stopped: the hourly materialize must not resume against an input tree
     # this host could not even stat, and the still-armed dead-man check pages on the missed ping.
-    assert calls(log) == ["systemctl stop zcrypto-panel-materialize.timer"]
+    assert calls(log) == STEP1
 
 
 def test_no_tty_refuses_restarts_timer_and_deletes_nothing(tmp_path):
@@ -148,10 +168,22 @@ def test_no_tty_refuses_restarts_timer_and_deletes_nothing(tmp_path):
     assert r.returncode == 3
     assert "no controlling terminal" in r.stderr
     assert panel.exists()  # nothing deleted
-    assert calls(log) == [
-        "systemctl stop zcrypto-panel-materialize.timer",
-        "systemctl start zcrypto-panel-materialize.timer",
-    ]
+    assert calls(log) == [*STEP1, TIMER_RESTART]
+
+
+@pytest.mark.parametrize("state", ["active", "activating"])
+def test_an_in_flight_materialize_run_refuses_and_restarts_the_timer(state, tmp_path):
+    # Stopping the TIMER does not stop a run already under way, and step 4's `rm -rf` under a live
+    # materialize half-deletes a tree the running process believes it owns. `activating` is the
+    # state that matters: the unit is Type=oneshot, so that is where an hourly run spends its whole
+    # runtime -- and it is precisely the state `systemctl is-active`'s EXIT CODE calls not-active.
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    env["FAKE_UNIT_ACTIVE"] = state
+    r = subprocess.run(["setsid", str(script)], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    assert r.returncode == 3
+    assert "in flight" in r.stderr  # WHICH refusal: setsid's no-tty gate is also rc 3
+    assert panel.exists()  # nothing deleted
+    assert calls(log) == [*STEP1, TIMER_RESTART]
 
 
 def test_empty_rendered_panel_subdir_refuses_before_touching_anything(tmp_path):
@@ -165,6 +197,19 @@ def test_empty_rendered_panel_subdir_refuses_before_touching_anything(tmp_path):
     assert calls(log) == []  # refused before the timer was even touched
     assert panel.exists()
     assert (panel.parent / "capture-reconciled").exists()  # the sibling tree the rm -rf would take
+
+
+def test_empty_rendered_data_dir_refuses_before_touching_anything(tmp_path):
+    # The OTHER half of the same rendered path. An empty ops_data_dir puts PANEL_ROOT at
+    # "/<subdir>" -- a path at the FILESYSTEM root, outside anything this host's data layout owns --
+    # and the subdir guard alone says nothing about it, because the subdir is perfectly non-empty.
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL, data_dir="")
+    r = subprocess.run(["setsid", str(script)], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    assert r.returncode == 2
+    assert "empty half" in r.stderr
+    assert calls(log) == []  # refused before the timer was even touched
+    assert panel.exists()
+    assert (panel.parent / "capture-reconciled").exists()
 
 
 def test_reason_override_crosses_the_deadline(tmp_path):
@@ -184,6 +229,51 @@ def test_abort_at_pause_gate_deletes_nothing(tmp_path):
     assert "systemctl start zcrypto-panel-materialize.timer" in calls(log)  # resumed
 
 
+def run_with_ctty_but_piped_stdin(script, env, piped_reply, deadline=3.0):
+    """Controlling pty attached (so the tty gate opens) but stdin is a PIPE carrying the reply.
+
+    The CHANNEL is the subject. Every other pty test here drives the gate through the pty, which IS
+    stdin there, so a `read reply` written without `< /dev/tty` passes all of them. Here the gate
+    finds a controlling terminal, nobody types on it, and the word the operator never said arrives
+    on a pipe. Returns the exit code, or None if still running at the deadline (blocked on
+    /dev/tty -- the correct behavior). Kills it either way.
+    """
+    r, w = os.pipe()
+    pid, master = pty.fork()  # child: the pty slave is fd 0/1/2 AND the controlling terminal
+    if pid == 0:
+        try:
+            os.environ.update(env)
+            os.close(w)
+            os.dup2(r, 0)  # stdin becomes the pipe; the pty stays the controlling terminal
+            os.close(r)
+            os.execv(str(script), [str(script)])
+        finally:
+            os._exit(127)  # a failed execv must never leave a forked pytest running
+    os.close(r)
+    os.write(w, piped_reply.encode() + b"\n")
+    os.close(w)
+    status, until = None, time.monotonic() + deadline
+    while time.monotonic() < until:
+        wpid, st = os.waitpid(pid, os.WNOHANG)
+        if wpid:
+            status = st
+            break
+        time.sleep(0.05)
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    os.close(master)
+    return None if status is None else os.waitstatus_to_exitcode(status)
+
+
+def test_pipe_cannot_drive_the_paused_gate(tmp_path):
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    rc = run_with_ctty_but_piped_stdin(script, env, "paused")
+    assert rc != 0  # rc 3 (aborted) or None (still waiting on the silent tty); 0 means it converged
+    assert panel.exists()  # the point of no return was never crossed
+    assert calls(log) == STEP1  # step 1 only -- no rebuild, and no timer restart either (killed)
+
+
 def test_happy_path_order_and_checklist(tmp_path):
     script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
     rc, out = run_tty(script, env, ["paused"])
@@ -191,9 +281,9 @@ def test_happy_path_order_and_checklist(tmp_path):
     assert not panel.exists()
     seq = calls(log)
     assert seq == [
-        "systemctl stop zcrypto-panel-materialize.timer",
+        *STEP1,
         "systemctl start --wait zcrypto-panel-materialize.service",
-        "systemctl start zcrypto-panel-materialize.timer",
+        TIMER_RESTART,
     ]
     assert "NAS" in out and "Un-pause" in out and "ops_panel_timer_hold" in out
 

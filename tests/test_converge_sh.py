@@ -8,8 +8,10 @@ only on exit codes.
 import os
 import pty
 import shutil
+import signal
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "infra" / "ansible" / "scripts" / "converge.sh"
@@ -66,6 +68,53 @@ def run_with_tty(script, args, reply):
         pass
     _, status = os.waitpid(pid, 0)
     return os.waitstatus_to_exitcode(status), out.decode(errors="replace")
+
+
+def run_with_ctty_but_piped_stdin(script, args, piped_reply, deadline=3.0):
+    """Controlling pty attached (so the tty gate opens) but stdin is a PIPE carrying the reply.
+
+    The CHANNEL is the whole subject here. Every other test in this file drives the confirm through
+    the pty, so a script that read `reply` from stdin instead of /dev/tty passes all of them
+    (measured) -- the pty IS stdin there. This shape separates the two: the gate finds a controlling
+    terminal, nobody types on it, and the answer the operator never gave arrives on a pipe.
+
+    Returns the exit code, or None if the process was still running at the deadline (blocked on
+    /dev/tty -- the correct behavior). Kills it either way.
+    """
+    r, w = os.pipe()
+    pid, master = pty.fork()  # child: the pty slave is fd 0/1/2 AND the controlling terminal
+    if pid == 0:
+        try:
+            os.close(w)
+            os.dup2(r, 0)  # stdin becomes the pipe; the pty stays the controlling terminal
+            os.close(r)
+            os.execv(str(script), [str(script), *args])
+        finally:
+            os._exit(127)  # a failed execv must never leave a forked pytest running
+    os.close(r)
+    os.write(w, piped_reply.encode() + b"\n")
+    os.close(w)
+    status, until = None, time.monotonic() + deadline
+    while time.monotonic() < until:
+        wpid, st = os.waitpid(pid, os.WNOHANG)
+        if wpid:
+            status = st
+            break
+        time.sleep(0.05)
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    os.close(master)
+    return None if status is None else os.waitstatus_to_exitcode(status)
+
+
+def test_pipe_cannot_drive_the_confirm(tmp_path):
+    script = make_harness(tmp_path)
+    rc = run_with_ctty_but_piped_stdin(script, ["site.yml", "--limit", "zcrypto-red"], "zcrypto-red")
+    # rc 3 (aborted) and None (still waiting on the silent /dev/tty) are both correct; 0 means the
+    # pipe answered the confirm and the real pass ran.
+    assert rc != 0
+    assert len(invocations(tmp_path)) == 1  # preview only -- the real pass never ran
 
 
 def test_refuses_without_limit(tmp_path):
