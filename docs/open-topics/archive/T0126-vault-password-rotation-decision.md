@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: now — the decision is the work; one attended answer disposes of it
+status: resolved
 ---
 
 # Vault password rotation after the red-phase transcript exposure
@@ -19,6 +18,10 @@ The vault password decrypts every fleet secret including the live Kraken trade k
 - Rotation mechanics if chosen: re-encrypt `infra/ansible/vault-password.sops.yaml`'s `vault_password` value with a new password, then `ansible-vault rekey` every vaulted file with the old/new pair — attended, since it touches the live trade key's vault.
 - The guard that prevents recurrence landed in the same iteration: `vault-pass.sh` now refuses `ansible-inventory --host/--list/--vars` ancestries, and future red phases stub sops via `ZCRYPTO_SOPS_BIN` (the test harness already does).
 
-## Suggested next steps
+## Resolution
 
-- Owner decides: rotate (attended session runs the rekey, ~30 min, no fleet converge needed — the vault files are controller-side), or accept the residual with the containment evidence above as the recorded reason and archive this topic as a conscious drop.
+**Accepted, not rotated — owner's decision, 2026-08-04.** The residual is carried rather than acted on, because a **comprehensive credential rotation round** is planned for the run-up to go-live, and rotating this one secret now would be redone there anyway. Rotating early and then continuing to develop re-opens the same class of exposure with a fresh secret, so one late round is the stronger posture.
+
+The deferred action is **registered, not merely mentioned**: the rotation round is a sub-item of [[T0085]] (rescoped in the same change from an arm64-only topic into the pre-go-live carrier), ripe as the **very last step before final go-live**, with the full credential inventory enumerated there.
+
+**What would re-open this decision.** The acceptance rests entirely on that round happening. If T0085's rotation sub-item is dropped, deferred past go-live, or narrowed to exclude the vault password, this judgement does not carry over — it must be re-decided against the exposure recorded above, not inherited. That conditional is the reason this file is archived rather than deleted.
