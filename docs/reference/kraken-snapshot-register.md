@@ -112,10 +112,12 @@ The master plan marks these facts as externally owned and requires re-confirmati
 third-party fact that can move in any month and a stale one is silent. **Each sweep bumps the header even when nothing
 changed** — otherwise the next reader cannot tell a re-confirmed register from an abandoned one.
 
-| Sweep | Fetched at (UTC) | Full response | Raw sha256 | Candidate-basket verdict |
-| -- | -- | -- | -- | -- |
-| #0 (Phase 0, iter-002) | 2026-07-07T03:29:00+00:00 | 1509 pairs / 809 assets | `e1510e98…3226e3` | 12/12 online + margin-enabled; the reference all later sweeps compare against |
-| #1 (monthly, 2026-08-04) | 2026-08-04T10:40:09+00:00 | 1429 pairs / 824 assets | `89e15dba…922f24` | **UNCHANGED** — all 12 still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases (re-rendered and diffed against the committed table: no cell moved) |
+| Sweep | Fetched at (UTC) | Full response | Raw sha256 | Candidate-basket verdict | Account fee tier (attended) |
+| -- | -- | -- | -- | -- | --- |
+| #0 (Phase 0, iter-002) | 2026-07-07T03:29:00+00:00 | 1509 pairs / 809 assets | `e1510e98…3226e3` | 12/12 online + margin-enabled; the reference all later sweeps compare against | **Tier 1, \$0 30-day volume** — read from the logged-in Fee tab the same day (T0000), which is what makes `kraken-fee-schedule.md` authoritative |
+| #1 (monthly, 2026-08-04) | 2026-08-04T10:40:09+00:00 | 1429 pairs / 824 assets | `89e15dba…922f24` | **UNCHANGED** — all 12 still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases (re-rendered and diffed against the committed table: no cell moved) | **not re-read** — recorded blank rather than inherited; at \$0 volume the tier cannot have moved, but *cannot have* is not *was checked* |
+
+The last column exists because the account's own tier is the one fact here that **no endpoint can supply** — it sits behind a login, and `cli/costs/fees.py` encodes the ladder it selects from. A sweep that silently carried the previous row's tier forward would manufacture exactly the false confirmation this log was built to make impossible, so an unperformed read is recorded as *not re-read*, never as unchanged.
 
 **Sweep #1 note — the basket held while Kraken's universe did not.** The full response lost **80 pairs net** and gained
 **15 assets** between #0 and #1, so the endpoint is demonstrably live and churning; none of that churn touched the
