@@ -45,7 +45,7 @@
     # -e engine_image_digest=... restarts the LIVE trade engine. Tags must be named explicitly.
     - name: refuse an un-tagged run on the live primary
       ansible.builtin.assert:
-        that: ansible_run_tags != ['all'] or ansible_skip_tags | length > 0
+        that: ansible_run_tags != ['all'] or 'engine' in ansible_skip_tags
         fail_msg: >-
           This run names no tags — on the live primary that sweeps in every play, including the
           engine play. Scope it explicitly: --tags capture, --tags engine, or --skip-tags engine.

@@ -240,6 +240,34 @@ def test_untagged_primary_refusal():
     assert truthy(assert_that(task), skip_scoped)
 
 
+# --- guard 4 tightened (spec 00083 D7): only --skip-tags forms naming engine satisfy it ----------
+
+
+def _untag_guard():
+    tasks = load_tasks(SITE)
+    return find_task(tasks, "refuse an un-tagged run on the live primary")
+
+
+def test_unrelated_skip_tags_now_refused():
+    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["something-else"]}
+    assert not truthy(assert_that(_untag_guard()), v)
+
+
+def test_skip_tags_engine_passes():
+    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]}
+    assert truthy(assert_that(_untag_guard()), v)
+
+
+def test_explicit_tags_still_pass():
+    v = {"ansible_run_tags": ["capture"], "ansible_skip_tags": []}
+    assert truthy(assert_that(_untag_guard()), v)
+
+
+def test_bare_run_still_refused():
+    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
+    assert not truthy(assert_that(_untag_guard()), v)
+
+
 WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
 
 
