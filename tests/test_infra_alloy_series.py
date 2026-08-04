@@ -255,6 +255,10 @@ ACCESS_REQUIRED = [
     "node_filesystem_size_bytes",
     "node_network_receive_bytes_total",
     "node_network_transmit_bytes_total",
+    # The `Node · a node-exporter collector is failing` rule (alerts.yaml) evaluates
+    # `min by (host) (node_scrape_collector_success)` with no host selector -- meant to cover
+    # every host. Without this admitted here, zaccess is structurally invisible to that rule.
+    "node_scrape_collector_success",
     # The did-the-timer-RUN discriminators (the ops green-when-blind lesson, 2026-07-28): without
     # them a dead probe timer serves its last gauges forever and the tunnel-stale/cert alerts can
     # never fire.
