@@ -1,13 +1,13 @@
 ---
 status: partial
-status stays `partial` because the routine recurs — ripe_when: monthly from 2026-09-04 (sweep #1's stamp + 1 month), and unconditionally before the go/no-go — whichever comes first. The trigger is readable from the register itself: `docs/research/01.1.kraken-snapshot-register.md`'s `**Fetched at:**` line versus today
+status stays `partial` because the routine recurs — ripe_when: monthly from 2026-09-04 (sweep #1's stamp + 1 month), and unconditionally before the go/no-go — whichever comes first. The trigger is readable from the register itself: `docs/reference/kraken-snapshot-register.md`'s `**Fetched at:**` line versus today
 ---
 
 # The master plan's go-live re-confirmation sweep is mandated in prose and registered nowhere
 
 ## Context — what
 
-`docs/research/00.master-plan.md` marks a set of externally-owned facts with ⏱ and states they "must be reconfirmed at Phase 0 and again at go-live": fees and fee tiers, borrow/rollover rates, tradeable pair lists, MiCA/regulatory status, tax rules, and market-data pricing. Phase 0 did that — `docs/research/01.1.kraken-snapshot-register.md` carries **`Fetched at: 2026-07-07T03:29:00+00:00`**.
+`docs/research/00.master-plan.md` marks a set of externally-owned facts with ⏱ and states they "must be reconfirmed at Phase 0 and again at go-live": fees and fee tiers, borrow/rollover rates, tradeable pair lists, MiCA/regulatory status, tax rules, and market-data pricing. Phase 0 did that — `docs/reference/kraken-snapshot-register.md` carries **`Fetched at: 2026-07-07T03:29:00+00:00`**.
 
 Nothing registers the second half. The obligation exists only as plan prose, and `.claude/rules/open-topics.md` is explicit that prose is not registration: a deferred action is only tracked if it lives in a topic. Surfaced by the 2026-07-30 Phase-6a completion audit.
 
@@ -32,7 +32,7 @@ A stale register does not announce itself. The failure mode is quiet: the go/no-
 
 ## Done so far
 
-- **The routine is registered and its first sweep has run — sweep #1, 2026-08-04** (`docs/research/01.1.kraken-snapshot-register.md`). The register's header now always carries the latest sweep, and a **re-confirmation log** table records each one with its own timestamp, response counts, raw hash and verdict — which is the mechanism this topic existed to create: "re-confirmed, identical" is now distinguishable from "never re-run" by reading one table.
+- **The routine is registered and its first sweep has run — sweep #1, 2026-08-04** (`docs/reference/kraken-snapshot-register.md`). The register's header now always carries the latest sweep, and a **re-confirmation log** table records each one with its own timestamp, response counts, raw hash and verdict — which is the mechanism this topic existed to create: "re-confirmed, identical" is now distinguishable from "never re-run" by reading one table.
 - **Sweep #1's verdict: UNCHANGED.** All twelve §3 candidates still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases — re-rendered through the same `cli/snapshot/` code and diffed cell-by-cell. Independently re-derived at review, including a fresh live fetch ~61 minutes later that also matched.
 - **A changed raw hash is not a changed fact, and the register now says so.** Kraken's full response moved (1509 → 1429 pairs, 809 → 824 assets) while our basket held; review computed the actual set difference from both archived snapshots — **13 pairs added / 93 removed, 15 assets added / 0 removed** — and confirmed none of the twelve candidates or their assets appear in any changed set. The verdict is therefore read from the rendered table, never the hash; treating hash churn as fact churn would raise a false alarm every month.
 

@@ -68,7 +68,7 @@ def _write_full_universe(root: Path, row_fn) -> None:
 
 
 def test_pair_keys_content():
-    # Independently transcribed from docs/research/01.1.kraken-snapshot-register.md's candidate
+    # Independently transcribed from docs/reference/kraken-snapshot-register.md's candidate
     # basket table -- the ten EUR-quoted rows only (ETH/BTC and SOL/BTC are BTC-quoted, excluded).
     expected = {
         "BTC": "XXBTZEUR",

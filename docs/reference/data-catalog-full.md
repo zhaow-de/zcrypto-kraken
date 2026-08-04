@@ -94,7 +94,7 @@ The pre-registered out-of-time holdout pull: 100 bars/pair, 2026-04-01 → 2026-
 
 ### `snapshots` + `universe`
 
-**`snapshots`** — venue point-in-time reference snapshots (`AssetPairs`/`Assets`: margin/leverage, order minimums, symbol aliases) from `cli/snapshot/`, each content-hashed. Dataset root `data/snapshots/`; see `docs/research/01.1.kraken-snapshot-register.md` for the live register and provenance.
+**`snapshots`** — venue point-in-time reference snapshots (`AssetPairs`/`Assets`: margin/leverage, order minimums, symbol aliases) from `cli/snapshot/`, each content-hashed. Dataset root `data/snapshots/`; see `docs/reference/kraken-snapshot-register.md` for the live register and provenance.
 **`universe`** — the derived mechanical universe selection (`cli/universe/`), built from a snapshot plus the OHLC basket's median volume. Dataset root `data/universe/`; see `docs/universe/point-in-time-universe.md` for the current point-in-time selection.
 
 ## custody

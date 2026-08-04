@@ -38,6 +38,50 @@ missing and none have lost margin eligibility since the master plan was drafted.
 2–10× on the ten EUR-quoted majors, and a lower 2–4×/2–5× band on the two BTC-quoted relative-value legs (ETH/BTC,
 SOL/BTC) — consistent with §3's "leverage caps per pair to be pulled from `AssetPairs` as ground truth" note.
 
+## Fee schedule, borrow rate & margin bands
+
+| Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow rate (base asset) | Collateral value | Margin call | Margin stop | Long limit | Short limit |
+|---|---|---|---|---|---|---|---|---|---|
+| BTC/EUR | 0.4 | 0.25 | 12 | 0.01 | 0.99 | 80 | 40 | 130 | 100 |
+| ETH/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.99 | 80 | 40 | 2300 | 2300 |
+| SOL/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 16000 | 16000 |
+| XRP/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.95 | 80 | 40 | 1400000 | 1400000 |
+| ADA/EUR | 0.4 | 0.25 | 12 | 0.04 | 0.925 | 80 | 40 | 4400000 | 3100000 |
+| LINK/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.9 | 80 | 40 | 63000 | 32000 |
+| DOGE/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 18000000 | 11000000 |
+| LTC/EUR | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 17000 | 11000 |
+| DOT/EUR | 0.4 | 0.25 | 12 | 0.024 | 0.925 | 80 | 40 | 390000 | 340000 |
+| AVAX/EUR | 0.4 | 0.25 | 12 | 0.03 | 0.9 | 80 | 40 | 79000 | 29000 |
+| ETH/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.99 | 80 | 40 | 1000 | 800 |
+| SOL/BTC | 0.4 | 0.25 | 12 | 0.02 | 0.925 | 80 | 40 | 6900 | 5100 |
+
+Added at sweep #1 (2026-08-04), closing a gap the sweep's own review found: the register re-confirmed
+status, margin, leverage and minimums while capturing **none** of the ⏱ cost facts the master plan
+names as externally owned. The fee ladder and `margin_rate` are public and were available all along —
+`margin_rate` **is** the borrow/rollover rate, and it lives on the *asset*, not the pair. Rendered as
+base tier plus ladder depth; the full 12-tier ladders live in the snapshot JSON so a future diff can
+name *which* tier moved.
+
+**What sweep #1 measures:** taker **0.40 %** / maker **0.25 %** at the base tier, uniform across all
+twelve pairs (12 tiers each); borrow rates spread 0.01–0.04 by asset (BTC cheapest, ADA dearest);
+margin call 80 / stop 40 uniform; position limits varying by three orders of magnitude.
+
+**An open question this raises about the cost model, stated rather than resolved.**
+`CrossfreqSystemConfig.fee_per_side = 0.0040` is commented *"Kraken tier-1 MAKER, schedule effective
+2026-07-09"* — but today's public tier-1 **maker** is 0.0025, and 0.0040 is today's **taker**. Either
+the label always misidentified which side it is, or the schedule moved between 2026-07-09 and now.
+**Sweep #0 cannot arbitrate, because it never captured fees** — which is precisely the gap this
+section closes, and from sweep #2 onward the question is answerable by diff. Two things do not
+change on either reading: the constant itself must stay frozen (record 44's figures reproduce only
+at `0.0040 + 0.0020 = 0.006`, and its own comment says so), and [[T0090]]'s ruling does not depend on
+the label, because it re-quoted maker and taker as separate bases rather than trusting one constant.
+If the resolution turns out to be "the schedule moved", the affected downstream number is the
+registered cost basis, and the honest read is the one T0090 already gives: a range, not a point.
+
+**Still account-gated:** the *account's own* fee tier depends on 30-day volume and needs the live
+account. This section is the **public schedule at the base tier** — the right anchor for a funded
+account starting at zero volume, and the wrong one the moment volume climbs.
+
 ## Symbol-alias ledger
 
 | Kraken code | Common symbol |
