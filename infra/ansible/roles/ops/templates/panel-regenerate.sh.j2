@@ -15,12 +15,17 @@ PANEL_ROOT="{{ ops_data_dir }}/{{ ops_panel_subdir }}"
 CANONICAL="{{ ops_nas_mount }}/{{ ops_capture_subdir }}"
 OVERLAY="{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
 
-# Render guard, before anything is touched: an EMPTY ops_panel_subdir makes PANEL_ROOT the ops data
-# root itself, and this script's payload is `rm -rf` on it -- the reconciled overlay, the
-# liquidations tree and the textfile dir would go with the panel. `set -u` cannot catch it (the var
-# is set, to a string with an empty component) and Ansible refuses only UNDEFINED vars, not empty
-# ones, so the check belongs here.
-[ -n "{{ ops_panel_subdir }}" ] || { echo "refusing: the panel subdirectory rendered empty, which would aim rm -rf at the whole data root" >&2; exit 2; }
+# Render guard, before anything is touched: this script's payload is `rm -rf "$PANEL_ROOT"`, and
+# PANEL_ROOT is TWO rendered halves -- either one empty aims it somewhere it must never point. An
+# empty ops_panel_subdir makes it the ops data root itself (the reconciled overlay, the liquidations
+# tree and the textfile dir would go with the panel); an empty ops_data_dir makes it "/<subdir>", a
+# path at the filesystem root, outside anything this host's data layout owns. `set -u` cannot catch
+# either (each var IS set, to a string with an empty component) and Ansible refuses only UNDEFINED
+# vars, not empty ones, so the check belongs here.
+if [ -z "{{ ops_data_dir }}" ] || [ -z "{{ ops_panel_subdir }}" ]; then
+  echo "refusing: the panel root rendered from an empty half ('{{ ops_data_dir }}' + '{{ ops_panel_subdir }}'), which would aim rm -rf at the whole data root or the filesystem root" >&2
+  exit 2
+fi
 
 override=""
 if [ "$#" -gt 0 ]; then
@@ -42,6 +47,20 @@ fi
 echo "== step 1: stopping the hourly timer =="
 systemctl stop zcrypto-panel-materialize.timer
 echo "timer stopped. Reminder: a converge re-arms it unless -e ops_panel_timer_hold=true is passed."
+
+# Stopping the TIMER does not stop a run already under way, and step 4's `rm -rf` beneath a live
+# materialize half-deletes a tree that process believes it owns. Read the STATE STRING, never
+# `is-active --quiet`'s exit code: this unit is Type=oneshot, so an hourly run in flight sits in
+# `activating` for its entire runtime, and is-active exits 0 only for active/reloading -- the
+# exit-code form walks straight past exactly the case this refuses.
+unit_state=$(systemctl is-active zcrypto-panel-materialize.service || true)
+case "$unit_state" in
+  active | activating | reloading)
+    echo "refusing: an hourly materialize run is in flight (state: $unit_state); re-run once it completes. Timer restarted, nothing deleted." >&2
+    systemctl start zcrypto-panel-materialize.timer
+    exit 3
+    ;;
+esac
 
 echo "== step 2: sizing the rebuild =="
 # One assignment per input, never both inside one arithmetic expansion: there the assignment takes
