@@ -501,6 +501,45 @@ def test_engine_parity_echo_mirrors_the_negated_assert():
     assert not truthy(conds, {**v_overridden, "canary_override": "true"})
 
 
+# --- fix round 1 (cold review M1): the mirror's original 7 tests never read the assert's/probe's
+# `when:` side, so a fail-open rewrite of `is not skipped` or a typo'd register name left all 90
+# green while the gate silently stood down. These three pin exactly what wave-1's own when-side
+# tests pin for the capture block (test_canary_parity_refuses_an_unreachable_secondary and
+# test_canary_probe_activates_only_on_an_actual_repin).
+ENGINE_UNREACHABLE = {"unreachable": True, "msg": "Failed to connect to the host via ssh"}
+
+
+def test_engine_parity_when_reaches_the_refusal_on_an_unreachable_secondary():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_secondary_digest_probe": ENGINE_UNREACHABLE,
+        "canary_override": "",
+    }
+    assert truthy(when_conditions(guard), v), "the probe RAN (unreachable is not skipped) -- the assert must evaluate"
+    # pins the fail-closed MECHANISM textually: `stdout is defined` would also reach a "true" when
+    # here (wrongly) once the unreachable fixture happens to lack `stdout` -- the mechanism, not just
+    # the outcome, must be `is not skipped`.
+    assert "is not skipped" in guard["when"]
+
+
+def test_engine_parity_probe_engages_on_an_actual_repin():
+    tasks = load_tasks(ENGINE)
+    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
+    v = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_running_parity_probe": {"stdout": "ghcr.io/x/y@sha256:" + "cd" * 32},
+    }
+    assert truthy(when_conditions(probe), v)
+
+
+def test_engine_parity_when_references_the_correct_probe_register_name():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    assert "engine_secondary_digest_probe" in guard["when"]
+
+
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
 # The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
 # that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
