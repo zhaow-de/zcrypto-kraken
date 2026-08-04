@@ -18,6 +18,7 @@ Copied verbatim from the spec. Every task's requirements implicitly include this
 - **New uids**: `zcrypto-fleet`, `zcrypto-integrity`, `zcrypto-engine`. `zcrypto-main` is NOT reused and NOT deleted by tooling — its removal is an owner step at closeout.
 - **Filenames must match `infra/grafana/*-dashboard.json`** — that is `grafana-push.sh`'s glob. A non-matching name is committed, tested, and never pushed, silently.
 - **`graphTooltip: 1`** (Shared Crosshair) on all three metric boards. Not on `Logs`.
+- **`tags: []` on all four boards** — purged, not rewritten (spec D1).
 - **Every panel expression carries a literal `host=` matcher or `$host`.** `instance` collides fleet-wide (every Alloy binds `127.0.0.1:12345`); `host` is the only discriminator.
 - **P1 — a panel serving a rule plots the RULE'S EXPRESSION, not the rule's family**, divisor included.
 - **P2 — a panel serving a rule encodes that rule's threshold as a marked `fieldConfig.thresholds.steps` value**; per-host field overrides where hosts have different bars, never one shared ladder.
@@ -25,7 +26,7 @@ Copied verbatim from the spec. Every task's requirements implicitly include this
 - **P4 — every monotone counter gets its recent-delta companion**, in the form matching its semantics (`increase` / `delta` / `max_over_time` — spec D2's table).
 - **P5 — legends are `{{host}}/{{job}}`** for logship and `process_*`.
 - **P6 — every metric board carries a restart annotation** over `changes(process_start_time_seconds[5m]) > 0`; silent on `zaccess` by construction.
-- **`$host` variables pin their regex** to `nas|ops|zcrypto|zcrypto-red|zaccess` with `allValue` left EMPTY.
+- **`$host` is a CUSTOM variable with `label : value` pairs** — `Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess` — multi, includeAll, `allValue` left EMPTY. This supersedes the `label_values(...)` + regex form: a query variable cannot carry display labels, and a fixed option list is a stronger pin than a regex anyway.
 - **Operator-facing text**: no `T<NNNN>`, `spec <NNNNN>`, `iter-<N>`, `Phase <N>`, `WP<N>` in any panel title, panel description, alert rule title, alert summary, or notification template output. Enforced by `tests/test_internal_terms_not_operator_visible.py`.
 - **Host display vocabulary** (rule titles, summaries, panel prose, notification text — **not** label values, **not** legends): `zcrypto` → Capture primary, `zcrypto-red` → Capture secondary, `ops` → Ops, `nas` → NAS, `zaccess` → Edge.
 - **No metric label value, `external_labels` entry, inventory entry, or hostname changes.** Renaming changes series identity.
@@ -58,8 +59,6 @@ def test_cycle_duration_is_absent_before_the_first_cycle():
     """It must not publish a gauge default of 0 — a false 'the last cycle took 0 seconds'."""
     registry = CollectorRegistry()
     gauges = _CycleGauges(registry=registry)
-    names = {m.name for m in registry.collect()}
-    assert "zcrypto_engine_cycle_duration" not in names
     assert registry.get_sample_value("zcrypto_engine_cycle_duration_seconds") is None
 
 
@@ -115,6 +114,67 @@ Then: `uv run pytest` — the engine journal/cycle tests exercise these gauges; 
 uv run pre-commit run -a
 git add cli/engine/command.py tests/test_engine_metrics.py
 git commit -m "fix(engine): retire dropped target weights and stop publishing a false zero duration"
+```
+
+---
+
+### Task 1b: The carried ledger-records gauge
+
+Spec D3's "carried rider". **This iteration carries T0044 and the memo is the ruling that says so** — the gauge has no other carrier, and shipping without it returns T0044 to waiting on a human ledger correction that may never come. Code, so it lands beside Task 1 rather than with the panels.
+
+**Files:**
+- Modify: `cli/archive/command.py` — `_write_textfile()`
+- Test: `tests/test_archive_reconcile.py` (find the module that already covers `_write_textfile` / `_totals`; do not create a new one if one exists)
+
+**Interfaces:**
+- Produces: `zcrypto_reconcile_ledger_records`, a gauge. Task 7 renders it as a second series on the reconcile row's "Gap totals" panel.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+def test_textfile_publishes_the_ledger_record_count(tmp_path):
+    """Every reconcile counter is summed from the whole ledger, so a reset has no visible cause
+    without this. It explains the silent empty-ledger path too, which a corrections counter cannot."""
+    out = tmp_path / "reconcile.prom"
+    _write_textfile(out, now=..., totals={..., "ledger_records": 4211}, lags={...})
+    body = out.read_text()
+    assert "# TYPE zcrypto_reconcile_ledger_records gauge" in body
+    assert "zcrypto_reconcile_ledger_records 4211" in body
+```
+
+Fill the `...` from the existing tests in that module — reuse their fixture shape rather than inventing one.
+
+- [ ] **Step 2: Run it and confirm it fails**
+
+Run: `uv run pytest tests/test_archive_reconcile.py -v` — expect FAIL, the family is absent.
+
+- [ ] **Step 3: Implement**
+
+Add `ledger_records` to `_totals()` (it already walks every record — count them in that same pass, no second read), then one `_emit(...)` call beside `trade_dedup_rows_total`:
+
+```python
+    _emit(
+        "ledger_records",
+        "gauge",
+        "Records in the append-only reconcile ledger this cycle summed its totals from.",
+        [("", totals["ledger_records"])],
+    )
+```
+
+A **gauge**, not a counter: it must be able to fall, since a correction removing records is exactly the event it exists to explain.
+
+- [ ] **Step 4: Verify, including the keep-list**
+
+Run: `uv run pytest tests/test_archive_reconcile.py tests/test_infra_alloy_series.py -v`
+
+The ops keep-regex admits `zcrypto_reconcile_.*` as a wildcard, so no config change is needed — but `test_infra_alloy_series.py` maintains a hand-curated published-family list per host, so **add the family there** or its own guard goes stale.
+
+- [ ] **Step 5: Commit**
+
+```bash
+uv run pre-commit run -a
+git add cli/archive/command.py tests/test_archive_reconcile.py tests/test_infra_alloy_series.py
+git commit -m "feat(archive): publish the reconcile ledger record count so a counter reset has a visible cause"
 ```
 
 ---
@@ -229,16 +289,20 @@ Per spec D11: `Access · WireGuard tunnel stale` → `max by (host) (...)`; `Acc
 
 ```bash
 uv run python -c "
-import yaml
+import re, yaml
 rs = yaml.safe_load(open('infra/grafana/alerts.yaml'))['rules']
-bad = [(r['title'], r.get('annotations',{}).get('summary','')) for r in rs
-       if any(h in (r['title'] + r.get('annotations',{}).get('summary','')) for h in ('zcrypto-red','zcrypto','zaccess'))]
-[print('LEAK:', t, '::', s[:90]) for t, s in bad]
+# A hostname used AS a hostname -- a parenthetical, or a bare token after an em-dash or 'on'.
+pat = re.compile(r'\((?:zcrypto|zcrypto-red|zaccess)\)|[—-] (?:zcrypto|zcrypto-red|zaccess)\b|\bon (?:zcrypto|zcrypto-red)\b')
+bad = [(r['title'], m.group(0)) for r in rs
+       for m in [pat.search(r['title'] + ' :: ' + r.get('annotations',{}).get('summary',''))] if m]
+[print('LEAK:', t, '::', m) for t, m in bad]
 print('leaks:', len(bad))
 "
 ```
 
-Expected: `leaks: 0`. A summary is read on a phone with nothing open; a hostname there is exactly the leak the vocabulary exists to remove. (Label *selectors* inside expressions are unaffected — this checks titles and summaries only.)
+Expected: `leaks: 0`.
+
+**The sweep targets hostnames used AS hostnames, and that narrowness is deliberate.** A naive substring search over titles and summaries hits **29 rules** today, almost all benignly: CLI command names (`zcrypto engine gate-export`), unit and container names (`zcrypto-archive-pull`), and paths (`/var/lib/zcrypto-capture`). Those are correct text and rewording them is not in scope — D6's vocabulary is about naming *a machine*, not about purging a token. If you find yourself rewording a command name to satisfy this check, the check is wrong, not the summary.
 
 - [ ] **Step 5: Validate and commit**
 
@@ -262,7 +326,11 @@ git commit -m "feat(grafana): add engine and capture liveness rules, ungroup col
 
 - [ ] **Step 1: Give the nine bare-`sum()` rules a `by` clause**
 
-Each currently reads `sum(count_over_time({...}[Xh]))`. Add `by (host, container)` — or `by (host)` where `container` is already pinned to a literal in the selector. Update each `summary` to interpolate the label. `container="archive-pull"` is not host-scoped today, so its rule genuinely cannot say which host it fired for; the `by` clause is what fixes that.
+Each currently reads `sum(count_over_time({...}[Xh]))`. Add `by (host, container)` — or `by (host)` where `container` is already pinned to a literal in the selector.
+
+**Interpolate `{{ $labels.host }}` into the summary on the PRESENCE-fired rules only.** Seven of these rules are dead-canary rules that fire on the `or on() vector(0)` arm: when the stream is empty the `sum by (...)` returns **no series at all**, and the unlabelled `vector(0)` is what crosses the threshold — so the `by` clause is inert at exactly fire time and `{{ $labels.host }}` renders as an empty string, mangling the page on the alerts where the page is the only signal. On those seven, write the host and container into the summary **as literal words**; their selectors are literal, so the rule knows statically what it watches. Keep the `by` clause there anyway — harmless, and correct if the arm ever changes — but do not claim it fixes anything.
+
+Correction to the spec's rationale, verified: `container="archive-pull"` **is** unambiguous — only the NAS produces that container label; ops publishes `zcrypto-archive-pull`. The `by` clause earns its place on the presence-fired rules, not on that argument.
 
 - [ ] **Step 2: Confirm `__line__` is available inside `label_format`**
 
@@ -308,20 +376,23 @@ Build every row and panel in **spec D2's "Rows and panels" table**, with D2's te
 - [ ] **Step 2: Validate structurally**
 
 ```bash
-uv run python -c "
-import json
-d = json.load(open('infra/grafana/fleet-health-dashboard.json'))
-assert d['uid'] == 'zcrypto-fleet' and d['title'] == 'Fleet health'
-assert d.get('graphTooltip') == 1, 'Shared Crosshair not enabled'
-ps = [p for p in d['panels'] if p.get('type') != 'row']
+uv run python - <<'EOF'
+import json, re
+d = json.load(open("infra/grafana/fleet-health-dashboard.json"))
+assert d["uid"] == "zcrypto-fleet" and d["title"] == "Fleet health"
+assert d.get("graphTooltip") == 1, "Shared Crosshair not enabled"
+assert d.get("tags") == [], f"tags must be purged, found {d.get('tags')}"
+ps = [p for p in d["panels"] if p.get("type") != "row"]
 for p in ps:
-    for t in p.get('targets', []):
-        e = t.get('expr', '')
-        assert e, f'empty expr on {p[\"title\"]}'
-        assert 'host' in e, f'unscoped expr on {p[\"title\"]}: {e[:70]}'
-print(len(ps), 'panels, all host-scoped')
-"
+    for tgt in p.get("targets", []):
+        e = tgt.get("expr", "")
+        assert e, f"empty expr on {p['title']}"
+        assert re.search(r"host\s*(=~|!=|=)", e), f"unscoped expr on {p['title']}: {e[:70]}"
+print(len(ps), "panels, all host-scoped")
+EOF
 ```
+
+**This is a lint, not a pin.** It requires a host *matcher*, so it no longer passes on a bare `by (host)` — but it still cannot tell a correct matcher from a wrong one. And P1 legitimately produces host-unscoped expressions wherever the RULE is unscoped (the gate rules, both reconcile rules, the WireGuard rule): those panels copy the rule verbatim and must be **exempted by hand with a comment**, not "fixed" to satisfy this script.
 
 - [ ] **Step 3: Vocabulary + glob checks**
 
@@ -365,7 +436,7 @@ print('guarded:', len(res), 'residual series;', len(dfc), 'deficit series')
 "
 ```
 
-- [ ] **Step 3: Run the structural check from Task 6 Step 2** against this file (same script, different path/uid/title).
+- [ ] **Step 3: Run the structural check from Task 6 Step 2** against this file, changing only the path, uid (`zcrypto-integrity`) and title (`Data integrity`).
 
 - [ ] **Step 4: Commit**
 
@@ -410,7 +481,7 @@ print(len(order), 'order panels, all marked intent')
 "
 ```
 
-- [ ] **Step 3: Structural check + vocabulary test**, as Task 6.
+- [ ] **Step 3: Structural check + vocabulary test** — Task 6 Step 2's script with path, uid (`zcrypto-engine`) and title (`Engine`) changed, then `uv run pytest tests/test_internal_terms_not_operator_visible.py -v`.
 
 - [ ] **Step 4: Commit**
 
@@ -429,7 +500,7 @@ git commit -m "feat(grafana): add the engine board"
 
 - [ ] **Step 1: Add the rate lane and fix the viewer**
 
-Add the three-panel lane from **spec D5** at the top at `h: 6` (total lines/min; by level; by host+container), plus the "last line seen" table. Add the `$container` multi-select with `includeAll`. Retitle the board to `Logs`. Apply the query-time `| json` plus `line_format` promoting `message` to the existing viewer panel.
+Add the three-panel lane from **spec D5** at the top at `h: 6` (total lines/min; by level; by host+container), plus the "last line seen" table. Make the existing `$container` variable multi-select with `includeAll` — the board already carries `host`/`container`/`level`/`search`; this task changes one, it does not add it. Retitle the board to `Logs`. Apply the query-time `| json` plus `line_format` promoting `message` to the existing viewer panel.
 
 Keep the raw-count and `level=~".+"` series as separate first-class panels — different rules fire on each, and collapsing them sends the responder to the wrong layer.
 
@@ -485,6 +556,10 @@ for f in sorted(pathlib.Path('infra/grafana').glob('*-dashboard.json')):
 
 For each rule, add `__dashboardUid__` and `__panelId__` per the ownership recorded in spec D2/D3/D4's `serves_alert_rules` columns. **Both values are quoted strings** — an unquoted integer aborts the entire push. Where a rule's signal is genuinely not panel-shaped, give it a runbook reference instead; no rule may have neither.
 
+- [ ] **Step 2b: Add the `unit:` annotations**
+
+Spec D12's call #4: **selectively**, where a bare number is ambiguous — durations in seconds, byte counts, ratios, row counts. Skip boolean and presence rules, where the value is `0`/`1` and the unit is the rule. The metrics template reads `.Annotations.unit` and D12's worked example depends on one existing, so this cannot be left to the rollout.
+
 - [ ] **Step 3: Assert every pointer resolves**
 
 ```bash
@@ -524,7 +599,7 @@ git commit -m "feat(grafana): point every alert rule at the panel that shows it"
 
 **Files:**
 - Create: `tests/test_dashboards_cover_metrics.py`
-- Reference: `/tmp/claude-1000/-home-zhaow-Projects-zcrypto-kraken/9155f24a-9e4a-4274-8653-7324e91389ec/scratchpad/test_dashboards_cover_metrics.py` — a complete prior draft. **Read it, do not paste it**: it was written against the pre-review design (old uids, `zcrypto-main`, no `Logs` rate lane) and its baseline assumptions have changed. Its PromQL family-extraction approach and its exclusion-set structure are the parts worth reusing.
+- Reference (OPTIONAL, may be absent): `/tmp/claude-1000/-home-zhaow-Projects-zcrypto-kraken/9155f24a-9e4a-4274-8653-7324e91389ec/scratchpad/test_dashboards_cover_metrics.py` — a prior draft in a session scratchpad that does **not** survive a reboot. If it is gone, build from spec D8 alone; nothing here depends on it. **Read it, do not paste it**: it was written against the pre-review design (old uids, `zcrypto-main`, no `Logs` rate lane) and its baseline assumptions have changed. Its PromQL family-extraction approach and its exclusion-set structure are the parts worth reusing.
 
 - [ ] **Step 1: Write the three assertions**
 
@@ -540,13 +615,15 @@ Expected: PASS. Any failure is a real gap in Tasks 6–9 — fix the dashboard, 
 - [ ] **Step 3: PROVE assertion 3 trips (mandatory)**
 
 ```bash
-git stash list > /dev/null
-sed -i 's/|node_scrape_collector_success//' infra/ansible/roles/access/files/config.alloy
-uv run pytest tests/test_dashboards_cover_metrics.py -v 2>&1 | tail -20
-git checkout infra/ansible/roles/access/files/config.alloy
+infra/scripts/mutate-probe.sh \
+  --file infra/ansible/roles/access/files/config.alloy \
+  --mutation 's/|node_scrape_collector_success//' \
+  -- uv run pytest tests/test_dashboards_cover_metrics.py -v
 ```
 
-Expected: the run FAILS naming `node_scrape_collector_success` and `zaccess`. **Read which assertion fired** — a red exit from an unrelated assertion proves nothing. Then confirm the restore: `git diff --exit-code infra/ansible/roles/access/files/config.alloy`.
+**Through `mutate-probe.sh`, never a hand-rolled sed-and-`git checkout` loop** (`agent-ops.md`): it refuses a dirty tree, refuses a no-op mutation, refuses a probe that fails on unmutated code, requires the control to fail, and neutralises the stale-`.pyc` trap.
+
+Expected: the probe reports the mutated run FAILING and names `node_scrape_collector_success` on `zaccess`. **Read WHICH assertion fired** — a red exit from an unrelated assertion proves nothing, and this trip-proof is what pins assertion 3's semantics: an implementation that derived host expectations only from literal `host=` matchers would never trip on the *unscoped* collector rule. Do not soften this step.
 
 - [ ] **Step 4: Commit**
 
@@ -561,7 +638,7 @@ git commit -m "test(grafana): assert every alerting family is charted and admitt
 ### Task 12: Slack notification templates
 
 **Files:**
-- Create: `infra/grafana/notification-templates/zcrypto.tmpl` (or the path spec D12's provisioning subsection settles on)
+- Create: `infra/grafana/notification-templates/zcrypto-slack.tmpl` — the name spec D12 settles on. The template-object name derives from the basename, so a different filename is visible in the provisioning API.
 - Modify: `infra/scripts/grafana-push.sh`
 
 - [ ] **Step 1: Author both templates**
@@ -596,13 +673,26 @@ git commit -m "feat(grafana): dense slack notification templates for both receiv
 
 `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host. Set Task 4's provisional `900` above the binding pair's natural maximum, with the ~2.4× margin the daemon's own 30 s constant uses. **Then edit the rule and commit** — the provisional value must not reach the push.
 
-- [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`. No host contact. Verify by read-back that all four boards and all 58 rules are live.
+- [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`, with **`GRAFANA_SLACK_WEBHOOK_URL` exported from the vault**. No host contact. Without it the script takes its webhook-less branch: the template object ships, the receiver wiring is silently skipped with a friendly "receivers already live" message, and every notification keeps the stock rendering — first visible at Step 5 as a baffling symptom. Verify by read-back that all four boards and all **62** rules are live (58 today + Task 4's four; transiently 63 while Step 5's probe rule exists).
 
 - [ ] **Step 4: Verify the first sample by VALUE, not presence** — read the new engine and capture liveness rules' current values. A rule born into an already-faulted condition bakes that into its baseline and never fires; triage a nonzero as the page it would have been.
 
 - [ ] **Step 5: Live-fire the Slack templates** — add the probe rule `count by (host)(up) > 0` (5 instances, touches no host), read the rendered messages in `#zcrypto`, re-tune the truncation caps from what actually renders, then delete the probe rule and confirm it is gone. Fire one logs rule too — resolve messages are ON for `metrics` and OFF for `logs`, so recovery behaves differently.
 
 - [ ] **Step 6: Converge `zaccess`** — `site.yml --limit` on that host. Native deb Alloy, ungated config copy, **no digest operand and no bake owed**. Verify `node_scrape_collector_success{host="zaccess"}` arrives.
+
+- [ ] **Step 6b: Build the engine image and mature its canary bake — START THIS RIGHT AFTER TASKS 1/1b MERGE, not here.**
+
+Step 7 cannot run without this, and the engine role will refuse mechanically if it is skipped. Sequenced first because the bake takes hours-to-days and should mature while Tasks 2–12 proceed. **Load the `zcrypto-captures-rollout` skill and follow it** — this is a capture-image re-pin with its own discipline, not an engine step:
+
+1. Build and push an image carrying Tasks 1 and 1b. Record its digest.
+2. Pull it on `zcrypto-red` and **verify the change is in the pulled image** — run the image's own version surface; never infer from the tag.
+3. Record the digest in `docs/reference/fleet-pins.md` **before** converging; the roles refuse a digest the file does not record.
+4. Re-pin the **secondary** as capture (`site.yml --limit zcrypto-red -e capture_image_digest=sha256:…`).
+5. Let the bake gate pass: a clean prune (read `deleted=N` — `deleted=0` is the weak form and needs explicit acceptance), ≥3 full segment-rotation hours, every abort signal clear throughout.
+6. Only then is Step 7 startable. **There is no engine secondary — the secondary's capture bake IS the engine's canary gate.**
+
+Precedent for the shape and timing: `fleet-pins.md`'s iter-119 row (`c7ed09020fe1` — red canary leg, bake, then the engine converge the following morning).
 
 - [ ] **Step 7: Converge the engine — the live trade host.** Full `capture-deploys.md` discipline: inside a 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), digest recorded in `docs/reference/fleet-pins.md` first, the secondary's capture bake as the canary gate, `--check --diff` preview from a tree whose rendered config matches the fleet. Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`, and `zcrypto_engine_cycle_duration_seconds` is **absent** until that cycle completes, then correct.
 

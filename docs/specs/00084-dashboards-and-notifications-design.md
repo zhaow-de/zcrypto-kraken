@@ -25,6 +25,8 @@ Two defects and one blind spot were found while scoping, all confirmed against t
 | `zcrypto-engine` *(new)* | `Engine` | what is the trading engine doing? |
 | `zcrypto-logs` *(existing, reworked)* | `Logs` | what did it say? |
 
+**All four boards carry `tags: []`** (owner's call, my judgement on the form): tags exist to filter a long board list, and four purpose-named boards in one folder are already the filter. The current values are actively wrong — `["zcrypto","gate","nas"]` on a board about to cover the whole fleet — and a corrected set would be maintenance surface with no reader. Purged rather than rewritten.
+
 **Titles carry no `zcrypto` prefix** (owner's call): the Grafana instance and the `zcrypto` folder already establish it, so the prefix is noise repeated on every board. **Titles are sentence case** — first word capitalised, the rest lower unless a proper noun.
 
 **All three metric boards mint NEW uids; `zcrypto-main` is not reused** (owner's call). Reuse would have replaced the old board in place, but it also welds the new design to the old board's identity — every link, bookmark and future prune decision inherits a uid whose name (`main`) no longer describes anything. Three purpose-named uids are worth one cleanup step.
@@ -37,13 +39,13 @@ Two defects and one blind spot were found while scoping, all confirmed against t
 
 ## D2 — `Fleet health`
 
-`uid zcrypto-fleet` (new), title `Fleet health`. Answers *is any machine in the fleet unwell?* — the node/process/scrape layer, the healthchecks.io aggregate, and the access tier. It owns 28 families and 16 of the 48 metric-backed rules.
+`uid zcrypto-fleet` (new), title `Fleet health`. Answers *is any machine in the fleet unwell?* — the node/process/scrape layer, the healthchecks.io aggregate, and the access tier. It owns 28 families and 20 of the 48 metric-backed rules.
 
 ### Panel rules P1–P6 — binding on all three boards
 
 These are the difference between a board that looks complete and one that works. Each was found by an adversarial review or by a paged-at-3am walkthrough of a rule that already exists.
 
-**P1 — a panel serving a rule plots the RULE'S EXPRESSION, not the rule's family, divisor included.** `Reconciler · primary gap rate high` evaluates `increase(healable[24h])` *divided by the live desynced-pair count*; a panel plotting raw healable seconds reports 3.6 while the page says 0.9, and at 03:00 a panel that disagrees with the page costs more time than no panel. This is the governing principle behind most of the corrections below: where a rule aggregates (`min_over_time`, `sum`, `max by`, `changes`, `delta`), the panel carries that exact series, and any additional context series sits beside it clearly marked as context.
+**P1 — a panel serving a rule plots the RULE'S EXPRESSION, not the rule's family, divisor included.** `Reconciler · primary gap rate high` evaluates `increase(healable[24h])` *divided by the live *pair* count*; a panel plotting raw healable seconds reports 3.6 while the page says 0.9, and at 03:00 a panel that disagrees with the page costs more time than no panel. This is the governing principle behind most of the corrections below: where a rule aggregates (`min_over_time`, `sum`, `max by`, `changes`, `delta`), the panel carries that exact series, and any additional context series sits beside it clearly marked as context.
 
 **P2 — a panel serving a rule encodes that rule's threshold as a marked `fieldConfig.thresholds.steps` value.** A timeseries reading 0.061 answers nothing without the page line drawn on it. Where two rules watch one family (the owner's low/high-watermark example), **both steps go on the one panel** — that is what family-level coverage means. Where one family's rules carry **different bars per host**, the steps are **per-host field overrides, never one shared ladder**: `node_load1` has three rules with three genuinely different true bars, and one ladder for all three is the review's critical fleet finding.
 
@@ -67,7 +69,7 @@ These are the difference between a board that looks complete and one that works.
 
 | Variable | Query | Notes |
 | --- | --- | --- |
-| `$host` | `label_values(up, host)`, **regex `/^(nas\|ops\|zcrypto\|zcrypto-red\|zaccess)$/`**, multi, includeAll | Two stray `host` label values exist on the fleet — `primary` and `secondary`, root-caused below — and a bare `label_values(host)` (the natural thing to write) offers both in the dropdown. Metric-scoping to `up` excludes them today; the regex is belt-and-braces against the next family that carries its own `host` label. **`allValue` must be left EMPTY** so `All` interpolates to the pinned option list joined by `\|` — setting it to `.*` re-admits exactly the two values the regex just removed. The regex is anchored: Grafana applies it unanchored, so `zcrypto` alone would also match `zcrypto-red`. This variable is a second place that must be edited when a host joins the fleet. |
+| `$host` | **custom** variable, `Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess`, multi, includeAll (supersedes the query form — see D6's naming section; a query variable cannot carry display labels) | Two stray `host` label values exist on the fleet — `primary` and `secondary`, root-caused below — and a bare `label_values(host)` (the natural thing to write) offers both in the dropdown. Metric-scoping to `up` excludes them today; the regex is belt-and-braces against the next family that carries its own `host` label. **`allValue` must be left EMPTY** so `All` interpolates to the pinned option list joined by `\|` — setting it to `.*` re-admits exactly the two values the regex just removed. The regex is anchored: Grafana applies it unanchored, so `zcrypto` alone would also match `zcrypto-red`. This variable is a second place that must be edited when a host joins the fleet. |
 | `$daemon_host` | `label_values(process_resident_memory_bytes, host)`, same regex | Drives the repeat of the per-host RSS panel. Derived from the family itself, not from `$host`: `zaccess` publishes no `process_*` at all, so a `$host`-driven repeat renders an empty tile indistinguishable from a quiet daemon. Resolves to **four** hosts — `nas`, `ops`, `zcrypto`, `zcrypto-red` — and the NAS tile shows **Alloy's own** process, not an app daemon. |
 
 The `primary` / `secondary` strays are root-caused (high confidence, one emitter, exactly two series): `cli/archive/command.py` emits `zcrypto_reconcile_trade_deficit_rows_total` with its **own** `host` label carrying a mirror *side*, and `external_labels` only stamps a label that is absent — so `host="ops"` is never applied to that family. Spec-level consequence is D3's selector, below; the mislabelling itself stays out of scope (renaming it changes series identity under an `increase()`).
@@ -122,7 +124,7 @@ node_scrape_collector_success{host=~"$host", host!="zaccess"} == 0              
 count by (host) (node_scrape_collector_success{host=~"$host", host!="zaccess"})         # a host that DISAPPEARS is visible
 ```
 
-`node_scrape_collector_success` is absent from the access keep-regex, so `min by (host)(…)` returns four hosts and never five: a panel showing four green hosts reads as a healthy fleet. Until D10(a)'s converge lands, the `count by (host)` companion series and a description naming `zaccess` as **structurally excluded** are mandatory — *a blind spot rendered as green is the failure class this spec exists to close.* When the converge lands, drop `host!="zaccess"` from both collector panels in the same change.
+`node_scrape_collector_success` is absent from the access keep-regex, so `min by (host)(…)` returns four hosts and never five: a panel showing four green hosts reads as a healthy fleet. Until D10(a)'s converge lands, the `count by (host)` companion series and a description naming `zaccess` as **structurally excluded** are mandatory — *a blind spot rendered as green is the failure class this spec exists to close.* When the converge lands, drop `host!="zaccess"` from the **success** panel only. The **duration** panel keeps its exclusion permanently: D10(a) admits `node_scrape_collector_success` and nothing else, so `node_scrape_collector_duration_seconds` stays unadmitted on that host forever, and dropping its matcher would recreate the unmarked-empty-series class this very rule exists to prevent.
 
 **Corrections applied from review:**
 
@@ -139,7 +141,7 @@ count by (host) (node_scrape_collector_success{host=~"$host", host!="zaccess"}) 
 
 ## D3 — `Data integrity`
 
-`uid zcrypto-integrity` (new — D1), title `Data integrity`. Answers *is the data we are betting on sound?* — the unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. It owns 66 families and 25 of the 48 metric-backed rules. P1–P6 bind here.
+`uid zcrypto-integrity` (new — D1), title `Data integrity`. Answers *is the data we are betting on sound?* — the unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. It owns 66 families and 27 of the 48 metric-backed rules. P1–P6 bind here.
 
 ### Template variables
 
@@ -211,7 +213,7 @@ Four expressions are quoted because the expression itself is the decision.
 / scalar(count(count by (pair) (zcrypto_capture_book_desynced)) or vector(1))
 ```
 
-Adding `{host="ops"}` to the healable references does not change the computed value — that family is published only by ops — and D6 requires the explicit scope. The **divisor is deliberately left as the rule writes it**: scoping it would silently make the panel disagree with the page whenever the two capture hosts' pair sets differ, which is exactly the state a pair-add creates for one converge window. A second series plots the divisor itself, so a change in desynced-pair count is not misread as a change in gap rate.
+Adding `{host="ops"}` to the healable references does not change the computed value — that family is published only by ops — and D6 requires the explicit scope. The **divisor is deliberately left as the rule writes it**: scoping it would silently make the panel disagree with the page whenever the two capture hosts' pair sets differ, which is exactly the state a pair-add creates for one converge window. A second series plots the divisor itself. **Label it the live pair count, not the desynced-pair count**: `zcrypto_capture_book_desynced` is emitted for every pair on every scrape (0 or 1), so `count(count by (pair)(…))` is the *full* pair count — 12 today, constant except across a pair-add. That is exactly what makes the unscoped divisor safe, and a description calling a flat 12 "desynced pairs" would alarm a reader for no reason.
 
 **The resubscribe-failure series is the alert's SUM, not the two counters separately:**
 
@@ -229,6 +231,17 @@ increase(zcrypto_reconcile_trade_deficit_rows_total{host=~"primary|secondary"}[2
 ```
 
 `{host="ops"}` renders this panel empty — the emitter writes its own `host` label and `external_labels` never overwrites it. The panel description must say so, or the next reader "fixes" it to `host="ops"` and silently blanks it.
+
+### The carried rider — [[T0044]]'s `zcrypto_reconcile_ledger_records` gauge
+
+**This iteration carries T0044, and the memo is the authority that says so** (owner's ruling, 2026-07-27): the dependency had lived only inside T0044's own prose, which meant this item could be scoped and executed without anyone noticing it owed a rider. It is pulled in here because **it has no other carrier** — ship without it and T0044 returns to waiting on a human ledger correction that may never come.
+
+**The shape is a gauge, not the counter the topic file proposes.** `zcrypto_reconcile_ledger_records` — the number of records `_totals()` summed on this cycle. The `corrections_total` counter T0044's own text suggests is the weaker design: it explains a reset only when someone remembers to bump it, whereas the record count explains **every** reset, including the silent empty-ledger path where the file is truncated or unreadable and every derived counter drops to zero with nothing marking why. The counters it explains sit behind the system's highest-severity alert.
+
+- **Emit:** one more `_emit(...)` call in `cli/archive/command.py`'s `_write_textfile`, valued from the ledger scan `_totals()` already performs — no second read.
+- **Keep-list:** nothing to change; the ops regex admits `zcrypto_reconcile_.*` as a wildcard.
+- **Panel:** a second series on the reconcile row's "Gap totals — cumulative since ledger genesis", which is the panel whose discontinuities it exists to explain. **This is why it belongs on this board rather than anywhere else**: D7 gives the residual and healable panels the alert rule's own `resets(...[24h]) == 0` guard, so after a correction those panels correctly read zero — correct, and it also makes the correction *invisible*. The record count is the line that makes it legible again.
+- **No rule.** A record count crossing a threshold means nothing on its own; it is an explanatory series read beside a discontinuity, not a page.
 
 **Per-pair write counts do not exist, and the board says so.** `zcrypto_capture_segments_written_total`, `_segment_bytes_total`, `_rows_held_total` and `_rows_quarantined_total` are **unlabeled scalars**, summed across every pair and kind at the producer. So "the primary wrote 12 segments and the secondary 9" is visible and "which three pairs" is not. The only per-pair discriminators that exist are `zcrypto_capture_gap_seconds_total{pair}`, `zcrypto_capture_seconds_since_last_book_message{pair}` and `zcrypto_capture_book_desynced{pair}`. Consequence for layout: **"Mirror lag by source" is the first panel of the reconcile row, immediately after the capture row's per-pair staleness panel**, so the responder to `Reconciler · capture mirror lagging` lands next to the only per-pair evidence there is — and both panel descriptions state plainly that a per-pair write count cannot be built, so nobody hunts for a panel that does not exist.
 
@@ -349,7 +362,7 @@ Two goals, the owner's: **(1)** a Linux hostname is never visible on an operator
 
 **What is actually a hostname.** Only two label values are: `zcrypto` and `zcrypto-red` (the journal shows `zcrypto-ops systemd[1]`, so even the ops box's *label* `ops` is already an abstraction over its hostname). `nas` and `ops` are role words that happen to be short. `zaccess` is a project-coined role name that doubles as a hostname. **So goal (1) bites on exactly two values**, and a fleet-wide renaming would be solving four-fifths of a problem that does not exist.
 
-**The vocabulary is adopted, not invented.** `capture-deploys.md` already says primary/secondary throughout, and six alert titles already read *"— primary (zcrypto)"* / *"— secondary (zcrypto-red)"* — the parenthetical is redundant decoration next to a name that is already the operational one. Dropping it loses no information and closes goal (1) for both values.
+**The vocabulary is adopted, not invented.** `capture-deploys.md` already says primary/secondary throughout, and four alert titles already read *"— primary (zcrypto)"* / *"— secondary (zcrypto-red)"* (six carry a host token in total) — the parenthetical is redundant decoration next to a name that is already the operational one. Dropping it loses no information and closes goal (1) for both values.
 
 | `host` label (**unchanged**) | display name | why |
 | --- | --- | --- |
@@ -362,9 +375,24 @@ Two goals, the owner's: **(1)** a Linux hostname is never visible on an operator
 **Applied at four surfaces, all of them presentation:**
 
 1. **Alert rule titles** — drop the six hostname parentheticals; `Fleet · Alloy dark — ops` / `— zaccess` become `— Ops` / `— Edge`. Rule **uids are unchanged**, so this is a display-only edit and no alert loses its identity. One consequence to state: `alertname` changes, so any saved Grafana silence keyed on the old title stops matching — there are none today, and the push is the moment to confirm that.
-2. **Slack templates (D12)** — one mapping, applied once to `$labels.host`, so the phone never shows a hostname. This is the highest-value surface: it is the only one read with nothing else open.
+2. **Slack templates (D12)** — the phone never shows a hostname. This is the highest-value surface: it is the only one read with nothing else open, and it is the one a test **cannot** protect, because the hostname arrives as runtime label data rather than as literal text the vocabulary check can walk.
+
+   Concretely, D12's template gains a mapping define, and **every `host` render goes through it** — the title, the where-line, and the per-instance lines. D12's template text and its worked example are amended by this; where the two disagree, this rule wins:
+
+   ```gotemplate
+   {{ define "zcrypto.host" -}}
+     {{ if eq . "zcrypto" }}Capture primary
+     {{- else if eq . "zcrypto-red" }}Capture secondary
+     {{- else if eq . "ops" }}Ops
+     {{- else if eq . "nas" }}NAS
+     {{- else if eq . "zaccess" }}Edge
+     {{- else }}{{ . }}{{ end }}
+   {{- end }}
+   ```
+
+   The fall-through is deliberate: a host the map does not know renders its raw label rather than vanishing. A new fleet member then shows up as an unmapped name — visible, correctable, and never silently unlabelled.
 3. **Panel titles, descriptions and text panels** — the vocabulary in prose. Free; it is text this spec is writing anyway.
-4. **The `$host` dropdown** — a custom variable carrying `label : value` pairs (`Capture primary : zcrypto`, …), so the picker shows the vocabulary. One edit, one place, per board.
+4. **The `$host` dropdown** — a **custom** variable with `label : value` pairs, `Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess`. This **supersedes the `label_values(up, host)` query form given in D2's variable table**: a query variable cannot carry display labels at all, so the query form and this goal are mutually exclusive. The custom list is also a *stronger* pin than the regex it replaces — it cannot admit a stray value in the first place — which is the same argument D4's engine `$host` already makes. The cost is real and stated: the option list is a second place to edit when a host joins the fleet, alongside the alert rules that name hosts.
 
 **Where the vocabulary deliberately stops: panel legends.** They keep the raw `host` label. There is no Grafana mechanism that maps a label *value* to a display string in a legend — the options are nested `label_replace()` inside every expression, or a per-panel `fieldConfig` override repeated across ~20 multi-host panels, and the dashboard JSON here is **hand-written and committed, not generated** (verified: no generator exists in the tree), so either choice buys a cosmetic gain with a large, hand-maintained, error-prone surface. This is the "less, not none" boundary: a legend is read *inside* a board the operator opened on purpose, next to a `$host` picker that now shows the vocabulary — the hostname there is a precise identifier, not a leak to someone with nothing open. The surfaces that are read cold — the phone notification and the rule title — carry no hostname at all.
 
@@ -496,7 +524,7 @@ Judged against one principle (owner's): **maximise information density without s
 | 4 | How widely to apply the `unit:` annotation? | **Selectively — where a bare number is ambiguous** | Applying it to all 58 would add a line to rules whose summary already carries the meaning, which is filler, and filler is what kills density. Apply where the threshold is a quantity whose unit a reader cannot infer: durations in seconds, byte counts, ratios, row counts. Skip for boolean and presence rules, where the number is `0` or `1` and the unit is the rule. |
 | 5 | Fire a probe into the live channel? | **Yes — the cheapest trip, and re-tune the caps from what renders** | Verification that does not exercise Slack's own rendering verifies nothing, and `00043` already set the precedent of a once-only test fire that does not break production. Use `count by (host)(up) > 0`: it touches no host, is trivially un-tripped by deleting the probe rule, and **fires five instances at once**, which exercises the multi-instance path — the one most likely to hit a length limit — rather than a flattering single-alert case. The 6-metric / 5-log truncation caps are explicitly starting values, re-tuned from the render. |
 
-Two consequences of (1)–(3) worth stating plainly, since they widen the change: this iteration now edits **eleven** logs rules rather than two, and the log-line hoist means two rules gain a `label_format` at query time. Both are rule-file edits pushed by the same script in the same step — no converge, no host contact — so the cost is review surface, not operational risk.
+Two consequences of (1)–(3) worth stating plainly, since they widen the change: this iteration now edits **all ten** logs rules rather than two, one of them twice, and the log-line hoist means two rules gain a `label_format` at query time. Both are rule-file edits pushed by the same script in the same step — no converge, no host contact — so the cost is review surface, not operational risk.
 
 ### The panel pointer
 
@@ -754,7 +782,6 @@ Measured at rollout against spec `00043`'s <1k target and `00069`'s per-host bas
 ## Out of scope
 
 - **Executed order / position / PnL panels** — those families do not exist; they arrive with [[T0018]]'s 6b executor and join the `engine` board then. Registered in T0018, not deferred in prose.
-- **The `zcrypto_reconcile_ledger_corrections_total` correction marker** — adjacent to D7 (both concern counter discontinuity being invisible) but it is [[T0044]]'s own item and needs its own decision; not folded in.
 - Widening the `zaccess` keep-regex beyond the one alert-backed family (D10a).
 - Grafana Cloud retention/usage tuning; alert threshold re-tuning beyond the rules D11 adds or corrects.
 - **Re-labelling the `host="primary"` / `host="secondary"` strays — now root-caused, and deliberately left alone.** Spec `00069` and [[T0020]] both recorded two anomalous `host` label values at one series each as un-root-caused. They are `zcrypto_reconcile_trade_deficit_rows_total`: `cli/archive/command.py` emits it with its **own** `host` label carrying a mirror *side* (`{host="primary"}`, `{host="secondary"}`), and `external_labels` only stamps a label that is absent, so `host="ops"` never lands on that family. Consequences are handled rather than fixed: D3's panel selects `host=~"primary|secondary"` and says why, and D2 pins the `$host` variable's regex so the two values stay out of every dropdown. **Renaming the label is out of scope** — it changes series identity under an `increase()`, which is the same hazard the fleet took knowingly and once, at a chosen window, for the NAS host label.
