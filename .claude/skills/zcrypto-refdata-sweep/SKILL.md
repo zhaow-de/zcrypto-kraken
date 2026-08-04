@@ -56,7 +56,7 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
 
 - **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, per-asset **`margin_rate`** (the per-4h rollover rate) and `collateral_value`, `margin_call`/`margin_stop`, position limits.
 - **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint was still serving the **pre-2026-07-09** schedule when checked on 2026-08-04, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
-- **Does not cover** (account-gated, parked in `T0000`): the account's own realised fee **tier**, AoP qualification, observed margin/rollover bands. The register's public base tier is the right anchor for a funded account at zero 30-day volume and the **wrong** one the moment volume climbs.
+- **No endpoint covers, so step 5 asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `T0000` recorded them at Phase 0 and is now archived, so `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
 - **Does not cover** (no endpoint): MiCA status, tax rules, market-data pricing — human re-reads, and they belong to the go/no-go run.
 
 ## Failure modes worth naming
