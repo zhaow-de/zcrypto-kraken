@@ -379,6 +379,32 @@ def test_short_all_digit_stdout_keeps_conservative_floor():
     assert not truthy(assert_that(guard), v)
 
 
+# The floor FOLLOWS the journal in both directions — it is not a monotone relaxation of B+1800.
+# A cycle that itself ran long (completed_at = B+1700) puts the floor at B+2000, ABOVE the fixed
+# one: the 5 min of post-completion clearance is unconditional, and refusing at B+1900 there is the
+# point, not a bug. Every fixture above has completed_at early enough that a `min(completion+300,
+# B+1800)` expression — the reading the old fail_msg's "when that is sooner" promised — would agree
+# with the committed one, so nothing else in this file can tell the two apart.
+def test_a_long_running_cycle_raises_the_floor_above_the_fixed_1800():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 1900)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 1700)},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)  # 1900 >= 1800, but 1900 < 1700+300 -> refuse
+
+
+def test_the_raised_floor_opens_at_completion_plus_300_exactly():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 2000)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 1700)},
+        "engine_window_override": "",
+    }
+    assert truthy(assert_that(guard), v)  # inclusive on the raised floor too: `>=`
+
+
 def test_undefined_probe_keeps_conservative_floor():
     guard = _window_guard()
     v = {"engine_epoch_probe": {"stdout": str(BOUNDARY + 500)}, "engine_window_override": ""}
@@ -406,8 +432,10 @@ def test_old_floor_still_passes_after_1800_without_journal():
 
 
 def test_journal_probe_path_matches_the_engine_role_default():
-    """site.yml's pre_task cannot see role defaults, so the journal path is a literal — pin it to
-    the engine role's engine_state_dir so a relocation cannot silently turn the floor
+    """The journal path is a LITERAL in site.yml — the probe stays self-contained, readable without
+    resolving what the engine role happens to default to (a statically-listed role's defaults ARE
+    play-wide on this ansible-core, so the literal is a choice, not a necessity). This test is the
+    drift pin that choice owes: a relocation of engine_state_dir cannot silently turn the floor
     permanently conservative (probe rc!=0 forever, guard 'working' but never early)."""
     site_text = SITE.read_text()
     defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()
@@ -630,6 +658,11 @@ def test_engine_parity_echo_mirrors_the_negated_assert():
     # a dict fixture is `not skipped` under Templar — wave-1's echo tests evaluate this directly
     assert truthy(conds, v_overridden)
     assert not truthy(conds, {**v_overridden, "canary_override": "true"})
+    # The third case every sibling echo test carries: the gate is ACCEPTANCE, not presence. Parity
+    # PASSES here, so the reason overrode nothing and printing a "why" would be a false record.
+    d = "sha256:" + "ab" * 32
+    baked = {**v_overridden, "engine_secondary_digest_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
+    assert not truthy(conds, baked)
 
 
 # --- fix round 1 (cold review M1): the mirror's original 7 tests never read the assert's/probe's
@@ -787,6 +820,11 @@ def test_stat_probe_resolves_symlinks():
     # absent -> stand-down, matching the old grep behavior.
     task = find_task(load_tasks(OPS), "probe — the deployed liquidations compose file (existence vs readability)")
     assert task["ansible.builtin.stat"]["follow"] is True
+    # Spec D9 also specifies `failed_when: false`, which every sibling probe in this role carries: a
+    # stat MODULE failure (an unreadable PARENT dir stats EACCES, not ENOENT) would otherwise abort
+    # the play — dropping the host from every later play — instead of letting the two guards below
+    # decide from what the probe registered.
+    assert task["failed_when"] is False
 
 
 def test_liquidations_refuses_a_compose_file_without_a_digest_line():
