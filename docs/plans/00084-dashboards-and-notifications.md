@@ -19,7 +19,7 @@ Copied verbatim from the spec. Every task's requirements implicitly include this
 - **Filenames must match `infra/grafana/*-dashboard.json`** — that is `grafana-push.sh`'s glob. A non-matching name is committed, tested, and never pushed, silently.
 - **`graphTooltip: 1`** (Shared Crosshair) on all three metric boards. Not on `Logs`.
 - **`tags: []` on all four boards** — purged, not rewritten (spec D1).
-- **Every panel expression carries a literal `host=` matcher or `$host`.** `instance` collides fleet-wide (every Alloy binds `127.0.0.1:12345`); `host` is the only discriminator.
+- **Every panel is UNAMBIGUOUS about which host each series belongs to** — by one of D6's three routes: an explicit `host=` / `$host` matcher (mandatory for `node_*`, `process_*`, `zcrypto_capture_*`, `zaccess_*`, `up`); a single-publisher family whose publisher the description names (`zcrypto_gate_*` → NAS; `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*`, `ops_*`, `hc_*` → ops; `zcrypto_engine_*` → the primary); or a per-host legend (`zcrypto_logship_*`, P5). **28 of the 48 metric rules are host-unscoped**, so a panel copying its rule verbatim per P1 will often take route 2 or 3 — that is correct, not a violation. `instance` collides fleet-wide (every Alloy binds `127.0.0.1:12345`); `host` is the only discriminator.
 - **P1 — a panel serving a rule plots the RULE'S EXPRESSION, not the rule's family**, divisor included.
 - **P2 — a panel serving a rule encodes that rule's threshold as a marked `fieldConfig.thresholds.steps` value**; per-host field overrides where hosts have different bars, never one shared ladder.
 - **P3 — a panel's description carries the rule's `for:` duration.**

@@ -356,6 +356,16 @@ Every panel expression carries either a literal `host=` matcher or the board's `
 
 This is the direct fix for the three mis-scoped panels above, and the reason it is stated as a rule rather than three edits: the defect was not that someone wrote three bad panels, it is that an unscoped expression is *correct* on a single-host fleet and silently rots as hosts are added.
 
+**The rule is about being unambiguous, not about a matcher being literally present — and that distinction is load-bearing, because 28 of the 48 metric rules are themselves host-unscoped.** P1 requires a panel to plot its rule's expression verbatim; read literally against a bare "every expression carries a matcher", the two would contradict each other on more than half the panels. They do not, because most of those 28 select a family with exactly **one publisher**, where the scope is implicit and a matcher adds noise rather than safety.
+
+A panel satisfies this rule by any of three routes, and its description says which:
+
+1. **An explicit `host=` / `$host` matcher** — required for every multi-publisher family: all `node_*`, all `process_*`, `zcrypto_capture_*` (two hosts), `zaccess_*` (two ends), `up`.
+2. **A single-publisher family** — `zcrypto_gate_*` (NAS only), `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*`, `ops_*` and `hc_*` (ops only), `zcrypto_engine_*` (the primary only). Adding a matcher here is inert; copying the rule verbatim per P1 wins. **State the publisher in the panel description** — that is what makes the omission auditable rather than accidental, and it is the fact an implementer otherwise has to dig out of a keep-regex.
+3. **A per-host legend that names the host** — for a family deliberately plotted across hosts, `zcrypto_logship_*` above all, whose whole value is the cross-host comparison. P5's `{{host}}/{{job}}` legend is what discharges the ambiguity there.
+
+Route 2 is exactly why the structural lint is a lint and not a pin: it can only see route 1.
+
 ### Host naming — one vocabulary at the operator surface, zero label rewrites
 
 Two goals, the owner's: **(1)** a Linux hostname is never visible on an operator surface; **(2)** *fewer* names for one thing — "less, not none", so this must not become a renaming project.
