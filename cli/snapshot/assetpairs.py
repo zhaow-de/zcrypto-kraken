@@ -37,6 +37,20 @@ class PairSnapshot:
     ordermin: str | None
     costmin: str | None
     status: str | None
+    # The ⏱ facts the master plan calls externally owned, which the first cut of this register did
+    # not capture: the public volume-tiered fee ladders, the per-asset borrow rate, and the margin
+    # /position bands. Kept as full ladders (not just the base tier) so a drift diff can name WHICH
+    # tier moved; the rendered doc shows the base tier and the ladder depth.
+    fees_taker: tuple[tuple[float, float], ...]
+    fees_maker: tuple[tuple[float, float], ...]
+    fee_taker_base: float | None
+    fee_maker_base: float | None
+    base_margin_rate: float | None
+    base_collateral_value: float | None
+    margin_call: int | None
+    margin_stop: int | None
+    long_position_limit: int | None
+    short_position_limit: int | None
 
 
 def _wsname_index(assetpairs_result: dict) -> dict[str, tuple[str, dict]]:
@@ -46,6 +60,17 @@ def _wsname_index(assetpairs_result: dict) -> dict[str, tuple[str, dict]]:
 def _altname(assets_result: dict, asset_code: str | None) -> str | None:
     asset = assets_result.get(asset_code) if asset_code else None
     return asset["altname"] if asset else None
+
+
+def _tiers(raw) -> tuple[tuple[float, float], ...]:
+    """Kraken renders a fee ladder as [[volume, percent], ...]; normalise to a tuple of pairs."""
+    return tuple((float(v), float(pct)) for v, pct in (raw or []))
+
+
+def _asset_field(assets_result: dict, asset_code: str | None, field: str) -> float | None:
+    asset = assets_result.get(asset_code) if asset_code else None
+    value = asset.get(field) if asset else None
+    return float(value) if value is not None else None
 
 
 def _not_found(symbol: str, base: str, quote: str) -> PairSnapshot:
@@ -64,6 +89,16 @@ def _not_found(symbol: str, base: str, quote: str) -> PairSnapshot:
         ordermin=None,
         costmin=None,
         status=None,
+        fees_taker=(),
+        fees_maker=(),
+        fee_taker_base=None,
+        fee_maker_base=None,
+        base_margin_rate=None,
+        base_collateral_value=None,
+        margin_call=None,
+        margin_stop=None,
+        long_position_limit=None,
+        short_position_limit=None,
     )
 
 
@@ -85,6 +120,8 @@ def derive_universe(assetpairs_result: dict, assets_result: dict, symbols: list[
             continue
         pair_key, pair = hit
         leverage_buy = tuple(pair.get("leverage_buy", []))
+        fees_taker = _tiers(pair.get("fees"))
+        fees_maker = _tiers(pair.get("fees_maker"))
         rows.append(
             PairSnapshot(
                 symbol=symbol,
@@ -101,6 +138,18 @@ def derive_universe(assetpairs_result: dict, assets_result: dict, symbols: list[
                 ordermin=pair.get("ordermin"),
                 costmin=pair.get("costmin"),
                 status=pair.get("status"),
+                fees_taker=fees_taker,
+                fees_maker=fees_maker,
+                fee_taker_base=fees_taker[0][1] if fees_taker else None,
+                fee_maker_base=fees_maker[0][1] if fees_maker else None,
+                # The borrow/rollover rate is a property of the ASSET, not the pair — reading it
+                # off the pair would silently yield None for every row.
+                base_margin_rate=_asset_field(assets_result, pair.get("base"), "margin_rate"),
+                base_collateral_value=_asset_field(assets_result, pair.get("base"), "collateral_value"),
+                margin_call=pair.get("margin_call"),
+                margin_stop=pair.get("margin_stop"),
+                long_position_limit=pair.get("long_position_limit"),
+                short_position_limit=pair.get("short_position_limit"),
             )
         )
     return rows
