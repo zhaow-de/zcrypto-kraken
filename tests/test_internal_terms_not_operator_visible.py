@@ -198,7 +198,7 @@ def _dashboard_texts() -> list[tuple[str, str, str]]:
             for i, v in enumerate(node):
                 walk(v, f"{where}[{i}]", name)
 
-    for path in sorted((REPO / "infra/grafana").glob("*dashboard*.json")):
+    for path in sorted((REPO / "infra/grafana").glob("*.json")):
         walk(json.loads(path.read_text()), path.stem, path.name)
     assert out, "walked no dashboard text — the glob is broken, not the dashboards clean"
     return out
@@ -208,6 +208,13 @@ def test_grafana_dashboard_text_carries_no_internal_vocabulary():
     """Panel titles, descriptions and text panels are the operator's actual UI."""
     found = [(f, where, hits) for f, where, text in _dashboard_texts() if (hits := _leaks(text))]
     assert not found, "\n".join(f"{f} {where} leaks {hits}" for f, where, hits in found)
+
+
+def test_every_dashboard_json_matches_the_push_script_glob():
+    """grafana-push.sh iterates infra/grafana/*-dashboard.json. A board named otherwise is
+    committed, passes every check, and is NEVER pushed -- silently absent from Grafana."""
+    strays = [p.name for p in sorted((REPO / "infra/grafana").glob("*.json")) if not p.name.endswith("-dashboard.json")]
+    assert not strays, f"these .json files will never be pushed by grafana-push.sh: {strays}"
 
 
 def test_compose_interpolation_errors_carry_no_internal_vocabulary():
