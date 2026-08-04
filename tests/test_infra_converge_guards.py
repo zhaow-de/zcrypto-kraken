@@ -428,6 +428,79 @@ def test_engine_pins_override_echo_fires_only_on_an_accepted_override(pins_text,
     assert truthy(when_conditions(task), variables) is expected
 
 
+# --- engine canary parity (spec 00083 D5): the capture parity assert, mirrored ------------------
+# The engine has no secondary; the secondary's CAPTURE bake is the engine's canary gate. The mirror
+# engages only when engine_image_digest differs from the running engine digest, fails CLOSED on an
+# unreachable secondary (empty stdout -> refuse via the override path), and shares canary_override.
+
+
+def test_engine_parity_refuses_unbaked_digest():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_secondary_digest_probe": {"stdout": "ghcr.io/x/y@sha256:" + "cd" * 32},
+        "canary_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+def test_engine_parity_passes_when_secondary_runs_it():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    d = "sha256:" + "ab" * 32
+    v = {
+        "engine_image_digest": d,
+        "engine_secondary_digest_probe": {"stdout": f"ghcr.io/x/y@{d}"},
+        "canary_override": "",
+    }
+    assert truthy(assert_that(guard), v)
+
+
+def test_engine_parity_fails_closed_on_unreachable_secondary():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {}, "canary_override": ""}
+    assert not truthy(assert_that(guard), v)  # no stdout at all -> default('') -> refuse
+
+
+def test_engine_parity_reason_override_is_accepted_and_boolean_is_not():
+    tasks = load_tasks(ENGINE)
+    guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
+    v = {"engine_image_digest": "sha256:" + "ab" * 32, "engine_secondary_digest_probe": {"stdout": ""}}
+    assert truthy(assert_that(guard), {**v, "canary_override": "rollback to the only digest carrying the fix"})
+    assert not truthy(assert_that(guard), {**v, "canary_override": "true"})
+
+
+def test_engine_parity_probe_skips_when_digest_already_running():
+    tasks = load_tasks(ENGINE)
+    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
+    d = "sha256:" + "ab" * 32
+    v = {"engine_image_digest": d, "engine_running_parity_probe": {"stdout": f"ghcr.io/x/y@{d}"}}
+    assert not truthy(" and ".join("(%s)" % c for c in when_conditions(probe)), v)
+
+
+def test_engine_parity_probe_is_unreachable_tolerant_and_delegated():
+    tasks = load_tasks(ENGINE)
+    probe = find_task(tasks, "probe — the secondary's running capture digest (engine canary parity)")
+    assert probe.get("ignore_unreachable") is True
+    assert "difference(groups['engine_host'])" in probe["delegate_to"]
+
+
+def test_engine_parity_echo_mirrors_the_negated_assert():
+    tasks = load_tasks(ENGINE)
+    echo = find_task(tasks, "engine canary override accepted — the reason, on the record")
+    v_overridden = {
+        "engine_image_digest": "sha256:" + "ab" * 32,
+        "engine_secondary_digest_probe": {"stdout": ""},
+        "canary_override": "rollback to the only digest carrying the fix",
+    }
+    conds = " and ".join("(%s)" % c for c in when_conditions(echo))
+    # a dict fixture is `not skipped` under Templar — wave-1's echo tests evaluate this directly
+    assert truthy(conds, v_overridden)
+    assert not truthy(conds, {**v_overridden, "canary_override": "true"})
+
+
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
 # The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
 # that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
