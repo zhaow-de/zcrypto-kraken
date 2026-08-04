@@ -72,10 +72,8 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     # Render through Jinja, the way Ansible does — NOT str.replace. The substitution harness this
     # replaced could not see a Jinja syntax error, and one shipped: the template failed on its
     # first real converge with every test here green.
-    import jinja2
-
     values = {var: val.format(data=data, nas=nas) for var, val in {**VARS, **overrides}.items()}
-    text = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(text).render(**values)
+    text = ansible_render(text, **values)
     assert "{{" not in text and "{%" not in text, "unrendered template syntax left behind"
     script = tmp_path / "zcrypto-panel-regenerate"
     script.write_text(text)
@@ -310,27 +308,41 @@ def test_failed_rebuild_leaves_timer_stopped(tmp_path):
 # first real converge while this file was fully green. These two tests close that blind spot.
 
 
-def test_template_renders_through_real_jinja():
-    """Render the way Ansible does, not the way the harness above does."""
-    jinja2 = pytest.importorskip("jinja2")
-    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
-    rendered = env.from_string(TEMPLATE.read_text()).render(
+def ansible_render(source, **values):
+    """Render through ANSIBLE's templar, not a bare jinja2.Environment.
+
+    Load-bearing distinction, learned twice on the same file: bare Jinja defaults to
+    trim_blocks=False while Ansible sets it True, so a template can render perfectly here and
+    still install broken shell on the host. Only the real engine settles it.
+    """
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar, trust_as_template
+
+    return Templar(loader=DataLoader(), variables=values).template(trust_as_template(source))
+
+
+def test_template_renders_to_valid_shell_through_ansible():
+    """The ground truth this file exists to protect: what Ansible installs must be valid bash."""
+    rendered = ansible_render(
+        TEMPLATE.read_text(),
         ops_data_dir="/var/lib/zcrypto-ops",
         ops_panel_subdir="l2-panel",
         ops_nas_mount="/mnt/zhao-crypto",
         ops_capture_subdir="capture-segments",
         ops_reconciled_subdir="capture-reconciled",
     )
-    # the shell length idiom must survive its raw block, and no Jinja may leak into the output
-    assert "len=${#override}" in rendered
     assert "{%" not in rendered and "{{" not in rendered
+    # the override length test must survive as its own statement, not welded to the next line
+    assert '[ -z "${override:8}" ]' in rendered
     subprocess.run(["bash", "-n", "/dev/stdin"], input=rendered, text=True, check=True)
 
 
 def test_every_ansible_template_is_parseable_jinja():
     """Repo-wide: a template that cannot parse never installs, whatever its tests say."""
     jinja2 = pytest.importorskip("jinja2")
-    env = jinja2.Environment()
+    # trim_blocks/lstrip_blocks mirror Ansible's environment — the defaults differ and that
+    # difference is what shipped broken shell twice.
+    env = jinja2.Environment(trim_blocks=True, lstrip_blocks=False)
     root = TEMPLATE.resolve().parent.parent.parent.parent  # infra/ansible
     templates = sorted(root.rglob("*.j2"))
     assert templates, "no templates found — the glob is wrong, not the tree"
