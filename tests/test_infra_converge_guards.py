@@ -518,9 +518,15 @@ def test_panel_timer_hold_excludes_only_the_panel_timer():
 
 def test_panel_regenerate_is_installed_by_the_ops_role():
     tasks = load_tasks(OPS)
-    task = find_task(tasks, "install the panel regenerate flow (delete-and-rebuild with its refusals)")
+    name = "install the panel regenerate flow (delete-and-rebuild with its refusals)"
+    task = find_task(tasks, name)
     assert task["ansible.builtin.template"]["dest"] == "/usr/local/sbin/zcrypto-panel-regenerate"
     assert task["ansible.builtin.template"]["mode"] == "0755"
+    # TOP-LEVEL and ungated is the load-bearing half, and find_task recurses into `block:` -- so the
+    # assertions above stay green with this task moved back inside the digest gate, which is exactly
+    # the regression that stops the script landing on a digestless converge. Scan the top level.
+    assert name in [t.get("name") for t in tasks]
+    assert "when" not in task
 
 
 OPS_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"

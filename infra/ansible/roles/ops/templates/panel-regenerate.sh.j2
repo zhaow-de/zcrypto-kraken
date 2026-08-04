@@ -15,6 +15,13 @@ PANEL_ROOT="{{ ops_data_dir }}/{{ ops_panel_subdir }}"
 CANONICAL="{{ ops_nas_mount }}/{{ ops_capture_subdir }}"
 OVERLAY="{{ ops_data_dir }}/{{ ops_reconciled_subdir }}"
 
+# Render guard, before anything is touched: an EMPTY ops_panel_subdir makes PANEL_ROOT the ops data
+# root itself, and this script's payload is `rm -rf` on it -- the reconciled overlay, the
+# liquidations tree and the textfile dir would go with the panel. `set -u` cannot catch it (the var
+# is set, to a string with an empty component) and Ansible refuses only UNDEFINED vars, not empty
+# ones, so the check belongs here.
+[ -n "{{ ops_panel_subdir }}" ] || { echo "refusing: the panel subdirectory rendered empty, which would aim rm -rf at the whole data root" >&2; exit 2; }
+
 override=""
 if [ "$#" -gt 0 ]; then
   if [ "$1" = "--override" ] && [ "$#" -eq 2 ]; then
@@ -37,7 +44,16 @@ systemctl stop zcrypto-panel-materialize.timer
 echo "timer stopped. Reminder: a converge re-arms it unless -e ops_panel_timer_hold=true is passed."
 
 echo "== step 2: sizing the rebuild =="
-mb=$(( $(du -sm "$CANONICAL" | cut -f1) + $(du -sm "$OVERLAY" | cut -f1) ))
+# One assignment per input, never both inside one arithmetic expansion: there the assignment takes
+# only the LAST substitution's status and an empty operand parses as unary plus, so a failing du on
+# the NFS-side canonical tree is swallowed and the ETA is sized from the overlay alone -- the
+# central refusal neutralized exactly when the NAS mount is what is broken (measured). Split, either
+# failure is its own statement and `set -e` + `pipefail` abort here, with the timer left stopped:
+# the hourly materialize must not resume against a tree this host cannot stat, and the dead-man
+# check is still armed at this point, so the missed ping pages.
+canon_mb=$(du -sm "$CANONICAL" | cut -f1)
+overlay_mb=$(du -sm "$OVERLAY" | cut -f1)
+mb=$(( canon_mb + overlay_mb ))
 eta=$(awk -v m="$mb" 'BEGIN{printf "%d", m * 2.1 * 1.2}')
 now=$(date -u +%s)
 deadline=$(date -u -d "$(date -u +%F) 02:25" +%s)
