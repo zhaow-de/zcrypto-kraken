@@ -284,6 +284,7 @@
     path: "{{ ops_compose_dir }}/compose.yaml"
     follow: true
   register: ops_liquidations_compose_stat
+  failed_when: false
   check_mode: false
   when: ops_image_digest is defined
 
