@@ -779,6 +779,16 @@ def test_decision_guard_engages_when_file_exists():
     assert not truthy(assert_that(_liq_decision_guard()), v)  # empty stdout + no decision -> refuse
 
 
+def test_stat_probe_resolves_symlinks():
+    # Textual pin, not a Templar fixture: without `follow: true` the real stat module lstats a
+    # dangling compose.yaml symlink as exists=True, readable=False, tripping the readability guard's
+    # chmod/chown fail_msg on a target that was never a permission fault. `follow: true` restores
+    # spec D9's `test -e`/`test -r` semantics (both resolve symlinks), so a dangling link reads as
+    # absent -> stand-down, matching the old grep behavior.
+    task = find_task(load_tasks(OPS), "probe — the deployed liquidations compose file (existence vs readability)")
+    assert task["ansible.builtin.stat"]["follow"] is True
+
+
 def test_liquidations_refuses_a_compose_file_without_a_digest_line():
     task = find_task(load_tasks(OPS), LIQUIDATIONS)
     variables = {

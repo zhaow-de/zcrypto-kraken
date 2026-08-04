@@ -282,13 +282,15 @@
 - name: probe — the deployed liquidations compose file (existence vs readability)
   ansible.builtin.stat:
     path: "{{ ops_compose_dir }}/compose.yaml"
+    follow: true
   register: ops_liquidations_compose_stat
   check_mode: false
   when: ops_image_digest is defined
 
 # spec 00083 D9: grep answered 2 for BOTH "absent" (legitimate first-provision stand-down) and
 # "present but unreadable" (a permission fault on the very file whose pin this converge would
-# move). The stat probe splits them: absent skips, unreadable refuses.
+# move). The stat probe splits them: absent skips, unreadable refuses. `follow: true` on the probe
+# resolves symlinks, so a dangling compose.yaml reads as absent rather than as a permission fault.
 - name: liquidations — an unreadable compose file is a fault, never a first-provision skip
   ansible.builtin.assert:
     that: ops_liquidations_compose_stat.stat.readable | default(false)
