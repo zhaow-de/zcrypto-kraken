@@ -5,6 +5,7 @@ never a re-implementation of the logic. `load_task` reads the committed YAML; a 
 expression is edited drifts here immediately.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -283,6 +284,108 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
         "engine_window_override": "",
     }
     assert truthy(assert_that(task), variables) is expected
+
+
+# --- window floor from the boundary cycle's completion (spec 00083 D6) --------------------------
+# When the boundary's cycle-HH.json already carries completed_at, the floor drops from B+1800 to
+# completed_at+300. Absent probe, failed probe, or garbage stdout -> the CONSERVATIVE B+1800 floor.
+
+BOUNDARY = 1785744000  # 2026-08-03 08:00:00 UTC, divisible by 14400
+
+
+def _window_guard():
+    tasks = load_tasks(SITE)
+    return find_task(tasks, "engine window — refuse a converge outside the inter-cycle gap")
+
+
+def test_floor_drops_to_completion_plus_300():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},  # B+500: inside old refusal window
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 108)},  # completed 08:01:48
+        "engine_window_override": "",
+    }
+    assert truthy(assert_that(guard), v)  # 500 >= 108+300 -> allowed early
+
+
+def test_floor_still_refuses_before_completion_plus_300():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 300)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 108)},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)  # 300 < 408
+
+
+def test_failed_probe_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},
+        "engine_cycle_epoch_probe": {"rc": 1, "stdout": ""},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)  # rc!=0 -> floor stays B+1800
+
+
+def test_garbage_stdout_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": "Traceback (most recent call last)"},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+# The `{10}` in the stdout regex is what the fixture above is blind to: measured by flipping the
+# committed expression's `^[0-9]{10}$` to `^[0-9]+$`, the Traceback fixture still passes while THIS
+# one flips to allowed -- a short all-digit token becomes a floor in the distant past, i.e. no floor.
+def test_short_all_digit_stdout_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 500)},
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": "99"},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+def test_undefined_probe_keeps_conservative_floor():
+    guard = _window_guard()
+    v = {"engine_epoch_probe": {"stdout": str(BOUNDARY + 500)}, "engine_window_override": ""}
+    assert not truthy(assert_that(guard), v)
+
+
+def test_ceiling_unchanged():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 14400 - 300)},  # last 5 min
+        "engine_cycle_epoch_probe": {"rc": 0, "stdout": str(BOUNDARY + 108)},
+        "engine_window_override": "",
+    }
+    assert not truthy(assert_that(guard), v)
+
+
+def test_old_floor_still_passes_after_1800_without_journal():
+    guard = _window_guard()
+    v = {
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + 1800)},
+        "engine_cycle_epoch_probe": {"rc": 1, "stdout": ""},
+        "engine_window_override": "",
+    }
+    assert truthy(assert_that(guard), v)
+
+
+def test_journal_probe_path_matches_the_engine_role_default():
+    """site.yml's pre_task cannot see role defaults, so the journal path is a literal — pin it to
+    the engine role's engine_state_dir so a relocation cannot silently turn the floor
+    permanently conservative (probe rc!=0 forever, guard 'working' but never early)."""
+    site_text = SITE.read_text()
+    defaults = (SITE.parent / "roles" / "engine" / "defaults" / "main.yml").read_text()
+    m = re.search(r"^engine_state_dir:\s*(\S+)", defaults, re.M)
+    assert m, "engine_state_dir vanished from the engine role defaults"
+    assert f"{m.group(1)}/journal/" in site_text
 
 
 # --- when-scoping (cold review M4): the `that:` tests never exercise the scoping, and a mis-scoped
