@@ -69,9 +69,14 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     overrides = {"ops_panel_subdir": panel_subdir}
     if data_dir is not None:
         overrides["ops_data_dir"] = data_dir
-    for var, val in {**VARS, **overrides}.items():
-        text = text.replace("{{ %s }}" % var, val.format(data=data, nas=nas))
-    assert "{{" not in text, "unrendered template var left behind"
+    # Render through Jinja, the way Ansible does — NOT str.replace. The substitution harness this
+    # replaced could not see a Jinja syntax error, and one shipped: the template failed on its
+    # first real converge with every test here green.
+    import jinja2
+
+    values = {var: val.format(data=data, nas=nas) for var, val in {**VARS, **overrides}.items()}
+    text = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(text).render(**values)
+    assert "{{" not in text and "{%" not in text, "unrendered template syntax left behind"
     script = tmp_path / "zcrypto-panel-regenerate"
     script.write_text(text)
     script.chmod(0o755)
@@ -296,3 +301,43 @@ def test_failed_rebuild_leaves_timer_stopped(tmp_path):
     seq = calls(log)
     assert "systemctl start zcrypto-panel-materialize.timer" not in seq  # stays stopped
     assert "investigate" in out
+
+
+# --- the defect the str.replace harness above cannot see -------------------------------------
+# Every test above renders by string substitution, which never invokes Jinja — so a Jinja SYNTAX
+# error is invisible to all of them. One shipped: bash's string-length expansion opens with a
+# brace-hash pair, which Jinja reads as a comment tag, and the template failed to render on the
+# first real converge while this file was fully green. These two tests close that blind spot.
+
+
+def test_template_renders_through_real_jinja():
+    """Render the way Ansible does, not the way the harness above does."""
+    jinja2 = pytest.importorskip("jinja2")
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    rendered = env.from_string(TEMPLATE.read_text()).render(
+        ops_data_dir="/var/lib/zcrypto-ops",
+        ops_panel_subdir="l2-panel",
+        ops_nas_mount="/mnt/zhao-crypto",
+        ops_capture_subdir="capture-segments",
+        ops_reconciled_subdir="capture-reconciled",
+    )
+    # the shell length idiom must survive its raw block, and no Jinja may leak into the output
+    assert "len=${#override}" in rendered
+    assert "{%" not in rendered and "{{" not in rendered
+    subprocess.run(["bash", "-n", "/dev/stdin"], input=rendered, text=True, check=True)
+
+
+def test_every_ansible_template_is_parseable_jinja():
+    """Repo-wide: a template that cannot parse never installs, whatever its tests say."""
+    jinja2 = pytest.importorskip("jinja2")
+    env = jinja2.Environment()
+    root = TEMPLATE.resolve().parent.parent.parent.parent  # infra/ansible
+    templates = sorted(root.rglob("*.j2"))
+    assert templates, "no templates found — the glob is wrong, not the tree"
+    broken = []
+    for path in templates:
+        try:
+            env.parse(path.read_text())
+        except jinja2.TemplateSyntaxError as exc:
+            broken.append(f"{path.relative_to(root)}:{exc.lineno}: {exc}")
+    assert not broken, "unparseable Jinja templates: " + "; ".join(broken)

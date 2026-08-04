@@ -38,7 +38,13 @@ if [ "$#" -gt 0 ]; then
 fi
 if [ -n "$override" ]; then
   low=$(printf '%s' "$override" | tr '[:upper:]' '[:lower:]')
-  if [ "${#override}" -le 8 ] || [ "$low" = "true" ] || [ "$low" = "false" ] || [ "$low" = "1" ] || [ "$low" = "yes" ]; then
+  # The raw block is load-bearing, not decoration: bash's string-length expansion opens with a
+  # brace-hash pair, which Jinja reads as a comment tag — so without it this template does not
+  # render at all and the script never installs. (This comment avoids the literal sequence for
+  # the same reason: Jinja parses shell comments too.) Found by the first real converge, not by
+  # a test — the sibling tests render with str.replace and are blind to Jinja syntax.
+  {% raw %}len=${#override}{% endraw %}
+  if [ "$len" -le 8 ] || [ "$low" = "true" ] || [ "$low" = "false" ] || [ "$low" = "1" ] || [ "$low" = "yes" ]; then
     echo "refusing: --override needs a reason (more than 8 chars, not a boolean)" >&2
     exit 2
   fi
