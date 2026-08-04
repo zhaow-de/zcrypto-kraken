@@ -20,20 +20,24 @@ Two defects and one blind spot were found while scoping, all confirmed against t
 
 | uid | title | question it answers |
 | --- | --- | --- |
-| `zcrypto-fleet` *(new)* | `fleet health` | is any machine in the fleet unwell? |
-| `zcrypto-main` *(reused, retitled)* | `data integrity` | is the data we are betting on sound? |
-| `zcrypto-engine` *(new)* | `engine` | what is the trading engine doing? |
-| `zcrypto-logs` *(existing)* | `logs` | what did it say? |
+| `zcrypto-fleet` *(new)* | `Fleet health` | is any machine in the fleet unwell? |
+| `zcrypto-integrity` *(new)* | `Data integrity` | is the data we are betting on sound? |
+| `zcrypto-engine` *(new)* | `Engine` | what is the trading engine doing? |
+| `zcrypto-logs` *(existing, reworked)* | `Logs` | what did it say? |
 
-**Titles carry no `zcrypto` prefix** (owner's call): the Grafana instance and the `zcrypto` folder already establish it, so the prefix is noise repeated on every board.
+**Titles carry no `zcrypto` prefix** (owner's call): the Grafana instance and the `zcrypto` folder already establish it, so the prefix is noise repeated on every board. **Titles are sentence case** — first word capitalised, the rest lower unless a proper noun.
 
-`data integrity` **reuses uid `zcrypto-main`** rather than minting a new one: `grafana-push.sh` upserts and never deletes, so reusing the uid replaces the old board in place. A new uid would leave the stale `zcrypto — Data Pipeline Health` live beside its replacement, and nothing in the push path would ever remove it.
+**All three metric boards mint NEW uids; `zcrypto-main` is not reused** (owner's call). Reuse would have replaced the old board in place, but it also welds the new design to the old board's identity — every link, bookmark and future prune decision inherits a uid whose name (`main`) no longer describes anything. Three purpose-named uids are worth one cleanup step.
 
-**The engine board is named `engine`, not "engine — intent".** The intent-versus-execution distinction is a property of the *metric*, and belongs at panel and `/metrics` level, where it already lives: `zcrypto_engine_orders_total` is documented "Intended orders emitted", `zcrypto_engine_order_notional_eur` "Intended order notional". Naming the board for intent would be wrong the moment [[T0018]]'s executor emits execution families — which then join **this same board** as new panels — recorded in the cross-topic section below and in [[T0018]] itself, so the handoff lives on the topic that owns making those families exist.
+**That cleanup step is the owner's, because the tooling cannot do it.** `grafana-push.sh`'s prune path (`GRAFANA_PRUNE=1`) is scoped to `/api/v1/provisioning/alert-rules` in the alert folder — there is **no dashboard delete path in the script at all**, and the push upserts only. So `zcrypto-main` ("zcrypto — Data Pipeline Health") stays live beside the new three until deleted by hand in the Grafana UI. **Closeout carries an explicit owner step to delete it**, and the closeout is the right moment: the new boards are verified live first, so the deletion is never the thing that leaves a gap. Adding a dashboard-prune path to the script is deliberately **out of scope** — dashboard deletion is irreversible from the repo, and the rules-prune precedent took a dry-run-by-default design and a named-uid confirmation that a one-off cleanup does not warrant.
 
-## D2 — `fleet health`
+**The engine board is named `Engine`, not "Engine — intent".** The intent-versus-execution distinction is a property of the *metric*, and belongs at panel and `/metrics` level, where it already lives: `zcrypto_engine_orders_total` is documented "Intended orders emitted", `zcrypto_engine_order_notional_eur` "Intended order notional". Naming the board for intent would be wrong the moment [[T0018]]'s executor emits execution families — which then join **this same board** as new panels — recorded in the cross-topic section below and in T0018 itself, so the handoff lives on the topic that owns making those families exist.
 
-`uid zcrypto-fleet` (new), title `fleet health`. Answers *is any machine in the fleet unwell?* — the node/process/scrape layer, the healthchecks.io aggregate, and the access tier. It owns 28 families and 16 of the 48 metric-backed rules.
+**All three metric boards enable Shared Crosshair** (`graphTooltip: 1` at dashboard level) — hovering one timeseries draws the cursor on every other panel at the same instant. Correlating a load spike against a scrape failure, or a desync against a gap, is the routine act on all three boards, and doing it by reading timestamps across panels is exactly the friction this iteration exists to remove. Not Shared Tooltip (`2`), which stacks every panel's values into one hover card and becomes unreadable at these panel counts.
+
+## D2 — `Fleet health`
+
+`uid zcrypto-fleet` (new), title `Fleet health`. Answers *is any machine in the fleet unwell?* — the node/process/scrape layer, the healthchecks.io aggregate, and the access tier. It owns 28 families and 16 of the 48 metric-backed rules.
 
 ### Panel rules P1–P6 — binding on all three boards
 
@@ -123,19 +127,19 @@ count by (host) (node_scrape_collector_success{host=~"$host", host!="zaccess"}) 
 **Corrections applied from review:**
 
 - **(critical) One load ladder cannot serve three hosts.** The proposed shared per-core ladder (green <1.0) reads GREEN across the whole band where `Ops · node load high` has already fired — `node_load1{host="ops"} > 20` on a 24-thread box is 0.833/core, *below* the ladder's first step. Fixed by P2: the panel plots each rule's own expression as its own series with its own marked step, and the normalised per-core view survives as a separate, explicitly page-line-free context panel.
-- **(important) The textfile-age panel applied capture-only thresholds to ops and access.** `node_textfile_mtime_seconds` is referenced in `alerts.yaml` only under `host=~"zcrypto|zcrypto-red"`; the ops timers are governed by entirely different families with different bars (3 h dead-man, 48 h), and access has no governing rule at all. Panel is now scoped `host=~"zcrypto|zcrypto-red"`, matching what it claims to serve; ops timer freshness lives on `data integrity` under its own families.
+- **(important) The textfile-age panel applied capture-only thresholds to ops and access.** `node_textfile_mtime_seconds` is referenced in `alerts.yaml` only under `host=~"zcrypto|zcrypto-red"`; the ops timers are governed by entirely different families with different bars (3 h dead-man, 48 h), and access has no governing rule at all. Panel is now scoped `host=~"zcrypto|zcrypto-red"`, matching what it claims to serve; ops timer freshness lives on `Data integrity` under its own families.
 - **(important) `topk(5, …)` without a grouping clause** reduces over the entire matched vector, so at `$host = All` it returns the five globally-largest series — possibly all from one host — and silently hides every other host's collectors. Corrected to `topk by (host) (5, …)`.
 - **(minor) `Capture · spool disk low` dropped** from the byte-headroom panel's rule list: that rule's bar is a percentage and is already correctly served by the free-% panel; the byte panel's 1 GiB step is the capture daemon's own watermark, which appears nowhere in `alerts.yaml`.
 - **(minor) `zaccess` gets its own 0.15 red step** on the free-% panel via a field override — the same single-ladder-for-multiple-bars class as the load finding, milder only because orange still reads as attention.
 - **(minor) `$daemon_host` resolves to four hosts, not three**, and the NAS tile renders Alloy's own process; both stated in the panel description and the layout note.
-- **Two panels moved off this board.** The proposed "NAS timer substitute — gate export age" belongs to `data integrity`'s gate row (it is a gate family and `Gate · exporter stale` points there); the two log-shipping panels move to `data integrity`'s telemetry-integrity row. Rationale for the split is in D3.
-- **Pointer ownership de-duplicated.** Where two panels could serve one rule, the `__panelId__` goes to the panel plotting the rule's expression (P1) and the other is marked context — Alloy-dark to the glance stat, not to "Scrape targets up"; the spool-disk pointer to `fleet health`, not to `data integrity`'s spool tile.
+- **Two panels moved off this board.** The proposed "NAS timer substitute — gate export age" belongs to `Data integrity`'s gate row (it is a gate family and `Gate · exporter stale` points there); the two log-shipping panels move to `Data integrity`'s telemetry-integrity row. Rationale for the split is in D3.
+- **Pointer ownership de-duplicated.** Where two panels could serve one rule, the `__panelId__` goes to the panel plotting the rule's expression (P1) and the other is marked context — Alloy-dark to the glance stat, not to "Scrape targets up"; the spool-disk pointer to `Fleet health`, not to `Data integrity`'s spool tile.
 
-**Superseded panels.** `zcrypto-main`'s `NAS · Load (1m)`, `NAS · Memory Available %` and `NAS · Network IO` are host-unfiltered and plot five hosts under a one-host title; their scoped equivalents are this board's load, memory and network panels. `NAS · /volume1 Free %` is accidentally correct (Synology-specific mountpoint) and is likewise superseded by "Filesystem free % by mountpoint". All four disappear when D3 replaces `zcrypto-main` wholesale — so `fleet health` must land in the **same push**, or the fleet briefly loses even the broken view.
+**Superseded panels.** `zcrypto-main`'s `NAS · Load (1m)`, `NAS · Memory Available %` and `NAS · Network IO` are host-unfiltered and plot five hosts under a one-host title; their scoped equivalents are this board's load, memory and network panels. `NAS · /volume1 Free %` is accidentally correct (Synology-specific mountpoint) and is likewise superseded by "Filesystem free % by mountpoint". None of the four *disappears* on push: `zcrypto-main` keeps its own uid and stays live until the owner deletes it at closeout (D1). That is the safer order — the broken-but-familiar board remains readable while the new three are verified — but it means the fleet briefly carries **two** answers to the same question, so the three new boards must land in the **same push** and the closeout deletion must not be skipped.
 
-## D3 — `data integrity`
+## D3 — `Data integrity`
 
-`uid zcrypto-main` (reused, retitled — D1), title `data integrity`. Answers *is the data we are betting on sound?* — the unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. It owns 66 families and 25 of the 48 metric-backed rules. P1–P6 bind here.
+`uid zcrypto-integrity` (new — D1), title `Data integrity`. Answers *is the data we are betting on sound?* — the unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. It owns 66 families and 25 of the 48 metric-backed rules. P1–P6 bind here.
 
 ### Template variables
 
@@ -157,7 +161,7 @@ count by (host) (node_scrape_collector_success{host=~"$host", host!="zaccess"}) 
 | | Book silence — gap seconds per pair (24h increase) | Which pair contributed how much book silence in the last day — the capture-side origin of every healable and residual second booked downstream | — |
 | | Rows held vs quarantined (6h increase) | Did rows arrive after their hour was finalized and get spilled out of the canonical tree | `Capture · rows quarantined to .held` |
 | | Capture counters — cumulative since process start | How much damage each host has taken over its whole life — **all-green, every step removed**, so scale reads here and recency reads in the delta panels beside it | — |
-| | Spool free % (root filesystem) | How much runway the unbackfillable spool has before the prune ring must be fixed | — (context; the rule pointer is on `fleet health`) |
+| | Spool free % (root filesystem) | How much runway the unbackfillable spool has before the prune ring must be fixed | — (context; the rule pointer is on `Fleet health`) |
 | | Hard stops — disk watermark & venue status | The two conditions under which capture is no longer trustworthy at the source | `Capture · disk watermark breached -- DISCARDING data`, `Capture · Kraken reports the venue is not online` |
 | | Segments written & bytes (1h increase) | Is the writer still committing hourly segments at normal size while the process stays up and keeps pinging | — |
 | reconcile | Mirror lag by source & reconciler liveness | Are both mirrors still producing, and is the reconciler that compares them still running | `Reconciler · capture mirror lagging`, `Reconciler · exporter stale` |
@@ -182,7 +186,11 @@ count by (host) (node_scrape_collector_success{host=~"$host", host!="zaccess"}) 
 | | Log shipping — worker liveness | Is the shipper alive — read cycle age for that, and read a stale last-ship age only together with the shipped-lines count beside it | `Logs · the shipping worker has stopped cycling` |
 | | Liquidations poller | Is the Coinalyze poller still landing cycles, and has any outage exceeded the 30 h window the next cycle would re-fetch for free | — (no rule watches any liquidations family) |
 
-**Log shipping is owned here, not by `fleet health`.** A dropped log line is data loss in the telemetry domain, and the panel's whole value is the quiet-versus-broken disambiguation ([[T0106]]'s false-red): a stale `last_success` beside an advancing `shipped_lines_total` is healthy, and no host-health reading expresses that. Both panels' legends are `{{host}}/{{job}}` (P5) — on `zcrypto` capture and the engine both publish this family, and the rules themselves need no change: neither aggregates, so Grafana already produces one alert instance per `(host, job)` with the labels intact.
+**Log shipping is owned here, not by `Fleet health`.** A dropped log line is data loss in the telemetry domain — the one fault that makes every Loki-based alert's *silence* meaningless — and that is a data-integrity question, not a host-health one.
+
+**The liveness panel follows [[T0106]]'s resolution rather than re-litigating it.** That topic is **resolved and archived**: it did not document the false red as a caveat, it *replaced the signal*. `zcrypto_logship_last_cycle_timestamp_seconds` became the liveness gauge (0 s on a healthy host), and `_last_success_timestamp_seconds` was demoted to corroboration and explicitly marked **not** a fault signal — because the worker skips the post on an empty buffer, so on a healthy quiet host the two read 0 s and 39 min at the same instant, as the closing bake measured. The panel therefore **leads with cycle age**, carries the page line only there (matching `Logs · the shipping worker has stopped cycling`, which reads that gauge), and renders last-ship age as an unthresholded context series beside `shipped_lines_total`. Reintroducing a threshold on last-ship age would rebuild the exact false red a shipped fix already removed.
+
+Both panels' legends are `{{host}}/{{job}}` (P5) — on `zcrypto` capture and the engine both publish this family, and the rules themselves need no change: neither aggregates, so Grafana already produces one alert instance per `(host, job)` with the labels intact.
 
 Four expressions are quoted because the expression itself is the decision.
 
@@ -234,12 +242,12 @@ increase(zcrypto_reconcile_trade_deficit_rows_total{host=~"primary|secondary"}[2
 - **(important) `zcrypto_gate_status` was coloured red for "NOT MET".** No rule reads that family — the rule that did was retired with an explicit note that `status == 0` is the **correct, expected** state for the whole ~14-day accumulation window. A red tile for twelve healthy days is the visual form of the same alarm fatigue. It is now informational: neutral background, text mapping only.
 - **(important) `zcrypto_logship_dropped_lines_total` had a delta panel and no cumulative partner**, breaking D7 for the one counter whose delta panel was already correct. The raw cumulative value joins the telemetry-integrity row, all-green, as context.
 - **(minor) The alert-expression series was the one unscoped expression** in an otherwise fully host-scoped board; `{host="ops"}` added to the healable references, and the divisor deliberately left as the rule writes it (above).
-- **Ownership moved in:** log shipping and the gate export-age view arrive from the `fleet health` draft; the spool-free tile stays but surrenders its rule pointer to `fleet health` (P1 — that rule's expression is a percentage over `mountpoint="/"`, which the fleet panel plots for all hosts).
+- **Ownership moved in:** log shipping and the gate export-age view arrive from the `Fleet health` draft; the spool-free tile stays but surrenders its rule pointer to `Fleet health` (P1 — that rule's expression is a percentage over `mountpoint="/"`, which the fleet panel plots for all hosts).
 - **Empty-by-design series are documented, not left ambiguous:** `zcrypto_gate_cache_oldest_verification_age_seconds` is emitted only when the scoring cache is active and non-empty (its rule sets `noDataState: OK` for exactly this), and `zcrypto_logship_last_success_timestamp_seconds` is absent until the worker has completed one successful ship. Both panels carry a description saying an empty series is expected — otherwise the board reintroduces the ambiguity the whole exercise is about.
 
-## D4 — `engine`
+## D4 — `Engine`
 
-`uid zcrypto-engine` (new), title **`engine`** — not "engine — intent" (D1). The intent-versus-execution distinction is a property of the metric and lives at panel and `/metrics` level, so [[T0018]]'s executed families join this same board without a rename. It owns 12 engine families plus two scoped second views (`up`, `node_textfile_mtime_seconds`), and serves one existing rule and two new ones. P1–P6 bind here.
+`uid zcrypto-engine` (new), title **`Engine`** — not "Engine — intent" (D1). The intent-versus-execution distinction is a property of the metric and lives at panel and `/metrics` level, so [[T0018]]'s executed families join this same board without a rename. It owns 12 engine families plus two scoped second views (`up`, `node_textfile_mtime_seconds`), and serves one existing rule and two new ones. P1–P6 bind here.
 
 **Panel titles must make intent unmistakable** — conflating an intended order with a fill on a trading dashboard is dangerous, so every intent panel carries "intended" in its title and the two counter panels say "decisions, not fills" outright.
 
@@ -269,7 +277,7 @@ The engine host is `zcrypto` alone by design: membership of that group grants th
 | Composition | Active sleeves & composition changes (26h) | The alerted family, plotted **with the rule's own `changes(…[26h])` value** so the page and the panel show the same number | `Engine · sleeve composition changed` |
 | | Sleeve gross — per sleeve (intended exposure) | **Which** sleeve moved — literally where that alert's summary sends the reader | — (the follow-up view; pointer is on the panel above, per P1) |
 | | Book-level intent — net vs gross target weight | The quantitative consequence the alert warns about: a dormant sleeve re-arming roughly triples gross and invalidates the drift band, and this is the line on which that is measurable | — |
-| Journal retention | Journal prune freshness — script clock vs textfile mtime | Is the daily prune still running, and do the script and the collector agree — the two normally track within seconds, and a gap between them means the script ran but its `.prom` was not written or not readable | — (context; `fleet health`'s textfile panel owns the alert pointer) |
+| Journal retention | Journal prune freshness — script clock vs textfile mtime | Is the daily prune still running, and do the script and the collector agree — the two normally track within seconds, and a gap between them means the script ran but its `.prom` was not written or not readable | — (context; `Fleet health`'s textfile panel owns the alert pointer) |
 | | Journal retention — day-dirs kept vs deleted per run | Is the 60-day tail intact — a collapsing kept-count is the one housekeeping failure that changes what the engine **trades**, by turning the next cycle's deltas into a full-book rebuild | — |
 | | Oldest retained journal day | Is the prune actually deleting, or only running — the age of the oldest surviving day-dir is the outcome measure where kept-days and last-run are process measures | — |
 
@@ -277,22 +285,28 @@ Every threshold on this board is a repo constant, not a judgement: 16500 s and 1
 
 **Absence is never rendered as a value.** `zcrypto_engine_cycle_success` and `zcrypto_engine_active_sleeves` are *lazily* registered — deliberately left unpublished rather than shipped as a false `0` — so both panels take all their colour from **value mappings** with a neutral base step and an explicit `noValue` text. A thresholds-driven stat would paint that absence red, i.e. would invent exactly the claim the code refuses to publish.
 
-**Two source-level traps the board must state and cannot fix.**
+### Two source-level defects this board surfaced — fixed here, not deferred
 
-- **A target weight persists at its last value until the engine process restarts.** The cycle gauges call `.labels(asset=…).set(…)` and never `.clear()` or `.remove()`, so an asset that drops out of the target set keeps publishing its last weight — the series neither zeroes nor goes absent. Both weight panels and the book-level gross line therefore over-report for as long as the process lives. Both descriptions must say so; the fix is code-level and belongs in a topic.
-- **`zcrypto_engine_cycle_duration_seconds` reads a false 0 after every restart.** Unlike its two siblings it is registered eagerly and never seeded, so it sits at the gauge default — a literal false value, not an absence — for up to ~4 h until the first cycle completes, and renders as a healthy green data point meaning "the last cycle took 0 seconds". The panel description carries the caveat and cross-references the cycle-age panel; the real fix (seed it at startup like `cycle_completed_at`, or make it lazy like `cycle_success`) is code-level and belongs in a topic.
+Reading `_CycleGauges` closely enough to design these panels turned up two gauge-lifecycle defects. **Both are fixed in this iteration** (owner's ruling): a code-side defect gets fixed in the iteration that finds it, and the engine converge it costs is a bounded, known price — where a deferred fix hangs on a trigger nobody is driving toward and quietly becomes permanent. A panel description is a workaround, and shipping one *instead of* the fix would leave the board honest about a defect it had the means to remove.
+
+- **A target weight persists at its last value until the engine process restarts.** The cycle gauges call `.labels(asset=…).set(…)` and never `.clear()` or `.remove()`, so an asset dropping out of the target set keeps publishing its last weight — the series neither zeroes nor goes absent, and both weight panels plus the book-level gross line over-report for the life of the process. **Fix:** track the label set written last cycle and `.remove()` the difference. *Remove*, not zero: a zero weight and a not-in-the-book asset are genuinely different states, and the executor will have to tell them apart.
+- **`zcrypto_engine_cycle_duration_seconds` reads a false 0 after every restart.** Unlike its two siblings it is registered eagerly and never seeded, so it sits at the `prometheus_client` gauge default — a literal false value, not an absence — until the first cycle completes, rendering as a healthy green "the last cycle took 0 seconds" for up to a full 4-hourly gap. **Fix:** make it lazily registered, exactly as `cycle_success` already is. Seeding from the journal is the alternative and is rejected unless the artifact is confirmed to persist a duration — and lazy registration is the better answer regardless, because it is the pattern the same class already uses two lines away: the code refuses to publish a `cycle_success` it cannot justify, and should refuse a duration it cannot justify for the same reason.
+
+Both are TDD-able against a fake registry with no live engine: assert a dropped asset's series is **gone** after the next cycle, and assert `cycle_duration` is **absent** rather than 0 before the first cycle of a fresh process. Neither can false-fire an existing rule — nothing reads either family today — so the change is safe to land ahead of the rules push.
+
+**Operational cost, named:** this makes the iteration touch the **live trade host**. The engine converge follows `capture-deploys.md` in full — inside a 4-hourly inter-cycle gap, digest recorded in `fleet-pins.md` first, the secondary's capture bake standing as the canary gate — and the panel descriptions ship **without** the two caveat sentences, because the defects will be gone.
 
 **Corrections applied from review:**
 
-- **(important) `zcrypto_engine_cycle_duration_seconds`' false zero was uncaught** by a design that was otherwise meticulous about this exact trap class. Caveat added to the panel description; the underlying defect registered rather than papered over.
+- **(important) `zcrypto_engine_cycle_duration_seconds`' false zero was uncaught** by a design otherwise meticulous about this exact trap class. Rather than adding a caveat to the panel description, the defect itself is fixed in this iteration (above).
 - **(important, ×2) Internal review vocabulary had leaked into panel description text** — "the constraint-4 pairing for order count…", "Family-level coverage for the one alerted engine family (constraint 3)…". `tests/test_internal_terms_not_operator_visible.py` walks dashboard JSON and these descriptions ship verbatim, so every such reference is rewritten in plain language: *"the recent-delta pairing for order count: the cumulative line answers 'has the engine ever intended to trade', the 24 h bars answer 'is it intending to trade now'"*. The rationale for a panel belongs in this spec; the panel says what it shows. Same scrub applies to the "gotcha (a)/(b)" phrasing in the two cycle-health stats.
 - **(minor) `multi: true` overstated readiness.** The `{{asset}}`, `{{sleeve}}` and static journal legends carry no `{{host}}` component, so adding a second host would overlay two hosts' series under identical labels — two indistinguishable "BTC" lines. `{{host}}` is added to every legend now, while `$host` has one option and the change is free.
-- **Title corrected to `engine`** (D1), and the two overclaimed rule pointers dropped: the cycle panels claimed `Fleet · healthchecks.io watchdog` (a fleet-wide aggregate that cannot name which check is down) and the exporter tile claimed `Fleet · Alloy dark — capture primary` (which fires on series *presence*, not on this value). Both now point at the new engine rules in D11, which are the honest owners.
-- **Journal-prune ownership settled here, not on `fleet health`.** The families are the engine's own state and the panel's meaning — a collapsing kept-count changes what the engine trades — is an engine question. `node_textfile_mtime_seconds` remains owned by `fleet health`, which carries both file slices with their own steps and therefore both textfile rule pointers; this board re-plots the prune file's slice beside the script's own clock as a deliberate second view.
+- **Title corrected to `Engine`** (D1), and the two overclaimed rule pointers dropped: the cycle panels claimed `Fleet · healthchecks.io watchdog` (a fleet-wide aggregate that cannot name which check is down) and the exporter tile claimed `Fleet · Alloy dark — capture primary` (which fires on series *presence*, not on this value). Both now point at the new engine rules in D11, which are the honest owners.
+- **Journal-prune ownership settled here, not on `Fleet health`.** The families are the engine's own state and the panel's meaning — a collapsing kept-count changes what the engine trades — is an engine question. `node_textfile_mtime_seconds` remains owned by `Fleet health`, which carries both file slices with their own steps and therefore both textfile rule pointers; this board re-plots the prune file's slice beside the script's own clock as a deliberate second view.
 
-**Gaps this board makes visible and cannot close.** There is no position, fill, reject, open-order, cash or realized-PnL family anywhere in `cli/` — the operator can see that the engine *wanted* to move and cannot see whether anything moved. That is a producer gap, and the board's head text panel is what stops a board titled `engine` from implying a completeness it does not have. Those families arrive with [[T0018]]'s executor and join this board then. Separately, nothing alerts on the journal `kept_days` floor even though it is the one housekeeping metric that changes what the engine trades; visible here now, which is the precondition for a rule rather than a substitute for one.
+**Gaps this board makes visible and cannot close.** There is no position, fill, reject, open-order, cash or realized-PnL family anywhere in `cli/` — the operator can see that the engine *wanted* to move and cannot see whether anything moved. That is a producer gap — distinct from the two lifecycle defects above, which this iteration fixes — and the board's head text panel is what stops a board titled `Engine` from implying a completeness it does not have. Those families arrive with [[T0018]]'s executor and join this board then. Separately, nothing alerts on the journal `kept_days` floor even though it is the one housekeeping metric that changes what the engine trades; visible here now, which is the precondition for a rule rather than a substitute for one.
 
-## D5 — `logs`: parse at query time, not in the pipeline
+## D5 — `Logs`: a rate lane at the top, and parsing at query time
 
 The capture daemon's structured lines render as raw JSON. The cause recorded in the 2026-08-02 grooming — [[T0109]]'s single-file bind mount starving Alloy of its config — **is wrong**, and re-verified wrong on 2026-08-04:
 
@@ -303,11 +317,58 @@ So the lines bypass the only component that could parse them, and **no Alloy con
 
 Rejected: reversing D3/D6 to route the daemon back through Alloy — heavier, and it re-opens a decision taken deliberately one spec ago.
 
+### The rate lane — a short row above the viewer
+
+**Ten of the 58 rules point at this board, and today it cannot serve a single one of them.** Its only panel is a raw log *viewer*, so when the page is "no lines in 6 h", opening it shows an empty stream — which is precisely what the page already said. The board answers neither *when did it stop* nor *did it stop everywhere or on one container*.
+
+A rate lane goes at the **top**, above the viewer, at **`h: 6`** (roughly a fifth of a 1080p viewport) — deliberately short, because the viewer stays the reason to open this board and the lane is orientation, not the destination:
+
+| Panel | Query | What it answers |
+| --- | --- | --- |
+| Total lines/min | `sum(rate({host=~"$host", container=~"$container"}[5m]))` | The single "is anything arriving at all" line — the transport canary, and the panel a `no lines in 6h` page lands on |
+| Lines/min by level | `sum by (level) (rate({host=~"$host", container=~"$container", level=~".+"}[5m]))` | Whether the mix shifted — an ERROR band appearing under a flat total is the signal a total-only view hides |
+| Lines/min by host & container | `sum by (host, container) (rate({host=~"$host", container=~"$container"}[5m]))` | **Which** stream went quiet — the question the split primary/secondary log-dead rules are asking |
+
+Three properties the lane must have, each earned from a rule that already exists:
+
+- **`level=~".+"` is the parse canary, and it is not the same series as the total.** Rules `Ops · unit log parse dead` and both `Capture · log pipeline dead` variants fire on the *parsed* count, while `Ops · journal transport dead` fires on the *raw* count. Plotting only one of them sends the responder to the wrong layer — a healthy transport with a broken parser looks identical to a dead transport on a total-only panel. Both series are therefore first-class, side by side.
+- **Container names are asymmetric across hosts** — `archive-pull` on the NAS versus `zcrypto-archive-pull` on ops. A single `container=` selector is silently blank on one host. `$container` is a multi-select with `includeAll`, and the mismatch is stated in the panel description rather than hidden behind an `All` that appears to work.
+- **A `rate()` of zero and an absent stream render identically.** So the by-host-and-container panel pairs with a small **"last line seen"** table (`max by (host, container) (max_over_time(…))` over a long window), which distinguishes a stream that has gone quiet from one that never existed. That distinction is the whole diagnostic value when a log-dead canary fires.
+
+`Logs` keeps its existing uid and takes **no** Shared Crosshair setting: crosshair sync is a timeseries affordance, and this board is one lane of timeseries above a log viewer that does not participate.
+
 ## D6 — Every panel scopes its hosts explicitly
 
 Every panel expression carries either a literal `host=` matcher or the board's `$host` template variable. **`instance` is not a discriminator** — every fleet Alloy binds `127.0.0.1:12345`, so `instance` collides across all five hosts; `host` (set via `external_labels`, uniform fleet-wide since spec `00069` D7) is the only one.
 
 This is the direct fix for the three mis-scoped panels above, and the reason it is stated as a rule rather than three edits: the defect was not that someone wrote three bad panels, it is that an unscoped expression is *correct* on a single-host fleet and silently rots as hosts are added.
+
+### Host naming — one vocabulary at the operator surface, zero label rewrites
+
+Two goals, the owner's: **(1)** a Linux hostname is never visible on an operator surface; **(2)** *fewer* names for one thing — "less, not none", so this must not become a renaming project.
+
+**What is actually a hostname.** Only two label values are: `zcrypto` and `zcrypto-red` (the journal shows `zcrypto-ops systemd[1]`, so even the ops box's *label* `ops` is already an abstraction over its hostname). `nas` and `ops` are role words that happen to be short. `zaccess` is a project-coined role name that doubles as a hostname. **So goal (1) bites on exactly two values**, and a fleet-wide renaming would be solving four-fifths of a problem that does not exist.
+
+**The vocabulary is adopted, not invented.** `capture-deploys.md` already says primary/secondary throughout, and six alert titles already read *"— primary (zcrypto)"* / *"— secondary (zcrypto-red)"* — the parenthetical is redundant decoration next to a name that is already the operational one. Dropping it loses no information and closes goal (1) for both values.
+
+| `host` label (**unchanged**) | display name | why |
+| --- | --- | --- |
+| `zcrypto` | **Capture primary** | hostname; the pair is already called this everywhere in operational prose |
+| `zcrypto-red` | **Capture secondary** | hostname; `-red` is *redundancy*, which no reader outside the repo would infer |
+| `ops` | `Ops` | already a role word — and the two *other* names for it, `zcrypto-ops` and the ssh alias `hp`, simply never appear on an operator surface |
+| `nas` | `NAS` | already a role word |
+| `zaccess` | `Edge` | coined, not distro-assigned; renamed only because "Edge" is what every prose description calls it |
+
+**Applied at four surfaces, all of them presentation:**
+
+1. **Alert rule titles** — drop the six hostname parentheticals; `Fleet · Alloy dark — ops` / `— zaccess` become `— Ops` / `— Edge`. Rule **uids are unchanged**, so this is a display-only edit and no alert loses its identity. One consequence to state: `alertname` changes, so any saved Grafana silence keyed on the old title stops matching — there are none today, and the push is the moment to confirm that.
+2. **Slack templates (D12)** — one mapping, applied once to `$labels.host`, so the phone never shows a hostname. This is the highest-value surface: it is the only one read with nothing else open.
+3. **Panel titles, descriptions and text panels** — the vocabulary in prose. Free; it is text this spec is writing anyway.
+4. **Legends and the `$host` dropdown** — Grafana value mappings on the `host` field. Affordable *because the dashboard JSON is generated rather than hand-edited*, so the mapping is written once in the generator and applied to the panels that display a host. If it were hand-maintained across sixty panels it would be exactly the over-engineering to avoid.
+
+**Explicitly NOT changed:** metric label values, `external_labels`, the ansible inventory, ssh aliases, or any hostname. Renaming a label value changes series identity under `increase()` — the hazard the fleet took knowingly, once, at a chosen window, for one label on one host. Nothing here is worth a second one.
+
+**A side benefit worth naming:** `zcrypto_reconcile_trade_deficit_rows_total`'s `host="primary"|"secondary"` values stop being an anomaly and become *the standard vocabulary* — the harmonization makes the outlier the rule. Its real defect is unchanged and still out of scope: it occupies the `host` label when it means a mirror *side*, so a `side` label is the correct fix and a future one.
 
 ## D7 — Every monotonic damage counter is paired with a recent-delta view
 
@@ -420,6 +481,20 @@ topk(5, sum by (host, container, level, msg) (count_over_time(
 `topk(5, …)` is not optional: without it a log storm mints one alert instance per distinct line, straight past Slack's length limit. `__line__` inside `label_format` is **medium confidence** — documented for `line_format`, assumed to share the function map — so it is **confirmed in Explore before the rules push**, and if it is unavailable the `msg` half is dropped and the template's own "this rule counts matching lines rather than carrying them" branch renders instead; nothing else in this section depends on it. The eight dead-canary rules alert on *absence* and get no `msg` by construction. `zcrypto-ops-error-logs` selects `{host="ops", level=~"ERROR|CRITICAL"}` with no container filter, so its distinct-line cardinality under a storm is a Loki query-cost hazard as well as a Slack one — narrowing it by container rides this change or is accepted knowingly (owner's call).
 
 The nine bare-`sum()` rules should gain a `by` clause on their own merits — `sum(count_over_time({container="archive-pull", …}))` fires without saying which host, and `container="archive-pull"` is not host-scoped — but that is a rule change, not a template change, and it is listed here so it is decided rather than discovered.
+
+### The five open calls, decided
+
+Judged against one principle (owner's): **maximise information density without sacrificing readability.** The operational reading of that: a notification should let the responder decide *whether to get up* without opening anything, and know *where to go* if they do. Every element earns its line by moving one of those two, or it is cut. Density is not compression — a dense message is one where nothing is filler, not one where everything is abbreviated.
+
+| # | Call | Decided | Reasoning |
+| --- | --- | --- | --- |
+| 1 | Carry the log line at all? | **Yes — the rule change rides** | The single largest density win available. A log alert that reports `7` and no line is the *definition* of low density: it establishes that something happened and forces a lookup to learn what. Confirming `__line__` in Explore is a five-minute precondition, and the template already has its fallback branch if it fails. |
+| 2 | Narrow `Ops · ERROR logs` by container? | **Yes** | It selects `{host="ops", level=~"ERROR\|CRITICAL"}` with no container filter, so it cannot say *which service* errored — a lookup forced by the alert's own shape. It is also the storm-cardinality hazard, in Loki query cost as well as Slack length. Both problems have the same one-line fix. |
+| 3 | Do the nine bare-`sum()` logs rules gain a `by` clause? | **Yes** | This is the **same defect class D11 already fixes three times** (the two zaccess collapses and the venue-status collapse): an aggregate that discards the label naming *where* it fired. Fixing three instances while leaving nine is not a scope boundary, it is an inconsistency — and `container="archive-pull"` is not even host-scoped, so today one of them cannot distinguish the two hosts that publish it. |
+| 4 | How widely to apply the `unit:` annotation? | **Selectively — where a bare number is ambiguous** | Applying it to all 58 would add a line to rules whose summary already carries the meaning, which is filler, and filler is what kills density. Apply where the threshold is a quantity whose unit a reader cannot infer: durations in seconds, byte counts, ratios, row counts. Skip for boolean and presence rules, where the number is `0` or `1` and the unit is the rule. |
+| 5 | Fire a probe into the live channel? | **Yes — the cheapest trip, and re-tune the caps from what renders** | Verification that does not exercise Slack's own rendering verifies nothing, and `00043` already set the precedent of a once-only test fire that does not break production. Use `count by (host)(up) > 0`: it touches no host, is trivially un-tripped by deleting the probe rule, and **fires five instances at once**, which exercises the multi-instance path — the one most likely to hit a length limit — rather than a flattering single-alert case. The 6-metric / 5-log truncation caps are explicitly starting values, re-tuned from the render. |
+
+Two consequences of (1)–(3) worth stating plainly, since they widen the change: this iteration now edits **eleven** logs rules rather than two, and the log-line hoist means two rules gain a `label_format` at query time. Both are rule-file edits pushed by the same script in the same step — no converge, no host contact — so the cost is review surface, not operational risk.
 
 ### The panel pointer
 
@@ -607,7 +682,7 @@ Sixteen lines. `**Firing**` renders with its asterisks visible. The folder name 
 
 ```
 Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this.
-👉 <https://zcrypto2026.grafana.net/d/zcrypto-main?viewPanel=<the gap panel's id on the rebuilt board>|open the panel>
+👉 <https://zcrypto2026.grafana.net/d/zcrypto-integrity?viewPanel=<the gap panel's id on the rebuilt board>|open the panel>
 • `host=ops`  measured 2437 seconds of unrecoverable silence  · since 04 Aug 09:14 UTC
 <https://zcrypto2026.grafana.net/alerting/silence/new?…&amp;orgId=1|silence this alert>
 ```
@@ -662,7 +737,13 @@ Measured at rollout against spec `00043`'s <1k target and `00069`'s per-host bas
 - **Guard proving** (D8, mandatory): revert D10(a)'s keep-regex line and confirm assertion 3 fails naming `node_scrape_collector_success` on `zaccess`; restore. A guard that has not been seen to trip is unproven.
 - **`tests/test_infra_alloy_series.py`**: the access `required` list gains the new family.
 - **`tests/test_internal_terms_not_operator_visible.py`**: the widened glob, plus a case proving a non-`*dashboard*`-named file is now walked.
-- **Dashboard JSON validity**: every committed board parses, every panel target carries a non-empty `expr`, every `expr` is host-scoped (D6) — the machine-checkable half of the panel review.
+- **Dashboard JSON validity**: every committed board parses, every panel target carries a non-empty `expr`, every `expr` is host-scoped (D6) — the machine-checkable half of the panel review. Plus: all three metric boards set `graphTooltip: 1` (D1), and no alert rule title or panel text contains a hostname (D6's naming table).
+- **The two engine gauge fixes** (D4), against a fake registry with no live engine: a dropped asset's target-weight series is **gone** after the next cycle, not zeroed; `cycle_duration` is **absent** rather than `0` before the first cycle of a fresh process. Both fail on today's code, which is what makes them the fix's proof.
+
+**Owner steps at closeout — the tooling cannot do these:**
+
+- **Delete the deprecated `zcrypto-main` board** in the Grafana UI (D1). `grafana-push.sh` has no dashboard-delete path, so it survives every push. Do it *after* the new three are verified live, so no window exists with neither.
+- **Confirm no saved Grafana silence** was keyed on one of the six retitled alert rules (D6). Rule uids are unchanged, so only silences matching on `alertname` are affected, and there are none today — this is a re-check at push time, not an expected failure.
 
 ## Out of scope
 
@@ -670,10 +751,6 @@ Measured at rollout against spec `00043`'s <1k target and `00069`'s per-host bas
 - **The `zcrypto_reconcile_ledger_corrections_total` correction marker** — adjacent to D7 (both concern counter discontinuity being invisible) but it is [[T0044]]'s own item and needs its own decision; not folded in.
 - Widening the `zaccess` keep-regex beyond the one alert-backed family (D10a).
 - Grafana Cloud retention/usage tuning; alert threshold re-tuning beyond the rules D11 adds or corrects.
-- **Two engine metric defects this design surfaced and works around but does not fix** — both code-level, both registered in [[T0127]]:
-  - A target weight **persists at its last value until the engine process restarts**. `_CycleGauges` calls `.labels(asset=…).set(…)` and never `.clear()` / `.remove()`, so an asset dropping out of the target set keeps publishing its last weight: the series neither zeroes nor goes absent, and both weight panels plus the book-level gross line over-report for the life of the process.
-  - **`zcrypto_engine_cycle_duration_seconds` reads a false zero after every restart.** Unlike its two siblings it is registered eagerly (`cli/engine/command.py`, `_CycleGauges.__init__`) and never seeded, so it sits at the gauge default — a literal false value, not an absence — until the first cycle completes, rendering as a healthy green "the last cycle took 0 seconds" for up to a full cycle gap.
-  - D4's panel descriptions carry both caveats. A description is a workaround, not a fix, which is why the defects are registered rather than absorbed.
 - **Re-labelling the `host="primary"` / `host="secondary"` strays — now root-caused, and deliberately left alone.** Spec `00069` and [[T0020]] both recorded two anomalous `host` label values at one series each as un-root-caused. They are `zcrypto_reconcile_trade_deficit_rows_total`: `cli/archive/command.py` emits it with its **own** `host` label carrying a mirror *side* (`{host="primary"}`, `{host="secondary"}`), and `external_labels` only stamps a label that is absent, so `host="ops"` never lands on that family. Consequences are handled rather than fixed: D3's panel selects `host=~"primary|secondary"` and says why, and D2 pins the `$host` variable's regex so the two values stay out of every dropdown. **Renaming the label is out of scope** — it changes series identity under an `increase()`, which is the same hazard the fleet took knowingly and once, at a chosen window, for the NAS host label.
 
 ## Cross-topic records — updated at THIS iteration's closeout
@@ -681,6 +758,8 @@ Measured at rollout against spec `00043`'s <1k target and `00069`'s per-host bas
 Following `00069`'s convention: the closeout follows the rollout, so every update records measured facts.
 
 - [[T0020]] — **resolves in full**. All sub-items land here: the dashboards package, the recent-delta pairing, the JSON-log render fix, and the 2026-07-21 untriaged additions (tags, titles, the stale per-node charts, both Slack template reworks).
-- [[T0018]] — its metrics bullet gains the execution-panel handoff: the families it emits are charted on the `engine` board; they must be **named so intent versus execution is unambiguous at `/metrics` level**, and the existing intent families must **not** be renamed to match — they are live series and a rename changes series identity.
-- [[T0044]] — unchanged; its correction-marker item is noted as adjacent in Out of scope, not absorbed.
-- [[T0106]] — the logship false-red is now visible by construction on the `data integrity` board (staleness paired with `shipped_lines_total` advancing), which is presentation, not resolution; the topic stays as it is.
+- [[T0018]] — its metrics bullet gains the execution-panel handoff: the families it emits are charted on the `Engine` board; they must be **named so intent versus execution is unambiguous at `/metrics` level**, and the existing intent families must **not** be renamed to match — they are live series and a rename changes series identity.
+- [[T0044]] — its correction-marker sub-item gains an **anchor** (added 2026-08-04, this branch): the emit site (`_write_textfile`'s `_emit` helper), the fact that the ops keep-regex's `zcrypto_reconcile_.*` wildcard needs no change, and the panel that would carry it. The decision itself stays T0044's. D7's `resets()`-guarded panels *raise* its value — after a correction those panels now correctly read zero, which also makes the correction invisible, which is the discontinuity the marker exists to explain.
+- **No T0127.** The two engine gauge-lifecycle defects this design surfaced are **fixed in this iteration** (D4), not registered. Standing ruling, owner, 2026-08-04: a newly surfaced defect whose fix is in application logic or code is fixed in the iteration that finds it — an extra converge is a bounded cost, where a `ripe_when:` hanging on an unscheduled activity is an unarmed trigger that quietly makes the topic permanent. The topic file opened earlier on this branch is deleted in the same change that folds the work in.
+
+**A topic deliberately NOT listed: [[T0106]].** It is resolved and archived, and this iteration neither reopens nor amends it. Recording it here would have implied a live caveat, and an earlier draft of D3 made exactly that error — describing the logship false red as an ongoing hazard the board renders visible. It is not: T0106 *replaced the signal* rather than documenting the caveat, and D3 now simply follows that resolution. **The general check this earns:** before listing a topic in a cross-topic section, confirm it is open — a resolved topic named as though it were live re-opens a settled question for whoever reads next.
