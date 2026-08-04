@@ -720,19 +720,63 @@ def test_liquidations_repin_decision(decision, pin_differs, expected):
 
 def test_liquidations_guard_skips_a_digestless_converge():
     task = find_task(load_tasks(OPS), LIQUIDATIONS)
-    probed = {"ops_liquidations_pin_probe": {"rc": 0}}
+    probed = {
+        "ops_liquidations_pin_probe": {"rc": 0},
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": True}},
+    }
     assert truthy(when_conditions(task), {**probed, "ops_image_digest": "sha256:" + "e" * 64})
     assert not truthy(when_conditions(task), probed)
 
 
-# grep's two non-zero answers are NOT the same fact: 2 = no such file (first provision, nothing
-# deployed to repin -- the only legitimate stand-down), 1 = the file is there and carries no
-# `@sha256:` line at all, an anomalous on-host state the guard must refuse rather than skip.
-@pytest.mark.parametrize(("rc", "expected"), [(1, True), (2, False)])
-def test_liquidations_guard_engages_on_a_compose_file_without_a_digest_line(rc, expected):
-    task = find_task(load_tasks(OPS), LIQUIDATIONS)
-    variables = {"ops_image_digest": "sha256:" + "e" * 64, "ops_liquidations_pin_probe": {"rc": rc}}
-    assert truthy(when_conditions(task), variables) is expected
+# --- liquidations rc split (spec 00083 D9): absent file stands down, unreadable file refuses -----
+
+
+def _liq_readable_guard():
+    tasks = load_tasks(OPS)
+    return find_task(tasks, "liquidations — an unreadable compose file is a fault, never a first-provision skip")
+
+
+def _liq_decision_guard():
+    tasks = load_tasks(OPS)
+    return find_task(tasks, LIQUIDATIONS)
+
+
+def test_unreadable_compose_refuses():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": False}},
+    }
+    assert not truthy(assert_that(_liq_readable_guard()), v)
+
+
+def test_readable_compose_passes_the_readability_guard():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": True}},
+    }
+    assert truthy(assert_that(_liq_readable_guard()), v)
+
+
+def test_absent_file_skips_both_guards():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": False}},
+    }
+    for guard in (_liq_readable_guard(), _liq_decision_guard()):
+        conds = " and ".join("(%s)" % c for c in when_conditions(guard))
+        assert not truthy(conds, v)
+
+
+def test_decision_guard_engages_when_file_exists():
+    v = {
+        "ops_image_digest": "sha256:" + "ab" * 32,
+        "ops_liquidations_compose_stat": {"stat": {"exists": True, "readable": True}},
+        "ops_liquidations_pin_probe": {"rc": 1, "stdout": ""},
+        "liquidations_decision": "",
+    }
+    conds = " and ".join("(%s)" % c for c in when_conditions(_liq_decision_guard()))
+    assert truthy(conds, v)
+    assert not truthy(assert_that(_liq_decision_guard()), v)  # empty stdout + no decision -> refuse
 
 
 def test_liquidations_refuses_a_compose_file_without_a_digest_line():

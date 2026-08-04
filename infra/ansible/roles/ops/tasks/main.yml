@@ -279,13 +279,34 @@
 # `docker compose up` rolls it unobserved. The guard refuses to leave that decision implicit; it
 # reads the FILE deliberately, because the pin the file carries is its whole subject (the pins
 # guard below reads the container instead, and the comment there says why).
+- name: probe — the deployed liquidations compose file (existence vs readability)
+  ansible.builtin.stat:
+    path: "{{ ops_compose_dir }}/compose.yaml"
+  register: ops_liquidations_compose_stat
+  check_mode: false
+  when: ops_image_digest is defined
+
+# spec 00083 D9: grep answered 2 for BOTH "absent" (legitimate first-provision stand-down) and
+# "present but unreadable" (a permission fault on the very file whose pin this converge would
+# move). The stat probe splits them: absent skips, unreadable refuses.
+- name: liquidations — an unreadable compose file is a fault, never a first-provision skip
+  ansible.builtin.assert:
+    that: ops_liquidations_compose_stat.stat.readable | default(false)
+    fail_msg: >-
+      {{ ops_compose_dir }}/compose.yaml exists but cannot be read — a permission fault on the very
+      file whose pin this converge would move. Fix its ownership/mode first; neither roll-after nor
+      defer addresses an unreadable pin.
+  when: >-
+    ops_image_digest is defined
+    and ops_liquidations_compose_stat.stat.exists | default(false)
+
 - name: probe — the digest the deployed liquidations compose file pins
   ansible.builtin.command: grep -E '@sha256:' {{ ops_compose_dir }}/compose.yaml
   register: ops_liquidations_pin_probe
   failed_when: false
   changed_when: false
   check_mode: false
-  when: ops_image_digest is defined
+  when: ops_image_digest is defined and ops_liquidations_compose_stat.stat.exists | default(false)
 
 - name: liquidations — require an explicit roll-after/defer decision on a repin
   ansible.builtin.assert:
@@ -302,12 +323,14 @@
       container keeps running the old one). If the deployed file turns out to carry no
       digest-pinned image line at all, that is the anomaly to investigate first — a hand-edited or
       truncated compose file — not something either decision fixes.
-  # rc != 2, not rc == 0: grep answers 2 for a missing file (first provision — nothing deployed to
-  # repin, the only legitimate skip) but 1 for a file that is THERE and carries no `@sha256:` line,
-  # which is an anomalous on-host state. On rc 1 the probe's stdout is empty, so the first disjunct
-  # is false and this guard refuses — fail-closed, like every other guard here, instead of standing
-  # down on exactly the host whose compose file cannot be read as a pin.
-  when: ops_image_digest is defined and ops_liquidations_pin_probe.rc != 2
+  # Gated on existence alone, not rc: the stat probe above already split "absent" (skip, nothing
+  # deployed to repin) from "present but unreadable" (refused one task up, before this guard is
+  # even reached). Any file this guard sees is readable, so the grep probe's rc no longer needs to
+  # carry that distinction — a compose file present with no `@sha256:` line at all still refuses
+  # here (empty stdout fails the first disjunct), same as before.
+  when: >-
+    ops_image_digest is defined
+    and ops_liquidations_compose_stat.stat.exists | default(false)
 
 # Reads the liquidations-poll CONTAINER, never the compose file the guard above reads: a converge
 # that passed the wrong digest once left that file naming a digest the container was not running, so
