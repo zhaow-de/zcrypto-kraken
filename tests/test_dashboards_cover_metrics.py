@@ -650,8 +650,8 @@ def test_a_merged_table_renames_the_refid_suffixed_value_column():
                 if "Value" in ((t.get("options") or {}).get("renameByName") or {}):
                     offenders.append(f"{filename} #{panel.get('id')} {panel.get('title')!r}")
     assert not offenders, (
-        f"a merged/joined table renames a bare 'Value', but the field is 'Value #<refId>' -- the"
-        f" rename misses and the column renders raw and unnamed: {offenders}"
+        f"a merged/joined table renames a bare 'Value', but a multi-series query names that field"
+        f" 'Value #<refId>' -- the rename misses there and the column renders raw and unnamed: {offenders}"
     )
 
 
@@ -675,18 +675,22 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
                 continue
             if len([t for t in (panel.get("targets") or []) if not t.get("hide")]) != 1:
                 continue
-            # Every name that resolves to the value column: its raw forms, plus whatever an
-            # `organize` rename turns one of those into.
-            value_names = {"Value"}
+            # Whatever an `organize` rename turns a value field into. The raw spellings are matched
+            # separately, on the matcher's own option: seeding them here would only cover the
+            # un-suffixed `Value`, letting an override keyed on the `Value #<refId>` spelling -- the
+            # one the UI shows in the multi-series view -- past the guard in exactly the shape it exists to stop.
+            renamed_value_names = set()
             for t in transforms:
                 if t.get("id") == "organize":
                     for src, dst in ((t.get("options") or {}).get("renameByName") or {}).items():
                         if _VALUE_FIELD.match(src):
-                            value_names.add(dst)
+                            renamed_value_names.add(dst)
             for ov in (panel.get("fieldConfig") or {}).get("overrides") or []:
                 matcher = ov.get("matcher") or {}
                 props = {p.get("id") for p in (ov.get("properties") or [])}
-                if matcher.get("id") == "byName" and matcher.get("options") in value_names and props & _VALUE_PROPS:
+                name = matcher.get("options")
+                hits_value = name in renamed_value_names or (isinstance(name, str) and bool(_VALUE_FIELD.match(name)))
+                if matcher.get("id") == "byName" and hits_value and props & _VALUE_PROPS:
                     offenders.append(
                         f"{filename} #{panel.get('id')} {panel.get('title')!r}"
                         f" byName={matcher.get('options')!r} carries {sorted(props & _VALUE_PROPS)}"
