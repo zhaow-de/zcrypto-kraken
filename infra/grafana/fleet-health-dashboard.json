@@ -1277,7 +1277,7 @@
       "id": 402,
       "type": "timeseries",
       "title": "node-exporter collector success",
-      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below the 0.5 line — i.e. as soon as any collector reports 0; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. **The edge machine is structurally excluded from this panel today** — the family is not yet collected there, so a machine that simply disappears from the minimum would read as a healthy fleet. That is what the counting series exists to expose. Once the edge machine's agent configuration is deployed, remove the exclusion **from this panel only**.",
+      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below the 0.5 line — i.e. as soon as any collector reports 0; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. All five machines are covered — the edge machine joined on 2026-08-05, when its agent began collecting the family; before that it was excluded here and could not fail the alert that watches it, which read as four green machines and a healthy fleet. **Keep reading the counting series, not just the minimum**: a machine that disappears entirely drops out of a minimum silently, and that is the failure this panel exists to expose. The scrape-duration panel beside this one still excludes the edge machine, because only the success family is collected there.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1294,7 +1294,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "min by (host) (node_scrape_collector_success{host=~\"$host\", host!=\"zaccess\"})",
+          "expr": "min by (host) (node_scrape_collector_success{host=~\"$host\"})",
           "refId": "A",
           "legendFormat": "{{host}} min"
         },
@@ -1303,7 +1303,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "node_scrape_collector_success{host=~\"$host\", host!=\"zaccess\"} == 0",
+          "expr": "node_scrape_collector_success{host=~\"$host\"} == 0",
           "refId": "B",
           "legendFormat": "{{host}}/{{collector}} FAILING"
         },
@@ -1312,7 +1312,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "count by (host) (node_scrape_collector_success{host=~\"$host\", host!=\"zaccess\"})",
+          "expr": "count by (host) (node_scrape_collector_success{host=~\"$host\"})",
           "refId": "C",
           "legendFormat": "{{host}} collectors reporting"
         }
