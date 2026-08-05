@@ -554,7 +554,10 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # Empty by design. An entry here declares a threshold this file ships knowing it is provisional;
 # the paired staleness test refuses an entry whose rule no longer carries the marker, so a bar that
 # has been derived cannot leave its excuse behind. `zcrypto-capture-stream-silent` was the last
-# occupant and was derived from 30 days of live data on 2026-08-05.
+# occupant, derived on 2026-08-05 from the gauge's WHOLE LIFE -- ~7.2 d (primary) / ~7.5 d
+# (secondary) of samples, not the 30 days the `[30d]` selector reads as, because the series only
+# started reaching Cloud with the 2026-07-29 converges. Re-derivation on a genuinely full 30 d
+# window is T0129; the bar itself is not provisional, its base is just younger than a month.
 PROVISIONAL_THRESHOLDS: set[str] = set()
 
 _PROVISIONAL = "PROVISIONAL"
