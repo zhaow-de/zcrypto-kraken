@@ -829,8 +829,7 @@
             },
             "renameByName": {
               "host": "Machine",
-              "container": "Stream",
-              "Value #A": "Last line seen"
+              "container": "Stream"
             }
           }
         }
@@ -851,10 +850,14 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "Last line seen"
+              "id": "byType",
+              "options": "number"
             },
             "properties": [
+              {
+                "id": "displayName",
+                "value": "Last line seen"
+              },
               {
                 "id": "unit",
                 "value": "dateTimeAsIso"
