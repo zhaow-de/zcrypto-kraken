@@ -1,0 +1,2349 @@
+{
+  "id": null,
+  "uid": "zcrypto-fleet",
+  "title": "Fleet health",
+  "description": "Is any machine in the fleet unwell? The node, process and scrape layer, the dead-man check aggregate, and the access tier. Every panel that serves an alert plots that alert's own expression and carries its own threshold line, so what you see here is the number the page was computed from.",
+  "tags": [],
+  "schemaVersion": 39,
+  "version": 0,
+  "editable": true,
+  "graphTooltip": 1,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "links": [],
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Fleet at a glance",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "Alloy up — per host",
+      "description": "Is each machine's telemetry agent shipping anything at all? One target per machine, written out literally rather than driven by the Host picker — a regex selector cannot render a machine whose series have vanished entirely, which is the exact condition this panel exists to catch. A tile reads DARK when the machine has shipped nothing; the alert fires after `for: 10m` of that, so a tile can be red for a few minutes before a page arrives. Counting series presence, not the scrape value: a machine can be shipping while an individual scrape target reads 0 — that case is the scrape-targets panel below.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"zcrypto\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "Capture primary",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"zcrypto-red\"}) or on() vector(0)",
+          "refId": "B",
+          "legendFormat": "Capture secondary",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"ops\"}) or on() vector(0)",
+          "refId": "C",
+          "legendFormat": "Ops",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"nas\"}) or on() vector(0)",
+          "refId": "D",
+          "legendFormat": "NAS",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"zaccess\"}) or on() vector(0)",
+          "refId": "E",
+          "legendFormat": "Edge",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DARK",
+                  "color": "red",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "DARK"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 102,
+      "type": "table",
+      "title": "Host vitals (now)",
+      "description": "Which machine is unwell right now, at a glance — one row per machine, all values instant. Deliberately carries **no** threshold colouring: load and disk each have per-machine page lines that differ by machine, and they are drawn on their own panels below. Filesystem free is the tightest of the two mountpoints any alert watches (the root filesystem, and the archive volume on the NAS).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 10,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_load1{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_memory_MemAvailable_bytes{host=~\"$host\"} / node_memory_MemTotal_bytes{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "min by (host) (node_filesystem_avail_bytes{host=~\"$host\", mountpoint=~\"/|/volume1\"} / node_filesystem_size_bytes{host=~\"$host\", mountpoint=~\"/|/volume1\"})",
+          "refId": "C",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count by (host) (up{host=~\"$host\"})",
+          "refId": "D",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "host",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "host": "Machine",
+              "Value #A": "load (1m)",
+              "Value #B": "memory available",
+              "Value #C": "tightest filesystem free",
+              "Value #D": "scrape targets up"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "memory available"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tightest filesystem free"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "healthchecks.io — checks down",
+      "description": "Are any of the dead-man checks down, and is the healthchecks.io scrape itself still alive? Carries the alert's own fallback, so an unreachable endpoint reads 999 rather than going blank — 999 means the watchdog's eyes went dark, not that 999 checks are down. Published by the ops machine, which is the only scraper of this endpoint; that is why the expression carries no machine matcher. The alert fires after `for: 5m` above zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max(hc_checks_down_total) or on() vector(999)",
+          "refId": "A",
+          "legendFormat": "checks down",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "999": {
+                  "text": "WATCHDOG DARK",
+                  "color": "red",
+                  "index": 0
+                },
+                "0": {
+                  "text": "all up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "no sample"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 104,
+      "type": "table",
+      "title": "healthchecks.io — per check",
+      "description": "WHICH check is down. Closes the \"log in to healthchecks.io to find out which one\" gap that the aggregate above cannot answer. Rendered as an instant table with no column renaming, so every label the endpoint publishes appears as its own column. Published by the ops machine. Context panel — the page pointer sits on the aggregate beside it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "hc_check_up{host=\"ops\"}",
+          "refId": "A",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "no checks reported"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Load, CPU & memory",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      }
+    },
+    {
+      "id": 201,
+      "type": "timeseries",
+      "title": "Node load — each host against its own bar",
+      "description": "Is a machine saturated **by the standard its own alert uses**? Three different alerts watch load with three genuinely different bars, so each is drawn as its own series with its own line: the two capture machines are normalised per core (they have different core counts) and page above 1.5 after `for: 10m`; the NAS pages above 4 after `for: 5m`; the ops machine pages above 20 after `for: 5m`. The three series are **not comparable on this axis** — one is per core and two are raw — which is exactly why a single shared ladder would be wrong here, and why the normalised cross-machine comparison is the panel beside this one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_load1{host=~\"zcrypto|zcrypto-red\"} / on(host) group_left() count by (host) (node_cpu_seconds_total{host=~\"zcrypto|zcrypto-red\", mode=\"idle\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} — per core"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_load1{host=\"nas\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} — load (1m)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_load1{host=\"ops\"}",
+          "refId": "C",
+          "legendFormat": "{{host}} — load (1m)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1.5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 4
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 202,
+      "type": "timeseries",
+      "title": "Load per core (context)",
+      "description": "Cross-machine comparison on one normalised axis: load divided by that machine's own core count. **Deliberately carries no page line.** No alert evaluates this expression, and the true bars differ per machine by a factor of more than ten — the ops machine pages at 20 raw, which is 0.83 per core, *below* where any per-core ladder would first turn amber. Read this panel for shape and relative pressure only; read the panel beside it for whether anything is about to page.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_load1{host=~\"$host\"} / on(host) group_left() count by (host) (node_cpu_seconds_total{host=~\"$host\", mode=\"idle\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 203,
+      "type": "timeseries",
+      "title": "CPU busy / iowait / steal",
+      "description": "Is high load real CPU work, blocked IO, or hypervisor steal — three different faults with three different fixes. Read together with the load panels above: the same load number means something different depending on which of these three lines is carrying it. No alert watches this breakdown, so there is no page line here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "1 - avg by (host) (rate(node_cpu_seconds_total{host=~\"$host\", mode=\"idle\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "{{host}} busy"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "avg by (host) (rate(node_cpu_seconds_total{host=~\"$host\", mode=\"iowait\"}[5m]))",
+          "refId": "B",
+          "legendFormat": "{{host}} iowait"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "avg by (host) (rate(node_cpu_seconds_total{host=~\"$host\", mode=\"steal\"}[5m]))",
+          "refId": "C",
+          "legendFormat": "{{host}} steal"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 204,
+      "type": "timeseries",
+      "title": "Memory available / free %",
+      "description": "Is any machine approaching an out-of-memory kill before it takes a capture daemon down? **No alert watches memory anywhere on the fleet — this panel is the only coverage there is**, so nothing here will ever page you and a falling line is yours to act on. The \"free\" series deliberately excludes the edge machine: that family is not collected there, and writing the exclusion into the expression makes it auditable where an empty series would not be. \"Available\" is the number that matters; \"free\" is only useful next to it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_memory_MemAvailable_bytes{host=~\"$host\"} / node_memory_MemTotal_bytes{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} available"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_memory_MemFree_bytes{host=~\"$host\", host!=\"zaccess\"} / node_memory_MemTotal_bytes{host=~\"$host\", host!=\"zaccess\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} free"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Storage & network",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      }
+    },
+    {
+      "id": 301,
+      "type": "timeseries",
+      "title": "Filesystem free % by mountpoint",
+      "description": "Which mountpoint on which machine is filling, and how fast. Three alerts watch three different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`. The ops root filesystem is drawn for context and has **no** alert behind it, so its line is deliberately unmarked. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=~\"zcrypto|zcrypto-red\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=~\"zcrypto|zcrypto-red\", mountpoint=\"/\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} {{mountpoint}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{mountpoint=\"/volume1\"} / node_filesystem_size_bytes{mountpoint=\"/volume1\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} {{mountpoint}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=\"zaccess\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"zaccess\", mountpoint=\"/\"}",
+          "refId": "C",
+          "legendFormat": "{{host}} {{mountpoint}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=\"ops\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"ops\", mountpoint=\"/\"}",
+          "refId": "D",
+          "legendFormat": "{{host}} {{mountpoint}} (no alert)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.15
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 302,
+      "type": "timeseries",
+      "title": "Filesystem headroom (bytes)",
+      "description": "How many gibibytes remain before the capture daemon's own 1 GiB watermark starts discarding order-book data that cannot be backfilled. **The line drawn here is the daemon's internal watermark, not an alert bar** — nothing pages on this number, and no alert in the fleet evaluates this expression. The percentage-based alert is on the panel beside it, which is where that page points.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=~\"zcrypto|zcrypto-red\", mountpoint=\"/\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1073741824
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 303,
+      "type": "timeseries",
+      "title": "NAS inode headroom",
+      "description": "Millions of small archive segments exhaust inodes long before they exhaust bytes, and a filesystem with free space and no inodes fails writes in a way the free-space panels above cannot show. These two families are collected on the NAS only, hence the literal machine matcher. Nothing pages on this — it is the early-warning line you read when writes start failing on a volume that still reports free space.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_files_free{host=\"nas\"}",
+          "refId": "A",
+          "legendFormat": "{{mountpoint}} free"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_files{host=\"nas\"}",
+          "refId": "B",
+          "legendFormat": "{{mountpoint}} total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 304,
+      "type": "timeseries",
+      "title": "Network IO (excl. lo)",
+      "description": "Is a link saturated, or has it gone silent, and on which interface? Loopback is excluded so the local scrape traffic does not swamp the scale. No alert watches network throughput, so there is no page line here. This replaces a panel that selected the same families with no machine matcher at all and therefore drew five machines under a one-machine title.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "rate(node_network_receive_bytes_total{host=~\"$host\", device!=\"lo\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{device}} rx"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "rate(node_network_transmit_bytes_total{host=~\"$host\", device!=\"lo\"}[5m])",
+          "refId": "B",
+          "legendFormat": "{{host}}/{{device}} tx"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Scrape & collector health",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      }
+    },
+    {
+      "id": 401,
+      "type": "timeseries",
+      "title": "Scrape targets up",
+      "description": "Which individual scrape target stopped answering, before the whole machine goes dark. The `unless` clause removes one series that is **0 by design** — the trading engine's scrape target exists on both capture machines because they share one agent configuration, but only the primary runs an engine, so the secondary's copy reads 0 forever and would otherwise be a permanent false fault. Context panel: the machine-dark pages point at the glance tiles at the top of the board, which measure series presence rather than scrape value.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 46
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "up{host=~\"$host\"} unless up{job=\"engine_app\", host=\"zcrypto-red\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 402,
+      "type": "timeseries",
+      "title": "node-exporter collector success",
+      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below 1; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. **The edge machine is structurally excluded from this panel today** — the family is not yet collected there, so a machine that simply disappears from the minimum would read as a healthy fleet. That is what the counting series exists to expose. Once the edge machine's agent configuration is deployed, remove the exclusion **from this panel only**.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 46
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "min by (host) (node_scrape_collector_success{host=~\"$host\", host!=\"zaccess\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} min"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_scrape_collector_success{host=~\"$host\", host!=\"zaccess\"} == 0",
+          "refId": "B",
+          "legendFormat": "{{host}}/{{collector}} FAILING"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count by (host) (node_scrape_collector_success{host=~\"$host\", host!=\"zaccess\"})",
+          "refId": "C",
+          "legendFormat": "{{host}} collectors reporting"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "no collector reported"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 403,
+      "type": "timeseries",
+      "title": "Collector scrape duration",
+      "description": "Is the exporter itself becoming the problem — a filesystem walk creeping toward the 60-second scrape interval, at which point scrapes start overlapping and the collector's own cost becomes the fault. **The 60-second line is the scrape interval, not an alert bar** — nothing pages on this number. The five slowest collectors are shown per machine, not per fleet, so no machine can be crowded out of the chart. The edge machine is excluded **permanently**: this family is not collected there and will not be, and an unmarked empty series is the failure class this board exists to prevent.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 46
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "topk by (host) (5, node_scrape_collector_duration_seconds{host=~\"$host\", host!=\"zaccess\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{collector}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 500,
+      "type": "row",
+      "title": "One-off timers & textfile freshness",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      }
+    },
+    {
+      "id": 501,
+      "type": "timeseries",
+      "title": "Textfile age — did the timer run (capture)",
+      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The two timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines only — that is the only scope any alert gives this family. The ops machine's timers are watched by different families with different budgets and live on the data-integrity board.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 0,
+        "y": 55
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/reboot.prom\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} reboot probe age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/engine-journal-prune.prom\"})",
+          "refId": "B",
+          "legendFormat": "{{host}} journal prune age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 3600
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 93600
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 502,
+      "type": "timeseries",
+      "title": "Textfile collector parse errors",
+      "description": "Is a metrics file unreadable or malformed? The usual cause is a file created with restrictive permissions by a temp-file helper, which makes a whole metric set vanish while every other signal on the machine stays green. Zero is the healthy baseline and a flat zero line is correct here. Pages above zero after `for: 15m`.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 7,
+        "x": 10,
+        "y": 55
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max by (host) (node_textfile_scrape_error{host=~\"zcrypto|zcrypto-red\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 503,
+      "type": "timeseries",
+      "title": "Reboot pending & probe presence",
+      "description": "Does either capture machine need its attended reboot — **and** is the probe that answers that question still publishing on both machines? These two questions have opposite failure directions on the same signal, so they carry opposite lines: the pending flag pages when it rises to 1 (after `for: 15m`) and the publisher count pages when it *falls* below 2 (after `for: 20m`). A staleness alert cannot fire on a series that never exists, which is exactly why the count is drawn here: an absent probe reads green forever without it. A flat zero on the pending line is the healthy state, not a dead exporter — the count line is what tells the two apart.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 7,
+        "x": 17,
+        "y": 55
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_reboot_required{host=~\"zcrypto|zcrypto-red\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} reboot pending"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(node_reboot_required{host=~\"zcrypto|zcrypto-red\"})",
+          "refId": "B",
+          "legendFormat": "machines publishing the probe"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineInterpolation": "stepAfter",
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 600,
+      "type": "row",
+      "title": "Daemon processes",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      }
+    },
+    {
+      "id": 601,
+      "type": "timeseries",
+      "title": "Daemon memory — $daemon_host (RSS & VSZ)",
+      "description": "Is a daemon's memory climbing against **this machine's own** history? Repeated once per machine on purpose: the ceilings differ by more than an order of magnitude across the fleet, so putting them on one shared axis would make the small machines unreadable and invite a comparison that means nothing. Legends name the daemon as well as the machine — several daemons publish this family, and on the primary capture machine two of them do, so the machine name alone is ambiguous exactly where it matters most. Four tiles render; the NAS tile shows the **telemetry agent's own** process rather than an application daemon. The edge machine publishes no per-process metrics at all and therefore has no tile — that absence is by design, and it is also why the restart markers on this board are silent for that machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 64
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "process_resident_memory_bytes{host=~\"$daemon_host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}} RSS"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "process_virtual_memory_bytes{host=~\"$daemon_host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}}/{{job}} VSZ"
+        }
+      ],
+      "repeat": "daemon_host",
+      "repeatDirection": "h",
+      "maxPerRow": 4,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 602,
+      "type": "timeseries",
+      "title": "Capture RSS growth per day",
+      "description": "Is the capture daemon's memory actually trending up? A growth **rate** is the one leak measure that is legitimately comparable across two machines with different ceilings, which is why this panel puts both on one axis where the panel above deliberately does not. The value is bytes per day, derived over a six-hour window; a flat line near zero is healthy and a persistent positive slope is the leak signal. Nothing pages on this.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 71
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "deriv(process_resident_memory_bytes{host=~\"zcrypto|zcrypto-red\", job=\"capture_app\"}[6h]) * 86400",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 603,
+      "type": "timeseries",
+      "title": "Open file descriptors (% of limit)",
+      "description": "Is a daemon leaking sockets toward its own limit after a reconnect storm? Plotted as a fraction of each daemon's **own** limit, so one axis is meaningful across daemons with different limits. No alert watches this, so there is no page line. The edge machine is excluded because it publishes no per-process metrics; writing the exclusion into the expression keeps it auditable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 71
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "process_open_fds{host=~\"$host\", host!=\"zaccess\"} / process_max_fds{host=~\"$host\", host!=\"zaccess\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 604,
+      "type": "timeseries",
+      "title": "Daemon CPU (cores)",
+      "description": "Is one daemon spinning? A wedged retry loop pins a single core, which on a 24-thread machine barely moves the load average and is therefore invisible on every panel above. The value is cores consumed: 1.0 means one core fully occupied. No alert watches this. The edge machine is excluded because it publishes no per-process metrics.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 78
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "rate(process_cpu_seconds_total{host=~\"$host\", host!=\"zaccess\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 605,
+      "type": "timeseries",
+      "title": "Daemon uptime (since last restart)",
+      "description": "Did a daemon restart? A sawtooth here is the single fact that explains a counter which reset to zero somewhere else on the fleet, and it is the same signal the restart markers across this board are drawn from. Rising steadily is healthy. No alert watches this. The edge machine is excluded because it publishes no per-process metrics — which is also why no restart marker ever appears for it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 78
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - process_start_time_seconds{host=~\"$host\", host!=\"zaccess\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 700,
+      "type": "row",
+      "title": "Access tier",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 85
+      }
+    },
+    {
+      "id": 701,
+      "type": "timeseries",
+      "title": "WireGuard handshake age (both ends)",
+      "description": "Is the encrypted tunnel between the ops machine and the edge machine alive, and **which end** lost it? This family is published by probes at both ends, and the alert groups by end so the notification can name the one that went stale — the legend here shows the same grouping, which is what makes the expression unambiguous without a machine matcher. A healthy tunnel re-handshakes every 25 seconds; the alert pages above 300 seconds after `for: 10m`. A fully dark machine at either end is a different alert, on the glance tiles at the top of this board.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 86
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max by (host) (zaccess_wireguard_handshake_age_seconds)",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 702,
+      "type": "timeseries",
+      "title": "Edge TLS — time to expiry",
+      "description": "How long until **each** tracked certificate expires. Three endpoints are tracked across two probes, and the alert now raises one instance per certificate, so this panel groups the same way and the legend names the endpoint the page will name. Pages below 14 days remaining, after `for: 1h`. The expression carries no machine matcher because the grouping puts both probing machines in the legend, which is what makes it unambiguous.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 86
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "min by (host, target) (zaccess_tls_not_after_seconds) - time()",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{target}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1209600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ],
+  "refresh": "1m",
+  "timezone": "",
+  "weekStart": "",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "custom",
+        "query": "Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess",
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Which machines the panels below select. All expands to the five pinned machines joined into one matcher — the option list is the pin, so a stray label value cannot appear here. This list is a second place to edit when a machine joins the fleet.",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "Capture primary",
+            "value": "zcrypto"
+          },
+          {
+            "selected": false,
+            "text": "Capture secondary",
+            "value": "zcrypto-red"
+          },
+          {
+            "selected": false,
+            "text": "Ops",
+            "value": "ops"
+          },
+          {
+            "selected": false,
+            "text": "NAS",
+            "value": "nas"
+          },
+          {
+            "selected": false,
+            "text": "Edge",
+            "value": "zaccess"
+          }
+        ]
+      },
+      {
+        "name": "daemon_host",
+        "label": "Daemon host",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "query": "label_values(process_resident_memory_bytes, host)",
+        "regex": "/^(zcrypto|zcrypto-red|ops|nas)$/",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Machines that publish per-process metrics. Derived from the process family itself, not from the Host picker — the edge machine publishes no process metrics at all, so a Host-driven repeat would render an empty tile indistinguishable from a quiet daemon. Resolves to four machines; the NAS tile shows the telemetry agent's own process, not an application daemon.",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Restarts",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "expr": "changes(process_start_time_seconds[5m]) > 0",
+        "titleFormat": "{{host}}/{{job}}",
+        "textFormat": "process restarted",
+        "tagKeys": "host,job",
+        "step": "60s"
+      }
+    ]
+  }
+}
