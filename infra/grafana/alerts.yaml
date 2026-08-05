@@ -432,10 +432,10 @@ rules:
       summary: >-
         The engine's most recent cycle finished UNSUCCESSFULLY. The outcome is final — the engine never
         re-runs a boundary that already has a journal artifact, so only
-        `zcrypto engine cycle --at <boundary> --replace` can re-run it. The cycle-staleness rule cannot
-        see this: the metrics sink refreshes the completion timestamp after a FAILED cycle too. Read the
-        engine log and the newest cycle journal artifact for which step failed.
-        Read the engine log and the newest cycle journal artifact for which step failed.
+        `zcrypto engine cycle --at` the failed boundary's timestamp `--replace` can re-run it. The
+        cycle-staleness rule cannot see this: the metrics sink refreshes the completion timestamp after
+        a FAILED cycle too. Read the engine log and the newest cycle journal artifact for which step
+        failed.
     labels:
       severity: warning
     notification_settings:
