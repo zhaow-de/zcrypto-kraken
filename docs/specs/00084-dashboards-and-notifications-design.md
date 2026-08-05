@@ -693,7 +693,7 @@ the query that failed is `{{ . }}` -- this is the rule's error state, not its co
 {{- if gt (len .Alerts) 5 }}
 • …{{ len .Alerts }} distinct lines matched; the first 5 are shown.
 {{- end }}
-{{- range $i, $a := .Alerts }}{{ if and (eq $i 0) (eq $a.Labels.msg "") }}
+{{- range $i, $a := .Alerts }}{{ if and (eq $i 0) (not $a.Labels.msg) }}
 This rule counts matching lines rather than carrying them, so there is no log text to quote — open the board above for the window shown.
 {{- end }}{{ end }}
 {{- end -}}
@@ -701,7 +701,13 @@ This rule counts matching lines rather than carrying them, so there is no log te
 
 The inner triple-backtick pair is the Slack code fence the template emits around a log line; this block is fenced with four backticks so the file renders — the `.tmpl` itself carries three.
 
-Two shapes are defensive rather than stylistic. `{{ range $i, $a := .Alerts }}{{ if eq $i 0 }}` replaces `index .Alerts 0`, which **panics** on an empty slice — and a Go template execution error produces a mangled notification, not a retry. `eq $a.Labels.msg ""` is safe because a missing key on the label map returns the empty string rather than erroring, which is what makes the dead-canary branch reachable without a second lookup.
+Three shapes are defensive rather than stylistic, and one of them corrects an earlier error in this section.
+
+`{{ range $i, $a := .Alerts }}{{ if eq $i 0 }}` replaces `index .Alerts 0`, which **panics** on an empty slice — and a Go template execution error produces a mangled notification, not a retry.
+
+**`not $a.Labels.msg`, never `eq $a.Labels.msg ""`.** This section previously asserted that a missing key on the label map returns the empty string rather than erroring. That is true only under `missingkey=zero`; under Go's **default** option a missing key yields an *invalid* value, and `eq` then returns **false without erroring** — so the dead-canary sentence became silently unreachable on exactly the seven unlabelled absence-fired alerts it exists for. Measured, not reasoned: the template was parsed and executed against Grafana-shaped structures under both options, independently by two agents. `not` reaches the branch under **both**, and suppresses correctly on a present `msg` under both. Which option Grafana sets is unverifiable offline, which is precisely why the form that does not depend on the answer is the right one.
+
+**`{{ if }}…{{ else }}…{{ end }}` on the host line, never `with`.** `with` renders *nothing* when the label is absent, and two rule summaries lean on this field by name — `Capture · every book stream on a host is silent` says "check the capture container on the named host", `Access · WireGuard tunnel stale` says "the host this notification names". A blank there makes those summaries false; the `else` branch states the absence instead.
 
 ### Worked example — `Reconciler · residual gap increased (permanent loss)`
 
