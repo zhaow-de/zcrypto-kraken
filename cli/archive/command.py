@@ -267,7 +267,7 @@ def _totals(records: list[dict]) -> dict[str, float]:
     that exported only its own cycle's numbers would reset every counter to zero on the next quiet
     hour, and the "residual gap increased" rule — the permanent-loss page — would fire on the reset.
     The ledger is append-only and each (pair, kind, hour, state) is written at most once, so summing
-    it is monotonic by construction.
+    it is monotonic by construction -- plus `ledger_records`, the gauge that must be able to fall.
 
     Trade deficits are counted from the FIRST decision per (pair, kind, hour) only: an hour ledgered
     `would_mint` during T0039's soak and then `minted` after the flip is one measurement, not two.
@@ -282,11 +282,13 @@ def _totals(records: list[dict]) -> dict[str, float]:
             "deficit_primary",
             "deficit_secondary",
             "dedup_rows",
+            "ledger_records",
         ),
         0.0,
     )
     measured: set[tuple] = set()
     for record in records:
+        totals["ledger_records"] += 1.0
         state = record.get("state")
         if state not in _MINT_FAMILY:
             # both_streams_silent / total_loss / failed / unwitnessed are decided once per
@@ -415,6 +417,12 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         ],
     )
     _emit("trade_dedup_rows_total", "counter", "Duplicate trade_id rows dropped while unioning.", [("", totals["dedup_rows"])])
+    _emit(
+        "ledger_records",
+        "gauge",
+        "Records in the append-only reconcile ledger this cycle summed its totals from.",
+        [("", totals["ledger_records"])],
+    )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -198,7 +199,7 @@ def _dashboard_texts() -> list[tuple[str, str, str]]:
             for i, v in enumerate(node):
                 walk(v, f"{where}[{i}]", name)
 
-    for path in sorted((REPO / "infra/grafana").glob("*dashboard*.json")):
+    for path in sorted((REPO / "infra/grafana").glob("*.json")):
         walk(json.loads(path.read_text()), path.stem, path.name)
     assert out, "walked no dashboard text — the glob is broken, not the dashboards clean"
     return out
@@ -208,6 +209,61 @@ def test_grafana_dashboard_text_carries_no_internal_vocabulary():
     """Panel titles, descriptions and text panels are the operator's actual UI."""
     found = [(f, where, hits) for f, where, text in _dashboard_texts() if (hits := _leaks(text))]
     assert not found, "\n".join(f"{f} {where} leaks {hits}" for f, where, hits in found)
+
+
+def _notification_templates() -> list[Path]:
+    """The Slack message bodies. A new operator-visible surface joins this list AND the test
+    together, per .claude/rules/operator-facing-text.md."""
+    out = sorted((REPO / "infra/grafana/notification-templates").glob("*.tmpl"))
+    assert out, "walked no notification templates — the glob is broken, not the templates clean"
+    return out
+
+
+@pytest.mark.parametrize("path", _notification_templates(), ids=lambda p: str(p.relative_to(REPO)))
+def test_notification_templates_carry_no_internal_vocabulary(path):
+    """The Slack notification body is the most operator-facing surface the fleet has: read on a
+    phone, in a channel, with nothing else open.
+
+    Every line is checked, `{{/* ... */}}` template comments included — unlike the `#` comments the
+    shell scan skips. A Go template comment can be inline and can span lines, so recognising one
+    costs more than it saves; and the template is written to carry no tokens anywhere, so a hit in a
+    comment is a token to move rather than a false positive.
+    """
+    found = [(i, line.strip()[:110], hits) for i, line in enumerate(path.read_text().splitlines(), 1) if (hits := _leaks(line))]
+    assert not found, "\n".join(f"{path.relative_to(REPO)}:{i} leaks {hits}: {txt!r}" for i, txt, hits in found)
+
+
+def test_every_dashboard_json_matches_the_push_script_glob():
+    """grafana-push.sh iterates infra/grafana/*-dashboard.json. A board named otherwise is
+    committed, passes every check, and is NEVER pushed -- silently absent from Grafana."""
+    strays = [p.name for p in sorted((REPO / "infra/grafana").glob("*.json")) if not p.name.endswith("-dashboard.json")]
+    assert not strays, f"these .json files will never be pushed by grafana-push.sh: {strays}"
+
+
+def test_every_notification_template_matches_the_push_script_glob():
+    """The same trap as the dashboard glob above, one turn worse.
+
+    A board named outside the push glob is merely absent from Grafana. A notification template
+    renamed outside it leaves the OLD template object live on the stack, still referenced by both
+    contact points and still rendering every alert the fleet sends — while the file the repo now
+    edits is never pushed. Nothing anywhere reports the divergence.
+
+    The pattern is READ OUT of the script rather than restated here: a guard that hardcodes its own
+    copy of the thing it audits drifts silently the moment the script's glob changes.
+    """
+    m = re.search(
+        r"for tmpl in \"\$\{root\}\"/infra/grafana/notification-templates/(\S+); do",
+        (REPO / "infra/scripts/grafana-push.sh").read_text(),
+    )
+    assert m, "found no notification-template loop in grafana-push.sh — the guard is broken, not the tree clean"
+    pattern = m.group(1)
+    files = sorted(p for p in (REPO / "infra/grafana/notification-templates").iterdir() if p.is_file())
+    assert files, "walked no notification templates — the glob is broken, not the tree clean"
+    strays = [p.name for p in files if not fnmatch(p.name, pattern)]
+    assert not strays, (
+        f"these files will never be pushed by grafana-push.sh (it iterates {pattern!r}), while the object "
+        f"they used to push stays live in Grafana rendering every notification: {strays}"
+    )
 
 
 def test_compose_interpolation_errors_carry_no_internal_vocabulary():

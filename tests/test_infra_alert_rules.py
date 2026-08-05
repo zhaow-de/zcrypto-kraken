@@ -144,14 +144,12 @@ NOT_A_FAULT_SIGNAL = {
     # Spec 00073 makes the silence observable; alerting on it is deliberately deferred to T0105,
     # since an unfitted threshold in `is_healthy()` darkens the dead-man fleet-wide on both hosts.
     "zcrypto_capture_gap_seconds_total",
-    # Seconds since the last book message (spec 00073 D4): the proof-it-runs gauge for the staleness
-    # watchdog. Excluded on purpose -- it exists to be READ so T0105 can fit a paging threshold to a
-    # real production distribution; a rule on it before that fitting is the guess this defers.
-    "zcrypto_capture_seconds_since_last_book_message",
-    # Engine cycle health -- registered under T0095 with `ripe_when: the dashboards/alerting design
-    # iteration`. Named here so its absence is a decision, not an oversight.
-    "zcrypto_engine_cycle_success",
-    "zcrypto_engine_cycle_completed_at_seconds",
+    # Engine intent and execution LEVELS, plus the cycle's own duration. Every value any of them can
+    # take is legitimate -- a weight that moved, an order that was placed, a cycle that ran long -- so
+    # no threshold on them means anything; they are the detail read on the engine board once something
+    # else has paged. The engine's two genuine fault signals, cycle liveness and the last cycle's
+    # outcome, are NOT excluded: zcrypto-engine-cycle-stale and zcrypto-engine-cycle-failed watch them,
+    # and this test is what keeps that true.
     "zcrypto_engine_cycle_duration_seconds",
     "zcrypto_engine_target_weight",
     "zcrypto_engine_orders_total",
@@ -492,3 +490,105 @@ def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
 
     assert summary.strip(), "no annotations.summary -- the vocabulary guard would scan an empty string"
     assert _RUNBOOK_LINK.search(summary), "the summary names no runbook, so the page carries no next step"
+
+
+# --- a summary may never interpolate the internal hostname ----------------------------------------
+
+# Every form Grafana's Go templater accepts for the same field. A summary is baked at EVALUATION
+# time, before any notification template runs, so the `zcrypto.host` -> friendly-name mapping in the
+# notification templates cannot reach it: an interpolated `host` ships the raw internal hostname
+# straight to a phone. The runtime VALUE is unprotectable from here, but the interpolation TOKEN is
+# literal text in the file and is therefore walkable -- which is the whole point, because this exact
+# edit has been made, reverted, and then re-instructed by a stale spec row.
+_HOST_INTERPOLATIONS = ("$labels.host", ".Labels.host", 'index $labels "host"')
+
+
+def test_no_alert_summary_interpolates_the_internal_hostname():
+    offenders = [
+        (r["uid"], token)
+        for r in _rules()
+        for token in _HOST_INTERPOLATIONS
+        if token in (r.get("annotations") or {}).get("summary", "")
+    ]
+    assert not offenders, (
+        f"an alert summary interpolates the internal hostname: {offenders}. Summaries are rendered "
+        f"before the notification template's host mapping, so say 'the host this notification names' "
+        f"and let the template do the naming."
+    )
+
+
+# --- the total-blackout rule, pinned by uid because the family guard cannot see it ---------------
+
+_ALL_STREAMS_SILENT = "zcrypto-capture-all-streams-silent"
+
+
+def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation():
+    """On 2026-07-27 all 12 pairs went silent for ~209 s on BOTH capture hosts while the socket
+    reported connected, the keepalive completed >=11 round trips and the cumulative gap counter read
+    0.0 -- the dead-man, the desync rule and the gap counter all sat green through a total blackout
+    of unbackfillable L2. This rule is the only thing that sees that shape, and the `min by (host)`
+    IS the rule: the minimum across pairs is what distinguishes one quiet leg (normal at any hour)
+    from the whole feed stopping, and it is what lets the bar be tight enough to matter.
+
+    Pinned by uid rather than left to `test_every_fault_signal_metric_is_watched_by_a_rule`, which
+    cannot cover it: that guard is FAMILY-level, and `zcrypto-capture-stream-silent` queries the same
+    `zcrypto_capture_seconds_since_last_book_message`, so each rule excuses the other and deleting
+    this one alone leaves that test green."""
+    rule = _rule(_ALL_STREAMS_SILENT)
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+
+    assert len(_ALL_STREAMS_SILENT) <= _UID_MAX, f"{len(_ALL_STREAMS_SILENT)} chars -- the create call will 400"
+    assert "min by (host) (" in expr, (
+        f"the cross-pair MINIMUM is the discriminator -- any other aggregation reads a healthy pair "
+        f"and sits green through a total blackout: {expr!r}"
+    )
+
+
+# --- a self-declared provisional threshold must be registered here, not only in a comment ---------
+# `grafana-push.sh` upserts unconditionally, so a bar whose own comment says "it must not reach a
+# push in this state" is held back by plan prose alone unless something in the repo names it. Each
+# entry states what derives the value, so the deferral is readable without opening the plan; when the
+# real value lands, the comment and the entry are deleted together and the staleness test below is
+# what forces the second half.
+
+PROVISIONAL_THRESHOLDS = {
+    # 900 s is a starting bar of the same standing this file gives the reconciler's 600, not a
+    # measured one. Derive it from `max_over_time(zcrypto_capture_seconds_since_last_book_message
+    # [30d])` per pair per host, set it above the binding pair's natural maximum with the same ~2.4x
+    # margin the daemon's own 30 s constant uses, and move the summary's stated duration with it.
+    "zcrypto-capture-stream-silent",
+}
+
+_PROVISIONAL = "PROVISIONAL"
+
+
+def _uids_with_a_provisional_marker() -> set[str]:
+    """Attribute each `PROVISIONAL` comment line to the rule it sits inside. Comments are stripped by
+    the YAML parser, so this walks the raw text -- the marker only ever lives in a comment."""
+    uid, found = None, set()
+    for line in ALERTS.read_text().splitlines():
+        if line.startswith("  - uid:"):
+            uid = line.split("uid:", 1)[1].strip()
+        if _PROVISIONAL in line and uid is not None:
+            found.add(uid)
+    return found
+
+
+def test_every_provisional_threshold_is_registered():
+    unregistered = _uids_with_a_provisional_marker() - PROVISIONAL_THRESHOLDS
+    assert not unregistered, (
+        f"a rule declares its own threshold {_PROVISIONAL} but nothing outside that comment knows: "
+        f"{sorted(unregistered)}. Add it to PROVISIONAL_THRESHOLDS with what derives the real value, "
+        f"or derive the value and delete the marker."
+    )
+
+
+def test_the_provisional_register_has_not_gone_stale():
+    """The other half, and the half that makes the register worth having: an entry outliving its
+    marker is a deferral that reads live while the value it guarded was quietly settled, which is
+    exactly the failure the register exists to prevent."""
+    discharged = PROVISIONAL_THRESHOLDS - _uids_with_a_provisional_marker()
+    assert not discharged, (
+        f"registered as provisional but the rule no longer says so: {sorted(discharged)}. If the "
+        f"threshold was derived, delete the entry in the same change."
+    )

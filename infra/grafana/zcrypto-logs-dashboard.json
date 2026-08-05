@@ -1,33 +1,923 @@
 {
+  "id": null,
   "uid": "zcrypto-logs",
-  "title": "zcrypto \u00b7 logs",
-  "description": "Every container log we ship, in one panel. Filter by host, container and level (all default to All). Lines are parsed at INGEST (Alloy), not here: the entry timestamp is the application's own, `level` is a real label, and the line carries only what Grafana does not already show in its own columns.",
-  "tags": [
-    "zcrypto"
-  ],
-  "timezone": "browser",
+  "title": "Logs",
+  "description": "Every log line the fleet ships, and the rate lane that says whether anything is arriving at all. Filter by machine, container, level and a substring. The capture daemon, the trading engine and the liquidations poller push one JSON object per record straight to the log store, so their lines are unpacked here at query time; lines collected from the systemd journal and from the shipping agent itself were unpacked when they were collected and pass through untouched. Every panel that serves an alert plots that alert's own expression and carries its own threshold line, so what you see here is the number the page was computed from.",
+  "tags": [],
   "schemaVersion": 39,
+  "version": 0,
   "editable": true,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "links": [],
+  "panels": [
+    {
+      "id": 101,
+      "type": "timeseries",
+      "title": "Total lines/min",
+      "description": "Is anything arriving at all? One line, every selected stream summed — the transport canary, and the panel a \"no lines in the last six hours\" page lands on. A flat zero here while the fleet is otherwise healthy means the shipping path is down, not that the fleet went quiet. Context panel: no alert evaluates this expression, so it carries no threshold line — the silence rules and the exact count each of them computes are drawn on the by-machine panel to the right. Counted per minute; the shipping paths here are low-volume by design, so a healthy total is a small number.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum(rate({host=~\"$host\", container=~\"$container\"}[5m])) * 60",
+          "refId": "A",
+          "legendFormat": "all selected streams",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 102,
+      "type": "timeseries",
+      "title": "Lines/min by level",
+      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the total stays flat is the other one — that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The four series on the right axis are the exact fifteen-minute counts the four error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All four fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS — the ops machine's own pull loop ships under a different name.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (level) (rate({host=~\"$host\", container=~\"$container\", level=~\".+\"}[5m])) * 60",
+          "refId": "A",
+          "legendFormat": "{{level}}",
+          "queryType": "range"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum(rate({host=~\"$host\", container=~\"$container\"}[5m])) * 60",
+          "refId": "B",
+          "legendFormat": "all lines, leveled or not",
+          "queryType": "range"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=~\"zcrypto|zcrypto-red\", container=\"capture\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
+          "refId": "C",
+          "legendFormat": "error window · capture daemon {{host}} {{msg}}",
+          "queryType": "range",
+          "step": "5m"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"ops\", container=~\"alloy|liquidations|zcrypto-.*\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
+          "refId": "D",
+          "legendFormat": "error window · ops {{container}} {{msg}}",
+          "queryType": "range",
+          "step": "5m"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({container=\"archive-pull\", level=~\"ERROR|CRITICAL\"} [15m])) or on() vector(0)",
+          "refId": "E",
+          "legendFormat": "error window · archive-pull loop",
+          "queryType": "range",
+          "step": "5m"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"zcrypto\", container=\"engine\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
+          "refId": "F",
+          "legendFormat": "error window · trading engine {{msg}}",
+          "queryType": "range",
+          "step": "5m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "E"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "F"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 103,
+      "type": "timeseries",
+      "title": "Lines/min by host and container",
+      "description": "Which stream went quiet? The solid series are per-machine, per-container rates. The seven series on the right axis are the exact counts the seven silence rules evaluate — six hours for the two capture daemons, for the shipping agent's own stream and for the liquidations poller, twenty-six hours for the scheduled ops units and for the ops journal transport, three hours for the archive-pull success line. Their bar is one line: below it the rule fires, and it fires the moment it crosses, with no pending period. Those counts run into the hundreds on a healthy stream, so the bar sits close to the floor of the right axis and the signal to read is a series reaching that floor. Container names are not symmetric across machines — the archive-pull loop is `archive-pull` on the NAS and `zcrypto-archive-pull` on the ops machine — so a single container pick blanks one of them. The archive-pull success series carries no machine filter because that container name exists only on the NAS. A rate of zero and a stream that never existed draw identically here; the table beside this panel is what tells them apart.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 7,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host, container) (rate({host=~\"$host\", container=~\"$container\"}[5m])) * 60",
+          "refId": "A",
+          "legendFormat": "{{host}} / {{container}}",
+          "queryType": "range"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({host=\"zcrypto\", container=\"capture\", level=~\".+\"} [6h])) or on() vector(0)",
+          "refId": "B",
+          "legendFormat": "dead-man · capture daemon, primary (6h)",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({host=\"zcrypto-red\", container=\"capture\", level=~\".+\"} [6h])) or on() vector(0)",
+          "refId": "C",
+          "legendFormat": "dead-man · capture daemon, secondary (6h)",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({host=\"ops\", container=\"alloy\", level=~\".+\"} [6h])) or on() vector(0)",
+          "refId": "D",
+          "legendFormat": "dead-man · shipping agent's own stream, ops (6h)",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({host=\"ops\", container=\"liquidations\", level=~\".+\"} [6h])) or on() vector(0)",
+          "refId": "E",
+          "legendFormat": "dead-man · liquidations poller (6h)",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host, container) (count_over_time({host=\"ops\", container=~\"zcrypto-.*\", level=~\".+\"} [26h])) or on() vector(0)",
+          "refId": "F",
+          "legendFormat": "dead-man · ops units, leveled lines (26h) {{container}}",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({host=\"ops\", container=\"zcrypto-archive-pull\"} [26h])) or on() vector(0)",
+          "refId": "G",
+          "legendFormat": "dead-man · ops journal transport (26h)",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({container=\"archive-pull\"} |= \"pull complete\" |= \"failed=0\" [3h])) or on() vector(0)",
+          "refId": "H",
+          "legendFormat": "dead-man · archive-pull success line (3h)",
+          "queryType": "range",
+          "step": "1h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "E"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "F"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "G"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "H"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 104,
+      "type": "table",
+      "title": "Last line seen — per stream",
+      "description": "A rate of zero and a stream that never existed render identically on a graph; this table tells them apart. One row per stream that has shipped at least one line in the last twenty-six hours — the widest window any log rule evaluates — carrying the wall-clock time of that line. A row present with an old timestamp is a stream that has gone quiet. **A row missing while other rows are present** is a stream already past every rule's patience; streams that exist on only one machine are expected to be missing from the other, and the edge machine ships metrics only, so it never appears here at all. **An entirely empty table means something different, and never that the whole fleet went silent.** Unless the pickers are narrowed to the edge machine alone, or to a container none of the selected machines runs, no rows at all means this panel's own query failed — a broken panel, not a verdict. Read the rate lane beside it before you treat anything as an outage: those panels answer the same question through a different query, and if they show lines arriving then this table is the thing that is wrong. Context panel, carrying no threshold of its own — the page pointers sit on the by-machine panel to its left, which plots the rules' own counts.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 5,
+        "x": 19,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "max by (host, container) (max_over_time({host=~\"$host\", container=~\"$container\"} | label_format seen=`{{ unixEpoch __timestamp__ }}` | unwrap seen [26h])) * 1000",
+          "refId": "A",
+          "legendFormat": "last line seen",
+          "queryType": "instant"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "host": "Machine",
+              "container": "Stream",
+              "Value": "Last line seen"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "Logs — $container / $level",
+      "description": "Every line, newest first. The capture daemon, the trading engine and the liquidations poller push straight to the log store as one JSON object per record, so their lines are unpacked here at query time and rendered as the message alone, with any stack trace beneath it. Lines collected from the systemd journal and from the shipping agent itself were already unpacked when they were collected and pass through untouched — the fallback in this panel's query is what keeps them readable. Level is a real stream label on both paths, so filtering and colouring work the same way for all of them. Expand a row to see the logger, the source file and any structured fields the line carried.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 24,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "queryType": "range",
+          "expr": "{host=~\"$host\", container=~\"$container\", level=~\"$level\"} |= \"$search\" | json | drop __error__, __error_details__ | line_format \"{{ if .message }}{{ .message }}{{ if .exception }}\\n{{ .exception }}{{ end }}{{ else }}{{ __line__ }}{{ end }}\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "refresh": "1m",
+  "timezone": "",
+  "weekStart": "",
   "time": {
     "from": "now-6h",
     "to": "now"
   },
-  "refresh": "1m",
+  "timepicker": {},
   "templating": {
     "list": [
       {
         "name": "host",
         "label": "Host",
-        "type": "query",
-        "datasource": {
-          "type": "loki",
-          "uid": "grafanacloud-logs"
-        },
-        "query": "label_values(host)",
-        "refresh": 2,
+        "type": "custom",
+        "query": "Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess",
         "multi": true,
         "includeAll": true,
-        "allValue": ".+",
+        "allValue": "",
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Which machines the panels below select. All expands to the five pinned machines joined into one matcher — the option list is the pin, so a stray label value cannot appear here. The edge machine ships metrics only and no log lines at all, so selecting it on its own empties every panel on this board by construction rather than by fault. This list is a second place to edit when a machine joins the fleet.",
         "current": {
           "selected": true,
           "text": [
@@ -37,10 +927,38 @@
             "$__all"
           ]
         },
-        "options": [],
-        "hide": 0,
-        "description": "Machine the log came from. Only the NAS ships logs today; capture hosts join when their obs role lands. (All = .+; Loki requires at least one matcher that cannot match empty.)",
-        "sort": 1
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "Capture primary",
+            "value": "zcrypto"
+          },
+          {
+            "selected": false,
+            "text": "Capture secondary",
+            "value": "zcrypto-red"
+          },
+          {
+            "selected": false,
+            "text": "Ops",
+            "value": "ops"
+          },
+          {
+            "selected": false,
+            "text": "NAS",
+            "value": "nas"
+          },
+          {
+            "selected": false,
+            "text": "Edge",
+            "value": "zaccess"
+          }
+        ]
       },
       {
         "name": "container",
@@ -55,6 +973,10 @@
         "multi": true,
         "includeAll": true,
         "allValue": ".+",
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Container or unit that produced the line. The names are not symmetric across machines: the archive-pull loop appears in this list as `archive-pull` on the NAS and as `zcrypto-archive-pull` on the ops machine, so picking one of them silently blanks the other machine. Leave it on All unless you are chasing a single stream.",
         "current": {
           "selected": true,
           "text": [
@@ -64,10 +986,7 @@
             "$__all"
           ]
         },
-        "options": [],
-        "hide": 0,
-        "description": "Container that produced the line. (All = .+; Loki requires at least one matcher that cannot match empty.)",
-        "sort": 1
+        "options": []
       },
       {
         "name": "level",
@@ -82,6 +1001,10 @@
         "multi": true,
         "includeAll": true,
         "allValue": ".*",
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Log level, carried as a real stream label on both paths — set by the shipping agent for the streams it collects, and by the daemon itself for the ones that push straight to the log store. Multi-select; All stays a match-anything pattern on purpose, so lines that carry no level label at all — the pull loop's own shell output — still appear.",
         "current": {
           "selected": true,
           "text": [
@@ -91,10 +1014,7 @@
             "$__all"
           ]
         },
-        "options": [],
-        "hide": 0,
-        "description": "Log level, set as a real label at ingest. Multi-select; All includes lines from any container whose format we do not yet parse. All stays `.*` on purpose: lines with no level label (pull-entrypoint's shell output) must still appear.",
-        "sort": 1
+        "options": []
       },
       {
         "name": "search",
@@ -110,42 +1030,35 @@
       }
     ]
   },
-  "panels": [
-    {
-      "id": 1,
-      "type": "logs",
-      "title": "Logs \u2014 $container / $level",
-      "datasource": {
-        "type": "loki",
-        "uid": "grafanacloud-logs"
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
       },
-      "gridPos": {
-        "h": 24,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "loki",
-            "uid": "grafanacloud-logs"
-          },
-          "queryType": "range",
-          "expr": "{host=~\"$host\", container=~\"$container\", level=~\"$level\"} |= \"$search\""
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "sortOrder": "Descending"
+      {
+        "name": "Restarts",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "expr": "changes(process_start_time_seconds{host=~\"$host\"}[5m]) > 0",
+        "titleFormat": "{{host}}/{{job}}",
+        "textFormat": "process restarted",
+        "tagKeys": "host,job",
+        "step": "60s"
       }
-    }
-  ]
+    ]
+  }
 }

@@ -117,13 +117,13 @@ NAS_LEGACY_ADMITTED = [
 ]
 # Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
 # command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
-# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the nine real
+# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the ten real
 # names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
 # per-host OPS list: the union bar alone would not catch the realistic drift, since narrowing the
 # wildcard on ops -- the host that actually publishes them -- still leaves NAS's copy satisfying the
 # union. A reviewer measured that: ops-only narrowing flagged 0 of 9.
 INTERPOLATED_METRIC_NAMES = [
-    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all nine, including
+    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all ten, including
     # last_success_timestamp_seconds, which the scan only ever picked up because an unrelated comment
     # in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not derivation.
     "zcrypto_reconcile_last_success_timestamp_seconds",
@@ -135,6 +135,7 @@ INTERPOLATED_METRIC_NAMES = [
     "zcrypto_reconcile_union_hours_total",
     "zcrypto_reconcile_trade_dedup_rows_total",
     "zcrypto_reconcile_trade_deficit_rows_total",
+    "zcrypto_reconcile_ledger_records",
 ]
 
 OPS_REQUIRED = [
@@ -254,6 +255,10 @@ ACCESS_REQUIRED = [
     "node_filesystem_size_bytes",
     "node_network_receive_bytes_total",
     "node_network_transmit_bytes_total",
+    # The `Node · a node-exporter collector is failing` rule (alerts.yaml) evaluates
+    # `min by (host) (node_scrape_collector_success)` with no host selector -- meant to cover
+    # every host. Without this admitted here, zaccess is structurally invisible to that rule.
+    "node_scrape_collector_success",
     # The did-the-timer-RUN discriminators (the ops green-when-blind lesson, 2026-07-28): without
     # them a dead probe timer serves its last gauges forever and the tunnel-stale/cert alerts can
     # never fire.

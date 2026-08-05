@@ -19,7 +19,7 @@ Several rows share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) — captu
 | --- | --- | --- | --- | --- |
 | caddy | zaccess | `2.11.4` (upstream cloudsmith `stable`) | 2026-07-30 | the mTLS edge; `verifier leaf` client-cert pinning syntax confirmed against v2.11.4 source |
 | alloy | zaccess | `1.18.0-1` (Grafana apt `stable`) | 2026-07-30 | native (not the containerized `491b0578c049` the other four run); `host="zaccess"` |
-| agentboard | zcrypto-ops | `0.4.5` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-07-30 | **every re-pin is security-relevant** (D2: the mTLS edge is its only auth) — attended, no bake; the unit is spike-gated on `access_ops_agentboard_live` |
+| agentboard | zcrypto-ops | **repo pin `0.4.8`** (`@gbasin/agentboard`, npm global as `zhaow`) — **running version still `0.4.5`, not yet converged** | pin raised 2026-08-05; `0.4.5` running since 2026-07-30 | **every re-pin is security-relevant** (D2: the mTLS edge is its only auth) — attended, no bake; the unit is spike-gated on `access_ops_agentboard_live`. The role installs the pin only when `npm ls -g` does not already find it, so the bump lands at the next attended ops converge; until then this row's two values differ **by design**, not by drift |
 
 Full digests:
 

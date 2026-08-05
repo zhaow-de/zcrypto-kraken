@@ -284,6 +284,7 @@ def test_healable_does_not_double_count_when_a_would_mint_hour_is_later_minted()
 
     assert totals["healable_seconds"] == 120.0, "the same hour measured twice is still one gap"
     assert totals["healed_seconds"] == 120.0, "it WAS minted, so it was genuinely healed"
+    assert totals["ledger_records"] == 2.0, "both ledger lines count, even the one the dedup `continue` skips"
 
 
 # --- per-intersection-window booking (T0103) -------------------------------------------------------

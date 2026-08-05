@@ -364,6 +364,7 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
         'zcrypto_reconcile_trade_deficit_rows_total{host="primary"}',
         'zcrypto_reconcile_trade_deficit_rows_total{host="secondary"}',
         "zcrypto_reconcile_trade_dedup_rows_total",
+        "zcrypto_reconcile_ledger_records",
     }
     assert series["zcrypto_reconcile_last_success_timestamp_seconds"] == SETTLED.timestamp()
     assert series["zcrypto_reconcile_spliced_hours_total"] == 1.0
@@ -521,6 +522,7 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
                 "deficit_primary",
                 "deficit_secondary",
                 "dedup_rows",
+                "ledger_records",
             ),
             0.0,
         ),
@@ -532,6 +534,33 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
     assert 'source="primary"} +Inf' in " ".join(lag_lines), f"primary lag not +Inf: {lag_lines}"
     assert 'source="secondary"} 100.0' in " ".join(lag_lines)
     assert " inf" not in text.lower(), f"bare 'inf' would break the whole textfile: {text!r}"
+
+
+def test_textfile_publishes_the_ledger_record_count(tmp_path):
+    """Every reconcile counter is summed from the whole ledger, so a reset has no visible cause
+    without this. It explains the silent empty-ledger path too, which a corrections counter cannot."""
+    from cli.archive.command import _write_textfile
+
+    out = tmp_path / "reconcile.prom"
+    totals = dict.fromkeys(
+        (
+            "spliced_hours",
+            "union_hours",
+            "healed_seconds",
+            "healable_seconds",
+            "residual_seconds",
+            "deficit_primary",
+            "deficit_secondary",
+            "dedup_rows",
+        ),
+        0.0,
+    )
+    totals["ledger_records"] = 4211
+    _write_textfile(out, now=SETTLED, totals=totals, lags={"primary": 0.0, "secondary": 0.0})
+    body = out.read_text()
+
+    assert "# TYPE zcrypto_reconcile_ledger_records gauge" in body
+    assert "zcrypto_reconcile_ledger_records 4211" in body
 
 
 # --- the counters describe the OUTPUT, not the input (T0103) --------------------------------------

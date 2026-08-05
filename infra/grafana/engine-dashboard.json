@@ -1,0 +1,1422 @@
+{
+  "id": null,
+  "uid": "zcrypto-engine",
+  "title": "Engine",
+  "description": "What the trading engine is doing. Cycle liveness and outcome, the intent it emitted, the book composition behind that intent, and the journal retention the next cycle's deltas depend on. Every number here is INTENDED state — what the engine decided, never what the market did; realized state lives in the engine journal on the capture primary.",
+  "tags": [],
+  "schemaVersion": 39,
+  "version": 0,
+  "editable": true,
+  "graphTooltip": 1,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Intent only — realized state lives in the engine journal",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Every number on this board is an INTENDED action, not an executed one.** There is no position, no fill, no reject, no open-order, no cash and no realized-profit series anywhere in this fleet's telemetry today — an order counter here means the engine *decided* to move, and says nothing about whether anything moved.\n\n**`data/engine-journal` on the capture primary is the sole source of truth for realized state.** Execution panels join this board when the executor that emits those families exists."
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Cycle health",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Last cycle age",
+      "description": "How long since the trading engine last completed a cycle — the single glance that says whether the four-hourly loop is still turning. Pages above 16500 s (4h35m) after `for: 5m`, and the line drawn here is that alert's own bar. A healthy cycle completes within 30 minutes of its boundary, so the worst legitimate age is 4h30m — reached just before the next cycle lands — and the bar sits five minutes past it; anything above the line is a stopped or crash-looping engine, not a slow one. **This is the one rule on this board that also pages on ABSENCE**: the gauge is seeded at engine start from the newest journal artifact, so it is never legitimately missing while the engine runs, and a vanished series means the engine itself is gone. The tile therefore reads NO CYCLE DATA **in red** when the series disappears — unlike the outcome reading beside it, absence here is a fault and not a value the engine is declining to publish. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_engine_cycle_completed_at_seconds{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "cycle age",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 16500
+              }
+            ]
+          },
+          "noValue": "NO CYCLE DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Last cycle outcome — absent is NOT failure",
+      "description": "Did the most recent cycle succeed, fail, or has the engine not determined an outcome yet — three distinct states, rendered as three. Pages the moment this reads 0, with no pending period (`for: 0s`): the outcome is final as soon as it is published, because the engine never re-runs a boundary that already has a journal artifact, so a pending window would buy silence and nothing else. **NO OUTCOME YET is not a failure** — the engine deliberately publishes nothing until it has actually measured an outcome, so a fresh start or an unreadable journal shows this state and does not page. That is why the colour here comes from value mappings and not from a threshold ladder: a ladder would paint honest absence red, inventing exactly the claim the engine refuses to publish. The cycle-age reading beside this one cannot cover this question — the metrics sink refreshes the completion timestamp after a FAILED cycle too, so age stays green while every cycle fails. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_cycle_success{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "last cycle",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "FAILED",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "SUCCEEDED",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "NO OUTCOME YET",
+                  "color": "text",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO OUTCOME YET"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Engine exporter scrape (:9102)",
+      "description": "The absent-versus-dark discriminator that makes the two readings beside it interpretable. SCRAPING means the telemetry agent is reaching the engine's exporter, so a missing engine series is honest absence. NOT LISTENING means the agent is alive and the engine is not answering on its port. NO SCRAPE DATA means this machine's agent stopped shipping and every panel on this board is blind — it is left neutral rather than red, because absence is not a value this board is willing to colour. No alert reads this tile: a per-target scrape failure surfaces as the cycle-age page on the left, and the machine-wide dark case is owned by the fleet board, whose rule counts series presence and stays satisfied while this one target reads 0.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "up{job=\"engine_app\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NOT LISTENING",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "SCRAPING",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "NO SCRAPE DATA",
+                  "color": "text",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO SCRAPE DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Cycle cadence — age sawtooth",
+      "description": "Six teeth a day. Each tooth rises to at most 4h30m and drops when the next cycle completes. A missing tooth is a skipped boundary and a tooth that overtops the line is a late one — neither of which a point-in-time reading can show, which is the whole reason this panel sits beside the stat. Same series and same bar as the cycle-age reading above, which owns the alert pointer; the page fires after `for: 5m` above the line. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_engine_cycle_completed_at_seconds{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "cycle age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 16500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Cycle duration — wall time per cycle",
+      "description": "Is a cycle creeping toward the deadlines that otherwise surface first as an unexplained failed cycle? **The line drawn here is the engine's own 25-minute refresh reserve, not an alert bar** — past it the cycle's transport and settle retries stop, and nothing in the fleet pages on this number; the failure it predicts pages as a failed cycle. A completion is expected to land within 30 minutes of its boundary, so a cycle approaching that second figure is already spending the whole window. This series is **absent, not zero**, until the first cycle of a fresh process completes: the engine will not publish a duration it has not measured, so an empty chart after a restart is the honest state and not a gap to fill in. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_cycle_duration_seconds{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · cycle wall time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Intent",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      }
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Intended trade activity — last 24h (decisions, not fills)",
+      "description": "Did the engine intend to trade today, and for how much — the headline number for a shadow book. **Decisions, not fills**: nothing on this board observes execution, and these two numbers count orders the engine emitted an intention for. Deliberately carries no colour at all — nothing pages on intent volume, and green or red on a trade count would assert a judgement no rule in this fleet has made. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_engine_orders_total{host=~\"$host\"}[24h])",
+          "refId": "A",
+          "legendFormat": "{{host}} · intended orders (24h)",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_engine_order_notional_eur{host=~\"$host\"}[24h])",
+          "refId": "B",
+          "legendFormat": "{{host}} · intended notional (24h)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No data"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyEUR"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "orientation": "vertical",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Intended orders — cumulative & rolling 24h",
+      "description": "The recent-delta pairing for order count: the cumulative line answers *has the engine ever intended to trade*, the rolling 24h line answers *is it intending to trade now*. **Decisions, not fills.** The cumulative series is on the right axis — the two live on completely different scales — and a process restart drops it back to zero, which the restart markers on the time axis are what distinguish from a real reset. No alert reads either line. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 6,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_orders_total{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · cumulative intended orders"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_engine_orders_total{host=~\"$host\"}[24h])",
+          "refId": "B",
+          "legendFormat": "{{host}} · intended orders, 24h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Intended order notional — cumulative & rolling 24h",
+      "description": "The euro weight of the day's intentions, so a day of many small rebalances is distinguishable from one large one. **Decisions, not fills** — this is notional the engine intended to move, not notional that moved. The cumulative series is on the right axis and drops back to zero on a process restart; the restart markers on the time axis show when. No alert reads either line. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_order_notional_eur{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · cumulative intended notional"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_engine_order_notional_eur{host=~\"$host\"}[24h])",
+          "refId": "B",
+          "legendFormat": "{{host}} · intended notional, 24h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Target weights by asset — INTENDED allocation (not held)",
+      "description": "How the intended book is allocated and how that has moved. **These are target weights the engine computed, not holdings.** Stacked, so an asset entering or leaving the target set is legible as a band appearing or collapsing. An asset that leaves the set has its series removed rather than zeroed — a zero weight and a not-in-the-book asset are different states — so a band ends instead of flattening onto the axis. An empty chart means no cycle has published a target set since the process started, which the cycle-age reading at the top of this board will explain. No alert reads this panel. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_target_weight{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · {{asset}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 40,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "bargauge",
+      "title": "Target weights — latest cycle (intent snapshot)",
+      "description": "Exactly which assets the last cycle targeted and at what weight — the view to read before touching anything. **Intent, not holdings.** Deliberately uncoloured: a target weight has no good or bad value and no rule reads one. An empty panel here means no cycle has published a target set since the process started, which the cycle-age reading at the top of this board will explain. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_target_weight{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · {{asset}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "valueMode": "color"
+      }
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Composition",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Active sleeves & composition changes (26h)",
+      "description": "The alerted series, plotted exactly as the rule evaluates it, so the page and this panel show the same number. Any step in the active-sleeve count — a dormant sleeve arming, or an active one going flat — is the event: the count is not monotone and the direction does not matter, because both directions move portfolio gross materially. Pages above 0 after `for: 5m`, and the line sits at 1 because the counting function is integer-valued and 1 is the first value that trips the bar; a line at 0 would paint every healthy sample red. The 26-hour window is wider than a day so the page ages out on its own. The raw count is context on the right axis and carries no line. This family has exactly one publisher — the trading engine on the capture primary — which is why the alerted expression needs no machine matcher and carries none. The count itself is **absent, not zero**, until a cycle has actually measured a composition.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 33
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "changes(zcrypto_engine_active_sleeves[26h])",
+          "refId": "A",
+          "legendFormat": "{{host}} · composition changes, 26h"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_active_sleeves{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} · active sleeves"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Sleeve gross — per sleeve (intended exposure)",
+      "description": "**Which** sleeve moved — the follow-up view for the composition alert, and literally where that alert's summary sends the reader. Per-sleeve gross is the sum of that sleeve's absolute target weights, so a sleeve sitting flat at zero for months is correct behaviour for a long-only sleeve in a sustained downtrend, and its re-arming is the event the alert announces. **Intended exposure, not held.** The alert pointer is on the panel to the left, which plots the alert's own value; nothing pages on this one. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 33
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_sleeve_gross{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · {{sleeve}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Book-level intent — net vs gross target weight",
+      "description": "The quantitative consequence the composition alert warns about. A dormant sleeve re-arming roughly triples gross and invalidates the drift band derived under the previous composition, and this is the line on which that is measurable; the distance between net and gross is the book's directional lean. **Intended weights, not held.** Nothing alerts on either line, so neither carries a bar. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 33
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum by (host) (abs(zcrypto_engine_target_weight{host=~\"$host\"}))",
+          "refId": "A",
+          "legendFormat": "{{host}} · gross target weight"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum by (host) (zcrypto_engine_target_weight{host=~\"$host\"})",
+          "refId": "B",
+          "legendFormat": "{{host}} · net target weight"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Journal retention",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      }
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Journal prune freshness — script clock vs published file age",
+      "description": "Is the daily journal prune still running, and do the script and the collector agree? The two normally track within seconds; a gap between them means the script ran but its metrics file was not written or not readable. **A stale metrics file is not a scrape error** — the collector keeps serving the last values forever, so without this panel the retention numbers beside it would read healthy indefinitely. The line at 26 hours sits on the published-file series only, because that is the series the alert evaluates: it pages above that after `for: 30m`, one missed daily run plus margin. That expression is written exactly as the alert evaluates it, which is why its matcher covers both capture machines even though only the primary runs the prune — the secondary contributes no series and that single line is the expected result, not a broken query. The alert pointer for this signal lives on the fleet board, which carries both metrics-file slices with their own bars.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 42
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_engine_journal_prune_last_run_timestamp_seconds{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · script clock age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/engine-journal-prune.prom\"})",
+          "refId": "B",
+          "legendFormat": "{{host}} · published file age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 93600
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Journal retention — day-dirs kept vs deleted per run",
+      "description": "Is the 60-day journal tail intact? A collapsing kept-count is the one housekeeping failure that changes what the engine **trades**: below two retained day-directories the next cycle's delta derivation degenerates into a full-book rebuild, because there is no prior record to take the delta against. **The line at two day-directories is that floor, not an alert bar** — nothing pages on it today, and this panel is the visibility that has to exist before a rule can. Retention is configured at 60 days, so the kept count settles just above that and a slow decline is the shape to watch for. The deleted count is on the right axis and carries no line: a run with nothing to remove correctly reports zero. Both series come from the prune script's metrics file on the capture primary, refreshed once a day — so on a freshly provisioned machine this panel is empty until that daily run first fires, which is honest absence and not a broken query.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 42
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_journal_prune_kept_days{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · day-dirs kept"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_journal_prune_deleted_days{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} · day-dirs deleted last run"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Oldest retained journal day",
+      "description": "Is the prune actually deleting, or only running? Kept-day count and last-run time are process measures; the age of the oldest surviving day-directory is the outcome measure. With retention configured at 60 days it should sit just past that figure and stay there — a value that keeps climbing means the script runs, reports success and removes nothing, which no other series on this board would reveal. **The line at two days is the same floor the panel beside this one draws, not an alert bar**: below it the journal tail has collapsed and the next cycle rebuilds the whole book instead of taking a delta. No upper bar is drawn, because the healthy value sits a little above the retention figure by construction and a line there would read red on a correct prune. Published from the prune script's metrics file on the capture primary, refreshed once a day — so on a freshly provisioned machine this panel is empty until that daily run first fires.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 42
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_journal_prune_oldest_day_age_seconds{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · oldest retained day"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 172800
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ],
+  "refresh": "1m",
+  "timezone": "",
+  "weekStart": "",
+  "time": {
+    "from": "now-2d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "custom",
+        "query": "Capture primary : zcrypto",
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Machine the engine runs on. A fixed list, not a query over the engine's own series: such a query empties out in exactly the incident where the engine is dark, which would blank this whole board at once. One option, because running the engine grants the live trade key and that is a security boundary rather than a convenience — a second engine machine is an edit here.",
+        "current": {
+          "selected": true,
+          "text": [
+            "Capture primary"
+          ],
+          "value": [
+            "zcrypto"
+          ]
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": true,
+            "text": "Capture primary",
+            "value": "zcrypto"
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Restarts",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "expr": "changes(process_start_time_seconds{host=~\"$host\"}[5m]) > 0",
+        "titleFormat": "{{host}}/{{job}}",
+        "textFormat": "process restarted",
+        "tagKeys": "host,job",
+        "step": "60s"
+      }
+    ]
+  }
+}

@@ -84,6 +84,9 @@ rules:
       summary: >-
         The Stage-6a clean-day streak went BACKWARDS — a clean run broke and the >=14-day gate clock
         has restarted. (The gate merely being not-MET while it accumulates is normal and no longer alerts.)
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "502"
+      unit: "days of streak change"
     labels:
       severity: warning
     notification_settings:
@@ -120,6 +123,9 @@ rules:
     for: 5m
     annotations:
       summary: "At least one replay mismatch/validation failure in the last 24h of journaled cycles."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "502"
+      unit: "mismatches in the last day"
     labels:
       severity: critical
     notification_settings:
@@ -161,6 +167,9 @@ rules:
     for: 5m
     annotations:
       summary: "The newest journaled cycle is more than 6h old -- the NAS journal pull is stuck or the VPS engine has stalled."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "503"
+      unit: "seconds of journal pull lag"
     labels:
       severity: critical
     notification_settings:
@@ -197,6 +206,9 @@ rules:
     for: 5m
     annotations:
       summary: "No successful `zcrypto engine gate-export` run in over 2h -- the NAS archive-pull loop or the gate-export step itself is broken."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "503"
+      unit: "seconds since the gate exporter last published"
     labels:
       severity: critical
     notification_settings:
@@ -252,6 +264,9 @@ rules:
     for: 15m
     annotations:
       summary: "The gate cache's oldest cycle has not been re-verified for over 3 days -- the rotating re-verification has stopped, so cached gate verdicts are being served against parquet bytes nobody has re-hashed. Check zcrypto_gate_cache_replayed (should be >0 every run) and the NAS disk."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "504"
+      unit: "seconds since the oldest cached cycle was re-verified"
     labels:
       severity: critical
     notification_settings:
@@ -316,12 +331,206 @@ rules:
         and re-read order placeability before the next go-live gate reads either of them. Read
         zcrypto_engine_sleeve_gross to see which sleeve moved.
         Runbook: infra/runbooks/README.md#zcrypto-engine-sleeve-count-changed
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "31"
+      unit: "changes to the active sleeve count in the last 26 hours"
     # Warning, not critical: this is an announcement, not a fault. Nothing is broken -- the book is
     # doing what it was built to do; what changed is the object the go-live gate is about to judge.
     labels:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  - uid: zcrypto-engine-cycle-stale
+    title: "Engine · cycles have stopped"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The larger of the two engine holes this file used to carry: NOTHING watched
+      # `zcrypto_engine_cycle_completed_at_seconds`. The only engine rule was the sleeve-composition
+      # one above, which is about composition, not liveness -- and a crash-looping engine leaves
+      # `active_sleeves` frozen at its last published value, so no page ever fired while cycles
+      # silently stopped.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 16500 s is cadence arithmetic, not a generic staleness number: boundaries are
+            # 00/04/08/12/16/20 UTC and a completion lands inside [B, B+30 min], so the worst
+            # HEALTHY age is 4h30m = 16200 s, reached legitimately just before the next cycle
+            # lands. 16500 leaves five minutes of margin; a flat 1h/2h bar would sit red through
+            # most of every inter-cycle gap.
+            - evaluator: {type: gt, params: [16500]}
+    # Alerting, and it is the only rule on this subject that takes that posture. The gauge is seeded
+    # at engine startup from the newest journal artifact (falling back to process start), so it is
+    # never legitimately absent while the engine runs -- absence means the engine container is gone,
+    # and nothing else owns that: `Fleet · Alloy dark — Capture primary` reads `count(up{host=...})`,
+    # which stays >= 1 while Alloy is up and the engine target merely scrapes `up = 0`. Accepted cost,
+    # named rather than discovered: a genuine Alloy-dark event on the primary double-pages.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: >-
+        The trading engine has not completed a cycle in over 4h35m — the 4-hourly loop has stopped
+        turning. A healthy cycle completes within 30 minutes of its boundary, so the worst legitimate
+        age is 4h30m and anything past that is a stopped or crash-looping engine, not a slow one.
+        This also fires when the metric has vanished entirely: either the engine's exporter is gone or
+        this host's telemetry plane is dark. Check `Fleet · Alloy dark — Capture primary` before
+        assuming the engine, then the engine container on the capture primary and its newest cycle
+        journal artifact for how far the last cycle got.
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "11"
+      unit: "seconds since the last completed cycle"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-cycle-failed
+    title: "Engine · the last cycle failed"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Liveness cannot cover this, and the reason is load-bearing: the metrics sink runs after every
+      # cycle, success OR failure, and it refreshes `cycle_completed_at` unconditionally -- so an
+      # engine whose every cycle fails on schedule keeps the staleness rule above silent forever.
+      # Two questions, two rules.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_engine_cycle_success{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}  # the gauge is 1 on success, 0 on failure
+    # OK, not Alerting: this gauge is DELIBERATELY left unregistered until an outcome is actually
+    # known (an unlabelled Gauge would otherwise publish 0.0 from process start, i.e. "the last cycle
+    # failed", which is a claim and a false one), so a fresh deploy or an unreadable journal must not
+    # page. Absence is the staleness rule above's business.
+    noDataState: OK
+    execErrState: Alerting
+    # 0s: the outcome is already final the instant this gauge reads 0, so any pending period is pure
+    # delay. The mechanism, read from the source rather than assumed -- `cli/engine/cycle.py::_failed`
+    # writes `failed-cycle-<HH>.json` BEFORE it calls `_update_metrics`, and
+    # `cli/engine/node.py::startup_action` returns None for any boundary that already has a journal
+    # artifact (success record OR failed sidecar), a check independent of the [B, B+25 min] window it
+    # sits behind. So `cycle_success == 0` implies the sidecar exists implies no re-run is possible,
+    # ever, and the next boundary is 4 h away. `for: 35m` shipped first on the opposite premise --
+    # that a restart inside B+25 min could still flip the gauge back -- which bought 35 minutes of
+    # silence and a summary telling a 03:00 responder the engine had already retried and failed again.
+    for: 0s
+    annotations:
+      summary: >-
+        The engine's most recent cycle finished UNSUCCESSFULLY. The outcome is final — the engine never
+        re-runs a boundary that already has a journal artifact, so only
+        `zcrypto engine cycle --at` the failed boundary's timestamp `--replace` can re-run it. The
+        cycle-staleness rule cannot see this: the metrics sink refreshes the completion timestamp after
+        a FAILED cycle too. Read the engine log and the newest cycle journal artifact for which step
+        failed.
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "12"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-error-logs
+    title: "Engine · ERROR logs"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The engine direct-ships its logs exactly as the capture daemon does -- `level` =
+      # `record.levelname` at the source and `container` = ZCRYPTO_LOG_SERVICE, set to `engine` in
+      # infra/ansible/roles/engine/templates/compose.yaml.j2 -- and NOTHING selected them: the
+      # capture ERROR rule is `container="capture"` and the ops one is scoped to `host="ops"`, so an
+      # ERROR line from the process holding the live trade key paged nobody. The engine runs only on
+      # the capture primary, hence `host="zcrypto"` alongside the container label; `sum by (host,
+      # ...)` keeps the label the notification template maps to a display name.
+      #
+      # Shape is `zcrypto-capture-error-logs`'s, deliberately identical rather than re-derived: the
+      # `msg` hoist puts the log MESSAGE on the page -- the whole reason a log alert exists, since
+      # without it the page says "3" and the responder goes hunting -- `printf "%.200s"` bounds one
+      # message and `topk(5, ...)` bounds how many; `| json message="message"` parses the
+      # direct-ship JSON body (cli/logging/ship.py's JsonLineFormatter) instead of reading
+      # `__line__`, which would spend ~150 of the 200 characters on the JSON preamble; and `| drop
+      # __error__, __error_details__` is required, not decorative -- `| json` stamps
+      # `__error__="JSONParserErr"` on any line it cannot parse and the query then 400s, taking the
+      # whole rule to execErrState. `or on() vector(0)` keeps a clean window an explicit 0, and the
+      # rule fires on the COUNT arm only, so its labels are genuinely populated when it pages.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto", container="engine", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR/CRITICAL log lines from the trading engine on the capture primary in the last 15 minutes -- the cycle rules see only a cycle's final outcome, so everything that goes wrong between boundaries (key or API failures, refresh errors, order-path exceptions) surfaces here first, on the host that holds the live trade key. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
 
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
@@ -356,6 +565,9 @@ rules:
     for: 5m
     annotations:
       summary: "/volume1 has less than 10% free space -- the archive keeps growing into it."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the volume still free (a fraction, not a percent)"
     labels:
       severity: warning
     notification_settings:
@@ -401,6 +613,9 @@ rules:
     for: 5m
     annotations:
       summary: "1-minute load average exceeds the NAS's 4 cores."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "201"
+      unit: "as a 1-minute load average"
     labels:
       severity: warning
     notification_settings:
@@ -422,13 +637,18 @@ rules:
       # this the query ran as a RANGE query and returned a time series, so the threshold node rejected
       # it with "invalid format of evaluation results ... looks like time series data, only reduced
       # data can be alerted on" -- the rule was erroring instead of evaluating.
+      #
+      # `by (host)` and not `by (host, container)`: the selector already pins the container to one
+      # literal, so carrying it would add a label whose value the rule already knows. This rule fires
+      # on the COUNT arm -- `or on() vector(0)` yields 0, which fails `gt 0` -- so the labels it
+      # raises are genuinely populated, unlike the dead-man below.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({container="archive-pull", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+            sum by (host) (count_over_time({container="archive-pull", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
           queryType: instant
           refId: A
       # Reduce A to a single value before the threshold. Belt-and-braces alongside the instant query:
@@ -459,7 +679,10 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "ERROR-level log lines from the archive-pull container in the last 15 minutes."
+      summary: "ERROR-level log lines from the archive-pull container on the NAS in the last 15 minutes."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -504,13 +727,18 @@ rules:
       # returns NO series, and a bare `sum(count_over_time(...))` would then evaluate to NoData
       # rather than to zero -- the rule would sit in NoData instead of firing, which is the precise
       # failure it exists to catch. The `or` substitutes an explicit 0, which trips the `lt 1` below.
+      #
+      # `by (host)` is carried for the notification's label line and is INERT at exactly fire time:
+      # the fire path IS the `or on() vector(0)` arm, which is unlabelled, so an interpolated
+      # `$labels.host` would render empty on the page. The summary therefore names the host and the
+      # container as literal words. Same shape on every dead-man in this file.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 10800, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({container="archive-pull"} |= "pull complete" |= "failed=0" [3h])) or on() vector(0)
+            sum by (host) (count_over_time({container="archive-pull"} |= "pull complete" |= "failed=0" [3h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -538,7 +766,9 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "archive-pull has not reported a successful pull for 3h -- the loop, the container, the NAS, or the log pipeline is down. The L2 archive is unbackfillable; the NAS mirror is going stale."
+      summary: "The archive-pull container on the NAS has not reported a successful pull for 3h -- the loop, the container, the NAS, or the log pipeline is down. The L2 archive is unbackfillable; the NAS mirror is going stale."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -585,6 +815,9 @@ rules:
     for: 5m
     annotations:
       summary: "No successful `zcrypto archive reconcile` cycle in over 3h. The reconciler is the only thing that heals primary gaps from the secondary -- while it is down, gaps accumulate unhealed and unmeasured."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "201"
+      unit: "seconds since the reconciler last completed a run"
     labels:
       severity: critical
     notification_settings:
@@ -641,6 +874,9 @@ rules:
     for: 0s
     annotations:
       summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "202"
+      unit: "seconds of unrecoverable silence"
     labels:
       severity: critical
     notification_settings:
@@ -684,6 +920,9 @@ rules:
     for: 10m
     annotations:
       summary: "A capture mirror's newest committed final is over 3h old -- that host has stopped producing data, or its pull channel is broken. If it is the SECONDARY, the fleet has no witness and the next primary gap is permanent."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "201"
+      unit: "seconds of mirror lag"
     labels:
       severity: warning
     notification_settings:
@@ -740,6 +979,9 @@ rules:
     for: 30m
     annotations:
       summary: "The primary needed more than 10 minutes of healing in the last 24h. Every gap was covered, so nothing else fires -- but a host that needs this much healing is degrading. Check the reconcile ledger's would_mint/minted records for the pattern."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "202"
+      unit: "seconds of healable silence per live pair over the last day"
     labels:
       severity: warning
     notification_settings:
@@ -791,6 +1033,9 @@ rules:
     for: 5m
     annotations:
       summary: "No clean `zcrypto archive backfill-trades` run in over ~2 days -- the daily step has been failing every cycle or has stopped running."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the trade backfill last succeeded"
     labels:
       severity: critical
     notification_settings:
@@ -833,6 +1078,8 @@ rules:
     for: 5m
     annotations:
       summary: "The daily trade-backfill run recorded a non-zero exit code (1 = errors recorded, 2 = primary root missing). It no longer retries hourly -- this alert is the only signal."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: critical
     notification_settings:
@@ -892,6 +1139,9 @@ rules:
         The ops overlay-writer cycle (historical name: archive-pull) has not completed for 3h --
         the host, the timer, or Alloy is gone. Reconcile + trade-backfill are not running, and
         nothing else owns that silence (a gate-skip still bumps this metric, so this is not a skip).
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the archive pull last succeeded"
     labels:
       severity: critical
     notification_settings:
@@ -935,6 +1185,8 @@ rules:
     for: 5m
     annotations:
       summary: "The last ops overlay-writer cycle (historical name: archive-pull) recorded a non-zero exit code -- the reconcile step failed (image/digest problem, dockerd down, a leftover zcrypto-reconcile container, or the reconciler itself erroring). Gate-skips and trade-backfill failures do NOT trip this rule."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: warning
     notification_settings:
@@ -975,6 +1227,9 @@ rules:
     annotations:
       # 48h = two daily replay cycles; the invariant is D9 in the spec vocabulary.
       summary: "No successful verified-path journal replay in over 48h -- the daily replay has stopped running or has not succeeded in two cycles."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the verified replay last succeeded"
     labels:
       severity: warning
     notification_settings:
@@ -1015,6 +1270,8 @@ rules:
     for: 5m
     annotations:
       summary: "The last verified-path journal replay recorded a non-zero exit code -- a replay mismatch or validation failure against yesterday's journaled cycles."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: critical
     notification_settings:
@@ -1071,6 +1328,9 @@ rules:
         run's journal to see which hours, triage them, and record the finding durably: this alert
         ages out after 25h and is not itself a record.
         Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-new-breakage
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "304"
+      unit: "newly failed hours in the last 25 hours"
     labels:
       severity: critical
     notification_settings:
@@ -1120,6 +1380,8 @@ rules:
         unknown, not clean. Likely causes: the container crashed, or the read-only NAS mount
         returned an I/O error.
         Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-run-broken
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "301"
     labels:
       severity: critical
     notification_settings:
@@ -1204,6 +1466,9 @@ rules:
         queued for re-verification have not decreased across two nightly runs — the drain budget may
         be zero, the state directory lost, or the drain broken.
         Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-backlog-stuck
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "304"
+      unit: "hours still pending replay"
     labels:
       severity: warning
     notification_settings:
@@ -1242,6 +1507,8 @@ rules:
     for: 5m
     annotations:
       summary: "The last hourly panel materialize recorded a non-zero exit code -- the L2 panel is going stale (derived data; recomputable once the cause is fixed)."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: warning
     notification_settings:
@@ -1291,6 +1558,9 @@ rules:
     for: 5m
     annotations:
       summary: "1-minute load average on the ops node exceeds 20 of its 24 threads -- sustained saturation, not a transient burst."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "201"
+      unit: "as a 1-minute load average"
     labels:
       severity: warning
     notification_settings:
@@ -1305,10 +1575,45 @@ rules:
     data:
       # Same shape as `NAS · archive-pull ERROR logs` above (level LABEL, not a text grep -- the
       # parse stages strip the level out of the message line, so a grep would be silently blind;
-      # `queryType: instant` for the same Loki-specific reason). Host-wide rather than per-container:
-      # `{host="ops", ...}` covers every parsed ops container at once -- the five named zcrypto-*
-      # jobs AND the liquidations poller, a long-lived daemon whose errors flip NO exit-code metric,
-      # so this rule is its ONLY error channel.
+      # `queryType: instant` for the same Loki-specific reason). It covers every container that ships
+      # from the ops node -- the four zcrypto-* units, Alloy's own logs, and the liquidations poller,
+      # a long-lived daemon whose errors flip NO exit-code metric, so this rule is its ONLY error
+      # channel.
+      #
+      # The container selector is ENUMERATED, not host-wide, and the enumeration was measured rather
+      # than guessed (`sum by (container) (count_over_time({host="ops"}[7d]))`): alloy, liquidations,
+      # zcrypto-archive-pull, zcrypto-panel-materialize, zcrypto-verified-replay, zcrypto-verify-replay.
+      # `zcrypto-.*` rather than the four unit names so a fifth unit is watched the day its journal
+      # keep-regex admits it. The bound matters twice: a host-wide selector cannot say WHICH service
+      # errored, and under a storm it is a distinct-line cardinality hazard in Loki query cost as well
+      # as in Slack message length. The cost is stated: a container outside this list ships errors
+      # nothing watches -- but nothing ships from this host without an Alloy or compose change, and
+      # that change is where the list is extended. A 30d read shows several dead container labels
+      # (`alloy-alloy`, `zcrypto-ops-liquidations`, docker's random names) from the retired
+      # docker-socket path; none has produced a line in 7d and the enumeration deliberately omits them.
+      #
+      # The `msg` label hoists the log MESSAGE onto the page, which is the whole reason a log alert
+      # exists -- without it the page says "7" and the responder goes hunting. `printf "%.200s"`
+      # bounds one message and `topk(5, ...)` bounds how many; topk is NOT optional, since without it
+      # a log storm mints one alert instance per distinct line and blows past Slack's length limit.
+      #
+      # Two stages stand between the line and the label, and both are load-bearing:
+      #
+      #   `| json message="message"` -- NOT a bare `__line__`. This selector spans both line shapes on
+      #   this host: the liquidations poller direct-ships a JSON BODY (cli/logging/ship.py's
+      #   JsonLineFormatter: ts/level/logger/file/line/message), while the journal units arrive already
+      #   flattened by Alloy's parse stage. Reading `__line__` raw spends ~150 of the 200 characters on
+      #   the JSON preamble and truncates the message mid-sentence -- a page that LOOKS like it answered
+      #   the question. Measured, not theorised. The `{{ if .message }}` fallback keeps the raw line for
+      #   the already-flat streams, so one expression serves both shapes.
+      #
+      #   `| drop __error__, __error_details__` -- required, and do not simplify it away. `| json` stamps
+      #   `__error__="JSONParserErr"` on every non-JSON line, and the query then fails with HTTP 400 the
+      #   moment one journal-unit line enters the pipeline; the whole rule goes to execErrState. Clearing
+      #   the label instead is impossible -- Loki rejects `label_format __error__=...` with "__error__
+      #   cannot be formatted" -- and `| __error__=""` would DROP the journal units rather than admit
+      #   them. `drop` is the only stage that keeps both shapes. All three behaviours confirmed against
+      #   live Loki before this shipped.
       #
       # The `level` label reaches this rule via TWO independent paths (00068 T6/T7/T8 review): the
       # four zcrypto-* units and Alloy's own logs get it from config.alloy's parse stages at ingest;
@@ -1325,7 +1630,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="ops", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="ops", container=~"alloy|liquidations|zcrypto-.*", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
           queryType: instant
           refId: A
       # Reduce A to a single value before the threshold -- same belt-and-braces A -> B(reduce) ->
@@ -1355,7 +1660,10 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "ERROR-level log lines from the ops node's containers in the last 15 minutes. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric."
+      summary: "{{ if $labels.container }}ERROR/CRITICAL log lines from `{{ $labels.container }}` on the ops node in the last 15 minutes.{{ else }}ERROR/CRITICAL log lines from a container on the ops node in the last 15 minutes.{{ end }} One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -1388,13 +1696,16 @@ rules:
       # path, which this rule can no longer see at all now that it is Alloy-scoped.
       # `or on() vector(0)` keeps the query returning data while it is intact; execErrState
       # Alerting still covers "Loki unreachable".
+      #
+      # `by (host)` is for the notification's label line and is INERT at fire time -- the fire path is
+      # the unlabelled `or on() vector(0)` arm -- so the summary names host and container literally.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 21600, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="ops", container="alloy", level=~".+"} [6h])) or on() vector(0)
+            sum by (host) (count_over_time({host="ops", container="alloy", level=~".+"} [6h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -1428,7 +1739,9 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy emits its own logfmt output continuously while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
+      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy is quiet but never silent while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. The margin here is thin and deliberately so: a healthy 6h window measured 7 to 9 lines over 14 days, roughly 1.5 an hour, so read a low count on this stream as a signal to look rather than as headroom. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1451,13 +1764,16 @@ rules:
       # poller's ship path is dead (the --ship-logs flag lost at render time, its Loki credentials
       # dead, or the container gone) -- not a quiet host, since the poller runs continuously on a
       # ~5-min cycle. `or on() vector(0)` keeps the query returning data while intact.
+      #
+      # `by (host)` is for the notification's label line and is INERT at fire time -- the fire path is
+      # the unlabelled `or on() vector(0)` arm -- so the summary names host and container literally.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 21600, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="ops", container="liquidations", level=~".+"} [6h])) or on() vector(0)
+            sum by (host) (count_over_time({host="ops", container="liquidations", level=~".+"} [6h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -1488,7 +1804,9 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED log line from the liquidations poller (container=liquidations) in 6h -- it direct-ships and runs continuously on a ~5-min cycle, so silence means its ship path is dead (the --ship-logs flag, its Loki credentials, or the container itself), not a quiet host."
+      summary: "Not one PARSED log line from the liquidations poller (container=liquidations) on the ops node in 6h -- it direct-ships and runs continuously on a ~5-min cycle, so silence means its ship path is dead (the --ship-logs flag, its Loki credentials, or the container itself), not a quiet host."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1514,13 +1832,21 @@ rules:
       # verified-replay (daily) run on independent schedules unaffected by that gate, so at least one
       # of the four units produces a leveled line well within 26h even through an extended streak --
       # a 6h window on this same selector would false-fire and was rejected for that reason.
+      #
+      # `by (host, container)` -- container is a REGEX here, so it is real information on the label
+      # line rather than something the rule already knows. It does not change when this rule fires:
+      # `count_over_time` yields no series at all for a silent container (never a zero), so one live
+      # unit still leaves every series >= 1 and the `lt 1` false, exactly as the bare `sum()` did.
+      # And it is INERT at fire time for the same reason as its siblings -- all four units going
+      # quiet empties the left arm and the unlabelled `or on() vector(0)` is what crosses the
+      # threshold -- so the summary names host and containers literally.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 93600, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} [26h])) or on() vector(0)
+            sum by (host, container) (count_over_time({host="ops", container=~"zcrypto-.*", level=~".+"} [26h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -1550,6 +1876,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one LEVEL-PARSED line from any of the four zcrypto-* ops units in 26h -- the four run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1585,13 +1913,16 @@ rules:
       # (reconcile CLI INFO on the happy path, the skip-gate/failure echoes otherwise), but its own
       # echoes carry no level label, so a level-filtered query would false-fire during a
       # pull-failure streak. 26h = a full day of hourly runs plus headroom.
+      #
+      # `by (host)` is for the notification's label line and is INERT at fire time -- the fire path is
+      # the unlabelled `or on() vector(0)` arm -- so the summary names host and container literally.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 93600, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="ops", container="zcrypto-archive-pull"} [26h])) or on() vector(0)
+            sum by (host) (count_over_time({host="ops", container="zcrypto-archive-pull"} [26h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -1621,7 +1952,9 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one journal-path log line from zcrypto-archive-pull in 26h -- the hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed."
+      summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1682,6 +2015,9 @@ rules:
     for: 5m
     annotations:
       summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + healthchecks dead-man are the last line. Check both prune timers (zcrypto-capture-prune for the spool, zcrypto-engine-journal-prune for the engine journal) and for an unexpected disk consumer."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the spool filesystem still free (a fraction, not a percent)"
     labels:
       severity: warning
     notification_settings:
@@ -1728,6 +2064,8 @@ rules:
     for: 15m
     annotations:
       summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in .claude/rules/capture-deploys.md."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "503"
     labels:
       severity: warning
     notification_settings:
@@ -1768,6 +2106,9 @@ rules:
     for: 20m
     annotations:
       summary: "A capture host has stopped publishing node_reboot_required entirely -- not stale, ABSENT. The attended-reboot safety net is down on at least one host: a pending kernel reboot would now go unseen. Check `systemctl status zcrypto-reboot-check.timer` on both hosts, then that the .prom exists in /var/lib/zcrypto-node-textfile and is mode 0644 (Alloy reads it as a non-root user)."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "503"
+      unit: "of the two capture machines still publishing the probe"
     labels:
       severity: warning
     notification_settings:
@@ -1808,6 +2149,8 @@ rules:
     for: 15m
     annotations:
       summary: "Alloy's textfile collector cannot read or parse a .prom on a capture host, so that timer's metrics are absent while everything else looks healthy. Most likely the file is mode 0600 (mktemp's default -- the publisher needs an explicit chmod 0644) or was written malformed. Check /var/lib/zcrypto-node-textfile on that host."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "502"
     labels:
       severity: warning
     notification_settings:
@@ -1847,6 +2190,9 @@ rules:
     for: 10m
     annotations:
       summary: "The pending-reboot probe on a capture host has not refreshed in over an hour (it runs every 15 min), so node_reboot_required is a frozen last-known value, not current state. A kernel reboot could be pending and unreported. Check `systemctl list-timers zcrypto-reboot-check.timer` on that host."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "501"
+      unit: "seconds since the reboot probe last wrote its file"
     labels:
       severity: warning
     notification_settings:
@@ -1886,6 +2232,9 @@ rules:
     for: 30m
     annotations:
       summary: "The engine journal prune has not refreshed its .prom in over 26h -- its last run is more than a day old, so the retention it reports is a frozen value. Check `systemctl list-timers zcrypto-engine-journal-prune.timer` and the unit's journal on the primary."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "501"
+      unit: "seconds since the daily timer last wrote its file"
     labels:
       severity: warning
     notification_settings:
@@ -1934,6 +2283,8 @@ rules:
     for: 5m
     annotations:
       summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- its single fire-and-forget resubscribe did not take, and the transition guard will not retry. That pair's L2 is not being captured, AND it silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "101"
     labels:
       severity: warning
     notification_settings:
@@ -1985,6 +2336,9 @@ rules:
     for: 30m
     annotations:
       summary: "A capture host has resubscribed a book more than once in 24h. Post-2026-07-13 these should be rare genuine venue events, so a re-elevating rate suggests a regression or a pair flapping desync/heal. This counter has no pair label -- check zcrypto_capture_book_desynced by pair on that host to find which."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "103"
+      unit: "resubscribes in the last day"
     labels:
       severity: warning
     notification_settings:
@@ -2035,6 +2389,147 @@ rules:
     for: 30m
     annotations:
       summary: "A capture host's book resubscribe is failing: the venue rejected the frames, or the unsubscribe acks are not arriving. The desync recovery ladder depends on this leg -- while it fails, a desynced book cannot heal and the pair keeps writing from a stale state. Check the capture log for the pair and the venue reply."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "103"
+      unit: "failed resubscribes -- errors plus ack timeouts -- in the last day"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-all-streams-silent
+    title: "Capture · every book stream on a host is silent"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The blackout class, and it is measured rather than imagined: on 2026-07-27 all 12 pairs went
+      # silent for ~209 s on BOTH hosts while the WS reported connected, the keepalive completed >=11
+      # round trips, and the cumulative gap counter read 0.0 -- so the dead-man, the desync rule and
+      # the gap counter all sat green through a total blackout.
+      #
+      # The MINIMUM across pairs is the discriminator, and that is the whole design: one thin leg
+      # being quiet is normal at any hour, all twelve simultaneously is not, and no natural cause
+      # produces it -- so the bar can be tight here where a per-pair bar cannot be. The gauge reads
+      # 0 for every pair at process start, so a restart cannot false-fire it either.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min by (host) (zcrypto_capture_seconds_since_last_book_message{host=~"zcrypto|zcrypto-red"})'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 60 s is the whole notice budget this rule can afford to spend on the bar, because the
+            # pending period is NOT free here: the gauge is scraped every 60 s
+            # (infra/ansible/roles/capture/files/config.alloy), so it advances one sample per minute
+            # and the real silence at firing time is 60 s bar + up to 60 s of scrape granularity +
+            # the pending period + the group's eval interval. That is why `for` is 0s below.
+            - evaluator: {type: gt, params: [60]}
+    # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
+    # capture rule here.
+    noDataState: OK
+    execErrState: Alerting
+    # 0s, and it is arithmetic rather than impatience. `for: 2m` shipped first and put the GUARANTEED
+    # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
+    # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
+    # the fix either -- it still misses 209 s in 12.9% of alignments. Nothing but real silence can put
+    # this minimum over 60: `_run` seeds last_seen for every pair before the collector registers, so a
+    # restart reads 0.0; a stop->start window replays the last healthy pre-stop sample through
+    # Prometheus' lookback; a longer stop goes NoData, which `noDataState: OK` swallows; and
+    # remote-write lag can only delay firing, never advance it. `zcrypto-capture-log-dead-primary`
+    # already carries 0s for the same reason.
+    for: 0s
+    annotations:
+      summary: >-
+        EVERY book stream on this capture host has been silent for minutes — not one message on
+        any pair, so this is the whole feed rather than one quiet leg. The last time this happened the
+        socket still reported connected, the keepalive kept completing round trips, and the cumulative
+        gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
+        permanent loss: check the capture container on the named host and restart the daemon if the
+        streams do not resume on their own.
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "102"
+      unit: "seconds since ANY book stream on that machine last delivered"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-stream-silent
+    title: "Capture · a book stream has stopped delivering"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The single-stuck-stream class, which nothing else catches: the resubscribe path failed for one
+      # pair while every other stream keeps flowing, so the dead-man pings, the all-streams rule above
+      # reads its minimum off a healthy pair, and the desync rule sees no checksum failure.
+      #
+      # Deliberately NOT aggregated: Grafana raises one instance per (host, pair) with both labels
+      # intact, which is what lets the page name the stream. That is also why this rule can raise many
+      # instances at once during a wide event -- the all-streams rule above is the one that says
+      # "everything", this one says "which".
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_capture_seconds_since_last_book_message{host=~"zcrypto|zcrypto-red"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # PROVISIONAL, and it must not reach a push in this state. 900 is a starting bar of the
+            # same standing this file gives the reconciler's 600, not a measured one: the daemon's
+            # own `is_healthy()` docstring records that silence was booked first and thresholding
+            # waits until the exported gauge shows a production distribution worth thresholding.
+            # That distribution now exists. DERIVE the bar from
+            # `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host
+            # and set it above the binding pair's natural maximum with the same ~2.4x margin the
+            # daemon's own 30 s constant uses -- then update the summary's stated duration with it,
+            # since the two must move together. THREE things move, not two: the summary's duration is
+            # the NOTICE PERIOD, which is `bar + up to 60 s of scrape granularity + for + the group's
+            # eval interval`, not the bar. Today's reads "over 15 minutes" against a bar of 900 and a
+            # `for` of 10m, so the real floor is ~25 min -- the same understatement the all-streams
+            # rule above carried until its arithmetic was measured. `zcrypto-logship-worker-stalled`
+            # is the idiom to copy: 300 s bar + 10m pending, summary says 15 minutes.
+            - evaluator: {type: gt, params: [900]}
+    # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
+    # capture rule here.
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: >-
+        One capture book stream has delivered nothing for over 15 minutes while its siblings keep
+        flowing — the single-stuck-stream shape, which no other rule catches: the dead-man still pings,
+        the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
+        healthy pair. The `pair` label names the stuck stream. Check whether that pair's resubscribe went
+        through; restarting the capture daemon re-establishes every stream.
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "102"
+      unit: "seconds since that stream last delivered a book message"
     labels:
       severity: warning
     notification_settings:
@@ -2078,9 +2573,23 @@ rules:
             - evaluator: {type: gt, params: [0.5]}
     noDataState: OK
     execErrState: Alerting
-    for: 2m
+    # 0s, and it is arithmetic rather than impatience. The pending period is NOT free on this rule:
+    # the daemon re-checks the watermark every 30 s in-process
+    # (cli/capture/command.py's DISK_WATERMARK_INTERVAL_SECONDS) and Alloy scrapes the gauge every
+    # 60 s (infra/ansible/roles/capture/files/config.alloy), so a true breach is already up to 90 s
+    # old before its first `1` sample exists, before Grafana evaluates anything. `for: 2m` shipped
+    # first and added >=2 further minutes of GUARANTEED discard to every real page, on a stream that
+    # is unbackfillable -- and at one sample per minute the condition has to hold across enough
+    # consecutive scrapes to fill that window, so the rule was also blind to any breach shorter than
+    # roughly 3 min. A breach that clears first is not a non-event: it dropped every message it
+    # lasted, and the only thing that would have spoken is the dead-man saying "this host went
+    # quiet". Nothing false-fires at 0s: the collector publishes the gauge straight off
+    # `watermark.breached`, so a `1` sample means the handlers are ALREADY dropping messages.
+    for: 0s
     annotations:
       summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so hc.io is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "108"
     labels:
       severity: critical
     notification_settings:
@@ -2121,6 +2630,9 @@ rules:
     for: 15m
     annotations:
       summary: "A capture host quarantined rows to .held in the last 6h -- rows arrived after their hour was finalized. Baseline is zero, so this is a real event: check for clock skew, a late-delivering stream, or a stalled writer on that host."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "105"
+      unit: "rows quarantined in the last 6 hours"
     labels:
       severity: warning
     notification_settings:
@@ -2161,6 +2673,9 @@ rules:
     for: 15m
     annotations:
       summary: "Log lines were dropped before reaching Loki in the last 6h. Baseline is zero. This matters beyond the lost lines: the Loki-based alert rules now reason over an incomplete stream, so their silence no longer means healthy. Check the shipper's backlog and the Loki push credentials on the named host."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "601"
+      unit: "log lines dropped in the last 6 hours"
     labels:
       severity: warning
     notification_settings:
@@ -2190,12 +2705,26 @@ rules:
       # This LATCHES: the counter never decreases until the daemon restarts. That is deliberate -- the
       # point is to capture the first observation of a shape this fleet has never seen, and a
       # self-resolving rule can retire it before anyone reads the value.
+      #
+      # `by (host, system)`, not a bare sum(): collapsing `system` discarded the one label the
+      # responder acts on -- `maintenance` (planned, wait) versus `cancel_only`/`post_only` (degraded,
+      # act) demand opposite responses. Grouping preserves every property above: the negative match
+      # still cannot miss an unobserved payload shape, presence-not-increase() is unchanged, and the
+      # latch is unchanged. The host scope every sibling capture rule carries is added at the same time.
+      #
+      # The grouping is also why the fallback carries `on()`, and dropping it is the tempting edit:
+      # `vector(0)` produces an UNLABELLED element, so a bare `or vector(0)` suppresses it only while
+      # the left arm is unlabelled too. Once `by (host, system)` gives the left arm labels the two stop
+      # sharing a signature, and the 0 rides through as a permanent extra series beside the real one
+      # instead of being a mutually-exclusive fallback. `on()` matches on the empty label set, which
+      # every element has, so the fallback is dropped whenever the left arm is non-empty and supplied
+      # when it is empty -- keeping a clean fleet out of NoData, which is the only job it ever had.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'sum(zcrypto_capture_venue_status_total{system!="online"}) or vector(0)'
+          expr: 'sum by (host, system) (zcrypto_capture_venue_status_total{host=~"zcrypto|zcrypto-red", system!="online"}) or on() vector(0)'
           instant: true
           refId: A
       - refId: C
@@ -2213,7 +2742,9 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "Kraken reported the trading venue is NOT online -- the first time this fleet has seen a status other than `online`. Capture may be unaffected: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online` -- the first time this fleet has seen it.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "108"
     labels:
       severity: warning
     notification_settings:
@@ -2261,6 +2792,9 @@ rules:
     for: 10m
     annotations:
       summary: "The log-shipping worker on the named host has not completed a cycle for over 15 minutes -- either it is stuck retrying a push it cannot complete, or the worker thread is wedged, so logs are queueing and every Loki-based alert on this host is now silent for the wrong reason. Look for a Loki endpoint that is unreachable or erroring, not for rejected credentials: a rejected push still completes a cycle and would leave this rule green, showing up instead as dropped log lines."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "602"
+      unit: "seconds since the shipping worker last cycled"
     labels:
       severity: warning
     notification_settings:
@@ -2302,6 +2836,8 @@ rules:
     for: 15m
     annotations:
       summary: "A node-exporter collector is failing on this host, so its entire metric family is absent -- and rules keyed on those series evaluate NoData, which this fleet maps to OK. Any alert depending on them is silently disarmed right now. Check Alloy's logs on the named host for the failing collector."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "402"
     labels:
       severity: warning
     notification_settings:
@@ -2347,6 +2883,9 @@ rules:
     for: 10m
     annotations:
       summary: "1-minute load average per core on a capture host exceeds 1.5x its cores, sustained 10m -- runaway/thrashing, not the transient hourly pull (the capture daemon is light, ~0.1/core baseline)."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "201"
+      unit: "as a 1-minute load average per core"
     labels:
       severity: warning
     notification_settings:
@@ -2367,15 +2906,37 @@ rules:
       # this selector still holds). Scoped to container="capture": the daemon on both hosts, whose
       # errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal. (Out of scope
       # here: Alloy self-errors -- a separate instrument-health concern; and the engine's logs, which
-      # ship no level label until its own --ship-logs lands post-gate (D7) -- the T0042 egress question.)
-      # `sum by (host)` names the firing host; `or on() vector(0)` keeps a clean window an explicit 0.
+      # ship with the same labels today and are owned by `zcrypto-engine-error-logs`.)
+      # `sum by (host, ...)` names the firing host; `or on() vector(0)` keeps a clean window an
+      # explicit 0. This rule fires on the COUNT arm only (the vector(0) fallback is 0, which fails
+      # `gt 0`), so unlike the two dead-men below its labels are genuinely populated when it pages.
+      #
+      # The `msg` label hoists the log MESSAGE onto the page -- the whole reason a log alert exists;
+      # without it the page says "3" and the responder goes hunting on the unbackfillable stream.
+      # `printf "%.200s"` bounds one message and `topk(5, ...)` bounds how many; topk is NOT optional,
+      # because a desync storm emits one distinct line per pair per event and without the bound each
+      # mints its own alert instance and blows past Slack's length limit.
+      #
+      # `| json message="message"` and NOT a bare `__line__`: this daemon direct-ships a JSON BODY
+      # (cli/logging/ship.py's JsonLineFormatter -- ts/level/logger/file/line/message), so the raw line
+      # spends ~150 of the 200 characters on the JSON preamble and truncates the message mid-sentence.
+      # A page carrying metadata and no message is worse than one carrying no line at all: it LOOKS
+      # like it answered the question. Measured against live Loki, not theorised.
+      #
+      # `| drop __error__, __error_details__` is required even though EVERY line on this selector is
+      # JSON today, and it must not be simplified away: `| json` stamps `__error__="JSONParserErr"` on
+      # any line it cannot parse and the query then fails with HTTP 400 -- one unparseable line takes
+      # the whole rule to execErrState. Clearing the label instead is impossible (Loki rejects
+      # `label_format __error__=...` outright) and `| __error__=""` would silently DROP the offending
+      # lines, which on this rule are exactly the ones worth seeing. The `{{ if .message }}` fallback
+      # is the same insurance one stage later. Sibling `Ops · ERROR logs` needs both for a live reason.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum by (host) (count_over_time({host=~"zcrypto|zcrypto-red", container="capture", level=~"ERROR|CRITICAL"} [15m])) or on() vector(0)
+            topk(5, sum by (host, container, level, msg) (count_over_time({host=~"zcrypto|zcrypto-red", container="capture", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -2403,7 +2964,10 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "ERROR/CRITICAL log lines from the capture daemon (container=capture) on a capture host in the last 15 minutes -- desync storms, ENOSPC, or reconnect failures on the unbackfillable stream. Zero is the healthy baseline."
+      summary: "ERROR/CRITICAL log lines from the capture daemon (container=capture) on a capture host in the last 15 minutes -- desync storms, ENOSPC, or reconnect failures on the unbackfillable stream. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -2424,9 +2988,12 @@ rules:
   # container gone), not a quiet daemon. One rule per host: Loki cannot synthesize a per-host zero (an
   # absent stream is no series, not a 0 series), so `or on() vector(0)` only injects a 0 for a
   # SINGLE-host query -- a `sum by(host)` would fire only when BOTH hosts go dark and miss a single
-  # host's outage.
+  # host's outage. The `by (host)` each of the two carries is NOT that: each selector still names one
+  # host, so the aggregation cannot span the pair. It is there for the notification's label line only,
+  # and it is INERT at exactly fire time -- the fire path is the unlabelled `or on() vector(0)` arm --
+  # which is why each summary names its host in words rather than interpolating `$labels.host`.
   - uid: zcrypto-capture-log-dead-primary
-    title: "Capture · log pipeline dead — primary (zcrypto)"
+    title: "Capture · log pipeline dead — Capture primary"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2438,7 +3005,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="zcrypto", container="capture", level=~".+"} [6h])) or on() vector(0)
+            sum by (host) (count_over_time({host="zcrypto", container="capture", level=~".+"} [6h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -2470,14 +3037,16 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the PRIMARY (zcrypto) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the capture PRIMARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
       receiver: logs
 
   - uid: zcrypto-capture-log-dead-secondary
-    title: "Capture · log pipeline dead — secondary (zcrypto-red)"
+    title: "Capture · log pipeline dead — Capture secondary"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2489,7 +3058,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            sum(count_over_time({host="zcrypto-red", container="capture", level=~".+"} [6h])) or on() vector(0)
+            sum by (host) (count_over_time({host="zcrypto-red", container="capture", level=~".+"} [6h])) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
@@ -2517,7 +3086,9 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED capture-daemon log line (any level) from the SECONDARY (zcrypto-red) in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      summary: "Not one PARSED capture-daemon log line (any level) from the capture SECONDARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -2588,13 +3159,15 @@ rules:
     for: 10m
     annotations:
       summary: "The NAS's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the gate metrics the Stage-6a soak verdict is read from and the NAS archive-pull's log stream (the reconciler is unaffected: its series publish from ops since 2026-07-16). Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-ops
-    title: "Fleet · Alloy dark — ops"
+    title: "Fleet · Alloy dark — Ops"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2636,13 +3209,15 @@ rules:
     for: 10m
     annotations:
       summary: "The ops node's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the panel/verify timer series, the liquidations poller signals, and the reconcile/trade-backfill exporter families — expect their exporter-stale rules to double-page alongside this one. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-capture-primary
-    title: "Fleet · Alloy dark — capture primary (zcrypto)"
+    title: "Fleet · Alloy dark — Capture primary"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2684,13 +3259,15 @@ rules:
     for: 10m
     annotations:
       summary: "The capture PRIMARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the unbackfillable L2 capture signals on the host that also runs the engine and holds the live trade key. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-capture-secondary
-    title: "Fleet · Alloy dark — capture secondary (zcrypto-red)"
+    title: "Fleet · Alloy dark — Capture secondary"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2732,13 +3309,15 @@ rules:
     for: 10m
     annotations:
       summary: "The capture SECONDARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the redundant unbackfillable L2 capture signals. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
       receiver: metrics
 
   - uid: zcrypto-alloy-dark-zaccess
-    title: "Fleet · Alloy dark — zaccess"
+    title: "Fleet · Alloy dark — Edge"
     ruleGroup: zcrypto-fleet
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2780,6 +3359,8 @@ rules:
     for: 10m
     annotations:
       summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the WireGuard tunnel handshake-age and edge TLS cert-expiry gauges alongside basic host metrics. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/README.md#zaccess-bridgehead-dark"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
@@ -2829,6 +3410,9 @@ rules:
     for: 5m
     annotations:
       summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "103"
+      unit: "checks down -- 999 means healthchecks.io itself is unreachable"
     labels:
       severity: critical
     notification_settings:
@@ -2875,6 +3459,9 @@ rules:
     for: 30m
     annotations:
       summary: "The bridgehead's root filesystem is below 15% free. On a 25 GB VPS running only Alloy, Caddy, and WireGuard, this is most likely accumulated logs or an ACME/cert-renewal artifact rather than data growth. Runbook: infra/runbooks/README.md#zaccess-disk-high"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the bridgehead root filesystem still free (a fraction, not a percent)"
     labels:
       severity: warning
     notification_settings:
@@ -2882,7 +3469,10 @@ rules:
 
   # Either end reporting a stale handshake is the failure -- PersistentKeepalive=25 means a healthy
   # tunnel handshakes well under 300s from BOTH sides, so max() (not min()) catches whichever end
-  # went stale first. A fully dark bridgehead is zcrypto-alloy-dark-zaccess's job, not this rule's;
+  # went stale first. `by (host)` because this family is published by BOTH ends (the bridgehead's own
+  # probe and the ops-side probe): a bare max() collapses them, so the page could not name which end
+  # lost the link -- the first question asked. Grouping raises one instance per end instead, and the
+  # summary names it. A fully dark bridgehead is zcrypto-alloy-dark-zaccess's job, not this rule's;
   # a fully dark ops node is zcrypto-alloy-dark-ops's -- a live-but-stale tunnel keeps reporting a
   # growing age (wg show's last-handshake timestamp doesn't vanish), so this fires via the normal
   # threshold path, not NoData.
@@ -2898,7 +3488,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: max(zaccess_wireguard_handshake_age_seconds)
+          expr: max by (host) (zaccess_wireguard_handshake_age_seconds)
           instant: true
           refId: A
       - refId: C
@@ -2916,16 +3506,25 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The WireGuard tunnel's handshake age has been over 300s on at least one end for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "701"
+      unit: "seconds since the last WireGuard handshake"
     labels:
       severity: warning
     notification_settings:
       receiver: metrics
 
-  # min() across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
+  # min across every zaccess_tls_not_after_seconds series -- both edge probes (target="tmux"|
   # "nas", written by this host's own probe timer) and the ops node's DSM probe (target="nas-dsm")
   # -- so whichever certificate is closest to expiry trips it first, regardless of which host
   # measured it. Same noDataState reasoning as zaccess-tunnel-stale: this metric is multi-host too.
+  #
+  # `by (host, target)`, not a bare min(): collapsing both labels told the operator that A certificate
+  # was expiring and not WHICH, across three tracked endpoints. Grouping makes each certificate its
+  # own alert instance and the summary names it. Consequence, stated: instance cardinality rises from
+  # 1 to up to 3, and the label change resolves the existing instance and re-fires under new labels at
+  # push time.
   - uid: zaccess-cert-expiring
     title: "Access · edge cert expiring"
     ruleGroup: zcrypto-access
@@ -2938,7 +3537,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: min(zaccess_tls_not_after_seconds) - time()
+          expr: min by (host, target) (zaccess_tls_not_after_seconds) - time()
           instant: true
           refId: A
       - refId: C
@@ -2956,7 +3555,10 @@ rules:
     execErrState: Alerting
     for: 1h
     annotations:
-      summary: "The soonest-expiring TLS certificate among the tracked zaccess endpoints (the tmux and nas edge vhosts, plus the NAS admin console) is under 14 days from expiry. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+      summary: "{{ if $labels.target }}The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry.{{ else }}A tracked TLS certificate is under 14 days from expiry.{{ end }} Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "702"
+      unit: "seconds until that certificate expires"
     labels:
       severity: warning
     notification_settings:
