@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a 30-day `count_over_time({host="zcrypto", container="engine"}[…])` read exists — the engine's real log cadence is the one input the canary window cannot be chosen without, and it is a single Grafana query against data that is already being collected
+ripe_when: a `count_over_time({host="zcrypto", container="engine"}[…])` read spanning the longest window Loki's retention actually serves exists — read the retention first and take the whole of it rather than assuming a span; the engine's real log cadence is the one input the canary window cannot be chosen without, and it is a single Grafana query against data that is already being collected
 ---
 
 # The engine's ERROR-log rule can read zero forever and nothing notices
@@ -26,7 +26,7 @@ The gap was closed for capture and for ops. The engine is the one stream where i
 
 ## Suggested next steps
 
-- **(autonomous)** Measure the engine's log cadence: `count_over_time({host="zcrypto", container="engine"}[1h])` and `[6h]` minima over 30 days, and separately the longest observed gap. The engine's 4-hourly cycle means the distribution is bimodal — a burst at each boundary, near-silence between — so the minimum over a window shorter than the cycle is the wrong statistic; take the minimum over a window that spans at least one boundary.
+- **(autonomous)** Measure the engine's log cadence: `count_over_time({host="zcrypto", container="engine"}[1h])` and `[6h]` minima over the full window Loki's retention serves — read that retention before choosing the span rather than assuming 30 days; this iteration's comparable measurement on `ops-log-pipeline-dead` spanned 14 — and separately the longest observed gap. The engine's 4-hourly cycle means the distribution is bimodal — a burst at each boundary, near-silence between — so the minimum over a window shorter than the cycle is the wrong statistic; take the minimum over a window that spans at least one boundary.
 - **(autonomous)** Derive the canary window from the longest healthy gap with the same margin the fleet's other dead-men use, and add `Engine · log pipeline dead` in the shape of `zcrypto-capture-log-dead-primary` — `lt 1` on the `or on() vector(0)` arm, `noDataState: Alerting`, host and container written into the summary as literal words (the arm carries no labels, so interpolation renders empty at exactly fire time).
 - **(autonomous, same change)** Give it a panel on the `Logs` board's by-machine rate panel and a `__dashboardUid__`/`__panelId__` pointer, matching how the other canaries are wired.
 - **(check first)** Confirm the engine actually emits at every cycle rather than only on state changes — if it can legitimately log nothing across a whole cycle, a line-count canary is the wrong instrument and the right one is a staleness read on `zcrypto_engine_cycle_completed_at_seconds`, which is already alerted. In that case this topic resolves as a measured non-issue rather than a rule.

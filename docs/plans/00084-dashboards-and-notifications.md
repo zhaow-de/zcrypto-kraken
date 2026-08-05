@@ -607,6 +607,8 @@ Per spec D8. Family extraction from PromQL must not mistake label values, functi
 
 Assertion 3 — every alerted family is keep-list admitted on the hosts its rule selects — is the load-bearing one: it derives its expectation from `alerts.yaml` rather than from the hand-curated per-host list in `test_infra_alloy_series.py`, which is exactly why that test missed the `zaccess` hole.
 
+Add spec D9's companion assertion in the same file, because nothing in the tree checks it today: every rule resolves to a **real non-row panel** on a committed board (its `__dashboardUid__` exists, its `__panelId__` is a panel id on that board) **or** carries a runbook reference — never neither — and every `__panelId__` loads as a **string**. The string check is the one whose violation is not local: `grafana-push.sh` does `yaml.safe_load` → `json.dumps`, the provisioning API's annotations are string-valued, so an unquoted id is rejected and `curl -fsS` under `set -euo pipefail` aborts the whole push — no rules, no dashboards. Prove it the way `agent-ops.md` requires: unquote one id and watch the assertion fail.
+
 - [ ] **Step 2: Run it**
 
 Run: `uv run pytest tests/test_dashboards_cover_metrics.py -v`
@@ -675,7 +677,7 @@ git commit -m "feat(grafana): dense slack notification templates for both receiv
 
 **FOUR surfaces move together, not three.** The rule's own comment lists three (the evaluator, the `for`, and the summary's stated notice period) — it was written before the boards existed. The fourth is **`data-integrity-dashboard.json` panel 102**, which hardcodes `900` in both its threshold step and its description. Miss it and the panel draws a line the page no longer fires at, on the unbackfillable capture path — the exact panel-disagrees-with-page failure P1 and P2 exist to kill. All four land in the same commit.
 
-- [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`, with **`GRAFANA_SLACK_WEBHOOK_URL` exported from the vault**. No host contact. Without it the script takes its webhook-less branch: the template object ships, the receiver wiring is silently skipped with a friendly "receivers already live" message, and every notification keeps the stock rendering — first visible at Step 5 as a baffling symptom. Verify by read-back that all four boards and all **62** rules are live (58 today + Task 4's four; transiently 63 while Step 5's probe rule exists).
+- [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`, with **`GRAFANA_SLACK_WEBHOOK_URL` exported from the vault**. No host contact. Without it the script takes its webhook-less branch: the template object ships, the receiver wiring is silently skipped with a friendly "receivers already live" message, and every notification keeps the stock rendering — first visible at Step 5 as a baffling symptom. Verify by read-back that all four boards and all **63** rules are live (the count `alerts.yaml` carries; transiently 64 while Step 5's probe rule exists). Read the number, do not eyeball the list: a push that drops exactly one rule is invisible to any check whose expected count is stale by one.
 
 - [ ] **Step 3b: Verify the Logs board's two unproven constructs at first push — they fail SILENTLY**
 
@@ -691,6 +693,8 @@ If either fails, the drop-in replacement is written up in `.superpowers/sdd/0008
 - [ ] **Step 5: Live-fire the Slack templates** — add the probe rule `count by (host)(up) > 0` (5 instances, touches no host), read the rendered messages in `#zcrypto`, re-tune the truncation caps from what actually renders, then delete the probe rule and confirm it is gone. Fire one logs rule too — resolve messages are ON for `metrics` and OFF for `logs`, so recovery behaves differently.
 
 - [ ] **Step 6: Converge `zaccess`** — `site.yml --limit` on that host. Native deb Alloy, ungated config copy, **no digest operand and no bake owed**. Verify `node_scrape_collector_success{host="zaccess"}` arrives.
+
+  Then **drop `host!="zaccess"` from `Fleet health` panel 402's three series and re-push** — spec D2 stages that matcher deliberately for the pre-converge window and says to drop it once the converge lands. `zcrypto-node-collector-failed` is host-unscoped, so from this converge on it can fire for the bridgehead; leaving the matcher sends that page to the one panel that structurally excludes the host that fired. Panel 402's description names `zaccess` as structurally excluded — rewrite that sentence in the same edit. The **duration** panel (403) keeps its exclusion permanently: D10(a) admits `node_scrape_collector_success` and nothing else.
 
 - [ ] **Step 6b: Build the engine image and mature its canary bake — START THIS RIGHT AFTER TASKS 1/1b MERGE, not here.**
 
