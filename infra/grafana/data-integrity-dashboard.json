@@ -2,7 +2,7 @@
   "id": null,
   "uid": "zcrypto-integrity",
   "title": "Data integrity",
-  "description": "Is the data we are betting on sound? The unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. Every panel that serves an alert plots that alert's own expression and carries its own threshold line, so what you see here is the number the page was computed from. Restart markers come from the process-start family; the edge machine publishes none, and nothing on this board plots an edge family either. The default window is seven days because the widest alert on this board looks back 27 hours.",
+  "description": "Is the data we are betting on sound? The unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. Every panel that serves an alert plots that alert's own expression and carries its own threshold line, so what you see here is the number the page was computed from. Restart markers come from the process-start family; the edge machine publishes none, and nothing on this board plots an edge family either. The default window is seven days because the widest alert on this board looks back 26 hours.",
   "tags": [],
   "schemaVersion": 39,
   "version": 0,
@@ -2355,7 +2355,7 @@
       "id": 402,
       "type": "timeseries",
       "title": "Job last-success age",
-      "description": "How long since each writer last completed cleanly, each against the exact budget its own alert uses: 3 hours for the half-hourly overlay-writer cycle, about six missed cycles; 48 hours for the daily verified-path replay and 48 hours for the daily trade backfill, two missed days each. Three genuinely different bars, so each series carries its own and there is no shared ladder. All three page after `for: 5m`. The panel materialize has no staleness alert at all and is plotted unlined. A stamp of zero means never succeeded, which renders as time since the epoch rather than a small number and will flatten everything else on the axis. Published only by the ops machine.",
+      "description": "How long since each writer last completed cleanly, each against the exact budget its own alert uses: 3 hours for the half-hourly overlay-writer cycle, about six missed cycles; 48 hours for the daily verified-path replay and 48 hours for the daily trade backfill, two missed days each. Two distinct budgets across three series, so each series carries its own bar and there is no shared ladder. All three page after `for: 5m`. The panel materialize has no staleness alert at all and is plotted unlined. A stamp of zero means never succeeded, which renders as time since the epoch rather than a small number and will flatten everything else on the axis. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

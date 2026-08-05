@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pushes the committed-as-code Grafana dashboards, notification templates + alert rules (infra/grafana/) to the
-# already-provisioned Grafana Cloud instance (spec 00049, Role B / Task 4). Idempotent: the
-# dashboard call always overwrites by its fixed uid (zcrypto-main); each alert rule upserts by
+# already-provisioned Grafana Cloud instance (spec 00049, Role B / Task 4). Idempotent: each
+# dashboard overwrites by its own uid (every *-dashboard.json ships); each alert rule upserts by
 # its own stable `uid` (GET to check whether it already exists, then POST to create or PUT to
 # update) -- safe to re-run after any commit to infra/grafana/.
 #
