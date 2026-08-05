@@ -721,16 +721,16 @@ Precedent for the shape and timing: `fleet-pins.md`'s iter-119 row (`c7ed09020fe
 
 - [ ] **Step 1: Record measured facts** — per-host series counts after the `zaccess` widening, against `00043`'s <1k target and `00069`'s baseline (nas 144, ops 308, zcrypto 134, zcrypto-red 108). Measured, never assumed.
 
-- [ ] **Step 2: Update `docs/reference/fleet.md`** — the access tier's converge shape: native deb Alloy pinned by `access_alloy_version`, config copied ungated every converge, no `access_alloy_digest` and no drift-assert, so a config change converges with a plain limited `site.yml`. `capture-deploys.md` does not cover this case.
+- [x] **Step 2: Update `docs/reference/fleet.md`** — the access tier's converge shape: native deb Alloy pinned by `access_alloy_version`, config copied ungated every converge, no `access_alloy_digest` and no drift-assert, so a config change converges with a plain limited `site.yml`. `capture-deploys.md` does not cover this case.
 
 - [ ] **Step 3: Update `docs/reference/fleet-pins.md`** with the engine digest.
 
 - [ ] **Step 4: Resolve [[T0020]]** — `status: resolved`, `ripe_when` deleted, file moved to `docs/open-topics/archive/`, index bullet moved to the category's `### Resolved` with the archived path. Per `topic-ops`.
 
-- [ ] **Step 5: Update [[T0018]]** — its metrics bullet gains the execution-panel handoff onto the `Engine` board, with the naming instruction and the do-not-rename-the-intent-families warning.
+- [x] **Step 5: Update [[T0018]]** — its metrics bullet gains the execution-panel handoff onto the `Engine` board, with the naming instruction and the do-not-rename-the-intent-families warning.
 
-- [ ] **Step 6: Append the iterations-history entry** to the phase-6 changelog per `iteration-closeout`. Re-verify every status claim against the full branch log immediately before PR-open — an entry drafted mid-branch reads stale the moment later work lands beside it.
+- [x] **Step 6: Append the iterations-history entry** to the phase-6 changelog per `iteration-closeout`. Re-verify every status claim against the full branch log immediately before PR-open — an entry drafted mid-branch reads stale the moment later work lands beside it.
 
-- [ ] **Step 7: Decisions-log entry** in the phase-6 decisions log for the design decisions the owner ruled on: board split, coverage principle, the no-defer ruling, and the naming harmonisation scope.
+- [x] **Step 7: Decisions-log entry** in the phase-6 decisions log for the design decisions the owner ruled on: board split, coverage principle, the no-defer ruling, and the naming harmonisation scope.
 
 - [ ] **Step 8: Commit and report the branch ready.** Do not open the PR without the owner's explicit word.
