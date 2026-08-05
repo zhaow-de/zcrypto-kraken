@@ -2462,7 +2462,7 @@ rules:
     # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
     # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
     # the fix either -- it still misses 209 s in 12.9% of alignments. Nothing but real silence can put
-    # this minimum over 60: `_run` seeds last_seen for every pair before the collector registers, so a
+    # this minimum over 120: `_run` seeds last_seen for every pair before the collector registers, so a
     # restart reads 0.0; a stop->start window replays the last healthy pre-stop sample through
     # Prometheus' lookback; a longer stop goes NoData, which `noDataState: OK` swallows; and
     # remote-write lag can only delay firing, never advance it. `zcrypto-capture-log-dead-primary`
@@ -2847,7 +2847,7 @@ rules:
       # 0 means that collector errored on its last scrape, so its whole metric family goes quietly
       # ABSENT -- and every rule keyed on those series then evaluates NoData, which this fleet maps
       # to OK. A failed `filesystem` collector silently disarms the disk-low rule; a failed
-      # `textfile` collector silently disarms every one-off timer alert. Baseline: 1 on all four
+      # `textfile` collector silently disarms every one-off timer alert. Baseline: 1 on all five
       # hosts. This is the rule that keeps the other rules honest.
       - refId: A
         queryType: ""
