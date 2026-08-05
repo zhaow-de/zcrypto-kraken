@@ -1,0 +1,3780 @@
+{
+  "id": null,
+  "uid": "zcrypto-integrity",
+  "title": "Data integrity",
+  "description": "Is the data we are betting on sound? The unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. Every panel that serves an alert plots that alert's own expression and carries its own threshold line, so what you see here is the number the page was computed from. Restart markers come from the process-start family; the edge machine publishes none, and nothing on this board plots an edge family either. The default window is seven days because the widest alert on this board looks back 27 hours.",
+  "tags": [],
+  "schemaVersion": 39,
+  "version": 0,
+  "editable": true,
+  "graphTooltip": 1,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "links": [],
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Capture — live ingest",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 101,
+      "type": "timeseries",
+      "title": "Book desync — live and stuck (15m)",
+      "description": "Which pair's book is checksum-desynced right now, and whether it is in the shape that pages. The live series sits at 1 while a pair's book is desynced; the 15-minute minimum is the series the alert reads, because a desync that healed inside the window carries a zero and reads 0 — recovery is a single fire-and-forget resubscribe fired only on the transition, so a pair whose one attempt did not take stays stuck and nothing retries it. That series pages above 0.5 after `for: 5m`, so roughly twenty minutes in total: a 15-minute window plus the hold. Scoped by the capture-machine and pair pickers.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_book_desynced{host=~\"$capture_host\", pair=~\"$pair\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} {{pair}} — live"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "min_over_time(zcrypto_capture_book_desynced{host=~\"$capture_host\", pair=~\"$pair\"}[15m])",
+          "refId": "B",
+          "legendFormat": "{{host}} {{pair}} — stuck 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1,
+            "fillOpacity": 0
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "min": 0,
+          "max": 1.2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 102,
+      "type": "timeseries",
+      "title": "Seconds since last book message (per pair)",
+      "description": "Per-pair proof of life: which stream has gone quiet and for how long, while it is still a live condition rather than a ledger entry booked hours later. Two page lines for two different faults. The per-machine minimum across every pair crossing 60 seconds means the WHOLE feed is silent — one thin leg being quiet is normal at any hour, every pair at once is not, and no natural cause produces it, which is why that bar can be tight. It fires with **no hold at all** (`for: 0s`): the gauge is scraped once a minute, so a pending period would spend the entire notice budget rather than buy confidence. A single per-pair series crossing 900 seconds, held for `for: 10m`, is the one-stuck-stream shape nothing else catches: the dead-man still pings, the desync rule sees no checksum failure, and the minimum reads off a healthy pair. Every gauge reads 0 at process start, so a restart cannot false-fire either line. The per-pair series follows both pickers; the minimum follows only the machine picker, exactly as its alert evaluates it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_seconds_since_last_book_message{host=~\"$capture_host\", pair=~\"$pair\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} {{pair}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "min by (host) (zcrypto_capture_seconds_since_last_book_message{host=~\"$capture_host\"})",
+          "refId": "B",
+          "legendFormat": "{{host}} — quietest pair"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 900
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 60
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 103,
+      "type": "timeseries",
+      "title": "Recovery ladder — 24h increase",
+      "description": "Is the desync recovery path being exercised more than it should be, and does it work? Two page lines, both held for `for: 30m`. Resubscribes over 24 hours above 1.5 mean the rate is re-elevating or a pair is flapping. Rejected frames and missing unsubscribe acks are SUMMED before the same 1.5 line, because that is how the alert evaluates them — one of each is two and pages, while two separate per-counter series would both read green. 1.5 rather than 1 because a single increment extrapolates to about 1.0007 and would page on one genuine self-healed event. Reconnects are context only: no alert watches them. Neither resubscribe counter carries a pair label, so this says THAT the rate rose, not which pair — the desync panel above names the pair. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum(increase(zcrypto_capture_resubscribe_errors_total{host=~\"$capture_host\"}[1d]) + increase(zcrypto_capture_resubscribe_ack_timeouts_total{host=~\"$capture_host\"}[1d]))",
+          "refId": "A",
+          "legendFormat": "resubscribe failures (rejected + missing ack)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_resubscribes_total{host=~\"$capture_host\"}[1d])",
+          "refId": "B",
+          "legendFormat": "{{host}} resubscribes"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_reconnects_total{host=~\"$capture_host\"}[1d])",
+          "refId": "C",
+          "legendFormat": "{{host}} reconnects (context)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1.5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 104,
+      "type": "timeseries",
+      "title": "Book silence — gap seconds per pair (24h increase)",
+      "description": "Which pair contributed how much book silence in the last day — the capture-side origin of every healable and residual second booked downstream. The 30-second line is the capture daemon's own derived silence bar, roughly 2.4 times the thinnest leg's worst natural spacing, and it deliberately equals the reconciler's minimum-gap setting. It is **not** an alerting bar: no rule watches this counter per pair, and the reconciler's own 600-second figure is computed on a different metric entirely — an aggregate divided by the live pair count — so it does not belong on this panel. Scoped by the capture-machine and pair pickers.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_gap_seconds_total{host=~\"$capture_host\", pair=~\"$pair\"}[24h])",
+          "refId": "A",
+          "legendFormat": "{{host}} {{pair}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 30
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 105,
+      "type": "timeseries",
+      "title": "Rows held vs quarantined (6h increase)",
+      "description": "Did rows arrive after their hour was finalized and get spilled out of the canonical tree? Held rows are parked pending hour confirmation; quarantined rows were actually written to a sidecar file and are **not** in the canonical tree, so the reconciler has to fold them and nobody knows to look. The measured baseline over seven days is zero on both capture machines, so any nonzero quarantine value is a real event and pages after `for: 15m`. Both counters are unlabeled totals summed across every pair and kind at the source, so which pair cannot be shown here — no such panel can be built. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_rows_held_total{host=~\"$capture_host\"}[6h])",
+          "refId": "A",
+          "legendFormat": "{{host}} held (context)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_rows_quarantined_total{host=~\"$capture_host\"}[6h])",
+          "refId": "B",
+          "legendFormat": "{{host}} quarantined"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 106,
+      "type": "timeseries",
+      "title": "Capture counters — cumulative since process start",
+      "description": "How much damage each capture machine has taken over its whole life. Deliberately all-green with no page lines: scale reads here, recency reads on the delta panels beside it. Every series resets when the capture container is recreated, so a step down to zero is a restart, not a repair. Gap seconds are on the right axis because they are the one series here measured in time rather than counts. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 17
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum by (host) (zcrypto_capture_gap_seconds_total{host=~\"$capture_host\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} gap seconds"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_resubscribes_total{host=~\"$capture_host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} resubscribes"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_resubscribe_errors_total{host=~\"$capture_host\"}",
+          "refId": "C",
+          "legendFormat": "{{host}} resubscribe errors"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_resubscribe_ack_timeouts_total{host=~\"$capture_host\"}",
+          "refId": "D",
+          "legendFormat": "{{host}} ack timeouts"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_reconnects_total{host=~\"$capture_host\"}",
+          "refId": "E",
+          "legendFormat": "{{host}} reconnects"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_rows_held_total{host=~\"$capture_host\"}",
+          "refId": "F",
+          "legendFormat": "{{host}} rows held"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_capture_rows_quarantined_total{host=~\"$capture_host\"}",
+          "refId": "G",
+          "legendFormat": "{{host}} rows quarantined"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 107,
+      "type": "timeseries",
+      "title": "Spool free % (root filesystem)",
+      "description": "How much runway the unbackfillable capture spool has before the prune ring must be fixed. The spool lives on the root filesystem. The 10 percent line is the early warning, held for `for: 5m` — it fires long before the daemon's own 1 GiB watermark starts discarding, so reaching it means the prune ring broke or an unexpected consumer appeared. Context here: the page for this line points at the fleet board, which plots the same ratio for every machine. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 17
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=~\"$capture_host\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=~\"$capture_host\", mountpoint=\"/\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} free"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 108,
+      "type": "timeseries",
+      "title": "Hard stops — disk watermark & venue status",
+      "description": "The two conditions under which capture is no longer trustworthy at the source. A breached disk watermark is not a warning: the book and trade handlers drop every incoming message instead of writing it, the data is unbackfillable, and the daemon also withholds its dead-man ping, so nothing else on that machine can page. It fires above 0.5 after `for: 2m`. The venue counter has a series only for states the daemon has actually seen, so it is EMPTY while the venue is online — the trailing zero fallback keeps the panel at 0 rather than blank, and the `on()` in it is load-bearing: without it the fallback stops being mutually exclusive and rides through as a permanent extra series. Any non-online state pages after `for: 5m`, and the state decides the response: maintenance is planned and you wait, cancel-only or post-only mean the venue is degraded. That counter is born at 1 on the event and latches until the daemon restarts, which is why the alert is presence-based rather than an increase. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 17
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max by (host) (zcrypto_capture_disk_watermark_breached{host=~\"$capture_host\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} watermark breached"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum by (host, system) (zcrypto_capture_venue_status_total{host=~\"$capture_host\", system!=\"online\"}) or on() vector(0)",
+          "refId": "B",
+          "legendFormat": "{{host}} venue {{system}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 109,
+      "type": "timeseries",
+      "title": "Segments written & bytes (1h increase)",
+      "description": "Is the writer still committing hourly segments at normal size while the process stays up? Both counters are unlabeled totals summed across every pair and kind at the source, so per-pair write counts do not exist and cannot be charted — the only per-pair evidence available is silence, staleness and desync, on the panels above. No alert watches either series. Scoped by the capture-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_segments_written_total{host=~\"$capture_host\"}[1h])",
+          "refId": "A",
+          "legendFormat": "{{host}} segments"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_capture_segment_bytes_total{host=~\"$capture_host\"}[1h])",
+          "refId": "B",
+          "legendFormat": "{{host}} bytes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Reconcile",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      }
+    },
+    {
+      "id": 201,
+      "type": "timeseries",
+      "title": "Mirror lag by source & reconciler liveness",
+      "description": "Are both mirrors still producing, and is the reconciler that compares them still running? Lag is per mirror side, so the alert instance names which side went quiet; either side above 3 hours pages after `for: 10m`. One to two hours of lag is the healthy steady state, because a final only commits after its hour closes and the pull is hourly. If it is the SECONDARY side, the fleet has no witness and the next primary gap is permanent. The liveness series is now minus the reconciler's last clean cycle and pages above the same 3 hours after `for: 5m` — the exported file is scraped in place, so a dead reconciler holds its last value forever and only the timestamp reveals it. Same number, two different alerts. Published only by the ops machine. The only per-pair evidence for a lagging mirror is on the capture row above: a per-pair write count does not exist.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max by (source) (zcrypto_reconcile_source_lag_seconds{host=\"ops\"})",
+          "refId": "A",
+          "legendFormat": "mirror lag — {{source}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_reconcile_last_success_timestamp_seconds{host=\"ops\"}",
+          "refId": "B",
+          "legendFormat": "reconciler last clean cycle age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10800
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10800
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 202,
+      "type": "timeseries",
+      "title": "Gap outcome — last 24h",
+      "description": "Did loss and healing pressure happen IN THE LAST DAY — the panel that answers \"is the red number new?\" without leaving the board. Both series carry their alerts' own reset guard, and that is load-bearing: a deliberate ledger correction reads to the time-series store as a counter reset, and a bare increase would report the whole post-reset value as fresh permanent loss — painting this panel red at the exact moment the alert, hardened against precisely this, correctly stays silent. Residual seconds are silence NEITHER mirror covered, so they can be neither healed nor backfilled; any increase above zero pages immediately, with no hold at all (`for: 0s`). The healable series is divided by the live pair count exactly as its alert divides it, and pages above 600 after `for: 30m`. That divisor is plotted beside it and is the FULL pair count, not a count of desynced pairs — the gauge it counts is emitted for every pair on every scrape, so a flat twelve is health. The divisor is deliberately left unscoped, as the alert writes it: scoping it would make this panel disagree with the page whenever the two capture machines' pair sets differ, which is exactly what adding a pair creates for one converge window. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "(increase(zcrypto_reconcile_residual_gap_seconds_total{host=\"ops\"}[24h]) > 0 and resets(zcrypto_reconcile_residual_gap_seconds_total{host=\"ops\"}[24h]) == 0) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "residual — PERMANENT loss (24h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "((increase(zcrypto_reconcile_healable_gap_seconds_total{host=\"ops\"}[24h]) > 0 and resets(zcrypto_reconcile_healable_gap_seconds_total{host=\"ops\"}[24h]) == 0) or on() vector(0)) / scalar(count(count by (pair) (zcrypto_capture_book_desynced)) or vector(1))",
+          "refId": "B",
+          "legendFormat": "healable per pair (24h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(count by (pair) (zcrypto_capture_book_desynced))",
+          "refId": "C",
+          "legendFormat": "live pair count (the divisor)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_healed_gap_seconds_total{host=\"ops\"}[24h])",
+          "refId": "D",
+          "legendFormat": "healed (24h, context)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 600
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 203,
+      "type": "timeseries",
+      "title": "Gap totals — cumulative since ledger genesis",
+      "description": "A number here is history, not an incident. Lifetime scale in each of the three outcomes, all-green with no page lines — recency lives on the panel beside this one, which carries the page lines and the reset guard. The record count is the explanatory series: it is how many append-only ledger records the cycle summed its totals from, so a step DOWN in any counter is legible as a deliberate ledger correction rather than a mystery. That matters precisely because the guarded panel beside this one correctly reads zero after a correction, which also makes the correction invisible there. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_residual_gap_seconds_total{host=\"ops\"}",
+          "refId": "A",
+          "legendFormat": "residual (permanent)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_healable_gap_seconds_total{host=\"ops\"}",
+          "refId": "B",
+          "legendFormat": "healable"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_healed_gap_seconds_total{host=\"ops\"}",
+          "refId": "C",
+          "legendFormat": "healed"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_ledger_records{host=\"ops\"}",
+          "refId": "D",
+          "legendFormat": "ledger records (explains a step down)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 204,
+      "type": "timeseries",
+      "title": "Reconcile output — hours minted (24h)",
+      "description": "Is the healer actually writing hours into the overlay? This is what separates \"nothing was broken\" from \"the healing step is not running\". Spliced hours are book hours minted from a primary-plus-secondary splice; union hours are trade hours minted from a cross-machine trade-id union. No alert watches either. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_spliced_hours_total{host=\"ops\"}[24h])",
+          "refId": "A",
+          "legendFormat": "spliced (book hours)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_union_hours_total{host=\"ops\"}[24h])",
+          "refId": "B",
+          "legendFormat": "union (trade hours)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 205,
+      "type": "timeseries",
+      "title": "Trade reconciliation — deficit & dedup rows (24h)",
+      "description": "How many trade rows each mirror was missing that the other had — the only measure of whether the two trade streams are genuinely redundant. **Read the selector before editing it**: the deficit counter is emitted with its OWN host label carrying a mirror SIDE rather than a machine name, and the fleet-wide machine stamp is only applied where that label is absent, so it never lands on this family. Selecting the publishing machine here renders this panel permanently empty. The duplicate-row counter is an ordinary single-publisher series. Published only by the ops machine. No alert watches either.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 39
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_trade_deficit_rows_total{host=~\"primary|secondary\"}[24h])",
+          "refId": "A",
+          "legendFormat": "deficit — {{host}} side"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_reconcile_trade_dedup_rows_total{host=\"ops\"}[24h])",
+          "refId": "B",
+          "legendFormat": "duplicate rows dropped"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Continuity",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      }
+    },
+    {
+      "id": 301,
+      "type": "stat",
+      "title": "Verify-replay — run verdict",
+      "description": "Did the sweep complete at all? A crash, an I/O error, or a mount that silently resolved empty all present as a run that did not complete, while every count below stays frozen at its carried-forward value — so today's findings are unknown, not clean. It pages below 1 after `for: 15m`. The exit code sits beside it as context ONLY and is deliberately uncoloured: it stays at 1 forever once any hour has ever failed, which is exactly why alerting on it was retired in favour of the change-based rule on the panel below, and colouring it here would rebuild that red-forever defect next to the panel that replaced it. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 48
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_run_ok",
+          "refId": "A",
+          "legendFormat": "run verdict",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_exit_code",
+          "refId": "B",
+          "legendFormat": "exit code (context)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DID NOT COMPLETE",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "COMPLETED",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "never run"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": []
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 302,
+      "type": "timeseries",
+      "title": "Verify-replay — freshness (last run vs last clean run)",
+      "description": "Is the nightly sweep still firing at all, separately from whether its runs come back clean? **No alert watches either age**, so this panel is the only coverage that exists for a sweep that has simply stopped running — nothing will page. A healthy pattern is a daily sawtooth on both. A last-clean stamp of zero means the sweep has never completed cleanly, in which case the age renders as time since the epoch rather than a small number and will flatten every other series on the axis. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 6,
+        "y": 48
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_verify_replay_last_run_timestamp",
+          "refId": "A",
+          "legendFormat": "age of last run (clean or not)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_verify_replay_last_success_timestamp",
+          "refId": "B",
+          "legendFormat": "age of last clean run"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 303,
+      "type": "timeseries",
+      "title": "Verify-replay — hour ledger",
+      "description": "Where every canonical hour sits, and whether the total still balances against replayed plus reused plus pending. Context for the breakage panel below — no alert reads these counts directly. All of them are carried forward unchanged when a run breaks before reporting, so read them together with the run verdict, or a frozen ledger looks like a stable one. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 48
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_hours_total",
+          "refId": "A",
+          "legendFormat": "total canonical hours"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_replayed_hours",
+          "refId": "B",
+          "legendFormat": "replayed"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_reused_hours",
+          "refId": "C",
+          "legendFormat": "reused from checkpoint"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_pending_hours",
+          "refId": "D",
+          "legendFormat": "pending"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_failed_hours",
+          "refId": "E",
+          "legendFormat": "failed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 304,
+      "type": "timeseries",
+      "title": "Verify-replay — new breakage & backlog drift",
+      "description": "Did a NEW hour break, or has the backlog stopped draining? A known bad hour is a constant in the failed-hour count and contributes nothing to the 25-hour change, so only an hour that failed today and did not fail in the prior sweep moves that series above zero — and it pages immediately, with no hold at all (`for: 0s`), because a re-failing known hour is exactly what this replaced. The backlog page is a conjunction this panel cannot draw as a single line: it needs pending hours above zero AND the 26-hour change at or above zero, held for `for: 27h`. So a backlog drained to zero shows the change series sitting on its coloured step while the alert correctly stays silent — read the two series together. Note the direction on that series: at or above zero is the fault, and a NEGATIVE change is the healthy drain. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 54
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "delta(ops_verify_replay_failed_hours[25h])",
+          "refId": "A",
+          "legendFormat": "NEW hours that broke (25h change)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_pending_hours",
+          "refId": "B",
+          "legendFormat": "backlog — pending hours"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "delta(ops_verify_replay_pending_hours[26h])",
+          "refId": "C",
+          "legendFormat": "backlog change (26h)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 305,
+      "type": "timeseries",
+      "title": "Verify-replay — audit mismatches & sweep duration",
+      "description": "Does the checkpoint the sweep reuses hours from still agree with a fresh replay — the only signal that a reused hour is verified rather than skipped. The mismatch count is a GAUGE carried forward from the last sweep that reported one, not a counter, so its recent view is a 25-hour change: an increase-style read would show it flat forever. Sweep duration sits beside it on the right axis so a lengthening sweep is visible before it starts colliding with the drain budget. No alert watches either. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 54
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_audit_mismatches",
+          "refId": "A",
+          "legendFormat": "audit mismatches (current)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "delta(ops_verify_replay_audit_mismatches[25h])",
+          "refId": "B",
+          "legendFormat": "audit mismatches (25h change)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verify_replay_duration_seconds",
+          "refId": "C",
+          "legendFormat": "sweep duration"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Canonical writers",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      }
+    },
+    {
+      "id": 401,
+      "type": "timeseries",
+      "title": "Job exit codes",
+      "description": "Did each of the four canonical-tree writers come back clean on its last pass? Any non-zero value pages, on all four, after `for: 5m` — but they are not equally severe: a failed panel materialize costs freshness on derived, recomputable data, while a verified-path mismatch or a failed trade backfill means the canonical result itself is in question, and those two are the critical pair. On the overlay-writer cycle, a gate skip and a trade-backfill failure both leave the code at zero; only the reconcile step sets it non-zero, and the backfill has its own series here. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_archive_pull_exit_code",
+          "refId": "A",
+          "legendFormat": "overlay-writer cycle"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verified_replay_exit_code",
+          "refId": "B",
+          "legendFormat": "verified-path replay"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_panel_exit_code",
+          "refId": "C",
+          "legendFormat": "panel materialize"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_trade_backfill_exit_code",
+          "refId": "D",
+          "legendFormat": "trade backfill"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "lineInterpolation": "stepAfter"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 402,
+      "type": "timeseries",
+      "title": "Job last-success age",
+      "description": "How long since each writer last completed cleanly, each against the exact budget its own alert uses: 3 hours for the half-hourly overlay-writer cycle, about six missed cycles; 48 hours for the daily verified-path replay and 48 hours for the daily trade backfill, two missed days each. Three genuinely different bars, so each series carries its own and there is no shared ladder. All three page after `for: 5m`. The panel materialize has no staleness alert at all and is plotted unlined. A stamp of zero means never succeeded, which renders as time since the epoch rather than a small number and will flatten everything else on the axis. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_archive_pull_last_success_timestamp",
+          "refId": "A",
+          "legendFormat": "overlay-writer cycle"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_verified_replay_last_success_timestamp",
+          "refId": "B",
+          "legendFormat": "verified-path replay"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_trade_backfill_last_success_timestamp",
+          "refId": "C",
+          "legendFormat": "trade backfill"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_panel_last_success_timestamp",
+          "refId": "D",
+          "legendFormat": "panel materialize (no page line)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10800
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 172800
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 172800
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 403,
+      "type": "timeseries",
+      "title": "Did it run at all? — last-run age",
+      "description": "Separates a timer that stopped firing from a job that fires and fails. The sawtooth is the signal: each series should drop to near zero on every tick of its own cadence. A rising ramp with no reset is the fault — the timer is not firing, which the exit-code and last-success panels cannot distinguish from a job that runs and succeeds. No alert watches any of these, so this panel is the only place that distinction is visible. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 70
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_archive_pull_last_run_timestamp",
+          "refId": "A",
+          "legendFormat": "overlay-writer cycle"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_verify_replay_last_run_timestamp",
+          "refId": "B",
+          "legendFormat": "continuity sweep"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_verified_replay_last_run_timestamp",
+          "refId": "C",
+          "legendFormat": "verified-path replay"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - ops_panel_last_run_timestamp",
+          "refId": "D",
+          "legendFormat": "panel materialize"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_trade_backfill_last_run_timestamp",
+          "refId": "E",
+          "legendFormat": "trade backfill"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 404,
+      "type": "timeseries",
+      "title": "Verified-path lag & trade repairs",
+      "description": "How far the verified path has fallen behind, and whether trade hours are being repaired NOW or merely were at some point. Days behind is zero when the replay is fully caught up. The repair counter is a true monotone counter — the emitter reads its own previous value and adds — so the 24-hour increase beside it is what answers \"now\", while the cumulative line answers \"ever\". No alert watches either. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 70
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "ops_verified_replay_days_behind",
+          "refId": "A",
+          "legendFormat": "verified path — days behind"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_trade_backfill_hours_repaired_after_loss_total",
+          "refId": "B",
+          "legendFormat": "trade hours repaired (cumulative)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_trade_backfill_hours_repaired_after_loss_total[24h])",
+          "refId": "C",
+          "legendFormat": "trade hours repaired (24h)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "d"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 500,
+      "type": "row",
+      "title": "Gate",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      }
+    },
+    {
+      "id": 501,
+      "type": "stat",
+      "title": "Gate verdict",
+      "description": "Does the fleet currently satisfy its own admission gate, and how long has it held? Deliberately informational, with a text mapping and no red: the gate is met only after at least fourteen consecutive clean days, so not-yet-met is the CORRECT and expected state for the entire accumulation window, and a red tile for a fortnight of healthy days is alarm fatigue in visual form. No alert reads this verdict — the signal that something actually broke is the streak going BACKWARDS, which is on the panel beside this one. Published only by the NAS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 78
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_status",
+          "refId": "A",
+          "legendFormat": "verdict",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_streak_days",
+          "refId": "B",
+          "legendFormat": "clean-day streak",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "ACCUMULATING",
+                  "color": "text",
+                  "index": 0
+                },
+                "1": {
+                  "text": "MET",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "no export"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "d"
+              },
+              {
+                "id": "mappings",
+                "value": []
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 502,
+      "type": "timeseries",
+      "title": "Streak & mismatch trend",
+      "description": "Is the streak climbing or was it reset, and is the mismatch behind it recent or ancient? The streak only ever increments on a clean complete day or resets to zero on a failed one, so a NEGATIVE 6-hour change is the failure and nothing else produces one — which is why the page line on that series sits BELOW zero rather than above it. It fires after `for: 5m` and auto-resolves as the window rolls past, one alert per broken run rather than a drumbeat. At least one replay mismatch or validation failure in the last day pages after `for: 5m` as well. The raw streak is context on the right axis and carries no line. Published only by the NAS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 6,
+        "y": 78
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "delta(zcrypto_gate_streak_days[6h])",
+          "refId": "A",
+          "legendFormat": "streak change (6h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_gate_mismatch_total[1d])",
+          "refId": "B",
+          "legendFormat": "mismatches (24h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_streak_days",
+          "refId": "C",
+          "legendFormat": "streak (days, context)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "d"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 503,
+      "type": "timeseries",
+      "title": "Exporter freshness, duration & journal pull lag",
+      "description": "Is the verdict on screen fresh, is the journal it was computed from current, and is a slow export still running or did it die? Two different bars on one panel, so each series carries its own: no successful export in over 2 hours pages after `for: 5m`, and a newest journaled cycle more than 6 hours old pages after `for: 5m`. Those bars are not interchangeable — the pull-lag floor is the trading cycle's own 4-hourly cadence rather than a measure of pull health, which is why it sits so much higher. Export duration is context with no line; read it beside export age to tell a slow run from a dead one. Published only by the NAS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 78
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_gate_export_timestamp_seconds",
+          "refId": "A",
+          "legendFormat": "age of last export"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_journal_pull_lag_seconds",
+          "refId": "B",
+          "legendFormat": "journal pull lag"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_export_duration_seconds",
+          "refId": "C",
+          "legendFormat": "export duration (context)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 7200
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 21600
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 504,
+      "type": "timeseries",
+      "title": "Scoring cache — is the journal still being re-hashed?",
+      "description": "A stalled scoring cache is indistinguishable from a healthy one everywhere except these four numbers, because a cache hit skips the only place the journal's parquet bytes are ever re-hashed. The oldest cycle's verification age pages above 3 days after `for: 15m` — a full rotation is about a day, so that is roughly three sweeps of slack. An EMPTY series here is EXPECTED, not a fault: the exporter emits that gauge only when the scoring cache is active and non-empty, and its alert treats no data as OK for exactly that reason. Cycles replayed should be above zero on every run; a cache that stopped rotating shows replayed at zero with hits at the full count. The invalidated flag is a per-run 0 or 1 rather than a counter, so its recent view is a 24-hour MAXIMUM — \"did it happen at all today\" is the only meaningful read of it. Published only by the NAS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 84
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_cache_oldest_verification_age_seconds",
+          "refId": "A",
+          "legendFormat": "oldest cycle's verification age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_cache_replayed",
+          "refId": "B",
+          "legendFormat": "cycles replayed this run"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_cache_hits",
+          "refId": "C",
+          "legendFormat": "cycles served from cache"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_gate_cache_invalidated",
+          "refId": "D",
+          "legendFormat": "cache discarded this run (0/1)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max_over_time(zcrypto_gate_cache_invalidated[24h])",
+          "refId": "E",
+          "legendFormat": "cache discarded at all today"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "cache off"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 259200
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 600,
+      "type": "row",
+      "title": "Telemetry integrity",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 91
+      }
+    },
+    {
+      "id": 601,
+      "type": "timeseries",
+      "title": "Log shipping — dropped vs shipped (6h)",
+      "description": "Was any log line discarded before it reached the log store — the one fault that makes every log-based alert's SILENCE meaningless, because those rules then reason over an incomplete stream. The measured baseline over seven days is zero on every machine, so any drop in 6 hours is real and pages after `for: 15m`. The cumulative total sits beside it, all-green, so old damage is legible without being mistaken for new. Shipped lines on the right axis give the scale to read a drop against. Legends name the machine and the daemon together, because one machine runs two shippers and the machine name alone is ambiguous there. Scoped by the shipping-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 92
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_logship_dropped_lines_total{host=~\"$logship_host\"}[6h])",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}} dropped (6h)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_logship_dropped_lines_total{host=~\"$logship_host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}}/{{job}} dropped (cumulative)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_logship_shipped_lines_total{host=~\"$logship_host\"}[6h])",
+          "refId": "C",
+          "legendFormat": "{{host}}/{{job}} shipped (6h)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 602,
+      "type": "timeseries",
+      "title": "Log shipping — worker liveness",
+      "description": "Is the shipper alive? Read CYCLE age for that, and only that: the worker cycles every second and advances that gauge even on an idle cycle, stalling only while it is stuck retrying a push it cannot complete or the thread is wedged. It is the series the page reads — above 5 minutes, held for `for: 10m`, which is about three hundred missed cycles. Last-ship age is context and deliberately carries NO line: the worker skips the push on an empty buffer, so on a healthy quiet machine cycle age reads seconds while last-ship age reads tens of minutes at the same instant. Read it only together with the shipped-line count beside it. That series is also absent until the worker has completed one successful ship, which is expected rather than a fault. What neither series catches is a permanently rejected batch: it still completes a cycle and still advances the liveness gauge, and shows up as dropped lines on the panel beside this one. Legends name the machine and the daemon together. Scoped by the shipping-machine picker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 92
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_logship_last_cycle_timestamp_seconds{host=~\"$logship_host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{job}} cycle age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_logship_last_success_timestamp_seconds{host=~\"$logship_host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}}/{{job}} last-ship age (context)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_logship_shipped_lines_total{host=~\"$logship_host\"}[1h])",
+          "refId": "C",
+          "legendFormat": "{{host}}/{{job}} shipped (1h)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "never shipped"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 300
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 603,
+      "type": "timeseries",
+      "title": "Liquidations poller",
+      "description": "Is the poller still landing cycles, and has any outage exceeded the 30-hour window the next cycle would re-fetch for free? **No alert watches any of these series**, so this panel is their only coverage. Poll cycles are split by outcome, so a poller that keeps running while every fetch fails is visible as a cycle count with no successes. The age of the last successful cycle is the one to read during an outage: a gap shorter than 30 hours self-heals on the next cycle at no cost, a longer one loses data the window will not re-fetch. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 92
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_liquidations_polls_total[1h])",
+          "refId": "A",
+          "legendFormat": "poll cycles — {{outcome}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_liquidations_api_errors_total[1h])",
+          "refId": "B",
+          "legendFormat": "API/transport errors"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_liquidations_last_success_timestamp_seconds",
+          "refId": "C",
+          "legendFormat": "age of last successful cycle"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ],
+  "refresh": "1m",
+  "timezone": "",
+  "weekStart": "",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "capture_host",
+        "label": "Capture host",
+        "type": "custom",
+        "query": "Capture primary : zcrypto, Capture secondary : zcrypto-red",
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Which capture machine the panels below select. All expands to both machines joined into one matcher, and it is the deliberate default: a fault on one and not the other IS the diagnosis. The option list is the pin — a stray label value cannot appear here — and it is a second place to edit if a third capture machine ever joins.",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "Capture primary",
+            "value": "zcrypto"
+          },
+          {
+            "selected": false,
+            "text": "Capture secondary",
+            "value": "zcrypto-red"
+          }
+        ]
+      },
+      {
+        "name": "pair",
+        "label": "Pair",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "query": "label_values(zcrypto_capture_book_desynced{host=~\"$capture_host\"}, pair)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Chained to the capture-machine picker, so deselecting a machine drops its pairs. At twelve pairs across two machines the All view is legible; narrowing is for chasing one stuck stream.",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      },
+      {
+        "name": "logship_host",
+        "label": "Shipping host",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "query": "label_values(zcrypto_logship_last_cycle_timestamp_seconds, host)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "sort": 1,
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Scopes the two log-shipping panels and nothing else — named for its scope on purpose, because a picker called Host that governs two of thirty panels is a trap. Derived from a shipping family, so its domain is exactly the machines that run a shipping worker; four daemons across three machines publish it, which is why those legends name the daemon as well.",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "Restarts",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "grafanacloud-prom"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "expr": "changes(process_start_time_seconds[5m]) > 0",
+        "titleFormat": "{{host}}/{{job}}",
+        "textFormat": "process restarted",
+        "tagKeys": "host,job",
+        "step": "60s"
+      }
+    ]
+  }
+}
