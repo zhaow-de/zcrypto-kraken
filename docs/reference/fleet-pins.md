@@ -10,7 +10,7 @@ Several rows share the image repo (`ghcr.io/zhaow-de/zcrypto-capture`) — captu
 | capture | zcrypto-red | **candidate `ccedc9dd6bf4`, pre-staged and NOT yet converged** — still running `6b36bf23a0ff` | candidate recorded 2026-08-05 (iter-127 engine-fix canary); `6b36bf23a0ff` running since 2026-08-04 07:52 | `6b36bf23a0ff` (2026-08-04) — **the rollback operand, verified still present locally on the host** |
 | engine | zcrypto | `c7ed09020fe1` | 2026-08-03 04:45 (iter-119; canary-passed on red) | `99faf16514e3` (2026-08-02 12:13) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
-| ops (timers + liquidations) | zcrypto-ops | `193d76be5275` | 2026-08-01 (spec `00078`: incremental verify-replay) | `cbf60c852f04` |
+| ops (timers + liquidations) | zcrypto-ops | **candidate `ccedc9dd6bf4`, pre-staged and NOT yet converged** — still running `193d76be5275` | candidate recorded 2026-08-05 (iter-127: carries the reconcile `ledger_records` gauge); `193d76be5275` running since 2026-08-01 | `193d76be5275` (2026-08-01) — **the rollback operand, verified still present locally on the host** |
 | archive-pull | nas | `620114511f19` (repo pin `nas_capture_image`, same file; running digest unverified) | — | — |
 
 **Bridgehead `zaccess` — apt-pinned native packages, not image digests** (spec `00075`; no Docker on the edge). These are `access_*` role defaults, held with `dpkg --set-selections`; a version bump = unhold → converge with the new pin → the role re-applies the hold.
