@@ -373,10 +373,10 @@ rules:
         The trading engine has not completed a cycle in over 4h35m — the 4-hourly loop has stopped
         turning. A healthy cycle completes within 30 minutes of its boundary, so the worst legitimate
         age is 4h30m and anything past that is a stopped or crash-looping engine, not a slow one.
-        This also fires when the metric vanishes entirely, which means the engine container is gone:
-        the gauge is seeded at startup from the newest journal artifact and is never legitimately
-        absent while the engine runs. Check the engine container on the capture primary, then its
-        newest cycle journal artifact for how far the last cycle got.
+        This also fires when the metric has vanished entirely: either the engine's exporter is gone or
+        this host's telemetry plane is dark. Check `Fleet · Alloy dark — Capture primary` before
+        assuming the engine, then the engine container on the capture primary and its newest cycle
+        journal artifact for how far the last cycle got.
     labels:
       severity: critical
     notification_settings:
@@ -418,16 +418,23 @@ rules:
     # page. Absence is the staleness rule above's business.
     noDataState: OK
     execErrState: Alerting
-    # 35m is arithmetic, not a comfort margin: a restart re-runs a missed boundary only within
-    # [B, B+25 min], so 35 minutes after a failed completion the boundary's outcome is FINAL and a
-    # recovered retry would already have flipped the gauge back to 1.
-    for: 35m
+    # 0s: the outcome is already final the instant this gauge reads 0, so any pending period is pure
+    # delay. The mechanism, read from the source rather than assumed -- `cli/engine/cycle.py::_failed`
+    # writes `failed-cycle-<HH>.json` BEFORE it calls `_update_metrics`, and
+    # `cli/engine/node.py::startup_action` returns None for any boundary that already has a journal
+    # artifact (success record OR failed sidecar), a check independent of the [B, B+25 min] window it
+    # sits behind. So `cycle_success == 0` implies the sidecar exists implies no re-run is possible,
+    # ever, and the next boundary is 4 h away. `for: 35m` shipped first on the opposite premise --
+    # that a restart inside B+25 min could still flip the gauge back -- which bought 35 minutes of
+    # silence and a summary telling a 03:00 responder the engine had already retried and failed again.
+    for: 0s
     annotations:
       summary: >-
-        The engine's most recent cycle finished UNSUCCESSFULLY and the outcome is now final — a restart
-        re-runs a missed boundary only within 25 minutes of it, so a recovered retry would already have
-        flipped this back. The cycle-staleness rule cannot see this: the metrics sink refreshes the
-        completion timestamp after a FAILED cycle too, so that rule stays green while every cycle fails.
+        The engine's most recent cycle finished UNSUCCESSFULLY. The outcome is final — the engine never
+        re-runs a boundary that already has a journal artifact, so only
+        `zcrypto engine cycle --at <boundary> --replace` can re-run it. The cycle-staleness rule cannot
+        see this: the metrics sink refreshes the completion timestamp after a FAILED cycle too. Read the
+        engine log and the newest cycle journal artifact for which step failed.
         Read the engine log and the newest cycle journal artifact for which step failed.
     labels:
       severity: warning
@@ -2185,15 +2192,29 @@ rules:
           expression: "A"
           refId: C
           conditions:
+            # 60 s is the whole notice budget this rule can afford to spend on the bar, because the
+            # pending period is NOT free here: the gauge is scraped every 60 s
+            # (infra/ansible/roles/capture/files/config.alloy), so it advances one sample per minute
+            # and the real silence at firing time is 60 s bar + up to 60 s of scrape granularity +
+            # the pending period + the group's eval interval. That is why `for` is 0s below.
             - evaluator: {type: gt, params: [60]}
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
     execErrState: Alerting
-    for: 2m
+    # 0s, and it is arithmetic rather than impatience. `for: 2m` shipped first and put the GUARANTEED
+    # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
+    # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
+    # the fix either -- it still misses 209 s in 12.9% of alignments. Nothing but real silence can put
+    # this minimum over 60: `_run` seeds last_seen for every pair before the collector registers, so a
+    # restart reads 0.0; a stop->start window replays the last healthy pre-stop sample through
+    # Prometheus' lookback; a longer stop goes NoData, which `noDataState: OK` swallows; and
+    # remote-write lag can only delay firing, never advance it. `zcrypto-capture-log-dead-primary`
+    # already carries 0s for the same reason.
+    for: 0s
     annotations:
       summary: >-
-        EVERY book stream on this capture host has been silent for over 60 seconds — not one message on
+        EVERY book stream on this capture host has been silent for minutes — not one message on
         any pair, so this is the whole feed rather than one quiet leg. The last time this happened the
         socket still reported connected, the keepalive kept completing round trips, and the cumulative
         gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
@@ -2451,7 +2472,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online` -- the first time this fleet has seen it. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online` -- the first time this fleet has seen it.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
     labels:
       severity: warning
     notification_settings:
@@ -3157,7 +3178,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This now fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
     labels:
       severity: warning
     notification_settings:
@@ -3203,7 +3224,7 @@ rules:
     execErrState: Alerting
     for: 1h
     annotations:
-      summary: "The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry. Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is now its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+      summary: "{{ if $labels.target }}The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry.{{ else }}A tracked TLS certificate is under 14 days from expiry.{{ end }} Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
     labels:
       severity: warning
     notification_settings:
