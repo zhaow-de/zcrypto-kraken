@@ -74,7 +74,7 @@
       "id": 102,
       "type": "timeseries",
       "title": "Lines/min by level",
-      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the grey total stays flat is the other one — that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The three series on the right axis are the exact fifteen-minute counts the three error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All three fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS — the ops machine's own pull loop ships under a different name.",
+      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the total stays flat is the other one — that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The three series on the right axis are the exact fifteen-minute counts the three error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All three fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS — the ops machine's own pull loop ships under a different name.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -113,7 +113,7 @@
           },
           "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=~\"zcrypto|zcrypto-red\", container=\"capture\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
           "refId": "C",
-          "legendFormat": "error window · capture daemon {{msg}}",
+          "legendFormat": "error window · capture daemon {{host}} {{msg}}",
           "queryType": "range",
           "step": "5m"
         },
@@ -734,7 +734,7 @@
       "id": 104,
       "type": "table",
       "title": "Last line seen — per stream",
-      "description": "A rate of zero and a stream that never existed render identically on a graph. This table tells them apart: a row present with an old timestamp is a stream that has gone quiet, a row missing entirely is a stream that has produced no line in twenty-six hours — the widest window any log rule evaluates, so a stream missing here is already past every rule's patience. Streams that exist on only one machine are expected to be missing from the other, and the edge machine ships metrics only, so it never appears here at all. Context panel, carrying no threshold of its own — the page pointers sit on the panel beside it, which plots the rules' own counts.",
+      "description": "A rate of zero and a stream that never existed render identically on a graph; this table tells them apart. One row per stream that has shipped at least one line in the last twenty-six hours — the widest window any log rule evaluates — carrying the wall-clock time of that line. A row present with an old timestamp is a stream that has gone quiet. **A row missing while other rows are present** is a stream already past every rule's patience; streams that exist on only one machine are expected to be missing from the other, and the edge machine ships metrics only, so it never appears here at all. **An entirely empty table means something different, and never that the whole fleet went silent.** Unless the pickers are narrowed to the edge machine alone, or to a container none of the selected machines runs, no rows at all means this panel's own query failed — a broken panel, not a verdict. Read the rate lane beside it before you treat anything as an outage: those panels answer the same question through a different query, and if they show lines arriving then this table is the thing that is wrong. Context panel, carrying no threshold of its own — the page pointers sit on the by-machine panel to its left, which plots the rules' own counts.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -754,8 +754,7 @@
           "expr": "max by (host, container) (max_over_time({host=~\"$host\", container=~\"$container\"} | label_format seen=`{{ unixEpoch __timestamp__ }}` | unwrap seen [26h])) * 1000",
           "refId": "A",
           "legendFormat": "last line seen",
-          "queryType": "instant",
-          "instant": true
+          "queryType": "instant"
         }
       ],
       "transformations": [
@@ -795,8 +794,7 @@
                 "value": null
               }
             ]
-          },
-          "noValue": "no selected stream has shipped a line in the last 26h"
+          }
         },
         "overrides": []
       },
@@ -1002,7 +1000,7 @@
         "enable": true,
         "hide": false,
         "iconColor": "rgba(255, 96, 96, 1)",
-        "expr": "changes(process_start_time_seconds[5m]) > 0",
+        "expr": "changes(process_start_time_seconds{host=~\"$host\"}[5m]) > 0",
         "titleFormat": "{{host}}/{{job}}",
         "textFormat": "process restarted",
         "tagKeys": "host,job",

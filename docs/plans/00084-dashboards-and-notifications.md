@@ -677,6 +677,15 @@ git commit -m "feat(grafana): dense slack notification templates for both receiv
 
 - [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`, with **`GRAFANA_SLACK_WEBHOOK_URL` exported from the vault**. No host contact. Without it the script takes its webhook-less branch: the template object ships, the receiver wiring is silently skipped with a friendly "receivers already live" message, and every notification keeps the stock rendering — first visible at Step 5 as a baffling symptom. Verify by read-back that all four boards and all **62** rules are live (58 today + Task 4's four; transiently 63 while Step 5's probe rule exists).
 
+- [ ] **Step 3b: Verify the Logs board's two unproven constructs at first push — they fail SILENTLY**
+
+Both are on `zcrypto-logs-dashboard.json` panel 104 ("last line seen"), and neither can be settled offline.
+
+- `label_format seen=\`{{ unixEpoch __timestamp__ }}\` | unwrap seen [26h]` — a *parse* error 400s loudly, but an **execution** error does not: it sets `__error__`, `unwrap` then drops every sample, and the panel returns **zero rows**. An empty table is the same shape as "every stream has been silent for 26 hours", which is the fleet-wide-outage reading. Open the panel and confirm it returns rows.
+- `renameByName: {"Value": "Last line seen"}` silently no-ops if Grafana's Loki backend names the value field anything but `Value`. Confirm the column header reads "Last line seen" rather than "Value".
+
+If either fails, the drop-in replacement is written up in `.superpowers/sdd/00084-dashboards-and-notifications/task-9-report.md`. **Do not skip this because the board renders** — both failures render.
+
 - [ ] **Step 4: Verify the first sample by VALUE, not presence** — read the new engine and capture liveness rules' current values. A rule born into an already-faulted condition bakes that into its baseline and never fires; triage a nonzero as the page it would have been.
 
 - [ ] **Step 5: Live-fire the Slack templates** — add the probe rule `count by (host)(up) > 0` (5 instances, touches no host), read the rendered messages in `#zcrypto`, re-tune the truncation caps from what actually renders, then delete the probe rule and confirm it is gone. Fire one logs rule too — resolve messages are ON for `metrics` and OFF for `logs`, so recovery behaves differently.

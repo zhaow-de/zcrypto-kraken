@@ -340,9 +340,9 @@ A rate lane goes at the **top**, above the viewer, at **`h: 6`** (roughly a fift
 
 | Panel | Query | What it answers |
 | --- | --- | --- |
-| Total lines/min | `sum(rate({host=~"$host", container=~"$container"}[5m]))` | The single "is anything arriving at all" line — the transport canary, and the panel a `no lines in 6h` page lands on |
-| Lines/min by level | `sum by (level) (rate({host=~"$host", container=~"$container", level=~".+"}[5m]))` | Whether the mix shifted — an ERROR band appearing under a flat total is the signal a total-only view hides |
-| Lines/min by host & container | `sum by (host, container) (rate({host=~"$host", container=~"$container"}[5m]))` | **Which** stream went quiet — the question the split primary/secondary log-dead rules are asking |
+| Total lines/min | `sum(rate({host=~"$host", container=~"$container"}[5m])) * 60` | The single "is anything arriving at all" line — the transport canary, and the panel a `no lines in 6h` page lands on |
+| Lines/min by level | `sum by (level) (rate({host=~"$host", container=~"$container", level=~".+"}[5m])) * 60` | Whether the mix shifted — an ERROR band appearing under a flat total is the signal a total-only view hides |
+| Lines/min by host & container | `sum by (host, container) (rate({host=~"$host", container=~"$container"}[5m])) * 60` | **Which** stream went quiet — the question the split primary/secondary log-dead rules are asking |
 
 Three properties the lane must have, each earned from a rule that already exists:
 
