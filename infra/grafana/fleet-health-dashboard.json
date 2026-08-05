@@ -1277,7 +1277,7 @@
       "id": 402,
       "type": "timeseries",
       "title": "node-exporter collector success",
-      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below 1; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. **The edge machine is structurally excluded from this panel today** — the family is not yet collected there, so a machine that simply disappears from the minimum would read as a healthy fleet. That is what the counting series exists to expose. Once the edge machine's agent configuration is deployed, remove the exclusion **from this panel only**.",
+      "description": "Is a collector failing, so its whole metric family goes silently absent and every alert keyed on it evaluates to no-data and quietly disarms itself? The minimum across collectors is the alert's own number and pages after `for: 15m` below the 0.5 line — i.e. as soon as any collector reports 0; the second series names the failing collector; the third counts how many collectors each machine is reporting at all. **The edge machine is structurally excluded from this panel today** — the family is not yet collected there, so a machine that simply disappears from the minimum would read as a healthy fleet. That is what the counting series exists to expose. Once the edge machine's agent configuration is deployed, remove the exclusion **from this panel only**.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2100,7 +2100,7 @@
       "id": 701,
       "type": "timeseries",
       "title": "WireGuard handshake age (both ends)",
-      "description": "Is the encrypted tunnel between the ops machine and the edge machine alive, and **which end** lost it? This family is published by probes at both ends, and the alert groups by end so the notification can name the one that went stale — the legend here shows the same grouping, which is what makes the expression unambiguous without a machine matcher. A healthy tunnel re-handshakes every 25 seconds; the alert pages above 300 seconds after `for: 10m`. A fully dark machine at either end is a different alert, on the glance tiles at the top of this board.",
+      "description": "Is the encrypted tunnel between the ops machine and the edge machine alive, and **which end** lost it? This family is published by probes at both ends, and the alert groups by end so the notification can name the one that went stale — the legend here shows the same grouping, which is what makes the expression unambiguous without a machine matcher. A healthy tunnel re-handshakes every couple of minutes (a 25-second keepalive holds it open), so the 300-second line the alert pages above after `for: 10m` is already several missed keepalives, not noise. A fully dark machine at either end is a different alert, on the glance tiles at the top of this board.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
