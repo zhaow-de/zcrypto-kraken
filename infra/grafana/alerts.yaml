@@ -441,6 +441,71 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-engine-error-logs
+    title: "Engine · ERROR logs"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The engine direct-ships its logs exactly as the capture daemon does -- `level` =
+      # `record.levelname` at the source and `container` = ZCRYPTO_LOG_SERVICE, set to `engine` in
+      # infra/ansible/roles/engine/templates/compose.yaml.j2 -- and NOTHING selected them: the
+      # capture ERROR rule is `container="capture"` and the ops one is scoped to `host="ops"`, so an
+      # ERROR line from the process holding the live trade key paged nobody. The engine runs only on
+      # the capture primary, hence `host="zcrypto"` alongside the container label; `sum by (host,
+      # ...)` keeps the label the notification template maps to a display name.
+      #
+      # Shape is `zcrypto-capture-error-logs`'s, deliberately identical rather than re-derived: the
+      # `msg` hoist puts the log MESSAGE on the page -- the whole reason a log alert exists, since
+      # without it the page says "3" and the responder goes hunting -- `printf "%.200s"` bounds one
+      # message and `topk(5, ...)` bounds how many; `| json message="message"` parses the
+      # direct-ship JSON body (cli/logging/ship.py's JsonLineFormatter) instead of reading
+      # `__line__`, which would spend ~150 of the 200 characters on the JSON preamble; and `| drop
+      # __error__, __error_details__` is required, not decorative -- `| json` stamps
+      # `__error__="JSONParserErr"` on any line it cannot parse and the query then 400s, taking the
+      # whole rule to execErrState. `or on() vector(0)` keeps a clean window an explicit 0, and the
+      # rule fires on the COUNT arm only, so its labels are genuinely populated when it pages.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="zcrypto", container="engine", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "ERROR/CRITICAL log lines from the trading engine on the capture primary in the last 15 minutes -- the cycle rules see only a cycle's final outcome, so everything that goes wrong between boundaries (key or API failures, refresh errors, order-path exceptions) surfaces here first, on the host that holds the live trade key. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas
@@ -2705,7 +2770,7 @@ rules:
       # this selector still holds). Scoped to container="capture": the daemon on both hosts, whose
       # errors (desync storms, ENOSPC, reconnect failures) are the soak-critical signal. (Out of scope
       # here: Alloy self-errors -- a separate instrument-health concern; and the engine's logs, which
-      # ship no level label until its own --ship-logs lands post-gate (D7) -- the T0042 egress question.)
+      # ship with the same labels today and are owned by `zcrypto-engine-error-logs`.)
       # `sum by (host, ...)` names the firing host; `or on() vector(0)` keeps a clean window an
       # explicit 0. This rule fires on the COUNT arm only (the vector(0) fallback is 0, which fails
       # `gt 0`), so unlike the two dead-men below its labels are genuinely populated when it pages.
