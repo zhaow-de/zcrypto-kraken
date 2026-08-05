@@ -141,7 +141,7 @@ count by (host) (node_scrape_collector_success{host=~"$host", host!="zaccess"}) 
 
 ## D3 — `Data integrity`
 
-`uid zcrypto-integrity` (new — D1), title `Data integrity`. Answers *is the data we are betting on sound?* — the unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. It owns 66 families and 27 of the 48 metric-backed rules. P1–P6 bind here.
+`uid zcrypto-integrity` (new — D1), title `Data integrity`. Answers *is the data we are betting on sound?* — the unbackfillable capture edge, the reconciler, the continuity sweep, the canonical writers, the admission gate, and the telemetry path that carries all of it. It owns 68 families and 29 of the 52 metric-backed rules — both counts re-derived against the shipped board; the earlier 66/27 predated the two capture staleness rules D11 adds. P1–P6 bind here.
 
 ### Template variables
 
