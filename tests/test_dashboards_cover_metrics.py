@@ -17,8 +17,16 @@ but from a hand-curated per-host `required` list: it catches a LISTED family bei
 blind to a family missing from the list. That blindness is exactly how `zaccess` came to be
 structurally unable to fail its own `node_scrape_collector_success` alert -- admitted nowhere in the
 bridgehead's keep-regex, so `min by (host) (node_scrape_collector_success)` could never match that
-host, and the rule sat green while the host was invisible to it. This test derives its expectation
-from `alerts.yaml`, so the omission cannot recur.
+host, and the rule sat green while the host was invisible to it.
+
+The property this file actually provides, stated precisely rather than as "it cannot recur": the
+FAMILY set comes from `alerts.yaml` and the HOST set comes from the rule's own selectors, from
+`KEEP_REGEX_FILES` (the fleet topology) or from where this repo publishes the family -- never from
+the keep-regexes under audit. An earlier draft derived the fleet-wide host set from the keep-regexes
+themselves ("every host admitting `node_load1`"), which failed open at the exact hole it exists to
+close: deleting `node_load1` AND `node_scrape_collector_success` from the bridgehead's regex dropped
+that host out of the requirement set and every assertion here stayed green. Two edges remain, both
+named below under scope limits.
 
 **(4)'s string check is the one whose violation is not local.** `grafana-push.sh` does
 `yaml.safe_load` -> `json.dumps`, and Grafana's rule annotations are `map[string]string`: an
@@ -37,9 +45,11 @@ whatever ships next are dropped because they are CALLED, not because they are li
 
 What it gets wrong, in full:
 
-* `{__name__="foo"}` names a family inside a label matcher; matchers are stripped, so that family
-  reads as unreferenced. Fails LOUD (a demand for a panel that already exists), never silent. No
-  such expression exists in this repo.
+* `{__name__="foo"}` names a family inside a label matcher; matchers are stripped, so that family is
+  invisible. PANEL-side that fails loud (a demand for a panel that already exists); RULE-side it
+  fails SILENT -- the family never enters `alerted_families()`, so nothing asks for its panel or its
+  keep-list admission. No such expression exists in this repo, and one would have to be written by
+  hand: no board or rule here selects by `__name__`.
 * a recording rule (`level:metric:op`) is indistinguishable from a raw family and would be required
   to have a panel like any other. None exist today.
 * an expression that is not valid PromQL yields junk names rather than an error. Grafana's own push
@@ -58,10 +68,15 @@ Scope limits, so nobody reads more into a green run than it earns:
   covered -- a dropdown is not a visual clue.
 * **Loki is out of range.** LogQL stream selectors carry no metric families; log rules are covered
   by assertion 4 alone.
-* **Assertion 3 is per-host only where the rule says so.** An unscoped rule over an app family can
-  only be required to be admitted SOMEWHERE (its publisher is one host and this file does not know
-  which); an unscoped rule over a `node_*` family is a fleet-wide guard and is required on every
-  host that scrapes a node exporter.
+* **Assertion 3's host set for an UNSCOPED rule is only as good as the topology behind it.** A
+  `node_*` family is required on every host in `KEEP_REGEX_FILES`; an app family is required on
+  every host `PUBLISHER_HOSTS` maps its publishing file to. The two edges:
+  - a publisher under `cli/**` maps to no host -- a daemon's source says nothing about which machine
+    runs it -- so those families fall back to "admitted somewhere on the fleet". Dropping such a
+    family from ONE host's keep-regex while another still admits it passes here.
+  - `KEEP_REGEX_FILES` is hand-pinned, not derived. A host added to the fleet and not to that dict
+    is outside every fleet-wide requirement. It is a five-entry dict next to the four config paths
+    it names, and adding a host without its keep-regex file is not a silent edit.
 """
 
 import json
@@ -89,6 +104,10 @@ PROM_DS = "${GRAFANA_PROM_DS_UID}"
 
 # `host` LABEL VALUE -> the config.alloy that renders that host's keep-regex. The two capture hosts
 # share one file: one role serves both, and `host=~"zcrypto|zcrypto-red"` selects them by label.
+#
+# This dict is also the FLEET TOPOLOGY, and that second job is why it is hand-pinned rather than
+# globbed: it is what an unscoped `node_*` rule is measured against. Deriving that set from the
+# keep-regexes instead makes the whole assertion circular -- see the module docstring.
 KEEP_REGEX_FILES = {
     "nas": REPO / "infra/nas/config.alloy",
     "ops": REPO / "infra/ansible/roles/ops/files/config.alloy",
@@ -97,24 +116,43 @@ KEEP_REGEX_FILES = {
     "zaccess": REPO / "infra/ansible/roles/access/files/config.alloy",
 }
 
+# Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
+# be pinned per host. Ansible roles carry the deployment target in their path, which makes this
+# derivable from `published_app_families()` rather than from a per-host list of series.
+#
+# `cli/**` maps to nothing on purpose: a daemon's source says nothing about which machine runs it,
+# and guessing would be worse than the honest "admitted somewhere on the fleet".
+PUBLISHER_HOSTS = (
+    ("infra/ansible/roles/access/", ("zaccess",)),
+    # The ops-side half of the same probe pair. Both ends publish `zaccess_wireguard_handshake_age_
+    # seconds` and `zaccess_tls_not_after_seconds` (spec 00084 D11) and `host` tells them apart, so
+    # "the publisher" is genuinely two hosts and either end can go dark on its own.
+    ("infra/ansible/roles/access_ops/", ("ops",)),
+    ("infra/ansible/roles/ops/", ("ops",)),
+    ("infra/ansible/roles/capture/", ("zcrypto", "zcrypto-red")),
+    # The engine runs on the capture primary only; its textfiles are admitted by the shared capture
+    # keep-regex, so both capture hosts satisfy the requirement either way.
+    ("infra/ansible/roles/engine/", ("zcrypto",)),
+    ("infra/nas/", ("nas",)),
+)
+
 
 # --- Deliberate exclusions ----------------------------------------------------------------------
 # Families deliberately drawn by no panel. Each entry is a REVIEWED decision and the reason IS the
 # entry: a bare name here is drift wearing a test's clothes.
 #
 # The bar for adding one: charting the family would actively mislead, or it is a duplicate view of
-# one already charted. "We ran out of room" is not a reason -- densify the layout instead.
-NOT_CHARTED = {
-    # Admitted on nas/ops/capture and drawn nowhere, deliberately: `free` counts the root-reserved
-    # blocks that `avail` excludes, so a free-based percentage sits a few points above the
-    # avail-based one. All three filesystem rules (nas-disk-low, capture-disk-low, zaccess-disk-high)
-    # threshold on `avail`, so charting `free` beside them would put a differently-defined number
-    # next to the line that pages -- the one place a dashboard must not disagree with the alert.
-    "node_filesystem_free_bytes": (
-        "`free` includes root-reserved blocks while every filesystem rule thresholds on `avail`; "
-        "charting it would sit a differently-defined percentage beside the page line"
-    ),
-}
+# one already charted. "We ran out of room" is not a reason -- densify the layout instead. And an
+# entry is only legitimate while some assertion would otherwise DEMAND that family: an entry nothing
+# asks for is a standing pre-waiver for a rule that has not been written yet, which
+# `test_the_not_charted_exclusions_stay_reviewed` now refuses.
+#
+# `node_filesystem_free_bytes` is the case that taught this: charted nowhere, admitted on
+# nas/ops/capture, and named by no rule -- so nothing asks for it and it needs no entry. If a rule
+# ever thresholds on it, that rule owes a panel like any other; what it must NOT get is a `free`
+# series plotted beside the avail-based lines the other three filesystem rules page on, since `free`
+# counts the root-reserved blocks `avail` excludes and the two percentages differ.
+NOT_CHARTED: dict[str, str] = {}
 
 
 # --- PromQL family extraction --------------------------------------------------------------------
@@ -316,27 +354,42 @@ def keep_regexes() -> dict[str, re.Pattern[str]]:
     return compiled
 
 
-@cache
-def node_exporter_hosts() -> frozenset[str]:
-    """Every host whose keep-regex admits node-exporter series at all -- `node_load1` is the marker,
-    the same line every sibling guard finds the regex by. This is the set an UNSCOPED `node_*` rule
-    covers: it names no host, so it is a fleet-wide guard, and a host missing the family from its
-    keep-list is structurally unable to fail it."""
-    return frozenset(host for host, keep in keep_regexes().items() if keep.match("node_load1"))
+def publishing_hosts(family: str) -> frozenset[str] | None:
+    """The hosts that run `family`'s producer, read off the publishing file's path via
+    `PUBLISHER_HOSTS`. None when no path maps -- a `cli/**` daemon, whose source cannot say which
+    machine runs it."""
+    hosts: set[str] = set()
+    for where in published_app_families().get(family, ()):
+        for prefix, mapped in PUBLISHER_HOSTS:
+            if where.startswith(prefix):
+                hosts.update(mapped)
+    return frozenset(hosts) or None
 
 
-def _admission_expectations() -> list[tuple[str, str, frozenset[str] | None]]:
-    """`(rule uid, family, hosts that must admit it)` for every alerted family, once per rule that
-    names it. `None` means "somewhere on the fleet" -- the honest bar for an unscoped rule over an
-    app family, whose single publisher this file cannot identify."""
+# Why each host in an expectation is on the hook, carried through so the failure message can say it.
+_BECAUSE_SELECTED = "selects that host"
+_BECAUSE_FLEET_WIDE = "names no host, so it is a fleet-wide guard over the whole topology"
+_BECAUSE_PUBLISHED = "names no host, and this repo publishes the family on that host"
+
+
+def _admission_expectations() -> list[tuple[str, str, frozenset[str] | None, str]]:
+    """`(rule uid, family, hosts that must admit it, why)` for every alerted family, once per rule
+    that names it. `None` hosts means "somewhere on the fleet" -- the honest bar when the rule names
+    no host AND nothing in the tree says which machine publishes the family."""
     expectations = []
     for rule in _rules():
         for expr in _prom_expressions(rule):
             for family in promql_families(expr):
-                hosts = selected_hosts(expr, family)
-                if hosts is None and family.startswith("node_"):
-                    hosts = node_exporter_hosts()
-                expectations.append((rule["uid"], family, hosts))
+                hosts, why = selected_hosts(expr, family), _BECAUSE_SELECTED
+                if hosts is None:
+                    # An unscoped `node_*` rule is fleet-wide: every host runs a node exporter, and a
+                    # host whose keep-list omits the family is structurally unable to fail the rule.
+                    # The topology comes from KEEP_REGEX_FILES, NEVER from the regexes it audits.
+                    if family.startswith("node_"):
+                        hosts, why = frozenset(KEEP_REGEX_FILES), _BECAUSE_FLEET_WIDE
+                    else:
+                        hosts, why = publishing_hosts(family), _BECAUSE_PUBLISHED
+                expectations.append((rule["uid"], family, hosts, why))
     return expectations
 
 
@@ -385,7 +438,7 @@ def test_every_alerted_family_is_admitted_where_its_rule_selects():
     that host can never match it. The rule stays green, the host stays invisible, and nothing
     distinguishes that from a healthy fleet."""
     keeps, problems = keep_regexes(), []
-    for uid, family, hosts in sorted(_admission_expectations()):
+    for uid, family, hosts, why in sorted(_admission_expectations()):
         if hosts is None:
             if not any(keep.match(family) for keep in keeps.values()):
                 problems.append(
@@ -394,12 +447,16 @@ def test_every_alerted_family_is_admitted_where_its_rule_selects():
                 )
             continue
         for host in sorted(hosts):
-            if not keeps[host].match(family):
-                scope = (
-                    f'selects host="{host}"' if len(hosts) < len(node_exporter_hosts()) else f"is fleet-wide, so it covers {host}"
-                )
+            if host not in keeps:
                 problems.append(
-                    f"    {family} on {host} -- rule {uid} {scope}, but {KEEP_REGEX_FILES[host].relative_to(REPO)}'s"
+                    f"    {family} on {host} -- rule {uid} {why}, but {host!r} is not in KEEP_REGEX_FILES, so"
+                    f" this file cannot say whether it admits the family. Add the host and its config.alloy,"
+                    f" or correct the matcher (`host` carries a MIRROR SIDE on some reconcile series)."
+                )
+                continue
+            if not keeps[host].match(family):
+                problems.append(
+                    f"    {family} on {host} -- rule {uid} {why}, but {KEEP_REGEX_FILES[host].relative_to(REPO)}'s"
                     f" keep-regex drops it: that host is structurally unable to fail this alert"
                 )
     assert not problems, (
@@ -484,15 +541,16 @@ def test_every_rule_points_at_a_real_panel_or_a_runbook():
 # --- the exclusions stay reviewed ------------------------------------------------------------------
 def test_the_not_charted_exclusions_stay_reviewed():
     """An exclusion outliving its subject excuses nothing while hiding the next real gap behind a
-    plausible-looking entry."""
+    plausible-looking entry -- and an exclusion that never had a subject is worse: it is a standing
+    pre-waiver, silently exempting the first rule anyone writes on that family."""
+    unneeded = sorted(set(NOT_CHARTED) - (set(alerted_families()) | set(published_app_families())))
+    assert not unneeded, (
+        f"NOT_CHARTED excuses families that no assertion asks for: {unneeded}. Nothing alerts on them"
+        f" and this repo does not publish them, so the entry waives a demand that does not exist --"
+        f" and would go on waiving it for a rule written years from now. Delete the entries."
+    )
     drawn = sorted(set(NOT_CHARTED) & set(panel_families()))
     assert not drawn, f"NOT_CHARTED excuses families that DO have a panel now: {drawn}. Delete the entries."
-    keeps = keep_regexes()
-    gone = sorted(f for f in NOT_CHARTED if not any(keep.match(f) for keep in keeps.values()))
-    assert not gone, (
-        f"NOT_CHARTED names families no host's keep-regex admits any more: {gone}. The fleet stopped"
-        f" shipping them (rename? removal?), so there is nothing left to excuse."
-    )
     unreasoned = sorted(f for f, why in NOT_CHARTED.items() if len(why.strip()) < 40)
     assert not unreasoned, f"NOT_CHARTED entries without a real reason: {unreasoned}"
 
