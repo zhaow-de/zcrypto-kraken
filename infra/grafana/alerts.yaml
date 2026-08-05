@@ -84,6 +84,9 @@ rules:
       summary: >-
         The Stage-6a clean-day streak went BACKWARDS — a clean run broke and the >=14-day gate clock
         has restarted. (The gate merely being not-MET while it accumulates is normal and no longer alerts.)
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "502"
+      unit: "days of streak change"
     labels:
       severity: warning
     notification_settings:
@@ -120,6 +123,9 @@ rules:
     for: 5m
     annotations:
       summary: "At least one replay mismatch/validation failure in the last 24h of journaled cycles."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "502"
+      unit: "mismatches in the last day"
     labels:
       severity: critical
     notification_settings:
@@ -161,6 +167,9 @@ rules:
     for: 5m
     annotations:
       summary: "The newest journaled cycle is more than 6h old -- the NAS journal pull is stuck or the VPS engine has stalled."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "503"
+      unit: "seconds of journal pull lag"
     labels:
       severity: critical
     notification_settings:
@@ -197,6 +206,9 @@ rules:
     for: 5m
     annotations:
       summary: "No successful `zcrypto engine gate-export` run in over 2h -- the NAS archive-pull loop or the gate-export step itself is broken."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "503"
+      unit: "seconds since the gate exporter last published"
     labels:
       severity: critical
     notification_settings:
@@ -252,6 +264,9 @@ rules:
     for: 15m
     annotations:
       summary: "The gate cache's oldest cycle has not been re-verified for over 3 days -- the rotating re-verification has stopped, so cached gate verdicts are being served against parquet bytes nobody has re-hashed. Check zcrypto_gate_cache_replayed (should be >0 every run) and the NAS disk."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "504"
+      unit: "seconds since the oldest cached cycle was re-verified"
     labels:
       severity: critical
     notification_settings:
@@ -316,6 +331,9 @@ rules:
         and re-read order placeability before the next go-live gate reads either of them. Read
         zcrypto_engine_sleeve_gross to see which sleeve moved.
         Runbook: infra/runbooks/README.md#zcrypto-engine-sleeve-count-changed
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "31"
+      unit: "changes to the active sleeve count in the last 26 hours"
     # Warning, not critical: this is an announcement, not a fault. Nothing is broken -- the book is
     # doing what it was built to do; what changed is the object the go-live gate is about to judge.
     labels:
@@ -377,6 +395,9 @@ rules:
         this host's telemetry plane is dark. Check `Fleet · Alloy dark — Capture primary` before
         assuming the engine, then the engine container on the capture primary and its newest cycle
         journal artifact for how far the last cycle got.
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "11"
+      unit: "seconds since the last completed cycle"
     labels:
       severity: critical
     notification_settings:
@@ -436,6 +457,8 @@ rules:
         cycle-staleness rule cannot see this: the metrics sink refreshes the completion timestamp after
         a FAILED cycle too. Read the engine log and the newest cycle journal artifact for which step
         failed.
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "12"
     labels:
       severity: warning
     notification_settings:
@@ -501,6 +524,9 @@ rules:
     for: 0s
     annotations:
       summary: "ERROR/CRITICAL log lines from the trading engine on the capture primary in the last 15 minutes -- the cycle rules see only a cycle's final outcome, so everything that goes wrong between boundaries (key or API failures, refresh errors, order-path exceptions) surfaces here first, on the host that holds the live trade key. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -539,6 +565,9 @@ rules:
     for: 5m
     annotations:
       summary: "/volume1 has less than 10% free space -- the archive keeps growing into it."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the volume still free (a fraction, not a percent)"
     labels:
       severity: warning
     notification_settings:
@@ -584,6 +613,9 @@ rules:
     for: 5m
     annotations:
       summary: "1-minute load average exceeds the NAS's 4 cores."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "201"
+      unit: "as a 1-minute load average"
     labels:
       severity: warning
     notification_settings:
@@ -648,6 +680,9 @@ rules:
     for: 0s
     annotations:
       summary: "ERROR-level log lines from the archive-pull container on the NAS in the last 15 minutes."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -732,6 +767,8 @@ rules:
     for: 0s
     annotations:
       summary: "The archive-pull container on the NAS has not reported a successful pull for 3h -- the loop, the container, the NAS, or the log pipeline is down. The L2 archive is unbackfillable; the NAS mirror is going stale."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -778,6 +815,9 @@ rules:
     for: 5m
     annotations:
       summary: "No successful `zcrypto archive reconcile` cycle in over 3h. The reconciler is the only thing that heals primary gaps from the secondary -- while it is down, gaps accumulate unhealed and unmeasured."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "201"
+      unit: "seconds since the reconciler last completed a run"
     labels:
       severity: critical
     notification_settings:
@@ -834,6 +874,9 @@ rules:
     for: 0s
     annotations:
       summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "202"
+      unit: "seconds of unrecoverable silence"
     labels:
       severity: critical
     notification_settings:
@@ -877,6 +920,9 @@ rules:
     for: 10m
     annotations:
       summary: "A capture mirror's newest committed final is over 3h old -- that host has stopped producing data, or its pull channel is broken. If it is the SECONDARY, the fleet has no witness and the next primary gap is permanent."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "201"
+      unit: "seconds of mirror lag"
     labels:
       severity: warning
     notification_settings:
@@ -933,6 +979,9 @@ rules:
     for: 30m
     annotations:
       summary: "The primary needed more than 10 minutes of healing in the last 24h. Every gap was covered, so nothing else fires -- but a host that needs this much healing is degrading. Check the reconcile ledger's would_mint/minted records for the pattern."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "202"
+      unit: "seconds of healable silence per live pair over the last day"
     labels:
       severity: warning
     notification_settings:
@@ -984,6 +1033,9 @@ rules:
     for: 5m
     annotations:
       summary: "No clean `zcrypto archive backfill-trades` run in over ~2 days -- the daily step has been failing every cycle or has stopped running."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the trade backfill last succeeded"
     labels:
       severity: critical
     notification_settings:
@@ -1026,6 +1078,8 @@ rules:
     for: 5m
     annotations:
       summary: "The daily trade-backfill run recorded a non-zero exit code (1 = errors recorded, 2 = primary root missing). It no longer retries hourly -- this alert is the only signal."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: critical
     notification_settings:
@@ -1085,6 +1139,9 @@ rules:
         The ops overlay-writer cycle (historical name: archive-pull) has not completed for 3h --
         the host, the timer, or Alloy is gone. Reconcile + trade-backfill are not running, and
         nothing else owns that silence (a gate-skip still bumps this metric, so this is not a skip).
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the archive pull last succeeded"
     labels:
       severity: critical
     notification_settings:
@@ -1128,6 +1185,8 @@ rules:
     for: 5m
     annotations:
       summary: "The last ops overlay-writer cycle (historical name: archive-pull) recorded a non-zero exit code -- the reconcile step failed (image/digest problem, dockerd down, a leftover zcrypto-reconcile container, or the reconciler itself erroring). Gate-skips and trade-backfill failures do NOT trip this rule."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: warning
     notification_settings:
@@ -1168,6 +1227,9 @@ rules:
     annotations:
       # 48h = two daily replay cycles; the invariant is D9 in the spec vocabulary.
       summary: "No successful verified-path journal replay in over 48h -- the daily replay has stopped running or has not succeeded in two cycles."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the verified replay last succeeded"
     labels:
       severity: warning
     notification_settings:
@@ -1208,6 +1270,8 @@ rules:
     for: 5m
     annotations:
       summary: "The last verified-path journal replay recorded a non-zero exit code -- a replay mismatch or validation failure against yesterday's journaled cycles."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: critical
     notification_settings:
@@ -1264,6 +1328,9 @@ rules:
         run's journal to see which hours, triage them, and record the finding durably: this alert
         ages out after 25h and is not itself a record.
         Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-new-breakage
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "304"
+      unit: "newly failed hours in the last 25 hours"
     labels:
       severity: critical
     notification_settings:
@@ -1313,6 +1380,8 @@ rules:
         unknown, not clean. Likely causes: the container crashed, or the read-only NAS mount
         returned an I/O error.
         Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-run-broken
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "301"
     labels:
       severity: critical
     notification_settings:
@@ -1397,6 +1466,9 @@ rules:
         queued for re-verification have not decreased across two nightly runs — the drain budget may
         be zero, the state directory lost, or the drain broken.
         Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-backlog-stuck
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "304"
+      unit: "hours still pending replay"
     labels:
       severity: warning
     notification_settings:
@@ -1435,6 +1507,8 @@ rules:
     for: 5m
     annotations:
       summary: "The last hourly panel materialize recorded a non-zero exit code -- the L2 panel is going stale (derived data; recomputable once the cause is fixed)."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "401"
     labels:
       severity: warning
     notification_settings:
@@ -1484,6 +1558,9 @@ rules:
     for: 5m
     annotations:
       summary: "1-minute load average on the ops node exceeds 20 of its 24 threads -- sustained saturation, not a transient burst."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "201"
+      unit: "as a 1-minute load average"
     labels:
       severity: warning
     notification_settings:
@@ -1584,6 +1661,9 @@ rules:
     for: 0s
     annotations:
       summary: "{{ if $labels.container }}ERROR/CRITICAL log lines from `{{ $labels.container }}` on the ops node in the last 15 minutes.{{ else }}ERROR/CRITICAL log lines from a container on the ops node in the last 15 minutes.{{ end }} One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here. For the liquidations poller this is the only error signal -- its failures flip no exit-code metric."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -1660,6 +1740,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy is quiet but never silent while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. The margin here is thin and deliberately so: a healthy 6h window measured 7 to 9 lines over 14 days, roughly 1.5 an hour, so read a low count on this stream as a signal to look rather than as headroom. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1723,6 +1805,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED log line from the liquidations poller (container=liquidations) on the ops node in 6h -- it direct-ships and runs continuously on a ~5-min cycle, so silence means its ship path is dead (the --ship-logs flag, its Loki credentials, or the container itself), not a quiet host."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1792,6 +1876,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one LEVEL-PARSED line from any of the four zcrypto-* ops units in 26h -- the four run on independent schedules (half-hourly/hourly/daily) so at least one always produces a leveled line inside that window while Alloy's zcrypto parse stage is intact; silence means that stage regressed (the line-shape regex, the container selector, or the label scheme) even though Alloy itself and its own logs (watched by `Ops · log pipeline dead`) stay healthy."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1867,6 +1953,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one journal-path log line from zcrypto-archive-pull on the ops node in 26h -- the hourly unit writes at least one line every run, so the journal transport (loki.source.journal) is dead: empty/volatile host journal, gid drift, or a stale keep regex. The four systemd units' logs -- including the reconcile skip-gate warning -- are invisible until this is fixed."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -1927,6 +2015,9 @@ rules:
     for: 5m
     annotations:
       summary: "A capture host's root filesystem (the unbackfillable L2 spool, /var/lib/zcrypto-capture) is below 10% free. Early warning -- the daemon's 1 GiB watermark + healthchecks dead-man are the last line. Check both prune timers (zcrypto-capture-prune for the spool, zcrypto-engine-journal-prune for the engine journal) and for an unexpected disk consumer."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the spool filesystem still free (a fraction, not a percent)"
     labels:
       severity: warning
     notification_settings:
@@ -1973,6 +2064,8 @@ rules:
     for: 15m
     annotations:
       summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in .claude/rules/capture-deploys.md."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "503"
     labels:
       severity: warning
     notification_settings:
@@ -2013,6 +2106,9 @@ rules:
     for: 20m
     annotations:
       summary: "A capture host has stopped publishing node_reboot_required entirely -- not stale, ABSENT. The attended-reboot safety net is down on at least one host: a pending kernel reboot would now go unseen. Check `systemctl status zcrypto-reboot-check.timer` on both hosts, then that the .prom exists in /var/lib/zcrypto-node-textfile and is mode 0644 (Alloy reads it as a non-root user)."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "503"
+      unit: "of the two capture machines still publishing the probe"
     labels:
       severity: warning
     notification_settings:
@@ -2053,6 +2149,8 @@ rules:
     for: 15m
     annotations:
       summary: "Alloy's textfile collector cannot read or parse a .prom on a capture host, so that timer's metrics are absent while everything else looks healthy. Most likely the file is mode 0600 (mktemp's default -- the publisher needs an explicit chmod 0644) or was written malformed. Check /var/lib/zcrypto-node-textfile on that host."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "502"
     labels:
       severity: warning
     notification_settings:
@@ -2092,6 +2190,9 @@ rules:
     for: 10m
     annotations:
       summary: "The pending-reboot probe on a capture host has not refreshed in over an hour (it runs every 15 min), so node_reboot_required is a frozen last-known value, not current state. A kernel reboot could be pending and unreported. Check `systemctl list-timers zcrypto-reboot-check.timer` on that host."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "501"
+      unit: "seconds since the reboot probe last wrote its file"
     labels:
       severity: warning
     notification_settings:
@@ -2131,6 +2232,9 @@ rules:
     for: 30m
     annotations:
       summary: "The engine journal prune has not refreshed its .prom in over 26h -- its last run is more than a day old, so the retention it reports is a frozen value. Check `systemctl list-timers zcrypto-engine-journal-prune.timer` and the unit's journal on the primary."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "501"
+      unit: "seconds since the daily timer last wrote its file"
     labels:
       severity: warning
     notification_settings:
@@ -2179,6 +2283,8 @@ rules:
     for: 5m
     annotations:
       summary: "A capture pair's order book has been desynced for 15 min straight (paged after 20 min: a 15m window plus a 5m hold) -- its single fire-and-forget resubscribe did not take, and the transition guard will not retry. That pair's L2 is not being captured, AND it silences this host's dead-man for all 12 pairs (is_healthy gates the ping), so hc.io is now saturated and will not page for anything else on this host. Fix: `docker restart zcrypto-capture` on the named host. The `pair` label names the stuck pair."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "101"
     labels:
       severity: warning
     notification_settings:
@@ -2230,6 +2336,9 @@ rules:
     for: 30m
     annotations:
       summary: "A capture host has resubscribed a book more than once in 24h. Post-2026-07-13 these should be rare genuine venue events, so a re-elevating rate suggests a regression or a pair flapping desync/heal. This counter has no pair label -- check zcrypto_capture_book_desynced by pair on that host to find which."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "103"
+      unit: "resubscribes in the last day"
     labels:
       severity: warning
     notification_settings:
@@ -2280,6 +2389,9 @@ rules:
     for: 30m
     annotations:
       summary: "A capture host's book resubscribe is failing: the venue rejected the frames, or the unsubscribe acks are not arriving. The desync recovery ladder depends on this leg -- while it fails, a desynced book cannot heal and the pair keeps writing from a stale state. Check the capture log for the pair and the venue reply."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "103"
+      unit: "failed resubscribes -- errors plus ack timeouts -- in the last day"
     labels:
       severity: warning
     notification_settings:
@@ -2347,6 +2459,9 @@ rules:
         gap counter stayed at 0.0, so nothing else saw it. L2 is unbackfillable and every second here is
         permanent loss: check the capture container on the named host and restart the daemon if the
         streams do not resume on their own.
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "102"
+      unit: "seconds since ANY book stream on that machine last delivered"
     labels:
       severity: critical
     notification_settings:
@@ -2412,6 +2527,9 @@ rules:
         the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
         healthy pair. The `pair` label names the stuck stream. Check whether that pair's resubscribe went
         through; restarting the capture daemon re-establishes every stream.
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "102"
+      unit: "seconds since that stream last delivered a book message"
     labels:
       severity: warning
     notification_settings:
@@ -2470,6 +2588,8 @@ rules:
     for: 0s
     annotations:
       summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so hc.io is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "108"
     labels:
       severity: critical
     notification_settings:
@@ -2510,6 +2630,9 @@ rules:
     for: 15m
     annotations:
       summary: "A capture host quarantined rows to .held in the last 6h -- rows arrived after their hour was finalized. Baseline is zero, so this is a real event: check for clock skew, a late-delivering stream, or a stalled writer on that host."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "105"
+      unit: "rows quarantined in the last 6 hours"
     labels:
       severity: warning
     notification_settings:
@@ -2550,6 +2673,9 @@ rules:
     for: 15m
     annotations:
       summary: "Log lines were dropped before reaching Loki in the last 6h. Baseline is zero. This matters beyond the lost lines: the Loki-based alert rules now reason over an incomplete stream, so their silence no longer means healthy. Check the shipper's backlog and the Loki push credentials on the named host."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "601"
+      unit: "log lines dropped in the last 6 hours"
     labels:
       severity: warning
     notification_settings:
@@ -2617,6 +2743,8 @@ rules:
     for: 5m
     annotations:
       summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online` -- the first time this fleet has seen it.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "108"
     labels:
       severity: warning
     notification_settings:
@@ -2664,6 +2792,9 @@ rules:
     for: 10m
     annotations:
       summary: "The log-shipping worker on the named host has not completed a cycle for over 15 minutes -- either it is stuck retrying a push it cannot complete, or the worker thread is wedged, so logs are queueing and every Loki-based alert on this host is now silent for the wrong reason. Look for a Loki endpoint that is unreachable or erroring, not for rejected credentials: a rejected push still completes a cycle and would leave this rule green, showing up instead as dropped log lines."
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "602"
+      unit: "seconds since the shipping worker last cycled"
     labels:
       severity: warning
     notification_settings:
@@ -2705,6 +2836,8 @@ rules:
     for: 15m
     annotations:
       summary: "A node-exporter collector is failing on this host, so its entire metric family is absent -- and rules keyed on those series evaluate NoData, which this fleet maps to OK. Any alert depending on them is silently disarmed right now. Check Alloy's logs on the named host for the failing collector."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "402"
     labels:
       severity: warning
     notification_settings:
@@ -2750,6 +2883,9 @@ rules:
     for: 10m
     annotations:
       summary: "1-minute load average per core on a capture host exceeds 1.5x its cores, sustained 10m -- runaway/thrashing, not the transient hourly pull (the capture daemon is light, ~0.1/core baseline)."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "201"
+      unit: "as a 1-minute load average per core"
     labels:
       severity: warning
     notification_settings:
@@ -2829,6 +2965,9 @@ rules:
     for: 0s
     annotations:
       summary: "ERROR/CRITICAL log lines from the capture daemon (container=capture) on a capture host in the last 15 minutes -- desync storms, ENOSPC, or reconnect failures on the unbackfillable stream. Zero is the healthy baseline. One alert instance per distinct line, and at most 5 of them -- a storm may carry more lines than are shown here."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "102"
+      unit: "ERROR or CRITICAL log lines in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -2899,6 +3038,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED capture-daemon log line (any level) from the capture PRIMARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -2946,6 +3087,8 @@ rules:
     for: 0s
     annotations:
       summary: "Not one PARSED capture-daemon log line (any level) from the capture SECONDARY in 6h -- the daemon emits ~35/hr, so its log plane is dead (the daemon's --ship-logs path down, its Loki credentials dead, or the container gone). The Capture · daemon ERROR logs rule is blind on this host until fixed."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
     labels:
       severity: critical
     notification_settings:
@@ -3016,6 +3159,8 @@ rules:
     for: 10m
     annotations:
       summary: "The NAS's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the gate metrics the Stage-6a soak verdict is read from and the NAS archive-pull's log stream (the reconciler is unaffected: its series publish from ops since 2026-07-16). Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
@@ -3064,6 +3209,8 @@ rules:
     for: 10m
     annotations:
       summary: "The ops node's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the panel/verify timer series, the liquidations poller signals, and the reconcile/trade-backfill exporter families — expect their exporter-stale rules to double-page alongside this one. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
@@ -3112,6 +3259,8 @@ rules:
     for: 10m
     annotations:
       summary: "The capture PRIMARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the unbackfillable L2 capture signals on the host that also runs the engine and holds the live trade key. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
@@ -3160,6 +3309,8 @@ rules:
     for: 10m
     annotations:
       summary: "The capture SECONDARY's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the redundant unbackfillable L2 capture signals. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. First checks: `docker ps` on the host, then `docker logs grafana-alloy`; a restart is the usual fix."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
@@ -3208,6 +3359,8 @@ rules:
     for: 10m
     annotations:
       summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the WireGuard tunnel handshake-age and edge TLS cert-expiry gauges alongside basic host metrics. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/README.md#zaccess-bridgehead-dark"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "101"
     labels:
       severity: critical
     notification_settings:
@@ -3257,6 +3410,9 @@ rules:
     for: 5m
     annotations:
       summary: "Either a healthchecks.io dead-man check is DOWN (value = how many), or the hc.io scrape itself went dark (value 999 — endpoint unreachable, read-only key revoked, or the ops Alloy scrape broken). hc.io's own notification may be the broken half — check https://healthchecks.io first, then the ops Alloy. The Grafana-down direction is covered by the zcrypto-grafana-watchdog check on hc.io, not this rule."
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "103"
+      unit: "checks down -- 999 means healthchecks.io itself is unreachable"
     labels:
       severity: critical
     notification_settings:
@@ -3303,6 +3459,9 @@ rules:
     for: 30m
     annotations:
       summary: "The bridgehead's root filesystem is below 15% free. On a 25 GB VPS running only Alloy, Caddy, and WireGuard, this is most likely accumulated logs or an ACME/cert-renewal artifact rather than data growth. Runbook: infra/runbooks/README.md#zaccess-disk-high"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the bridgehead root filesystem still free (a fraction, not a percent)"
     labels:
       severity: warning
     notification_settings:
@@ -3348,6 +3507,9 @@ rules:
     for: 10m
     annotations:
       summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "701"
+      unit: "seconds since the last WireGuard handshake"
     labels:
       severity: warning
     notification_settings:
@@ -3394,6 +3556,9 @@ rules:
     for: 1h
     annotations:
       summary: "{{ if $labels.target }}The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry.{{ else }}A tracked TLS certificate is under 14 days from expiry.{{ end }} Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "702"
+      unit: "seconds until that certificate expires"
     labels:
       severity: warning
     notification_settings:

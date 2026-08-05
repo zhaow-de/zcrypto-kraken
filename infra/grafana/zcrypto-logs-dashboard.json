@@ -74,7 +74,7 @@
       "id": 102,
       "type": "timeseries",
       "title": "Lines/min by level",
-      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the total stays flat is the other one — that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The three series on the right axis are the exact fifteen-minute counts the three error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All three fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS — the ops machine's own pull loop ships under a different name.",
+      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the total stays flat is the other one — that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The four series on the right axis are the exact fifteen-minute counts the four error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All four fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS — the ops machine's own pull loop ships under a different name.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -136,6 +136,17 @@
           "expr": "sum by (host) (count_over_time({container=\"archive-pull\", level=~\"ERROR|CRITICAL\"} [15m])) or on() vector(0)",
           "refId": "E",
           "legendFormat": "error window · archive-pull loop",
+          "queryType": "range",
+          "step": "5m"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"zcrypto\", container=\"engine\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
+          "refId": "F",
+          "legendFormat": "error window · trading engine {{msg}}",
           "queryType": "range",
           "step": "5m"
         }
@@ -247,6 +258,48 @@
             "matcher": {
               "id": "byFrameRefID",
               "options": "E"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "F"
             },
             "properties": [
               {
