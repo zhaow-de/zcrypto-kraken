@@ -69,9 +69,12 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     overrides = {"ops_panel_subdir": panel_subdir}
     if data_dir is not None:
         overrides["ops_data_dir"] = data_dir
-    for var, val in {**VARS, **overrides}.items():
-        text = text.replace("{{ %s }}" % var, val.format(data=data, nas=nas))
-    assert "{{" not in text, "unrendered template var left behind"
+    # Render through Jinja, the way Ansible does — NOT str.replace. The substitution harness this
+    # replaced could not see a Jinja syntax error, and one shipped: the template failed on its
+    # first real converge with every test here green.
+    values = {var: val.format(data=data, nas=nas) for var, val in {**VARS, **overrides}.items()}
+    text = ansible_render(text, **values)
+    assert "{{" not in text and "{%" not in text, "unrendered template syntax left behind"
     script = tmp_path / "zcrypto-panel-regenerate"
     script.write_text(text)
     script.chmod(0o755)
@@ -132,15 +135,33 @@ def test_eta_over_deadline_refuses_and_restarts_timer(tmp_path):
     assert calls(log) == [*STEP1, TIMER_RESTART]
 
 
-def test_boolean_override_refused(tmp_path):
+@pytest.mark.parametrize("boolish", ["true", "TRUE", "false", "1", "yes"])
+def test_boolean_override_refused(boolish, tmp_path):
+    # Parametrized because a single value pins only its own arm: dropping the false/1/yes clauses
+    # left the suite green (measured), so each refusal carries its own case.
     script, env, panel, log = render(tmp_path, STUB_DU_HUGE)
     r = subprocess.run(
-        ["setsid", str(script), "--override", "true"], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
+        ["setsid", str(script), "--override", boolish], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
     )
     assert r.returncode == 2
     assert panel.exists()
     # Argument validation precedes step 1: a refused override must not have disturbed the timer.
     assert calls(log) == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "expect_rc"),
+    [("12345678", 2), ("123456789", 3)],  # 8 chars refused; 9 accepted, so the run reaches the tty gate
+)
+def test_override_length_boundary_is_behavioural(reason, expect_rc, tmp_path):
+    # The 8/9 boundary was pinned only by a literal string match on the guard line, so an offset
+    # typo (:1, :9, :20) failed nothing but that assert. This runs the rendered script instead.
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    r = subprocess.run(
+        ["setsid", str(script), "--override", reason], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL
+    )
+    assert r.returncode == expect_rc
+    assert panel.exists()
 
 
 @pytest.mark.parametrize("failing", ["capture-segments", "capture-reconciled"])
@@ -296,3 +317,60 @@ def test_failed_rebuild_leaves_timer_stopped(tmp_path):
     seq = calls(log)
     assert "systemctl start zcrypto-panel-materialize.timer" not in seq  # stays stopped
     assert "investigate" in out
+
+
+# --- what the render path itself must guarantee ----------------------------------------------
+# Two defects shipped here, both invisible to the harness of their day. First: bash's string-length
+# expansion opens with a brace-hash pair, which Jinja reads as a comment tag — the template did not
+# render at all, caught only by a real converge, because the harness then rendered by str.replace.
+# Second: the raw-block fix rendered fine under a bare jinja2.Environment and installed BROKEN shell,
+# because Ansible sets trim_blocks=True and ate the newline after the closing tag. Hence the rule
+# these tests enforce: render through Ansible's own engine, then check the result is valid bash.
+
+
+def ansible_render(source, **values):
+    """Render through ANSIBLE's templar, not a bare jinja2.Environment.
+
+    Load-bearing distinction, learned twice on the same file: bare Jinja defaults to
+    trim_blocks=False while Ansible sets it True, so a template can render perfectly here and
+    still install broken shell on the host. Only the real engine settles it.
+    """
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.template import Templar, trust_as_template
+
+    return Templar(loader=DataLoader(), variables=values).template(trust_as_template(source))
+
+
+def test_template_renders_to_valid_shell_through_ansible():
+    """The ground truth this file exists to protect: what Ansible installs must be valid bash."""
+    rendered = ansible_render(
+        TEMPLATE.read_text(),
+        ops_data_dir="/var/lib/zcrypto-ops",
+        ops_panel_subdir="l2-panel",
+        ops_nas_mount="/mnt/zhao-crypto",
+        ops_capture_subdir="capture-segments",
+        ops_reconciled_subdir="capture-reconciled",
+    )
+    assert "{%" not in rendered and "{{" not in rendered
+    # the override length test must survive as its own statement, not welded to the next line
+    assert '[ -z "${override:8}" ]' in rendered
+    subprocess.run(["bash", "-n", "/dev/stdin"], input=rendered, text=True, check=True)
+
+
+def test_every_ansible_template_is_parseable_jinja():
+    """Repo-wide: a template that cannot parse never installs, whatever its tests say."""
+    jinja2 = pytest.importorskip("jinja2")
+    # Settings mirror Ansible's, though for PARSING they are inert: trim_blocks changes rendered
+    # whitespace, not what parses. This sweep therefore catches the comment-tag class only — the
+    # weld class needs a render, which tests/test_infra_shell_templates_render.py provides.
+    env = jinja2.Environment(trim_blocks=True, lstrip_blocks=False)
+    root = TEMPLATE.resolve().parent.parent.parent.parent  # infra/ansible
+    templates = sorted(root.rglob("*.j2"))
+    assert templates, "no templates found — the glob is wrong, not the tree"
+    broken = []
+    for path in templates:
+        try:
+            env.parse(path.read_text())
+        except jinja2.TemplateSyntaxError as exc:
+            broken.append(f"{path.relative_to(root)}:{exc.lineno}: {exc}")
+    assert not broken, "unparseable Jinja templates: " + "; ".join(broken)
