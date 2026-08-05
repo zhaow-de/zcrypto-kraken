@@ -51,8 +51,18 @@
 {{- end -}}
 
 {{ define "zcrypto.errctx" -}}
-{{- with .Labels.ref_id }}
-the query that failed is `{{ . }}` -- this is the rule's error state, not its condition
+{{/* Gates on .Annotations.Error, NOT .Labels.ref_id. Measured against the live stack 2026-08-05
+     by deliberately breaking a probe rule: Grafana delivers an execution failure as the
+     annotations `Error` and `grafana_state_reason`, and sets NO ref_id label -- so the previous
+     gate never fired and an errored rule rendered as an ordinary page. Every rule in this file
+     carries execErrState: Alerting, so that path is live for all of them. */}}
+{{- with .Annotations.Error }}
+
+:warning: *This is the rule's ERROR state, not its condition* -- the query did not run, so the
+value above means nothing. The condition may be fine. Grafana said:
+```
+{{ template "zcrypto.esc" (printf "%.300s" .) }}
+```
 {{- end }}
 {{- end -}}
 
