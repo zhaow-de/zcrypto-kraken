@@ -551,13 +551,11 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # real value lands, the comment and the entry are deleted together and the staleness test below is
 # what forces the second half.
 
-PROVISIONAL_THRESHOLDS = {
-    # 900 s is a starting bar of the same standing this file gives the reconciler's 600, not a
-    # measured one. Derive it from `max_over_time(zcrypto_capture_seconds_since_last_book_message
-    # [30d])` per pair per host, set it above the binding pair's natural maximum with the same ~2.4x
-    # margin the daemon's own 30 s constant uses, and move the summary's stated duration with it.
-    "zcrypto-capture-stream-silent",
-}
+# Empty by design. An entry here declares a threshold this file ships knowing it is provisional;
+# the paired staleness test refuses an entry whose rule no longer carries the marker, so a bar that
+# has been derived cannot leave its excuse behind. `zcrypto-capture-stream-silent` was the last
+# occupant and was derived from 30 days of live data on 2026-08-05.
+PROVISIONAL_THRESHOLDS: set[str] = set()
 
 _PROVISIONAL = "PROVISIONAL"
 
