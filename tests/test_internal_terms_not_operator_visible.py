@@ -210,6 +210,28 @@ def test_grafana_dashboard_text_carries_no_internal_vocabulary():
     assert not found, "\n".join(f"{f} {where} leaks {hits}" for f, where, hits in found)
 
 
+def _notification_templates() -> list[Path]:
+    """The Slack message bodies. A new operator-visible surface joins this list AND the test
+    together, per .claude/rules/operator-facing-text.md."""
+    out = sorted((REPO / "infra/grafana/notification-templates").glob("*.tmpl"))
+    assert out, "walked no notification templates — the glob is broken, not the templates clean"
+    return out
+
+
+@pytest.mark.parametrize("path", _notification_templates(), ids=lambda p: str(p.relative_to(REPO)))
+def test_notification_templates_carry_no_internal_vocabulary(path):
+    """The Slack notification body is the most operator-facing surface the fleet has: read on a
+    phone, in a channel, with nothing else open.
+
+    Every line is checked, `{{/* ... */}}` template comments included — unlike the `#` comments the
+    shell scan skips. A Go template comment can be inline and can span lines, so recognising one
+    costs more than it saves; and the template is written to carry no tokens anywhere, so a hit in a
+    comment is a token to move rather than a false positive.
+    """
+    found = [(i, line.strip()[:110], hits) for i, line in enumerate(path.read_text().splitlines(), 1) if (hits := _leaks(line))]
+    assert not found, "\n".join(f"{path.relative_to(REPO)}:{i} leaks {hits}: {txt!r}" for i, txt, hits in found)
+
+
 def test_every_dashboard_json_matches_the_push_script_glob():
     """grafana-push.sh iterates infra/grafana/*-dashboard.json. A board named otherwise is
     committed, passes every check, and is NEVER pushed -- silently absent from Grafana."""

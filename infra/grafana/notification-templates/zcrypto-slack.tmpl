@@ -1,0 +1,110 @@
+{{/* Slack notification templates for the metrics and logs receivers.                     */}}
+{{/* Slack mrkdwn is NOT Markdown: bold is *single-asterisk*, links are <url|label>, and   */}}
+{{/* & < > must be HTML-escaped in every human string -- inside code fences too. An        */}}
+{{/* attachment TITLE is not mrkdwn at all: emoji and plain text only there.               */}}
+
+{{/* ---------- shared partials ---------- */}}
+
+{{- define "zcrypto.esc" -}}
+{{ . | reReplaceAll "&" "&amp;" | reReplaceAll "<" "&lt;" | reReplaceAll ">" "&gt;" }}
+{{- end -}}
+
+{{- define "zcrypto.url" -}}
+{{ . | reReplaceAll "&" "&amp;" }}
+{{- end -}}
+
+{{/* The operator vocabulary for a host label. EVERY host render goes through this -- the  */}}
+{{/* title and the per-instance where-line -- because this message is read with nothing    */}}
+{{/* else open. The fall-through renders the raw label so a host the map does not know     */}}
+{{/* shows up visibly and correctably instead of vanishing.                                */}}
+{{- define "zcrypto.host" -}}
+  {{ if eq . "zcrypto" }}Capture primary
+  {{- else if eq . "zcrypto-red" }}Capture secondary
+  {{- else if eq . "ops" }}Ops
+  {{- else if eq . "nas" }}NAS
+  {{- else if eq . "zaccess" }}Edge
+  {{- else }}{{ template "zcrypto.esc" . }}{{ end }}
+{{- end -}}
+
+{{/* The else branch is reached by the rules that fire from an unlabelled `or on() vector(0)` */}}
+{{/* arm: at fire time those instances carry no labels at all, so a bare interpolation would  */}}
+{{/* render a blank where the operator expects a place.                                      */}}
+{{- define "zcrypto.where" -}}
+{{- if .Labels.host }}`host={{ template "zcrypto.host" .Labels.host }}`
+{{- else }}`no host label on this instance -- see the summary above`{{ end }}
+{{- range .Labels.SortedPairs }}
+{{- if and (ne .Name "alertname") (ne .Name "grafana_folder") (ne .Name "severity") (ne .Name "instance") (ne .Name "job") (ne .Name "host") (ne .Name "msg") (ne .Name "datasource_uid") (ne .Name "ref_id") }}  `{{ .Name }}={{ template "zcrypto.esc" .Value }}`{{ end }}
+{{- end }}
+{{- end -}}
+
+{{- define "zcrypto.value" -}}
+{{- range $k, $v := .Values }}
+{{- if eq $k "A" }}  measured {{ printf "%.4g" $v }}{{ with $.Annotations.unit }} {{ . }}{{ end }}{{ end }}
+{{- end }}
+{{- end -}}
+
+{{- define "zcrypto.link" -}}
+{{ if .PanelURL }}👉 <{{ template "zcrypto.url" .PanelURL }}|open the panel>
+{{- else if .DashboardURL }}👉 <{{ template "zcrypto.url" .DashboardURL }}|open the board> -- this rule names a board but no panel
+{{- else }}👉 <{{ template "zcrypto.url" .GeneratorURL }}|open the rule and its query> -- no dashboard panel is pinned on this rule
+{{- end }}
+{{- end -}}
+
+{{- define "zcrypto.errctx" -}}
+{{- with .Labels.ref_id }}
+the query that failed is `{{ . }}` -- this is the rule's error state, not its condition
+{{- end }}
+{{- end -}}
+
+{{- define "zcrypto.silence" -}}
+{{- with .SilenceURL }}<{{ template "zcrypto.url" . }}|silence this alert>{{ end -}}
+{{- end -}}
+
+{{/* ---------- metrics receiver ---------- */}}
+
+{{- define "zcrypto.slack.title.metrics" -}}
+{{ if eq .Status "resolved" }}✅ {{ else if eq .CommonLabels.severity "critical" }}🔴 CRITICAL · {{ else }}🟠 WARNING · {{ end }}{{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} · {{ template "zcrypto.host" . }}{{ end }}{{ if gt (len .Alerts.Firing) 1 }} ×{{ len .Alerts.Firing }}{{ end }}
+{{- end -}}
+
+{{- define "zcrypto.slack.body.metrics" -}}
+{{ with .CommonAnnotations.summary }}{{ template "zcrypto.esc" . }}
+{{ end }}
+{{- range $i, $a := .Alerts }}{{ if eq $i 0 }}{{ template "zcrypto.link" $a }}{{ template "zcrypto.errctx" $a }}{{ end }}{{ end }}
+{{- range $i, $a := .Alerts }}{{ if lt $i 6 }}
+• {{ template "zcrypto.where" $a }}{{ template "zcrypto.value" $a }}  · since {{ $a.StartsAt.UTC.Format "02 Jan 15:04 UTC" }}
+{{- end }}{{ end }}
+{{- if gt (len .Alerts) 6 }}
+• …{{ len .Alerts }} instances in total; the first 6 are shown.
+{{- end }}
+{{ range $i, $a := .Alerts }}{{ if eq $i 0 }}{{ template "zcrypto.silence" $a }}{{ end }}{{ end }}
+{{- end -}}
+
+{{/* ---------- logs receiver ---------- */}}
+
+{{- define "zcrypto.slack.title.logs" -}}
+{{ if eq .Status "resolved" }}✅ {{ else if eq .CommonLabels.severity "critical" }}🔴 CRITICAL · {{ else }}🟠 WARNING · {{ end }}{{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} · {{ template "zcrypto.host" . }}{{ end }}{{ if gt (len .Alerts.Firing) 1 }} · {{ len .Alerts.Firing }} distinct lines{{ end }}
+{{- end -}}
+
+{{- define "zcrypto.slack.body.logs" -}}
+{{ with .CommonAnnotations.summary }}{{ template "zcrypto.esc" . }}
+{{ end }}
+{{- range $i, $a := .Alerts }}{{ if eq $i 0 }}{{ template "zcrypto.link" $a }}{{ template "zcrypto.errctx" $a }}{{ end }}{{ end }}
+{{- range $i, $a := .Alerts }}{{ if lt $i 5 }}
+• {{ template "zcrypto.where" $a }}{{ template "zcrypto.value" $a }}
+{{- with $a.Labels.msg }}
+```
+{{ template "zcrypto.esc" . }}
+```
+{{- end }}
+{{- end }}{{ end }}
+{{- if gt (len .Alerts) 5 }}
+• …{{ len .Alerts }} distinct lines matched; the first 5 are shown.
+{{- end }}
+{{/* `not` rather than `eq ... ""`: a missing map key is an INVALID value, not the empty string,   */}}
+{{/* unless the renderer sets missingkey=zero -- and Go's `eq` answers false for an invalid       */}}
+{{/* operand without erroring, which would make this branch silently unreachable on exactly the   */}}
+{{/* unlabelled alerts it exists for. `not` reads an invalid value as false under either option.  */}}
+{{- range $i, $a := .Alerts }}{{ if and (eq $i 0) (not $a.Labels.msg) }}
+This rule counts matching lines rather than carrying them, so there is no log text to quote — open the board above for the window shown.
+{{- end }}{{ end }}
+{{- end -}}

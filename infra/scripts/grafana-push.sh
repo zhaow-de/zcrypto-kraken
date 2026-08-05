@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pushes the committed-as-code Grafana dashboard + alert rules (infra/grafana/) to the
+# Pushes the committed-as-code Grafana dashboards, notification templates + alert rules (infra/grafana/) to the
 # already-provisioned Grafana Cloud instance (spec 00049, Role B / Task 4). Idempotent: the
 # dashboard call always overwrites by its fixed uid (zcrypto-main); each alert rule upserts by
 # its own stable `uid` (GET to check whether it already exists, then POST to create or PUT to
@@ -85,6 +85,33 @@ print(json.dumps({"dashboard": d, "folderUid": os.environ["GRAFANA_ALERT_FOLDER_
     "${auth[@]}" -H "Content-Type: application/json" -d "${dashboard_payload}" >/dev/null
 done
 
+# --- Notification templates -----------------------------------------------------------------------
+# One provisioned template object per infra/grafana/notification-templates/*.tmpl, named after the
+# basename (the name is what the contact points' `{{ template "..." . }}` references resolve
+# against, so renaming a file is visible in the provisioning API). Deliberately OUTSIDE the
+# webhook-gated branch below, so a steady-state run with no webhook still ships template edits.
+#
+# ORDERING IS LOAD-BEARING: this runs BEFORE the contact points. A contact point whose
+# `{{ template }}` target does not exist renders an EMPTY body, Grafana accepts that without
+# complaint, and Slack then rejects the message.
+#
+# The read-back is the point: the API stores whatever it is given and never parses the Go template,
+# so a truncated or mis-escaped push is invisible until an alert renders blank on someone's phone.
+# Both $( ) substitutions strip trailing newlines, so the file's final newline is not a difference.
+for tmpl in "${root}"/infra/grafana/notification-templates/*.tmpl; do
+  [ -e "${tmpl}" ] || continue
+  tname="$(basename "${tmpl}" .tmpl)"
+  tmpl_payload=$(jq -n --arg name "${tname}" --rawfile template "${tmpl}" '{name: $name, template: $template}')
+  curl -fsS -X PUT "${GRAFANA_URL}/api/v1/provisioning/templates/${tname}" \
+    "${auth[@]}" -H "Content-Type: application/json" -H "X-Disable-Provenance: true" -d "${tmpl_payload}" >/dev/null
+  live_tmpl=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/templates/${tname}" | jq -r '.template')
+  if [ "${live_tmpl}" != "$(cat "${tmpl}")" ]; then
+    echo "grafana-push: notification template ${tname} did NOT read back byte-identical" >&2
+    exit 1
+  fi
+  echo "grafana-push: notification template ${tname} pushed and verified byte-identical" >&2
+done
+
 # --- Slack contact points: `metrics` + `logs` receivers (T0047; generalized 2026-07-16) -----------
 # Two receivers, both delivering to the SAME Slack webhook: `metrics` (resolve messages ON) is the
 # default + what every metrics rule pins via notification_settings; `logs` (resolve messages OFF --
@@ -106,11 +133,12 @@ if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
   echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set -- receivers metrics+logs already live, skipping Slack upserts" >&2
 else
   existing_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
-  upsert_slack_integration() { # uid receiver_name disable_resolve
-    local uid="$1" name="$2" disable="$3"
+  upsert_slack_integration() { # uid receiver_name disable_resolve title_tmpl body_tmpl
+    local uid="$1" name="$2" disable="$3" title="$4" text="$5"
     local payload
-    payload=$(jq -n --arg uid "${uid}" --arg name "${name}" --arg url "${GRAFANA_SLACK_WEBHOOK_URL}" --argjson disable "${disable}" \
-      '{uid: $uid, name: $name, type: "slack", settings: {url: $url}, disableResolveMessage: $disable}')
+    payload=$(jq -n --arg uid "${uid}" --arg name "${name}" --arg url "${GRAFANA_SLACK_WEBHOOK_URL}" \
+      --argjson disable "${disable}" --arg title "${title}" --arg text "${text}" \
+      '{uid: $uid, name: $name, type: "slack", settings: {url: $url, title: $title, text: $text}, disableResolveMessage: $disable}')
     if jq -e --arg uid "${uid}" 'any(.[]; .uid == $uid)' <<<"${existing_cps}" >/dev/null; then
       curl -fsS -X PUT "${GRAFANA_URL}/api/v1/provisioning/contact-points/${uid}" \
         "${auth[@]}" -H "Content-Type: application/json" -d "${payload}" >/dev/null
@@ -120,8 +148,12 @@ else
     fi
     echo "grafana-push: upserted Slack integration uid=${uid} receiver=${name} disableResolve=${disable}" >&2
   }
-  upsert_slack_integration "zcrypto-slack-metrics" "metrics" false
-  upsert_slack_integration "zcrypto-slack-logs" "logs" true
+  # SINGLE-quoted references, so `{{`, `}}` and the bare `.` reach jq untouched by bash. Without a
+  # title/text of their own both receivers fall back to Grafana's stock default.title/default.message.
+  upsert_slack_integration "zcrypto-slack-metrics" "metrics" false \
+    '{{ template "zcrypto.slack.title.metrics" . }}' '{{ template "zcrypto.slack.body.metrics" . }}'
+  upsert_slack_integration "zcrypto-slack-logs" "logs" true \
+    '{{ template "zcrypto.slack.title.logs" . }}' '{{ template "zcrypto.slack.body.logs" . }}'
 
   # Default route -> `metrics` (GET the tree, mutate only the receiver, PUT it back verbatim). The
   # tree may carry UI provenance, hence X-Disable-Provenance.
@@ -137,18 +169,24 @@ else
   # "email"). Deleted only AFTER the rules push below has repointed every rule, so it can never
   # strand a referenced receiver -- see the post-rules block.
 
-  # Read-back verify (T0034): both integrations present with the right name/type. Grafana redacts
-  # settings.url on read-back, so uid/name/type only.
+  # Read-back verify (T0034): both integrations present with the right name/type, and each still
+  # POINTING AT THE TEMPLATE. Grafana redacts settings.url on read-back, so the url itself cannot be
+  # checked -- but title/text are not secure fields and do read back, which is what catches a contact
+  # point reverted to the stock template. Without this the revert resurfaces weeks later as "the
+  # messages look like they used to" with nobody sure when. If a future Grafana starts redacting
+  # title/text too, drop to a presence-only assertion here rather than deleting the guard.
   live_cps=$(curl -fsS "${auth[@]}" "${GRAFANA_URL}/api/v1/provisioning/contact-points")
   for pair in "zcrypto-slack-metrics metrics" "zcrypto-slack-logs logs"; do
     uid="${pair%% *}"; name="${pair##* }"
     if ! jq -e --arg uid "${uid}" --arg name "${name}" \
-        'any(.[]; .uid == $uid and .type == "slack" and .name == $name)' <<<"${live_cps}" >/dev/null; then
-      echo "grafana-push: Slack integration verification FAILED for uid=${uid} name=${name}" >&2
+        'any(.[]; .uid == $uid and .type == "slack" and .name == $name
+             and ((.settings.title // "") | test("zcrypto\\.slack\\.title"))
+             and ((.settings.text // "") | test("zcrypto\\.slack\\.body")))' <<<"${live_cps}" >/dev/null; then
+      echo "grafana-push: Slack integration verification FAILED for uid=${uid} name=${name} -- absent, or no longer referencing the notification template" >&2
       exit 1
     fi
   done
-  echo "grafana-push: Slack receivers metrics+logs verified" >&2
+  echo "grafana-push: Slack receivers metrics+logs verified, both referencing the notification template" >&2
 fi
 
 echo "grafana-push: pushing alert rules"
