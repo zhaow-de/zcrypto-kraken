@@ -31,4 +31,4 @@ Two `increase()`-based alert rules read these counters: `Reconciler · residual 
 
 ## Suggested next steps
 
-- When the ledger grows large enough to matter (watch the cycle time), design rotation/compaction that preserves the summed totals — e.g. fold everything older than the retention horizon into a single opening `carried_forward` record so `_totals` stays exact while the scanned file stays bounded. Do NOT simply truncate: that would reset every counter.
+- When the ledger grows large enough to matter (watch `zcrypto_reconcile_ledger_records`, the frontmatter's trigger — there is no cycle-duration series to watch instead), design rotation/compaction that preserves the summed totals — e.g. fold everything older than the retention horizon into a single opening `carried_forward` record so `_totals` stays exact while the scanned file stays bounded. Do NOT simply truncate: that would reset every counter.
