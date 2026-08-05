@@ -715,6 +715,19 @@ Step 7 cannot run without this, and the engine role will refuse mechanically if 
 
 Precedent for the shape and timing: `fleet-pins.md`'s iter-119 row (`c7ed09020fe1` — red canary leg, bake, then the engine converge the following morning).
 
+- [ ] **Step 6c: Converge the ops node — WITHOUT THIS, the carried gauge never emits.**
+
+`zcrypto archive reconcile` runs on `zcrypto-ops` in the `ops_image_digest`-pinned image (the reconciler moved there at spec `00054`), so Task 1b's `zcrypto_reconcile_ledger_records` ships **only** via an ops converge. Omit this and the gauge sits in the repo, tested and reviewed, emitting nothing — discharging [[T0044]]'s carried rider on paper only, and leaving `Data integrity`'s "Gap totals" panel plotting a family nothing publishes, which renders empty and reads exactly like a quiet metric.
+
+No canary bake is owed here — the compute tier carries no trade key and no unbackfillable path — but its own discipline is not optional:
+
+1. **Pull the digest on the host first.** Every ops runner is `--pull never`; the role's preflight refuses a digest the host has not pulled.
+2. **Record it in `fleet-pins.md` before converging.** The pins assert refuses otherwise, and that row is the only rollback operand (`ops_image_digest` has no repo default). The current pin, `193d76be5275`, becomes `prior`.
+3. **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Use `infra/ansible/scripts/converge.sh`, which requires the limit and previews first.
+4. **`ops_image_digest` also re-pins the liquidations compose, which the role never restarts**, so it refuses without `-e liquidations_decision=roll-after|defer`. Prefer `roll-after`: the poller re-fetches a 30 h window each cycle, so a converge-length restart self-heals.
+5. **Omit `ops_alloy_digest`** — Alloy is not the subject here, and passing it the value of `ops_image_digest` is a live footgun this fleet has already armed once.
+6. **Verify by outcome**: `infra/scripts/ops-postverify.sh`, then read the gauge itself — `zcrypto_reconcile_ledger_records` must return a value, and `(no series)` is a FAIL, never a zero.
+
 - [ ] **Step 7: Converge the engine — the live trade host.** Full `capture-deploys.md` discipline: inside a 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), digest recorded in `docs/reference/fleet-pins.md` first, the secondary's capture bake as the canary gate, `--check --diff` preview from a tree whose rendered config matches the fleet. Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`, and `zcrypto_engine_cycle_duration_seconds` is **absent** until that cycle completes, then correct.
 
 - [ ] **Step 8: Owner steps** — delete the deprecated `zcrypto-main` board in the Grafana UI; confirm no saved silence was keyed on a retitled rule.
