@@ -5,46 +5,68 @@
   },
   "ADA": {
     "altname": "ADA",
+    "collateral_value": 0.925,
+    "margin_rate": "0.04",
     "status": "enabled"
   },
   "AVAX": {
     "altname": "AVAX",
+    "collateral_value": 0.9,
+    "margin_rate": "0.03",
     "status": "enabled"
   },
   "DOT": {
     "altname": "DOT",
+    "collateral_value": 0.925,
+    "margin_rate": "0.024",
     "status": "enabled"
   },
   "LINK": {
     "altname": "LINK",
+    "collateral_value": 0.9,
+    "margin_rate": "0.02",
     "status": "enabled"
   },
   "SOL": {
     "altname": "SOL",
+    "collateral_value": 0.925,
+    "margin_rate": "0.02",
     "status": "enabled"
   },
   "XETH": {
     "altname": "ETH",
+    "collateral_value": 0.99,
+    "margin_rate": "0.02",
     "status": "enabled"
   },
   "XLTC": {
     "altname": "LTC",
+    "collateral_value": 0.925,
+    "margin_rate": "0.02",
     "status": "enabled"
   },
   "XXBT": {
     "altname": "XBT",
+    "collateral_value": 0.99,
+    "margin_rate": "0.01",
     "status": "enabled"
   },
   "XXDG": {
     "altname": "XDG",
+    "collateral_value": 0.925,
+    "margin_rate": "0.02",
     "status": "enabled"
   },
   "XXRP": {
     "altname": "XRP",
+    "collateral_value": 0.95,
+    "margin_rate": "0.02",
     "status": "enabled"
   },
   "ZEUR": {
     "altname": "EUR",
+    "collateral_value": 1.0,
+    "margin_rate": "0.02",
     "status": "enabled"
   }
 }

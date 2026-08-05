@@ -10,7 +10,7 @@ _BASE_URL = "https://api.kraken.com/0/public/OHLC"
 _TIMEOUT_SECONDS = 15
 
 # The ten EUR-quoted assets of data/ohlc-full, transcribed from the snapshot register
-# (docs/research/01.1.kraken-snapshot-register.md) -- display asset -> Kraken pair key.
+# (docs/reference/kraken-snapshot-register.md) -- display asset -> Kraken pair key.
 PAIR_KEYS: dict[str, str] = {
     "BTC": "XXBTZEUR",
     "ETH": "XETHZEUR",
