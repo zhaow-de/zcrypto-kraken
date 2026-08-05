@@ -593,3 +593,57 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
         f" renamed (update this canary) or a discovery path broke -- in which case every family that"
         f" path used to find is now silently exempt from coverage."
     )
+
+
+# A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
+# applies to EVERY field in it -- so a date unit parked there is handed the label strings too,
+# cannot coerce them, and renders every label column as `NaN`. Number-family units (`short`,
+# `bytes`) pass a string through untouched, which is why only the date family is banned here:
+# the two `Host vitals` / `healthchecks.io` tables carry `short` over a string `Machine` column
+# and render correctly. The unit belongs on an override matched to the value column by the name
+# it carries AFTER `organize` renames it.
+_DATE_UNIT = re.compile(r"^(?:dateTime|time:)")
+
+
+def test_no_table_panel_parks_a_date_unit_in_its_defaults():
+    offenders = []
+    for filename, dash in dashboards():
+        for panel in _walk_panels(dash.get("panels") or []):
+            if panel.get("type") != "table":
+                continue
+            unit = ((panel.get("fieldConfig") or {}).get("defaults") or {}).get("unit") or ""
+            if _DATE_UNIT.match(unit):
+                offenders.append(f"{filename} #{panel.get('id')} {panel.get('title')!r} unit={unit!r}")
+    assert not offenders, (
+        f"a table panel parks a date unit in fieldConfig.defaults, so every string label column in it"
+        f" renders as NaN -- move the unit onto a byName override for the value column: {offenders}"
+    )
+
+
+# `merge` and `joinByField` combine one frame per series, and Grafana disambiguates the value
+# column of each by suffixing its refId -- the field is `Value #A`, never a bare `Value`. An
+# `organize` rename keyed on `Value` therefore matches nothing: the column keeps its raw name and
+# every override aimed at the renamed name misses too, so the value renders unformatted. This is
+# invisible on a panel that also parks a unit in `fieldConfig.defaults`, because the default hits
+# the value column anyway -- which is exactly how it survived review on the log table.
+_MERGING = frozenset({"merge", "joinByField"})
+
+
+def test_a_merged_table_renames_the_refid_suffixed_value_column():
+    offenders = []
+    for filename, dash in dashboards():
+        for panel in _walk_panels(dash.get("panels") or []):
+            if panel.get("type") != "table":
+                continue
+            transforms = panel.get("transformations") or []
+            if not any(t.get("id") in _MERGING for t in transforms):
+                continue
+            for t in transforms:
+                if t.get("id") != "organize":
+                    continue
+                if "Value" in ((t.get("options") or {}).get("renameByName") or {}):
+                    offenders.append(f"{filename} #{panel.get('id')} {panel.get('title')!r}")
+    assert not offenders, (
+        f"a merged/joined table renames a bare 'Value', but the field is 'Value #<refId>' -- the"
+        f" rename misses and the column renders raw and unnamed: {offenders}"
+    )

@@ -830,14 +830,13 @@
             "renameByName": {
               "host": "Machine",
               "container": "Stream",
-              "Value": "Last line seen"
+              "Value #A": "Last line seen"
             }
           }
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "dateTimeAsIso",
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -849,7 +848,20 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last line seen"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,
