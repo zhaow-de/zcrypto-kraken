@@ -2390,7 +2390,19 @@ rules:
             - evaluator: {type: gt, params: [0.5]}
     noDataState: OK
     execErrState: Alerting
-    for: 2m
+    # 0s, and it is arithmetic rather than impatience. The pending period is NOT free on this rule:
+    # the daemon re-checks the watermark every 30 s in-process
+    # (cli/capture/command.py's DISK_WATERMARK_INTERVAL_SECONDS) and Alloy scrapes the gauge every
+    # 60 s (infra/ansible/roles/capture/files/config.alloy), so a true breach is already up to 90 s
+    # old before its first `1` sample exists, before Grafana evaluates anything. `for: 2m` shipped
+    # first and added >=2 further minutes of GUARANTEED discard to every real page, on a stream that
+    # is unbackfillable -- and at one sample per minute the condition has to hold across enough
+    # consecutive scrapes to fill that window, so the rule was also blind to any breach shorter than
+    # roughly 3 min. A breach that clears first is not a non-event: it dropped every message it
+    # lasted, and the only thing that would have spoken is the dead-man saying "this host went
+    # quiet". Nothing false-fires at 0s: the collector publishes the gauge straight off
+    # `watermark.breached`, so a `1` sample means the handlers are ALREADY dropping messages.
+    for: 0s
     annotations:
       summary: "CAPTURE IS DISCARDING DATA on this host: the disk watermark is breached, so the book and trade handlers drop every incoming message instead of writing it, and L2 is unbackfillable. This also withholds the dead-man ping, so hc.io is saturated and will not page for anything else here. Free space on the capture spool NOW -- check both prune timers and for an unexpected consumer."
     labels:
