@@ -44,7 +44,7 @@
       "id": 11,
       "type": "stat",
       "title": "Last cycle age",
-      "description": "How long since the trading engine last completed a cycle — the single glance that says whether the four-hourly loop is still turning. Pages above 16500 s (4h35m) after `for: 5m`, and the line drawn here is that alert's own bar. A healthy cycle completes within 30 minutes of its boundary, so the worst legitimate age is 4h30m — reached just before the next cycle lands — and the bar sits five minutes past it; anything above the line is a stopped or crash-looping engine, not a slow one. **This is the one rule on this board that also pages on ABSENCE**: the gauge is seeded at engine start from the newest journal artifact, so it is never legitimately missing while the engine runs, and a vanished series means the engine itself is gone. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "description": "How long since the trading engine last completed a cycle — the single glance that says whether the four-hourly loop is still turning. Pages above 16500 s (4h35m) after `for: 5m`, and the line drawn here is that alert's own bar. A healthy cycle completes within 30 minutes of its boundary, so the worst legitimate age is 4h30m — reached just before the next cycle lands — and the bar sits five minutes past it; anything above the line is a stopped or crash-looping engine, not a slow one. **This is the one rule on this board that also pages on ABSENCE**: the gauge is seeded at engine start from the newest journal artifact, so it is never legitimately missing while the engine runs, and a vanished series means the engine itself is gone. The tile therefore reads NO CYCLE DATA **in red** when the series disappears — unlike the outcome reading beside it, absence here is a fault and not a value the engine is declining to publish. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -75,15 +75,20 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
               },
               {
                 "color": "red",
                 "value": 16500
               }
             ]
-          }
+          },
+          "noValue": "NO CYCLE DATA"
         },
         "overrides": []
       },
@@ -431,7 +436,7 @@
           },
           "expr": "increase(zcrypto_engine_orders_total{host=~\"$host\"}[24h])",
           "refId": "A",
-          "legendFormat": "intended orders (24h)",
+          "legendFormat": "{{host}} · intended orders (24h)",
           "instant": true
         },
         {
@@ -441,7 +446,7 @@
           },
           "expr": "increase(zcrypto_engine_order_notional_eur{host=~\"$host\"}[24h])",
           "refId": "B",
-          "legendFormat": "intended notional (24h)",
+          "legendFormat": "{{host}} · intended notional (24h)",
           "instant": true
         }
       ],
@@ -457,9 +462,22 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "No data"
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byFrameRefID",
@@ -757,7 +775,8 @@
                 "value": null
               }
             ]
-          }
+          },
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -811,7 +830,7 @@
           },
           "expr": "changes(zcrypto_engine_active_sleeves[26h])",
           "refId": "A",
-          "legendFormat": "composition changes, 26h"
+          "legendFormat": "{{host}} · composition changes, 26h"
         },
         {
           "datasource": {
