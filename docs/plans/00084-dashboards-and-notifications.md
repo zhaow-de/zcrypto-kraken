@@ -673,6 +673,8 @@ git commit -m "feat(grafana): dense slack notification templates for both receiv
 
 `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host. Set Task 4's provisional `900` above the binding pair's natural maximum, with the ~2.4× margin the daemon's own 30 s constant uses. **Then edit the rule and commit** — the provisional value must not reach the push.
 
+**FOUR surfaces move together, not three.** The rule's own comment lists three (the evaluator, the `for`, and the summary's stated notice period) — it was written before the boards existed. The fourth is **`data-integrity-dashboard.json` panel 102**, which hardcodes `900` in both its threshold step and its description. Miss it and the panel draws a line the page no longer fires at, on the unbackfillable capture path — the exact panel-disagrees-with-page failure P1 and P2 exist to kill. All four land in the same commit.
+
 - [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`, with **`GRAFANA_SLACK_WEBHOOK_URL` exported from the vault**. No host contact. Without it the script takes its webhook-less branch: the template object ships, the receiver wiring is silently skipped with a friendly "receivers already live" message, and every notification keeps the stock rendering — first visible at Step 5 as a baffling symptom. Verify by read-back that all four boards and all **62** rules are live (58 today + Task 4's four; transiently 63 while Step 5's probe rule exists).
 
 - [ ] **Step 4: Verify the first sample by VALUE, not presence** — read the new engine and capture liveness rules' current values. A rule born into an already-faulted condition bakes that into its baseline and never fires; triage a nonzero as the page it would have been.
