@@ -1450,12 +1450,28 @@ rules:
       # (`alloy-alloy`, `zcrypto-ops-liquidations`, docker's random names) from the retired
       # docker-socket path; none has produced a line in 7d and the enumeration deliberately omits them.
       #
-      # `label_format msg=` hoists the log LINE into a label, which is the whole reason a log alert
-      # exists -- without it the page says "7" and the responder goes hunting. `__line__` inside
-      # `label_format` was CONFIRMED against live Loki before this shipped (it is documented for
-      # `line_format`); `printf "%.200s"` bounds one line, and `topk(5, ...)` bounds how many. topk is
-      # NOT optional: without it a log storm mints one alert instance per distinct line and blows past
-      # Slack's message-length limit.
+      # The `msg` label hoists the log MESSAGE onto the page, which is the whole reason a log alert
+      # exists -- without it the page says "7" and the responder goes hunting. `printf "%.200s"`
+      # bounds one message and `topk(5, ...)` bounds how many; topk is NOT optional, since without it
+      # a log storm mints one alert instance per distinct line and blows past Slack's length limit.
+      #
+      # Two stages stand between the line and the label, and both are load-bearing:
+      #
+      #   `| json message="message"` -- NOT a bare `__line__`. This selector spans both line shapes on
+      #   this host: the liquidations poller direct-ships a JSON BODY (cli/logging/ship.py's
+      #   JsonLineFormatter: ts/level/logger/file/line/message), while the journal units arrive already
+      #   flattened by Alloy's parse stage. Reading `__line__` raw spends ~150 of the 200 characters on
+      #   the JSON preamble and truncates the message mid-sentence -- a page that LOOKS like it answered
+      #   the question. Measured, not theorised. The `{{ if .message }}` fallback keeps the raw line for
+      #   the already-flat streams, so one expression serves both shapes.
+      #
+      #   `| drop __error__, __error_details__` -- required, and do not simplify it away. `| json` stamps
+      #   `__error__="JSONParserErr"` on every non-JSON line, and the query then fails with HTTP 400 the
+      #   moment one journal-unit line enters the pipeline; the whole rule goes to execErrState. Clearing
+      #   the label instead is impossible -- Loki rejects `label_format __error__=...` with "__error__
+      #   cannot be formatted" -- and `| __error__=""` would DROP the journal units rather than admit
+      #   them. `drop` is the only stage that keeps both shapes. All three behaviours confirmed against
+      #   live Loki before this shipped.
       #
       # The `level` label reaches this rule via TWO independent paths (00068 T6/T7/T8 review): the
       # four zcrypto-* units and Alloy's own logs get it from config.alloy's parse stages at ingest;
@@ -1472,7 +1488,7 @@ rules:
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            topk(5, sum by (host, container, level, msg) (count_over_time({host="ops", container=~"alloy|liquidations|zcrypto-.*", level=~"ERROR|CRITICAL"} | label_format msg=`{{ printf "%.200s" __line__ }}` [15m]))) or on() vector(0)
+            topk(5, sum by (host, container, level, msg) (count_over_time({host="ops", container=~"alloy|liquidations|zcrypto-.*", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
           queryType: instant
           refId: A
       # Reduce A to a single value before the threshold -- same belt-and-braces A -> B(reduce) ->
@@ -1578,7 +1594,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy emits its own logfmt output continuously while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
+      summary: "Not one PARSED Alloy log line (any level label) from the ops node in 6h -- Alloy is quiet but never silent while alive, so this means Alloy itself is dead, its parse stage has regressed to level=-, or it cannot reach Loki. The margin here is thin and deliberately so: a healthy 6h window measured 7 to 9 lines over 14 days, roughly 1.5 an hour, so read a low count on this stream as a signal to look rather than as headroom. Scoped to Alloy only: the liquidations poller direct-ships and is watched separately (`Ops · poller log pipeline dead`), and the four zcrypto-* units' own level-parse health is watched separately too (`Ops · unit log parse dead`)."
     labels:
       severity: critical
     notification_settings:
@@ -2682,19 +2698,32 @@ rules:
       # explicit 0. This rule fires on the COUNT arm only (the vector(0) fallback is 0, which fails
       # `gt 0`), so unlike the two dead-men below its labels are genuinely populated when it pages.
       #
-      # `label_format msg=` hoists the log LINE into a label -- the whole reason a log alert exists;
+      # The `msg` label hoists the log MESSAGE onto the page -- the whole reason a log alert exists;
       # without it the page says "3" and the responder goes hunting on the unbackfillable stream.
-      # `__line__` inside `label_format` was CONFIRMED against live Loki before this shipped (it is
-      # documented for `line_format`); `printf "%.200s"` bounds one line, and `topk(5, ...)` bounds how
-      # many. topk is NOT optional: a desync storm emits one distinct line per pair per event, and
-      # without the bound each mints its own alert instance and blows past Slack's length limit.
+      # `printf "%.200s"` bounds one message and `topk(5, ...)` bounds how many; topk is NOT optional,
+      # because a desync storm emits one distinct line per pair per event and without the bound each
+      # mints its own alert instance and blows past Slack's length limit.
+      #
+      # `| json message="message"` and NOT a bare `__line__`: this daemon direct-ships a JSON BODY
+      # (cli/logging/ship.py's JsonLineFormatter -- ts/level/logger/file/line/message), so the raw line
+      # spends ~150 of the 200 characters on the JSON preamble and truncates the message mid-sentence.
+      # A page carrying metadata and no message is worse than one carrying no line at all: it LOOKS
+      # like it answered the question. Measured against live Loki, not theorised.
+      #
+      # `| drop __error__, __error_details__` is required even though EVERY line on this selector is
+      # JSON today, and it must not be simplified away: `| json` stamps `__error__="JSONParserErr"` on
+      # any line it cannot parse and the query then fails with HTTP 400 -- one unparseable line takes
+      # the whole rule to execErrState. Clearing the label instead is impossible (Loki rejects
+      # `label_format __error__=...` outright) and `| __error__=""` would silently DROP the offending
+      # lines, which on this rule are exactly the ones worth seeing. The `{{ if .message }}` fallback
+      # is the same insurance one stage later. Sibling `Ops · ERROR logs` needs both for a live reason.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
         datasourceUid: "${GRAFANA_LOKI_DS_UID}"
         model:
           expr: >-
-            topk(5, sum by (host, container, level, msg) (count_over_time({host=~"zcrypto|zcrypto-red", container="capture", level=~"ERROR|CRITICAL"} | label_format msg=`{{ printf "%.200s" __line__ }}` [15m]))) or on() vector(0)
+            topk(5, sum by (host, container, level, msg) (count_over_time({host=~"zcrypto|zcrypto-red", container="capture", level=~"ERROR|CRITICAL"} | json message="message" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf "%.200s" .message }}{{ else }}{{ printf "%.200s" __line__ }}{{ end }}` [15m]))) or on() vector(0)
           queryType: instant
           refId: A
       - refId: B
