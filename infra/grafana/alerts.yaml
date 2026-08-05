@@ -2266,7 +2266,12 @@ rules:
             # `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host
             # and set it above the binding pair's natural maximum with the same ~2.4x margin the
             # daemon's own 30 s constant uses -- then update the summary's stated duration with it,
-            # since the two must move together.
+            # since the two must move together. THREE things move, not two: the summary's duration is
+            # the NOTICE PERIOD, which is `bar + up to 60 s of scrape granularity + for + the group's
+            # eval interval`, not the bar. Today's reads "over 15 minutes" against a bar of 900 and a
+            # `for` of 10m, so the real floor is ~25 min -- the same understatement the all-streams
+            # rule above carried until its arithmetic was measured. `zcrypto-logship-worker-stalled`
+            # is the idiom to copy: 300 s bar + 10m pending, summary says 15 minutes.
             - evaluator: {type: gt, params: [900]}
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
