@@ -593,3 +593,27 @@ def test_the_provisional_register_has_not_gone_stale():
         f"registered as provisional but the rule no longer says so: {sorted(discharged)}. If the "
         f"threshold was derived, delete the entry in the same change."
     )
+
+
+# --- Grafana's template parser is stricter than Go's ------------------------------------------
+# A leading trim marker on a define declaration -- `{{- define "x" ... }}` -- parses fine in Go's
+# own text/template and renders identically, but Grafana's provisioning API REJECTS it with
+# `invalid template: unexpected <define> in command` and the whole push aborts under
+# `set -euo pipefail`. Measured against the live API 2026-08-05, by probe: `{{ define` -> 202,
+# `{{- define` -> 400, with trim markers everywhere else (`-}}`, `{{- end`, `{{- template`)
+# accepted. So the trailing `-}}` that trims the define's BODY stays; only the leading one goes.
+# A Go-based test cannot catch this -- Go accepts what Grafana refuses -- which is why it is here.
+NOTIFICATION_TEMPLATES = sorted((REPO / "infra/grafana/notification-templates").glob("*.tmpl"))
+
+
+@pytest.mark.parametrize("path", NOTIFICATION_TEMPLATES, ids=lambda p: p.name)
+def test_no_define_carries_a_leading_trim_marker(path):
+    offenders = [
+        f"{path.name}:{i}: {line.strip()[:70]}"
+        for i, line in enumerate(path.read_text().splitlines(), 1)
+        if re.search(r"\{\{-\s*define\s", line)
+    ]
+    assert not offenders, (
+        "Grafana's provisioning API rejects a define whose action opens with a trim marker, and the "
+        "push aborts before any rule ships. Drop the leading `-` (keep the trailing `-}}`):\n  " + "\n  ".join(offenders)
+    )
