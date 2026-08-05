@@ -100,10 +100,13 @@ the query that failed is `{{ . }}` -- this is the rule's error state, not its co
 {{- if gt (len .Alerts) 5 }}
 • …{{ len .Alerts }} distinct lines matched; the first 5 are shown.
 {{- end }}
-{{/* `not` rather than `eq ... ""`: a missing map key is an INVALID value, not the empty string,   */}}
-{{/* unless the renderer sets missingkey=zero -- and Go's `eq` answers false for an invalid       */}}
-{{/* operand without erroring, which would make this branch silently unreachable on exactly the   */}}
-{{/* unlabelled alerts it exists for. `not` reads an invalid value as false under either option.  */}}
+{{- /* This block is INSIDE a define, so every newline BETWEEN these comment tags is literal text  */}}
+{{- /* in the rendered message -- hence the leading trim marker on each one. A comment between    */}}
+{{- /* defines needs none; one inside a define always does.                                       */}}
+{{- /* `not` rather than `eq ... ""`: a missing map key is an INVALID value, not the empty string, */}}
+{{- /* unless the renderer sets missingkey=zero -- and Go's `eq` answers false for an invalid      */}}
+{{- /* operand without erroring, which would make this branch silently unreachable on exactly the  */}}
+{{- /* unlabelled alerts it exists for. `not` reads an invalid value as false under either option. */}}
 {{- range $i, $a := .Alerts }}{{ if and (eq $i 0) (not $a.Labels.msg) }}
 This rule counts matching lines rather than carrying them, so there is no log text to quote — open the board above for the window shown.
 {{- end }}{{ end }}

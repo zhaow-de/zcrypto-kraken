@@ -129,6 +129,20 @@ if [ -z "${GRAFANA_SLACK_WEBHOOK_URL:-}" ]; then
       echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set and receiver '${name}' does not exist on the stack -- set the webhook so the metrics/logs receivers can be minted before the rules push" >&2
       exit 1
     fi
+    # The template-reference half of the read-back verify below, repeated HERE deliberately: that
+    # one lives inside the webhook branch, so a contact point reverted to the stock template in the
+    # UI would survive every webhook-less steady-state run undetected -- the exact "the messages
+    # look like they used to, nobody knows since when" failure the check exists to catch. The
+    # predicate needs no webhook: it compares against the template names, not the url. Restoring the
+    # reference DOES need one (the upsert rewrites the whole integration), hence an instruction
+    # rather than a repair.
+    if ! jq -e --arg name "${name}" \
+        'any(.[]; .name == $name
+             and ((.settings.title // "") | test("zcrypto\\.slack\\.title"))
+             and ((.settings.text // "") | test("zcrypto\\.slack\\.body")))' <<<"${preexisting_cps}" >/dev/null; then
+      echo "grafana-push: receiver '${name}' is live but no longer references the notification template -- it is rendering Grafana's stock message; re-run with GRAFANA_SLACK_WEBHOOK_URL set to restore the reference" >&2
+      exit 1
+    fi
   done
   echo "grafana-push: GRAFANA_SLACK_WEBHOOK_URL not set -- receivers metrics+logs already live, skipping Slack upserts" >&2
 else

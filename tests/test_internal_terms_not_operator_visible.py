@@ -41,6 +41,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -237,6 +238,32 @@ def test_every_dashboard_json_matches_the_push_script_glob():
     committed, passes every check, and is NEVER pushed -- silently absent from Grafana."""
     strays = [p.name for p in sorted((REPO / "infra/grafana").glob("*.json")) if not p.name.endswith("-dashboard.json")]
     assert not strays, f"these .json files will never be pushed by grafana-push.sh: {strays}"
+
+
+def test_every_notification_template_matches_the_push_script_glob():
+    """The same trap as the dashboard glob above, one turn worse.
+
+    A board named outside the push glob is merely absent from Grafana. A notification template
+    renamed outside it leaves the OLD template object live on the stack, still referenced by both
+    contact points and still rendering every alert the fleet sends — while the file the repo now
+    edits is never pushed. Nothing anywhere reports the divergence.
+
+    The pattern is READ OUT of the script rather than restated here: a guard that hardcodes its own
+    copy of the thing it audits drifts silently the moment the script's glob changes.
+    """
+    m = re.search(
+        r"for tmpl in \"\$\{root\}\"/infra/grafana/notification-templates/(\S+); do",
+        (REPO / "infra/scripts/grafana-push.sh").read_text(),
+    )
+    assert m, "found no notification-template loop in grafana-push.sh — the guard is broken, not the tree clean"
+    pattern = m.group(1)
+    files = sorted(p for p in (REPO / "infra/grafana/notification-templates").iterdir() if p.is_file())
+    assert files, "walked no notification templates — the glob is broken, not the tree clean"
+    strays = [p.name for p in files if not fnmatch(p.name, pattern)]
+    assert not strays, (
+        f"these files will never be pushed by grafana-push.sh (it iterates {pattern!r}), while the object "
+        f"they used to push stays live in Grafana rendering every notification: {strays}"
+    )
 
 
 def test_compose_interpolation_errors_carry_no_internal_vocabulary():
