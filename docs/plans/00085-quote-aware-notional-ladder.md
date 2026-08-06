@@ -579,9 +579,11 @@ git commit -m "feat(costs): commit the spread calibration query as runnable code
 
 The pins assert refuses otherwise, and that row is the only rollback operand.
 
-- [ ] **Step 2: Build the ops image from this branch's HEAD; pull it on `zcrypto-ops`**
+- [ ] **Step 2: Build the ops image from this branch's HEAD — which MUST already include Task 4 — and pull it on `zcrypto-ops`**
 
-Not "the merge commit" — Task 8 forbids opening the PR without the owner's word, so no merge commit exists yet.
+Not "the merge commit": Task 8 forbids opening the PR without the owner's word, so none exists yet.
+
+**The Task 4 requirement is a hard gate, reproduced end to end during review.** Before Task 4, `_check_generation` still compares hours against `PANEL_QUOTE`, so a sweep writes `ETH/BTC` hours and the *next* `_check_generation` refuses on the same tree with the same code — telling the operator to delete hours on BOTH this host and the NAS. An image built from any pre-Task-4 commit puts the production tree one CLI run away from that state. Confirm `cli/panel/command.py` compares ladder membership, not `PANEL_QUOTE`, in the image you are about to ship.
 
 Every runner is `--pull never`; the role's digest preflight refuses a digest the host has not pulled.
 
