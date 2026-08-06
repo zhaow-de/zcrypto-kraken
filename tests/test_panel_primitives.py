@@ -54,6 +54,19 @@ def test_notionals_eur():
     assert NOTIONALS_EUR == (100.0, 1_000.0, 10_000.0)
 
 
+def test_btc_eur_reference_is_pinned_to_the_measured_value():
+    """A literal pin, not a derived/approx check -- `BTC_EUR_REFERENCE` is a MEASUREMENT, not a
+    formula, so nothing else in the suite can catch a wrong value (the per-quote ladder test only
+    restates `eur_rung / BTC_EUR_REFERENCE`, which passes identically whatever the constant is).
+
+    Provenance: mean `mid` over BTC/EUR panel-1s across `BTC_EUR_REFERENCE_WINDOW`, 1,180,800 rows =
+    exactly 328 contiguous hours, no gaps, measured 2026-08-06 (spec 00085 D1 Task 1 Step 0).
+    """
+    from cli.panel.primitives import BTC_EUR_REFERENCE
+
+    assert BTC_EUR_REFERENCE == 55876.28413495087
+
+
 # --- the per-quote ladder (spec 00085 D1) ------------------------------------------------------------
 
 
@@ -248,5 +261,5 @@ def test_sample_row_fills_a_btc_quoted_book_that_eur_rungs_could_never_fill():
 
 
 def test_sample_row_requires_the_quote_explicitly():
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="quote"):
         sample_row({Decimal("1"): Decimal("1")}, {Decimal("2"): Decimal("1")}, updates=1)  # type: ignore[call-arg]

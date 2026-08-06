@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -471,6 +472,24 @@ def test_pairs_out_of_scope_counts_distinct_pairs_not_hours(tmp_path: Path) -> N
     assert result.pairs_out_of_scope == 1  # one PAIR, not three hours
     assert result.hours_written == 0
     assert not (panel_root / "ETH" / "USD").exists()
+
+
+def test_the_out_of_scope_log_line_is_deduped_per_pair_not_per_hour(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The counter dedup above is not the only thing the `skipped_pairs` set buys: it also gates the
+    LOG line. A pair with hundreds of captured hours must ship ONE INFO line to Loki, not one per
+    hour -- asserting only `pairs_out_of_scope` would pass even with the set kept but the log call
+    moved outside the `if seg_pair not in skipped_pairs` guard."""
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    for offset in range(3):
+        h = hour + timedelta(hours=offset)
+        _book(capture_root, "ETH/USD", h, _explode("ETH/USD", h, _messages()))
+
+    with caplog.at_level(logging.INFO, logger="zcrypto.panel.materialize"):
+        materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    skip_lines = [r for r in caplog.records if "ETH/USD" in r.message]
+    assert len(skip_lines) == 1, [r.message for r in skip_lines]
 
 
 # --- write_meta: the generation manifest ------------------------------------------------------------

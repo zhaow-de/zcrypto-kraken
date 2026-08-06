@@ -19,25 +19,37 @@ from cli.panel.errors import PanelError  # errors.py imports nothing, so this is
 # null before this.
 NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
 # The ladder walks `price * qty`, which is denominated in the pair's QUOTE currency -- so these are
-# EUR notionals only for EUR-quoted pairs. The panel is scoped to those (T0092). On a BTC-quoted
-# pair the rungs read as 100/1k/10k BTC: at the 2026-03-31 BTC/EUR close (EUR 58,968.90) the @100
-# rung alone asks EUR 5.9 M, which is ~10x ETH/BTC's and ~25x SOL/BTC's ENTIRE daily volume, so
-# `_fill_bps` returns None on insufficient depth and all six `fill_bps_*` columns go null. The harm
-# is therefore a dead EUR-labelled ladder and an out-of-scope tree, not a wrong number -- which is
-# still worth excluding, and is why the calibration reads `<BASE>/EUR/**` by design.
+# EUR notionals only for EUR-quoted pairs. Every OTHER quote needs its own rungs, denominated in
+# that quote and pinned EUR-equivalent (spec 00085 D1) -- `NOTIONALS_BY_QUOTE` below is that map,
+# and `notionals_for` refuses a quote with no entry rather than silently walking the EUR rungs
+# against it (the exact bug this ladder now prevents: a BTC-quoted pair asked for 100 BTC of depth
+# under the old EUR-only rungs, which no such pair carries, so every `fill_bps_*` column went null).
 PANEL_QUOTE = "EUR"
 
 # The BTC/EUR rate the BTC rungs are pinned to. EUR-EQUIVALENCE is the point (spec 00085 D1): the
 # BTC rungs buy the same EUR value as the EUR rungs, so `SPREAD_CALIBRATION`'s inner keys stay EUR
-# notionals and one shared interpolation grid serves all twelve legs. Derived from this repo's own
-# BTC/EUR panel mids over the calibration window by `cli/costs/calibrate.py`, and restamped with the
-# table -- never a live rate, or the column meaning would drift hour to hour.
-BTC_EUR_REFERENCE: float = 55876.28413495087
+# notionals and one shared interpolation grid serves all twelve legs. Never a live rate, or the
+# column meaning would drift hour to hour.
+#
+# THIS VALUE AND ITS WINDOW ARE FIXED FOREVER. `BTC_EUR_REFERENCE_WINDOW` is the reference's OWN
+# window and is NOT `cli/costs/spread.py`'s `CALIBRATION_WINDOW` -- the two are independent by
+# design. A recalibration moves the calibration window; it must NOT move this. This number defines
+# what every BTC `fill_bps_*` column already written to the tree MEANS, so changing it silently
+# redefines data that already exists. If a later measurement disagrees with it, the answer is
+# regenerate the tree or explain the divergence -- NEVER update this constant to match.
+#
+# Measured (main loop, 2026-08-06): mean `mid` over BTC/EUR panel-1s across the window below,
+# 1,180,800 rows = exactly 328 contiguous hours, no gaps.
+BTC_EUR_REFERENCE: float = 55876.28413495087  # the Step 0 measurement, verbatim
 BTC_EUR_REFERENCE_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-06T06:00:00Z")
 
 NOTIONALS_BY_QUOTE: dict[str, tuple[float, float, float]] = {
     "EUR": NOTIONALS_EUR,
-    "BTC": tuple(n / BTC_EUR_REFERENCE for n in NOTIONALS_EUR),  # type: ignore[dict-item]
+    "BTC": (
+        NOTIONALS_EUR[0] / BTC_EUR_REFERENCE,
+        NOTIONALS_EUR[1] / BTC_EUR_REFERENCE,
+        NOTIONALS_EUR[2] / BTC_EUR_REFERENCE,
+    ),
 }
 
 # Keyed by rung INDEX, not by value: the values now differ per quote, so a value-keyed map would
@@ -150,8 +162,9 @@ def sample_row(
         "microprice": microprice,
         "imbalance_l1": imbalance_l1,
     }
-    for index, notional in enumerate(notionals_for(quote)):
-        suffix = _FILL_SUFFIXES[index]
+    # strict=True: a future quote whose ladder has a different length must refuse loudly here, not
+    # raise a bare IndexError two lines down or, worse, silently truncate.
+    for suffix, notional in zip(_FILL_SUFFIXES, notionals_for(quote), strict=True):
         row[f"fill_bps_bid_{suffix}"] = _fill_bps(bid_levels, notional, mid, buy=False)
         row[f"fill_bps_ask_{suffix}"] = _fill_bps(ask_levels, notional, mid, buy=True)
     for side, levels in (("bid", bid_levels), ("ask", ask_levels)):
