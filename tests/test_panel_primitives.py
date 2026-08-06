@@ -54,6 +54,30 @@ def test_notionals_eur():
     assert NOTIONALS_EUR == (100.0, 1_000.0, 10_000.0)
 
 
+# --- the per-quote ladder (spec 00085 D1) ------------------------------------------------------------
+
+
+def test_the_ladder_is_per_quote_and_btc_rungs_are_eur_equivalent():
+    from cli.panel.primitives import BTC_EUR_REFERENCE, NOTIONALS_BY_QUOTE, notionals_for
+
+    assert notionals_for("EUR") == (100.0, 1_000.0, 10_000.0)
+    btc = notionals_for("BTC")
+    # Each BTC rung is the BTC quantity worth the same EUR as the EUR rung at the pinned reference.
+    for eur_rung, btc_rung in zip((100.0, 1_000.0, 10_000.0), btc, strict=True):
+        assert btc_rung == pytest.approx(eur_rung / BTC_EUR_REFERENCE, rel=1e-12)
+    # The rungs must be *different* numbers, or the ladder is not actually quote-aware.
+    assert btc != (100.0, 1_000.0, 10_000.0)
+    assert set(NOTIONALS_BY_QUOTE) == {"EUR", "BTC"}
+
+
+def test_an_unknown_quote_refuses_rather_than_defaulting_to_eur():
+    from cli.panel.errors import PanelError  # NOT primitives -- it is defined in errors.py
+    from cli.panel.primitives import notionals_for
+
+    with pytest.raises(PanelError, match="no notional ladder"):
+        notionals_for("USD")
+
+
 # --- sample_row: basic values (hand-computed) + K > available levels --------------------------------
 
 
