@@ -107,10 +107,19 @@ NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
 
 # The BTC/EUR rate the BTC rungs are pinned to. EUR-EQUIVALENCE is the point (spec 00085 D1): the
 # BTC rungs buy the same EUR value as the EUR rungs, so `SPREAD_CALIBRATION`'s inner keys stay EUR
-# notionals and one shared interpolation grid serves all twelve legs. Derived from this repo's own
-# BTC/EUR panel mids over the calibration window by `cli/costs/calibrate.py`, and restamped with the
-# table -- never a live rate, or the column meaning would drift hour to hour.
-BTC_EUR_REFERENCE: float = <the value measured in Step 0>
+# notionals and one shared interpolation grid serves all twelve legs. Never a live rate, or the
+# column meaning would drift hour to hour.
+#
+# THIS VALUE AND ITS WINDOW ARE FIXED FOREVER. `BTC_EUR_REFERENCE_WINDOW` is the reference's OWN
+# window and is NOT `cli/costs/spread.py`'s `CALIBRATION_WINDOW` -- the two are independent by
+# design. A recalibration moves the calibration window; it must NOT move this. This number defines
+# what every BTC `fill_bps_*` column already written to the tree MEANS, so changing it silently
+# redefines data that already exists. If a later measurement disagrees with it, the answer is
+# regenerate the tree or explain the divergence -- NEVER update this constant to match.
+#
+# Measured (main loop, 2026-08-06): mean `mid` over BTC/EUR panel-1s across the window below,
+# 1,180,800 rows = exactly 328 contiguous hours, no gaps.
+BTC_EUR_REFERENCE: float = 55876.28413495087  # the Step 0 measurement, verbatim
 BTC_EUR_REFERENCE_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-06T06:00:00Z")
 
 NOTIONALS_BY_QUOTE: dict[str, tuple[float, float, float]] = {
