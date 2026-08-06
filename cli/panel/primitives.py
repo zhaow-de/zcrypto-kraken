@@ -24,7 +24,6 @@ NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
 # and `notionals_for` refuses a quote with no entry rather than silently walking the EUR rungs
 # against it (the exact bug this ladder now prevents: a BTC-quoted pair asked for 100 BTC of depth
 # under the old EUR-only rungs, which no such pair carries, so every `fill_bps_*` column went null).
-PANEL_QUOTE = "EUR"
 
 # The BTC/EUR rate the BTC rungs are pinned to. EUR-EQUIVALENCE is the point (spec 00085 D1): the
 # BTC rungs buy the same EUR value as the EUR rungs, so `SPREAD_CALIBRATION`'s inner keys stay EUR

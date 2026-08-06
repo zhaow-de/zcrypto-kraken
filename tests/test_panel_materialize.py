@@ -504,7 +504,7 @@ def test_write_meta_writes_the_generation_manifest(tmp_path: Path) -> None:
     meta = json.loads(path.read_text())
     assert meta["schema_version"] == 2  # T0104 bumped it: stale_seconds is a generation change
     assert meta["grid"] == "1s"
-    assert meta["notionals_eur"] == [100.0, 1000.0, 10000.0]
+    assert meta["notionals_by_quote"]["EUR"] == [100.0, 1000.0, 10000.0]
     assert meta["k_levels"] == [1, 5, 10]
     assert meta["code_ref"]  # non-empty; exact value is host-dependent
 

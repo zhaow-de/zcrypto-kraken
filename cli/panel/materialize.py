@@ -36,7 +36,7 @@ from cli.capture.book import OrderBook
 from cli.capture.segment_writer import _replace_durably
 from cli.logging import get_logger
 from cli.panel.errors import PanelError
-from cli.panel.primitives import NOTIONALS_BY_QUOTE, NOTIONALS_EUR, PANEL_SCHEMA, sample_row
+from cli.panel.primitives import NOTIONALS_BY_QUOTE, PANEL_SCHEMA, sample_row
 
 logger = get_logger("panel.materialize")
 
@@ -417,7 +417,7 @@ def write_meta(panel_root: Path) -> Path:
     meta = {
         "schema_version": SCHEMA_VERSION,
         "grid": "1s",
-        "notionals_eur": list(NOTIONALS_EUR),
+        "notionals_by_quote": {q: list(v) for q, v in sorted(NOTIONALS_BY_QUOTE.items())},
         "k_levels": list(K_LEVELS),
         "code_ref": _code_ref(),
     }

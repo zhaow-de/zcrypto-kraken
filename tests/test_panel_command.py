@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
+import pytest
+import typer
 from typer.testing import CliRunner
 
 from cli.__main__ import app
@@ -115,8 +117,35 @@ def test_materialize_end_to_end_writes_the_panel_and_the_meta(tmp_path: Path) ->
     meta = json.loads((panel_root / "panel-meta.json").read_text())
     assert meta["schema_version"] == 2  # T0104 bumped it: stale_seconds is a generation change
     assert meta["grid"] == "1s"
-    assert meta["notionals_eur"] == [100.0, 1000.0, 10000.0]
+    assert meta["notionals_by_quote"]["EUR"] == [100.0, 1000.0, 10000.0]
     assert meta["k_levels"] == [1, 5, 10]
+
+
+def test_the_generation_manifest_records_the_per_quote_ladder() -> None:
+    from cli.panel.command import _expected_generation
+
+    gen = _expected_generation()
+    assert gen["schema_version"] == 2  # unchanged: no column moved
+    assert gen["notionals_by_quote"]["EUR"] == [100.0, 1_000.0, 10_000.0]
+    assert "BTC" in gen["notionals_by_quote"]
+    assert "notionals_eur" not in gen
+
+
+def test_a_tree_built_on_the_old_eur_only_manifest_refuses(tmp_path: Path) -> None:
+    # A panel-meta.json carrying the OLD generation must abort: its columns mean something else now.
+    # This is the regeneration gate doing its job, and it is what forces the Task 6 rebuild.
+    from cli.panel.command import _check_generation
+
+    panel_root = tmp_path / "l2-panel"
+    panel_root.mkdir(parents=True)
+    (panel_root / "panel-meta.json").write_text(
+        json.dumps({"schema_version": 2, "grid": "1s", "notionals_eur": [100.0, 1_000.0, 10_000.0], "k_levels": [1, 5, 10]})
+    )
+    # schema_version matches; the LADDER KEY does not. That alone must refuse -- which is why no
+    # SCHEMA_VERSION bump is needed to force the regeneration.
+
+    with pytest.raises(typer.Exit):
+        _check_generation(panel_root)
 
 
 # --- meta-mismatch refusal -----------------------------------------------------------------------------
@@ -171,22 +200,23 @@ def test_a_missing_meta_over_a_POPULATED_tree_refuses_instead_of_minting_a_fresh
 
 def test_an_out_of_scope_subtree_refuses_because_no_sweep_can_ever_repair_it(tmp_path: Path) -> None:
     """The hole the manifest check could not see, and the one the planned regeneration creates. The
-    sweep is PANEL_QUOTE-scoped, so hours for a pair outside it are never revisited: they keep the
-    generation that wrote them while the manifest claims the current one, and a whole-tree read then
-    raises SchemaError on files nobody remembers exist. A matching manifest is not evidence the tree
-    matches it — and unlike every other mixed state, no re-run can repair this one."""
+    sweep only covers quotes with a notional ladder (`NOTIONALS_BY_QUOTE`), so hours for a quote
+    outside it are never revisited: they keep the generation that wrote them while the manifest
+    claims the current one, and a whole-tree read then raises SchemaError on files nobody remembers
+    exist. A matching manifest is not evidence the tree matches it — and unlike every other mixed
+    state, no re-run can repair this one."""
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "BTC/EUR", H)
     write_meta(panel_root)  # a CURRENT, matching manifest -- the old check passed this happily
-    stray = panel_root / "ETH" / "BTC" / "panel-1s" / "2026" / "07" / "15"
+    stray = panel_root / "ETH" / "USD" / "panel-1s" / "2026" / "07" / "15"  # USD has no ladder (T0092)
     stray.mkdir(parents=True)
-    (stray / "09.parquet").write_bytes(b"an hour the EUR-scoped sweep will never revisit")
+    (stray / "09.parquet").write_bytes(b"an hour with no notional ladder -- the sweep will never revisit it")
 
     result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code != 0, result.output
-    assert "ETH" in result.output and "BTC" in result.output, "the refusal must name what to delete"
+    assert "ETH" in result.output and "USD" in result.output, "the refusal must name what to delete"
     assert "NAS" in result.output, "and that deleting one side leaves the other to be pulled back"
     final = panel_root / "BTC" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet"
     assert not final.exists(), "refused before writing anything"
@@ -414,7 +444,8 @@ def test_since_parsing_edges(tmp_path):
     assert r.exit_code == 0, r.output
 
 
-# --- quote scope: the ladder is quote-denominated, so the panel is EUR-quoted only (T0092) ------------
+# --- quote scope: the ladder is quote-denominated, so the panel covers only quotes with a ladder in
+# NOTIONALS_BY_QUOTE (currently EUR, BTC) (T0092) ------------------------------------------------------
 
 
 def test_materialize_skips_pairs_whose_quote_has_no_ladder_in_the_sweep(tmp_path: Path) -> None:
@@ -437,15 +468,37 @@ def test_materialize_skips_pairs_whose_quote_has_no_ladder_in_the_sweep(tmp_path
 
 
 def test_materialize_refuses_an_explicit_non_eur_pair(tmp_path: Path) -> None:
-    """`--pair ETH/BTC` must fail loudly, not exit 0 having done nothing."""
+    """`--pair ETH/USD` must fail loudly, not exit 0 having done nothing: USD has no notional ladder."""
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
-    _seed_primary(primary, "ETH/BTC", H)
+    _seed_primary(primary, "ETH/USD", H)
 
     result = runner.invoke(
         app,
-        ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0", "--pair", "ETH/BTC"],
+        ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0", "--pair", "ETH/USD"],
     )
 
     assert result.exit_code != 0, result.output
-    assert "EUR" in result.output
+    assert "notional ladder" in result.output
+
+
+def test_a_btc_quoted_pair_is_accepted_by_the_pair_option(tmp_path: Path) -> None:
+    # Follows test_materialize_refuses_an_explicit_non_eur_pair exactly: the primary tree and
+    # --panel-root are REQUIRED parameters, and Click fails on a missing one BEFORE the function body
+    # runs -- so an invocation without them would pass vacuously and prove nothing.
+    primary, panel_root = tmp_path / "primary", tmp_path / "panel"
+    _seed_primary(primary, "ETH/BTC", H)
+
+    ok = runner.invoke(
+        app,
+        ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0", "--pair", "ETH/BTC"],
+    )
+    assert ok.exit_code == 0, ok.output
+
+    _seed_primary(primary, "ETH/USD", H)
+    refused = runner.invoke(
+        app,
+        ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0", "--pair", "ETH/USD"],
+    )
+    assert refused.exit_code != 0, refused.output
+    assert "notional ladder" in refused.output
