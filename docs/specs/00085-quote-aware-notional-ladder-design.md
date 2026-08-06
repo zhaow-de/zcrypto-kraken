@@ -14,11 +14,15 @@ The harm today is a dead ladder and an out-of-scope tree, **not a wrong number**
 
 ### D1 — BTC rungs are EUR-equivalent at a pinned FX reference
 
-The per-quote ladder holds, for BTC, the BTC quantities whose value equals €100 / €1,000 / €10,000 at a **pinned BTC/EUR reference** derived from this repo's own `BTC/EUR` panel mids over the calibration window (D4), stored as a provenance-stamped constant beside the ladder.
+The per-quote ladder holds, for BTC, the BTC quantities whose value equals €100 / €1,000 / €10,000 at a **pinned BTC/EUR reference** derived from this repo's own `BTC/EUR` panel mids over its **own** fixed window (`BTC_EUR_REFERENCE_WINDOW`, not D4's calibration window), stored as a provenance-stamped constant beside the ladder.
 
 Rejected: round BTC quantities (0.001/0.01/0.1 BTC). Clean labels, but the rungs drift from EUR-equivalence as BTC/EUR moves, the €1,400 lookup needs an FX conversion at read time anyway, and `_PINNED_SIZES` would have to become per-symbol — the FX question returns downstream instead of being settled once, here, with provenance.
 
 Rejected: per-hour FX-converted rungs. Most faithful, but it breaks fixed column identity and the generation manifest's fixed-notional semantics.
+
+**The FX reference is pinned to the TREE, not to the calibration window.** `BTC_EUR_REFERENCE` defines what every BTC `fill_bps_*` column in the materialized tree *means*, so it is measured once, over its own fixed `BTC_EUR_REFERENCE_WINDOW`, and a later recalibration over a different window **must not** move it. Moving it would redefine columns that already exist. The two windows are independent by design and the constants say so.
+
+The guarantee this rests on is mechanical, not procedural: `notionals_by_quote` in the generation manifest contains the BTC rungs, which *are* `100/REF, 1k/REF, 10k/REF`. Change `BTC_EUR_REFERENCE` in code and the manifest comparison mismatches every existing tree, so `_check_generation` refuses at the next hourly sweep. The tree and the constant cannot silently disagree.
 
 **Consequence that makes D1 cheap:** because the rungs remain EUR-equivalent, `SPREAD_CALIBRATION`'s inner keys stay the EUR notionals, `_PINNED_SIZES` stays one shared grid, and `effective_spread_bps(symbol, notional_eur)` keeps its signature. Spread values are dimensionless bps; the inner key names a grid point, not a currency amount in the quote.
 
@@ -68,7 +72,7 @@ The ruling is defensible on the facts: the live engine imports none of this (its
 
 ## Rollout
 
-The panel's generation dict contains `notionals_eur`, so **any** ladder change triggers `_check_generation`'s refusal even without a `SCHEMA_VERSION` bump; a column-set change would additionally demand the bump. Either way a whole-tree regeneration is owed.
+The panel's generation dict contains the ladder, so **any** ladder change triggers `_check_generation`'s refusal on its own. **`SCHEMA_VERSION` therefore stays 2**: no column is added or removed, and that constant documents itself as tracking *column-set* generations — bumping it would buy nothing and falsify its own comment. The regeneration is forced by the manifest comparison, which is sufficient.
 
 **Paths do not change.** Quote is already a path level (`<BASE>/<QUOTE>/panel-1s/...`), so the `/BTC` subtrees are additive and nothing is orphaned. This is the first real exercise of the regeneration checklist rewritten on 2026-08-06, whose stated rule — "a schema or ladder bump forces a regeneration but rewrites identical paths, so it orphans nothing" — this iteration puts to the test rather than trusting.
 
@@ -80,6 +84,8 @@ Order: build and review → ops image → ops converge → attended `zcrypto-pan
 - The scope lift: each of the four lifted guards has a test that fails against the pre-lift behaviour, and `rebuild.py`'s guard is proven *still closed* until the re-key step.
 - The re-key: `effective_spread_bps("ETH/BTC", 1_400)` returns a number where it previously raised; `entries["ETH/BTC"]` in the rebuild test inverts from `None` to a value, and `unevaluated_count` goes 1 → 0.
 - The restamp: the three provenance constants match what the committed script emits for the window it was run on — asserted, not transcribed.
+- **The committed script reproduces the OLD table over the OLD window.** Run `calibrate()` over `2026-07-08T13:47:33Z … 2026-07-23T05:59:59Z` and require it to emit today's ten committed EUR rows. Without this, a transcription error in the script and the window move are indistinguishable in the same diff.
+- **The FX agreement is a committed test, not a one-time step**: `calibrate(..., BTC_EUR_REFERENCE_WINDOW).btc_eur_reference` equals `primitives.BTC_EUR_REFERENCE`. Its docstring states that a breach means the tree must be regenerated or the divergence explained — never that the constant should be quietly updated to match.
 - Every guard proven by construction through `infra/scripts/mutate-probe.sh`, never asserted.
 
 ## Out of scope
