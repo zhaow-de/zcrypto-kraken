@@ -70,7 +70,7 @@ def test_the_committed_script_reproduces_the_table_it_replaces():
 
     Marked slow: it reads the real panel tree from the read-only NAS mount.
     """
-    from cli.costs.spread import CALIBRATION_WINDOW, SPREAD_CALIBRATION
+    from cli.costs.spread import CALIBRATION_HOURS, CALIBRATION_MIN_ROWS, CALIBRATION_WINDOW, SPREAD_CALIBRATION
 
     panel_root = Path("/mnt/zhao-crypto/l2-panel")
     if not panel_root.exists():
@@ -79,6 +79,21 @@ def test_the_committed_script_reproduces_the_table_it_replaces():
     start, end = (datetime.fromisoformat(w.replace("Z", "+00:00")) for w in CALIBRATION_WINDOW)
     result = calibrate(panel_root, start, end)
 
+    # The table alone is structurally blind to a one-hour window error (a BTC@1k deviation of
+    # 0.00029 from an `overlap` -> `start-inside` window-rule regression sits 34x inside the table's
+    # own tolerance below) -- pin the two provenance constants Task 7 restamps from these fields too.
+    assert result.hours == CALIBRATION_HOURS
+    assert result.min_rows == CALIBRATION_MIN_ROWS
+    # Joint-sampling, now measured on the REAL tree -- the synthetic fixture's delta is 0 by
+    # construction and cannot fail this. The observed real-tree delta is exactly 5 today, so this
+    # assertion sits on its own boundary with zero margin: a future one-row drift fails it. That is
+    # the doc's own bar ("row counts agree to within 5 rows"), not ours to loosen.
+    assert result.max_rows - result.min_rows <= 5
+
     for base, rows in SPREAD_CALIBRATION.items():  # pre-re-key: base-keyed
         for size, expected in rows.items():
-            assert result.table[f"{base}/EUR"][size] == pytest.approx(expected, abs=0.01)
+            # Exact-on-rounding, not a fixed abs-tolerance: the committed table is rounded to 3
+            # decimals, so the rounding floor is 0.0005 and no threshold >= that can catch a
+            # last-digit transcription error (measured: worst deviation 0.000457 bps across all 30
+            # cells today, so this holds with room to spare).
+            assert round(result.table[f"{base}/EUR"][size], 3) == expected

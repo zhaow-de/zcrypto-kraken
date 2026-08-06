@@ -15,7 +15,7 @@ spread (a partial NAS pull of one leg must be visible, not averaged away).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -50,8 +50,12 @@ def _hourly_files_in_window(panel_dir: Path, window_start: datetime, window_end:
     # for the committed 2026-07-08T13:47:33Z..2026-07-23T05:59:59Z window, matching CALIBRATION_HOURS.
     files = []
     for p in panel_dir.glob("*/*/*/*.parquet"):
+        # Hardcoded UTC, not `window_start.tzinfo`: panel paths are UTC by the tree's own
+        # convention, independent of what tzinfo the caller's window happens to carry. Deriving it
+        # from the caller would select the wrong FILES for an equivalent-instant, non-UTC window
+        # while the polars filter below stayed correct -- a silently partial window.
         hour_start = datetime(
-            int(p.parent.parent.parent.name), int(p.parent.parent.name), int(p.parent.name), int(p.stem), tzinfo=window_start.tzinfo
+            int(p.parent.parent.parent.name), int(p.parent.parent.name), int(p.parent.name), int(p.stem), tzinfo=timezone.utc
         )
         if hour_start < window_end and hour_start + timedelta(hours=1) > window_start:
             files.append(p)
@@ -89,7 +93,11 @@ def calibrate(panel_root: Path, window_start: datetime, window_end: datetime) ->
         rows_per_pair[symbol] = stats["_rows"].item()
         table[symbol] = {size: stats[str(size)].item() for size, _ in _SIZES}
 
-    if "BTC/EUR" not in table:
+    # Guard on rows actually landing IN the window, not on key presence: a BTC/EUR file whose hour
+    # merely OVERLAPS the window (see `_hourly_files_in_window`) puts "BTC/EUR" in `table` even when
+    # every row inside it falls in an archive gap the window happens to land in -- `rows_per_pair`
+    # is then 0 (or the key never gets set at all, for the "no file at all" case both cover).
+    if not rows_per_pair.get("BTC/EUR"):
         raise CostModelError(f"no BTC/EUR panel data in the window [{window_start}, {window_end}]; refusing an unpinned table")
 
     btc_eur_reference = (
