@@ -52,6 +52,16 @@
 # datasources grafanacloud-prom / grafanacloud-logs) and confirmed to match infra/grafana/alerts.yaml.
 # After ANY push, read the rules back and check the datasourceUid of each -- the API accepts a wrong
 # UID happily and reports health=ok (T0034).
+#
+# Verify a DASHBOARD by rendering it, not by reading its JSON back. A read-back proves what was
+# stored, never what a panel DISPLAYS: a unit that reaches a string column renders every cell `NaN`
+# while the stored JSON looks perfect, and a rename keyed on the wrong field name is invisible the
+# same way. The server-side renderer is available on this stack and returns a PNG:
+#   curl -fsS -H "Authorization: Bearer $GRAFANA_SA_TOKEN" -o panel.png \
+#     "$GRAFANA_URL/render/d-solo/<dashboard-uid>/x?panelId=<id>&width=1100&height=420&from=now-6h&to=now"
+# Append &var-<name>=<value> per template variable. Render the NARROWED case too, not just the
+# default: a query returning a single series yields one frame, whose value field is named `Value`
+# rather than `Value #<refId>`, so name-matched renames and overrides can miss there and only there.
 set -euo pipefail
 
 : "${GRAFANA_SA_TOKEN:?GRAFANA_SA_TOKEN is required}"

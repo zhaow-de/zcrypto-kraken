@@ -214,7 +214,7 @@ above). This file now reflects a live-verified deploy, not just the originally-a
 
 ## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
 
-The committed-as-code dashboard (`infra/grafana/zcrypto-dashboard.json`) and alert rules
+The committed-as-code dashboards (`infra/grafana/*-dashboard.json` — four boards since spec 00084 split the original) and alert rules
 (`infra/grafana/alerts.yaml`) are provisioned onto the already-live Grafana Cloud instance by
 `infra/scripts/grafana-push.sh` — run from any machine with network access to that instance (not
 NAS-side; this is a one-off/on-change push, not a running service). Idempotent: re-run after any

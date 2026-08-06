@@ -679,6 +679,10 @@ git commit -m "feat(grafana): dense slack notification templates for both receiv
 
 **FOUR surfaces move together, not three.** The rule's own comment lists three (the evaluator, the `for`, and the summary's stated notice period) — it was written before the boards existed. The fourth is **`data-integrity-dashboard.json` panel 102**, which hardcodes `900` in both its threshold step and its description. Miss it and the panel draws a line the page no longer fires at, on the unbackfillable capture path — the exact panel-disagrees-with-page failure P1 and P2 exist to kill. All four land in the same commit.
 
+**SUPERSEDED at execution, 2026-08-05 (`ade2c019`), and recorded here because the prescription above is the thing that was abandoned.** The `~2.4×` margin puts the bar at **~29 s** — the daemon's own `BOOK_STALENESS_SECONDS` gap-booking threshold, and *below* the 30.261266 s fleet-wide event the same measurement found, i.e. twelve false warning instances on 07-29 alone. The shipped bar is **300 s**: ~25× the binding **natural** per-pair maximum (the primary's **12.068981 s** on AVAX/EUR, above the secondary's worst of 11.125801 s on ETH/BTC) and ~10× the daemon's 30 s mark. The margin the spec borrowed was fitted to a *booking* threshold, where a false window costs a ledger entry; a *page* bar pays a woken operator on the unbackfillable path, so the two cannot share a multiplier.
+
+**And the measurement base is one week, not the thirty days `[30d]` reads as** — corrected 2026-08-05 after the rollout review. The gauge only started reaching Cloud with the 2026-07-29 converges, so `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` returns **10435** (primary) / **10838** (secondary) samples at 60 s each = **7.2 d / 7.5 d**. Both bars are therefore derived from the series' whole life so far, and the fleet-wide 120 is 4× the worst event in *one week*. Re-derivation on a genuinely full window is **[[T0129]]**, ripe when that count reaches ~42000.
+
 - [ ] **Step 3: Push dashboards + rules** — `infra/scripts/grafana-push.sh`, with **`GRAFANA_SLACK_WEBHOOK_URL` exported from the vault**. No host contact. Without it the script takes its webhook-less branch: the template object ships, the receiver wiring is silently skipped with a friendly "receivers already live" message, and every notification keeps the stock rendering — first visible at Step 5 as a baffling symptom. Verify by read-back that all four boards and all **63** rules are live (the count `alerts.yaml` carries; transiently 64 while Step 5's probe rule exists). Read the number, do not eyeball the list: a push that drops exactly one rule is invisible to any check whose expected count is stale by one.
 
 - [ ] **Step 3b: Verify the Logs board's two unproven constructs at first push — they fail SILENTLY**
@@ -710,6 +714,19 @@ Step 7 cannot run without this, and the engine role will refuse mechanically if 
 6. Only then is Step 7 startable. **There is no engine secondary — the secondary's capture bake IS the engine's canary gate.**
 
 Precedent for the shape and timing: `fleet-pins.md`'s iter-119 row (`c7ed09020fe1` — red canary leg, bake, then the engine converge the following morning).
+
+- [ ] **Step 6c: Converge the ops node — WITHOUT THIS, the carried gauge never emits.**
+
+`zcrypto archive reconcile` runs on `zcrypto-ops` in the `ops_image_digest`-pinned image (the reconciler moved there at spec `00054`), so Task 1b's `zcrypto_reconcile_ledger_records` ships **only** via an ops converge. Omit this and the gauge sits in the repo, tested and reviewed, emitting nothing — discharging [[T0044]]'s carried rider on paper only, and leaving `Data integrity`'s "Gap totals" panel plotting a family nothing publishes, which renders empty and reads exactly like a quiet metric.
+
+No canary bake is owed here — the compute tier carries no trade key and no unbackfillable path — but its own discipline is not optional:
+
+1. **Pull the digest on the host first.** Every ops runner is `--pull never`; the role's preflight refuses a digest the host has not pulled.
+2. **Record it in `fleet-pins.md` before converging.** The pins assert refuses otherwise, and that row is the only rollback operand (`ops_image_digest` has no repo default). The current pin, `193d76be5275`, becomes `prior`.
+3. **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Use `infra/ansible/scripts/converge.sh`, which requires the limit and previews first.
+4. **`ops_image_digest` also re-pins the liquidations compose, which the role never restarts**, so it refuses without `-e liquidations_decision=roll-after|defer`. Prefer `roll-after`: the poller re-fetches a 30 h window each cycle, so a converge-length restart self-heals.
+5. **Omit `ops_alloy_digest`** — Alloy is not the subject here, and passing it the value of `ops_image_digest` is a live footgun this fleet has already armed once.
+6. **Verify by outcome**: `infra/scripts/ops-postverify.sh`, then read the gauge itself — `zcrypto_reconcile_ledger_records` must return a value, and `(no series)` is a FAIL, never a zero.
 
 - [ ] **Step 7: Converge the engine — the live trade host.** Full `capture-deploys.md` discipline: inside a 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), digest recorded in `docs/reference/fleet-pins.md` first, the secondary's capture bake as the canary gate, `--check --diff` preview from a tree whose rendered config matches the fleet. Verify by outcome: the next `cycle-HH.json` lands with `completed_at` inside `[B, B+30 min]`, and `zcrypto_engine_cycle_duration_seconds` is **absent** until that cycle completes, then correct.
 

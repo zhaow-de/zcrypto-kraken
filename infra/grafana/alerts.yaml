@@ -1,5 +1,5 @@
-# Grafana alert-rule provisioning source (spec 00049, Role B / Task 4) for the one canonical
-# dashboard's series (infra/grafana/zcrypto-dashboard.json). Pushed by infra/scripts/grafana-push.sh,
+# Grafana alert-rule provisioning source (spec 00049, Role B / Task 4; boards split four ways by
+# spec 00084 -- every *-dashboard.json beside this file ships). Pushed by infra/scripts/grafana-push.sh,
 # ONE rule per `POST`/`PUT /api/v1/provisioning/alert-rules[/:uid]` call against Grafana's
 # **Alerting Provisioning HTTP API** -- that endpoint takes a single alert-rule JSON object per
 # call; it is NOT the `apiVersion: 1` / `groups:` file-provisioning shape (that shape is for
@@ -2431,12 +2431,29 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 60 s is the whole notice budget this rule can afford to spend on the bar, because the
-            # pending period is NOT free here: the gauge is scraped every 60 s
+            # 120 s, WIDENED from 60 on 2026-08-05 against measurement. The pending period is NOT
+            # free here: the gauge is scraped every 60 s
             # (infra/ansible/roles/capture/files/config.alloy), so it advances one sample per minute
-            # and the real silence at firing time is 60 s bar + up to 60 s of scrape granularity +
+            # and the real silence at firing time is the bar + up to 60 s of scrape granularity +
             # the pending period + the group's eval interval. That is why `for` is 0s below.
-            - evaluator: {type: gt, params: [60]}
+            # Why 120 and not 60: `max_over_time(min by (host) (...)[30d:1m])` measured a fleet-wide
+            # silence of 30.261266 s on the primary -- all twelve pairs quiet at once.
+            # THE BASE IS ONE WEEK, NOT A MONTH, and the `[30d]` selector hides it: this gauge only
+            # started reaching Cloud with the 2026-07-29 converges, so
+            # `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` returns 10435
+            # (primary) / 10838 (secondary) samples at 60 s each = 7.2 d / 7.5 d. So 120 is 4x the
+            # worst event in the series' whole LIFE so far -- materially thinner than 4x a month's
+            # worst, which is why re-derivation on a genuinely full window is registered as T0129.
+            # NOT a converge artefact, and better localized than "hours after": a 6 h bisection puts
+            # the event inside 2026-07-29 19:14-01:14 UTC, >=11.6 h after the primary's 07:36:13Z
+            # converge, with the adjacent 6 h windows maxing 0.12 / 0.20 / 0.14 s. Cause
+            # unexplained, which is the point: an unexplained 30 s event cannot be bounded, so 60
+            # left only a 2x margin on the fleet's highest-severity capture signal. 120 is 4x it and
+            # the 209 s motivating event is still caught -- but the slack is ~29 s, not the 89 s a
+            # bar-only subtraction suggests: with a 60 s scrape the guaranteed detection floor is
+            # ~180 s of silence, not 120. Every other day of the series' life maxed between 0.18 s
+            # and 10.4 s on the primary.
+            - evaluator: {type: gt, params: [120]}
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
@@ -2445,7 +2462,7 @@ rules:
     # detection floor at 300 s against a 209 s motivating event: a phase sweep over scrape x eval
     # alignments caught that event in only 12.1% of them, and a 180 s blackout in 0%. `for: 1m` is not
     # the fix either -- it still misses 209 s in 12.9% of alignments. Nothing but real silence can put
-    # this minimum over 60: `_run` seeds last_seen for every pair before the collector registers, so a
+    # this minimum over 120: `_run` seeds last_seen for every pair before the collector registers, so a
     # restart reads 0.0; a stop->start window replays the last healthy pre-stop sample through
     # Prometheus' lookback; a longer stop goes NoData, which `noDataState: OK` swallows; and
     # remote-write lag can only delay firing, never advance it. `zcrypto-capture-log-dead-primary`
@@ -2474,9 +2491,11 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The single-stuck-stream class, which nothing else catches: the resubscribe path failed for one
-      # pair while every other stream keeps flowing, so the dead-man pings, the all-streams rule above
-      # reads its minimum off a healthy pair, and the desync rule sees no checksum failure.
+      # The single-stuck-stream class, which nothing else catches: one pair has stopped delivering
+      # while every other stream keeps flowing, so the dead-man pings, the all-streams rule above
+      # reads its minimum off a healthy pair, and the desync rule sees no checksum failure. Nor does
+      # the daemon heal it -- recovery is desync-driven only, so a stream that is silent while still
+      # in sync stays silent (the evaluator's comment below reads both loops).
       #
       # Deliberately NOT aggregated: Grafana raises one instance per (host, pair) with both labels
       # intact, which is what lets the page name the stream. That is also why this rule can raise many
@@ -2500,29 +2519,47 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # PROVISIONAL, and it must not reach a push in this state. 900 is a starting bar of the
-            # same standing this file gives the reconciler's 600, not a measured one: the daemon's
-            # own `is_healthy()` docstring records that silence was booked first and thresholding
-            # waits until the exported gauge shows a production distribution worth thresholding.
-            # That distribution now exists. DERIVE the bar from
-            # `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per host
-            # and set it above the binding pair's natural maximum with the same ~2.4x margin the
-            # daemon's own 30 s constant uses -- then update the summary's stated duration with it,
-            # since the two must move together. THREE things move, not two: the summary's duration is
-            # the NOTICE PERIOD, which is `bar + up to 60 s of scrape granularity + for + the group's
-            # eval interval`, not the bar. Today's reads "over 15 minutes" against a bar of 900 and a
-            # `for` of 10m, so the real floor is ~25 min -- the same understatement the all-streams
-            # rule above carried until its arithmetic was measured. `zcrypto-logship-worker-stalled`
-            # is the idiom to copy: 300 s bar + 10m pending, summary says 15 minutes.
-            - evaluator: {type: gt, params: [900]}
+            # DERIVED 2026-08-05, replacing a provisional 900. Measured
+            # `max_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` per pair per
+            # host -- and THE BASE IS ONE WEEK, NOT A MONTH, which the `[30d]` selector hides: this
+            # gauge only started reaching Cloud with the 2026-07-29 converges, so
+            # `count_over_time(...[30d])` returns 10435 (primary) / 10838 (secondary) samples at
+            # 60 s each = 7.2 d / 7.5 d. The window is the series' whole life, and re-derivation on
+            # a genuinely full 30 d is registered as T0129.
+            # All twelve primary maxima (30.26-31.59 s) are ONE simultaneous fleet-wide event, not
+            # per-pair spacing, and the proof is exact rather than inferred: the min-by-host maximum
+            # is 30.261266, which equals AVAX/EUR's per-pair maximum to the digit, so at that
+            # instant every pair was silent. Excluding it, the BINDING natural per-pair maximum is
+            # the primary's 12.068981 s (AVAX/EUR) -- above the secondary's worst of 11.125801 s
+            # (ETH/BTC), and matching the 12.196 s worst NATURAL spacing the daemon's own
+            # BOOK_STALENESS_SECONDS comment records. 300 is ~25x that natural maximum and ~10x the
+            # daemon's own 30 s mark. It deliberately SUPERSEDES the ~2.4x margin the design
+            # prescribed, which would have put this page bar at ~29 s: at the daemon's own
+            # gap-booking threshold, and BELOW the 30.26 s event above -- twelve false warning
+            # instances on 07-29 alone.
+            # What 30 s actually is, read from the source, because the bar's warrant depends on it:
+            # `_staleness_loop` BOOKS the silence (`monitor.start_silence`) and does nothing else.
+            # Recovery -- resubscribe, then a forced reconnect -- is `_desync_recovery_loop`, which
+            # skips every pair whose book is not `desynced`, and `is_healthy()` deliberately ignores
+            # silence. So a silent-but-SYNCED stream is never resubscribed, never reconnected, and
+            # never withholds the dead-man ping, at any age: it does not self-heal, which is exactly
+            # why this rule is the only thing that catches it.
+            # NO pending period, deliberately: the gauge advances one sample per minute, so a `for`
+            # spends the notice budget rather than buying confidence -- the same arithmetic that
+            # took `for: 2m` off the all-streams rule. Notice period is `300 + up to 60 s of scrape
+            # granularity + the group's eval interval`, ~5-7 min, so the summary's "over five
+            # minutes" is its floor. Four surfaces carry this number and move together: this
+            # evaluator, the `for`, the summary's duration, and the data-integrity board's per-pair
+            # panel.
+            - evaluator: {type: gt, params: [300]}
     # OK: absence is owned by the dead-man and by `Fleet · Alloy dark`, matching every sibling
     # capture rule here.
     noDataState: OK
     execErrState: Alerting
-    for: 10m
+    for: 0s
     annotations:
       summary: >-
-        One capture book stream has delivered nothing for over 15 minutes while its siblings keep
+        One capture book stream has delivered nothing for over five minutes while its siblings keep
         flowing — the single-stuck-stream shape, which no other rule catches: the dead-man still pings,
         the desync rule sees no checksum failure, and a fleet-wide silence rule reads its minimum off a
         healthy pair. The `pair` label names the stuck stream. Check whether that pair's resubscribe went
@@ -2810,7 +2847,7 @@ rules:
       # 0 means that collector errored on its last scrape, so its whole metric family goes quietly
       # ABSENT -- and every rule keyed on those series then evaluates NoData, which this fleet maps
       # to OK. A failed `filesystem` collector silently disarms the disk-low rule; a failed
-      # `textfile` collector silently disarms every one-off timer alert. Baseline: 1 on all four
+      # `textfile` collector silently disarms every one-off timer alert. Baseline: 1 on all five
       # hosts. This is the rule that keeps the other rules honest.
       - refId: A
         queryType: ""

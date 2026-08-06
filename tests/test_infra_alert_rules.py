@@ -551,13 +551,14 @@ def test_the_total_blackout_rule_exists_and_keeps_its_discriminating_aggregation
 # real value lands, the comment and the entry are deleted together and the staleness test below is
 # what forces the second half.
 
-PROVISIONAL_THRESHOLDS = {
-    # 900 s is a starting bar of the same standing this file gives the reconciler's 600, not a
-    # measured one. Derive it from `max_over_time(zcrypto_capture_seconds_since_last_book_message
-    # [30d])` per pair per host, set it above the binding pair's natural maximum with the same ~2.4x
-    # margin the daemon's own 30 s constant uses, and move the summary's stated duration with it.
-    "zcrypto-capture-stream-silent",
-}
+# Empty by design. An entry here declares a threshold this file ships knowing it is provisional;
+# the paired staleness test refuses an entry whose rule no longer carries the marker, so a bar that
+# has been derived cannot leave its excuse behind. `zcrypto-capture-stream-silent` was the last
+# occupant, derived on 2026-08-05 from the gauge's WHOLE LIFE -- ~7.2 d (primary) / ~7.5 d
+# (secondary) of samples, not the 30 days the `[30d]` selector reads as, because the series only
+# started reaching Cloud with the 2026-07-29 converges. Re-derivation on a genuinely full 30 d
+# window is T0129; the bar itself is not provisional, its base is just younger than a month.
+PROVISIONAL_THRESHOLDS: set[str] = set()
 
 _PROVISIONAL = "PROVISIONAL"
 
@@ -591,4 +592,28 @@ def test_the_provisional_register_has_not_gone_stale():
     assert not discharged, (
         f"registered as provisional but the rule no longer says so: {sorted(discharged)}. If the "
         f"threshold was derived, delete the entry in the same change."
+    )
+
+
+# --- Grafana's template parser is stricter than Go's ------------------------------------------
+# A leading trim marker on a define declaration -- `{{- define "x" ... }}` -- parses fine in Go's
+# own text/template and renders identically, but Grafana's provisioning API REJECTS it with
+# `invalid template: unexpected <define> in command` and the whole push aborts under
+# `set -euo pipefail`. Measured against the live API 2026-08-05, by probe: `{{ define` -> 202,
+# `{{- define` -> 400, with trim markers everywhere else (`-}}`, `{{- end`, `{{- template`)
+# accepted. So the trailing `-}}` that trims the define's BODY stays; only the leading one goes.
+# A Go-based test cannot catch this -- Go accepts what Grafana refuses -- which is why it is here.
+NOTIFICATION_TEMPLATES = sorted((REPO / "infra/grafana/notification-templates").glob("*.tmpl"))
+
+
+@pytest.mark.parametrize("path", NOTIFICATION_TEMPLATES, ids=lambda p: p.name)
+def test_no_define_carries_a_leading_trim_marker(path):
+    offenders = [
+        f"{path.name}:{i}: {line.strip()[:70]}"
+        for i, line in enumerate(path.read_text().splitlines(), 1)
+        if re.search(r"\{\{-\s*define\s", line)
+    ]
+    assert not offenders, (
+        "Grafana's provisioning API rejects a define whose action opens with a trim marker, and the "
+        "push aborts before any rule ships. Drop the leading `-` (keep the trailing `-}}`):\n  " + "\n  ".join(offenders)
     )

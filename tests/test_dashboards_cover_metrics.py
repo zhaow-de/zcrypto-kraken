@@ -593,3 +593,110 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
         f" renamed (update this canary) or a discovery path broke -- in which case every family that"
         f" path used to find is now silently exempt from coverage."
     )
+
+
+# A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
+# applies to EVERY field in it -- so a date unit parked there is handed the label strings too,
+# cannot coerce them, and renders every label column as `NaN`. Number-family units (`short`,
+# `bytes`) pass a string through untouched, which is why only the date family is banned here:
+# the two `Host vitals` / `healthchecks.io` tables carry `short` over a string `Machine` column
+# and render correctly. The unit belongs on an override scoped to the value column -- matched by
+# TYPE, not by name: a value field's name shifts with the frame count (see the guard below), so a
+# name-matched override silently stops applying the moment a query returns a single series.
+_DATE_UNIT = re.compile(r"^(?:dateTime|time:)")
+
+
+def test_no_table_panel_parks_a_date_unit_in_its_defaults():
+    offenders = []
+    for filename, dash in dashboards():
+        for panel in _walk_panels(dash.get("panels") or []):
+            if panel.get("type") != "table":
+                continue
+            unit = ((panel.get("fieldConfig") or {}).get("defaults") or {}).get("unit") or ""
+            if _DATE_UNIT.match(unit):
+                offenders.append(f"{filename} #{panel.get('id')} {panel.get('title')!r} unit={unit!r}")
+    assert not offenders, (
+        f"a table panel parks a date unit in fieldConfig.defaults, so every string label column in it"
+        f" renders as NaN -- move the unit onto a byType:number override for the value column: {offenders}"
+    )
+
+
+# `merge` and `joinByField` combine one frame per series, and Grafana suffixes the value column
+# with its refId ONLY to disambiguate several frames -- so the field is `Value #A` when the query
+# returns many series and a bare `Value` when it returns exactly one. A rename keyed on `Value`
+# therefore matches nothing in the ordinary multi-series case: the column keeps its raw name, and
+# every override aimed at the renamed name misses too, so the value renders unformatted. This is
+# invisible on a panel that also parks a unit in `fieldConfig.defaults`, because the default hits
+# the value column anyway -- which is exactly how it survived review on the log table.
+#
+# The name being data-dependent is why the value column's own overrides must match by TYPE; this
+# guard covers only the rename half. `_a_single_target_merged_table_matches_its_value_by_type`
+# below covers the other, and neither one alone would have caught the log table.
+_MERGING = frozenset({"merge", "joinByField"})
+
+
+def test_a_merged_table_renames_the_refid_suffixed_value_column():
+    offenders = []
+    for filename, dash in dashboards():
+        for panel in _walk_panels(dash.get("panels") or []):
+            if panel.get("type") != "table":
+                continue
+            transforms = panel.get("transformations") or []
+            if not any(t.get("id") in _MERGING for t in transforms):
+                continue
+            for t in transforms:
+                if t.get("id") != "organize":
+                    continue
+                if "Value" in ((t.get("options") or {}).get("renameByName") or {}):
+                    offenders.append(f"{filename} #{panel.get('id')} {panel.get('title')!r}")
+    assert not offenders, (
+        f"a merged/joined table renames a bare 'Value', but a multi-series query names that field"
+        f" 'Value #<refId>' -- the rename misses there and the column renders raw and unnamed: {offenders}"
+    )
+
+
+# The other half. A value column's NAME is data-dependent exactly when a single query's frame count
+# is -- one series yields `Value`, several yield `Value #<refId>` -- so such a panel must reach its
+# value column by TYPE, and a `byName` override there works only until the pickers narrow to one
+# stream. A panel with several targets is exempt: its frames are structural rather than data-driven,
+# so the suffix is stable (`Host vitals` joins four targets and names them `Value #A`..`Value #D`).
+_VALUE_FIELD = re.compile(r"^Value(?: #\w+)?$")
+_VALUE_PROPS = frozenset({"unit", "displayName"})
+
+
+def test_a_single_target_merged_table_matches_its_value_by_type():
+    offenders = []
+    for filename, dash in dashboards():
+        for panel in _walk_panels(dash.get("panels") or []):
+            if panel.get("type") != "table":
+                continue
+            transforms = panel.get("transformations") or []
+            if not any(t.get("id") in _MERGING for t in transforms):
+                continue
+            if len([t for t in (panel.get("targets") or []) if not t.get("hide")]) != 1:
+                continue
+            # Whatever an `organize` rename turns a value field into. The raw spellings are matched
+            # separately, on the matcher's own option: seeding them here would only cover the
+            # un-suffixed `Value`, letting an override keyed on the `Value #<refId>` spelling -- the
+            # one the UI shows in the multi-series view -- past the guard in exactly the shape it exists to stop.
+            renamed_value_names = set()
+            for t in transforms:
+                if t.get("id") == "organize":
+                    for src, dst in ((t.get("options") or {}).get("renameByName") or {}).items():
+                        if _VALUE_FIELD.match(src):
+                            renamed_value_names.add(dst)
+            for ov in (panel.get("fieldConfig") or {}).get("overrides") or []:
+                matcher = ov.get("matcher") or {}
+                props = {p.get("id") for p in (ov.get("properties") or [])}
+                name = matcher.get("options")
+                hits_value = name in renamed_value_names or (isinstance(name, str) and bool(_VALUE_FIELD.match(name)))
+                if matcher.get("id") == "byName" and hits_value and props & _VALUE_PROPS:
+                    offenders.append(
+                        f"{filename} #{panel.get('id')} {panel.get('title')!r}"
+                        f" byName={matcher.get('options')!r} carries {sorted(props & _VALUE_PROPS)}"
+                    )
+    assert not offenders, (
+        f"a single-target merged table reaches its value column by NAME, but that name changes with"
+        f" the number of series returned -- narrowing the pickers to one stream silently drops these"
+        f" properties. Match byType:number instead: {offenders}"
+    )

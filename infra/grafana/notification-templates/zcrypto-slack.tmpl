@@ -5,11 +5,11 @@
 
 {{/* ---------- shared partials ---------- */}}
 
-{{- define "zcrypto.esc" -}}
+{{ define "zcrypto.esc" -}}
 {{ . | reReplaceAll "&" "&amp;" | reReplaceAll "<" "&lt;" | reReplaceAll ">" "&gt;" }}
 {{- end -}}
 
-{{- define "zcrypto.url" -}}
+{{ define "zcrypto.url" -}}
 {{ . | reReplaceAll "&" "&amp;" }}
 {{- end -}}
 
@@ -17,7 +17,7 @@
 {{/* title and the per-instance where-line -- because this message is read with nothing    */}}
 {{/* else open. The fall-through renders the raw label so a host the map does not know     */}}
 {{/* shows up visibly and correctably instead of vanishing.                                */}}
-{{- define "zcrypto.host" -}}
+{{ define "zcrypto.host" -}}
   {{ if eq . "zcrypto" }}Capture primary
   {{- else if eq . "zcrypto-red" }}Capture secondary
   {{- else if eq . "ops" }}Ops
@@ -29,7 +29,7 @@
 {{/* The else branch is reached by the rules that fire from an unlabelled `or on() vector(0)` */}}
 {{/* arm: at fire time those instances carry no labels at all, so a bare interpolation would  */}}
 {{/* render a blank where the operator expects a place.                                      */}}
-{{- define "zcrypto.where" -}}
+{{ define "zcrypto.where" -}}
 {{- if .Labels.host }}`host={{ template "zcrypto.host" .Labels.host }}`
 {{- else }}`no host label on this instance -- see the summary above`{{ end }}
 {{- range .Labels.SortedPairs }}
@@ -37,36 +37,46 @@
 {{- end }}
 {{- end -}}
 
-{{- define "zcrypto.value" -}}
+{{ define "zcrypto.value" -}}
 {{- range $k, $v := .Values }}
 {{- if eq $k "A" }}  measured {{ printf "%.4g" $v }}{{ with $.Annotations.unit }} {{ . }}{{ end }}{{ end }}
 {{- end }}
 {{- end -}}
 
-{{- define "zcrypto.link" -}}
+{{ define "zcrypto.link" -}}
 {{ if .PanelURL }}👉 <{{ template "zcrypto.url" .PanelURL }}|open the panel>
 {{- else if .DashboardURL }}👉 <{{ template "zcrypto.url" .DashboardURL }}|open the board> -- this rule names a board but no panel
 {{- else }}👉 <{{ template "zcrypto.url" .GeneratorURL }}|open the rule and its query> -- no dashboard panel is pinned on this rule
 {{- end }}
 {{- end -}}
 
-{{- define "zcrypto.errctx" -}}
-{{- with .Labels.ref_id }}
-the query that failed is `{{ . }}` -- this is the rule's error state, not its condition
+{{ define "zcrypto.errctx" -}}
+{{/* Gates on .Annotations.Error, NOT .Labels.ref_id. Measured against the live stack 2026-08-05
+     by deliberately breaking a probe rule: Grafana delivers an execution failure as the
+     annotations `Error` and `grafana_state_reason`, and sets NO ref_id label -- so the previous
+     gate never fired and an errored rule rendered as an ordinary page. Every rule in this file
+     carries execErrState: Alerting, so that path is live for all of them. */}}
+{{- with .Annotations.Error }}
+
+:warning: *This is the rule's ERROR state, not its condition* -- the query did not run, so the
+value above means nothing. The condition may be fine. Grafana said:
+```
+{{ template "zcrypto.esc" (printf "%.300s" .) }}
+```
 {{- end }}
 {{- end -}}
 
-{{- define "zcrypto.silence" -}}
+{{ define "zcrypto.silence" -}}
 {{- with .SilenceURL }}<{{ template "zcrypto.url" . }}|silence this alert>{{ end -}}
 {{- end -}}
 
 {{/* ---------- metrics receiver ---------- */}}
 
-{{- define "zcrypto.slack.title.metrics" -}}
+{{ define "zcrypto.slack.title.metrics" -}}
 {{ if eq .Status "resolved" }}✅ {{ else if eq .CommonLabels.severity "critical" }}🔴 CRITICAL · {{ else }}🟠 WARNING · {{ end }}{{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} · {{ template "zcrypto.host" . }}{{ end }}{{ if gt (len .Alerts.Firing) 1 }} ×{{ len .Alerts.Firing }}{{ end }}
 {{- end -}}
 
-{{- define "zcrypto.slack.body.metrics" -}}
+{{ define "zcrypto.slack.body.metrics" -}}
 {{ with .CommonAnnotations.summary }}{{ template "zcrypto.esc" . }}
 {{ end }}
 {{- range $i, $a := .Alerts }}{{ if eq $i 0 }}{{ template "zcrypto.link" $a }}{{ template "zcrypto.errctx" $a }}{{ end }}{{ end }}
@@ -81,11 +91,11 @@ the query that failed is `{{ . }}` -- this is the rule's error state, not its co
 
 {{/* ---------- logs receiver ---------- */}}
 
-{{- define "zcrypto.slack.title.logs" -}}
+{{ define "zcrypto.slack.title.logs" -}}
 {{ if eq .Status "resolved" }}✅ {{ else if eq .CommonLabels.severity "critical" }}🔴 CRITICAL · {{ else }}🟠 WARNING · {{ end }}{{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} · {{ template "zcrypto.host" . }}{{ end }}{{ if gt (len .Alerts.Firing) 1 }} · {{ len .Alerts.Firing }} distinct lines{{ end }}
 {{- end -}}
 
-{{- define "zcrypto.slack.body.logs" -}}
+{{ define "zcrypto.slack.body.logs" -}}
 {{ with .CommonAnnotations.summary }}{{ template "zcrypto.esc" . }}
 {{ end }}
 {{- range $i, $a := .Alerts }}{{ if eq $i 0 }}{{ template "zcrypto.link" $a }}{{ template "zcrypto.errctx" $a }}{{ end }}{{ end }}
