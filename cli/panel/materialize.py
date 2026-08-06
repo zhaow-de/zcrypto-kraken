@@ -259,10 +259,11 @@ class MaterializeResult:
     hours_unsettled: int
     rows: int
     errors: list[tuple[str, datetime, str]]
-    #: hour-segments present in the archive for a pair whose quote has no entry in
-    #: `NOTIONALS_BY_QUOTE` (T0092/spec 00085 D1). Reported so an out-of-scope stream is visible
-    #: rather than an absence that looks like success. Defaulted and last so it stays after the
-    #: non-default `errors` field.
+    #: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
+    #: (T0092/spec 00085 D1) -- counted once per pair, not once per hour-segment, or a single
+    #: out-of-scope pair with hundreds of captured hours would inflate this by the hour count.
+    #: Reported so an out-of-scope stream is visible rather than an absence that looks like
+    #: success. Defaulted and last so it stays after the non-default `errors` field.
     pairs_out_of_scope: int = 0
 
 
@@ -303,7 +304,6 @@ def materialize(
     hours_skipped = 0
     hours_unanchored = 0
     hours_unsettled = 0
-    pairs_out_of_scope = 0
     rows = 0
     errors: list[tuple[str, datetime, str]] = []
     watermarks: dict[str, datetime | None] = {}
@@ -312,15 +312,18 @@ def materialize(
     last_seen: dict[str, datetime | None] = {}  # T0104: the staleness clock, carried with the book
     unanchored_run: dict[str, bool] = {}  # suppresses repeat WARNING logging within one bad run
 
+    skipped_pairs: set[str] = set()  # logged once per pair, not per hour
+
     for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
         if pair is not None and seg_pair != pair:
             continue
         if seg_pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
-            pairs_out_of_scope += 1
-            logger.info(
-                "panel skipping pair=%s: no notional ladder for its quote (add one to NOTIONALS_BY_QUOTE)",
-                seg_pair,
-            )
+            if seg_pair not in skipped_pairs:
+                skipped_pairs.add(seg_pair)
+                logger.info(
+                    "panel skipping pair=%s: no notional ladder for its quote (add one to NOTIONALS_BY_QUOTE)",
+                    seg_pair,
+                )
             continue
         if since is not None and hour < since:
             continue
@@ -386,7 +389,7 @@ def materialize(
         last_seen[seg_pair] = last_out
         unanchored_run[seg_pair] = False
 
-    return MaterializeResult(hours_written, hours_skipped, hours_unanchored, hours_unsettled, rows, errors, pairs_out_of_scope)
+    return MaterializeResult(hours_written, hours_skipped, hours_unanchored, hours_unsettled, rows, errors, len(skipped_pairs))
 
 
 def _code_ref() -> str:

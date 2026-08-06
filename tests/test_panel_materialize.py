@@ -455,6 +455,24 @@ def test_a_pair_whose_quote_has_no_ladder_is_still_counted_out_of_scope(tmp_path
     assert not (panel_root / "ETH" / "USD").exists()
 
 
+def test_pairs_out_of_scope_counts_distinct_pairs_not_hours(tmp_path: Path) -> None:
+    """A single ladderless pair with MANY captured hours must count as ONE out-of-scope pair, not
+    one per hour -- otherwise a real tree with hundreds of hours for one out-of-scope pair inflates
+    this counter by the hour count, and the dedup also gates the log line (one INFO per pair, not
+    one per hour shipped to Loki)."""
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    for offset in range(3):
+        h = hour + timedelta(hours=offset)
+        _book(capture_root, "ETH/USD", h, _explode("ETH/USD", h, _messages()))
+
+    result = materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    assert result.pairs_out_of_scope == 1  # one PAIR, not three hours
+    assert result.hours_written == 0
+    assert not (panel_root / "ETH" / "USD").exists()
+
+
 # --- write_meta: the generation manifest ------------------------------------------------------------
 
 
