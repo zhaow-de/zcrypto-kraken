@@ -284,7 +284,8 @@ async def _consume(
             for item in msg.get("data", []) or []:
                 system = item.get("system")
                 # `effectiveTime` is the lead time a planned-downtime notice carries -- the one
-                # number deciding whether a pre-drain is worth building (T0105). Capturing `system`
+                # number the pre-drain decision waited on (T0105 -- settled 2026-08-06: zero lead
+                # observed, pre-drain dropped). Capturing `system`
                 # and dropping it would answer only the easy half.
                 logger.info(
                     "venue status system=%s version=%s effective_time=%s",
