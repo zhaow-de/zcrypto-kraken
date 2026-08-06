@@ -115,14 +115,71 @@ rm -rf "$PANEL_ROOT"
 echo "deleted $PANEL_ROOT (the per-pair watermarks went with it — the rebuild covers everything, out-of-scope subtrees included)"
 
 echo "== step 5: rebuilding inside the unit =="
+# Anchor the journal read that follows to THIS run. `systemctl start --wait` returning does not
+# prove journald has committed the unit's last lines, and an unanchored `tail -1` would then hand
+# back the PREVIOUS run's numbers -- the same wrong-run failure the capture exists to prevent.
+rebuild_since=$(date -u +%s)
 if ! systemctl start --wait zcrypto-panel-materialize.service; then
   echo "rebuild FAILED (the unit reported non-zero). The tree is now partial — investigate before anything else. The timer stays STOPPED and the closing checklist is NOT owed yet." >&2
   exit 4
 fi
 echo "rebuild complete."
+
+# BEFORE the timer restart, deliberately. The runner's completion line carries hours_unanchored --
+# the counter the checklist below branches on, and the only thing that later separates a stale orphan
+# on the NAS from the last surviving copy of an hour this rebuild could not reproduce. It carries
+# hours_unsettled beside it, which matters only if the settle window ever widens between generations;
+# record both, decide on the first. They are unrecoverable from the tree,
+# and the one written-from-memory record of that line lost exactly those two fields. `tail -1` is
+# only trustworthy while the rebuild IS the newest run: the timer is Persistent=true, so restarting
+# it can fire a queued catch-up tick immediately, and the T0111 drill recorded that tick reporting
+# hours_written=80 hours_skipped=6370 -- plausible, reassuring, and the wrong run.
+echo "== the rebuild's own completion line — record it whole, both unanchored counts included =="
+# Captured into a variable, not piped straight to the terminal: with `pipefail` a journalctl that
+# emits its lines and THEN exits non-zero makes the pipeline fail after the text is already out, so
+# a trailing `|| echo` would print the line and the could-not-read message together. One read, one
+# verdict, one message. `-o short-iso` keeps the timestamp so the operator can see which run it is.
+completion=$(journalctl -u zcrypto-panel-materialize.service --since "@$rebuild_since" --no-pager -o short-iso 2>/dev/null \
+  | grep -F 'hours_written' | tail -1 || true)
+if [ -n "$completion" ]; then
+  echo "  $completion"
+else
+  echo "  (could not read it back — recover with: journalctl -u zcrypto-panel-materialize.service --since \"@$rebuild_since\" | grep hours_written)"
+fi
+
 systemctl start zcrypto-panel-materialize.timer
 echo "timer restarted."
 
 echo "== step 6: your remaining checklist =="
-echo "1. Delete the OLD panel copy on the NAS share ({{ ops_panel_subdir }} there) — the hourly pull has no --delete, so it survives until deleted there."
-echo "2. Un-pause the healthchecks.io panel check (paused time-boxed in step 3)."
+echo "1. Un-pause the healthchecks.io panel check (paused time-boxed in step 3). Do this FIRST: it is"
+echo "   the materialize timer's only liveness signal, and every run until you do is unwatched."
+echo "2. The NAS copy of {{ ops_panel_subdir }}. A deletion is owed ONLY when this rebuild wrote to"
+echo "   DIFFERENT paths than the old tree. Exactly two things do that, and a schema bump is NOT one:"
+echo "     - the grid directory name changed (the path carries it as a literal); or"
+echo "     - a pair left the archive, or left the panel's quote scope — that orphans a whole subtree"
+echo "       with no generation change at all, which is the case nothing else catches."
+echo "   A schema, notional-ladder or level-count change FORCES a regeneration but rewrites identical"
+echo "   paths, so it orphans nothing. The pull is rsync without --delete, so only paths the rebuild"
+echo "   no longer writes survive there. Measure before deleting — from this host, which sees both:"
+echo "     find \"$PANEL_ROOT\" -type f -printf '%P\\n' | LC_ALL=C sort > /tmp/ops-panel.txt"
+echo "     find {{ ops_nas_mount }}/{{ ops_panel_subdir }} -type f -printf '%P\\n' | LC_ALL=C sort > /tmp/nas-panel.txt"
+echo "     wc -l /tmp/ops-panel.txt /tmp/nas-panel.txt   # both non-zero, or the check proved nothing"
+echo "     LC_ALL=C comm -13 /tmp/ops-panel.txt /tmp/nas-panel.txt   # NAS-only: the delete CANDIDATES"
+echo "   comm needs LC_ALL=C as much as the sorts do: under a UTF-8 locale it rejects C-sorted input"
+echo "   as unsorted and exits 1, right at the moment you are deciding whether to delete."
+echo "   Empty output means nothing is owed. Record that it was measured, and stop."
+echo "   Non-empty is NOT a licence to delete. The materialize sweep skips every hour at or below its"
+echo "   watermark, so an hour this rebuild failed to anchor is missing here and present ONLY on the"
+echo "   NAS — indistinguishable, by path alone, from a stale orphan. Deleting such an hour destroys"
+echo "   its last copy, and the pull runs outward from this host, so nothing brings it back."
+echo "   If hours_unanchored above is 0, every candidate is a real orphan and may be deleted."
+echo "   If it is NOT 0, the count alone will not tell you WHICH hours — that comes from the same"
+echo "   journal, one WARNING per contiguous bad run per pair:"
+echo "     journalctl -u zcrypto-panel-materialize.service --since \"@$rebuild_since\" | grep unanchored"
+echo "   Those name the START of each bad run, not every hour in it, so they are a lead and not a map."
+echo "   Unless you can account for EVERY candidate against them, delete nothing — and if the counts"
+echo "   could not be read at all, delete nothing regardless: an unread count is not a zero."
+echo "   Delete on the NAS itself. {{ ops_nas_mount }} is mounted READ-ONLY here and must never be"
+echo "   written through. On the NAS the tree is /volume1/ZhaoCrypto/l2-panel — written as a literal"
+echo "   on purpose: that target is pinned NAS-side and only happens to match this host's name for"
+echo "   the same tree, so confirm it there rather than assuming the two names move together."
