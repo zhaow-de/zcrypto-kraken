@@ -134,8 +134,9 @@ def test_the_status_channel_is_recognised_rather_than_discarded():
 def test_the_consumer_counts_and_records_the_venue_status_it_receives():
     """D1 is "log AND count, keeping system and effectiveTime" -- a log line alone answers the
     question only for whoever thinks to grep Loki. `effectiveTime` is the field that would carry a
-    planned-downtime lead time, which is the single number deciding whether a pre-drain is worth
-    building ([[T0105]]); capturing `system` while dropping it would answer the easy half.
+    planned-downtime lead time -- the number the pre-drain decision waited on ([[T0105]], settled
+    2026-08-06: the first real event carried None throughout, and the pre-drain was dropped);
+    capturing `system` while dropping it would have answered only the easy half.
     """
     import asyncio
 
