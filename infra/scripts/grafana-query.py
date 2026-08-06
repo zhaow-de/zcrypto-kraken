@@ -7,6 +7,11 @@ environment and never obtains it, so every caller improvised the decrypt. This i
 
     uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}' hc_check_up
 
+NOT for alert states: `ALERTS{alertstate="firing"}` is a Prometheus-native metric and is
+structurally EMPTY for Grafana-managed rules (which is all of ours), so its `(no series)` reads
+as "nothing firing" regardless of reality. Read rule states from the API instead:
+`GET /api/prometheus/grafana/api/v1/rules` with the same bearer token.
+
 Two decrypt footguns, both of which cost a live rollout an error-and-retry, are handled here so
 nobody meets them again:
 
