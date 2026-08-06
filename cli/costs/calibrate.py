@@ -1,0 +1,109 @@
+"""The captured-spread calibration query, committed as runnable code (T0014, spec 00085 D5).
+
+Was prose at `docs/reference/captured-spread-calibration.md`; this module is now the provenance of
+record. `tests/test_costs_calibrate.py::test_the_committed_script_reproduces_the_table_it_replaces`
+runs it over the OLD window (`cli/costs/spread.py`'s `CALIBRATION_WINDOW`) and requires it to
+reproduce the currently-committed table -- that comparison is only available while those rows are
+still committed, i.e. before Task 7 replaces them.
+
+The statistic, matching the query of record: the mean of `(fill_bps_bid_<size> +
+fill_bps_ask_<size>) / 2` per pair per rung. `hours` means hourly panel files PER PAIR, not summed
+pair-hours -- where pairs differ, the minimum is reported and `max_rows - min_rows` exposes the
+spread (a partial NAS pull of one leg must be visible, not averaged away).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import polars as pl
+
+from cli.costs.errors import CostModelError
+
+_SIZES: tuple[tuple[int, str], ...] = ((100, "100"), (1_000, "1k"), (10_000, "10k"))
+
+
+@dataclass(frozen=True)
+class CalibrationResult:
+    """`calibrate()`'s output: the re-keyed table plus the provenance figures Task 7 restamps
+    `cli/costs/spread.py`'s constants from."""
+
+    table: dict[str, dict[int, float]]
+    hours: int
+    min_rows: int
+    max_rows: int
+    btc_eur_reference: float
+
+
+def _discover_pairs(panel_root: Path) -> list[str]:
+    # Mirrors `cli/panel/command.py`'s glob-and-slice convention for the same tree layout
+    # (`<BASE>/<QUOTE>/panel-1s/<YYYY>/<MM>/<DD>/<HH>.parquet`).
+    return sorted({f"{p.parts[-7]}/{p.parts[-6]}" for p in panel_root.glob("*/*/panel-1s/*/*/*/*.parquet")})
+
+
+def _hourly_files_in_window(panel_dir: Path, window_start: datetime, window_end: datetime) -> list[Path]:
+    # A file's hour interval is [HH:00:00, HH+1:00:00); keep files that OVERLAP the window rather
+    # than start inside it, since `window_start`/`window_end` need not land on an hour boundary
+    # (the committed window starts at :47:33) -- reproduced against the real tree: 353 files/pair
+    # for the committed 2026-07-08T13:47:33Z..2026-07-23T05:59:59Z window, matching CALIBRATION_HOURS.
+    files = []
+    for p in panel_dir.glob("*/*/*/*.parquet"):
+        hour_start = datetime(
+            int(p.parent.parent.parent.name), int(p.parent.parent.name), int(p.parent.name), int(p.stem), tzinfo=window_start.tzinfo
+        )
+        if hour_start < window_end and hour_start + timedelta(hours=1) > window_start:
+            files.append(p)
+    return sorted(files)
+
+
+def calibrate(panel_root: Path, window_start: datetime, window_end: datetime) -> CalibrationResult:
+    """Scan every `<BASE>/<QUOTE>/panel-1s/**` pair under `panel_root` and compute the mean
+    effective-spread table over `[window_start, window_end]`, plus its provenance.
+
+    `window_start`/`window_end` must be timezone-aware (panel `ts` is `Datetime("us", "UTC")`; a
+    naive literal compared against it raises `SchemaError`).
+    """
+    table: dict[str, dict[int, float]] = {}
+    hours_per_pair: dict[str, int] = {}
+    rows_per_pair: dict[str, int] = {}
+
+    for symbol in _discover_pairs(panel_root):
+        base, quote = symbol.split("/")
+        panel_dir = panel_root / base / quote / "panel-1s"
+        files = _hourly_files_in_window(panel_dir, window_start, window_end)
+        if not files:
+            continue
+        hours_per_pair[symbol] = len(files)
+
+        lf = pl.scan_parquet(files).filter(pl.col("ts").is_between(window_start, window_end, closed="both"))
+        stats = lf.select(
+            pl.len().alias("_rows"),
+            *(
+                (((pl.col(f"fill_bps_bid_{suffix}") + pl.col(f"fill_bps_ask_{suffix}")) / 2).mean()).alias(str(size))
+                for size, suffix in _SIZES
+            ),
+        ).collect()
+
+        rows_per_pair[symbol] = stats["_rows"].item()
+        table[symbol] = {size: stats[str(size)].item() for size, _ in _SIZES}
+
+    if "BTC/EUR" not in table:
+        raise CostModelError(f"no BTC/EUR panel data in the window [{window_start}, {window_end}]; refusing an unpinned table")
+
+    btc_eur_reference = (
+        pl.scan_parquet(_hourly_files_in_window(panel_root / "BTC" / "EUR" / "panel-1s", window_start, window_end))
+        .filter(pl.col("ts").is_between(window_start, window_end, closed="both"))
+        .select(pl.col("mid").mean())
+        .collect()
+        .item()
+    )
+
+    return CalibrationResult(
+        table=table,
+        hours=min(hours_per_pair.values()),
+        min_rows=min(rows_per_pair.values()),
+        max_rows=max(rows_per_pair.values()),
+        btc_eur_reference=btc_eur_reference,
+    )
