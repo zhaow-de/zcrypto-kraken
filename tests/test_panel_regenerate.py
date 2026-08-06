@@ -46,6 +46,32 @@ case "$*" in
 esac
 exit 0
 """
+# journalctl was absent from this harness until the completion-line block existed, so that block's
+# SUCCESS path -- the one that captures hours_unanchored/hours_unsettled -- had never executed
+# anywhere: every run silently took the `|| echo` fallback.
+#
+# It logs to CALL_LOG alongside systemctl, and that is load-bearing rather than incidental. The
+# defect this block exists to prevent is the timer being restarted BEFORE the journal read, and
+# `systemctl start …timer` prints nothing -- so an ordering assertion made on stdout cannot see it.
+# A stdout-anchored check passed against exactly that defect when it was constructed. One ordered
+# log covering both commands is the only place the ordering is observable.
+#
+# The emitted text mirrors the real completion line field-for-field (cli/panel/command.py), with the
+# `-o short-iso` timestamp the script now asks for: a harness whose model of the line is wrong
+# teaches the wrong shape to whoever reads it next.
+# The argv goes to its OWN file, not into CALL_LOG: the ordering assertions need a stable marker,
+# while the flags need pinning separately. Without this the `--since`/`-o short-iso` anchoring is
+# untested -- a revert to the un-anchored `-o cat` form passed the whole suite when probed, which is
+# the same silent-revert hole the vacuous checklist assertion was.
+JOURNAL_READ = "journalctl completion-read"
+STUB_JOURNALCTL = (
+    "#!/usr/bin/env bash\n"
+    f'echo "{JOURNAL_READ}" >> "$CALL_LOG"\n'
+    'echo "$*" >> "$CALL_LOG.journalctl-argv"\n'
+    'echo "2026-08-03T10:00:05+0000 ops zcrypto-panel[1] panel materialize complete pairs=10'
+    " pairs_out_of_scope=2 hours_written=6370 hours_skipped=0 hours_unsettled=1"
+    ' hours_unanchored=2 rows=22827108 errors=0"\n'
+)
 STUB_DU_SMALL = '#!/usr/bin/env bash\necho -e "1\\t$2"\n'
 STUB_DU_HUGE = '#!/usr/bin/env bash\necho -e "99999999\\t$2"\n'
 # A du that fails on ONE of its two inputs. The canonical tree is the NFS-side one that goes away
@@ -80,7 +106,7 @@ def render(tmp_path, du_stub, panel_subdir="l2-panel", data_dir=None):
     script.chmod(0o755)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name, body in (("date", STUB_DATE), ("systemctl", STUB_SYSTEMCTL), ("du", du_stub)):
+    for name, body in (("date", STUB_DATE), ("systemctl", STUB_SYSTEMCTL), ("du", du_stub), ("journalctl", STUB_JOURNALCTL)):
         p = bin_dir / name
         p.write_text(body)
         p.chmod(0o755)
@@ -301,9 +327,14 @@ def test_happy_path_order_and_checklist(tmp_path):
     assert rc == 0
     assert not panel.exists()
     seq = calls(log)
+    # The journal read sits between the rebuild and the timer restart, and this equality is what
+    # pins it: the timer is Persistent=true, so a restart can fire a queued catch-up tick whose
+    # numbers then win `tail -1`. `systemctl start …timer` prints nothing, so only an ordered call
+    # log can see that inversion -- a stdout-position check passes straight through it.
     assert seq == [
         *STEP1,
         "systemctl start --wait zcrypto-panel-materialize.service",
+        JOURNAL_READ,
         TIMER_RESTART,
     ]
     assert "NAS" in out and "Un-pause" in out and "ops_panel_timer_hold" in out
@@ -374,3 +405,65 @@ def test_every_ansible_template_is_parseable_jinja():
         except jinja2.TemplateSyntaxError as exc:
             broken.append(f"{path.relative_to(root)}:{exc.lineno}: {exc}")
     assert not broken, "unparseable Jinja templates: " + "; ".join(broken)
+
+
+# The closing checklist is the ONLY artifact this routine leaves an operator, and its previous
+# version was asserted by `"NAS" in out and "Un-pause" in out` -- which the OLD text satisfied
+# verbatim, so the whole rewrite was unpinned and a revert would have shipped green. Each assertion
+# below fails against that old text.
+def test_the_closing_checklist_is_safe_and_ordered(tmp_path):
+    script, env, panel, log = render(tmp_path, STUB_DU_SMALL)
+    rc, out = run_tty(script, env, ["paused"])
+    assert rc == 0
+
+    # (c) The completion line must be captured BEFORE the timer is restarted. The timer is
+    # Persistent=true, so restarting it can fire a queued catch-up tick whose numbers then win
+    # `tail -1` -- the T0111 drill saw exactly that (hours_written=80 hours_skipped=6370).
+    # Asserted on the CALL LOG, not on stdout. `systemctl start …timer` prints nothing, so hoisting
+    # it above the journal read while leaving `echo "timer restarted."` in place is invisible to a
+    # stdout-position check -- a review constructed that exact defect and the stdout form survived.
+    assert "completion line" in out, "the rebuild's completion line is not printed at all"
+    seq = calls(log)
+    assert JOURNAL_READ in seq, "the journal was never read"
+    assert seq.index(JOURNAL_READ) < seq.index(TIMER_RESTART), (
+        "the timer is restarted BEFORE the journal read, so a queued catch-up tick can win `tail -1` and the operator records the wrong run's counters"
+    )
+    # The read must be ANCHORED to this rebuild. `systemctl start --wait` returning does not prove
+    # journald committed the unit's last lines, and an unanchored `tail -1` hands back the PREVIOUS
+    # run's numbers -- the wrong-run failure this block exists to prevent, in a second shape.
+    argv = Path(f"{log}.journalctl-argv").read_text()
+    assert "--since @" in argv, "the journal read is not anchored to this rebuild's start"
+    assert "-o short-iso" in argv, "the line carries no timestamp, so it cannot be tied to a run"
+
+    # The success branch actually ran -- without a journalctl stub this silently took the fallback.
+    assert "hours_unanchored=2" in out and "hours_unsettled=1" in out, (
+        "the journal line did not reach the operator; the block fell through to its fallback"
+    )
+
+    # Un-pause is the timer's only liveness signal, so it comes first; the orphan sweep can wait.
+    assert out.index("Un-pause") < out.index("NAS copy"), "un-pause must precede the NAS item"
+
+    # (a) The trigger must not claim a schema bump orphans paths -- it forces a regeneration but
+    # rewrites identical paths. The path-orphaning cases are a grid rename and a departed pair.
+    assert "owed ONLY when" in out
+    assert "a schema bump is NOT one" in out, "the checklist still implies a schema change orphans paths"
+    assert "left the archive" in out, "the departed-pair case (the one nothing else catches) is missing"
+
+    # (b) comm needs the locale pin as much as the sorts do, or it exits 1 on C-sorted input.
+    assert "LC_ALL=C comm -13" in out, "comm is not locale-pinned; it errors under a UTF-8 locale"
+
+    # A measurement that could not be read is not a zero.
+    assert "an unread count is not a zero" in out, "no safe default stated for unreadable counts"
+    # The reconcile step must name an operand. `hours_unanchored` is a COUNT, never which hours, so
+    # "reconcile every candidate against the counts" was itself a step naming nothing runnable --
+    # the original defect one layer down. The WARNING grep is where the hours actually are.
+    assert "grep unanchored" in out, "the reconcile step still names no operand"
+    assert "not a map" in out, (
+        "the WARNING is suppressed for repeats within a run, so it names each run's START, not every"
+        " hour -- the checklist must say so or it over-promises"
+    )
+
+    # The action needs a host and a path -- its absence is what made the item unfindable.
+    assert "READ-ONLY here" in out and "/volume1/ZhaoCrypto" in out, (
+        "the checklist still does not say WHERE to delete, which was the original defect"
+    )
