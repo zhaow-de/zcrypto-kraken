@@ -117,6 +117,7 @@ def sample_row(
     bids: dict[Decimal, Decimal],
     asks: dict[Decimal, Decimal],
     *,
+    quote: str,
     updates: int,
     stale_seconds: float | None = None,
 ) -> dict | None:
@@ -149,8 +150,8 @@ def sample_row(
         "microprice": microprice,
         "imbalance_l1": imbalance_l1,
     }
-    for notional in NOTIONALS_EUR:
-        suffix = _FILL_SUFFIXES[notional]
+    for index, notional in enumerate(notionals_for(quote)):
+        suffix = _FILL_SUFFIXES[index]
         row[f"fill_bps_bid_{suffix}"] = _fill_bps(bid_levels, notional, mid, buy=False)
         row[f"fill_bps_ask_{suffix}"] = _fill_bps(ask_levels, notional, mid, buy=True)
     for side, levels in (("bid", bid_levels), ("ask", ask_levels)):
