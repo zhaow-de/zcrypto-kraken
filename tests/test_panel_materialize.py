@@ -425,6 +425,36 @@ def test_materialize_uses_the_reconciled_hour_when_present(tmp_path: Path) -> No
     assert pl.read_parquet(final).row(0, named=True)["depth_qty_bid_l1"] == 9.0  # the healed value, not 1.0
 
 
+# --- materialize: quote scope (T0092 spec 00085 D1 -- every quote with a ladder, not just EUR) --------
+
+
+def test_the_sweep_no_longer_skips_a_btc_quoted_pair(tmp_path: Path) -> None:
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    _book(capture_root, "ETH/BTC", hour, _explode("ETH/BTC", hour, _messages()))
+
+    # THREE positionals: (primary_root, reconciled_root, panel_root). Passing two silently binds
+    # panel_root to reconciled_root and raises TypeError on the missing third.
+    result = materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    assert result.pairs_out_of_scope == 0
+    assert result.hours_written == 1
+    assert (panel_root / "ETH" / "BTC" / "panel-1s").exists()
+
+
+def test_a_pair_whose_quote_has_no_ladder_is_still_counted_out_of_scope(tmp_path: Path) -> None:
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    _book(capture_root, "ETH/USD", hour, _explode("ETH/USD", hour, _messages()))
+
+    result = materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    # Skipped, not crashed, and NOT silently walked with the EUR ladder.
+    assert result.pairs_out_of_scope == 1
+    assert result.hours_written == 0
+    assert not (panel_root / "ETH" / "USD").exists()
+
+
 # --- write_meta: the generation manifest ------------------------------------------------------------
 
 

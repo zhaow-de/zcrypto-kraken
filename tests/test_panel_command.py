@@ -417,26 +417,23 @@ def test_since_parsing_edges(tmp_path):
 # --- quote scope: the ladder is quote-denominated, so the panel is EUR-quoted only (T0092) ------------
 
 
-def test_materialize_skips_non_eur_quoted_pairs_in_the_sweep(tmp_path: Path) -> None:
-    """A BTC-quoted book must never be materialized.
-
-    `NOTIONALS_EUR` walks `price * qty` in the QUOTE currency, so on ETH/BTC the rungs read as
-    100/1k/10k BTC -- the @100 rung alone is ~10x that pair's entire daily volume, so every
-    `fill_bps_*` column would be null. A dead EUR-labelled ladder on an out-of-scope tree; the
-    sweep therefore takes EUR-quoted pairs only.
+def test_materialize_skips_pairs_whose_quote_has_no_ladder_in_the_sweep(tmp_path: Path) -> None:
+    """A quote with no entry in `NOTIONALS_BY_QUOTE` must never be materialized (T0092/spec 00085
+    D1: the sweep now walks every quote that HAS a ladder -- BTC included -- so the property that
+    survives is "no ladder for this quote", not "not EUR". USD has no ladder entry.
     """
     primary = tmp_path / "primary"
     panel_root = tmp_path / "panel"
     _seed_primary(primary, "ETH/EUR", H)
-    _seed_primary(primary, "ETH/BTC", H)
+    _seed_primary(primary, "ETH/USD", H)
 
     result = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
 
     assert result.exit_code == 0, result.output
-    # only the EUR leg is counted and written
+    # only the EUR leg (the quote with a ladder) is counted and written
     assert "pairs=1 pairs_out_of_scope=1 " in result.output, result.output
     assert (panel_root / "ETH" / "EUR" / "panel-1s" / "2026" / "07" / "16" / "09.parquet").exists()
-    assert not (panel_root / "ETH" / "BTC").exists()
+    assert not (panel_root / "ETH" / "USD").exists()
 
 
 def test_materialize_refuses_an_explicit_non_eur_pair(tmp_path: Path) -> None:
