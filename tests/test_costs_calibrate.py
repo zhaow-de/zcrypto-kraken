@@ -32,19 +32,25 @@ def _panel_hour(root: Path, pair: str, hour: datetime, *, mid: float, fill: floa
 def test_calibrate_produces_full_symbol_keys_and_provenance(tmp_path: Path) -> None:
     panel_root = tmp_path / "l2-panel"
     W_START = datetime(2026, 7, 24, 0, tzinfo=timezone.utc)
-    W_END = datetime(2026, 7, 24, 2, tzinfo=timezone.utc)
-    for h in (0, 1):
+    W_END = datetime(2026, 7, 24, 3, tzinfo=timezone.utc)
+    for h in (0, 1, 2):
         _panel_hour(panel_root, "BTC/EUR", W_START + timedelta(hours=h), mid=60_000.0, fill=1.5)
+    for h in (0, 1):  # one hour short of BTC/EUR -- models a partial NAS pull of this leg
         _panel_hour(panel_root, "ETH/BTC", W_START + timedelta(hours=h), mid=0.03, fill=2.5)
 
     expected_mean_mid = 60_000.0
     result = calibrate(panel_root, W_START, W_END)
     assert set(result.table) == {"BTC/EUR", "ETH/BTC"}
     assert set(result.table["ETH/BTC"]) == {100, 1_000, 10_000}
-    assert result.hours == 2  # hourly files PER PAIR, not 2 pairs x 2 hours
-    # Joint-sampling: the doc's provenance rests on row counts agreeing across pairs. A bare
-    # `min_rows > 0` would sail straight through a partial NAS pull of the two new legs.
-    assert result.max_rows - result.min_rows <= 5
+    # hourly files PER PAIR: the MIN across pairs (BTC/EUR has 3, ETH/BTC has 2) -- not the max (3)
+    # and not the sum (5), either of which a summed- or max-reading restamp would silently produce.
+    assert result.hours == 2
+    # Joint-sampling on unequal coverage, not the equal-by-construction case: ETH/BTC's missing
+    # third hour is exactly a partial NAS pull, and it must show up as a nonzero row-count spread --
+    # a bare `min_rows > 0` (or a fixture where every pair happens to match) would sail straight
+    # through it.
+    assert result.min_rows == 7_200  # ETH/BTC: 2 hours x 3600 rows/hour
+    assert result.max_rows == 10_800  # BTC/EUR: 3 hours x 3600 rows/hour
     # The FX reference is derived from BTC/EUR mids in the same window, not hardcoded.
     assert result.btc_eur_reference == pytest.approx(expected_mean_mid, rel=1e-9)
 
