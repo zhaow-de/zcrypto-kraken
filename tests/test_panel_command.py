@@ -502,3 +502,26 @@ def test_a_btc_quoted_pair_is_accepted_by_the_pair_option(tmp_path: Path) -> Non
     )
     assert refused.exit_code != 0, refused.output
     assert "notional ladder" in refused.output
+
+
+def test_a_second_sweep_over_a_prior_btc_hour_is_counted_and_not_refused(tmp_path: Path) -> None:
+    """Closes two guards neither existing test discriminates (T0092 review): `_affected_pairs`'
+    `NOTIONALS_BY_QUOTE` membership check and `_check_generation`'s stray-scope check both revert to
+    their old EUR-only form and every existing test still passes. `test_an_out_of_scope_subtree_...`
+    never materializes a real BTC hour before checking, and `test_a_btc_quoted_pair_is_accepted_...`
+    runs on a fresh tree where the stray check never executes (absent manifest -> `write_meta` and
+    return) and dies at the `--pair` `BadParameter` on its second call before `_check_generation` is
+    reached. Only a tree that already holds a BTC hour from a PRIOR sweep exercises both: the
+    completion line's `pairs=` count on the first run, and the generation guard's stray-hour scan
+    (which must not mistake that BTC hour for one the sweep will never revisit) on the second."""
+    primary = tmp_path / "primary"
+    panel_root = tmp_path / "panel"
+    _seed_primary(primary, "ETH/EUR", H)
+    _seed_primary(primary, "ETH/BTC", H)
+
+    first = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+    assert first.exit_code == 0, first.output
+    assert "pairs=2 " in first.output, first.output  # _affected_pairs must count the BTC leg too
+
+    second = runner.invoke(app, ["panel", "materialize", str(primary), "--panel-root", str(panel_root), "--settle-hours", "0"])
+    assert second.exit_code == 0, second.output  # the BTC hour from the first sweep is not a stray

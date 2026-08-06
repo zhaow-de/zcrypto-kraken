@@ -16,14 +16,9 @@ from cli.panel.errors import PanelError  # errors.py imports nothing, so this is
 # accumulating price*qty in the pair's QUOTE currency until the notional is filled, then compare the
 # resulting VWAP to mid in bps. The rungs therefore have to be denominated per quote, or a BTC-quoted
 # pair asks for 100 BTC where it means EUR 100 -- which is why every `fill_bps_*` on those pairs was
-# null before this.
+# null before this. NOTIONALS_EUR is the EUR rungs; `NOTIONALS_BY_QUOTE` below extends them to every
+# other quote, and `notionals_for` refuses a quote with no entry rather than silently defaulting to EUR.
 NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
-# The ladder walks `price * qty`, which is denominated in the pair's QUOTE currency -- so these are
-# EUR notionals only for EUR-quoted pairs. Every OTHER quote needs its own rungs, denominated in
-# that quote and pinned EUR-equivalent (spec 00085 D1) -- `NOTIONALS_BY_QUOTE` below is that map,
-# and `notionals_for` refuses a quote with no entry rather than silently walking the EUR rungs
-# against it (the exact bug this ladder now prevents: a BTC-quoted pair asked for 100 BTC of depth
-# under the old EUR-only rungs, which no such pair carries, so every `fill_bps_*` column went null).
 
 # The BTC/EUR rate the BTC rungs are pinned to. EUR-EQUIVALENCE is the point (spec 00085 D1): the
 # BTC rungs buy the same EUR value as the EUR rungs, so `SPREAD_CALIBRATION`'s inner keys stay EUR
