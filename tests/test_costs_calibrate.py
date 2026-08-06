@@ -63,6 +63,37 @@ def test_calibrate_refuses_a_window_with_no_btc_eur_data(tmp_path: Path) -> None
         calibrate(panel_root, W_START, W_END)
 
 
+def test_calibrate_refuses_when_the_only_btc_eur_rows_fall_outside_the_window(tmp_path: Path) -> None:
+    """Distinct from the key-absent case above: here a BTC/EUR hour FILE overlaps the window (so a
+    naive `"BTC/EUR" in table` check would pass), but every row it actually holds falls outside
+    [window_start, window_end] -- the archive-gap case a sub-hour window can land in. Before the fix
+    this returned an unpinned table (btc_eur_reference=None, all-None cells, min_rows=0) instead of
+    refusing.
+    """
+    from cli.costs.errors import CostModelError
+
+    panel_root = tmp_path / "l2-panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=timezone.utc)
+    p = panel_root / "BTC" / "EUR" / "panel-1s" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}" / f"{hour:%H}.parquet"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    n = 10  # only the first 10 seconds of the hour have data -- a real archive gap for the rest
+    pl.DataFrame(
+        {
+            "ts": [hour + timedelta(seconds=i) for i in range(n)],
+            "mid": [60_000.0] * n,
+            **{f"fill_bps_{side}_{sfx}": [1.5] * n for side in ("bid", "ask") for sfx in ("100", "1k", "10k")},
+        }
+    ).write_parquet(p)
+
+    # Overlaps the file's [HH:00, HH+1:00) hour interval (so the file is scanned) but lands
+    # entirely after the last actual row -- zero rows inside the window.
+    window_start = hour + timedelta(seconds=20)
+    window_end = hour + timedelta(seconds=30)
+
+    with pytest.raises(CostModelError, match="no BTC/EUR"):
+        calibrate(panel_root, window_start, window_end)
+
+
 def test_the_committed_script_reproduces_the_table_it_replaces():
     """The script becomes the provenance of record (spec D5), and Task 7 replaces all ten EUR rows
     in the same commit that introduces it -- so a transcription error and the window move would be
