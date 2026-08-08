@@ -69,10 +69,12 @@ def finalize_universe(
     OUTCOME (`selected`, `escalate`, every `reasons` list) is unchanged, though the output is NOT
     byte-identical: every entry gains a `spread_bps` key, null on that path. A symbol ABSENT from
     the map is recorded `spread_bps: None` and is **not** rejected -- absence of evidence is not
-    evidence of a wide spread. As of spec 00085 all twelve universe legs ARE calibrated (the
-    BTC-quoted pair captured since 2026-07-23, the ladder per-quote since 00085), so this path is
-    now reached only by a symbol genuinely outside the calibration, not by a whole quote. The null is deliberate: it makes the unscreened
-    symbols visible in the artifact instead of letting a reader assume all twelve were screened.
+    evidence of a wide spread. As of spec 00085 all twelve universe legs ARE
+    calibrated -- both BTC-quoted legs captured since 2026-07-23, the ladder per-quote since
+    00085 -- so this path is now reached only by a symbol genuinely outside the
+    calibration, never by a whole quote. The null is deliberate: it makes the
+    unscreened symbols visible in the artifact instead of letting a reader assume
+    all twelve were screened.
     """
     entries = []
     for pair in pairs:

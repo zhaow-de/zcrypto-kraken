@@ -110,7 +110,7 @@ def test_the_committed_script_reproduces_the_table_it_replaces():
     constants now carry the new window, so importing them would make this test follow the very
     restamp it exists to check, and it would pass vacuously forever after.
 
-    This is also the standing CONTROL for the restamp's size. The EUR rows moved by up to -24.77 %
+    This is also the standing CONTROL for the restamp's size. The EUR rows moved by up to -25.01 %
     across the re-key, far past the under-2 % the spec estimated. This test is what attributes that
     move to the WINDOW rather than to the pipeline: the same script, run over the old window against
     the REGENERATED tree, must still land on the old numbers. If it ever stops doing so, the

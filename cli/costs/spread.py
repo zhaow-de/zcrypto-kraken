@@ -39,9 +39,11 @@ CALIBRATION_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-07T19:00
 CALIBRATION_HOURS: int = 365
 CALIBRATION_MIN_ROWS: int = 1_314_000
 
-# Mean effective spread, **bps per side**, mid-relative, by EUR notional. Nulls over the window:
-# exactly 2 across 10 pairs x 3 sizes x 2 sides (XRP fill_bps_ask_10k, 2026-07-13 07:04:31-32Z), so
-# the visible book covered EUR 10k effectively always; those 2 rows drop out of XRP's @10k mean.
+# Mean effective spread, **bps per side**, mid-relative, by EUR notional (the rung is the BTC
+# quantity worth that many EUR on a BTC-quoted pair -- see BTC_EUR_REFERENCE). Nulls over the
+# committed window: **zero**, across 12 pairs x 3 sizes x 2 sides, so the visible book covered the
+# EUR 10k rung on every second of every pair. (The superseded window had exactly 2, both XRP
+# fill_bps_ask_10k at 2026-07-13 07:04:31-32Z -- a date that predates the current window entirely.)
 # NOTE (standing caveat, capture-era data-hygiene map): at EUR 10k the fill walk passes rank 10 on
 # the thin pairs, and ranks beyond 10 are venue-unverified in every era -- those figures rest on
 # protocol congruence rather than on Kraken's own checksums.

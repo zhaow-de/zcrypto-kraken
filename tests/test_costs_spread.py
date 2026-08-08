@@ -84,8 +84,13 @@ def test_the_window_still_clears_the_two_week_exit_bar():
     start, end = (datetime.fromisoformat(w.replace("Z", "+00:00")) for w in CALIBRATION_WINDOW)
     span_days = (end - start).total_seconds() / 86_400
     assert span_days >= 14.0, f"window spans {span_days:.2f} days, below the >=2-week exit bar"
-    # The stamped hour count must describe that same window, or the two can drift apart silently.
-    assert CALIBRATION_HOURS == round((end - start).total_seconds() / 3_600)
+    # The stamped hour count must describe that same window, or the two drift apart silently. Bound
+    # it rather than equate it: `calibrate()` counts hourly FILES that OVERLAP the window, so
+    # `span / 3600` is the right answer only when the window is hour-aligned. The superseded
+    # 2026-07-08T13:47:33Z...2026-07-23T05:59:59Z window spans 352.21 h and correctly stamps 353,
+    # so an equality here would fail a perfectly good restamp for the wrong reason.
+    span_hours = (end - start).total_seconds() / 3_600
+    assert math.floor(span_hours) <= CALIBRATION_HOURS <= math.ceil(span_hours) + 1
 
 
 @pytest.mark.parametrize("pair", sorted(EXPECTED))

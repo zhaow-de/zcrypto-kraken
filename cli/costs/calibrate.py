@@ -2,9 +2,11 @@
 
 Was prose at `docs/reference/captured-spread-calibration.md`; this module is now the provenance of
 record. `tests/test_costs_calibrate.py::test_the_committed_script_reproduces_the_table_it_replaces`
-runs it over the OLD window (`cli/costs/spread.py`'s `CALIBRATION_WINDOW`) and requires it to
-reproduce the currently-committed table -- that comparison is only available while those rows are
-still committed, i.e. before Task 7 replaces them.
+runs it over the SUPERSEDED window and requires it to reproduce the SUPERSEDED table, both held
+there as literals. It deliberately does NOT read `cli/costs/spread.py`'s constants: those now carry
+the current window, so importing them would make the control follow the very restamp it exists to
+check. That test is the standing instrument for attributing a restamp's move to the window rather
+than to this code.
 
 The statistic, matching the query of record: the mean of `(fill_bps_bid_<size> +
 fill_bps_ask_<size>) / 2` per pair per rung. `hours` means hourly panel files PER PAIR, not summed
@@ -46,8 +48,11 @@ def _discover_pairs(panel_root: Path) -> list[str]:
 def _hourly_files_in_window(panel_dir: Path, window_start: datetime, window_end: datetime) -> list[Path]:
     # A file's hour interval is [HH:00:00, HH+1:00:00); keep files that OVERLAP the window rather
     # than start inside it, since `window_start`/`window_end` need not land on an hour boundary
-    # (the committed window starts at :47:33) -- reproduced against the real tree: 353 files/pair
-    # for the committed 2026-07-08T13:47:33Z..2026-07-23T05:59:59Z window, matching CALIBRATION_HOURS.
+    # -- reproduced against the real tree BOTH ways: 353 files/pair for the superseded, non-aligned
+    # 2026-07-08T13:47:33Z..2026-07-23T05:59:59Z window, and 365 files/pair for the current,
+    # hour-aligned 2026-07-23T14:00:00Z..2026-08-07T19:00:00Z one. Note the count is files that
+    # OVERLAP, so it equals span/3600 only when the window is hour-aligned: the superseded window
+    # spans 352.21 h yet correctly yields 353 files.
     files = []
     for p in panel_dir.glob("*/*/*/*.parquet"):
         # Hardcoded UTC, not `window_start.tzinfo`: panel paths are UTC by the tree's own
