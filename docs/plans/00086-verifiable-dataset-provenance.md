@@ -1,5 +1,55 @@
 # Verifiable Dataset Provenance Implementation Plan
 
+> # ⛔ STATUS 2026-08-08: STILL FAILING COLD REVIEW AFTER 4 ROUNDS — DO NOT IMPLEMENT
+>
+> The round-4 rewrite removed the previous do-not-implement marker; that was premature. An automated
+> rework→two-cold-reviewers loop ran **4 rounds (12 agents)** and **did not converge**:
+>
+> | round | verdicts | blocking findings |
+> |---|---|---|
+> | 1 | REWORK / REWORK | 10 |
+> | 2 | REWORK / REWORK | 6 |
+> | 3 | REWORK / REWORK | 6 |
+> | 4 | REWORK / REWORK | **5** |
+>
+> **The plateau is the finding.** Rounds 2–4 sat at 5–6, and the findings kept *moving* rather than
+> recurring — each round genuinely fixed things and exposed new ones. They share one root cause:
+>
+> **The manifest ecosystem has no contract, so anything that reads it generically keeps meeting a
+> writer it cannot handle.** Five committed writers, four `series` shapes, two set-level digest key
+> spellings, a per-run nonce (`ohlc-reach`'s `series_digest` moves on every rebuild with zero content
+> change), an absolute machine-local `source` path (`ohlc-15m`), and a holdout set with no set digest
+> at all. Round 1 hit this as "the holdout is unregisterable"; round 4 hits it as
+> "`derivatives-funding`/`-oi` are unregisterable" and "`ohlc-reach` false-alarms". Same wall, new brick.
+>
+> **This wants a different shape, not another round.** Two candidates for the next session:
+> **(a) normalise the manifests first** — give them a contract and a single writer/reader, then build
+> provenance on it; or **(b) narrow drastically** — an explicit allowlist of the datasets that actually
+> back trials, refusing everything else loudly, and defer generality until (a) exists.
+>
+> Residual blocking findings from round 4, verbatim, for whoever picks this up:
+>
+> 1. **docs/plans/00086-verifiable-dataset-provenance.md Task 3 Step 2 — test_the_real_dataset_bytes_match_what_its_manifest_says; vs spec Verification bullet "For every dataset present here, the parquet row counts sum to the manifest's whole-set `rows`; every vouched per-series `sha256` is reproduced by a parquet"**
+>    - defect: The only test that actually runs the bytes checks over real data is hardcoded to `ohlc-full`. `ohlc-15m`, `derivatives-funding` and `ohlc-holdout-2026-07-10` get no bytes check at all — `_bytes_findings` reaches them only via a schema-4 record naming them, and there are zero schema-4 records. The spec's Verification claim is therefore false as the plan stands, and the holdout — the one set whose ONLY link to its bytes is the row count (D5's stated residual) — is precisely the set left unchecked.
+>    - fix: Parametrise it over `CATALOG_PINNED` (skipping per name where the manifest is absent), asserting `rows == capture_datasets({name: []}, DATA_ROOT)[name]["extent"]["rows"]` and `_vouched_sha256s(manifest["series"]) <= hashes` for each; keep the `len(hashes) == 36` pin as an ohlc-full-specific assertion or drop it. Expected values are the four rows measured above.
+> 2. **docs/plans/00086-verifiable-dataset-provenance.md Task 3 Step 2 — test_the_vouches_no_bytes_allowlist_is_frozen_and_asserted_both_ways; vs spec D5 "no non-member present on disk may vouch nothing" and Verification "the vouches-nothing allowlist is non-vacuous and exhaustive"**
+>    - defect: The both-direction assertion iterates the hardcoded 4-tuple `CATALOG_PINNED`, not the datasets actually present under `DATA_ROOT`. A set present on disk but absent from that tuple can vouch no per-series `sha256` and never be caught — which is exactly the escape hatch D5 exists to make loud. The plan's own Step 1 names two such candidates by name (`derivatives-oi`, `ohlc-reach` — documented, not on this machine, deliberately unpinned), so the first `data fetch` of either silently defeats the assertion.
+>    - fix: Enumerate the sets from disk instead: `for manifest in sorted(DATA_ROOT.glob("*/manifest.json"))`, take `name = manifest.parent.name`, and assert the same equality. That makes the direction the spec states ("present on disk") the direction the test checks, and keeps `CATALOG_PINNED` for the pin test only.
+> 3. **spec 00086 D4 refusal 4 (L141) / plan Task 1 Step 3 `_extent` / plan Task 3 `test_the_catalog_pins_the_current_series_digest_of_every_canonical_dataset_present_here` (plan L897-912)**
+>    - defect: Refusing any leaf whose `first_ts`/`last_ts` is not a parseable non-empty str makes two committed writers' normal output uncapturable, so `derivatives-funding` and `derivatives-oi` become unregisterable whole-set and the catalog-pin test raises rather than fails.
+>    - fix: Scope refusal 4 to leaves that carry data: refuse an unusable stamp only when `rows > 0`. A `rows == 0` leaf contributes 0 rows and no span endpoint, so counting it in `series` and excluding it from `span` cannot narrow anything -- D1's silent-collapse case is strictly rows>0-with-a-null-stamp and stays refused. Add the empty-series leaf to Task 1's matrix as a PASS case (the existing null-stamp refusal test must keep its `rows: 10`), and record the shape in Task 6 Step 2's manifest contract.
+> 4. **plan Task 3 Step 4, `_bytes_findings` -- `whole, refusal = _captured(data_root, name, ())` (plan L1085)**
+>    - defect: D5 re-captures the WHOLE set while `append()` captured only the declared slice, so a record `append()` legitimately writes can be permanently unclearable by Layer 2 on an append-only registry -- the same unrepairable-line class the plan's Global Constraints forbid for the append-vs-load pairing, left open for the append-vs-D5 pairing.
+>    - fix: Make both layers read the same slice: run the row check from the record's own `select` capture (`_captured(..., tuple(entry['select']))` is already computed one line above) against the parquet that slice addresses; or, if a whole-set row sum is required, score a whole-set capture refusal as an explicit `unverifiable-here` verdict rather than a finding and say so in D5's honest-guarantee paragraph. Either way add a Global Constraint -- every shape `append()` can write must be a shape D5 can clear -- plus a test that constructs a manifest capturable in slice but not whole and asserts the record does not red.
+> 5. **spec D1 L53 ("Nothing in the block is a per-run value … so a re-fetch that changes only the stamp cannot move `dataset_hash`") and L246, which attributes this defect only to the un-committed holdout writer; plan Task 1 `series_digest = compute_hash({"series": series})`**
+>    - defect: `series_digest` is a per-run nonce for `ohlc-reach`, a COMMITTED writer with a live subcommand -- it moves on every rebuild with zero content change, which is precisely the false alarm the spec says the design cannot produce.
+>    - fix: Digest a fixed projection of each leaf -- the contracted keys `rows`/`first_ts`/`last_ts` plus `sha256` when present -- rather than the whole leaf. That is writer-agnostic (no exhaustive volatile-key list, which is what D1 rightly rejected for top-level keys), per-run noise cannot enter, and the transitive commitment to per-series hashes is unchanged; the named cost is that a future content-bearing leaf key would not be covered, which belongs in the decay list. Alternative if the whole-leaf digest is kept: narrow the L53 claim to the writers it actually holds for and state per dataset which give a stable digest. Either way, add a test that runs a per-run-field writer twice over identical content and asserts one digest.
+>
+> Sound and worth keeping across any reshape: `dataset_hash = compute_hash(datasets)` derived from the
+> record's own block; the `_STORE_OWNED` split that keeps all 46 records loadable; load-time
+> enforcement in `validate_stored_record` (there is no production caller of `append()`).
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the trial registry's opaque, caller-supplied `dataset_hash` with a `datasets` block the store derives from each named dataset's manifest, re-derives from disk over the real files — bytes included — and, where the data is not on this machine or has since been refreshed, checks against a committed pin, so a future record's provenance cannot become unresolvable the way 44 of the 46 existing ones have.
