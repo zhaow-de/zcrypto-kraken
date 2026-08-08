@@ -1,106 +1,170 @@
 # Verifiable dataset provenance for the trial registry
 
-Closes the going-forward half of [[T0065]]'s execution-reproducibility round. Master-plan §8 requires a backtest to reference the data it was fitted on rather than "latest". Today that reference is a single opaque `dataset_hash` string the caller supplies, and for 42 of 46 records it can no longer be resolved to anything. This spec makes the reference **self-describing and machine-checkable by construction**, and records what is known about the historical ones.
+Closes the going-forward half of [[T0065]]'s execution-reproducibility round. Master-plan §8 requires a backtest to reference the data it was fitted on rather than "latest". Today that reference is a single opaque `dataset_hash` string the caller supplies, and for **44 of 46** records it can no longer be resolved to anything. This spec replaces the opaque string with a structure the store derives from disk, and records what is known about the historical ones.
 
 ## Context — the failure this is designed against
 
-The registry validates `dataset_hash` as "a non-empty str" and nothing more (`cli/registry/record.py`, `_REQUIRED_CALLER`). Whatever a caller passed became the permanent provenance of that verdict. The drivers that computed those strings were never committed, and `git log --all --diff-filter=D` confirms none was ever committed and later deleted — so for `ba47e37e` (38 records, A1 + P1) and `81dc9b44` (4 records) the recipe is gone. Measured 2026-08-08: ~226,000 candidate recipes fail to reproduce either, on a method validated against two known targets.
+The registry validates `dataset_hash` as "a non-empty str" and nothing more (`cli/registry/record.py`, `_REQUIRED_CALLER`). Whatever a caller passed became the permanent provenance of that verdict. The drivers that computed those strings were never committed, and `git log --all --diff-filter=D` confirms none was ever committed and later deleted.
 
-Three facts shape the design:
+Measured over the committed registry (46 records, four distinct `dataset_hash` values):
+
+| hash | records | schema | status |
+|---|---|---|---|
+| `ba47e37e` | 38 | 32×v2 + 6×v3 | unresolved — ~226,000 candidate recipes tested, none reproduces |
+| `81dc9b44` | 4 | v3 | unresolved (the 4h primitive) |
+| `45275ebe` | 2 | v3 | unresolved; record 44, the deployable. The runbook's stated recipe does not verify |
+| `cccb8d17` | 2 | v3 | **reproduces** — `sha256(hex_4h + ":" + hex_15m)`, verified today |
+
+So 44 of 46 records carry a digest nobody can recompute. Three facts shape the design:
 
 - **The data did not move.** `data/ohlc-full`'s 36 per-series `sha256` re-derive from disk today and its parquet mtimes predate every registry record. The loss is of the *derivation*, not the bytes.
-- **Extent rescued what the digest could not.** Record 1 was re-identified from its own `run_ref` ("2013→2026, 4581 returns") matching `ohlc-full`'s exact 4581 daily rows over exactly that span, plus the structural impossibility of the only alternative dataset (the retired v0 seed: 721 bars from 2024-07-17). Record 44 is carried the same way by the extent pins in `tests/test_crossfreq_system.py`.
-- **One hash survived, and the reason is instructive.** `cccb8d17` reproduces exactly as `sha256(hex_4h + ":" + hex_15m)` — solely because `docs/specs/00045` wrote the recipe down. It survived by documentation discipline, which is not a mechanism.
+- **Extent rescued what the digest could not.** Record 1 was re-identified from its own `run_ref` ("2013→2026, 4581 returns" — 4582 daily union stamps yield 4581 returns, and `UNION_BARS = {1440: 4582, 240: 27338}` is pinned in `tests/test_record44_legs.py`) against `data/ohlc-full`'s daily span 2013-09-10 → 2026-03-31, plus the structural impossibility of the only alternative daily dataset (the retired v0 seed: 721 bars from 2024-07-17, zero per-series hash overlap). Record 44 is carried the same way by the extent pins in `tests/test_crossfreq_system.py`.
+- **One hash survived, and the reason is instructive.** `cccb8d17` reproduces solely because `docs/specs/00045` wrote the recipe down. It survived by documentation discipline, which is not a mechanism.
+
+**The manifest zoo is a hard constraint, not a detail.** Five committed writers plus one uncommitted one produce four different `series` shapes:
+
+| writer | `series` shape | set-level digest | timestamp key |
+|---|---|---|---|
+| `cli/backfill/backfill.py` (and `substrate15m.py`, which delegates to it) | `series[pair][interval]` | `basket_sha256` | `fetched_at` |
+| `cli/derivatives/funding.py`, `cli/derivatives/oi.py` | `series[symbol]` | `basket_sha256` | `fetched_at` |
+| `cli/ohlc/reach.py` | `series` is a **list** of rows carrying `symbol`/`interval` | `basket_sha256` + `detached_sha256` | `built_at` |
+| *(no committed writer)* `data/ohlc-holdout-2026-07-10` | `series[symbol]` | **none** — a top-level `manifest_sha256`, no per-series `sha256` at all | `pulled_at` |
+
+The holdout is [[T0064]]'s out-of-sample dataset — the deployable's missing validation evidence. **Any design that requires `basket_sha256`, or that assumes an interval level in `series`, refuses the holdout and is therefore disqualified.** `cli/data/sync.py::_manifest_sha256s` already documents this zoo and already solves a neighbouring problem shape-agnostically; this spec follows that precedent.
 
 ## Decisions
 
-### D1 — The record carries a `datasets` block; the digest is derived from it
+### D1 — The record carries a `datasets` block: what the data *is*, what it *was*, and what was *read*
 
-Schema 4 adds one caller-visible structure:
+Schema 4 adds one structure, keyed by dataset name:
 
 ```json
 "datasets": {
-  "<dataset-name>": {
-    "basket_sha256": "<from that dataset's manifest>",
-    "fetched_at": "<from that dataset's manifest>",
-    "extent": {"<interval>": {"series": <int>, "rows": <int>, "span": ["<first>", "<last>"]}}
+  "ohlc-full": {
+    "select": ["1440", "240"],
+    "manifest_digest": "66a5f633...",
+    "extent": {"series": 36, "rows": 1052322,
+               "span": ["2013-09-10T00:00:00+00:00", "2026-03-31T23:00:00+00:00"]}
   }
 }
 ```
 
-**`extent` is derived from the manifest alone and must stay that way** — `series` is the count of series at that interval, `rows` their SUM, and `span` is `min(first_ts) → max(last_ts)`. For `data/ohlc-full` that is `1440: {series: 12, rows: 34460, span: 2013-09-10 → 2026-03-31}`. Deliberately NOT the union-calendar bar count (4582 at 1440): that number is not in any manifest and recovering it means reading every parquet, which would make registering a trial an O(dataset) operation and couple the registry to the data's schema rather than to its manifest. Sum-of-rows is the stronger identifier anyway — it moves when any single series changes length, where a union count does not.
+Three fields, three different jobs; none replaces another.
 
-The two halves do different jobs and neither replaces the other. `basket_sha256` is the **drift alarm** — byte-exact, already produced by committed code. `extent` is the **identifier** — coarse, human-readable, and the only half that survives the loss of a hashing convention, which is precisely the failure being designed against.
+**`manifest_digest` — the drift alarm.** `compute_hash(manifest_without_volatile_keys)`: the registry's own `compute_hash`/`canonical_json` over the parsed manifest with the top-level timestamp key removed (`fetched_at` / `pulled_at` / `built_at` — exhaustive over the writers tabled above). It works for every shape because it makes no assumption about any; it transitively commits to every per-series `sha256` the manifest carries, so where a `basket_sha256` exists it is covered too, and where none exists (the holdout) the digest still moves on any change to any series entry. Excluding the timestamp is load-bearing: **a re-fetch that reproduces identical content must not move the digest**, or the alarm cries wolf on every refresh. Formatting is irrelevant (the digest is over the parsed object), so a re-indent does not fire it either.
 
-Rejected: extent alone. It cannot distinguish two datasets of identical shape and different content, so it is an identifier without an integrity check.
+**`extent` — the identifier.** Derived from the manifest's `series` subtree by a shape-agnostic walk: a *series leaf* is any dict carrying all three of `rows`, `first_ts`, `last_ts`; `series` is the leaf count, `rows` their sum, `span` is `min(first_ts) → max(last_ts)` normalised through `datetime.fromisoformat().isoformat()` (the holdout spells its stamps with a space separator, the rest with `T`). Measured against the four datasets on disk:
 
-Rejected: digest alone, with the recipe merely committed. That is the status quo plus documentation discipline — the same thing that failed, and the same thing that saved `cccb8d17` by luck rather than by construction.
+| dataset | `series` | `rows` | `span` |
+|---|---|---|---|
+| `ohlc-full` | 36 | 1052322 | 2013-09-10T00:00:00+00:00 → 2026-03-31T23:00:00+00:00 |
+| `ohlc-15m` | 12 | 3122044 | 2013-09-10T23:45:00+00:00 → 2026-03-31T23:45:00+00:00 |
+| `derivatives-funding` | 10 | 68281 | 2020-01-01T00:00:00+00:00 → 2026-06-30T16:00:00.005000+00:00 |
+| `ohlc-holdout-2026-07-10` | 10 | 30032 | 2013-09-10T00:00:00+00:00 → 2026-07-09T00:00:00+00:00 |
 
-### D2 — `dataset_hash` is derived, never supplied
+`extent` is the only half that survives losing the manifest itself, which is precisely the failure class being designed against: coarse, human-readable, and — as record 1's rescue shows — enough to identify a dataset against the realistic alternatives.
 
-`dataset_hash = compute_hash(datasets)` — the registry's **own** `compute_hash`/`canonical_json`, already committed, already tested, already what produces `record_hash`.
+**`select` — what the trial actually read.** Without it the design would be a *regression*: a daily-only trial, a 4h-only trial and record 44's daily+4h trial would all name `ohlc-full` and receive one identical digest, where history gave them three distinct ones. `select` is the caller's list of addressing tokens (interval and/or symbol), and the store **refuses a token that does not appear in the manifest's `series` subtree** — the token set is the dict keys of that subtree plus, for the list-shaped manifest, the `symbol`/`interval` values of its rows (the only shape knowledge in the module, and it is named). An empty list is legal and means "the whole set"; the key is always present, so choosing the whole set is an explicit act rather than an omission.
 
-This is the load-bearing choice for sustainability: the derivation cannot be lost without simultaneously breaking the registry's own record hashing, which every record depends on and every test exercises. The recipe stops being a fact about a driver and becomes a fact about the store.
+Never read parquet. The registry must not become an O(dataset) operation, and coupling it to every dataset's on-disk layout is the coupling `sync.py` already refused.
 
-`TrialRegistry.append()` **loses its `dataset_hash` parameter entirely** and gains `datasets: list[str]`. Not "validate what the caller passes" — *remove the ability to pass it*. A caller cannot record a provenance that disagrees with disk because there is no argument through which to express one.
+**Rejected — `basket_sha256` as the drift alarm** (the obvious choice): absent from the holdout, and two of the six manifests spell their set-level digest differently. It would disqualify [[T0064]]'s dataset.
 
-### D3 — The registry captures the block itself, and refuses when it cannot
+**Rejected — extent alone.** It cannot distinguish two datasets of identical shape and different content: an identifier without an integrity check.
 
-Given `datasets=["ohlc-full", "ohlc-15m"]`, the store reads each `data/<name>/manifest.json`, extracts `basket_sha256`/`fetched_at`, derives `extent` from the manifest's own `series` entries, and stamps the result.
+**Rejected — digest alone, recipe merely committed.** That is the status quo plus documentation discipline — the thing that failed, and the thing that saved `cccb8d17` by luck.
 
-**A missing or unreadable manifest is a refusal, not a warning.** A record whose provenance could not be captured must not exist; the alternative is a record that looks pinned and is not, which is exactly today's state.
+**Rejected — per-`select` extent** (restricting the leaf walk to the selected slice). Slice semantics differ per manifest shape (AND across dimensions, OR within), so it would put real shape knowledge in the module in exchange for a number the manifest already carries and `manifest_digest` already commits to. `extent` describes the dataset; `select` names the slice; the pair identifies the read.
 
-**Named cost, accepted:** a trial can only be registered on a machine where its datasets are present. This couples the registry to dataset layout and forbids registering from a bare checkout. That is the price of making fabrication structurally impossible, and it is the right trade — the failure being fixed is precisely a record written without the data being checked.
+### D2 — `dataset_hash` is derived, and there is no argument through which to supply it
 
-Rejected: caller supplies, registry validates. On a machine without the datasets it degrades silently to trusting the caller — the failure mode returns exactly where verification is hardest.
+`dataset_hash = compute_hash(datasets)` — the registry's **own** `compute_hash`/`canonical_json`, already committed, already tested, already what produces `record_hash`. The derivation cannot be lost without simultaneously breaking the registry's own record hashing, which every record depends on and every test exercises. The recipe stops being a fact about a driver and becomes a fact about the store.
 
-### D4 — Historical hashes get a committed legacy table, not prose
+**The mechanism is the file's existing machinery, not a new rule.** `dataset_hash` and `datasets` both move into `_STORE_OWNED`, whose sole existing job is `validate_caller_fields`'s "caller must not supply store-owned field(s)" check. A caller passing either is rejected by code that already exists, and `validate_stored_record`'s caller-half re-validation already excludes `_STORE_OWNED` keys, so the loader does not fight the writer.
+
+Two mechanical constraints follow, and both are the difference between this working and bricking the live registry:
+
+- `_BASE_STORED_KEYS` is *derived* from `_STORE_OWNED` and is the set required of **every** record at every schema version. `datasets` therefore may not enter that derivation, or all 46 committed records become unloadable for a missing key. The tuple splits: `_STORE_OWNED_ALWAYS` feeds `_BASE_STORED_KEYS`; `_STORE_OWNED = _STORE_OWNED_ALWAYS + ("datasets",)` feeds only the caller-surplus check.
+- `datasets` is version-scoped in `_EXPECTED_STORED_KEYS` exactly as `variant` already is — `{2: base, 3: base | {"variant"}, 4: base | {"variant", "datasets"}}`. A `4:` entry must exist or a schema-4 load raises a bare `KeyError`; and the surplus check then rejects a pre-4 record that carries `datasets`, with no extra rule.
+
+`TrialRegistry.append()` loses its `dataset_hash` parameter and gains `datasets: dict[str, list[str]]` (name → `select`) plus `data_root: Path`. `TrialRegistry.__init__` is untouched: `cli/engine/command.py` and `cli/portfolio/record44_legs.py` construct the registry to **read** it at runtime, and that path must not acquire a data-root dependency.
+
+### D3 — The invariant is enforced at LOAD, not only at append
+
+`validate_stored_record` re-checks, for every schema-4 record it reads: the block is a non-empty dict whose entries carry a 64-char `manifest_digest`, an `extent` dict and a `select` list; and `compute_hash(rec["datasets"]) == rec["dataset_hash"]`.
+
+Append-time validation alone would be theatre here. **`append()` has no production caller** — all 46 records were written by scripts that were never committed, which is the whole reason this spec exists. A hand-written record is the *normal* case, not the exotic one, so the check that matters is the one every reader runs. Pre-schema-4 records are untouched by it: `_LOADABLE_SCHEMA_VERSIONS` gains `4` and keeps `2` and `3`, and an absent `datasets` block below schema 4 is normal.
+
+This is also where `dataset_hash`'s type check now lives, since it is store-owned and `validate_caller_fields` no longer sees it.
+
+### D4 — The store captures the block from disk, and refuses what it cannot verify
+
+Given `datasets={"ohlc-full": ["1440", "240"]}`, `append` reads `data_root/ohlc-full/manifest.json` and builds the block. Three refusals, each naming the offending value:
+
+1. the manifest is absent or unparseable;
+2. it carries no non-empty `series` (every writer above emits one; a dataset without one exposes nothing to identify);
+3. a `select` token appears nowhere in that `series` subtree.
+
+**A refusal, never a warning.** A record whose provenance could not be captured must not exist; the alternative is a record that looks pinned and is not, which is exactly today's state.
+
+**Named cost, accepted:** a trial can only be registered on a machine where its datasets are present, so registering from a bare checkout is impossible. That is the price of removing the fabrication path, and the failure being fixed is precisely a record written without the data being checked.
+
+**Rejected — caller supplies, registry validates.** On a machine without the datasets it degrades to trusting the caller, so the failure mode returns exactly where verification is hardest.
+
+**Residual gap, named not deferred:** nothing verifies that the run *actually* read only the selected slice — the registry cannot observe the run, only the record. Closing that needs the committed research-run command, which is [[T0065]]'s other sub-item and already registered there; no new topic is owed.
+
+### D5 — Historical hashes get a committed legacy table, not prose
 
 `docs/reference/legacy-dataset-pins.jsonl`, one line per distinct pre-schema-4 `dataset_hash`:
 
 ```json
 {"dataset_hash": "...", "referent": "data/ohlc-full", "basis": "extent",
- "confidence": "inferred", "reproduced": false,
- "evidence": {...}, "recipe": null, "notes": "..."}
+ "confidence": "inferred", "reproduced": false, "evidence": {...}, "recipe": null, "notes": "..."}
 ```
 
-`confidence` is `inferred` or `reproduced`; `reproduced: true` requires a `recipe` field that a test executes. `cccb8d17` is `reproduced: true` and carries its recipe; `ba47e37e` is `inferred` with the extent evidence.
+`confidence` is `inferred` or `reproduced`; `reproduced: true` requires a `recipe` a test executes against the stated target. `cccb8d17` is the one `reproduced` entry (`sha256(hex_4h + ":" + hex_15m)`, both operands carried literally); `ba47e37e`, `81dc9b44` and `45275ebe` are `inferred`, carrying their extent evidence and, for `45275ebe`, the negative result that the runbook's stated recipe does not verify.
 
-Prose was rejected because [[T0065]] is archived on resolution and archived topics are never reviewed again — the knowledge would leave with it, and the next reader would repeat the investigation. A file the tests police cannot rot the same way.
+Prose was rejected because [[T0065]] is archived on resolution and archived topics are never re-read — the knowledge would leave with it and the next reader would repeat the investigation. A file the tests police cannot rot the same way.
 
 **The distinction is load-bearing and must survive into the file's own wording**: `inferred` means an arithmetic match plus an exclusion, not a recomputation. A future reader must not mistake it for verification.
 
-### D5 — Four properties, each enforced by a test that can fail
+The completeness test reads the real registry and asserts every distinct pre-schema-4 `dataset_hash` appears in the table. It is a guard against the table silently losing an entry — **not** "completeness by construction": the historical set is frozen at four the moment `SCHEMA_VERSION` is 4, so the test asserts over constants and its value is regression protection, nothing grander.
 
-1. **Round-trip** — for any schema-4 record, `compute_hash(record.datasets) == record.dataset_hash`.
-2. **No fabrication path** — `append()` rejects a `dataset_hash` keyword; proving the structural fix by construction rather than by claim.
-3. **Legacy completeness** — every distinct `dataset_hash` among pre-schema-4 records appears in the legacy table. Makes the table complete *by construction*: a historical hash cannot be forgotten, and a future backfill cannot silently omit one.
-4. **Reproduced means reproduced** — every legacy entry with `reproduced: true` has its `recipe` executed and its target reproduced. `cccb8d17` becomes a live executable assertion rather than a claim in a document.
+### D6 — Six guards, each proven by a constructed failure
 
-Each is proven by construction through `infra/scripts/mutate-probe.sh` rather than asserted.
+1. **Load-time round-trip** — a schema-4 record whose `dataset_hash` is not `compute_hash(datasets)` fails to load.
+2. **No caller path to the digest** — `validate_caller_fields` rejects a caller supplying `dataset_hash` or `datasets`; `append` has no `dataset_hash` parameter.
+3. **Capture refuses an absent manifest**, naming the path.
+4. **Capture refuses an unknown `select` token**, naming the token.
+5. **Legacy completeness** — every distinct pre-4 `dataset_hash` is pinned.
+6. **Reproduced means reproduced** — the `cccb8d17` recipe is executed and its target reproduced.
+
+Each is proven through `infra/scripts/mutate-probe.sh` — the guard is mutated, the probe must go red — rather than asserted.
 
 ## Why this is sustainable, and where it still decays
 
-**Sustainable because the mechanism is not documentation.** The derivation is the store's own hashing; the capture path has no bypass; the legacy table's completeness is a test, not a habit. None of these depends on anyone remembering a convention.
+**Sustainable because the mechanism is not documentation.** The derivation is the store's own hashing; there is no argument through which to bypass the capture; the invariant is re-checked by every reader on every load. None of these depends on anyone remembering a convention.
 
-**Named decay paths, so they are not discovered later:**
+**Named decay paths:**
 
-- **Dataset rename or relocation** breaks the `name → referent` link. `extent` and `basket_sha256` still identify the data; the *name* becomes a historical label. Accepted — a rename is a human event that can be recorded.
-- **Manifest shape change** changes the `datasets` block shape, so digests before and after are not comparable. Old records stay readable (the loader already carries `_LOADABLE_SCHEMA_VERSIONS`); comparability across the boundary is lost. This is the same class of event as a schema bump and is handled the same way.
-- **`extent` is coarser than content.** Two datasets with identical shape and different values share an extent. That is why `basket_sha256` is carried beside it, and why neither alone was accepted.
-- **This fixes nothing retroactively.** The 42 historical records remain unverifiable; D4 documents them, it does not repair them. The registry is append-only and hash-chained, so no design could.
+- **Dataset rename or relocation** breaks the `name → referent` link. `extent` and `manifest_digest` still identify the data; the name becomes a historical label. Accepted — a rename is a human event that can be recorded.
+- **A new manifest shape** that carries no `series`, or whose series leaves lack `rows`/`first_ts`/`last_ts`, is refused at capture rather than mis-captured. Loud, and the fix is one writer-side field.
+- **An unknown top-level timestamp key** in a future manifest would make a re-fetch of identical content move `manifest_digest`. That reads as drift — fail-loud, not silent.
+- **`extent` is coarser than content.** Two datasets with identical shape and different values share an extent. That is why `manifest_digest` sits beside it, and why neither alone was accepted.
+- **This fixes nothing retroactively.** The 44 historical records remain unverifiable; D5 documents them, it does not repair them. The registry is append-only and hash-chained, so no design could.
 
 ## Verification
 
-- The four D5 properties, each with a constructed failure that trips it.
-- A schema-4 record round-trips through write → read → re-derive with byte-stable output.
-- Pre-schema-4 records still load (`_LOADABLE_SCHEMA_VERSIONS` gains 4, keeps 2 and 3), and their absent `datasets` block is not an error.
+- The six D6 guards, each with a constructed failure that trips it.
+- A schema-4 record round-trips write → read → re-derive with byte-stable output.
+- Pre-schema-4 records still load: the committed 46-record registry loads unchanged, and an absent `datasets` block below schema 4 is not an error.
+- `capture_datasets` produces the measured `extent` above for each of the four datasets present on disk — including the holdout, which has no `basket_sha256` (data-dependent, skipped where `data/` is absent).
 - The legacy table's `cccb8d17` entry reproduces its target when its recipe is executed.
-- `append()` refuses when a named dataset's manifest is absent, and the refusal names the missing path.
 
 ## Out of scope
 
-- **Rewriting historical records** — impossible by construction (hash-chained, append-only), and D4 is the alternative.
-- **The committed research-run/backtest command** — [[T0065]]'s other sub-item, design-bearing, its own spec.
+- **Rewriting historical records** — impossible by construction (hash-chained, append-only); D5 is the alternative. No task in the implementation touches `docs/reference/trial-registry.jsonl`.
+- **The committed research-run/backtest command** — [[T0065]]'s other sub-item, design-bearing, its own spec. The `select`-is-caller-asserted gap in D4 belongs to it.
 - **Re-deriving `ba47e37e` or `81dc9b44`** — ~226,000 candidates and a clean git history say the driver is gone. Consciously dropped, recorded in the legacy table as `inferred`.
 - **Any change to `spec_hash`**, which has its own immutability rule and is not implicated here.
+- **A CLI surface.** No subcommand or option changes, so `README.md`'s Usage section is unaffected.
