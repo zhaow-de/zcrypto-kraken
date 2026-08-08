@@ -4,7 +4,7 @@
 
 **Goal:** Make a trial record's dataset reference self-describing and machine-checkable, for the datasets that actually back trials, so no future `dataset_hash` becomes unresolvable the way 44 existing ones have.
 
-**Architecture:** Two per-shape adapters capture a `datasets` block (per-axis **resolved** slice + set digest + extent) for an allowlist of three datasets; `dataset_hash` becomes `compute_hash(datasets)`; `dataset_hash` moves into the store-owned key set so no caller can supply it; and `validate_stored_record` enforces both the block's shape and the derivation at LOAD, since `append()` has no production caller — with `schema_version` non-decreasing so a new record cannot escape the check by declaring 3.
+**Architecture:** Two per-shape adapters capture a `datasets` block (per-axis **resolved** slice + set digest + extent) for an allowlist of three datasets; `dataset_hash` becomes `compute_hash(datasets)`; `dataset_hash` moves into the store-owned key set so no caller can supply it; and `validate_stored_record` enforces both the block's shape and the derivation at LOAD, since `append()` has no production caller — with a hard schema-4 floor past trial 46 so a new record cannot escape the check by declaring 3.
 
 **Tech Stack:** Python 3.14, `cli/registry/`, pytest, `infra/scripts/mutate-probe.sh`.
 
@@ -288,9 +288,12 @@ def _data_root(tmp_path):
     return tmp_path / "data"
 
 
+_REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
+
+
 def test_all_46_committed_records_still_load():
     """The defect that sank the first attempt. Assert against the REAL file, not a fixture."""
-    reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl")
+    reg = TrialRegistry(_REGISTRY)
     assert len(reg) >= 46  # floored, never pinned: the file grows with every registered trial
     assert all(r.schema_version in (2, 3) or r.datasets for r in reg.records)
 
@@ -322,13 +325,16 @@ def test_different_declared_pairs_give_different_digests(tmp_path):
     assert one.dataset_hash != two.dataset_hash
 
 
+_BLOCK = {"select": {"intervals": ["1440"]}, "set_digest": "a" * 64,
+          "extent": {"series": 1, "rows": 10, "span": ["2020-01-01", "2020-01-10"]}}
+
+
 def _schema4_line(**over):
     body = dict(
         trial_id=1, schema_version=4, timestamp="2026-08-08T00:00:00+00:00", iteration="iter-001",
         family="A1", spec_hash="s", seeds=[0], metrics={"dsr": 0.1}, n_trials_in_family=1,
         verdict="adopt", run_ref=None, notes="", prev_hash=GENESIS_HASH,
-        datasets={"ohlc-full": {"select": {"intervals": ["1440"]}, "set_digest": "a" * 64,
-                                "extent": {"series": 1, "rows": 10, "span": ["2020-01-01", "2020-01-10"]}}},
+        datasets={"ohlc-full": dict(_BLOCK)},
     )
     body.update(over)
     body["dataset_hash"] = over.get("dataset_hash", compute_hash(body["datasets"]))
@@ -342,6 +348,13 @@ def _schema4_line(**over):
         ({"datasets": "ba47e37e"}, "datasets"),               # D2a: the original failure, verbatim
         ({"datasets": {}}, "datasets"),                       # D2: empty carries no provenance
         ({"datasets": {"ohlc-full": {"select": {}, "set_digest": "zz"}}}, "datasets"),  # short + bad digest
+        # D2a's emptiness/strictness clauses. Each block below is otherwise perfectly shaped AND correctly
+        # derived (`_schema4_line` re-derives `dataset_hash` from whatever it is given), so nothing but the
+        # named clause can reject it -- and each defeats D2's property while satisfying the letter.
+        ({"datasets": {"ohlc-full": {**_BLOCK, "select": {}}}}, "select"),
+        ({"datasets": {"ohlc-full": {**_BLOCK, "select": {"intervals": []}}}}, "select"),
+        ({"datasets": {"ohlc-full": {**_BLOCK, "extent": {"series": 0, "rows": 0, "span": ["a", "b"]}}}}, "extent"),
+        ({"datasets": {"ohlc-full": {**_BLOCK, "extent": {"series": True, "rows": True, "span": ["a", "b"]}}}}, "extent"),
     ],
 )
 def test_a_forged_schema_four_record_is_rejected_at_load(tmp_path, over, match):
@@ -358,15 +371,37 @@ def test_a_schema_four_record_missing_datasets_entirely_is_rejected(tmp_path):
         TrialRegistry(_write(tmp_path, [canonical_json(line)]))
 
 
-def test_a_schema_three_line_after_a_schema_four_line_is_rejected(tmp_path):
-    """D4: the load check binds only >= 4; this is what binds a NEW record to declare 4.
+def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
+    """D4: what actually binds record 47. The load check binds only >= 4, and nothing else makes a NEW
+    record say 4 -- the next direct JSONL writer templates off record 46, which says 3.
 
-    Every existing line says 2 or 3, and the next direct JSONL writer templates off one of them.
+    Built on the REAL 46 records (read-only, never rewritten), because that is the file it appends to.
     """
-    l4 = _schema4_line()
-    l3 = _line(2, n=2, prev_hash=json.loads(l4)["record_hash"])  # _line is pinned to schema 3 (Step 4)
+    real = _REGISTRY.read_text(encoding="utf-8").splitlines()
+    prev = json.loads(real[-1])
+
+    def _line47(**over):
+        body = dict(
+            trial_id=prev["trial_id"] + 1, schema_version=4, timestamp="2026-08-08T00:00:00+00:00",
+            iteration="iter-001", family="FLOOR", spec_hash="s", seeds=[0], metrics={"dsr": 0.1},
+            n_trials_in_family=1, verdict="adopt", run_ref=None, notes="", prev_hash=prev["record_hash"],
+            datasets={"ohlc-full": dict(_BLOCK)},
+        )
+        body.update(over)
+        body["dataset_hash"] = compute_hash(body["datasets"])
+        return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+    # Non-vacuous in both directions: at schema 4 the very same record loads, so it is the floor that
+    # rejects the schema-3 one -- not the chain, the contiguity or the family-count rule.
+    assert len(TrialRegistry(_write(tmp_path, [*real, _line47()]))) == prev["trial_id"] + 1
+
+    v3 = json.loads(_line47())
+    del v3["datasets"], v3["record_hash"]  # schema 3 may not carry the key at all (surplus-key check)
+    v3["schema_version"] = 3
+    v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # verbatim
+    forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
     with pytest.raises(RegistryCorruptionError, match="schema_version"):
-        TrialRegistry(_write(tmp_path, [l4, l3]))
+        TrialRegistry(_write(tmp_path, [*real, forged]))
 
 
 def test_a_manifest_the_loader_would_reject_is_refused_at_append_and_nothing_is_written(tmp_path):
@@ -391,7 +426,8 @@ Run: `uv run pytest tests/test_registry_store.py -q` — expected FAIL.
 - `_EXPECTED_STORED_KEYS = {2: _BASE_STORED_KEYS, 3: _BASE_STORED_KEYS | {"variant"}, 4: _BASE_STORED_KEYS | {"variant", "datasets"}}`. That entry only *permits* `datasets`; it does not require it — the surplus check is a superset test and the missing check is over `_BASE_STORED_KEYS`.
 - `validate_caller_fields` gets **no** `datasets` check. `capture_datasets` is its only writer and always emits a valid shape; the block's shape is D2a's load-time business, and a caller-layer raise here would be a plain `RegistryError`, which `pytest.raises(RegistryCorruptionError)` cannot catch (corruption is a **subclass**, so it does not catch its parent). Its `_REQUIRED_CALLER` sweep must not name `datasets` either.
 - `validate_stored_record` gains, for **every** version, the non-empty-str check on `rec["dataset_hash"]` that `validate_caller_fields` used to perform — it no longer sees the key, so without this the guard silently lapses for schema 2/3.
-- `validate_stored_record`, for `version >= 4`, in order, each raising its own `RegistryCorruptionError` **whose message contains `datasets` or `dataset_hash`** (the tests match on those): (a) `datasets` present; (b) `_validate_datasets_shape(rec["datasets"], where)` — non-empty `dict`; each value a dict with **exactly** `{select, set_digest, extent}`; `select` a `dict[str, list[str]]` whose lists are sorted and deduplicated; `set_digest` 64-char lowercase hex; `extent` exactly `{series: int, rows: int, span: [str, str]}` (D2a — no disk access, no axis-name knowledge); (c) the derivation, written verbatim as `rec["dataset_hash"] != compute_hash(rec["datasets"])` because Probe 1 seds that text. Order matters: (a) before (c), or (c) raises a bare `KeyError`.
+- `validate_stored_record`, for `version >= 4`, in order, each raising its own `RegistryCorruptionError` **naming `datasets` or `dataset_hash`, plus the offending sub-field where there is one** (`select`, `set_digest`, `extent` — the parametrized test matches on those, so a message naming only `datasets` makes four cases pass for the wrong reason): (a) `datasets` present; (b) `_validate_datasets_shape(rec["datasets"], where)`; (c) the derivation, written verbatim as `rec["dataset_hash"] != compute_hash(rec["datasets"])` because Probe 1 seds that text. Order matters: (a) before (c), or (c) raises a bare `KeyError`.
+- `_validate_datasets_shape` (D2a — no disk access, no axis-name knowledge): non-empty `dict`; each value a dict with **exactly** `{select, set_digest, extent}`; `select` a **non-empty** `dict[str, list[str]]` whose lists are each **non-empty**, sorted and deduplicated; `set_digest` 64-char lowercase hex; `extent` exactly `{series: int, rows: int, span: [str, str]}` with `series >= 1` and `rows >= 1`. Write the int checks as `type(x) is int`, **never `isinstance`** — `isinstance(True, int)` is `True`, and `_assert_finite` two functions up already uses the is-strict form with the comment saying why. The emptiness clauses are not decoration: without them `{"select": {}, "set_digest": <hex>, "extent": {"series": 0, "rows": 0, ...}}` satisfies every other clause, hashes and loads clean, and carries no slice — defeating D2's "the block says which pairs and intervals were read without the gitignored manifest". Capture can never emit one, so refusing it is free.
 - **Place that whole `version >= 4` block BEFORE the `caller = {k: v for k, v in rec.items() ...}` / `validate_caller_fields(...)` lines**, which are today the last two statements of the function — anything raised from the caller layer is a plain `RegistryError` the corruption tests cannot catch.
 - `TrialRecord` gains `datasets: dict | None = None`.
 
@@ -401,16 +437,24 @@ Run: `uv run pytest tests/test_registry_store.py -q` — expected FAIL.
 - `TrialRegistry.__init__(self, path, *, data_root: Path | None = None)`, stored on the instance. **No `cli.config` default** — resolving it there would make a plain read of the registry raise `ConfigError` on an unconfigured host, and there is no production `append()` caller to serve. `append()` raises `RegistryError` naming `data_root` when it is `None`.
 - `append()` drops `dataset_hash`, gains `datasets: dict[str, dict[str, list[str]]]`, calls `capture_datasets(datasets, self._data_root)`, puts the captured block in `caller["datasets"]`, and sets `rec["dataset_hash"] = compute_hash(caller["datasets"])` **after** `validate_caller_fields` (it is store-owned now).
 - `append()` then calls `validate_stored_record(rec, f"{self.path} (append)")` **after** `rec["record_hash"] = compute_hash(rec)` and **before** `lock_f.write(...)`. Schema 4 is the first path where a successful capture can yield a record the loader rejects — `set_digest` and `extent.rows` come straight from a manifest, and the holdout's is written by an external freeze — and the file is append-only and hash-chained, so one such line makes the registry permanently unloadable with no legal repair (`_read_healing` heals only a torn *trailing* line).
-- `_assert_cross_record` gains a non-decreasing `schema_version` rule. Measured over the 46 committed records: `[2]×32` then `[3]×14`, so it costs nothing against history; it is what makes record 47 onward structurally unable to carry an underived `dataset_hash` at schema 3. Probe 5 seds the guard line, so write it exactly:
+- `_assert_cross_record` gains the **schema-4 floor** (D4) — the rule that binds record 47, and the only thing that does. Measured: the 46 committed records are `[2]×32` then `[3]×14` and the highest `trial_id` is 46, so the floor costs nothing against history and bites on the very next record. A weaker "non-decreasing `schema_version`" was considered and rejected: an unbroken run of 3s satisfies it, so it binds nothing until a first schema-4 append that nothing compels. Module constant, with the comment, then the guard — Probe 5 seds the guard line, so write both exactly:
 
 ```python
-        if rec["schema_version"] < prev_version:
-            raise RegistryCorruptionError(
-                f"{path}: trial {rec['trial_id']} schema_version {rec['schema_version']} < {prev_version} "
-                f"in the preceding record — the schema never goes backwards"
-            )
-        prev_version = rec["schema_version"]
+# The highest trial_id committed when the datasets block landed. Records 1-46 predate it and the file is
+# append-only, so they can never carry one -- the exemption is by ID precisely because that cannot grow.
+_LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
 ```
+
+```python
+        if rec["trial_id"] > _LEGACY_UNPROVENANCED_MAX_TRIAL_ID and rec["schema_version"] < 4:
+            raise RegistryCorruptionError(
+                f"{path}: trial {rec['trial_id']} declares schema_version {rec['schema_version']}; every "
+                f"record past trial {_LEGACY_UNPROVENANCED_MAX_TRIAL_ID} must be schema_version 4+ and carry "
+                f"a derived datasets block"
+            )
+```
+
+- Update the `TrialRegistry` class docstring: `loads schema v2+v3, writes v3` → `loads schema v2-v4, writes v4`, plus one clause naming the v4 addition (a `datasets` block whose `compute_hash` is `dataset_hash`). Both halves are false after this task, and the constant sits three lines below. **Do NOT touch the two specs it cites** (`docs/specs/00000-…`, `docs/specs/00012-…`): their sha256 is pinned as `spec_hash` in committed records, so editing either dangles a pin that can never be repaired.
 
 - [ ] **Step 4: Update every existing test that constructs a record**
 
@@ -433,9 +477,10 @@ def _new_registry(tmp_path, path=None):
     return TrialRegistry(path or tmp_path / "t.jsonl", data_root=_data_root(tmp_path))
 ```
 
-- Every site that builds a `TrialRegistry` inline and then calls `_append` must route through it — otherwise `data_root` stays `None` and `append()` raises the new `RegistryError`. **Fourteen** sites: `test_append_assigns_contiguous_ids_across_reopen`, `test_append_rejects_nonfinite_before_writing`, `test_append_family_count_floor`, `test_append_then_records_snapshot`, `test_concurrent_registries_get_unique_ids`, `test_append_with_variant_round_trips`, `test_append_without_variant_omits_key_from_raw_line`, `test_append_rejects_invalid_variant_before_writing`, `test_append_records_a_committed_run_ref_end_to_end`, `test_append_rejects_unprovenanced_run_ref_before_writing`, `test_variant_does_not_affect_family_budget_monotonic_check`, and **`test_chain_continues_across_registry_instances`** (its `reg2 = TrialRegistry(reg.path)` reopen is an `_append` caller that reads as a plain construction) — plus the two that must pass their own path as `_new_registry(tmp_path, p)`:
+- Every site that builds a `TrialRegistry` inline and then calls `_append` must route through it — otherwise `data_root` stays `None` and `append()` raises the new `RegistryError`. **Fourteen** sites, split **eleven** whose registry really is `tmp_path/"t.jsonl"` and may route blind as `_new_registry(tmp_path)`: `test_append_assigns_contiguous_ids_across_reopen`, `test_append_rejects_nonfinite_before_writing`, `test_append_family_count_floor`, `test_append_then_records_snapshot`, `test_concurrent_registries_get_unique_ids`, `test_append_with_variant_round_trips`, `test_append_without_variant_omits_key_from_raw_line`, `test_append_rejects_invalid_variant_before_writing`, `test_append_records_a_committed_run_ref_end_to_end`, `test_variant_does_not_affect_family_budget_monotonic_check`, and **`test_chain_continues_across_registry_instances`** (its `reg2 = TrialRegistry(reg.path)` reopen is an `_append` caller that reads as a plain construction) — and **three** that must pass their own path as `_new_registry(tmp_path, p)`:
   - `test_append_after_torn_trailing_line_self_heal` — `p = _write(tmp_path, [_line(1)])` is `tmp_path/"trials.jsonl"` (the `_write` helper's filename), deliberately torn and then healed; on `t.jsonl` the append lands in an empty file and `assert r.trial_id == 2` fails.
   - `test_mixed_v2_and_v3_file_loads_with_intact_chain` — `p = tmp_path/"trials.jsonl"` pre-seeded with two v2 lines; on `t.jsonl` its first assertion `len(reg) == 2` fails.
+  - `test_append_rejects_unprovenanced_run_ref_before_writing` — `p = tmp_path/f"t{hash(str(bad))}.jsonl"`, a fresh path per loop iteration. This is the dangerous one: `_validate_run_ref` fires inside `validate_caller_fields` **before** `open(self.path, "a")`, so no file is ever created either way and the trailing `assert not p.exists() or p.read_text() == ""` stays true whichever path the registry actually used — routing it blind retires that assertion silently instead of failing loudly.
 - `grep -n "TrialRegistry(" tests/test_registry_store.py` finds the *names*, not the paths — so check each site's path expression, not just that it appears here.
 - `test_append_requires_run_ref_explicitly` passes `dataset_hash="d"` directly to `append()`: replace with `datasets={"ohlc-full": {}}`, or the `TypeError` it asserts fires for the wrong keyword.
 
@@ -474,20 +519,26 @@ def test_cccb8d17_reproduces():
 
 
 def test_the_qualification_lives_in_the_referent_value():
-    """A careless grep must not return a bare path that reads as verified fact."""
+    """A careless grep must not return a bare path that reads as verified fact -- for ANY confidence."""
     for pin in _pins():
         assert pin["confidence"] in ("reproduced", "inferred", "unrecoverable")
         if pin["confidence"] == "inferred":
             assert "INFERRED" in pin["referent"]
         if pin["confidence"] == "unrecoverable":
             assert pin["referent"] is None
+        if pin["confidence"] == "reproduced":
+            # `reproduced` names the RECIPE, not the data: cccb8d17's 4h operand is 81dc9b44, which this
+            # same table classes unrecoverable. This is the row a careless reader trusts unconditionally.
+            assert "UNRECOVERABLE" in pin["referent"]
+            assert any(p["dataset_hash"].startswith("81dc9b44") and p["confidence"] == "unrecoverable"
+                       for p in _pins())
 ```
 
 - [ ] **Step 2: Run to verify they fail**
 
 - [ ] **Step 3: Write the four entries**, taking every claim from `docs/open-topics/T0065-...md`'s measured table and asserting nothing beyond it:
 
-- `cccb8d17` — `reproduced`, evidence `operands` = the 4h and 15m hex operands, recipe `sha256(hex_4h + ":" + hex_15m)`.
+- `cccb8d17` — `reproduced`, evidence `operands` = the 4h and 15m hex operands, recipe `sha256(hex_4h + ":" + hex_15m)`. Referent `"sha256(81dc9b44 [UNRECOVERABLE 4h primitive] : data/ohlc-15m basket_sha256) — the RECIPE reproduces; the 4h operand's referent does not"`. T0065's words: "fully reproducible but only half traceable to bytes." Verified at full precision 2026-08-08 — the 15m operand is `data/ohlc-15m/manifest.json`'s on-disk `basket_sha256`.
 - `ba47e37e` — `inferred`, referent `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`, evidence = 1440 `rows 34460`, span `2013-09-10 → 2026-03-31`, plus the v0 exclusion (721 bars from 2024-07-17, zero hash overlap). T0065's argument covers the **daily** series only; do not widen it.
 - `81dc9b44` — `unrecoverable`, `referent: null`. T0065 classes it an unresolved **4h primitive**, and nothing in the repo establishes a referent. Do **not** write "inherits" — only `45275ebe` inherits. Evidence records the negative: ~226,000 candidates tested, no driver ever committed.
 - `45275ebe` — `inferred`, referent naming `data/ohlc-full` daily+4h with the INFERRED qualification; evidence names the two hashes it composes, that `81dc9b44` is unrecoverable so it cannot be recomputed, that the runbook's stated composition does **not** reproduce, and `tests/test_record44_legs.py`'s `UNION_BARS = {1440: 4582, 240: 27338}` as the actual extent evidence.
@@ -548,16 +599,24 @@ infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
 
 Expected: `KILLED`. This is the probe the previous version lacked: the on-disk test is the whole mechanism behind the spec's sustainability claim, and without a measured pin it passes for any non-empty manifest. `max` instead of `sum` leaves every other assertion true and moves only the pinned row counts — all three of them, so the probe does not hang on one dataset being present.
 
-- [ ] **Step 5: A new record cannot go back to schema 3**
+- [ ] **Step 5: Record 47 cannot be schema 3**
+
+First confirm the selector actually collects **both** tests — pytest `-k` is plain substring matching, not gapped, so a near-miss name silently deselects the only mutation-sensitive test and the probe returns a confident SURVIVED:
+
+```bash
+uv run pytest tests/test_registry_store.py -k "past_the_legacy_floor or all_46" --collect-only -q
+```
+
+Expected: 2 collected. Then:
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/registry/store.py \
   --control 's|if rec\["prev_hash"\] != expected_prev:|if True:|' \
-  --mutation 's|if rec\["schema_version"\] < prev_version:|if False:|' \
-  -- uv run pytest tests/test_registry_store.py -k "schema_three_after or all_46" -q
+  --mutation 's|and rec\["schema_version"\] < 4:|and False:|' \
+  -- uv run pytest tests/test_registry_store.py -k "past_the_legacy_floor or all_46" -q
 ```
 
-Expected: `KILLED`. The control makes the chain check fire unconditionally, so `test_all_46_committed_records_still_load` reds — a control chosen to red *this selection*, not the deselected contiguity test. The mutation disables the monotonicity guard, so the forged v3-after-v4 line loads clean.
+Expected: `KILLED`. The control makes the chain check fire unconditionally, so `test_all_46_committed_records_still_load` reds — a control chosen to red *this selection*, not the deselected contiguity test. The mutation disables the floor, so the forged schema-3 record 47 loads clean while `test_all_46_committed_records_still_load` stays green: only the floor test can catch it, which is exactly why the selector must be verified first.
 
 - [ ] **Step 6: Record every verdict.** A probe reporting `CONTROL mutation did not fail` means the harness does not bite — choose a control the probe must detect and re-run. Never record a verdict from an unproven harness.
 
