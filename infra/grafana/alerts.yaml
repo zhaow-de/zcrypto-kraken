@@ -537,19 +537,30 @@ rules:
   # healthy, or its log-shipping path regressed and no line arrives at all. Mirrors
   # `zcrypto-capture-log-dead-primary` in shape; the WINDOW is derived differently and deliberately.
   #
-  # THE ENGINE IS A BURST EMITTER, NOT A CONTINUOUS ONE -- this is the whole reason the window is not
-  # simply copied. Measured 2026-08-08 over 72 h of raw Loki entries (230 lines, bucketed locally
-  # rather than by a range query): 50 of 69 hours carry ZERO lines, and the largest inter-line gaps
-  # are all exactly 4.00 h -- the engine's 4-hourly cycle period. A window at or under 4 h would
-  # false-fire on every healthy inter-cycle gap.
+  # THE ENGINE IS A BURST EMITTER, NOT A CONTINUOUS ONE -- the whole reason this window is derived
+  # rather than copied from the capture canary. Measured 2026-08-08 over the FULL 12.6 days Loki
+  # serves for this selector (974 lines): it emits ~11 lines within ~90 s of each 4-hourly cycle
+  # boundary and nothing between, so most hours carry zero lines and no gap anywhere exceeds 4.5 h.
+  # A window at or under 4 h would false-fire on every healthy inter-cycle gap.
   #
-  # 6h = the measured 4.00 h period + the fleet's own 2 h margin (the ops timer canaries use 26 h for
-  # a daily emitter, i.e. 24 h + 2 h). Min lines observed in any 6 h window: 11. Do NOT tighten this
-  # toward the 15m of the ERROR rule above: they watch different things.
+  # 6h against a measured 4.00 h period = 2.00 h of slack, and the rolling 6 h count never dropped
+  # below 11 over those 12.6 days (max 34). Note this is by far the TIGHTEST window/period ratio of
+  # any log canary here (~1.5x, against capture's ~210x) -- it is sized to the cycle, and it
+  # tolerates exactly zero missed cycles. Do NOT tighten it toward the 15m of the ERROR rule above:
+  # they watch different things.
   #
-  # Measuring this needs care -- Loki's query_range forces ~240 min spacing here regardless of the
-  # `step` asked for, which aliases exactly against the 4 h cycle and reports a flat "every hour has
-  # lines". Read raw entries and bucket them locally, as the figures above were.
+  # ACCEPTED COST, named rather than discovered: a genuinely missed cycle double-pages. The engine's
+  # own `zcrypto-engine-cycle-stale` fires first and correctly (B+40m..B+1h10m, receiver `metrics`);
+  # this rule then fires at ~B+2h01m on receiver `logs` with a title saying the LOG PIPELINE is dead
+  # when it is fine. The summary's last sentence tells the responder how to tell them apart, but the
+  # phone shows the title first.
+  #
+  # MEASURING THIS NEEDS CARE, and the trap is not what it looks like. `count_over_time` emits NO
+  # sample for a step whose range window is empty, so on a burst emitter the surviving points are
+  # just the burst hours -- 4 h apart -- and a range query reads back as a flat "every hour has
+  # lines", the exact opposite of the truth. The `step` is honored; Loki is not at fault. The cheap
+  # fix is the `or on() vector(0)` this rule already carries: with it, step=1h returns the zero hours
+  # (11,0,0,0,11,0,0,0,21,...). Without it, page raw entries and bucket them locally.
   #
   # `level=~".+"` verified present on this stream (values: INFO) before being relied on -- an absent
   # label would make the selector match nothing and park the rule permanently firing.
@@ -598,7 +609,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Not one log line of any level from the trading engine in 6h. The engine logs in bursts at its 4-hourly cycle boundaries, so 6h means at least one whole cycle produced nothing -- its log-shipping path is dead (Loki credentials, the ship handler, or the container gone). The Engine ERROR logs rule is blind until this is fixed, on the host that holds the live trade key. Check whether cycles are still completing: if they are, this is the log plane alone; if they are not, the engine itself is down and the cycle rules are the ones to read."
+      summary: "Not one log line of any level from the trading engine on host zcrypto (container `engine`) in 6h. The engine logs in bursts at its 4-hourly cycle boundaries, so 6h means at least one whole cycle produced nothing -- its log-shipping path is dead (Loki credentials, the ship handler, or the container gone). The Engine · ERROR logs rule is blind until this is fixed, on the host that holds the live trade key. Check whether cycles are still completing: if they are, this is the log plane alone; if they are not, the engine itself is down and the cycle rules are the ones to read."
       __dashboardUid__: "zcrypto-logs"
       __panelId__: "103"
       unit: "engine log lines of any level in the last 6 hours"
