@@ -14,20 +14,24 @@ The registry validates `dataset_hash` as "a non-empty str" and nothing more (`cl
 
 ### D1 — Scope is an explicit allowlist of trial-backing datasets
 
-Capture supports a **named list**, each with a declared adapter. Measured against the registry: all four historical hashes trace to `ohlc-full` and `ohlc-15m`, and [[T0064]]'s pending out-of-sample work needs `ohlc-holdout-*`. Nothing else has ever backed a trial.
+Capture supports a **named list**, each with a declared adapter. Measured against the registry: all four historical hashes trace to `ohlc-full` and `ohlc-15m`. Nothing else has ever backed a trial.
 
 | dataset | set digest | timestamp | `series` shape | per-series `sha256` |
 |---|---|---|---|---|
 | `ohlc-full`, `ohlc-15m` | `basket_sha256` | `fetched_at` | `[pair][interval]` nested | yes |
 | `ohlc-holdout-*` | `manifest_sha256` | `pulled_at` | `[asset]` flat | **no** |
 
+**The holdout entry is built ahead of its consumer, deliberately.** No trial has ever cited it and `grep -rn ohlc-holdout cli/` returns nothing today. It is in scope because the holdout is the set out-of-sample evaluation reads ([[T0133]]), because a provenance record matters most at exactly the evaluation that decides a deployable, and because its manifest is the **second shape** — a design with one adapter is a special case pretending to be a rule, and the shape is on disk now while the next freeze's is not.
+
 **Two adapters, not a generic walker.** `derivatives-funding`, `derivatives-oi` and `ohlc-reach` are deliberately excluded: none backs a trial today, and each needs its own adapter when one first does.
+
+**The dataset key recorded in the block is the directory name as captured, and each allowlist key also prefix-matches `<key>-…`.** All three sets are frozen — a revision mints a sibling `data/<name>-<stamp>` rather than overwriting (`cli/data/rebuild.py::rebuild_sets`; `docs/reference/data-catalog-full.md`'s hot cluster) — so `ohlc-full-<stamp>` is the canonical's own successor, same writer and same shape. Refusing it would refuse the revision workflow itself.
 
 **An unlisted dataset is refused, and the refusal names the remedy** — add an adapter. That is the design, not a limitation: when B2 first registers against funding/OI, someone must consciously decide how that dataset's identity is expressed, at the moment they have the context. A generic reader guessing is what produced four failed rounds.
 
 Rejected: normalise all five writers to one manifest contract first. That is a data-pipeline change across code producing canonical data, serving a 46-record registry whose historical entries cannot be repaired — disproportionate, and it cannot touch the holdout's manifest, which this repo does not write. Registered as [[T0132]]; the zoo is a real liability, just not this spec's job.
 
-### D2 — The block records the declared slice, the set's identity, and that slice's extent
+### D2 — The block records the resolved slice, the set's identity, and that slice's extent
 
 ```json
 "datasets": {
@@ -55,9 +59,9 @@ That is record 44's actual slice, measured from the manifest on disk 2026-08-08.
 | backfill (`ohlc-full`, `ohlc-15m`) | `pairs`, `intervals` | all of that axis |
 | holdout (`ohlc-holdout-*`) | `assets` | all of that axis |
 
-An unknown axis key is refused, as is a token that matches nothing — this stays two hand-written adapters, not a dimension walker. `select: {}` is the explicit "whole set"; an empty `datasets` **mapping** is refused, because a record naming no dataset carries no provenance at all, which is the failure being replaced.
+An unknown axis key is refused, as is a token that matches nothing — this stays two hand-written adapters, not a dimension walker. `select: {}` is the caller's shorthand for "whole set"; an empty `datasets` **mapping** is refused, because a record naming no dataset carries no provenance at all, which is the failure being replaced.
 
-**`select` is normalised before hashing** — each axis list sorted and deduplicated — so the digest identifies the slice, not the caller's argument order. `extent` resolves over the cross-product of the selected axes.
+**`select` is RESOLVED before hashing, not recorded as written** — each axis is expanded to the sorted, deduplicated list of tokens actually selected, an absent or empty axis becoming that axis's full membership. Two consequences, and both are the point: the digest is a function of the **slice**, so `select: {}` and the same slice spelled out hash identically instead of differently; and the stored block states which pairs/intervals were read **without the manifest**, which is gitignored and unreachable from a checkout. `extent` resolves over the cross-product of the selected axes.
 
 ### D2a — The block's shape is checked at load, not only at capture
 
@@ -84,6 +88,10 @@ Requiring `datasets` for `schema_version >= 4` is then an explicit check in `val
 There is **no production caller of `append()`** anywhere in `cli/` — all 46 records were written by uncommitted scripts. Bolting the API alone bolts an unused door.
 
 So `validate_stored_record` checks, for `schema_version >= 4`, that `datasets` is present, that it satisfies D2a's shape, and that `dataset_hash == compute_hash(datasets)` — three distinct corruption errors. One hash and one cheap walk per record on load: the property becomes a fact about the file rather than about a function signature.
+
+**`schema_version` must be non-decreasing along the chain** (`_assert_cross_record`). Without it the load check binds only `>= 4` and nothing binds a *new* record to declare 4: the next direct writer templates off an existing line, every existing line says 2 or 3, and `{"schema_version": 3, "dataset_hash": "ba47e37e"}` reproduces the original failure verbatim and loads clean forever. The 46 records measure `[2]×32` then `[3]×14` — already non-decreasing, so the rule costs nothing against history — and the moment record 47 is schema 4 every later record is structurally unable to carry an underived `dataset_hash`.
+
+**`append()` re-validates the finished record with `validate_stored_record` before writing.** Schema 4 is the first path where a *successful* capture can produce a record the loader rejects: `set_digest` and `extent.rows` come straight from a manifest, and the holdout's is produced by an external freeze this repo does not write ([[T0132]]) — an uppercase `manifest_sha256`, or a `rows` emitted as `2842.0`, passes capture and fails load. The file is append-only and hash-chained and `_read_healing` self-heals only a torn *trailing* line, so one such write makes the registry permanently unloadable with no legal repair. Validating before the write turns an irreversible corruption into a refused append.
 
 **Named limitation, not a claim:** `cli/engine/soak.py` parses the registry with raw `json.loads` and never calls `validate_stored_record`, so the engine's soak path does not inherit this check.
 
@@ -119,7 +127,7 @@ Prose was rejected: [[T0065]] is archived on resolution, and archived topics are
 
 - **A new dataset backs a trial** → refused until an adapter exists. Deliberate; the refusal *is* the design.
 - **A supported writer changes its manifest shape** → its adapter fails loudly at capture, and a test over every allowlisted manifest on disk goes red **on a data-bearing host**. The data root is gitignored, so on a bare checkout that test must **skip**, not pass: a loop over an empty glob asserting nothing is a green that means nothing.
-- **Dataset rename** → the block's dataset key stops matching the allowlist, so capture refuses; `set_digest` and `extent` in already-written records still identify the data.
+- **Dataset rename** → the block's dataset key stops matching the allowlist, so capture refuses; `set_digest` and `extent` in already-written records still identify the data. A re-freeze **sibling** is not a rename — the allowlist keys prefix-match (D1).
 - **`extent` is coarser than content** → deliberate; D5 states exactly how far the existing coverage reaches, and [[T0133]] carries the hole it leaves.
 - **This repairs nothing retroactively** — 44 records stay unverifiable; D6 documents them.
 
@@ -127,9 +135,10 @@ Prose was rejected: [[T0065]] is archived on resolution, and archived topics are
 
 - All 46 existing records still load, asserted against the **real** `docs/reference/trial-registry.jsonl`, not a fixture, and through the real loader rather than a set-arithmetic model of it.
 - A schema-4 record round-trips write → read → re-derive.
-- Two trials declaring different slices of one dataset get different `dataset_hash` — on **each** axis, pairs and intervals; two declaring the same slice in different order get the same one.
-- A schema-4 line whose `datasets` is missing, empty, or not the D2a shape is refused **at load**, not only at capture.
-- Every allowlisted dataset present on disk captures without error; the **frozen** holdout's extent matches a measured pin (10 series, 30,032 rows, `2013-09-10 00:00:00+00:00` → `2026-07-09 00:00:00+00:00`). `ohlc-full` and `ohlc-15m` get no row pin — they grow on every backfill — so their assertion is that capture succeeds and the digest is well-formed. The test enumerates from disk rather than a hardcoded tuple, and skips rather than passes when the glob is empty.
+- Two trials declaring different slices of one dataset get different `dataset_hash` — on **each** axis, pairs and intervals; two declaring the same slice get the same one whatever the order, and whether spelled out or abbreviated to `select: {}` (D2's resolution).
+- A schema-4 line whose `datasets` is missing, empty, or not the D2a shape is refused **at load**, not only at capture; so is a schema-3 line appended after a schema-4 one.
+- A manifest value the loader would reject — an uppercase set digest; equally a float `rows` — is refused **at append**, with nothing written.
+- Every allowlisted dataset present on disk captures without error, and all three are frozen, so all three get a measured whole-set extent pin (measured 2026-08-08): `ohlc-full` 36 series / 1,052,322 rows / `2013-09-10T00:00:00+00:00` → `2026-03-31T23:00:00+00:00`; `ohlc-15m` 12 / 3,122,044 / `2013-09-10T23:45:00+00:00` → `2026-03-31T23:45:00+00:00`; `ohlc-holdout-2026-07-10` 10 / 30,032 / `2013-09-10 00:00:00+00:00` → `2026-07-09 00:00:00+00:00`. Without a pin the on-disk test asserts only that some number is positive, which any non-empty manifest satisfies. The test enumerates from disk rather than a hardcoded tuple, and skips rather than passes when the glob is empty.
 - An unlisted dataset is refused, and the message names the adapter remedy.
 - `cccb8d17`'s legacy entry reproduces when executed.
 - Each guard proven by a constructed failure through `infra/scripts/mutate-probe.sh`, never asserted — including that the on-disk test itself can go red.
