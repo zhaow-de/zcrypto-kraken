@@ -176,14 +176,19 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     }
 
     # Spread cap (T0024, spec 00067): priced from the committed calibration at the same max-size
-    # position the volume floor uses. The map covers EUR-quoted pairs with a calibrated base;
-    # everything else (today: the BTC-quoted legs, which have no L2 capture) is absent by
-    # construction -- finalize_universe records them `spread_bps: None`
-    # and does NOT reject them (absence of evidence is not evidence of a wide spread; T0092).
+    # position the volume floor uses. Keyed by FULL SYMBOL (spec 00085 D3), so the quote filter is
+    # gone: the calibration now covers the BTC-quoted legs too, and membership alone decides. A
+    # symbol still absent from the table is recorded `spread_bps: None` by finalize_universe and is
+    # NOT rejected -- absence of evidence is not evidence of a wide spread (T0092).
+    #
+    # The lift is ordered, deliberately: while the table was base-keyed, `effective_spread_bps` fed
+    # a EUR notional against a BTC-denominated ladder and returned a plausible large bps, which
+    # would fake-reject a universe member for illiquidity. It was only safe once the ladder went
+    # per-quote AND the table carried real /BTC rows.
     spreads = {
-        symbol: round(effective_spread_bps(symbol.split("/")[0], SPREAD_REFERENCE_NOTIONAL_EUR), 3)
+        symbol: round(effective_spread_bps(symbol, SPREAD_REFERENCE_NOTIONAL_EUR), 3)
         for symbol in symbols
-        if symbol.split("/")[1] == "EUR" and symbol.split("/")[0] in SPREAD_CALIBRATION
+        if symbol in SPREAD_CALIBRATION
     }
     selection = finalize_universe(pairs, volumes, spreads=spreads, max_spread_bps=DEFAULT_MAX_SPREAD_BPS)
     params = {

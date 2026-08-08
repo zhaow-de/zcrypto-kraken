@@ -101,33 +101,58 @@ def test_calibrate_refuses_when_the_only_btc_eur_rows_fall_outside_the_window(tm
 
 
 def test_the_committed_script_reproduces_the_table_it_replaces():
-    """The script becomes the provenance of record (spec D5), and Task 7 replaces all ten EUR rows
-    in the same commit that introduces it -- so a transcription error and the window move would be
-    indistinguishable in one diff. Run it over the OLD window and require the OLD table.
+    """The script is the provenance of record (spec D5), and Task 7 replaced all ten EUR rows in the
+    same commit that introduced it -- so a transcription error and the window move would have been
+    indistinguishable in one diff. Run it over the SUPERSEDED window and require the SUPERSEDED
+    table.
+
+    The window, provenance and table below are deliberately LITERALS, not imports: the module
+    constants now carry the new window, so importing them would make this test follow the very
+    restamp it exists to check, and it would pass vacuously forever after.
+
+    This is also the standing CONTROL for the restamp's size. The EUR rows moved by up to -24.77 %
+    across the re-key, far past the under-2 % the spec estimated. This test is what attributes that
+    move to the WINDOW rather than to the pipeline: the same script, run over the old window against
+    the REGENERATED tree, must still land on the old numbers. If it ever stops doing so, the
+    calibration path itself changed and the restamp's interpretation is void.
 
     Marked slow: it reads the real panel tree from the read-only NAS mount.
     """
-    from cli.costs.spread import CALIBRATION_HOURS, CALIBRATION_MIN_ROWS, CALIBRATION_WINDOW, SPREAD_CALIBRATION
+    superseded_window = ("2026-07-08T13:47:33Z", "2026-07-23T05:59:59Z")
+    superseded_hours = 353
+    superseded_min_rows = 1_260_309
+    superseded_table = {
+        "BTC": {100: 0.260, 1_000: 0.386, 10_000: 0.625},
+        "ETH": {100: 0.420, 1_000: 0.486, 10_000: 0.686},
+        "XRP": {100: 0.758, 1_000: 1.116, 10_000: 2.071},
+        "SOL": {100: 0.922, 1_000: 1.029, 10_000: 1.822},
+        "DOGE": {100: 1.721, 1_000: 1.853, 10_000: 3.741},
+        "LINK": {100: 2.207, 1_000: 2.367, 10_000: 3.704},
+        "LTC": {100: 2.036, 1_000: 3.022, 10_000: 5.237},
+        "ADA": {100: 2.180, 1_000: 2.459, 10_000: 5.365},
+        "AVAX": {100: 2.408, 1_000: 2.858, 10_000: 5.863},
+        "DOT": {100: 3.579, 1_000: 5.405, 10_000: 12.223},
+    }
 
     panel_root = Path("/mnt/zhao-crypto/l2-panel")
     if not panel_root.exists():
         pytest.skip("panel tree not mounted")
 
-    start, end = (datetime.fromisoformat(w.replace("Z", "+00:00")) for w in CALIBRATION_WINDOW)
+    start, end = (datetime.fromisoformat(w.replace("Z", "+00:00")) for w in superseded_window)
     result = calibrate(panel_root, start, end)
 
     # The table alone is structurally blind to a one-hour window error (a BTC@1k deviation of
     # 0.00029 from an `overlap` -> `start-inside` window-rule regression sits 34x inside the table's
     # own tolerance below) -- pin the two provenance constants Task 7 restamps from these fields too.
-    assert result.hours == CALIBRATION_HOURS
-    assert result.min_rows == CALIBRATION_MIN_ROWS
+    assert result.hours == superseded_hours
+    assert result.min_rows == superseded_min_rows
     # Joint-sampling, now measured on the REAL tree -- the synthetic fixture's delta is 0 by
     # construction and cannot fail this. The observed real-tree delta is exactly 5 today, so this
     # assertion sits on its own boundary with zero margin: a future one-row drift fails it. That is
     # the doc's own bar ("row counts agree to within 5 rows"), not ours to loosen.
     assert result.max_rows - result.min_rows <= 5
 
-    for base, rows in SPREAD_CALIBRATION.items():  # pre-re-key: base-keyed
+    for base, rows in superseded_table.items():  # base-keyed, as the table was before the re-key
         for size, expected in rows.items():
             # Exact-on-rounding, not a fixed abs-tolerance: the committed table is rounded to 3
             # decimals, so the rounding floor is 0.0005 and no threshold >= that can catch a

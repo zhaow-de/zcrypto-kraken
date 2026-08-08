@@ -18,18 +18,24 @@ from cli.costs.spread import (
     round_trip_cost,
 )
 
-# Mean effective spread, bps per side, mid-relative -- spec 00066's table, verbatim.
+# Mean effective spread, bps per side, mid-relative. Keyed by FULL SYMBOL (spec 00085 D3): a
+# base-keyed table returns the EUR row for "ETH" while raising for "ETH/BTC", so the old shape's
+# failure mode was a silently wrong value. The inner keys stay the EUR notionals -- on a BTC-quoted
+# pair the rung is the BTC quantity worth that many EUR at the pinned FX reference (D1), so the key
+# names a grid point, not a currency amount in the quote.
 EXPECTED = {
-    "BTC": {100: 0.260, 1_000: 0.386, 10_000: 0.625},
-    "ETH": {100: 0.420, 1_000: 0.486, 10_000: 0.686},
-    "XRP": {100: 0.758, 1_000: 1.116, 10_000: 2.071},
-    "SOL": {100: 0.922, 1_000: 1.029, 10_000: 1.822},
-    "DOGE": {100: 1.721, 1_000: 1.853, 10_000: 3.741},
-    "LINK": {100: 2.207, 1_000: 2.367, 10_000: 3.704},
-    "LTC": {100: 2.036, 1_000: 3.022, 10_000: 5.237},
-    "ADA": {100: 2.180, 1_000: 2.459, 10_000: 5.365},
-    "AVAX": {100: 2.408, 1_000: 2.858, 10_000: 5.863},
-    "DOT": {100: 3.579, 1_000: 5.405, 10_000: 12.223},
+    "ADA/EUR": {100: 2.383, 1_000: 2.686, 10_000: 5.389},
+    "AVAX/EUR": {100: 2.417, 1_000: 2.838, 10_000: 6.031},
+    "BTC/EUR": {100: 0.198, 1_000: 0.299, 10_000: 0.533},
+    "DOGE/EUR": {100: 1.635, 1_000: 1.787, 10_000: 3.539},
+    "DOT/EUR": {100: 2.812, 1_000: 4.053, 10_000: 10.054},
+    "ETH/BTC": {100: 0.748, 1_000: 1.112, 10_000: 1.564},
+    "ETH/EUR": {100: 0.344, 1_000: 0.404, 10_000: 0.619},
+    "LINK/EUR": {100: 2.382, 1_000: 2.555, 10_000: 4.021},
+    "LTC/EUR": {100: 2.103, 1_000: 2.908, 10_000: 5.124},
+    "SOL/BTC": {100: 1.343, 1_000: 1.685, 10_000: 2.757},
+    "SOL/EUR": {100: 0.927, 1_000: 1.041, 10_000: 1.798},
+    "XRP/EUR": {100: 0.603, 1_000: 0.945, 10_000: 1.924},
 }
 
 
@@ -38,12 +44,29 @@ def test_table_matches_the_calibration_exactly():
 
 
 def test_provenance_is_pinned_so_a_recalibration_cannot_be_silent():
-    # A new window MUST come with a new stamp. Restamped 2026-07-23 (T0091) when the panel crossed
-    # the exit bar's literal >=2 weeks: 353 h/pair over 14.68 days, discharging Phase 2's last
-    # carried-forward row. The 315 h / 13.1-day figures spec 00066 reported are its predecessor.
-    assert CALIBRATION_WINDOW == ("2026-07-08T13:47:33Z", "2026-07-23T05:59:59Z")
-    assert CALIBRATION_HOURS == 353
-    assert CALIBRATION_MIN_ROWS == 1_260_309
+    # A new window MUST come with a new stamp. Restamped 2026-08-08 (spec 00085 D4) onto ONE window
+    # shared by all twelve rows: the first full hour after the /BTC genesis through the last settled
+    # hour, so the two BTC-quoted legs carry the same provenance as the ten EUR ones rather than a
+    # second window to explain forever.
+    #
+    # 365 h == 15.21 days, which is what keeps Phase 2's ">=2 weeks of captured spreads" exit-bar row
+    # DISCHARGED. That is load-bearing and nothing else checks it: the first window drafted for this
+    # restamp ended 2026-08-06T06:00Z, ran 13.67 days, and would have silently un-discharged the bar
+    # with every test still green. If a future restamp shortens this window below 14 days, the bar
+    # goes with it.
+    #
+    # min_rows == max_rows == 365 * 3600 == 1_314_000 exactly: ZERO missing seconds and perfect joint
+    # sampling, against 0.602 % shared gaps in the superseded window. A short window on one pair
+    # cannot hide inside the mean.
+    #
+    # The EUR rows moved MATERIALLY across this restamp -- 9 of the 10 move >2 % at some rung, worst
+    # -25.01 % (DOT @1k) -- where the spec had estimated under 2 %. That is market variation between
+    # two disjoint windows, not drift in the pipeline: over the OLD window the same script against
+    # the REGENERATED tree still reproduces the OLD table exactly (test_costs_calibrate.py). Treat
+    # one window as a point estimate, never a constant.
+    assert CALIBRATION_WINDOW == ("2026-07-23T14:00:00Z", "2026-08-07T19:00:00Z")
+    assert CALIBRATION_HOURS == 365
+    assert CALIBRATION_MIN_ROWS == 1_314_000
 
 
 @pytest.mark.parametrize("pair", sorted(EXPECTED))
@@ -60,23 +83,23 @@ def test_unknown_pair_raises():
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0, 0.0])
 def test_non_positive_or_non_finite_notional_raises(bad):
     with pytest.raises(CostModelError):
-        effective_spread_bps("BTC", bad)
+        effective_spread_bps("BTC/EUR", bad)
 
 
 def test_above_the_pinned_grid_refuses_rather_than_extrapolating():
     # Convex curve: extrapolating understates cost exactly where it matters most (spec 00066 D3).
     with pytest.raises(CostModelError, match="10000"):
-        effective_spread_bps("DOT", 10_001)
+        effective_spread_bps("DOT/EUR", 10_001)
 
 
 def test_below_the_grid_clamps_to_the_floor():
-    assert effective_spread_bps("BTC", 1.0) == EXPECTED["BTC"][100]
+    assert effective_spread_bps("BTC/EUR", 1.0) == EXPECTED["BTC/EUR"][100]
 
 
 def test_interpolation_is_log_notional_and_respects_convexity():
     # DOT between 1k and 10k: sqrt(1k*10k) ~= 3162 is the log-midpoint.
-    mid = effective_spread_bps("DOT", math.sqrt(1_000 * 10_000))
-    lo, hi = EXPECTED["DOT"][1_000], EXPECTED["DOT"][10_000]
+    mid = effective_spread_bps("DOT/EUR", math.sqrt(1_000 * 10_000))
+    lo, hi = EXPECTED["DOT/EUR"][1_000], EXPECTED["DOT/EUR"][10_000]
     assert lo < mid < hi
     # The log-midpoint sits at the arithmetic mean of the endpoints...
     assert mid == pytest.approx((lo + hi) / 2, rel=1e-9)
@@ -89,7 +112,7 @@ def test_interpolation_is_log_notional_and_respects_convexity():
 def test_interpolation_is_monotone_across_the_whole_grid():
     prev = 0.0
     for notional in (100, 300, 1_000, 3_000, 10_000):
-        cur = effective_spread_bps("DOT", notional)
+        cur = effective_spread_bps("DOT/EUR", notional)
         assert cur >= prev
         prev = cur
 
@@ -98,15 +121,15 @@ def test_interpolation_is_monotone_across_the_whole_grid():
 
 
 def test_round_trip_cost_components_sum_to_total():
-    r = round_trip_cost(1_000.0, pair="BTC", maker_rate=0.0040, taker_rate=0.0080)
+    r = round_trip_cost(1_000.0, pair="BTC/EUR", maker_rate=0.0040, taker_rate=0.0080)
     assert set(r) == {"fee", "spread", "carry", "total"}
     assert r["total"] == pytest.approx(r["fee"] + r["spread"] + r["carry"])
 
 
 def test_spread_is_charged_once_per_side():
     notional = 1_000.0
-    r = round_trip_cost(notional, pair="DOT", maker_rate=0.0, taker_rate=0.0)
-    expected = 2 * notional * EXPECTED["DOT"][1_000] / 10_000
+    r = round_trip_cost(notional, pair="DOT/EUR", maker_rate=0.0, taker_rate=0.0)
+    expected = 2 * notional * EXPECTED["DOT/EUR"][1_000] / 10_000
     assert r["spread"] == pytest.approx(expected)
     assert r["fee"] == 0.0
 
@@ -115,17 +138,17 @@ def test_fee_component_delegates_rather_than_reimplementing():
     from cli.costs.fees import round_trip_fee
 
     notional, maker, taker = 5_000.0, 0.0015, 0.0030
-    r = round_trip_cost(notional, pair="ETH", maker_rate=maker, taker_rate=taker, taker_open=True)
+    r = round_trip_cost(notional, pair="ETH/EUR", maker_rate=maker, taker_rate=taker, taker_open=True)
     assert r["fee"] == round_trip_fee(notional, maker_rate=maker, taker_rate=taker, taker_open=True)
 
 
 def test_spot_path_has_no_carry():
-    r = round_trip_cost(1_000.0, pair="ETH", maker_rate=0.0040, taker_rate=0.0080)
+    r = round_trip_cost(1_000.0, pair="ETH/EUR", maker_rate=0.0040, taker_rate=0.0080)
     assert r["carry"] == 0.0
 
 
 def test_carry_applies_whenever_a_margin_rate_is_given():
-    r = round_trip_cost(1_000.0, pair="ETH", maker_rate=0.0, taker_rate=0.0, hold_hours=24.0, margin_rate_=0.0002)
+    r = round_trip_cost(1_000.0, pair="ETH/EUR", maker_rate=0.0, taker_rate=0.0, hold_hours=24.0, margin_rate_=0.0002)
     assert r["carry"] > 0.0
     assert r["total"] == pytest.approx(r["fee"] + r["spread"] + r["carry"])
 
@@ -144,24 +167,24 @@ def test_carry_applies_whenever_a_margin_rate_is_given():
     ],
 )
 def test_carry_value_includes_the_unconditional_opening_charge(hold_hours, expected):
-    r = round_trip_cost(1_000.0, pair="ETH", maker_rate=0.0, taker_rate=0.0, hold_hours=hold_hours, margin_rate_=0.0002)
+    r = round_trip_cost(1_000.0, pair="ETH/EUR", maker_rate=0.0, taker_rate=0.0, hold_hours=hold_hours, margin_rate_=0.0002)
     assert r["carry"] == pytest.approx(expected)
 
 
 def test_carry_matches_margin_carry_exactly_rather_than_reimplementing():
     from cli.costs.margin import margin_carry
 
-    r = round_trip_cost(2_500.0, pair="BTC", maker_rate=0.0, taker_rate=0.0, hold_hours=13.0, margin_rate_=0.0003)
+    r = round_trip_cost(2_500.0, pair="BTC/EUR", maker_rate=0.0, taker_rate=0.0, hold_hours=13.0, margin_rate_=0.0003)
     assert r["carry"] == margin_carry(2_500.0, 13.0, 0.0003)
 
 
 def test_at_tier_one_fees_dominate_spread_even_on_the_widest_pair():
     # Spec 00066 D4: the spread term is additive to the fee term, never a substitute. If a future
     # edit swapped one for the other this guard catches the order-of-magnitude error.
-    r = round_trip_cost(1_000.0, pair="DOT", maker_rate=0.0040, taker_rate=0.0080, taker_open=True, taker_close=True)
+    r = round_trip_cost(1_000.0, pair="DOT/EUR", maker_rate=0.0040, taker_rate=0.0080, taker_open=True, taker_close=True)
     assert r["fee"] > 10 * r["spread"]
 
 
 def test_round_trip_rejects_a_notional_the_grid_cannot_price():
     with pytest.raises(CostModelError):
-        round_trip_cost(50_000.0, pair="BTC", maker_rate=0.0040, taker_rate=0.0080)
+        round_trip_cost(50_000.0, pair="BTC/EUR", maker_rate=0.0040, taker_rate=0.0080)
