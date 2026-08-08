@@ -50,7 +50,10 @@ Rejected: normalise all five writers to one manifest contract first. That is a d
 
 That is record 44's actual slice, measured from the manifest on disk 2026-08-08.
 
-**Nothing in the block is a per-run value** — no `fetched_at`, no `pulled_at`, and no `source` (absolute and machine-local for `ohlc-15m`). A re-fetch that changes only a stamp cannot move `dataset_hash`.
+**The block copies no per-run FIELD** — no `fetched_at`, no `pulled_at`, no `source` (absolute and machine-local for `ohlc-15m`). Beyond that the guarantee differs by adapter, and the difference is stated rather than glossed:
+
+- **backfill — proven.** `basket_sha256` is a sha256 over the sorted per-series hashes (`cli/backfill/backfill.py`); both on-disk manifests re-derive exactly (`ohlc-full` `70c2728e…`, `ohlc-15m` `0fed24a6…`, measured 2026-08-08). It is content-only, so a re-fetch changing only a stamp cannot move `dataset_hash`.
+- **holdout — an assumption, not a property.** `manifest_sha256` is an opaque digest from an external freeze this repo does not write; six candidate recipes were tested 2026-08-08 and none reproduces it, so whether it hashes `pulled_at` is unknown. A re-pull with byte-identical content **may** move `dataset_hash`. That is `ohlc-reach`'s per-run-nonce failure reappearing inside the allowlist — tracked at [[T0132]], and the reason this limit is stated here rather than assumed away.
 
 **`set_digest` is the adapter's normalisation** of `basket_sha256` or `manifest_sha256` under one name, so the block does not leak which writer produced the manifest. It is deliberately **not** a digest over the selected series' hashes: the holdout carries no per-series `sha256`, so such a field could not exist for the one dataset out-of-sample validation most needs.
 
