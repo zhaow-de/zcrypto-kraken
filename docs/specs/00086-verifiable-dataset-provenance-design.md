@@ -52,6 +52,8 @@ Schema 4 adds one structure, keyed by dataset name. Values below are the measure
 
 Three fields, three different jobs; none replaces another. Nothing in the block is a per-run value — no `fetched_at`, no `pulled_at`, no `built_at` — so a re-fetch that changes only the stamp cannot move `dataset_hash`.
 
+**Two emptinesses that must not be confused.** An empty `select` **list** is legal and meaningful: it is the explicit "the whole set". An empty `datasets` **mapping** is refused (D4): a record naming no dataset carries no provenance at all, which is precisely the failure being replaced.
+
 **`select` — the slice the caller declares.** Not "what the trial read": the registry cannot observe the run, only the record. What it *can* do is resolve the declaration against the manifest and record what it resolves to, so an under-declared slice is visible as a number rather than silently collapsing.
 
 `select` is a list of addressing tokens; the store resolves it to a set of series leaves and refuses anything it cannot. Resolution is **AND across dimensions, OR within one**, and a *dimension* falls out of the walk rather than out of per-set knowledge: for a nested manifest a dimension is the nesting depth (`level0` = pair, `level1` = interval); for the two list-shaped manifests it is the row's own address field (`symbol`, `interval`). Measured against `data/ohlc-full`:
@@ -67,20 +69,24 @@ Three fields, three different jobs; none replaces another. Nothing in the block 
 
 Without this the design would be a *regression*: a daily-only trial, a 4h-only trial and record 44's daily+4h trial would all name `ohlc-full` and receive one identical digest, where history gave them three distinct ones. With it they receive three distinct extents and therefore three distinct digests — and the 10-EUR-pair row above is exactly what `tests/test_crossfreq_system.py`'s frozen per-asset `EXTENT` table sums to (29,032 daily + 173,373 4h), so the resolution reproduces an independently-pinned number rather than asserting one of its own.
 
-**`extent` — the identifier, scoped to the resolved slice.** `series` is the matched leaf count, `rows` their sum, `span` is `min(first_ts) → max(last_ts)` with each stamp parsed by `datetime.fromisoformat` before comparison (the holdout spells its stamps with a space separator, the rest with `T`, and a string comparison across those two spellings would be wrong). A *series leaf* is any dict carrying all three of `rows`, `first_ts`, `last_ts` — the only structural assumption in the module. `extent` is the half that survives losing the manifest itself, which is precisely the failure class being designed against: coarse, human-readable, and — as record 1's rescue shows — enough to identify a dataset against the realistic alternatives.
+**`extent` — the identifier, scoped to the resolved slice.** `series` is the matched leaf count, `rows` their sum, `span` is `min(first_ts) → max(last_ts)` with each stamp parsed by `datetime.fromisoformat` before comparison (the holdout spells its stamps with a space separator, the rest with `T`, and a string comparison across those two spellings would be wrong). A *series leaf* is any dict carrying all three of `rows`, `first_ts`, `last_ts` — the only structural assumption in the module. All three sub-fields are always present: a leaf whose `rows` is not an int, or whose stamps are not parseable non-empty strings, is **refused at capture** rather than dropped from the aggregate (D4). Dropping was the earlier design and it was wrong in the design's own terms — a null-stamped leaf would still be counted in `series` and `rows` while silently narrowing `span`, producing exactly the "silently collapsing" identifier D1 exists to prevent.
 
-Whole-set extents, measured, for the four datasets on disk:
+`extent` is the half that survives losing the manifest itself, which is precisely the failure class being designed against: coarse, human-readable, and — as record 1's rescue shows — enough to identify a dataset against the realistic alternatives.
 
-| dataset | `series` | `rows` | `span` |
-|---|---|---|---|
-| `ohlc-full` | 36 | 1052322 | 2013-09-10T00:00:00+00:00 → 2026-03-31T23:00:00+00:00 |
-| `ohlc-15m` | 12 | 3122044 | 2013-09-10T23:45:00+00:00 → 2026-03-31T23:45:00+00:00 |
-| `derivatives-funding` | 10 | 68281 | 2020-01-01T00:00:00+00:00 → 2026-06-30T16:00:00.005000+00:00 |
-| `ohlc-holdout-2026-07-10` | 10 | 30032 | 2013-09-10T00:00:00+00:00 → 2026-07-09T00:00:00+00:00 |
+Whole-set extents, measured, for the four datasets on disk — and beside each, the **independently measured** sum of the parquet row counts under that dataset's root:
+
+| dataset | `series` | `rows` (manifest) | parquet row sum | `span` |
+|---|---|---|---|---|
+| `ohlc-full` | 36 | 1052322 | 1052322 | 2013-09-10T00:00:00+00:00 → 2026-03-31T23:00:00+00:00 |
+| `ohlc-15m` | 12 | 3122044 | 3122044 | 2013-09-10T23:45:00+00:00 → 2026-03-31T23:45:00+00:00 |
+| `derivatives-funding` | 10 | 68281 | 68281 | 2020-01-01T00:00:00+00:00 → 2026-06-30T16:00:00.005000+00:00 |
+| `ohlc-holdout-2026-07-10` | 10 | 30032 | 30032 | 2013-09-10T00:00:00+00:00 → 2026-07-09T00:00:00+00:00 |
+
+That third column is not decoration. It is what stops `extent` from being pure manifest self-assertion: capture reads `manifest.json` and only `manifest.json`, so on the machine where records are written a re-derivation compares a manifest to itself and agrees tautologically. D5 therefore re-counts the bytes and asserts the whole-set `rows` against them, for **every** dataset a record names — including the holdout, which vouches no per-series digest and would otherwise have no link to its bytes at all. The check is free: the pass already opens and parses every one of those parquet files to re-hash them, and the row count falls out of the same frames.
 
 **`series_digest` — the drift alarm, scoped to the whole dataset.** `compute_hash({"series": manifest["series"]})`: the registry's own `compute_hash`/`canonical_json` over the manifest's `series` subtree and nothing else. It works for every shape because it makes no assumption about any; where the manifest carries per-series `sha256`/`dataset_hash` values it transitively commits to every one of them, so a `basket_sha256` is covered without being named; where none exists (the holdout) the digest still moves on any change to any series entry's rows or span. Formatting is irrelevant (the digest is over the parsed object), so a re-indent does not fire it.
 
-It is deliberately **dataset**-scoped where `extent` is slice-scoped, and the asymmetry buys something specific: one dataset has one `series_digest`, so that value can be pinned once in the committed catalog and a record's digest stays checkable from committed state after the data leaves the machine (D5). A slice-scoped digest would have as many values as there are ways to read the set, and could be pinned nowhere.
+It is deliberately **dataset**-scoped where `extent` is slice-scoped, and the asymmetry buys something specific: one dataset has one `series_digest`, so that value can be pinned in the committed catalog and a record's digest stays checkable from committed state after the data leaves the machine, or after the set is refreshed under it (D5). A slice-scoped digest would have as many values as there are ways to read the set, and could be pinned nowhere.
 
 Digesting the **whole** manifest was rejected on measurement, not taste. `data/ohlc-full` records `source: "../zcrypto-kraken-data/kraken-ohlcvt-updates"` while `data/ohlc-15m` records `source: "/home/zhaow/Projects/zcrypto-kraken-data/kraken-ohlcvt-updates"` — the same source directory in two spellings, so a rebuild from identical bytes at a different working directory moves a whole-manifest digest. `cli/ohlc/reach.py` also writes the config knob `min_seam_overlap` at top level. Excluding a hand-listed set of "volatile" top-level keys would make the design's correctness depend on that list staying exhaustive across writers nobody has written yet; scoping the digest to `series` drops the list and the burden with it.
 
@@ -115,9 +121,11 @@ Two mechanical constraints follow, and both are the difference between this work
 
 ### D3 — Layer 1: the invariant is enforced at LOAD, not only at append
 
-`validate_stored_record` re-checks, for every schema-4 record it reads: the block is a non-empty dict whose entries carry a 64-char `series_digest`, an `extent` dict and a `select` list; and `compute_hash(rec["datasets"]) == rec["dataset_hash"]`. This is also where `dataset_hash`'s type check now lives, since it is store-owned and `validate_caller_fields` no longer sees it.
+`validate_stored_record` re-checks, for every schema-4 record it reads: `datasets` is a non-empty dict whose entries each carry a 64-char `series_digest`, a `select` list, and an `extent` dict carrying an int `series`, an int `rows` and a two-element `span` list of strings; and `compute_hash(rec["datasets"]) == rec["dataset_hash"]`. This is also where `dataset_hash`'s type check now lives, since it is store-owned and `validate_caller_fields` no longer sees it.
 
 Append-time validation alone would be theatre here. **`append()` has no production caller** — all 46 records were written by scripts that were never committed, which is the whole reason this spec exists. A hand-written record is the *normal* case, not the exotic one, so the check that matters is the one every reader runs.
+
+**The load check and the capture refusals must agree, and the agreement is not optional.** The registry is append-only: a record that `append` writes but `validate_stored_record` then rejects is a line nobody can ever load or remove, and the next `TrialRegistry(path)` raises forever. So every shape the loader demands is a shape capture *cannot fail to produce*, and every emptiness the loader rejects is refused at capture before the file is opened — the empty `datasets` mapping above all (D4 refusal 1). A capture that can return a block the loader rejects is a defect of this design, not a defence in depth.
 
 **And this layer is honest about its limit: it proves internal consistency, nothing about disk.** A hand-writer who invents a `datasets` block and calls `compute_hash` on it satisfies every check here, forever. Layer 1 kills the *accidental* forgery — a copied block, a stale digest, an edited extent — and it is the layer that runs everywhere, including on a machine with no `data/`. It does not kill the *deliberate* one. That is D5's job, and shipping D3 alone would rebuild the same failure in richer clothes.
 
@@ -125,14 +133,15 @@ Pre-schema-4 records are untouched by all of it: `_LOADABLE_SCHEMA_VERSIONS` gai
 
 ### D4 — The store captures the block from disk, from a root the caller cannot choose
 
-Given `datasets={"ohlc-full": ["1440", "240"]}`, `append` reads `<repo>/data/ohlc-full/manifest.json` and builds the block. Six refusals, each naming the offending value:
+Given `datasets={"ohlc-full": ["1440", "240"]}`, `append` reads `<repo>/data/ohlc-full/manifest.json` and builds the block. Seven refusals, each naming the offending value:
 
-1. the manifest is absent or unparseable;
-2. it carries no non-empty `series`, or no series leaf carrying all of `rows`/`first_ts`/`last_ts` (a `series` that exposes neither identifies nothing);
-3. a series timestamp that `datetime.fromisoformat` cannot parse;
-4. a `select` token that appears in no leaf address (the message lists the addressable tokens);
-5. a `select` that resolves to zero leaves — tokens from different dimensions that never co-occur;
-6. anything above, for any named dataset: the block is all-or-nothing.
+1. the `datasets` mapping is empty — a record with no provenance is exactly the failure this replaces, and the loader rejects such a record permanently (D3), so it must never be written;
+2. the manifest is absent or unparseable;
+3. it carries no non-empty `series`, or no series leaf carrying all of `rows`/`first_ts`/`last_ts` (a `series` that exposes neither identifies nothing);
+4. a matched leaf whose `rows` is not an int, or whose `first_ts`/`last_ts` is not a non-empty str, or that `datetime.fromisoformat` cannot parse — a `null` stamp is refused here, never dropped from the span;
+5. a `select` token that appears in no leaf address (the message lists the addressable tokens);
+6. a `select` that resolves to zero leaves — tokens from different dimensions that never co-occur;
+7. anything above, for any named dataset: the block is all-or-nothing.
 
 **The data root is a module constant, not a parameter.** `capture_datasets(selection, data_root)` takes one so it is testable against a temporary tree, but `append()` calls it with `DATA_ROOT = <repo>/data` and exposes no argument for it. This mirrors `_validate_run_ref`, which anchors to `_REPO_ROOT` for exactly the same reason. It is also how the two layers agree on what to compare: they can only compare if they read the same root, and a constant is how they agree without a convention.
 
@@ -144,21 +153,32 @@ Given `datasets={"ohlc-full": ["1440", "240"]}`, `append` reads `<repo>/data/ohl
 
 **Rejected — caller supplies, registry validates.** On a machine without the datasets it degrades to trusting the caller, so the failure mode returns exactly where verification is hardest.
 
-### D5 — Layer 2: re-derive from disk, re-hash the bytes the manifest vouches for, and fall back to the committed pin
+### D5 — Layer 2: re-derive from disk, re-count and re-hash the bytes, and fall back to the committed pins
 
-`tests/test_trial_registry_provenance.py` gains a second guard beside the `run_ref` one it already carries. For every schema-4 record in the committed registry, **per named dataset**, exactly one of three verdicts:
+`tests/test_trial_registry_provenance.py` gains a second guard beside the `run_ref` one it already carries. For every schema-4 record in the committed registry, **per named dataset**, exactly one of four verdicts — three of them normal, the fourth a finding:
 
-1. **The manifest is present here** → re-run `capture_datasets({name: entry["select"]}, DATA_ROOT)` and compare to the stored entry. A disagreement is a **mismatch** and the failure message carries the reason verbatim — a value that moved, or a refusal (unknown token, unreadable manifest) with its own text. Additionally, where the manifest vouches per-series `sha256` values, every vouched hash must be reproduced by some parquet under the dataset root: `dataset_hash(read_parquet(p))` over `rglob("*.parquet")`, the same `cli/ohlc/dataset` pair `cli/data/sync.py::_verify_new_files` already uses for the neighbouring problem. Measured cost on this machine: 0.7 s for `ohlc-full` (36 files), 0.9 s for `ohlc-15m`, 0.1 s for `derivatives-funding`.
-2. **The manifest is absent here** → **not** a mismatch. The dataset was never fetched on this node, or was retired; both are normal and neither is evidence about the record. The record is still checked against committed state: its `series_digest` must equal the pin `docs/reference/data-catalog-full.md` carries **in that dataset's own section**, so the name↔digest binding is checked and not merely the digest's presence somewhere in the file. That check needs no `data/` at all, so it holds on a bare checkout and after the bytes are gone.
-3. **The record names a dataset whose section carries no matching pin** → a finding, naming the digest and the file to add it to. That is the forcing function for a new canonical set: the pin lands with the first record that reads it, in the same change.
+1. **`rederived` — the manifest is present here and the record matches it.** `capture_datasets({name: entry["select"]}, DATA_ROOT)` reproduces the stored entry exactly, *and* the bytes checks below all pass. Any disagreement is a finding whose message carries the reason verbatim — a value that moved, or a refusal (unknown token, unreadable manifest) with its own text.
+2. **`absent-here` — the dataset was never fetched on this node, or was retired.** **Not** a finding: both are normal and neither is evidence about the record. The record is still checked against committed state — its `series_digest` must appear among the `series_digest` pins that `docs/reference/data-catalog-full.md` carries **in that dataset's own section**, so the name↔digest binding is checked and not merely the digest's presence somewhere in the file. That check needs no `data/` at all, so it holds on a bare checkout and after the bytes are gone.
+3. **`superseded` — the dataset is present but has been refreshed since the record was written.** The record's `series_digest` is not the current one, but it *is* one of the superseded pins recorded in that set's catalog section. See "the refresh path" below.
+4. **Anything else is a finding**, including a record naming a dataset that is neither on disk nor pinned anywhere — which is the forcing function for a new canonical set: the pin lands with the first record that reads it, in the same change.
 
-**Why the gating is not a detail.** Keying the whole layer to one dataset's presence, and scoring every `RegistryError` as a mismatch, would make "this node has not fetched that set" indistinguishable from "this block is forged" — and would permanently red the suite for anyone registering a trial against a set they have and someone else does not. Measured on this machine: `data/` holds `derivatives-funding`, `ohlc-15m`, `ohlc-full`, `ohlc-holdout-2026-07-10`, `snapshots`, `universe` — and **not** `derivatives-oi` (a documented hot set, ~189 MB, staged for the B2 family) or `ohlc-reach`. Retirement is not hypothetical either: the v0 `ohlc` set was retired 2026-07-18 and is absent from disk and the NAS.
+**The bytes checks, run for every dataset a record names that is present here.** Every parquet under the dataset root is read once; that single pass yields both a content hash per file and a row count:
 
-**The honest guarantee, and it is not "the record matches the data" without qualification.** Layer 1 proves the record is internally consistent. Layer 2 proves the block agrees with the manifest **present on this machine**, and — for the sets whose manifest vouches per-series hashes — that those vouched hashes are the hashes of parquet files that actually exist there. A fabricated `data/x/manifest.json` therefore survives only if its author also produced parquet reproducing every hash they invented, which is no longer "with extra steps". The one set where the link cannot be closed at all is `ohlc-holdout-2026-07-10`: its manifest carries no per-series digest, so for it the guarantee stops at rows and spans. Said plainly rather than left to be discovered.
+- **The manifest's whole-set `rows` must equal the sum of the parquet row counts.** This is what makes `extent` a measurement rather than a claim — see D1. It applies to every set, including the ones that vouch no digest.
+- **Every per-series `sha256` the manifest vouches must be reproduced by some parquet**, via `dataset_hash(read_parquet(p))` over `rglob("*.parquet")` — the same `cli/ohlc/dataset` pair `cli/data/sync.py::_verify_new_files` already uses for the neighbouring problem.
+- **A manifest that vouches *no* per-series `sha256` is itself a finding**, unless the dataset name is in a frozen, both-direction-asserted allowlist whose only member today is `ohlc-holdout-2026-07-10` — the same freeze discipline `LEGACY_UNCOMMITTED` and `LEGACY_SPEC_HASH_ORPHANS` already use in that file. Without this the strongest check in the design would be opt-out-able *by the artefact it checks*: a fabricated manifest that simply omits `sha256` keys would pass both layers, and it would be invisible, because from the checker's side a manifest with no digests looks exactly like one with them. Making it loud costs one allowlist entry and turns a silent hole into a reviewable decision. The allowlist assertion runs in both directions: every member must genuinely vouch nothing today (so it cannot silently cover a set that later gained digests), and no non-member present on disk may vouch nothing.
 
-**The guard is live on day one, with zero schema-4 records.** A test that only asserts over an empty set is a decoration, so the layer ships with a constructive companion, exactly as `test_a_new_record_without_committed_provenance_would_fail_this_test` does for `run_ref`: build one honest record from `capture_datasets` over the real `data/ohlc-full`, assert it re-derives; forge its `series_digest`, assert it is flagged; inflate its `extent`, assert it is flagged; name a dataset that is neither on disk nor in the catalog, assert it is flagged; and pass a forged vouched-hash set to the parquet check, assert every forged hash comes back unattested.
+**The pass is memoised per dataset, and that is a correctness property of the design, not a micro-optimisation.** The registry is append-only and only grows, so an un-memoised O(records × dataset) pass gets permanently slower with every trial registered — the read-and-hash of `ohlc-full`'s 36 parquet files measures 0.52 s, which is ~10 s at twenty records naming it and never comes back down. Both the capture and the parquet pass are pure functions of on-disk state within one test run, so both are cached by `(root, name, select)` and by dataset directory respectively. Measured after that change: 0.52 s for the first record, 0.002 s for the next twenty.
 
-**Two named limits, neither hidden.** Where `data/` is absent entirely, only the committed-pin half runs, on the repo's existing data-dependent-test convention — the layer protects the research machine where records are actually written, not a bare CI checkout. And it will legitimately go red if a canonical dataset is refreshed after a record was written against it: `extent` and `series_digest` both move on a refresh, the registry is append-only, and the record can never be edited. The remedy at that point is a frozen, both-direction-asserted exemption pin naming the affected trial ids and the refresh that caused it — the machinery `LEGACY_UNCOMMITTED` already is in that file. It is deliberately **not** pre-built: there is nothing to exempt yet, and an empty exemption set is a hole waiting for a lazy commit.
+**Why the gating is not a detail.** Keying the whole layer to one dataset's presence, and scoring every `RegistryError` as a finding, would make "this node has not fetched that set" indistinguishable from "this block is forged" — and would permanently red the suite for anyone registering a trial against a set they have and someone else does not. Measured on this machine: `data/` holds `derivatives-funding`, `ohlc-15m`, `ohlc-full`, `ohlc-holdout-2026-07-10`, `snapshots`, `universe` — and **not** `derivatives-oi` (a documented hot set, ~189 MB, staged for the B2 family) or `ohlc-reach`. Retirement is not hypothetical either: the v0 `ohlc` set was retired 2026-07-18 and is absent from disk and the NAS.
+
+**The refresh path is executable, not a promise.** A canonical dataset refreshed after a record was written against it is this design's most likely decay, and the registry is append-only so the record can never be repaired. The catalog therefore pins a **list** per dataset: the current `series_digest` first, each superseded value below it, labelled with the refresh that retired it. That one list serves both sides of the present/absent split — verdict 2 accepts membership anywhere in it, verdict 3 accepts membership in the superseded tail — and it cannot be abused to hide live drift, because the companion freshness test asserts that the *first* pin equals what capture produces from disk today. So covering a genuine refresh is a one-line, reviewable diff in the catalog, in the same change as the rebuild; covering a forgery would require moving the current pin, which reds immediately. No separate exemption set is needed, and none is created — the earlier design's "frozen exemption pin, deliberately not pre-built" was a remedy the implementation could not execute on either side.
+
+**The honest guarantee, stated exactly.** Layer 1 proves the record is internally consistent. Layer 2 proves the block agrees with the manifest **present on this machine**; that the manifest's total row count is the row count of the parquet actually on disk; and — for the sets whose manifest vouches per-series hashes — that every vouched hash is the hash of a parquet that actually exists there. So a fabricated `data/x/manifest.json` survives only if its author also produced parquet reproducing every hash they invented and totalling the rows they claimed. Omitting the `sha256` keys to dodge the hash half does not work either: that is a finding in its own right unless the name is allowlisted, and the row-count half still runs. What remains uncovered is narrow and named: for `ohlc-holdout-2026-07-10` — the one allowlisted set — the link to the bytes is the row count only, so a content edit preserving row counts is invisible to this layer. That is the holdout's manifest, not this design; the going-forward remedy is a writer that vouches per-series hashes, at which point the allowlist entry must be dropped or the both-direction assertion fails.
+
+**The guard is live on day one, with zero schema-4 records.** A test that only asserts over an empty set is a decoration, so the layer ships with a constructive companion, exactly as `test_a_new_record_without_committed_provenance_would_fail_this_test` does for `run_ref`. It builds an honest block from `capture_datasets` over the real `data/ohlc-full` and asserts it re-derives; then, over a synthetic dataset root it writes itself (a manifest plus a real parquet), it constructs each failure and asserts the matching verdict: a forged `series_digest`, an inflated `extent`, a dataset that is neither on disk nor pinned, a parquet one row short of the manifest's claim, a forged vouched hash, and a manifest that vouches nothing under a non-allowlisted name. It also asserts the two verdicts that must **not** fire: an absent-but-pinned dataset is `absent-here`, and a present dataset whose digest is a recorded superseded pin is `superseded`.
+
+**Two named limits, neither hidden.** Where `data/` is absent entirely, only the committed-pin half runs, on the repo's existing data-dependent-test convention — the layer protects the research machine where records are actually written, not a bare CI checkout. And a deliberately fabricated block whose digest happens to be pinned loads clean on such a machine; stated here rather than left to be discovered.
 
 ### D6 — Historical hashes get a committed legacy table whose evidence executes
 
@@ -198,30 +218,32 @@ Prose was rejected because [[T0065]] is archived on resolution and archived topi
 
 The completeness test reads the real registry and asserts every distinct pre-schema-4 `dataset_hash` appears in the table. It is a guard against the table silently losing an entry — **not** "completeness by construction": the historical set is frozen at four the moment `SCHEMA_VERSION` is 4, so the test asserts over constants and its value is regression protection, nothing grander.
 
-### D7 — Eight guards, each proven by a constructed failure
+### D7 — Ten guards, each proven by a constructed failure
 
 1. **Load-time round-trip** — a schema-4 record whose `dataset_hash` is not `compute_hash(datasets)` fails to load.
 2. **No caller path to the digest** — `validate_caller_fields` rejects a caller supplying `dataset_hash` or `datasets`; `append` has neither parameter, nor a data-root one.
-3. **Capture refuses an absent manifest**, naming the path.
-4. **Capture refuses an unknown `select` token**, naming the token and the addressable set.
-5. **`select` resolves per dimension** — the recorded extent is the slice, not the whole set.
-6. **Legacy completeness** — every distinct pre-4 `dataset_hash` is pinned.
-7. **Legacy evidence executes** — a corrupted `extent` evidence item fails against the referent's manifest.
-8. **Reproduced means reproduced** — the `cccb8d17` recipe is executed and its target reproduced.
+3. **Capture refuses an empty `datasets` mapping**, so `append` can never write the one record shape the loader rejects forever.
+4. **Capture refuses an absent manifest**, naming the path.
+5. **Capture refuses an unusable series timestamp** — a `null` stamp raises rather than being dropped from the span.
+6. **Capture refuses an unknown `select` token**, naming the token and the addressable set.
+7. **`select` resolves per dimension** — the recorded extent is the slice, not the whole set.
+8. **Legacy completeness** — every distinct pre-4 `dataset_hash` is pinned.
+9. **Legacy evidence executes** — a corrupted `extent` evidence item fails against the referent's manifest.
+10. **Reproduced means reproduced** — the `cccb8d17` recipe is executed and its target reproduced.
 
-Each is proven through `infra/scripts/mutate-probe.sh` — the guard is mutated, the probe must go red — rather than asserted. D5's layer is proven differently and deliberately: its constructive companion *is* the constructed failure, built from real data at test time, which is stronger than mutating the assertion that would catch it. (Its parquet half could not be mutation-probed anyway: the only file to mutate would be under `data/`, which is gitignored, so the probe's `git checkout --` restore has nothing to restore from.)
+Each is proven through `infra/scripts/mutate-probe.sh` — the guard is mutated, the probe must go red — rather than asserted. D5's layer is proven differently and deliberately: its constructive companion *is* the constructed failure, built at test time from real data and from a synthetic dataset root the test writes itself, which is stronger than mutating the assertion that would catch it. (Its parquet half could not be mutation-probed against real data anyway: the only file to mutate would be under `data/`, which is gitignored, so the probe's `git checkout --` restore has nothing to restore from — which is exactly why the constructed failures use a root the test builds.)
 
 ## Why this is sustainable, and where it still decays
 
-**Sustainable because the mechanism is not documentation.** The derivation is the store's own hashing; there is no argument through which to bypass the capture or redirect its root; the invariant is re-checked by every reader on every load; the block is re-derived from disk — and the vouched bytes re-hashed — wherever the data exists; and where it does not, the digest still meets a committed pin. None of these depends on anyone remembering a convention.
+**Sustainable because the mechanism is not documentation.** The derivation is the store's own hashing; there is no argument through which to bypass the capture or redirect its root; the invariant is re-checked by every reader on every load; the block is re-derived from disk — and the bytes re-counted and re-hashed — wherever the data exists; and where it does not, the digest still meets a committed pin. None of these depends on anyone remembering a convention.
 
 **Named decay paths:**
 
-- **A refresh of a canonical dataset after a record was written against it** reds D5 for that record, permanently, because the registry is append-only. The remedy is a frozen exemption pin naming the ids and the refresh — loud and reviewable, never silent. The catalog's pin for that set moves in the same change, and the superseded value stays recorded beside it or the absent-dataset check loses its footing.
-- **A new canonical set** must gain its catalog `series_digest` pin before a record names it; otherwise D5's third verdict fires on any node that lacks the data. One line, and the failure names it.
+- **A refresh of a canonical dataset after a record was written against it** is handled, not merely noted: the catalog's per-dataset pin list keeps the superseded digest beside the current one, verdict 3 recognises it, and verdict 2 keeps working on nodes without the data. The cost is one committed line per refresh, in the same change as the rebuild. What it does *not* restore is re-derivability: a superseded record's `extent` can never be re-checked against bytes that no longer exist, and the verdict says so by name rather than by passing quietly.
+- **A new canonical set** must gain its catalog `series_digest` pin before a record names it; otherwise verdict 4 fires on any node that lacks the data. One line, and the failure names it.
 - **Dataset rename or relocation** breaks the `name → referent` link. `extent` and `series_digest` still identify the data; the name becomes a historical label, and D5 flags the record until the rename is pinned. Accepted — a rename is a human event that can be recorded.
-- **A new manifest shape** that carries no `series`, or whose series leaves lack `rows`/`first_ts`/`last_ts`, is refused at capture rather than mis-captured. Loud, and the fix is one writer-side field.
-- **`series_digest` is only as strong as the manifest's own leaves.** For `data/ohlc-holdout-2026-07-10`, which carries no per-series digest at all, it commits to row counts and spans but not to bytes — a content edit preserving both is invisible to it, and the parquet re-hash cannot cover it either. And the holdout's leaves carry the per-run process fields `appended` and `overlap_bars_verified`, so a re-pull that changed only those *would* move the digest without a content change. Both directions of that looseness are the holdout's manifest, not this design.
+- **A new manifest shape** that carries no `series`, or whose series leaves lack `rows`/`first_ts`/`last_ts`, or whose leaves carry unusable values in them, is refused at capture rather than mis-captured. Loud, and the fix is one writer-side field.
+- **`series_digest` is only as strong as the manifest's own leaves.** For `data/ohlc-holdout-2026-07-10`, which carries no per-series digest at all, it commits to row counts and spans but not to per-series bytes — a content edit preserving both is invisible to it. The row-count check still binds the set to its parquet in aggregate, but that is the whole of the link, which is why the set is the one allowlisted name and why the allowlist is asserted in both directions. And the holdout's leaves carry the per-run process fields `appended` and `overlap_bars_verified`, so a re-pull that changed only those *would* move the digest without a content change. Both directions of that looseness are the holdout's manifest, not this design.
 - **`extent` is coarser than content.** Two slices with identical shape and different values share an extent. That is why `series_digest` sits beside it, and why neither alone was accepted.
 - **An under-declared `select` over-states the read.** The record says what the declaration resolved to; the trial may have read less. Visible as a number, not closed here — the research-run command closes it.
 - **Where `data/` is absent, only the committed-pin half runs**, and a deliberately fabricated block whose digest happens to be pinned loads clean. Stated here rather than left to be discovered.
@@ -229,15 +251,16 @@ Each is proven through `infra/scripts/mutate-probe.sh` — the guard is mutated,
 
 ## Verification
 
-- The eight D7 guards, each with a constructed failure that trips it under `mutate-probe.sh`.
-- D5's re-derivation layer, with its constructive companion proving all four of its findings bite before any schema-4 record exists.
+- The ten D7 guards, each with a constructed failure that trips it under `mutate-probe.sh`.
+- D5's re-derivation layer, with its constructive companion proving every one of its findings and both of its non-finding verdicts bite before any schema-4 record exists.
 - A schema-4 record round-trips write → read → re-derive with byte-stable output.
 - Pre-schema-4 records still load: the committed 46-record registry loads unchanged, record by record, and an absent `datasets` block below schema 4 is not an error.
+- Nothing capture can produce is rejected by `validate_stored_record`, and nothing `validate_stored_record` rejects can be produced by capture — the empty `datasets` mapping is refused before `append` opens the file.
 - `capture_datasets` produces the measured whole-set extent above for each of the four datasets present on disk — including the holdout, which has no `basket_sha256` and no per-series digest (data-dependent, skipped per dataset where absent).
 - `capture_datasets` produces each measured slice extent in D1's resolution table, including the 20-series/202,405-row slice that `tests/test_crossfreq_system.py`'s frozen table independently sums to.
 - Two spellings of one `select` list produce one digest.
-- Every vouched per-series `sha256` in `ohlc-full`'s manifest is reproduced by a parquet on disk; a forged vouched hash is reported unattested.
-- The catalog pins the `series_digest` of every canonical dataset present here.
+- For every dataset present here, the parquet row counts sum to the manifest's whole-set `rows`; every vouched per-series `sha256` is reproduced by a parquet; a forged vouched hash is reported; and the vouches-nothing allowlist is non-vacuous and exhaustive.
+- The catalog pins, first-entry-current, the `series_digest` of every canonical dataset present here, with every superseded entry distinct from it.
 - Every legacy pin's evidence executes: two extents against the referent's manifest, one citation against the committed spec, one recipe against its own target.
 
 ## Out of scope
@@ -246,6 +269,7 @@ Each is proven through `infra/scripts/mutate-probe.sh` — the guard is mutated,
 - **The committed research-run/backtest command** — [[T0065]]'s other sub-item, design-bearing, its own spec. D1's `select`-is-declared residual belongs to it.
 - **`cli/engine/soak.py`'s unvalidated read of the registry** — a pre-existing gap this spec neither creates nor closes (D2). Registered as its own topic at closeout.
 - **Re-deriving `ba47e37e` or `81dc9b44`** — ~226,000 candidates and a clean git history say the driver is gone. Consciously dropped, recorded in the legacy table as `inferred`.
-- **Verifying whole datasets for their own sake.** The parquet re-hash in D5 runs for the sets a registry record names, not as a general integrity sweep; transfer integrity remains `cli/data/sync.py`'s job.
+- **Verifying whole datasets for their own sake.** The bytes checks in D5 run for the sets a registry record names, not as a general integrity sweep; transfer integrity remains `cli/data/sync.py`'s job.
+- **Per-series binding of parquet to manifest leaf.** D5's row check is a whole-set sum, deliberately: the manifests carry no path→series mapping, and `ohlc-full`'s `<ASSET>/<QUOTE>/<interval>.parquet` layout is not shared by the list-shaped writers. The sum closes the fabrication path this spec is aimed at without inventing a binding the data does not carry.
 - **Any change to `spec_hash`**, which has its own immutability rule and is not implicated here.
 - **A CLI surface.** No subcommand or option changes, so `README.md`'s Usage section is unaffected.
