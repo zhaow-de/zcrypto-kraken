@@ -1,5 +1,22 @@
 # Verifiable Dataset Provenance Implementation Plan
 
+> # ⛔ STATUS 2026-08-08: FAILED COLD REVIEW — DO NOT IMPLEMENT
+>
+> Two independent cold reviews (consistency; effectiveness) both rejected this pair. **Rework the spec first — this is not a patch job.** Blocking set, all verified against the code:
+>
+> 1. **The plan makes all 46 live records unloadable, three ways.** `_BASE_STORED_KEYS` is *derived* from `_REQUIRED_CALLER`, so Task 1's edit silently rewrites the stored-key contract: existing records fail the surplus check (`dataset_hash` becomes unknown) and the missing check (`datasets` absent), and `_EXPECTED_STORED_KEYS` has no `4:` entry so a schema-4 load raises a bare `KeyError`. `cli/engine/command.py` reads this registry at runtime.
+> 2. **Task 1 and Task 3 contradict each other.** `validate_stored_record` re-validates the caller half of every loaded record, and `dataset_hash` is not in `_STORE_OWNED` — so Task 1's "raise if the caller passed `dataset_hash`" rejects the store's own schema-4 output on every load.
+> 3. **THE FIX IS ALREADY IN THE FILE**: move `dataset_hash` into `_STORE_OWNED` and version-scope `datasets` in `_EXPECTED_STORED_KEYS` exactly as `variant` already is. The caller-cannot-supply property then falls out of existing machinery instead of a new rule that fights the loader.
+> 4. **D1/D3's "derivable from a manifest alone" is false.** Five writers produce **four** different `series` shapes and two basket-key spellings. The plan's walk handles two; it crashes on `derivatives-funding`/`derivatives-oi` (no interval level) and on `ohlc-reach` (list rows). **Disqualifying**: `data/ohlc-holdout-2026-07-10` has no `basket_sha256` at all, so D3's "a missing manifest is a refusal" would make [[T0064]]'s out-of-sample holdout — the deployable's missing evidence — permanently unregistrable.
+> 5. **The design is a REGRESSION on discrimination.** A daily-only trial, a 4h-only trial and record 44's daily+4h trial would all pass `datasets=["ohlc-full"]` and receive an **identical** digest. Historically those were three *distinct* hashes; the lost drivers discriminated by interval and probably by pair. The block must carry the selection (intervals + series), or the claim must be downgraded and a topic registered. `fetched_at` must also leave the hashed block — a re-fetch must not move the digest.
+> 6. **`append()` has no production caller.** All 46 records were written by uncommitted scripts, so bolting the API bolts an unused door. The invariant belongs in `validate_stored_record` at LOAD time.
+> 7. **Task 5 cannot run**: the tree is dirty at that point (Task 1 Step 5 stages fewer files than Step 4 edits) → `mutate-probe.sh` rc 3; and its baseline is already broken by (1) → rc 7. Steps 2–4 are prose with no `--file`/`--control`.
+> 8. Cut the `_run_recipe` interpreter (single-use abstraction over one row that can never grow) and the "completeness by construction" framing (the historical set is frozen at four hashes once `SCHEMA_VERSION` is 4).
+>
+> **Corrections owed to the spec's own facts**: "42 of 46" is really **44 of 46** non-reproduced (`45275ebe` is inferred too); and spec line 12's "4581 daily rows" conflates BTC/EUR's row count with the 4582 union stamps that yield 4581 returns — [[T0065]] states it correctly, the spec's compression does not.
+>
+> Verified clean by both reviewers: the deferral sweep, all four hash counts, the `cccb8d17` reproduction, the `ohlc-full` 1440 extent, and D2's core insight — `dataset_hash = compute_hash(datasets)` is sound and worth keeping.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make a trial record's dataset reference self-describing and machine-checkable by construction, so no future `dataset_hash` can become unresolvable the way 42 existing ones have.
