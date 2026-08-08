@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the Stage-6a gate is met (≥ 14 consecutive clean complete-UTC days on the VPS journal, clock started 2026-07-11 00:00 UTC) and the human convenes the 6b executor session
+ripe_when: **the Stage-6a half is MET and MEASURED (2026-08-08): 28 consecutive clean complete-UTC days**, 2026-07-11 → 2026-08-07, every day 6/6 cycles and zero `failed-cycle-*` — twice the ≥14 required, unbroken. What remains is the OTHER half only: the human convenes the 6b executor session. That is a deliberate act, not a formality — the eight items below are the live order-submission path (state machine, kill-switch, reconciliation, reduce-only), which carries the Fable review floor per `spec-plan-locations.md`. Re-measure the streak at convening time with one pass over `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/`: a day is clean at 6 `cycle-HH.json` and 0 `failed-cycle-*`
 ---
 
 # Phase-6 build sequence and its cross-iteration constraints
@@ -19,6 +19,13 @@ Three constraints bind *future* iterations and would otherwise be invisible at p
 4. **6b executor scope** — order submission + order state machine + reconciliation loop + kill-switch, **plus** §12's weekly tracking-error report in full (fills, fees, rollover accrual, slippage vs the cost model), **cost-model recalibration from real fills**, tiny-live sleeve funding (D3(ii) second half, human money action), and the **D3(iii) T2 tax-probe set** (≥ 1 margin long + ≥ 1 margin short, each held across ≥ 2 rollover events, one closed, one settled) scheduled within the first two 6b weeks so the tax verification (T2 pass or T3 fallback) closes before any ramp past 25 %. T0005's Blockpit T1 check rides alongside.
 
 ## Findings so far
+
+**(2026-08-08) The Stage-6a gate is MET — measured, not assumed.** 28 consecutive clean complete-UTC days on the engine journal, 2026-07-11 through 2026-08-07: every day carries 6 `cycle-HH.json` files (00/04/08/12/16/20) and zero `failed-cycle-*` sidecars. The bar is ≥14, so it is cleared at 2× with no break anywhere in the series. 2026-08-08 reads 1/6 only because it was measured at 03:45Z with one cycle elapsed — that is an incomplete day, not a gap.
+
+Read it the way it was read, because a wrong path here returns a plausible zero: day-dirs are `journal/<YYYY-MM-DD>/` directly, each holding `cycle-HH.json` + `orders.jsonl` + `snapshots/`. A `find -mindepth 3 -maxdepth 3 -type d` walks into `snapshots/cycle-HH/` instead and reports `ok=0` for every day — which reads as a totally failed gate rather than as a bad probe. `cycle-HH.json` is written LAST, after validation, so its presence is the completion signal; a failed cycle writes `failed-cycle-<HH>.json` beside it rather than nothing.
+
+**This unblocks the gate but does not make the topic ripe** — the convening half is untouched, and it is the half that matters for a live-order path.
+
 
 - Spec 00039 (kickoff decisions 1–8, the pre-registered go-live criteria incl. the pinned Stage-6a concordance semantics, and the adapter-verification protocol); decisions log `[iter-079]`.
 - The go/no-go gate and every ramp step are **D3(vi) human decisions**, conditional on no gate breaches and the DD ladder untouched or correctly handled — never automatic calendar promotions.
