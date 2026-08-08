@@ -49,8 +49,32 @@ The pipeline is in good shape for the strategy already researched (1d/4h) but ha
 
 - **15m is out of reach and stays that way.** The 15m REST window spans only ~7.5 days, so it stopped reaching 2026-07-08 on that date. 2026-07-01 → 07-08 at 15m is recoverable **only** from the Q3 dump (~October), or not at all. It sits after the frozen canonical's 2026-03-31 end, so it does not touch any trial sample — it is a seam to mark when extending forward, not a blocker.
 
+## Findings — the execution-reproducibility gap, measured 2026-08-08
+
+**Two of the four `dataset_hash` values are unresolved; one reproduces exactly; one inherits.** A first pass here claimed *all* of them were unresolvable and that no recipe was recoverable from the repo. A cold second assessment refuted that, and the refutation was reproduced before being accepted. Corrected:
+
+| hash | records | status |
+|---|---|---|
+| `ba47e37e` | ×38 — A1 (36) **and P1 (2)** | **unresolved**, and hardest-tested |
+| `81dc9b44` | ×4, iter-074 | **unresolved** (4h primitive) |
+| `45275ebe` | ×2, record 44 — the deployable | **inherits** from the two above |
+| `cccb8d17` | ×2, iter-086/087 | **RESOLVES — recipe is committed** |
+
+**`cccb8d17` reproduces from committed text**: `sha256(hex_4h + ":" + hex_15m)` = `cccb8d175d20…`, verbatim in `docs/specs/00045-b1-seasonality-conditioning-design.md` and restated in the registry's own `notes` for those records. Its 15m operand is `data/ohlc-15m`'s `basket_sha256` on disk, so half of it is anchored to bytes; its 4h operand is `81dc9b44` carried as a literal, so it is fully **reproducible** but only half **traceable to bytes**.
+
+**What genuinely resists**: `ba47e37e` and `81dc9b44`, against ~226,000 candidate hashes — all 4096 pair subsets × intervals × orders × separators, parquet file bytes as components, union-calendar price matrices from `load_union` (what the driver actually fed the model), the deleted v0 `data/ohlc` catalog, and cross-dataset combinations. **Method validated on two independent controls** (`ohlc-full`'s own `basket_sha256` `70c2728e` and the universe artifact's `407d2ed8`), and all 36 per-series `sha256` re-derive today under the current polars, so frame-hash negatives are real rather than version drift. **Git history is clean** — no driver, notebook or helper was ever committed and deleted.
+
+**The data did not move, proven by content rather than by a self-reported field.** All 36 per-series `sha256` in `ohlc-full`'s manifest reproduce from the parquet files today, and every parquet mtime is 2026-07-07 21:18–21:22, predating every registry record (07-09 → 07-11). The NAS replica is byte-identical. So modification-without-a-manifest-change is ruled out.
+
+**Record 44 is NOT an unidentifiable dataset — that framing was wrong and is withdrawn.** Its hash cannot be recomputed, but committed state identifies its dataset precisely and redundantly: `tests/test_crossfreq_system.py` pins per-asset bar counts at 1440 and 240 plus last bar-start stamps behind a "canonical dataset drifted — STOP" assertion, `tests/test_record44_legs.py` pins the union bar counts, and `cli/portfolio/record44_legs.py` re-derives the registered legs. They pass against `data/ohlc-full` today. The accurate, narrow statement: **the hash cannot serve as an independent cross-check** — not that the dataset is unknown. [[T0125]] (resolved 2026-08-03) already worked this ground and re-grounded the go/no-go on a reproducible basis.
+
+**A new defect this surfaced, worth its own attention.** `docs/research/12.phase5-system-spec-runbook.md` states `45275ebe = sha256(daily manifest ‖ 4h manifest)`. Read literally as those two digests it **does not reproduce** across ~100 tested forms. So a committed doc states a recipe that does not verify — it is describing semantics, not an executable rule, and a forward-fix must not treat it as one.
+
 ## Suggested next steps (dedicated rounds — pick when ripe; split into own specs when taken)
 
 - **Fine-cadence reach round.** Build the live-trades→bars materializer (the `book → L2-panel` analogue for the trade tape; reuses `ticks_to_bars`), and ingest the 2026 Q2 (+ early Q3) OHLCVT dumps to extend the frozen canonicals past 2026-03-31 — together these lift the intraday ceiling. Ripe now (capture tape ≈10 days deep; the Q2 dump is likely published). Grid/watermark/catalog design belongs to its own spec. **Settle discipline (moved here from [[T0066]] 2026-07-19):** the materializer's spec MUST answer the settle-vs-heal-complete question explicitly — trades are heal-complete only after the *next day's* REST backfill (≤ ~28 h), a chasm not a race, so a settle-lag ≥ the daily trade-backfill (or ledger-driven invalidation) is required; do NOT copy the panel's original D6 "no settle margin needed" shape (which T0066 corrected).
-- **Execution-reproducibility round.** A committed `zcrypto` research-run/backtest command (so a verdict is reproducible from the repo, not a gitignored driver), plus committing the dataset-hash recipes that currently live only in scratchpad (esp. record 1's `ba47e37e`).
+- **Execution-reproducibility round — now split, because the measurement above changes what is possible.**
+  - **(decision, owner)** `ba47e37e` and `81dc9b44` resist ~226,000 candidates and no driver was ever committed, so treat them as **unrecoverable** unless something outside the repo survives. Rule: accept them as unverifiable and say so where they are cited, or spend effort reconstructing the iter-046 driver. Note this is narrower than it sounds — record 44's dataset is pinned by content in passing tests ([[T0125]]), so what is lost is an independent cross-check, not the dataset's identity. The registry is append-only and hash-chained, so restamping is not an option.
+  - **(autonomous, ripe now — independent of that ruling)** Fix `docs/research/12.phase5-system-spec-runbook.md`, which states a `45275ebe` recipe that does not verify. Then commit the recipe **going forward** — the `cli/costs/calibrate.py` pattern from spec `00085` D5 applied to dataset identity, so the next record's `dataset_hash` is reproducible from committed code by construction rather than by a driver nobody kept.
+  - **(design-bearing, wants a spec)** The committed `zcrypto` research-run/backtest command, so a verdict is reproducible from the repo rather than a gitignored driver.
 - **Already tracked — do NOT duplicate here:** durability + catalog rewrite → **OPS-6 / spec 00056 (done, iter-103)**; deployable doc drift → **[[T0063]] (resolved 2026-07-19)**; deployable out-of-sample validation → **[[T0064]]**.
