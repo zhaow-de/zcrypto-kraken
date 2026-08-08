@@ -119,8 +119,8 @@ def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> 
     Checked PER SYMBOL, on the stalest, rather than on the basket's newest bar: each symbol's median
     is computed from its own frame, so a basket-wide `max` would let one fresh symbol vouch for
     stale ones. That is not hypothetical -- the live-trades->bars materializer planned in T0065's
-    REACH round feeds EUR pairs only (capture is EUR-quoted; T0092), which would leave the
-    BTC-quoted legs behind while a `max` check signed off. The cost of this strictness: a
+    REACH round is fed by a source whose coverage need not match the basket, which would leave the
+    thinner legs behind while a `max` check signed off. The cost of this strictness: a
     legitimately delisted symbol fails the whole rebuild. That is the intended direction -- a
     delisting is a corporate action wanting human attention (T0025), not something to select around
     on a stale window -- and the error names the offender.

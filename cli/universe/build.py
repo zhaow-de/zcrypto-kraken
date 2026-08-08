@@ -20,8 +20,9 @@ def build_universe_file(
     `spread_cap` is either the literal `"pending-capture"` (no spread criterion applied -- pass
     `spread_cap=` to supply one) or a record naming the cap, the reference notional it is priced
     at, and the calibration behind it (T0024, spec 00067). Per-symbol values live on each entry's
-    `spread_bps`, where `null` means the symbol has no L2 capture and was NOT screened -- the
-    daemon subscribes to EUR-quoted pairs only, so the BTC-quoted legs carry nulls by construction.
+    `spread_bps`, where `null` means the symbol is outside the committed calibration and was NOT
+    screened. That is no longer a whole quote: since spec 00085 the table covers all twelve legs,
+    BTC-quoted included, so a null here marks a genuine one-off rather than a structural blind spot.
     """
     return {
         "as_of": as_of,

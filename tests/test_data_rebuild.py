@@ -302,8 +302,8 @@ def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
 def test_refresh_universe_refuses_a_basket_where_only_some_symbols_are_fresh(tmp_path, monkeypatch):
     """The guard is per-symbol, not on the basket's newest bar: each symbol's median comes from its
     own frame, so one fresh symbol must not vouch for a stale one. This is the shape T0065's REACH
-    round would produce -- a live-trades->bars tail feeds EUR pairs only (capture is EUR-quoted,
-    T0092), leaving the BTC-quoted legs at the dump extent. A `max` check passes this basket."""
+    round would produce -- a live-trades->bars tail need not cover every basket symbol equally,
+    leaving the thinner legs at the dump extent. A `max` check passes this basket."""
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
