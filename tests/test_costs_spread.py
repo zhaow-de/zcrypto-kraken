@@ -69,6 +69,25 @@ def test_provenance_is_pinned_so_a_recalibration_cannot_be_silent():
     assert CALIBRATION_MIN_ROWS == 1_314_000
 
 
+def test_the_window_still_clears_the_two_week_exit_bar():
+    """Phase 2's exit-bar row is ">=2 weeks of captured spreads", discharged by T0091 at 14.68 days
+    after a 13.1-day predecessor explicitly failed it.
+
+    This exists because the bar was nearly lost to a restamp: spec 00085's implementation plan
+    drafted a window ending 2026-08-06T06:00Z, which spans 13.67 days. Every other assertion in this
+    file would have stayed green on it -- the table, the provenance stamp, the row counts and the
+    reproduction control are all blind to span. Only reading the two timestamps catches it, so a
+    future restamp that shortens the window fails HERE rather than silently un-discharging a gate.
+    """
+    from datetime import datetime
+
+    start, end = (datetime.fromisoformat(w.replace("Z", "+00:00")) for w in CALIBRATION_WINDOW)
+    span_days = (end - start).total_seconds() / 86_400
+    assert span_days >= 14.0, f"window spans {span_days:.2f} days, below the >=2-week exit bar"
+    # The stamped hour count must describe that same window, or the two can drift apart silently.
+    assert CALIBRATION_HOURS == round((end - start).total_seconds() / 3_600)
+
+
 @pytest.mark.parametrize("pair", sorted(EXPECTED))
 @pytest.mark.parametrize("size", [100, 1_000, 10_000])
 def test_pinned_sizes_return_the_table_value(pair, size):
