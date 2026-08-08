@@ -35,27 +35,31 @@ from cli.costs.fees import round_trip_fee
 from cli.costs.margin import margin_carry
 
 # Provenance of the table below -- asserted by the tests so a new window cannot arrive unstamped.
-CALIBRATION_WINDOW: tuple[str, str] = ("2026-07-08T13:47:33Z", "2026-07-23T05:59:59Z")
-CALIBRATION_HOURS: int = 353
-CALIBRATION_MIN_ROWS: int = 1_260_309
+CALIBRATION_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-07T19:00:00Z")
+CALIBRATION_HOURS: int = 365
+CALIBRATION_MIN_ROWS: int = 1_314_000
 
-# Mean effective spread, **bps per side**, mid-relative, by EUR notional. Nulls over the window:
-# exactly 2 across 10 pairs x 3 sizes x 2 sides (XRP fill_bps_ask_10k, 2026-07-13 07:04:31-32Z), so
-# the visible book covered EUR 10k effectively always; those 2 rows drop out of XRP's @10k mean.
+# Mean effective spread, **bps per side**, mid-relative, by EUR notional (the rung is the BTC
+# quantity worth that many EUR on a BTC-quoted pair -- see BTC_EUR_REFERENCE). Nulls over the
+# committed window: **zero**, across 12 pairs x 3 sizes x 2 sides, so the visible book covered the
+# EUR 10k rung on every second of every pair. (The superseded window had exactly 2, both XRP
+# fill_bps_ask_10k at 2026-07-13 07:04:31-32Z -- a date that predates the current window entirely.)
 # NOTE (standing caveat, capture-era data-hygiene map): at EUR 10k the fill walk passes rank 10 on
 # the thin pairs, and ranks beyond 10 are venue-unverified in every era -- those figures rest on
 # protocol congruence rather than on Kraken's own checksums.
 SPREAD_CALIBRATION: dict[str, dict[int, float]] = {
-    "BTC": {100: 0.260, 1_000: 0.386, 10_000: 0.625},
-    "ETH": {100: 0.420, 1_000: 0.486, 10_000: 0.686},
-    "XRP": {100: 0.758, 1_000: 1.116, 10_000: 2.071},
-    "SOL": {100: 0.922, 1_000: 1.029, 10_000: 1.822},
-    "DOGE": {100: 1.721, 1_000: 1.853, 10_000: 3.741},
-    "LINK": {100: 2.207, 1_000: 2.367, 10_000: 3.704},
-    "LTC": {100: 2.036, 1_000: 3.022, 10_000: 5.237},
-    "ADA": {100: 2.180, 1_000: 2.459, 10_000: 5.365},
-    "AVAX": {100: 2.408, 1_000: 2.858, 10_000: 5.863},
-    "DOT": {100: 3.579, 1_000: 5.405, 10_000: 12.223},
+    "ADA/EUR": {100: 2.383, 1_000: 2.686, 10_000: 5.389},
+    "AVAX/EUR": {100: 2.417, 1_000: 2.838, 10_000: 6.031},
+    "BTC/EUR": {100: 0.198, 1_000: 0.299, 10_000: 0.533},
+    "DOGE/EUR": {100: 1.635, 1_000: 1.787, 10_000: 3.539},
+    "DOT/EUR": {100: 2.812, 1_000: 4.053, 10_000: 10.054},
+    "ETH/BTC": {100: 0.748, 1_000: 1.112, 10_000: 1.564},
+    "ETH/EUR": {100: 0.344, 1_000: 0.404, 10_000: 0.619},
+    "LINK/EUR": {100: 2.382, 1_000: 2.555, 10_000: 4.021},
+    "LTC/EUR": {100: 2.103, 1_000: 2.908, 10_000: 5.124},
+    "SOL/BTC": {100: 1.343, 1_000: 1.685, 10_000: 2.757},
+    "SOL/EUR": {100: 0.927, 1_000: 1.041, 10_000: 1.798},
+    "XRP/EUR": {100: 0.603, 1_000: 0.945, 10_000: 1.924},
 }
 
 _PINNED_SIZES: tuple[int, ...] = (100, 1_000, 10_000)

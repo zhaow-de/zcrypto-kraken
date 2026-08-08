@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -425,6 +426,72 @@ def test_materialize_uses_the_reconciled_hour_when_present(tmp_path: Path) -> No
     assert pl.read_parquet(final).row(0, named=True)["depth_qty_bid_l1"] == 9.0  # the healed value, not 1.0
 
 
+# --- materialize: quote scope (T0092 spec 00085 D1 -- every quote with a ladder, not just EUR) --------
+
+
+def test_the_sweep_no_longer_skips_a_btc_quoted_pair(tmp_path: Path) -> None:
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    _book(capture_root, "ETH/BTC", hour, _explode("ETH/BTC", hour, _messages()))
+
+    # THREE positionals: (primary_root, reconciled_root, panel_root). Passing two silently binds
+    # panel_root to reconciled_root and raises TypeError on the missing third.
+    result = materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    assert result.pairs_out_of_scope == 0
+    assert result.hours_written == 1
+    assert (panel_root / "ETH" / "BTC" / "panel-1s").exists()
+
+
+def test_a_pair_whose_quote_has_no_ladder_is_still_counted_out_of_scope(tmp_path: Path) -> None:
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    _book(capture_root, "ETH/USD", hour, _explode("ETH/USD", hour, _messages()))
+
+    result = materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    # Skipped, not crashed, and NOT silently walked with the EUR ladder.
+    assert result.pairs_out_of_scope == 1
+    assert result.hours_written == 0
+    assert not (panel_root / "ETH" / "USD").exists()
+
+
+def test_pairs_out_of_scope_counts_distinct_pairs_not_hours(tmp_path: Path) -> None:
+    """A single ladderless pair with MANY captured hours must count as ONE out-of-scope pair, not
+    one per hour -- otherwise a real tree with hundreds of hours for one out-of-scope pair inflates
+    this counter by the hour count, and the dedup also gates the log line (one INFO per pair, not
+    one per hour shipped to Loki)."""
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    for offset in range(3):
+        h = hour + timedelta(hours=offset)
+        _book(capture_root, "ETH/USD", h, _explode("ETH/USD", h, _messages()))
+
+    result = materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    assert result.pairs_out_of_scope == 1  # one PAIR, not three hours
+    assert result.hours_written == 0
+    assert not (panel_root / "ETH" / "USD").exists()
+
+
+def test_the_out_of_scope_log_line_is_deduped_per_pair_not_per_hour(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The counter dedup above is not the only thing the `skipped_pairs` set buys: it also gates the
+    LOG line. A pair with hundreds of captured hours must ship ONE INFO line to Loki, not one per
+    hour -- asserting only `pairs_out_of_scope` would pass even with the set kept but the log call
+    moved outside the `if seg_pair not in skipped_pairs` guard."""
+    capture_root, panel_root = tmp_path / "capture", tmp_path / "panel"
+    hour = datetime(2026, 7, 24, 0, tzinfo=UTC)
+    for offset in range(3):
+        h = hour + timedelta(hours=offset)
+        _book(capture_root, "ETH/USD", h, _explode("ETH/USD", h, _messages()))
+
+    with caplog.at_level(logging.INFO, logger="zcrypto.panel.materialize"):
+        materialize(capture_root, None, panel_root, settle=timedelta(0), now=hour + timedelta(hours=8))
+
+    skip_lines = [r for r in caplog.records if "ETH/USD" in r.message]
+    assert len(skip_lines) == 1, [r.message for r in skip_lines]
+
+
 # --- write_meta: the generation manifest ------------------------------------------------------------
 
 
@@ -437,7 +504,7 @@ def test_write_meta_writes_the_generation_manifest(tmp_path: Path) -> None:
     meta = json.loads(path.read_text())
     assert meta["schema_version"] == 2  # T0104 bumped it: stale_seconds is a generation change
     assert meta["grid"] == "1s"
-    assert meta["notionals_eur"] == [100.0, 1000.0, 10000.0]
+    assert meta["notionals_by_quote"]["EUR"] == [100.0, 1000.0, 10000.0]
     assert meta["k_levels"] == [1, 5, 10]
     assert meta["code_ref"]  # non-empty; exact value is host-dependent
 

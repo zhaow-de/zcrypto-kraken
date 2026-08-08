@@ -23,7 +23,7 @@ from cli.archive.reader import canonical_segments
 from cli.logging import get_logger
 from cli.panel.materialize import K_LEVELS, SCHEMA_VERSION, panel_watermark, write_meta
 from cli.panel.materialize import materialize as materialize_hours
-from cli.panel.primitives import NOTIONALS_EUR, PANEL_QUOTE
+from cli.panel.primitives import NOTIONALS_BY_QUOTE
 
 logger = get_logger("panel.command")
 
@@ -59,7 +59,7 @@ def _expected_generation() -> dict[str, object]:
     return {
         "schema_version": SCHEMA_VERSION,
         "grid": "1s",
-        "notionals_eur": list(NOTIONALS_EUR),
+        "notionals_by_quote": {q: list(v) for q, v in sorted(NOTIONALS_BY_QUOTE.items())},
         "k_levels": list(K_LEVELS),
     }
 
@@ -84,18 +84,19 @@ def _check_generation(panel_root: Path) -> None:
             )
         write_meta(panel_root)
         return
-    # A matching manifest is not enough: the sweep is `PANEL_QUOTE`-scoped, so hours for a pair
-    # outside that scope are never revisited and stay at whatever generation wrote them. The manifest
-    # then asserts a generation the tree does not have, and a whole-tree read raises SchemaError on
-    # files nobody remembers exist. No sweep can repair it -- only deleting them can.
+    # A matching manifest is not enough: the sweep only covers quotes with an entry in
+    # `NOTIONALS_BY_QUOTE`, so hours for a quote outside that ladder are never revisited and stay at
+    # whatever generation wrote them. The manifest then asserts a generation the tree does not have,
+    # and a whole-tree read raises SchemaError on files nobody remembers exist. No sweep can repair
+    # it -- only deleting them can.
     stray = next(
-        (h for h in panel_root.glob("*/*/panel-1s/*/*/*/*.parquet") if h.parts[-6] != PANEL_QUOTE),
+        (h for h in panel_root.glob("*/*/panel-1s/*/*/*/*.parquet") if h.parts[-6] not in NOTIONALS_BY_QUOTE),
         None,
     )
     if stray is not None:
         raise _abort(
-            f"panel materialize: the tree holds hours outside the {PANEL_QUOTE}-quoted scope this "
-            f"sweep covers (e.g. {stray}), so they can never be regenerated and the manifest would "
+            f"panel materialize: the tree holds hours outside the ladder-scoped sweep this run "
+            f"covers (e.g. {stray}), so they can never be regenerated and the manifest would "
             f"describe a generation they do not share. Delete them on BOTH this host and the NAS."
         )
     expected = _expected_generation()
@@ -113,12 +114,12 @@ def _check_generation(panel_root: Path) -> None:
 def _affected_pairs(primary_root: Path, reconciled_root: Path | None, pair: Optional[str]) -> set[str]:
     if pair is not None:
         return {pair}
-    # EUR-quoted only, matching the sweep's own scope (PANEL_QUOTE) -- otherwise the completion
-    # line would report pairs=N counting pairs the sweep never processes.
+    # Ladder-quoted only, matching the sweep's own scope (NOTIONALS_BY_QUOTE) -- otherwise the
+    # completion line would report pairs=N counting pairs the sweep never processes.
     return {
         seg_pair
         for seg_pair, _, _ in canonical_segments(primary_root, reconciled_root, kind="book")
-        if seg_pair.split("/")[-1] == PANEL_QUOTE
+        if seg_pair.split("/")[-1] in NOTIONALS_BY_QUOTE
     }
 
 
@@ -180,7 +181,8 @@ def materialize(
     pair: Optional[str] = typer.Option(
         None,
         "--pair",
-        help=f"Only this pair (e.g. BTC/EUR); must be {PANEL_QUOTE}-quoted. Defaults to every {PANEL_QUOTE}-quoted pair.",
+        help=f"Only this pair (e.g. BTC/EUR); its quote must have a notional ladder ({', '.join(NOTIONALS_BY_QUOTE)}). "
+        "Defaults to every pair whose quote has one.",
     ),
     since: Optional[str] = typer.Option(
         None,
@@ -208,11 +210,9 @@ def materialize(
     """
     if pair is not None and pair.count("/") != 1:
         raise typer.BadParameter(f"--pair {pair}: expected BASE/QUOTE (e.g. BTC/EUR)")
-    if pair is not None and pair.split("/")[-1] != PANEL_QUOTE:
+    if pair is not None and pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
         # Refuse loudly: the sweep would skip it, so proceeding would exit 0 having done nothing. (T0092)
-        raise typer.BadParameter(
-            f"--pair {pair}: the panel is {PANEL_QUOTE}-quoted only (the notional ladder is quote-denominated)"
-        )
+        raise typer.BadParameter(f"--pair {pair}: its quote has no notional ladder ({', '.join(NOTIONALS_BY_QUOTE)})")
 
     since_dt = _parse_since(since) if since is not None else None
     affected_pairs = _affected_pairs(primary_root, reconciled_root, pair)

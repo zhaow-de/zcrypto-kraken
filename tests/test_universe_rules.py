@@ -157,7 +157,9 @@ def test_exactly_at_the_cap_passes():
 
 
 def test_an_uncaptured_pair_is_recorded_as_unevaluated_and_NOT_rejected():
-    """D3: ETH/BTC and SOL/BTC have no L2 capture. Absence of evidence is not a wide spread."""
+    """D3: a symbol outside the committed calibration is unevaluated, never auto-rejected -- absence
+    of evidence is not evidence of a wide spread. Since spec 00085 all twelve universe legs ARE
+    calibrated, so this pins the property for any future gap rather than for the /BTC legs."""
     sel = finalize_universe([_pair("ETH/BTC")], {"ETH/BTC": 5.8e5}, spreads={"BTC/EUR": 0.4}, max_spread_bps=10.0)
     entry = sel.entries[0]
     assert entry["selected"] is True

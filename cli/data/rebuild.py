@@ -119,8 +119,8 @@ def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> 
     Checked PER SYMBOL, on the stalest, rather than on the basket's newest bar: each symbol's median
     is computed from its own frame, so a basket-wide `max` would let one fresh symbol vouch for
     stale ones. That is not hypothetical -- the live-trades->bars materializer planned in T0065's
-    REACH round feeds EUR pairs only (capture is EUR-quoted; T0092), which would leave the
-    BTC-quoted legs behind while a `max` check signed off. The cost of this strictness: a
+    REACH round is fed by a source whose coverage need not match the basket, which would leave the
+    thinner legs behind while a `max` check signed off. The cost of this strictness: a
     legitimately delisted symbol fails the whole rebuild. That is the intended direction -- a
     delisting is a corporate action wanting human attention (T0025), not something to select around
     on a stale window -- and the error names the offender.
@@ -176,14 +176,19 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     }
 
     # Spread cap (T0024, spec 00067): priced from the committed calibration at the same max-size
-    # position the volume floor uses. The map covers EUR-quoted pairs with a calibrated base;
-    # everything else (today: the BTC-quoted legs, which have no L2 capture) is absent by
-    # construction -- finalize_universe records them `spread_bps: None`
-    # and does NOT reject them (absence of evidence is not evidence of a wide spread; T0092).
+    # position the volume floor uses. Keyed by FULL SYMBOL (spec 00085 D3), so the quote filter is
+    # gone: the calibration now covers the BTC-quoted legs too, and membership alone decides. A
+    # symbol still absent from the table is recorded `spread_bps: None` by finalize_universe and is
+    # NOT rejected -- absence of evidence is not evidence of a wide spread (T0092).
+    #
+    # The lift is ordered, deliberately: while the table was base-keyed, `effective_spread_bps` fed
+    # a EUR notional against a BTC-denominated ladder and returned a plausible large bps, which
+    # would fake-reject a universe member for illiquidity. It was only safe once the ladder went
+    # per-quote AND the table carried real /BTC rows.
     spreads = {
-        symbol: round(effective_spread_bps(symbol.split("/")[0], SPREAD_REFERENCE_NOTIONAL_EUR), 3)
+        symbol: round(effective_spread_bps(symbol, SPREAD_REFERENCE_NOTIONAL_EUR), 3)
         for symbol in symbols
-        if symbol.split("/")[1] == "EUR" and symbol.split("/")[0] in SPREAD_CALIBRATION
+        if symbol in SPREAD_CALIBRATION
     }
     selection = finalize_universe(pairs, volumes, spreads=spreads, max_spread_bps=DEFAULT_MAX_SPREAD_BPS)
     params = {

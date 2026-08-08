@@ -10,19 +10,55 @@ from decimal import Decimal
 
 import polars as pl
 
-# The depth-at-notional ladder (spec 00052 D2): walk a side accumulating price*qty EUR until the
-# notional is filled, then compare the resulting VWAP to mid in bps. Column-name suffixes below are
-# keyed off these exact values -- extending the ladder means extending `_FILL_SUFFIXES` too.
+from cli.panel.errors import PanelError  # errors.py imports nothing, so this is safe
+
+# The depth-at-notional ladder (spec 00052 D2, made quote-aware by spec 00085 D1): walk a side
+# accumulating price*qty in the pair's QUOTE currency until the notional is filled, then compare the
+# resulting VWAP to mid in bps. The rungs therefore have to be denominated per quote, or a BTC-quoted
+# pair asks for 100 BTC where it means EUR 100 -- which is why every `fill_bps_*` on those pairs was
+# null before this. NOTIONALS_EUR is the EUR rungs; `NOTIONALS_BY_QUOTE` below extends them to every
+# other quote, and `notionals_for` refuses a quote with no entry rather than silently defaulting to EUR.
 NOTIONALS_EUR: tuple[float, float, float] = (100.0, 1_000.0, 10_000.0)
-# The ladder walks `price * qty`, which is denominated in the pair's QUOTE currency -- so these are
-# EUR notionals only for EUR-quoted pairs. The panel is scoped to those (T0092). On a BTC-quoted
-# pair the rungs read as 100/1k/10k BTC: at the 2026-03-31 BTC/EUR close (EUR 58,968.90) the @100
-# rung alone asks EUR 5.9 M, which is ~10x ETH/BTC's and ~25x SOL/BTC's ENTIRE daily volume, so
-# `_fill_bps` returns None on insufficient depth and all six `fill_bps_*` columns go null. The harm
-# is therefore a dead EUR-labelled ladder and an out-of-scope tree, not a wrong number -- which is
-# still worth excluding, and is why the calibration reads `<BASE>/EUR/**` by design.
-PANEL_QUOTE = "EUR"
-_FILL_SUFFIXES: dict[float, str] = {100.0: "100", 1_000.0: "1k", 10_000.0: "10k"}
+
+# The BTC/EUR rate the BTC rungs are pinned to. EUR-EQUIVALENCE is the point (spec 00085 D1): the
+# BTC rungs buy the same EUR value as the EUR rungs, so `SPREAD_CALIBRATION`'s inner keys stay EUR
+# notionals and one shared interpolation grid serves all twelve legs. Never a live rate, or the
+# column meaning would drift hour to hour.
+#
+# THIS VALUE AND ITS WINDOW ARE FIXED FOREVER. `BTC_EUR_REFERENCE_WINDOW` is the reference's OWN
+# window and is NOT `cli/costs/spread.py`'s `CALIBRATION_WINDOW` -- the two are independent by
+# design. A recalibration moves the calibration window; it must NOT move this. This number defines
+# what every BTC `fill_bps_*` column already written to the tree MEANS, so changing it silently
+# redefines data that already exists. If a later measurement disagrees with it, the answer is
+# regenerate the tree or explain the divergence -- NEVER update this constant to match.
+#
+# Measured (main loop, 2026-08-06): mean `mid` over BTC/EUR panel-1s across the window below,
+# 1,180,800 rows = exactly 328 contiguous hours, no gaps.
+BTC_EUR_REFERENCE: float = 55876.28413495087  # the Step 0 measurement, verbatim
+BTC_EUR_REFERENCE_WINDOW: tuple[str, str] = ("2026-07-23T14:00:00Z", "2026-08-06T06:00:00Z")
+
+NOTIONALS_BY_QUOTE: dict[str, tuple[float, float, float]] = {
+    "EUR": NOTIONALS_EUR,
+    "BTC": (
+        NOTIONALS_EUR[0] / BTC_EUR_REFERENCE,
+        NOTIONALS_EUR[1] / BTC_EUR_REFERENCE,
+        NOTIONALS_EUR[2] / BTC_EUR_REFERENCE,
+    ),
+}
+
+# Keyed by rung INDEX, not by value: the values now differ per quote, so a value-keyed map would
+# need a lookup per quote and would silently miss on a float that did not round-trip.
+_FILL_SUFFIXES: tuple[str, str, str] = ("100", "1k", "10k")
+
+
+def notionals_for(quote: str) -> tuple[float, float, float]:
+    """The ladder for `quote`, refusing rather than defaulting -- a silent EUR fallback on an
+    unknown quote is exactly the wrong-number failure this ladder exists to prevent."""
+    try:
+        return NOTIONALS_BY_QUOTE[quote]
+    except KeyError:
+        raise PanelError(f"no notional ladder for quote {quote!r}: add one to NOTIONALS_BY_QUOTE") from None
+
 
 # Cumulative-depth price levels (spec 00052 D2).
 _DEPTH_LEVELS: tuple[int, int, int] = (1, 5, 10)
@@ -87,6 +123,7 @@ def sample_row(
     bids: dict[Decimal, Decimal],
     asks: dict[Decimal, Decimal],
     *,
+    quote: str,
     updates: int,
     stale_seconds: float | None = None,
 ) -> dict | None:
@@ -119,8 +156,9 @@ def sample_row(
         "microprice": microprice,
         "imbalance_l1": imbalance_l1,
     }
-    for notional in NOTIONALS_EUR:
-        suffix = _FILL_SUFFIXES[notional]
+    # strict=True: a future quote whose ladder has a different length must refuse loudly here, not
+    # raise a bare IndexError two lines down or, worse, silently truncate.
+    for suffix, notional in zip(_FILL_SUFFIXES, notionals_for(quote), strict=True):
         row[f"fill_bps_bid_{suffix}"] = _fill_bps(bid_levels, notional, mid, buy=False)
         row[f"fill_bps_ask_{suffix}"] = _fill_bps(ask_levels, notional, mid, buy=True)
     for side, levels in (("bid", bid_levels), ("ask", ask_levels)):

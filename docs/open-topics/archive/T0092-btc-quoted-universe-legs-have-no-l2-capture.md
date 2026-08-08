@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: ≥2 weeks of captured book on the new legs (≈2026-08-06) — the trigger, and it is externally observable. But the iteration it opens has TWO parts in order, not one: the quote-aware notional ladder FIRST (measured 2026-07-28: every `fill_bps_*` is null on both BTC-quoted legs, because the ladder walks 100/1k/10k in the pair's QUOTE currency, and that is the column family the calibration reads), then the calibration and the base→symbol re-key — extend the spread calibration to them and re-key `SPREAD_CALIBRATION` from base to full symbol; the docs rewrite is closeout work for that same iteration. The capture half is DONE (2026-07-23)
+status: resolved
 ---
 
 # Two universe legs have no L2 capture, so the spread cap cannot screen them
@@ -28,6 +27,11 @@ It is not urgent: nothing today suggests those legs are untradeable, they are re
 
 ## Done so far
 
+**(2026-08-08) RESOLVED — the calibration remainder landed, spec `00085`.** The three parts ran in the order this topic insisted on. **The ladder first:** `NOTIONALS_EUR` became `NOTIONALS_BY_QUOTE`, with BTC rungs held as the BTC quantities worth EUR 100/1k/10k at a pinned `BTC_EUR_REFERENCE = 55876.28413495087` measured over its own fixed window, so column identity and the EUR-denominated grid survive. The four EUR-scope guards lifted with it. **Then the regeneration:** ops converged to `65402dc67701` and the whole panel tree was rebuilt 2026-08-07 12:55→22:26Z — 7,836 hours, `hours_unanchored=0`, `errors=0`, and the two `/BTC` subtrees built for the first time. Verified on the tree rather than inferred: all six `fill_bps_*` columns read **100 % non-null** on both legs (ETH/BTC 0.684→1.259 bps @100→@10k, SOL/BTC 0.910→2.672), monotonic in size, where every one was previously null. **Then the calibration and re-key:** `SPREAD_CALIBRATION` is keyed by full symbol with twelve rows over one shared window `2026-07-23T14:00Z…2026-08-07T19:00Z` (365 h, 15.21 days, `min_rows == max_rows == 1,314,000` — zero missing seconds), and `cli/data/rebuild.py`'s quote guard collapsed to plain membership. The re-key is proven load-bearing by mutation probe: reverting to a base lookup is KILLED.
+
+Two findings the work produced, both recorded where they will be read again. The **EUR rows moved materially** across the restamp — 9 of 10 by >2 %, worst −25.01 % (DOT @1k) — against the spec's "under 2 %" estimate, which is corrected in place; the move is attributable to the window, not the pipeline, and a permanent control test holds the superseded values as literals to keep proving that. And the window end is now pinned by a test against Phase 2's **≥2-week exit bar**: the window first drafted for this restamp ran 13.67 days and would have un-discharged that bar with every other assertion still green.
+
+
 **(2026-07-23) Option (a) taken — the legs are captured.** The owner ruled to capture rather than exempt or drop, on the asymmetry: capturing-and-dropping costs a config line and ~0.1 GB/day, while not-capturing-and-later-needing costs a permanently late start date on 2 of the 12 selected members. L2 book is unbackfillable, so the start date is the entire cost of waiting.
 
 **A 15-agent pre-flight audit ran before the change** (7 consumer surfaces, each independently re-verified, plus a completeness critic). Its headline corrected the premise this topic was written on:
@@ -51,6 +55,4 @@ It is not urgent: nothing today suggests those legs are untradeable, they are re
 
 ## Suggested next steps
 
-- **(The calibration remainder — this topic's own scope, ripe ≈2026-08-06; do the quote-aware ladder FIRST or there is nothing to calibrate from)** Extend the spread calibration to the two new legs once they have ≥2 weeks of book, and re-key `SPREAD_CALIBRATION` from base to full symbol so `effective_spread_bps` stops resolving a BTC-quoted leg to the EUR leg's number. **Sequence matters:** `cli/data/rebuild.py:156`'s `quote == "EUR"` test currently *protects* — replacing it with a coverage test before the ladder is per-quote would feed a EUR notional into a BTC-denominated ladder, producing a large plausible bps figure that trips the 10 bps cap and drops a universe member as a fake liquidity rejection. Do the ladder first, the lookup second.
-- **(Closeout of that same iteration)** Rewrite in place the docs that assert the pre-change world as justification: `docs/reference/data-catalog-full.md:101`, `captured-spread-calibration.md:7,55` (state the `/EUR/` scope as required, not incidental), and the **five** "the BTC legs have no L2 capture" sites — `cli/universe/rules.py:72`, `cli/universe/build.py:23-24`, `cli/data/rebuild.py:93`, `cli/data/rebuild.py:150`, `tests/test_universe_rules.py:160` (plus `tests/test_data_rebuild.py:203`, same clause in a docstring).
-- **(Superseded)** The cross-spread sanity bound this topic originally proposed is no longer needed — real capture replaces the order-of-magnitude floor it would have given.
+_(none — this topic is resolved. The capture half landed 2026-07-23, the ladder / regeneration / calibration / re-key remainder 2026-08-08, and the docs rewrite with it. The cross-spread sanity bound this topic once proposed was superseded by real capture and is consciously dropped.)_

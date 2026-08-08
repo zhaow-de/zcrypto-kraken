@@ -36,7 +36,7 @@ from cli.capture.book import OrderBook
 from cli.capture.segment_writer import _replace_durably
 from cli.logging import get_logger
 from cli.panel.errors import PanelError
-from cli.panel.primitives import NOTIONALS_EUR, PANEL_QUOTE, PANEL_SCHEMA, sample_row
+from cli.panel.primitives import NOTIONALS_BY_QUOTE, PANEL_SCHEMA, sample_row
 
 logger = get_logger("panel.materialize")
 
@@ -129,7 +129,7 @@ def materialize_hour(
             updates += 1
             msg_idx += 1
         stale = (boundary - last_msg_ts).total_seconds() if last_msg_ts is not None else None
-        row = sample_row(book.bids, book.asks, updates=updates, stale_seconds=stale)
+        row = sample_row(book.bids, book.asks, quote=pair.split("/")[-1], updates=updates, stale_seconds=stale)
         updates = 0
         if row is not None:
             row["ts"] = boundary
@@ -259,9 +259,11 @@ class MaterializeResult:
     hours_unsettled: int
     rows: int
     errors: list[tuple[str, datetime, str]]
-    #: pairs present in the archive but outside the panel's EUR-quoted scope (T0092). Reported so
-    #: an out-of-scope stream is visible rather than an absence that looks like success. Defaulted
-    #: and last so it stays after the non-default `errors` field.
+    #: distinct pairs present in the archive whose quote has no entry in `NOTIONALS_BY_QUOTE`
+    #: (T0092/spec 00085 D1) -- counted once per pair, not once per hour-segment, or a single
+    #: out-of-scope pair with hundreds of captured hours would inflate this by the hour count.
+    #: Reported so an out-of-scope stream is visible rather than an absence that looks like
+    #: success. Defaulted and last so it stays after the non-default `errors` field.
     pairs_out_of_scope: int = 0
 
 
@@ -315,11 +317,12 @@ def materialize(
     for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="book"):
         if pair is not None and seg_pair != pair:
             continue
-        if seg_pair.split("/")[-1] != PANEL_QUOTE:
+        if seg_pair.split("/")[-1] not in NOTIONALS_BY_QUOTE:
             if seg_pair not in skipped_pairs:
                 skipped_pairs.add(seg_pair)
                 logger.info(
-                    "panel skipping non-%s-quoted pair=%s (the notional ladder is quote-denominated)", PANEL_QUOTE, seg_pair
+                    "panel skipping pair=%s: no notional ladder for its quote (add one to NOTIONALS_BY_QUOTE)",
+                    seg_pair,
                 )
             continue
         if since is not None and hour < since:
@@ -414,7 +417,7 @@ def write_meta(panel_root: Path) -> Path:
     meta = {
         "schema_version": SCHEMA_VERSION,
         "grid": "1s",
-        "notionals_eur": list(NOTIONALS_EUR),
+        "notionals_by_quote": {q: list(v) for q, v in sorted(NOTIONALS_BY_QUOTE.items())},
         "k_levels": list(K_LEVELS),
         "code_ref": _code_ref(),
     }

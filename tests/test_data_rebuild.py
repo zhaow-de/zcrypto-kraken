@@ -259,13 +259,20 @@ def test_refresh_universe_actually_applies_the_spread_cap(tmp_path, monkeypatch)
     payload = json.loads((out_root / "point-in-time-universe.json").read_text())
     entries = {e["symbol"]: e["spread_bps"] for e in payload["entries"]}
     # The EUR leg carries the calibrated number at the reference notional -- not None, not 0.0.
-    expected = round(effective_spread_bps("BTC", SPREAD_REFERENCE_NOTIONAL_EUR), 3)
+    expected = round(effective_spread_bps("BTC/EUR", SPREAD_REFERENCE_NOTIONAL_EUR), 3)
     assert entries["BTC/EUR"] == expected
-    # The BTC-quoted leg has no capture, so it is recorded unevaluated rather than auto-failed (D3).
-    assert entries["ETH/BTC"] is None
+    # INVERTED by spec 00085: the BTC-quoted leg is now calibrated, so it carries a real number
+    # where it previously carried None. This assertion is the re-key's proof at the production
+    # boundary -- with the base-keyed table `_refresh_universe` skipped the leg entirely, and with a
+    # base-keyed lookup it would have priced a EUR notional against a BTC ladder instead.
+    #
+    # The unevaluated path itself is NOT lost with this flip: an uncalibrated pair being recorded
+    # rather than auto-failed is pinned directly by
+    # test_universe_rules.py::test_an_uncaptured_pair_is_recorded_as_unevaluated_and_NOT_rejected.
+    assert entries["ETH/BTC"] == round(effective_spread_bps("ETH/BTC", SPREAD_REFERENCE_NOTIONAL_EUR), 3)
     assert payload["spread_cap"]["max_spread_bps"] == DEFAULT_MAX_SPREAD_BPS
     assert payload["spread_cap"]["reference_notional_eur"] == SPREAD_REFERENCE_NOTIONAL_EUR
-    assert payload["spread_cap"]["unevaluated_count"] == 1
+    assert payload["spread_cap"]["unevaluated_count"] == 0
 
 
 def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
@@ -295,8 +302,8 @@ def test_refresh_universe_refuses_a_stale_ohlc_set(tmp_path, monkeypatch):
 def test_refresh_universe_refuses_a_basket_where_only_some_symbols_are_fresh(tmp_path, monkeypatch):
     """The guard is per-symbol, not on the basket's newest bar: each symbol's median comes from its
     own frame, so one fresh symbol must not vouch for a stale one. This is the shape T0065's REACH
-    round would produce -- a live-trades->bars tail feeds EUR pairs only (capture is EUR-quoted,
-    T0092), leaving the BTC-quoted legs at the dump extent. A `max` check passes this basket."""
+    round would produce -- a live-trades->bars tail need not cover every basket symbol equally,
+    leaving the thinner legs at the dump extent. A `max` check passes this basket."""
     monkeypatch.setattr(rebuild, "CANDIDATE_SYMBOLS", ("BTC/EUR", "ETH/BTC"))
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
 
