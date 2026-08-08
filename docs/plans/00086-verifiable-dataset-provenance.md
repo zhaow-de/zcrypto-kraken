@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the trial registry's opaque, caller-supplied `dataset_hash` with a `datasets` block the store derives from each named dataset's manifest and re-derives from disk over the real file, so a future record's provenance cannot become unresolvable the way 44 of the 46 existing ones have.
+**Goal:** Replace the trial registry's opaque, caller-supplied `dataset_hash` with a `datasets` block the store derives from each named dataset's manifest, re-derives from disk over the real file, and — where the data is not on this machine — checks against a committed pin, so a future record's provenance cannot become unresolvable the way 44 of the 46 existing ones have.
 
-**Architecture:** Schema 4 adds a `datasets` block carrying, per dataset, a normalised `select` (the slice read), a `series_digest` (drift alarm) and an `extent` (identifier). `dataset_hash` becomes `compute_hash(datasets)`; both keys become store-owned, so the caller has no argument through which to supply either, and the data root is a module constant rather than a parameter. Two guard layers: `validate_stored_record` re-checks the round-trip on **every load** (D3), and a repo-level test re-derives every schema-4 block from `data/` (D5). Historical hashes move into a committed, test-policed legacy table.
+**Architecture:** Schema 4 adds a `datasets` block carrying, per dataset, a normalised `select` (the declared slice), an `extent` (that slice, resolved against the manifest) and a `series_digest` (the whole set's drift alarm). `dataset_hash` becomes `compute_hash(datasets)`; both keys become store-owned, so the caller has no argument through which to supply either, and the data root is a module constant rather than a parameter. Two guard layers: `validate_stored_record` re-checks the round-trip on **every load** (D3), and a repo-level test re-derives every schema-4 block from `data/`, re-hashes the parquet its manifest vouches for, and falls back to the catalog's committed `series_digest` pin where the dataset is absent (D5). Historical hashes move into a committed table whose evidence the tests execute.
 
-**Tech Stack:** Python 3.14, `cli/registry/` (`record.py`, `store.py`, new `provenance.py`), pytest, `infra/scripts/mutate-probe.sh`.
+**Tech Stack:** Python 3.14, `cli/registry/` (`record.py`, `store.py`, new `provenance.py`), `cli/ohlc/dataset.py` (test-side parquet re-hash), pytest, `infra/scripts/mutate-probe.sh`.
 
 ## Global Constraints
 
@@ -16,7 +16,7 @@
 - `_LOADABLE_SCHEMA_VERSIONS` gains `4` and **keeps `2` and `3`**. All 46 committed records must keep loading unchanged; an absent `datasets` block below schema 4 is normal, never an error.
 - **`_BASE_STORED_KEYS` is derived and is required of every record at every version** — `datasets` must never enter that derivation (D2). `dataset_hash` must stay in it (every record since schema 2 carries the key).
 - **The schema bump and the writer land in ONE commit (Task 2).** `append()` writes `schema_version=SCHEMA_VERSION`; bumping the constant while leaving `append()` alone would make every record the writer produces unloadable by the validator in the same commit, redding ~8 append-then-reload tests and leaving the tree red for `mutate-probe.sh`, which refuses to run from a red or dirty tree.
-- Follow the `variant` precedent: a key that does not apply is **omitted entirely**, never serialised as `null`. `select` is the exception and is always present — an empty list is the explicit "whole set" (D1). `extent["span"]` follows the `variant` precedent and is omitted when no series leaf carries both timestamps.
+- Follow the `variant` precedent: a key that does not apply is **omitted entirely**, never serialised as `null`. `select` is the exception and is always present — an empty list is the explicit "whole set" (D1). `extent["span"]` follows the `variant` precedent and is omitted when no matched leaf carries both timestamps.
 - Error messages are operator-facing: no `T<NNNN>`, no `spec 00086`, no `iter-<N>` in any raised string (`.claude/rules/operator-facing-text.md`). Those tokens go in comments.
 - Every guard is proven by `infra/scripts/mutate-probe.sh`, never asserted. The probe refuses a dirty tree, so all probes run in Task 5, after Tasks 1–4 are committed. D5's layer is the one exception and is proven by its constructive companion test instead (D7).
 - Commit gate `uv run pre-commit run -a` before every commit; a rewriting run reports Failed and leaves rewrites unstaged — re-run, re-stage, re-commit.
@@ -76,17 +76,41 @@ def _nested(**extra):
     }
 
 
-def test_extent_counts_leaves_sums_rows_and_spans_the_union(tmp_path):
+def test_an_empty_select_is_the_whole_set_and_sums_every_leaf(tmp_path):
     # A max()-based rows would read 60 and a single-series span would hide the 2019 start.
     _write(tmp_path, "ohlc-x", _nested())
-    got = capture_datasets({"ohlc-x": ["1440"]}, tmp_path)
+    got = capture_datasets({"ohlc-x": []}, tmp_path)
     assert got["ohlc-x"]["extent"] == {
         "series": 3,
         "rows": 75,
         "span": ["2019-01-01T00:00:00+00:00", "2020-01-10T20:00:00+00:00"],
     }
-    assert got["ohlc-x"]["select"] == ["1440"]
+    assert got["ohlc-x"]["select"] == []
     assert len(got["ohlc-x"]["series_digest"]) == 64
+
+
+@pytest.mark.parametrize(
+    "select,series,rows",
+    [
+        (["1440"], 2, 15),  # OR within one dimension: both pairs' daily
+        (["240"], 1, 60),
+        (["1440", "240"], 3, 75),
+        (["BTC/EUR"], 2, 70),  # a whole pair, both its intervals
+        (["BTC/EUR", "1440"], 1, 10),  # AND across dimensions: one leaf
+    ],
+)
+def test_select_resolves_per_dimension_and_the_extent_is_that_slice(tmp_path, select, series, rows):
+    # THE regression this design exists to prevent: without per-dimension resolution a daily-only
+    # trial, a 4h-only trial and a daily+4h trial all get one identical extent and one identical digest.
+    _write(tmp_path, "ohlc-x", _nested())
+    got = capture_datasets({"ohlc-x": select}, tmp_path)["ohlc-x"]["extent"]
+    assert (got["series"], got["rows"]) == (series, rows)
+
+
+def test_distinct_slices_get_distinct_blocks(tmp_path):
+    _write(tmp_path, "ohlc-x", _nested())
+    blocks = [capture_datasets({"ohlc-x": s}, tmp_path) for s in ([], ["1440"], ["240"], ["1440", "240"])]
+    assert len({json.dumps(b, sort_keys=True) for b in blocks}) == 4
 
 
 def test_select_is_normalised_so_one_read_has_one_digest(tmp_path):
@@ -97,6 +121,14 @@ def test_select_is_normalised_so_one_read_has_one_digest(tmp_path):
     b = capture_datasets({"ohlc-x": ["1440", "240", "1440"]}, tmp_path)
     assert a == b
     assert a["ohlc-x"]["select"] == ["1440", "240"]
+
+
+def test_the_digest_covers_the_whole_series_subtree_not_the_slice(tmp_path):
+    # series_digest is dataset-scoped on purpose: one dataset, one value, so the catalog can pin it
+    # once and a record stays checkable after the data leaves this machine (spec 00086 D1/D5).
+    _write(tmp_path, "ohlc-x", _nested())
+    whole = capture_datasets({"ohlc-x": []}, tmp_path)["ohlc-x"]["series_digest"]
+    assert capture_datasets({"ohlc-x": ["1440"]}, tmp_path)["ohlc-x"]["series_digest"] == whole
 
 
 def test_only_the_series_subtree_is_digested(tmp_path):
@@ -118,17 +150,24 @@ def test_a_content_change_does_move_the_digest(tmp_path):
 
 def test_a_flat_manifest_with_no_interval_level_is_captured(tmp_path):
     _write(tmp_path, "funding", {"fetched_at": "x", "basket_sha256": "b" * 64, "series": {
-        "BTCUSDT": {"rows": 7, "first_ts": "2020-01-01T00:00:00+00:00", "last_ts": "2020-01-08T00:00:00+00:00", "sha256": "f" * 64}}})
-    assert capture_datasets({"funding": ["BTCUSDT"]}, tmp_path)["funding"]["extent"]["series"] == 1
+        "BTCUSDT": {"rows": 7, "first_ts": "2020-01-01T00:00:00+00:00", "last_ts": "2020-01-08T00:00:00+00:00", "sha256": "f" * 64},
+        "ETHUSDT": {"rows": 3, "first_ts": "2020-01-05T00:00:00+00:00", "last_ts": "2020-01-08T00:00:00+00:00", "sha256": "a" * 64}}})
+    got = capture_datasets({"funding": ["BTCUSDT"]}, tmp_path)["funding"]["extent"]
+    assert (got["series"], got["rows"]) == (1, 7)
 
 
-def test_a_list_shaped_manifest_is_captured_and_addressable(tmp_path):
-    # cli/ohlc/ingest.py and cli/ohlc/reach.py both emit this shape; the rows carry their own address.
+def test_a_list_shaped_manifest_is_captured_and_addressable_by_its_row_fields(tmp_path):
+    # cli/ohlc/ingest.py and cli/ohlc/reach.py both emit this shape; the rows carry their own address,
+    # so the dimensions are the field names rather than nesting depth.
     _write(tmp_path, "reach", {"built_at": "x", "basket_sha256": "b" * 64, "min_seam_overlap": 6, "series": [
         {"symbol": "BTC", "interval": 1440, "status": "continuous", "rows": 4,
-         "first_ts": "2020-01-01T00:00:00+00:00", "last_ts": "2020-01-04T00:00:00+00:00", "sha256": "a" * 64}]})
-    got = capture_datasets({"reach": ["1440", "BTC"]}, tmp_path)
-    assert got["reach"]["extent"]["series"] == 1
+         "first_ts": "2020-01-01T00:00:00+00:00", "last_ts": "2020-01-04T00:00:00+00:00", "sha256": "a" * 64},
+        {"symbol": "BTC", "interval": 240, "status": "continuous", "rows": 24,
+         "first_ts": "2020-01-01T00:00:00+00:00", "last_ts": "2020-01-04T20:00:00+00:00", "sha256": "b" * 64},
+        {"symbol": "ETH", "interval": 1440, "status": "detached", "rows": 2,
+         "first_ts": "2020-01-03T00:00:00+00:00", "last_ts": "2020-01-04T00:00:00+00:00", "sha256": "c" * 64}]})
+    got = capture_datasets({"reach": ["1440", "BTC"]}, tmp_path)["reach"]["extent"]
+    assert (got["series"], got["rows"]) == (1, 4)  # symbol AND interval, not either
 
 
 def test_a_manifest_without_any_per_series_digest_is_captured(tmp_path):
@@ -179,6 +218,14 @@ def test_capture_refuses_an_unknown_select_token_and_names_it(tmp_path):
         capture_datasets({"ohlc-x": ["1441"]}, tmp_path)
 
 
+def test_capture_refuses_a_select_that_addresses_no_series(tmp_path):
+    # Both tokens are real; ETH/EUR has no 4h leaf. Silently capturing the whole set here would be the
+    # regression the resolution exists to prevent.
+    _write(tmp_path, "ohlc-x", _nested())
+    with pytest.raises(RegistryError, match="no series"):
+        capture_datasets({"ohlc-x": ["ETH/EUR", "240"]}, tmp_path)
+
+
 def test_the_block_is_built_in_sorted_name_order(tmp_path):
     _write(tmp_path, "a", _nested())
     _write(tmp_path, "b", _nested())
@@ -190,7 +237,9 @@ def test_the_data_root_constant_points_at_the_repo_data_dir():
     assert DATA_ROOT.name == "data" and (DATA_ROOT.parent / "pyproject.toml").is_file()
 
 
-@pytest.mark.skipif(not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file(), reason="compiled datasets absent")
+_EUR_PAIRS = ["ADA/EUR", "AVAX/EUR", "BTC/EUR", "DOGE/EUR", "DOT/EUR", "ETH/EUR", "LINK/EUR", "LTC/EUR", "SOL/EUR", "XRP/EUR"]
+
+
 @pytest.mark.parametrize(
     "name,series,rows,span",
     [
@@ -205,6 +254,33 @@ def test_capture_matches_the_measured_extent_of_every_real_dataset(name, series,
         pytest.skip(f"{name} absent")
     assert capture_datasets({name: []}, DATA_ROOT)[name]["extent"] == {"series": series, "rows": rows, "span": span}
     assert datetime.fromisoformat(span[0]) < datetime.fromisoformat(span[1])
+
+
+@pytest.mark.skipif(not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file(), reason="compiled datasets absent")
+@pytest.mark.parametrize(
+    "select,series,rows",
+    [
+        (["1440"], 12, 34460),
+        (["240"], 12, 205917),
+        (["1440", "240"], 24, 240377),
+        (["BTC/EUR", "1440"], 1, 4581),
+        ([*_EUR_PAIRS, "1440"], 10, 29032),
+        ([*_EUR_PAIRS, "1440", "240"], 20, 202405),
+    ],
+)
+def test_slices_of_the_real_dataset_resolve_to_their_measured_extents(select, series, rows):
+    # The last row is the cross-check that matters: 29032 + 173373 = 202405 is exactly what
+    # tests/test_crossfreq_system.py's frozen per-asset EXTENT table sums to, so the resolution
+    # reproduces an independently pinned number instead of asserting one of its own.
+    got = capture_datasets({"ohlc-full": select}, DATA_ROOT)["ohlc-full"]["extent"]
+    assert (got["series"], got["rows"]) == (series, rows)
+
+
+@pytest.mark.skipif(not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file(), reason="compiled datasets absent")
+def test_the_real_series_digest_is_stable_and_slice_independent():
+    digest = "76edb3a0633a5ab5f9f2c6f9d7b3af4d2000c1aaab22c69da0e278cbe88eafb0"
+    assert capture_datasets({"ohlc-full": []}, DATA_ROOT)["ohlc-full"]["series_digest"] == digest
+    assert capture_datasets({"ohlc-full": ["1440"]}, DATA_ROOT)["ohlc-full"]["series_digest"] == digest
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -214,7 +290,7 @@ Expected: FAIL at collection — `cli.registry.provenance` does not exist.
 
 - [ ] **Step 3: Implement `cli/registry/provenance.py`**
 
-One walk produces both outputs; no second traversal, no per-shape branch beyond the one named constant.
+One walk produces the leaves *and* their addresses; the slice, the extent and the digest all read off that one traversal.
 
 ```python
 from __future__ import annotations
@@ -227,9 +303,9 @@ from cli.registry.errors import RegistryError
 from cli.registry.record import compute_hash
 
 # The one root a record may be captured from. Deliberately a constant and NOT an append() argument:
-# `run_ref` anchors to _REPO_ROOT for the same reason -- a root the caller chooses is a root the caller
-# can point at a hand-made manifest. It is also how the append-time and repo-level layers agree on
-# what to compare (spec 00086 D4/D5).
+# `run_ref` anchors to _REPO_ROOT for the same reason. It is also how the append-time and repo-level
+# layers agree on what to compare (spec 00086 D4/D5). It removes the data-root PARAMETER, not the
+# fabrication path -- data/ is writer-controlled, and closing that is D5's parquet re-hash.
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"  # cli/registry/provenance.py -> repo root
 
 _LEAF_KEYS = frozenset({"rows", "first_ts", "last_ts"})
@@ -238,21 +314,61 @@ _LEAF_KEYS = frozenset({"rows", "first_ts", "last_ts"})
 _ROW_ADDRESS_KEYS = ("symbol", "interval")
 
 
-def _walk(node, leaves: list[dict], tokens: set[str]) -> None:
-    """Collect series leaves and the tokens that address them, without assuming a manifest shape."""
+def _walk(node, depth: int, address: dict[str, str], leaves: list[tuple[dict[str, str], dict]]) -> None:
+    """Collect (address, leaf) pairs without assuming a manifest shape.
+
+    An address maps a *dimension* to this leaf's token in it. Nesting depth is a dimension
+    (`level0` = pair, `level1` = interval); a list-shaped manifest's rows carry theirs by field.
+    """
     if type(node) is dict:
         if _LEAF_KEYS <= node.keys():
-            leaves.append(node)
+            address = dict(address)
             for key in _ROW_ADDRESS_KEYS:
                 if type(node.get(key)) in (str, int):
-                    tokens.add(str(node[key]))
+                    address[key] = str(node[key])
+            leaves.append((address, node))
             return  # a leaf's own fields are not addressing tokens
         for key, value in node.items():
-            tokens.add(str(key))
-            _walk(value, leaves, tokens)
+            _walk(value, depth + 1, {**address, f"level{depth}": str(key)}, leaves)
     elif type(node) is list:
         for value in node:
-            _walk(value, leaves, tokens)
+            _walk(value, depth, address, leaves)
+
+
+def _selected(leaves: list[tuple[dict[str, str], dict]], select: list[str], path: Path) -> list[dict]:
+    """The leaves `select` addresses: AND across dimensions, OR within one. Empty select = all of them.
+
+    A token that occurs in two dimensions (a symbol spelled like an interval) is required in both, so
+    such a select resolves to nothing and is refused rather than silently widened.
+    """
+    dimensions: dict[str, set[str]] = {}
+    for address, _leaf in leaves:
+        for dimension, token in address.items():
+            dimensions.setdefault(token, set()).add(dimension)
+    unknown = [t for t in select if t not in dimensions]
+    if unknown:
+        raise RegistryError(f"{path}: unknown select token(s) {unknown}; addressable tokens are {sorted(dimensions)}")
+    wanted: dict[str, set[str]] = {}
+    for token in select:
+        for dimension in dimensions[token]:
+            wanted.setdefault(dimension, set()).add(token)
+    matched = [leaf for address, leaf in leaves if all(address.get(d) in tokens for d, tokens in wanted.items())]
+    if not matched:
+        raise RegistryError(f"{path}: select {select} addresses no series; tokens from different dimensions must occur together")
+    return matched
+
+
+def _extent(matched: list[dict], path: Path) -> dict:
+    extent: dict = {"series": len(matched), "rows": sum(int(leaf["rows"]) for leaf in matched)}
+    dated = [leaf for leaf in matched if leaf["first_ts"] and leaf["last_ts"]]
+    if dated:  # omit the key entirely rather than serialize a null, as `variant` does
+        try:
+            firsts = [datetime.fromisoformat(leaf["first_ts"]) for leaf in dated]
+            lasts = [datetime.fromisoformat(leaf["last_ts"]) for leaf in dated]
+        except (TypeError, ValueError) as e:
+            raise RegistryError(f"{path}: unusable series timestamp: {e}") from e
+        extent["span"] = [min(firsts).isoformat(), max(lasts).isoformat()]
+    return extent
 
 
 def capture_datasets(selection: dict[str, list[str]], data_root: Path) -> dict:
@@ -269,31 +385,18 @@ def capture_datasets(selection: dict[str, list[str]], data_root: Path) -> dict:
         series = manifest.get("series")
         if not series:
             raise RegistryError(f"{path} carries no non-empty 'series': nothing in it identifies the data")
-        leaves: list[dict] = []
-        tokens: set[str] = set()
-        _walk(series, leaves, tokens)
+        leaves: list[tuple[dict[str, str], dict]] = []
+        _walk(series, 0, {}, leaves)
         if not leaves:
             raise RegistryError(f"{path}: no series entry carries all of {sorted(_LEAF_KEYS)}, so the data cannot be identified")
         select = sorted(set(selection[name]))
-        unknown = [t for t in select if t not in tokens]
-        if unknown:
-            raise RegistryError(f"{path}: unknown select token(s) {unknown}; addressable tokens are {sorted(tokens)}")
-        extent: dict = {"series": len(leaves), "rows": sum(int(leaf["rows"]) for leaf in leaves)}
-        dated = [leaf for leaf in leaves if leaf["first_ts"] and leaf["last_ts"]]
-        if dated:  # omit the key entirely rather than serialize a null, as `variant` does
-            try:
-                firsts = [datetime.fromisoformat(leaf["first_ts"]) for leaf in dated]
-                lasts = [datetime.fromisoformat(leaf["last_ts"]) for leaf in dated]
-                extent["span"] = [min(firsts).isoformat(), max(lasts).isoformat()]
-            except (TypeError, ValueError) as e:
-                raise RegistryError(f"{path}: unusable series timestamp: {e}") from e
         out[name] = {
             "select": select,
-            # The series subtree ONLY: the whole manifest carries a `source` spelled two ways for one
-            # directory and per-writer config knobs, so a whole-manifest digest fires on a re-fetch of
-            # identical content (spec 00086 D1).
+            # The series subtree ONLY, and the WHOLE of it: the top level carries a `source` spelled two
+            # ways for one directory and per-writer config knobs, and a slice-scoped digest could be
+            # pinned nowhere (spec 00086 D1).
             "series_digest": compute_hash({"series": series}),
-            "extent": extent,
+            "extent": _extent(_selected(leaves, select, path), path),
         }
     return out
 ```
@@ -303,7 +406,7 @@ Sorted-name order is for the in-memory object a caller inspects; `canonical_json
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `uv run pytest tests/test_registry_provenance.py -q`
-Expected: PASS, with the four real-dataset cases **running, not skipping** (`data/` is present on the research machine — that parametrisation is the check that the design admits all four manifest shapes).
+Expected: PASS, with the real-dataset cases **running, not skipping** (`data/` is present on the research machine — those parametrisations are the check that the design admits all four manifest shapes and that the slice resolution reproduces the crossfreq table's numbers).
 
 - [ ] **Step 5: Commit**
 
@@ -483,11 +586,21 @@ def test_append_derives_the_dataset_hash_from_the_captured_block(tmp_path):
     r = _append(_new_registry(tmp_path))
     assert r.schema_version == 4
     assert r.dataset_hash == compute_hash(r.datasets)
-    assert r.datasets["ohlc-x"]["extent"] == {
-        "series": 2, "rows": 30,
-        "span": ["2020-01-01T00:00:00+00:00", "2020-01-10T20:00:00+00:00"],
+    assert r.datasets["ohlc-x"] == {
+        "select": ["1440"],
+        "series_digest": r.datasets["ohlc-x"]["series_digest"],
+        "extent": {"series": 1, "rows": 10, "span": ["2020-01-01T00:00:00+00:00", "2020-01-10T00:00:00+00:00"]},
     }
     assert TrialRegistry(tmp_path / "t.jsonl").records[0] == r  # survives write -> read -> re-validate
+
+
+def test_the_recorded_extent_is_the_declared_slice_not_the_whole_set(tmp_path):
+    # The stub manifest carries two intervals; the default _append declares only 1440.
+    whole = _append(_new_registry(tmp_path), datasets={"ohlc-x": []})
+    assert whole.datasets["ohlc-x"]["extent"]["rows"] == 30
+    sliced = _append(_new_registry(tmp_path), datasets={"ohlc-x": ["240"]}, n_trials_in_family=3)
+    assert sliced.datasets["ohlc-x"]["extent"]["rows"] == 20
+    assert sliced.dataset_hash != whole.dataset_hash  # two different reads, two different digests
 
 
 def test_append_offers_no_argument_for_the_digest_or_the_data_root(tmp_path):
@@ -578,7 +691,7 @@ def _validate_datasets_block(block, where: str) -> None:
 
 `TrialRecord`: add `datasets: dict | None = None`, with a docstring line saying it is schema-4+ and that pre-4 records legitimately carry `None`.
 
-**Then implement `cli/registry/store.py` in the same commit.** `_to_record` gains `datasets=rec.get("datasets")`. `TrialRegistry.append` replaces its `dataset_hash: str` parameter with `datasets: dict[str, list[str]]`, adds no other parameter, and imports `DATA_ROOT`/`capture_datasets` from `cli.registry.provenance`. Build `caller` **without** either store-owned key, then capture after `validate_caller_fields(caller)` and before the lock — a refusal must land before the file is opened, exactly as the non-finite-metric check already does:
+**Then implement `cli/registry/store.py` in the same commit.** `_to_record` gains `datasets=rec.get("datasets")`. `TrialRegistry.append` replaces its `dataset_hash: str` parameter with `datasets: dict[str, list[str]]`, adds no other parameter, and imports `DATA_ROOT`/`capture_datasets` from `cli.registry.provenance` (module-level `DATA_ROOT` so the test fixture can point it at a stub). Build `caller` **without** either store-owned key, then capture after `validate_caller_fields(caller)` and before the lock — a refusal must land before the file is opened, exactly as the non-finite-metric check already does:
 
 ```python
         validate_caller_fields(caller)  # raises on non-finite metric BEFORE opening the file
@@ -622,95 +735,206 @@ git commit -m "feat(registry): schema 4 derives dataset_hash from a captured dat
 
 ---
 
-### Task 3: Layer 2 — re-derive every schema-4 block from disk, over the real registry
+### Task 3: Layer 2 — re-derive from disk, re-hash the vouched bytes, fall back to the committed pin
 
-Without this the load-time check is self-referential: a hand-writer who invents a block and calls `compute_hash` on it satisfies D3 forever, and a hand-written record is the normal case (D3/D5).
+Without this the load-time check is self-referential: a hand-writer who invents a block and calls `compute_hash` on it satisfies D3 forever, and a hand-written record is the normal case (D3/D5). The three verdicts are the point — "not on this machine" must never be scored as "forged", or the first trial registered against a set another node lacks reds the suite permanently.
 
 **Files:**
 
 - Modify: `tests/test_trial_registry_provenance.py`
+- Modify: `docs/reference/data-catalog-full.md` (the committed `series_digest` pins the fallback reads)
 
 **Interfaces:**
 
-- Produces: `_rederivation_mismatches(records) -> set[int]` plus two tests — the standing assertion over the real file, and the constructive companion that proves the check bites while zero schema-4 records exist.
-- Consumes: `capture_datasets`, `DATA_ROOT` (Task 1); schema 4 (Task 2).
+- Produces: `_provenance_findings(records, catalog) -> (dict[int, list[str]], set[tuple[int, str]])`; `_catalog_pin(name, catalog) -> str | None`; `_vouched_sha256s(node) -> set[str]`; `_unattested(vouched, dataset_dir) -> set[str]`; three tests — the standing assertion over the real file, the catalog-pin freshness check, and the constructive companion that proves all four findings bite while zero schema-4 records exist.
+- Consumes: `capture_datasets`, `DATA_ROOT` (Task 1); schema 4 (Task 2); `cli.ohlc.dataset.dataset_hash` / `read_parquet`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Pin each canonical dataset's `series_digest` in the catalog**
 
-Append to `tests/test_trial_registry_provenance.py` (its imports gain `pytest`, `RegistryError`, and `DATA_ROOT`/`capture_datasets`), and extend the module docstring's two-layer paragraph to say the same split now guards `datasets`. Write the two tests **without** the helper they call, so the red is real:
+`docs/reference/data-catalog-full.md`, four sections, one sentence appended to the line that already carries that set's `Dataset root …` (so the pin sits with the identity it belongs to). **The digest must follow the label immediately** — `_catalog_pin` matches `` `series_digest` `<64 hex>` `` inside the set's own `### \`name\`` section, so any prose between the two breaks the parse (verified against the real file: the parenthetical goes *after* the digest, never between).
+
+- `### \`ohlc-full\`` → ``` `series_digest` `76edb3a0633a5ab5f9f2c6f9d7b3af4d2000c1aaab22c69da0e278cbe88eafb0` (the registry's provenance pin over the manifest's `series` subtree, spec `00086`). ```
+- `### \`ohlc-15m\`` → same wording, digest `cc57da1ff6c48ea6f0b6da5dd70dfbb33b9167f852d44dd0b927e16987239937`.
+- `### \`derivatives-funding\`` → same wording, digest `034809ebbd838a786075b50d774cc0b85cdbb6b89d22526e44994d3726ef3a4b`.
+- `### \`ohlc-holdout-2026-07-10\`` → same wording, digest `de5b2771579104c711550035d1f2beb371fad5038e84f2203b07df94cc26186f`.
+
+Add one sentence to the `## hot` preamble stating the rule the pins live by: **a rebuild that moves a set's `series_digest` updates its pin here in the same change, and the superseded value stays recorded beside it** — records written against the old bytes are append-only and their digests must stay findable. `derivatives-oi` and `ohlc-reach` are documented but not on this machine, so they get no pin now and none is invented; the first record naming one of them adds it, and Task 3's test says so in its failure message.
+
+- [ ] **Step 2: Write the failing tests**
+
+Append to `tests/test_trial_registry_provenance.py` (its imports gain `re`, `pytest`, `RegistryError`, `DATA_ROOT`/`capture_datasets`, and `dataset_hash`/`read_parquet` from `cli.ohlc.dataset`), and extend the module docstring's two-layer paragraph to say the same split now guards `datasets`. Write the tests **without** the helpers they call, so the red is real:
 
 ```python
-@pytest.mark.skipif(not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file(), reason="compiled datasets absent")
-def test_no_schema_four_record_carries_a_block_that_does_not_re_derive():
+CATALOG = REPO / "docs" / "reference" / "data-catalog-full.md"
+CATALOG_PINNED = ("ohlc-full", "ohlc-15m", "derivatives-funding", "ohlc-holdout-2026-07-10")
+
+
+def test_no_schema_four_record_disagrees_with_the_provenance_it_can_be_checked_against():
     # Layer 2. The load-time check proves a record is internally consistent; only this one compares the
-    # block to the data. A dataset legitimately refreshed after a record was written also lands here --
-    # append-only means the record cannot be repaired, so pin the ids and the refresh, as
-    # LEGACY_UNCOMMITTED does above; never widen the check to make the red go away.
-    stale = _rederivation_mismatches(_records())
-    assert stale == set(), f"trial(s) {sorted(stale)} carry a datasets block that does not re-derive from data/"
+    # block to what is on disk -- and, where the dataset is not on disk, to the committed catalog pin.
+    # A dataset legitimately refreshed after a record was written also lands here: append-only means the
+    # record cannot be repaired, so pin the ids and the refresh, as LEGACY_UNCOMMITTED does above; never
+    # widen the check to make the red go away.
+    findings, _unverifiable = _provenance_findings(_records(), CATALOG.read_text(encoding="utf-8"))
+    assert findings == {}, f"provenance findings: {findings}"
+
+
+def test_the_catalog_pins_the_series_digest_of_every_canonical_dataset_present_here():
+    # Keeps the fallback honest: a pin nobody checks rots into a number that once was true.
+    catalog = CATALOG.read_text(encoding="utf-8")
+    checked = 0
+    for name in CATALOG_PINNED:
+        if not (DATA_ROOT / name / "manifest.json").is_file():
+            continue
+        assert _catalog_pin(name, catalog) == capture_datasets({name: []}, DATA_ROOT)[name]["series_digest"], name
+        checked += 1
+    if not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file():
+        pytest.skip("compiled datasets absent")
+    assert checked >= 1
 
 
 @pytest.mark.skipif(not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file(), reason="compiled datasets absent")
-def test_the_re_derivation_check_bites_before_any_schema_four_record_exists():
+def test_the_provenance_check_bites_before_any_schema_four_record_exists():
     # Constructive proof, in the same shape as the run_ref one above: the standing assertion is vacuous
     # until the first schema-4 record lands, and a vacuous guard is a decoration.
+    catalog = CATALOG.read_text(encoding="utf-8")
     honest = capture_datasets({"ohlc-full": ["1440"]}, DATA_ROOT)
-    assert _rederivation_mismatches([{"trial_id": 900, "schema_version": 4, "datasets": honest}]) == set()
+
+    def _findings(trial_id, block, cat=catalog):
+        return _provenance_findings([{"trial_id": trial_id, "schema_version": 4, "datasets": block}], cat)
+
+    assert _findings(900, honest) == ({}, set())
 
     forged = {"ohlc-full": {**honest["ohlc-full"], "series_digest": "0" * 64}}
-    assert _rederivation_mismatches([{"trial_id": 901, "schema_version": 4, "datasets": forged}]) == {901}
+    assert set(_findings(901, forged)[0]) == {901}
 
     inflated = {"ohlc-full": {**honest["ohlc-full"], "extent": {**honest["ohlc-full"]["extent"], "rows": 1}}}
-    assert _rederivation_mismatches([{"trial_id": 902, "schema_version": 4, "datasets": inflated}]) == {902}
+    assert set(_findings(902, inflated)[0]) == {902}
 
     invented = {"ohlc-nowhere": {"select": [], "series_digest": "0" * 64, "extent": {}}}
-    assert _rederivation_mismatches([{"trial_id": 903, "schema_version": 4, "datasets": invented}]) == {903}
+    assert set(_findings(903, invented)[0]) == {903}  # absent here AND pinned nowhere
+
+    # ...but absent-and-pinned is UNVERIFIABLE here, never a mismatch: a node that has not fetched a set
+    # (derivatives-oi is exactly that today) must not red this suite.
+    elsewhere = {"ohlc-elsewhere": honest["ohlc-full"]}
+    pinned = "### `ohlc-elsewhere`\n\n`series_digest` `%s`\n" % honest["ohlc-full"]["series_digest"]
+    assert _findings(904, elsewhere, pinned) == ({}, {(904, "ohlc-elsewhere")})
 
     # ...and a pre-4 record is out of scope for this layer, not silently "passing" it.
-    assert _rederivation_mismatches(_records()) == set()
+    assert _provenance_findings(_records(), catalog) == ({}, set())
+
+
+@pytest.mark.skipif(not (DATA_ROOT / "ohlc-full" / "manifest.json").is_file(), reason="compiled datasets absent")
+def test_every_hash_the_manifest_vouches_for_is_reproduced_by_a_parquet_on_disk():
+    # The link past the manifest to the bytes: capture reads manifest.json and nothing else, so without
+    # this a hand-written manifest is attested forever. Same re-derivation cli/data/sync.py already runs
+    # for newly transmitted files. Measured cost: ~0.7 s for ohlc-full's 36 parquets.
+    manifest = json.loads((DATA_ROOT / "ohlc-full" / "manifest.json").read_text(encoding="utf-8"))
+    vouched = _vouched_sha256s(manifest["series"])
+    assert len(vouched) == 36
+    assert _unattested(vouched, DATA_ROOT / "ohlc-full") == set()
+    assert _unattested({"0" * 64}, DATA_ROOT / "ohlc-full") == {"0" * 64}  # a forged vouch is reported
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 3: Run to verify they fail**
 
 Run: `uv run pytest tests/test_trial_registry_provenance.py -q`
-Expected: FAIL — `NameError: name '_rederivation_mismatches' is not defined` in both new tests, and every pre-existing test in the file still PASSES.
+Expected: FAIL — `NameError` on `_provenance_findings`, `_catalog_pin`, `_vouched_sha256s`, `_unattested` in the new tests, and every pre-existing test in the file still PASSES.
 
-- [ ] **Step 3: Implement the helper**
+- [ ] **Step 4: Implement the helpers**
 
 ```python
-def _rederivation_mismatches(records: list[dict]) -> set[int]:
-    """Trial ids whose stored `datasets` block does not re-derive from what is on disk today."""
-    out: set[int] = set()
+def _catalog_pin(name: str, catalog: str) -> str | None:
+    """The `series_digest` the catalog pins for `name`, read from that set's own section."""
+    head = f"### `{name}`"
+    if head not in catalog:
+        return None
+    section = catalog.split(head, 1)[1].split("\n### ", 1)[0]
+    found = re.search(r"`series_digest` `([0-9a-f]{64})`", section)
+    return found.group(1) if found else None
+
+
+def _vouched_sha256s(node) -> set[str]:
+    """Every per-series `sha256` the manifest vouches for. Key-exact, so a set that exposes none (the
+    holdout) yields the empty set rather than sweeping up a manifest-level digest."""
+    found: set[str] = set()
+    if type(node) is dict:
+        for key, value in node.items():
+            if key == "sha256" and type(value) is str:
+                found.add(value)
+            else:
+                found |= _vouched_sha256s(value)
+    elif type(node) is list:
+        for item in node:
+            found |= _vouched_sha256s(item)
+    return found
+
+
+def _unattested(vouched: set[str], dataset_dir) -> set[str]:
+    """Vouched hashes that no parquet under `dataset_dir` reproduces. Takes the vouched set as an
+    argument so a forged one can be passed at test time -- data/ is gitignored, so the mutation probe
+    cannot reach a manifest to corrupt one."""
+    if not vouched:
+        return set()  # nothing to check against: named in the spec as the holdout's limit
+    derived = {dataset_hash(read_parquet(p)) for p in sorted(dataset_dir.rglob("*.parquet"))}
+    return vouched - derived
+
+
+def _provenance_findings(records: list[dict], catalog: str) -> tuple[dict[int, list[str]], set[tuple[int, str]]]:
+    """Per schema-4 record-dataset pair, one of three verdicts (spec 00086 D5).
+
+    Returns (findings, unverifiable): `findings` maps a trial id to the reasons its block disagrees with
+    something checkable HERE; `unverifiable` holds the (trial_id, dataset) pairs whose data is not on
+    this machine and whose digest the catalog pins -- normal, never a finding.
+    """
+    findings: dict[int, list[str]] = {}
+    unverifiable: set[tuple[int, str]] = set()
+
+    def _note(trial_id: int, reason: str) -> None:
+        findings.setdefault(trial_id, []).append(reason)
+
     for rec in records:
         if rec.get("schema_version", 0) < 4:
             continue
-        selection = {name: entry["select"] for name, entry in rec["datasets"].items()}
-        try:
-            captured = capture_datasets(selection, DATA_ROOT)
-        except RegistryError:  # an invented dataset name refuses at the manifest, which IS a mismatch
-            out.add(rec["trial_id"])
-            continue
-        if captured != rec["datasets"]:
-            out.add(rec["trial_id"])
-    return out
+        trial_id = rec["trial_id"]
+        for name, entry in rec["datasets"].items():
+            manifest_path = DATA_ROOT / name / "manifest.json"
+            if not manifest_path.is_file():
+                if _catalog_pin(name, catalog) == entry["series_digest"]:
+                    unverifiable.add((trial_id, name))
+                else:
+                    _note(trial_id, f"{name}: not present here, and the catalog pins no matching series_digest {entry['series_digest']}")
+                continue
+            try:
+                captured = capture_datasets({name: entry["select"]}, DATA_ROOT)[name]
+            except RegistryError as e:  # the data IS here and refuses this record's own select
+                _note(trial_id, f"{name}: the manifest present here refuses this record's own select: {e}")
+                continue
+            if captured != entry:
+                _note(trial_id, f"{name}: re-derives as {captured}, record carries {entry}")
+                continue
+            missing = _unattested(_vouched_sha256s(json.loads(manifest_path.read_text(encoding="utf-8"))["series"]), DATA_ROOT / name)
+            if missing:
+                _note(trial_id, f"{name}: {len(missing)} manifest-vouched sha256 reproduced by no parquet on disk")
+    return findings, unverifiable
 ```
 
-- [ ] **Step 4: Run to verify they pass**
+- [ ] **Step 5: Run to verify they pass**
 
 Run: `uv run pytest tests/test_trial_registry_provenance.py -q`
-Expected: PASS with both new tests **running, not skipping**. A skip on the research machine means `DATA_ROOT` is wrong — fix that before proceeding, since a silently-skipped provenance guard is the failure class this whole change is about.
+Expected: PASS with the new tests **running, not skipping**. A skip on the research machine means `DATA_ROOT` is wrong — fix that before proceeding, since a silently-skipped provenance guard is the failure class this whole change is about.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 uv run pre-commit run -a
-git add tests/test_trial_registry_provenance.py
-git commit -m "test(registry): re-derive every schema-4 datasets block from disk over the real registry"
+git add tests/test_trial_registry_provenance.py docs/reference/data-catalog-full.md
+git commit -m "test(registry): re-derive every schema-4 datasets block from disk and pin each set's digest"
 ```
 
 ---
 
-### Task 4: The legacy pins table
+### Task 4: The legacy pins table, with evidence the tests execute
 
 **Files:**
 
@@ -719,15 +943,18 @@ git commit -m "test(registry): re-derive every schema-4 datasets block from disk
 
 **Interfaces:**
 
-- Produces: one line per distinct pre-schema-4 `dataset_hash`, shape per D6. **Every line starts with `{"dataset_hash": "` so a single pin is addressable by a line-anchored pattern** (Task 5 mutates one).
-- Consumes: nothing.
+- Produces: one line per distinct pre-schema-4 `dataset_hash`, keys `dataset_hash`, `records`, `referent`, `confidence`, `evidence`, `notes` (D6). **Every line starts with `{"dataset_hash": "` so a single pin is addressable by a line-anchored pattern** (Task 5 mutates one).
+- Consumes: `capture_datasets`, `DATA_ROOT` (Task 1).
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
+import collections
 import hashlib
 import json
 from pathlib import Path
+
+from cli.registry.provenance import DATA_ROOT, capture_datasets
 
 REPO = Path(__file__).resolve().parents[1]
 PINS = REPO / "docs" / "reference" / "legacy-dataset-pins.jsonl"
@@ -740,45 +967,71 @@ def _pins():
 
 def _historical():
     records = [json.loads(line) for line in REGISTRY.read_text(encoding="utf-8").splitlines() if line.strip()]
-    return {r["dataset_hash"] for r in records if r["schema_version"] < 4}
+    return [r for r in records if r["schema_version"] < 4]
 
 
 def test_every_pre_schema_four_dataset_hash_is_pinned():
     # Regression protection, not completeness by construction: the historical set is frozen at four the
     # moment SCHEMA_VERSION is 4, so this asserts over constants and is worth exactly that.
-    unpinned = _historical() - {p["dataset_hash"] for p in _pins()}
+    historical = {r["dataset_hash"] for r in _historical()}
+    unpinned = historical - {p["dataset_hash"] for p in _pins()}
     assert not unpinned, f"unpinned: {sorted(unpinned)}"
-    assert len(_historical()) == 4
+    assert len(historical) == 4
 
 
 def test_the_table_pins_nothing_that_is_not_in_the_registry():
-    assert {p["dataset_hash"] for p in _pins()} <= _historical()
+    assert {p["dataset_hash"] for p in _pins()} <= {r["dataset_hash"] for r in _historical()}
 
 
-def test_reproduced_entries_actually_reproduce():
-    # `reproduced: true` is an executable claim, not a label. cccb8d17 is the only live case.
-    checked = 0
+def test_each_pin_names_exactly_the_records_it_stamps():
+    stamped = collections.defaultdict(list)
+    for r in _historical():
+        stamped[r["dataset_hash"]].append(r["trial_id"])
     for pin in _pins():
-        if pin["confidence"] != "reproduced":
-            continue
-        recipe = pin["recipe"]
-        assert recipe["form"] == "sha256(a + ':' + b)", f"unknown recipe form {recipe['form']!r}"
-        assert hashlib.sha256((recipe["a"] + ":" + recipe["b"]).encode()).hexdigest() == pin["dataset_hash"]
-        checked += 1
-    assert checked == 1  # the claim is live, not vacuously satisfied by an empty table
-
-
-def test_inferred_entries_do_not_claim_a_recipe():
-    for pin in _pins():
-        if pin["confidence"] == "inferred":
-            assert pin["recipe"] is None and pin["reproduced"] is False
+        assert pin["records"] == sorted(stamped[pin["dataset_hash"]]), pin["dataset_hash"]
+    assert sum(len(p["records"]) for p in _pins()) == 46
 
 
 def test_every_pin_declares_a_known_confidence_and_a_referent():
     for pin in _pins():
         assert pin["confidence"] in {"inferred", "reproduced"}
-        assert pin["reproduced"] is (pin["confidence"] == "reproduced")
-        assert pin["referent"] and pin["notes"]
+        assert type(pin["referent"]) is list and pin["referent"]
+        assert all(r.startswith("data/") for r in pin["referent"]), pin["referent"]
+        assert pin["notes"]
+        # `reproduced` is not a label to be written down: it means a recipe item exists and runs.
+        has_recipe = any(item["kind"] == "recipe" for item in pin["evidence"])
+        assert has_recipe is (pin["confidence"] == "reproduced"), pin["dataset_hash"]
+
+
+def test_every_pin_carries_evidence_that_executes():
+    # THE point of a file over prose: an `inferred` row states arithmetic, and arithmetic is checkable.
+    # A referent rename or a re-freeze into a sibling must break this, not sit green under a label.
+    ran = collections.Counter()
+    for pin in _pins():
+        assert pin["evidence"], pin["dataset_hash"]
+        for item in pin["evidence"]:
+            kind = item["kind"]
+            if kind == "extent":
+                if not (DATA_ROOT / item["dataset"] / "manifest.json").is_file():
+                    ran["extent-skipped"] += 1
+                    continue
+                got = capture_datasets({item["dataset"]: item["select"]}, DATA_ROOT)[item["dataset"]]
+                assert got["extent"] == item["extent"], (pin["dataset_hash"], item["dataset"])
+                ran["extent"] += 1
+            elif kind == "citation":
+                assert item["literal"] in (REPO / item["path"]).read_text(encoding="utf-8"), item["path"]
+                ran["citation"] += 1
+            elif kind == "recipe":
+                assert item["form"] == "sha256(a + ':' + b)", f"unknown recipe form {item['form']!r}"
+                assert hashlib.sha256((item["a"] + ":" + item["b"]).encode()).hexdigest() == pin["dataset_hash"]
+                ran["recipe"] += 1
+            else:
+                raise AssertionError(f"unknown evidence kind {kind!r} in pin {pin['dataset_hash']}")
+    # The two data-free kinds must ALWAYS run -- an empty table would otherwise satisfy this test.
+    assert ran["citation"] == 1 and ran["recipe"] == 1
+    assert ran["extent"] + ran["extent-skipped"] == 2
+    if (DATA_ROOT / "ohlc-full" / "manifest.json").is_file():
+        assert ran["extent"] == 2
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -788,35 +1041,49 @@ Expected: FAIL — the pins file does not exist.
 
 - [ ] **Step 3: Write the four entries**
 
-One JSON object per line, `dataset_hash` first, no trailing spaces (mdformat does not touch `.jsonl`; the whitespace hooks do).
+One JSON object per line, `dataset_hash` first, no trailing spaces (mdformat does not touch `.jsonl`; the whitespace hooks do). The `EUR10` shorthand below is the literal list `["ADA/EUR", "AVAX/EUR", "BTC/EUR", "DOGE/EUR", "DOT/EUR", "ETH/EUR", "LINK/EUR", "LTC/EUR", "SOL/EUR", "XRP/EUR"]`, written out in full in each `select` — no shorthand survives into the file.
 
-- `ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42` — 38 records (32 v2 + 6 v3). `referent: "data/ohlc-full"`, `basis: "extent"`, `confidence: "inferred"`, `reproduced: false`, `recipe: null`. `evidence`: daily rows `4581` for BTC/EUR over `2013-09-10 → 2026-03-31`; record 1's `run_ref` headline of 4581 returns, which is 4582 daily union stamps minus one (`UNION_BARS = {1440: 4582, 240: 27338}`, pinned in `tests/test_record44_legs.py`); and the exclusion of the only alternative daily dataset — the retired v0 REST seed, 721 bars from 2024-07-17, zero per-series hash overlap. `notes` must say in its own words that this is **identification by extent, not verification by digest** — an arithmetic match plus an exclusion, never a recomputation — and that ~226,000 candidate recipes were tested without a match, on a method validated against two known targets.
-- `81dc9b44f8897e38aacf78f00d3cffa12d54e724ccf0c9add0bced3fd5e1291f` — 4 records, the 4h primitive of the same dataset. Same treatment; `notes` records that it is carried as a literal operand inside `cccb8d17`'s recipe, so it is reproducible-by-citation but not traceable to bytes.
-- `45275ebeb7986e3cca76e8ca8952f031256885e32b231fc782be0cd0d58871a7` — 2 records, record 44, the deployable. `confidence: "inferred"`, and `notes` must state that `docs/research/12.phase5-system-spec-runbook.md` describes it as `sha256(daily ‖ 4h)` **semantically**, that ~100 concatenation forms of `ba47e37e` and `81dc9b44` were tested and none reproduces it, and that the dataset is nevertheless pinned by the extent assertions in `tests/test_crossfreq_system.py` and `tests/test_record44_legs.py`.
-- `cccb8d175d2038c462de57b295e9eb53ee2d51278e4110accfa350d93ced68b9` — 2 records. `confidence: "reproduced"`, `reproduced: true`, `basis: "recipe"`, `recipe: {"form": "sha256(a + ':' + b)", "a": "81dc9b44f8897e38aacf78f00d3cffa12d54e724ccf0c9add0bced3fd5e1291f", "b": "0fed24a65b0bf3953a1dc266e2de9be68169b879fb8faeafa343d8daf5ec5de1"}` — `a` is the 4h primitive above, `b` is `data/ohlc-15m`'s `basket_sha256`, both verbatim. `notes`: it survived only because `docs/specs/00045-b1-seasonality-conditioning-design.md` wrote the recipe down — documentation discipline, which is why this table exists.
+- `ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42`
+  - `records`: `[1, 2, … 35, 40, 41, 42]` (38 ids: 1–35 contiguous, then 40, 41, 42).
+  - `referent`: `["data/ohlc-full"]`; `confidence`: `"inferred"`.
+  - `evidence`: one `extent` item — `{"kind": "extent", "dataset": "ohlc-full", "select": EUR10 + ["1440"], "extent": {"series": 10, "rows": 29032, "span": ["2013-09-10T00:00:00+00:00", "2026-03-31T00:00:00+00:00"]}}`.
+  - `notes` must say in its own words: this is **identification by extent, not verification by digest** — an arithmetic match plus an exclusion, never a recomputation; record 1's own `run_ref` (`docs/research/06.phase4-a1-results.md`) headlines "full history 2013→2026, 4581 returns", and 4582 daily union stamps yield 4581 returns (`UNION_BARS = {1440: 4582, 240: 27338}`, pinned in `tests/test_record44_legs.py`); the only alternative daily dataset — the v0 REST seed, retired 2026-07-18, 721 bars from 2024-07-17, zero per-series hash overlap — could not have produced a 2013→2026 walk-forward; and ~226,000 candidate recipes were tested without a match, on a method validated against two known targets.
+- `81dc9b44f8897e38aacf78f00d3cffa12d54e724ccf0c9add0bced3fd5e1291f`
+  - `records`: `[36, 37, 38, 39]`; `referent`: `["data/ohlc-full"]`; `confidence`: `"inferred"`.
+  - `evidence`: one `citation` item — `{"kind": "citation", "path": "docs/specs/00045-b1-seasonality-conditioning-design.md", "literal": "81dc9b44f8897e38aacf78f00d3cffa12d54e724ccf0c9add0bced3fd5e1291f"}`. That spec names it verbatim as "**the literal trials-37–39 dataset hash**".
+  - `notes`: it is the 4h primitive behind trials 36–39 and operand `a` of `cccb8d17`'s recipe, so it is reproducible **by citation** and never traced to bytes; the referent is `data/ohlc-full` **by exclusion** — the only 4h set that existed at iter-074, since `ohlc-reach` was first built 2026-07-23 — and **no extent evidence is claimed**, because nothing committed ties this hash to a row count and inventing one would manufacture the inference this table exists to prevent. Same ~226,000-candidate negative as above.
+- `45275ebeb7986e3cca76e8ca8952f031256885e32b231fc782be0cd0d58871a7`
+  - `records`: `[43, 44]`; `referent`: `["data/ohlc-full"]`; `confidence`: `"inferred"`.
+  - `evidence`: one `extent` item — `{"kind": "extent", "dataset": "ohlc-full", "select": EUR10 + ["1440", "240"], "extent": {"series": 20, "rows": 202405, "span": ["2013-09-10T00:00:00+00:00", "2026-03-31T20:00:00+00:00"]}}`.
+  - `notes` must state that `docs/research/12.phase5-system-spec-runbook.md` describes it as `sha256(daily ‖ 4h)` **semantically**, that ~100 concatenation forms of `ba47e37e` and `81dc9b44` were tested and none reproduces it, and that the dataset is nevertheless pinned by content: the extent above is exactly the sum of the frozen per-asset `EXTENT` table in `tests/test_crossfreq_system.py` (29,032 daily + 173,373 4h), which is where record 44's identity actually rests.
+- `cccb8d175d2038c462de57b295e9eb53ee2d51278e4110accfa350d93ced68b9`
+  - `records`: `[45, 46]`; `referent`: `["data/ohlc-full", "data/ohlc-15m"]` — **two roots, and the notes say which operand comes from which**: `a` is `data/ohlc-full`'s 4h primitive (`81dc9b44…`), `b` is `data/ohlc-15m`'s `basket_sha256` (`0fed24a6…`). A single-path referent here would be a false one.
+  - `confidence`: `"reproduced"`.
+  - `evidence`: one `recipe` item — `{"kind": "recipe", "form": "sha256(a + ':' + b)", "a": "81dc9b44f8897e38aacf78f00d3cffa12d54e724ccf0c9add0bced3fd5e1291f", "b": "0fed24a65b0bf3953a1dc266e2de9be68169b879fb8faeafa343d8daf5ec5de1"}`.
+  - `notes`: it survived only because `docs/specs/00045-b1-seasonality-conditioning-design.md` wrote the recipe down, operands and all — documentation discipline, which is why this table exists and why the going-forward design derives the digest instead.
 
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `uv run pytest tests/test_legacy_dataset_pins.py -q`
-Expected: PASS.
+Expected: PASS, with `ran["extent"] == 2` (both extent items executed against the real `data/ohlc-full`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 uv run pre-commit run -a
 git add docs/reference/legacy-dataset-pins.jsonl tests/test_legacy_dataset_pins.py
-git commit -m "docs(registry): pin every pre-schema-4 dataset hash in a test-policed legacy table"
+git commit -m "docs(registry): pin every pre-schema-4 dataset hash with evidence the tests execute"
 ```
 
 ---
 
-### Task 5: Prove the six mutate-probe guards
+### Task 5: Prove the eight mutate-probe guards
 
 **Files:** none — probes only. Runs AFTER Tasks 1–4 are committed; `mutate-probe.sh` refuses a dirty tree and refuses to score anything from a tree whose probe does not pass unmutated.
 
 Each probe must print `KILLED`. Diagnose by exit code, never by re-running blind: **rc 6** (no-op sed) means the committed text differs from the pattern — re-read the file and fix the pattern; **rc 5** (control did not fail) means the harness does not bite — pick another control, verify by reading which test the control would break, and re-run; **rc 7** means the tree is red before any mutation. Never record a verdict from an unproven harness.
 
-Controls below were each chosen against a specific existing test that must break. That reasoning is stated so a rc-5 can be diagnosed rather than guessed at.
+Controls below were each chosen against a specific existing test that must break. That reasoning is stated so an rc 5 can be diagnosed rather than guessed at.
 
 - [ ] **Step 1: Load-time round-trip (D7-1)**
 
@@ -842,11 +1109,11 @@ infra/scripts/mutate-probe.sh --file cli/registry/record.py \
 
 - [ ] **Step 3: Capture refuses an absent manifest (D7-3)**
 
-Control breaks `test_extent_counts_leaves_sums_rows_and_spans_the_union` (75 becomes 60). The mutation makes the missing file surface as a bare `FileNotFoundError`, which `pytest.raises(RegistryError)` does not catch.
+Control breaks `test_an_empty_select_is_the_whole_set_and_sums_every_leaf` (75 becomes 60). The mutation makes the missing file surface as a bare `FileNotFoundError`, which `pytest.raises(RegistryError)` does not catch.
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
-  --control 's|sum(int(leaf\["rows"\]) for leaf in leaves)|max(int(leaf["rows"]) for leaf in leaves)|' \
+  --control 's|sum(int(leaf\["rows"\]) for leaf in matched)|max(int(leaf["rows"]) for leaf in matched)|' \
   --mutation 's|if not path.is_file():|if False:|' \
   -- uv run pytest tests/test_registry_provenance.py -q
 ```
@@ -862,9 +1129,20 @@ infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
   -- uv run pytest tests/test_registry_provenance.py -q
 ```
 
-- [ ] **Step 5: Legacy completeness (D7-5)**
+- [ ] **Step 5: `select` resolves per dimension (D7-5)**
 
-Control corrupts the `cccb8d17` recipe's `b` operand, breaking `test_reproduced_entries_actually_reproduce`.
+The regression guard: with the mutation every leaf matches, so a slice's extent silently becomes the whole set's. Control as in Step 3.
+
+```bash
+infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
+  --control 's|sum(int(leaf\["rows"\]) for leaf in matched)|max(int(leaf["rows"]) for leaf in matched)|' \
+  --mutation 's|if all(address.get(d) in tokens for d, tokens in wanted.items())|if True|' \
+  -- uv run pytest tests/test_registry_provenance.py -q
+```
+
+- [ ] **Step 6: Legacy completeness (D7-6)**
+
+Control corrupts the `cccb8d17` recipe's `b` operand, breaking `test_every_pin_carries_evidence_that_executes`.
 
 ```bash
 infra/scripts/mutate-probe.sh --file docs/reference/legacy-dataset-pins.jsonl \
@@ -873,9 +1151,20 @@ infra/scripts/mutate-probe.sh --file docs/reference/legacy-dataset-pins.jsonl \
   -- uv run pytest tests/test_legacy_dataset_pins.py -q
 ```
 
-- [ ] **Step 6: Reproduced means reproduced (D7-6)**
+- [ ] **Step 7: Legacy evidence executes (D7-7)**
 
-Same pair, swapped: control deletes the `ba47e37e` pin (breaking completeness), mutation corrupts the recipe operand.
+The B-finding this table exists to answer: an `inferred` row's arithmetic must be checked, not labelled. Mutating the `ba47e37e` extent's row count must fail against the real manifest. Control deletes that pin, breaking completeness.
+
+```bash
+infra/scripts/mutate-probe.sh --file docs/reference/legacy-dataset-pins.jsonl \
+  --control '/^{"dataset_hash": "ba47e37e/d' \
+  --mutation 's|"rows": 29032|"rows": 29033|' \
+  -- uv run pytest tests/test_legacy_dataset_pins.py -q
+```
+
+- [ ] **Step 8: Reproduced means reproduced (D7-8)**
+
+Control deletes the `ba47e37e` pin (breaking completeness); mutation corrupts the recipe operand.
 
 ```bash
 infra/scripts/mutate-probe.sh --file docs/reference/legacy-dataset-pins.jsonl \
@@ -884,20 +1173,30 @@ infra/scripts/mutate-probe.sh --file docs/reference/legacy-dataset-pins.jsonl \
   -- uv run pytest tests/test_legacy_dataset_pins.py -q
 ```
 
-- [ ] **Step 7: Record all six verdicts verbatim** for the closeout entry — each probe's own last line, not a paraphrase. D5's layer carries no probe here by design (D7): its constructive companion in Task 3 is the constructed failure.
+- [ ] **Step 9: Record all eight verdicts verbatim** for the closeout entry — each probe's own last line, not a paraphrase. D5's layer carries no probe here by design (D7): its constructive companion in Task 3 is the constructed failure, and its parquet half could not be probed anyway — the only file to mutate would sit under the gitignored `data/`, where the probe's `git checkout --` restore has nothing to restore from.
 
 ---
 
 ### Task 6: Closeout
 
-- [ ] **Step 1: Full suite.** `uv run pytest` — expected PASS (~7 min with `data/ohlc-full` present, which is required here: Task 1's real-dataset parametrisation and Task 3's whole layer both need it).
+- [ ] **Step 1: Full suite.** `uv run pytest` — expected PASS (~7 min with `data/ohlc-full` present, which is required here: Task 1's real-dataset parametrisations, Task 3's whole layer and Task 4's extent evidence all need it).
 
-- [ ] **Step 2:** `docs/reference/data-catalog-full.md` — record the manifest contract the registry now depends on (a non-empty top-level `series`; series leaves carrying `rows`/`first_ts`/`last_ts`; parseable ISO timestamps), that only the `series` subtree is digested and why, and point at `legacy-dataset-pins.jsonl` as where pre-schema-4 hashes are explained.
+- [ ] **Step 2:** `docs/reference/data-catalog-full.md` — beyond the pins added in Task 3, record the manifest contract the registry now depends on (a non-empty top-level `series`; series leaves carrying `rows`/`first_ts`/`last_ts`; parseable ISO timestamps), that only the `series` subtree is digested and why, and point at `legacy-dataset-pins.jsonl` as where pre-schema-4 hashes are explained.
 
 - [ ] **Step 3:** Register the soak-read gap as its own topic via the `topic-ops` skill, and queue it in `docs/memo.local.md` in the same edit (registration and queue insertion travel together): `cli/engine/soak.py::_load_registry_record` reads `docs/reference/trial-registry.jsonl` with raw `json.loads` and pulls record 44's `metrics` without any chain, `record_hash` or schema validation — the live engine's instrument self-test trusts a file it never checks. Pre-existing, not introduced here.
 
 - [ ] **Step 4:** [[T0065]] via the `topic-ops` skill — the going-forward half of the execution-reproducibility sub-item is done; rewrite it into `## Done so far` as its outcome and remove it from `## Suggested next steps`. The topic stays `partial`: the committed research-run command and the fine-cadence reach round remain. Update `ripe_when` accordingly and re-check the index bullet.
 
-- [ ] **Step 5:** Append the iterations-history entry (phase 6 → `docs/iterations-history-phase6.md`, per the `iteration-closeout` skill), naming the six probe verdicts, the two-layer split, the accepted cost from D4 (a record can only be written where its data sits under the repo's own `data/`), and the residual gap from D4 (`select` is caller-asserted; closing it belongs to [[T0065]]'s research-run command).
+- [ ] **Step 5:** Append the iterations-history entry (phase 6 → `docs/iterations-history-phase6.md`, per the `iteration-closeout` skill), naming the eight probe verdicts, the three-verdict layer-2 split (and why "absent here" must not read as "forged"), the parquet re-hash that closes the manifest→bytes link and the one set where it cannot (`ohlc-holdout-2026-07-10`), the accepted cost from D4 (a record can only be written where its data sits under the repo's own `data/`), and the residual from D1 (`select` is the caller's declaration; closing it belongs to [[T0065]]'s research-run command).
 
-- [ ] **Step 6:** Re-verify every status claim on the branch against the full branch log, then report the branch ready. **Do not open the PR without the owner's explicit word.**
+- [ ] **Step 6: Commit the closeout.** One commit, all non-claude kind (`docs/memo.local.md` is gitignored — do not stage it):
+
+```bash
+uv run pre-commit run -a
+git add docs/reference/data-catalog-full.md docs/open-topics/README.md \
+        docs/open-topics/T0065-data-pipeline-maturity-for-strategy-research.md docs/iterations-history-phase6.md
+git add "$(git status --porcelain docs/open-topics | awk '/^\?\?/ {print $2}')"  # the topic Step 3 just created
+git commit -m "docs(registry): close out the verifiable-dataset-provenance iteration"
+```
+
+- [ ] **Step 7:** Re-verify every status claim on the branch against the full branch log, confirm `git status` is clean, then report the branch ready. **Do not open the PR without the owner's explicit word.**
