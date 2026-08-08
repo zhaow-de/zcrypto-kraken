@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: **one `min_over_time(process_resident_memory_bytes{host="zcrypto-red",job="capture_app"}[2h])` read taken after 2026-08-08 18:30Z** — a 2h window, and after the step band closes, so the window sits ENTIRELY past it. **The original trigger here said "a `[6h]` read after 18:20Z" and that was wrong**: a 6h window read at 18:20 covers 12:20–18:20Z, straddling the band, so its floor still reports the pre-step value — the same window-vs-event misalignment that produced the first wrong verdict on this topic. Either a `[2h]` read after 18:30Z, or a `[6h]` read after 00:20Z, satisfies it; a `[6h]` read before 00:20Z does not
+status: resolved
 ---
 
 # The capture RSS floor was still climbing when the bake residual was declared discharged
@@ -41,8 +40,21 @@ The measured 6 h floor series on `zcrypto-red`, oldest → newest, **none of the
 - **Step 3 was due ~2026-08-08 15:00Z and has not appeared** through the window ending 16:14Z.
 
 **Why this is still not a discharge.** The read was taken at 16:13Z — inside the step band, and two hours before this topic's own trigger. Only the last ~1 h is genuinely ambiguous (a step landing now has no full post-step window yet to raise a floor), but that is exactly the residual the trigger exists to remove, and the first verdict on this topic was wrong through precisely this kind of strong-but-early reasoning. One clean read settles it.
+## Resolution
+
+**Discharged 2026-08-08 18:26Z (T+77.0 h) — no leak. The floor settled; the third step never came.**
+
+Step 2 is pinned to ~2026-08-07 15:00Z, so step 3 was due ~24 h later. 2 h floors across and after that band — ending 10:26 / 12:26 / 14:26 / 16:26 / **18:26Z** — read `141.39 · 141.29 · 141.27 · 141.43 · 141.37` MiB: **28 hours flat inside 0.25 MiB**, with the final window sitting entirely past the anniversary. The predicted ~+1.5 MiB step would read ~142.8, and step 2 was unmissable at this resolution (`138.23 → 140.43 → 141.32`).
+
+Confirmed on the host: `RestartCount` 0, digest `ccedc9dd6bf4`, instantaneous 144.08 MiB against a 141.37 floor — a ~2.7 MiB sawtooth around a settled level, matching the decaying-amplitude model's predicted ~144 MiB asymptote. **13.8 % of red's 1 GiB limit.**
+
+**The lesson this topic actually carries is about the instrument, and it failed three times.** Every wrong answer here came from a measurement window misaligned with the event it measured, never from a wrong number:
+
+1. The original "no leak" verdict read 12 h of flat floor inside a signal with a 24 h step period — the trough, not a plateau.
+2. This topic's own `ripe_when` then specified a `[6h]` read after 18:20Z. That window covers 12:20–18:20Z and **straddles** the step band, so its floor reports the pre-step value whether or not a step occurred. The rule written to prevent the error reproduced it.
+3. A scheduled background watch carrying that same `[6h]` query fired at 18:25Z and returned "asymptote confirmed" — the right conclusion, reached by an instrument that could not have detected the alternative. It was discarded and re-measured.
+
+**The rule worth keeping: a floor read must sit ENTIRELY past the event band.** A `[2h]` window after the band closes, or `[6h]` only 6 h later. This generalises beyond RSS — it is the same defect as reading `count_over_time` on a burst emitter and concluding it is continuous.
 ## Suggested next steps
 
-- **After 2026-08-08 18:30Z**, take one `min_over_time(...[2h])` reading (see the corrected trigger above — a `[6h]` window straddles the step band unless taken after 00:20Z) on `zcrypto-red` and compare against the 141.20 MiB floor. Interpret as: **no third step** → the asymptote is confirmed, discharge the residual honestly and record it; **a third step of ~1.5 MiB** → still converging, re-read after the next daily window; **a third step of ≥3 MiB** → the residual is **not** dischargeable, and the leak question is live against `ccedc9dd6bf4` on the capture path.
-- Record whichever outcome in `docs/reference/fleet-pins.md` beside the existing residual paragraph, replacing its provisional verdict.
-- If a third step appears, compare against `zcrypto`'s capture on `99faf16514e3` **as a same-workload control on the old image** — a rise present on the candidate and absent on the control is the strongest available evidence that the image is implicated, since a cross-host absolute comparison remains forbidden (limits differ: primary 2 GiB, secondary 1 GiB).
+_(none — resolved. The follow-on lesson about window-vs-event alignment is recorded above and in `fleet-pins.md`, where the next person reading a floor will be standing.)_
