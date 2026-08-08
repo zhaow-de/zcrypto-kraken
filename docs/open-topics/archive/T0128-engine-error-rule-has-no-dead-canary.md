@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: **the measurement and the rule are DONE (2026-08-08); what remains is the PUSH.** `infra/scripts/grafana-push.sh` upserts `zcrypto-engine-log-dead` into the folder, then verify the first sample BY VALUE, not presence — read the count the rule computes and confirm it is the expected ~11-34, never merely that the rule exists. Additive, so **no prune is owed**. Ripe at any window where an alert-rule push is acceptable
+status: resolved
 ---
 
 # The engine's ERROR-log rule can read zero forever and nothing notices
@@ -33,7 +32,10 @@ The gap was closed for capture and for ops. The engine is the one stream where i
 - **The owner considered and deliberately deferred this**, 2026-08-05, when approving the ERROR rule: the offered option was "add the rule and a log-dead canary for it", and the stated reason for declining was that the engine logs far less than capture, so the canary window needs measuring before it can be trusted. That reason is the whole content of this topic — the work is blocked on a measurement, not on a decision.
 - Why a borrowed threshold will not do: the capture canaries use a 6 h window because both capture daemons emit continuously at hundreds of lines an hour. The engine emits per 4-hourly cycle, so its natural quiet periods are longer than capture's alarm threshold by construction. A canary copied from capture would page on every healthy inter-cycle gap; one guessed too wide would never fire. The same trap was measured on `ops-log-pipeline-dead` this iteration, whose 14-day floor turned out to be ~1.5 lines an hour against a summary implying far more.
 
-## Suggested next steps
+## Resolution
 
-- **(the remainder — everything else is built)** Push `zcrypto-engine-log-dead` with `infra/scripts/grafana-push.sh`, then **verify the first sample BY VALUE**: read the count the rule actually computes and confirm it lands in the measured 11–34 band. `delta()`/presence checks are blind to a fault already present in a series' first sample, and a rule that reads 0 because its selector is wrong looks identical to one that is simply healthy-and-quiet. The push is **additive — no prune is owed**, and `grafana-push.sh` never deletes.
-- **(after the first sample)** Resolve this topic, recording the verified value.
+**Resolved 2026-08-08 — the canary is live and verified by value.** `zcrypto-engine-log-dead` pushed via `infra/scripts/grafana-push.sh`; the folder went **63 → 64 rules** and the push reported **no orphaned rules**, confirming it was purely additive with nothing to prune.
+
+**Verified by VALUE, not presence** — the distinction this repo insists on, because a rule reading 0 through a wrong selector looks identical to one that is healthy and quiet. The rule's own query returned **32** against the measured 11–34 band, far above its `< 1` threshold. And it is evaluating, not merely stored: `state=inactive health=ok lastError=none`, last evaluated 2026-08-08T04:23:30Z in 0.12 s.
+
+The design and the measurement that produced it are in `## Findings so far` above; the window (6 h) and the reason it is not the 15 m of the ERROR rule it protects are recorded in the rule's own comment in `infra/grafana/alerts.yaml`, where the next reader will be standing.
