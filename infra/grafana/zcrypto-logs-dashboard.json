@@ -15,7 +15,7 @@
       "id": 101,
       "type": "timeseries",
       "title": "Total lines/min",
-      "description": "Is anything arriving at all? One line, every selected stream summed — the transport canary, and the panel a \"no lines in the last six hours\" page lands on. A flat zero here while the fleet is otherwise healthy means the shipping path is down, not that the fleet went quiet. Context panel: no alert evaluates this expression, so it carries no threshold line — the silence rules and the exact count each of them computes are drawn on the by-machine panel to the right. Counted per minute; the shipping paths here are low-volume by design, so a healthy total is a small number.",
+      "description": "Is anything arriving at all? One line, every selected stream summed \u2014 the transport canary, and the panel a \"no lines in the last six hours\" page lands on. A flat zero here while the fleet is otherwise healthy means the shipping path is down, not that the fleet went quiet. Context panel: no alert evaluates this expression, so it carries no threshold line \u2014 the silence rules and the exact count each of them computes are drawn on the by-machine panel to the right. Counted per minute; the shipping paths here are low-volume by design, so a healthy total is a small number.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -74,7 +74,7 @@
       "id": 102,
       "type": "timeseries",
       "title": "Lines/min by level",
-      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the total stays flat is the other one — that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The four series on the right axis are the exact fifteen-minute counts the four error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All four fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS — the ops machine's own pull loop ships under a different name.",
+      "description": "Did the mix of levels shift? An error band appearing under a flat total is the signal a total-only view hides, and a leveled band collapsing while the total stays flat is the other one \u2014 that is a parser or labelling regression rather than a dead transport, and it sends you to a different layer, which is why the raw total is re-drawn here beside the leveled series. The four series on the right axis are the exact fifteen-minute counts the four error rules evaluate. Their bar sits at one line, not at zero: these are whole-line counts, so one line is the smallest value that fires. All four fire the moment they cross, with no pending period. The archive-pull series carries no machine filter because that container name exists only on the NAS \u2014 the ops machine's own pull loop ships under a different name.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -113,7 +113,7 @@
           },
           "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=~\"zcrypto|zcrypto-red\", container=\"capture\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
           "refId": "C",
-          "legendFormat": "error window · capture daemon {{host}} {{msg}}",
+          "legendFormat": "error window \u00b7 capture daemon {{host}} {{msg}}",
           "queryType": "range",
           "step": "5m"
         },
@@ -124,7 +124,7 @@
           },
           "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"ops\", container=~\"alloy|liquidations|zcrypto-.*\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
           "refId": "D",
-          "legendFormat": "error window · ops {{container}} {{msg}}",
+          "legendFormat": "error window \u00b7 ops {{container}} {{msg}}",
           "queryType": "range",
           "step": "5m"
         },
@@ -135,7 +135,7 @@
           },
           "expr": "sum by (host) (count_over_time({container=\"archive-pull\", level=~\"ERROR|CRITICAL\"} [15m])) or on() vector(0)",
           "refId": "E",
-          "legendFormat": "error window · archive-pull loop",
+          "legendFormat": "error window \u00b7 archive-pull loop",
           "queryType": "range",
           "step": "5m"
         },
@@ -146,7 +146,7 @@
           },
           "expr": "topk(5, sum by (host, container, level, msg) (count_over_time({host=\"zcrypto\", container=\"engine\", level=~\"ERROR|CRITICAL\"} | json message=\"message\" | drop __error__, __error_details__ | label_format msg=`{{ if .message }}{{ printf \"%.200s\" .message }}{{ else }}{{ printf \"%.200s\" __line__ }}{{ end }}` [15m]))) or on() vector(0)",
           "refId": "F",
-          "legendFormat": "error window · trading engine {{msg}}",
+          "legendFormat": "error window \u00b7 trading engine {{msg}}",
           "queryType": "range",
           "step": "5m"
         }
@@ -356,7 +356,7 @@
       "id": 103,
       "type": "timeseries",
       "title": "Lines/min by host and container",
-      "description": "Which stream went quiet? The solid series are per-machine, per-container rates. The seven series on the right axis are the exact counts the seven silence rules evaluate — six hours for the two capture daemons, for the shipping agent's own stream and for the liquidations poller, twenty-six hours for the scheduled ops units and for the ops journal transport, three hours for the archive-pull success line. Their bar is one line: below it the rule fires, and it fires the moment it crosses, with no pending period. Those counts run into the hundreds on a healthy stream, so the bar sits close to the floor of the right axis and the signal to read is a series reaching that floor. Container names are not symmetric across machines — the archive-pull loop is `archive-pull` on the NAS and `zcrypto-archive-pull` on the ops machine — so a single container pick blanks one of them. The archive-pull success series carries no machine filter because that container name exists only on the NAS. A rate of zero and a stream that never existed draw identically here; the table beside this panel is what tells them apart.",
+      "description": "Which stream went quiet? The solid series are per-machine, per-container rates. The eight series on the right axis are the exact counts the eight silence rules evaluate \u2014 six hours for the two capture daemons, for the shipping agent's own stream and for the liquidations poller, twenty-six hours for the scheduled ops units and for the ops journal transport, three hours for the archive-pull success line. Their bar is one line: below it the rule fires, and it fires the moment it crosses, with no pending period. Most of those counts run into the hundreds on a healthy stream, so the bar sits close to the floor of the right axis and the signal to read is a series reaching that floor. READ THE THRESHOLD LINE AT 1, NOT THE HEIGHT: the engine's series (I) is a BURST emitter on a 4-hourly cycle and sits at 11-34 where capture sits at 747-1348, so on this shared linear axis a perfectly healthy engine renders near the floor. It is healthy at 11 and dead only at 0. Container names are not symmetric across machines \u2014 the archive-pull loop is `archive-pull` on the NAS and `zcrypto-archive-pull` on the ops machine \u2014 so a single container pick blanks one of them. The archive-pull success series carries no machine filter because that container name exists only on the NAS. A rate of zero and a stream that never existed draw identically here; the table beside this panel is what tells them apart.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -385,7 +385,7 @@
           },
           "expr": "sum by (host) (count_over_time({host=\"zcrypto\", container=\"capture\", level=~\".+\"} [6h])) or on() vector(0)",
           "refId": "B",
-          "legendFormat": "dead-man · capture daemon, primary (6h)",
+          "legendFormat": "dead-man \u00b7 capture daemon, primary (6h)",
           "queryType": "range",
           "step": "1h"
         },
@@ -396,7 +396,7 @@
           },
           "expr": "sum by (host) (count_over_time({host=\"zcrypto-red\", container=\"capture\", level=~\".+\"} [6h])) or on() vector(0)",
           "refId": "C",
-          "legendFormat": "dead-man · capture daemon, secondary (6h)",
+          "legendFormat": "dead-man \u00b7 capture daemon, secondary (6h)",
           "queryType": "range",
           "step": "1h"
         },
@@ -407,7 +407,7 @@
           },
           "expr": "sum by (host) (count_over_time({host=\"ops\", container=\"alloy\", level=~\".+\"} [6h])) or on() vector(0)",
           "refId": "D",
-          "legendFormat": "dead-man · shipping agent's own stream, ops (6h)",
+          "legendFormat": "dead-man \u00b7 shipping agent's own stream, ops (6h)",
           "queryType": "range",
           "step": "1h"
         },
@@ -418,7 +418,7 @@
           },
           "expr": "sum by (host) (count_over_time({host=\"ops\", container=\"liquidations\", level=~\".+\"} [6h])) or on() vector(0)",
           "refId": "E",
-          "legendFormat": "dead-man · liquidations poller (6h)",
+          "legendFormat": "dead-man \u00b7 liquidations poller (6h)",
           "queryType": "range",
           "step": "1h"
         },
@@ -429,7 +429,7 @@
           },
           "expr": "sum by (host, container) (count_over_time({host=\"ops\", container=~\"zcrypto-.*\", level=~\".+\"} [26h])) or on() vector(0)",
           "refId": "F",
-          "legendFormat": "dead-man · ops units, leveled lines (26h) {{container}}",
+          "legendFormat": "dead-man \u00b7 ops units, leveled lines (26h) {{container}}",
           "queryType": "range",
           "step": "1h"
         },
@@ -440,7 +440,7 @@
           },
           "expr": "sum by (host) (count_over_time({host=\"ops\", container=\"zcrypto-archive-pull\"} [26h])) or on() vector(0)",
           "refId": "G",
-          "legendFormat": "dead-man · ops journal transport (26h)",
+          "legendFormat": "dead-man \u00b7 ops journal transport (26h)",
           "queryType": "range",
           "step": "1h"
         },
@@ -451,7 +451,18 @@
           },
           "expr": "sum by (host) (count_over_time({container=\"archive-pull\"} |= \"pull complete\" |= \"failed=0\" [3h])) or on() vector(0)",
           "refId": "H",
-          "legendFormat": "dead-man · archive-pull success line (3h)",
+          "legendFormat": "dead-man \u00b7 archive-pull success line (3h)",
+          "queryType": "range",
+          "step": "1h"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum by (host) (count_over_time({host=\"zcrypto\", container=\"engine\", level=~\".+\"} [6h])) or on() vector(0)",
+          "refId": "I",
+          "legendFormat": "dead-man \u00b7 capture daemon, primary (6h)",
           "queryType": "range",
           "step": "1h"
         }
@@ -768,6 +779,48 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "I"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "lines in the rule's own window"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
@@ -786,8 +839,8 @@
     {
       "id": 104,
       "type": "table",
-      "title": "Last line seen — per stream",
-      "description": "A rate of zero and a stream that never existed render identically on a graph; this table tells them apart. One row per stream that has shipped at least one line in the last twenty-six hours — the widest window any log rule evaluates — carrying the wall-clock time of that line. A row present with an old timestamp is a stream that has gone quiet. **A row missing while other rows are present** is a stream already past every rule's patience; streams that exist on only one machine are expected to be missing from the other, and the edge machine ships metrics only, so it never appears here at all. **An entirely empty table means something different, and never that the whole fleet went silent.** Unless the pickers are narrowed to the edge machine alone, or to a container none of the selected machines runs, no rows at all means this panel's own query failed — a broken panel, not a verdict. Read the rate lane beside it before you treat anything as an outage: those panels answer the same question through a different query, and if they show lines arriving then this table is the thing that is wrong. Context panel, carrying no threshold of its own — the page pointers sit on the by-machine panel to its left, which plots the rules' own counts.",
+      "title": "Last line seen \u2014 per stream",
+      "description": "A rate of zero and a stream that never existed render identically on a graph; this table tells them apart. One row per stream that has shipped at least one line in the last twenty-six hours \u2014 the widest window any log rule evaluates \u2014 carrying the wall-clock time of that line. A row present with an old timestamp is a stream that has gone quiet. **A row missing while other rows are present** is a stream already past every rule's patience; streams that exist on only one machine are expected to be missing from the other, and the edge machine ships metrics only, so it never appears here at all. **An entirely empty table means something different, and never that the whole fleet went silent.** Unless the pickers are narrowed to the edge machine alone, or to a container none of the selected machines runs, no rows at all means this panel's own query failed \u2014 a broken panel, not a verdict. Read the rate lane beside it before you treat anything as an outage: those panels answer the same question through a different query, and if they show lines arriving then this table is the thing that is wrong. Context panel, carrying no threshold of its own \u2014 the page pointers sit on the by-machine panel to its left, which plots the rules' own counts.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -877,8 +930,8 @@
     {
       "id": 1,
       "type": "logs",
-      "title": "Logs — $container / $level",
-      "description": "Every line, newest first. The capture daemon, the trading engine and the liquidations poller push straight to the log store as one JSON object per record, so their lines are unpacked here at query time and rendered as the message alone, with any stack trace beneath it. Lines collected from the systemd journal and from the shipping agent itself were already unpacked when they were collected and pass through untouched — the fallback in this panel's query is what keeps them readable. Level is a real stream label on both paths, so filtering and colouring work the same way for all of them. Expand a row to see the logger, the source file and any structured fields the line carried.",
+      "title": "Logs \u2014 $container / $level",
+      "description": "Every line, newest first. The capture daemon, the trading engine and the liquidations poller push straight to the log store as one JSON object per record, so their lines are unpacked here at query time and rendered as the message alone, with any stack trace beneath it. Lines collected from the systemd journal and from the shipping agent itself were already unpacked when they were collected and pass through untouched \u2014 the fallback in this panel's query is what keeps them readable. Level is a real stream label on both paths, so filtering and colouring work the same way for all of them. Expand a row to see the logger, the source file and any structured fields the line carried.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -932,7 +985,7 @@
         "allValue": "",
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Which machines the panels below select. All expands to the five pinned machines joined into one matcher — the option list is the pin, so a stray label value cannot appear here. The edge machine ships metrics only and no log lines at all, so selecting it on its own empties every panel on this board by construction rather than by fault. This list is a second place to edit when a machine joins the fleet.",
+        "description": "Which machines the panels below select. All expands to the five pinned machines joined into one matcher \u2014 the option list is the pin, so a stray label value cannot appear here. The edge machine ships metrics only and no log lines at all, so selecting it on its own empties every panel on this board by construction rather than by fault. This list is a second place to edit when a machine joins the fleet.",
         "current": {
           "selected": true,
           "text": [
@@ -1019,7 +1072,7 @@
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Log level, carried as a real stream label on both paths — set by the shipping agent for the streams it collects, and by the daemon itself for the ones that push straight to the log store. Multi-select; All stays a match-anything pattern on purpose, so lines that carry no level label at all — the pull loop's own shell output — still appear.",
+        "description": "Log level, carried as a real stream label on both paths \u2014 set by the shipping agent for the streams it collects, and by the daemon itself for the ones that push straight to the log store. Multi-select; All stays a match-anything pattern on purpose, so lines that carry no level label at all \u2014 the pull loop's own shell output \u2014 still appear.",
         "current": {
           "selected": true,
           "text": [
