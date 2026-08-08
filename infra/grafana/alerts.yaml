@@ -532,6 +532,81 @@ rules:
     notification_settings:
       receiver: logs
 
+  # The dead canary that makes `zcrypto-engine-error-logs` above trustworthy (T0128). That rule is
+  # presence-fired, so it is silent in two states that look identical from outside: the engine is
+  # healthy, or its log-shipping path regressed and no line arrives at all. Mirrors
+  # `zcrypto-capture-log-dead-primary` in shape; the WINDOW is derived differently and deliberately.
+  #
+  # THE ENGINE IS A BURST EMITTER, NOT A CONTINUOUS ONE -- this is the whole reason the window is not
+  # simply copied. Measured 2026-08-08 over 72 h of raw Loki entries (230 lines, bucketed locally
+  # rather than by a range query): 50 of 69 hours carry ZERO lines, and the largest inter-line gaps
+  # are all exactly 4.00 h -- the engine's 4-hourly cycle period. A window at or under 4 h would
+  # false-fire on every healthy inter-cycle gap.
+  #
+  # 6h = the measured 4.00 h period + the fleet's own 2 h margin (the ops timer canaries use 26 h for
+  # a daily emitter, i.e. 24 h + 2 h). Min lines observed in any 6 h window: 11. Do NOT tighten this
+  # toward the 15m of the ERROR rule above: they watch different things.
+  #
+  # Measuring this needs care -- Loki's query_range forces ~240 min spacing here regardless of the
+  # `step` asked for, which aliases exactly against the 4 h cycle and reports a flat "every hour has
+  # lines". Read raw entries and bucket them locally, as the figures above were.
+  #
+  # `level=~".+"` verified present on this stream (values: INFO) before being relied on -- an absent
+  # label would make the selector match nothing and park the rule permanently firing.
+  - uid: zcrypto-engine-log-dead
+    title: "Engine · log pipeline dead"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    # Alerting, matching the other dead-men: the `or on() vector(0)` fallback keeps the query
+    # returning data while intact, and this is the belt-and-braces layer for the day an edit drops
+    # that fallback or Loki maps an empty response to NoData. With OK it would park green in exactly
+    # the blind state it exists to page on.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Not one log line of any level from the trading engine in 6h. The engine logs in bursts at its 4-hourly cycle boundaries, so 6h means at least one whole cycle produced nothing -- its log-shipping path is dead (Loki credentials, the ship handler, or the container gone). The Engine ERROR logs rule is blind until this is fixed, on the host that holds the live trade key. Check whether cycles are still completing: if they are, this is the log plane alone; if they are not, the engine itself is down and the cycle rules are the ones to read."
+      __dashboardUid__: "zcrypto-logs"
+      __panelId__: "103"
+      unit: "engine log lines of any level in the last 6 hours"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: logs
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas
