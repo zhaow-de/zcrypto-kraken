@@ -106,7 +106,7 @@ The identity path touches nothing that varies: file bytes, row counts, timestamp
 - **Manifest normalisation across writers** — [[T0132]]; its body **and its `ripe_when`** are updated in this PR (both currently reference the discarded allowlist shape): provenance no longer waits on the contract.
 - **Freeze-side byte verification for the holdout** — [[T0133]]; its body is updated in this PR: record-scoped hashes exist from record 47 on.
 - **Any future holdout look's statistical protocol** — that look's own §12-governed work when convened; its committed metrics function joins the subject enum then. This is a description of where future work lives, not a deferral: [[T0064]] itself is archived resolved, and nothing here waits on anything.
-- **REACH (Q2 OHLCVT ingest, live-trades→bars)** — [[T0065]]'s separate round, gated on an external publication, untouched here.
+- **REACH (live-trades→bars materializer, Q2/Q3 OHLCVT ingest)** — [[T0065]]'s separate round, untouched here. Stated precisely so ripe work does not read as blocked: the materializer is **autonomous and ripe now**; only the dump ingest waits on Kraken publishing.
 - **Explicit drops, with reasons recorded above:** mechanically closing the hand-rolled-writer door (bounded claim 1); sub-file content addressing (bounded claim 2); environment capture (bounded claim 7).
 
 **T0065 closure effect:** with this spec implemented, the execution-reproducibility round is **done in full** — recipe (D1–D4), command (D5), ruling (D6). T0065's remaining open work is the REACH round alone.

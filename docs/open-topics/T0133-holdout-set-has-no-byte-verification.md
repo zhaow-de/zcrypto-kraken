@@ -5,8 +5,6 @@ ripe_when: `data/ohlc-holdout-*` is next re-frozen or a second holdout is cut �
 
 # The holdout set is the one canonical dataset with no byte verification
 
-**Update 2026-08-09 (spec `00086`):** partial mitigation now exists, and its limit is the point. Every schema-4 record stores the per-file sha256 of the bytes it read, and a conformance pass re-hashes those citations on the canonical data host — so a later edit to a file a registered evaluation READ is caught. That is record-scoped and after-the-fact: it says nothing about whether the freeze was faithful when it was cut, and covers no file no record cites. Freeze-side hashes and a fail-closed sync remain this topic's scope.
-
 ## Context — what
 
 `cli/data/sync.py::_verify_new_files` re-hashes each newly transferred parquet and refuses content the manifest does not attest. It works off `_manifest_sha256s`, which collects **per-artifact `sha256` keys only** — its docstring says the manifest-level `manifest_sha256` is deliberately not collected, because it is not a per-parquet hash.
@@ -15,7 +13,9 @@ ripe_when: `data/ohlc-holdout-*` is next re-frozen or a second holdout is cut �
 
 ## Why this matters
 
-Spec `00086` D5 declines to build byte-level re-verification on the grounds that committed mechanisms already cover it. That is true for `ohlc-full` and `ohlc-15m` and false for the holdout — the one dataset [[T0064]]'s out-of-sample validation depends on. A schema-4 provenance record for a holdout trial names the freeze's `manifest_sha256` and its extent, which detects a *re-freeze*, not an edit to a parquet the freeze already vouched for.
+The sync-side verification that covers `ohlc-full` and `ohlc-15m` is inert here — on the one dataset an out-of-sample validation depends on.
+
+**Partial mitigation shipped 2026-08-09 (spec `00086`), and its limit is the point.** Every schema-4 record stores the per-file **byte** `sha256` of what the run read, and a conformance pass re-hashes those citations on the canonical data host — so an edit to a parquet that a registered evaluation READ is caught. That is record-scoped and after-the-fact: it says nothing about whether the freeze was faithful when it was cut, it covers no file that no record cites, and it arrives only once a holdout trial is actually registered. Freeze-side hashes and a fail-closed sync — the coverage that would make an edit detectable regardless of who read what — remain this topic's whole subject.
 
 Three further bounds on `_verify_new_files`, worth stating so its coverage is not overclaimed elsewhere: it sees only files rsync itemizes as **new**, only `.parquet`, only when `verify=True`, and it matches by hash **membership** in the manifest's hash set rather than by path binding — so two swapped series pass.
 
