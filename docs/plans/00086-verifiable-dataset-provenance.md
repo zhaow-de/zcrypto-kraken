@@ -2,256 +2,257 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make a trial record's dataset reference self-describing and machine-checkable, for the datasets that actually back trials, so no future `dataset_hash` becomes unresolvable the way 44 existing ones have.
+**Goal:** Close T0065's execution-reproducibility round whole: dataset identity computed from the bytes a run reads (the capturing loader), enforced at load with a schema-4 floor, written through the committed `zcrypto research eval` command — the registry's first production caller — with the legacy ruling executed as a committed pins table.
 
-**Architecture:** Two per-shape adapters capture a `datasets` block (per-axis **resolved** slice + set digest + extent) for an allowlist of three datasets; `dataset_hash` becomes `compute_hash(datasets)`; `dataset_hash` moves into the store-owned key set so no caller can supply it; and `validate_stored_record` enforces both the block's shape and the derivation at LOAD, since `append()` has no production caller — with a hard schema-4 floor past trial 46 so a new record cannot escape the check by declaring 3.
+**Architecture:** `cli/registry/observed.py` (the loader) produces the `datasets` block; `cli/registry/record.py`/`store.py` derive `dataset_hash = compute_hash(datasets)` and enforce shape+derivation+floor at load; `cli/research/` is the door; `docs/reference/legacy-dataset-pins.jsonl` documents the 4 historical hashes. No manifest is parsed anywhere in the identity path.
 
-**Tech Stack:** Python 3.14, `cli/registry/`, pytest, `infra/scripts/mutate-probe.sh`.
+**Tech Stack:** Python 3.14 / polars / Typer / pytest, `uv` throughout.
 
 ## Global Constraints
 
-- Spec: `docs/specs/00086-verifiable-dataset-provenance-design.md`; D-numbers below refer to it. **This is the reshaped version** — a generic-capture design failed four cold-review rounds and was replaced by D1's allowlist. Do not re-generalise.
-- **The registry is append-only and hash-chained.** No task rewrites, reorders or re-hashes a record. `docs/reference/trial-registry.jsonl` is modified by NO task.
-- **The key-set move breaks all 46 records in three ways if done carelessly** (D3). Task 2 Step 2 makes ONLY that move and then performs a REAL load of the real file — set arithmetic over the constants cannot see any of the three, because two of them live inside `validate_caller_fields`.
-- **The schema bump and the `append()` change land in ONE commit** (Task 2). Bumping `SCHEMA_VERSION` while `append()` still writes no `datasets` block would make every record it writes unloadable by the validator in the same commit.
-- **Runtime readers**: `cli/portfolio/record44_legs.py` constructs `TrialRegistry`; `cli/engine/soak.py` parses the JSONL with raw `json.loads` and never validates. Breaking the loader breaks the first; the second does not inherit D4's check (named in the spec, not a defect to fix here).
-- **Several seds in Task 4 quote implementation lines verbatim.** Where Task 1/2 prescribes an exact line, write it exactly — `mutate-probe.sh` exits 6 on a no-op sed.
-- Each task stages **everything it edits**. `mutate-probe.sh` refuses a dirty worktree, so an unstaged edit makes every later probe exit 3.
-- Commit gate `uv run pre-commit run -a` before each commit; a rewriting run reports Failed and leaves rewrites unstaged — re-run, re-stage, re-commit.
+- `docs/reference/trial-registry.jsonl` is append-only, hash-chained, and committed: all 46 records MUST load after every commit of this plan. The real-file load test (`tests/test_registry_store.py::test_live_registry_file_loads_clean`) is the tripwire — run it after each task.
+- The schema bump and the `append()` rework land in ONE commit (Task 2) — an intermediate commit whose own `append()` writes records its own validator rejects is forbidden.
+- `_BASE_STORED_KEYS` is derived from `_REQUIRED_CALLER` ∪ `_STORE_OWNED`: the Task 2 key-set move follows its steps exactly; deviations have historically made all 46 records unloadable three separate ways.
+- Int strictness is `type(x) is int`, never `isinstance` (`isinstance(True, int)` is `True`); the file already uses this idiom with the comment saying why.
+- Every guard gets a mutate-probe with a control that fails first (`infra/scripts/mutate-probe.sh`; clean tree; Task 6). A guard is unproven until its defect is constructed and seen to trip it.
+- Data-gated tests **skip** with a reason off the workstation — never pass vacuously. CI (bare checkout) must still exercise the full synthetic-parquet pipeline.
+- Commits: Conventional Commits, `Co-Authored-By: <actual authoring model> <noreply@anthropic.com>` last line; **review floor is Fable for every commit** (this plan touches canonical-data provenance). Frames: `ts` is `Datetime("us", "UTC")`; errors live in `cli.registry.errors`.
+- Spec: `docs/specs/00086-verifiable-dataset-provenance-design.md` (this plan's serial mate). Decision numbers below (D1…D7) refer to it.
 
-______________________________________________________________________
+---
 
-### Task 1: The two adapters and `capture_datasets`
+### Task 1: The capturing loader replaces the manifest adapters
 
-Pure new module, no schema change, nothing else depends on it yet — so it lands safely first.
+The identity referent changes from manifest declarations to observed bytes (D1/D2), so the two manifest adapters — committed on this branch, never merged — are removed in the same commit that lands their replacement.
 
 **Files:**
 
-- Create: `cli/registry/provenance.py`
-- Test: `tests/test_registry_provenance.py`
+- Delete: `cli/registry/provenance.py`, `tests/test_registry_provenance.py` (`git rm`)
+- Create: `cli/registry/observed.py`
+- Test: `tests/test_registry_observed.py`
 
 **Interfaces:**
 
-- Produces: `capture_datasets(select: dict[str, dict[str, list[str]]], data_root: Path) -> dict` returning the D2 block; `ALLOWLIST: dict[str, str]` mapping dataset name (or prefix, for `ohlc-holdout-*`) to adapter name. Raises `RegistryError` on an empty `datasets` mapping, an unlisted dataset, an absent manifest, a `series` block that is not the adapter's expected shape, an unknown axis key, or a token that matches nothing.
-- Consumes: `cli.registry.errors.RegistryError`.
+- Produces: `ObservedReader(data_root: Path)` with `read_series(dataset: str, relpath: str, window: tuple[str, str] | None = None) -> pl.DataFrame` and `block() -> dict`; module-level `_sha256_file(path: Path) -> str`.
+- Consumes: `cli.ohlc.dataset.read_parquet`, `cli.data.sync._manifest_sha256s`, `cli.registry.errors.RegistryError`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_registry_provenance.py`
+- [ ] **Step 1: Write the failing tests** — `tests/test_registry_observed.py`
 
 ```python
+"""The capturing loader: identity is what the run read (spec 00086 D1/D2)."""
+
+import hashlib
 import json
-import pytest
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
+
+from cli.ohlc.dataset import to_frame, write_parquet
 from cli.registry.errors import RegistryError
-from cli.registry.provenance import ALLOWLIST, capture_datasets
-
-_NESTED = {
-    "BTC/EUR": {"1440": {"rows": 10, "first_ts": "2020-01-01T00:00:00+00:00",
-                         "last_ts": "2020-01-10T00:00:00+00:00", "sha256": "c" * 64},
-                "240":  {"rows": 60, "first_ts": "2020-01-01T00:00:00+00:00",
-                         "last_ts": "2020-01-10T20:00:00+00:00", "sha256": "d" * 64}},
-    "ETH/EUR": {"1440": {"rows": 7, "first_ts": "2020-01-04T00:00:00+00:00",
-                         "last_ts": "2020-01-10T00:00:00+00:00", "sha256": "e" * 64},
-                "240":  {"rows": 42, "first_ts": "2020-01-04T00:00:00+00:00",
-                         "last_ts": "2020-01-10T20:00:00+00:00", "sha256": "f" * 64}},
-}
+from cli.registry.observed import ObservedReader
 
 
-def _write(root: Path, name: str, payload: dict) -> None:
-    (root / name).mkdir(parents=True, exist_ok=True)
-    (root / name / "manifest.json").write_text(json.dumps(payload))
+def _rows(n, start=1577836800):  # 2020-01-01, daily steps
+    return [[start + i * 86400, "1", "2", "0.5", "1.5", "1.2", "10", 3] for i in range(n)]
 
 
-def _full(root: Path) -> None:
-    _write(root, "ohlc-full", {"basket_sha256": "a" * 64, "fetched_at": "2020-01-11T00:00:00+00:00",
-                               "source": "/machine/local/path", "series": _NESTED})
+def _dataset(tmp_path, name="ohlc-test", series=(("BTC/EUR/1440.parquet", 10), ("ETH/EUR/1440.parquet", 7))):
+    root = tmp_path / "data"
+    for relpath, n in series:
+        write_parquet(to_frame(_rows(n)), root / name / relpath)
+    return root
 
 
-def test_backfill_shape_captures_the_declared_slice(tmp_path):
-    _full(tmp_path)
-    got = capture_datasets({"ohlc-full": {"intervals": ["1440"], "pairs": ["BTC/EUR"]}}, tmp_path)["ohlc-full"]
-    assert got["select"] == {"intervals": ["1440"], "pairs": ["BTC/EUR"]}
-    assert got["set_digest"] == "a" * 64
-    assert got["extent"] == {"series": 1, "rows": 10,
-                             "span": ["2020-01-01T00:00:00+00:00", "2020-01-10T00:00:00+00:00"]}
-    assert "source" not in got and "fetched_at" not in got  # D2: no per-run, no machine-local values
+def test_block_records_files_rows_span_from_what_was_read(tmp_path):
+    root = _dataset(tmp_path)
+    reader = ObservedReader(root)
+    reader.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+    reader.read_series("ohlc-test", "ETH/EUR/1440.parquet")
+    block = reader.block()
+    entry = block["ohlc-test"]
+    assert set(entry) == {"files", "rows", "span"}
+    assert set(entry["files"]) == {"BTC/EUR/1440.parquet", "ETH/EUR/1440.parquet"}
+    raw = (root / "ohlc-test" / "BTC/EUR/1440.parquet").read_bytes()
+    assert entry["files"]["BTC/EUR/1440.parquet"] == hashlib.sha256(raw).hexdigest()
+    assert entry["rows"] == 17
+    assert entry["span"][0] == "2020-01-01 00:00:00+00:00"
 
 
-def test_each_axis_is_independently_selectable_and_empty_means_all(tmp_path):
-    _full(tmp_path)
-    whole = capture_datasets({"ohlc-full": {}}, tmp_path)["ohlc-full"]["extent"]
-    assert whole == {"series": 4, "rows": 119,
-                     "span": ["2020-01-01T00:00:00+00:00", "2020-01-10T20:00:00+00:00"]}
-    by_pair = capture_datasets({"ohlc-full": {"pairs": ["ETH/EUR"]}}, tmp_path)["ohlc-full"]["extent"]
-    assert by_pair["series"] == 2 and by_pair["rows"] == 49
-    by_interval = capture_datasets({"ohlc-full": {"intervals": ["240"]}}, tmp_path)["ohlc-full"]["extent"]
-    assert by_interval["series"] == 2 and by_interval["rows"] == 102
+def test_a_flipped_byte_moves_the_hash(tmp_path):
+    root = _dataset(tmp_path)
+    before = ObservedReader(root)
+    before.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+    p = root / "ohlc-test" / "BTC/EUR/1440.parquet"
+    raw = bytearray(p.read_bytes())
+    raw[len(raw) // 2] ^= 0x01
+    p.write_bytes(bytes(raw))
+    after = ObservedReader(root)
+    try:  # the flip may or may not still parse as parquet; the hash is taken from bytes either way
+        after.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+        assert after.block()["ohlc-test"]["files"] != before.block()["ohlc-test"]["files"]
+    except Exception:
+        pass  # an unreadable flip is also a detected change — the read refused
 
 
-def test_holdout_shape_uses_manifest_sha256_and_a_single_asset_axis(tmp_path):
-    # No basket_sha256, no per-series sha256, series NOT nested by interval.
-    _write(tmp_path, "ohlc-holdout-2026-07-10", {
-        "manifest_sha256": "b" * 64, "pulled_at": "2026-07-10T01:30Z", "freeze_last_complete_day": "2026-07-09",
-        "series": {"ADA": {"rows": 5, "first_ts": "2018-09-28 00:00:00+00:00",
-                           "last_ts": "2026-07-09 00:00:00+00:00", "overlap_bars_verified": 3, "appended": 1},
-                   "BTC": {"rows": 9, "first_ts": "2013-09-10 00:00:00+00:00",
-                           "last_ts": "2026-07-09 00:00:00+00:00", "overlap_bars_verified": 3, "appended": 1}}})
-    name = "ohlc-holdout-2026-07-10"
-    got = capture_datasets({name: {"assets": ["ADA"]}}, tmp_path)[name]
-    assert got["set_digest"] == "b" * 64
-    assert got["extent"] == {"series": 1, "rows": 5,
-                             "span": ["2018-09-28 00:00:00+00:00", "2026-07-09 00:00:00+00:00"]}
-    with pytest.raises(RegistryError, match="intervals"):  # not an axis of this adapter
-        capture_datasets({name: {"intervals": ["1440"]}}, tmp_path)
+def test_window_moves_rows_and_span_and_is_applied_by_the_loader(tmp_path):
+    root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
+    reader = ObservedReader(root)
+    frame = reader.read_series("ohlc-test", "BTC/EUR/1440.parquet",
+                               window=("2020-01-03 00:00:00+00:00", "2020-01-05 00:00:00+00:00"))
+    assert frame.height == 3
+    entry = reader.block()["ohlc-test"]
+    assert entry["rows"] == 3
+    assert entry["span"] == ["2020-01-03 00:00:00+00:00", "2020-01-05 00:00:00+00:00"]
 
 
-def test_select_is_resolved_so_order_duplicates_and_abbreviation_cannot_move_the_digest(tmp_path):
-    _full(tmp_path)
-    a = capture_datasets({"ohlc-full": {"intervals": ["240", "1440", "240"]}}, tmp_path)
-    b = capture_datasets({"ohlc-full": {"intervals": ["1440", "240"]}}, tmp_path)
-    # D2: an absent axis is RESOLVED to its full membership, not stored blank -- so the block states
-    # which pairs were read without the manifest, and the abbreviation hashes as the slice it means.
-    assert a == b
-    assert a["ohlc-full"]["select"] == {"intervals": ["1440", "240"], "pairs": ["BTC/EUR", "ETH/EUR"]}
-    assert capture_datasets({"ohlc-full": {}}, tmp_path) == a
+def test_same_file_read_twice_is_one_entry_and_a_window_mismatch_is_refused(tmp_path):
+    root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
+    reader = ObservedReader(root)
+    reader.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+    reader.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+    assert reader.block()["ohlc-test"]["rows"] == 10  # not 20 — one read, one entry
+    with pytest.raises(RegistryError, match="window"):
+        reader.read_series("ohlc-test", "BTC/EUR/1440.parquet", window=("2020-01-03 00:00:00+00:00", "2020-01-05 00:00:00+00:00"))
 
 
-def test_an_unlisted_dataset_is_refused_and_the_message_names_the_remedy(tmp_path):
-    _write(tmp_path, "derivatives-funding", {"basket_sha256": "e" * 64, "fetched_at": "x", "series": {}})
-    with pytest.raises(RegistryError, match="adapter"):
-        capture_datasets({"derivatives-funding": {}}, tmp_path)
+def test_empty_accumulation_and_zero_row_dataset_are_refused(tmp_path):
+    root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
+    with pytest.raises(RegistryError, match="nothing"):
+        ObservedReader(root).block()
+    reader = ObservedReader(root)
+    with pytest.raises(RegistryError, match="zero rows"):
+        reader.read_series("ohlc-test", "BTC/EUR/1440.parquet",
+                           window=("2031-01-01 00:00:00+00:00", "2031-01-02 00:00:00+00:00"))
 
 
-def test_an_absent_manifest_is_refused_and_names_the_path(tmp_path):
-    with pytest.raises(RegistryError, match=r"ohlc-full/manifest\.json"):
-        capture_datasets({"ohlc-full": {}}, tmp_path)
-
-
-@pytest.mark.parametrize("bad", [{"intervals": ["60"]}, {"pairs": ["DOGE/EUR"]}, {"grids": ["1440"]}])
-def test_an_unresolvable_select_token_or_axis_is_refused(tmp_path, bad):
-    _full(tmp_path)
-    with pytest.raises(RegistryError):
-        capture_datasets({"ohlc-full": bad}, tmp_path)
-
-
-def test_an_empty_datasets_mapping_is_refused(tmp_path):
-    with pytest.raises(RegistryError, match="no dataset"):
-        capture_datasets({}, tmp_path)
-
-
-def test_a_changed_series_shape_is_a_registry_error_not_a_traceback(tmp_path):
-    """`ohlc-reach` already writes `series` as a list[dict]; a supported writer could too."""
-    _write(tmp_path, "ohlc-full", {"basket_sha256": "a" * 64, "fetched_at": "x",
-                                   "series": [{"symbol": "BTC/EUR", "rows": 10}]})
-    with pytest.raises(RegistryError, match="series"):
-        capture_datasets({"ohlc-full": {}}, tmp_path)
+def test_vouched_hash_mismatch_refuses_and_absence_is_inert(tmp_path):
+    root = _dataset(tmp_path)
+    # No manifest at all -> inert, and the reader says so.
+    reader = ObservedReader(root)
+    reader.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+    assert reader.vouched_status()["ohlc-test"] == "inert (0 vouched hashes)"
+    # A manifest vouching a DIFFERENT hash for some series -> the file changed since the freeze: refuse.
+    (root / "ohlc-test" / "manifest.json").write_text(json.dumps({"series": {"X": {"sha256": "f" * 64}}}))
+    reader2 = ObservedReader(root)
+    with pytest.raises(RegistryError, match="vouched"):
+        reader2.read_series("ohlc-test", "BTC/EUR/1440.parquet")
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 2: Run to verify they fail** — `uv run pytest tests/test_registry_observed.py -q` — expected: import error (`cli.registry.observed` does not exist).
 
-Run: `uv run pytest tests/test_registry_provenance.py -q`
-Expected: FAIL — `cli.registry.provenance` does not exist.
-
-- [ ] **Step 3: Implement**
-
-`ALLOWLIST = {"ohlc-full": "backfill", "ohlc-15m": "backfill", "ohlc-holdout": "holdout"}` — every key matches exactly **or** as a `<key>-…` prefix, so both `ohlc-holdout-<date>` and a re-freeze sibling `ohlc-full-<stamp>` resolve (D1: revisions mint siblings, so a sibling is the canonical's own successor, same writer and same shape). Resolution goes through a helper whose match line is quoted verbatim by Task 4 Probe 2:
+- [ ] **Step 3: Implement** — `cli/registry/observed.py`
 
 ```python
-    for key, adapter in ALLOWLIST.items():
-        if name == key or name.startswith(key + "-"):
+"""The capturing loader: dataset identity computed from the bytes a run actually reads.
+
+The one sanctioned way research reads frozen datasets (spec 00086 D1). Hashes every file it opens,
+applies any window itself, and accumulates per-dataset files/rows/span from what it RETURNS -- so
+rows-used cannot drift from rows-recorded by construction. It imports nothing from manifests: no
+manifest shape can reach the identity path. Where a manifest vouches per-series hashes, a computed
+hash absent from a non-empty vouched set means the file changed since the manifest was written --
+fitting on disputed bytes is exactly what should stop a run, so `read_series` refuses.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import polars as pl
+
+from cli.data.sync import _manifest_sha256s
+from cli.ohlc.dataset import read_parquet
+from cli.registry.errors import RegistryError
+
+_TS_FORMAT = "%Y-%m-%d %H:%M:%S%z"  # matches the frozen manifests' stamp style: space, not 'T'
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _stamp(value) -> str:
+    s = value.strftime(_TS_FORMAT)
+    return s[:-2] + ":" + s[-2:]  # +0000 -> +00:00
+
+
+class ObservedReader:
+    def __init__(self, data_root: Path) -> None:
+        self._root = Path(data_root)
+        self._files: dict[str, dict[str, str]] = {}
+        self._reads: dict[tuple[str, str], tuple[str, str] | None] = {}  # (dataset, relpath) -> window
+        self._rows: dict[str, int] = {}
+        self._span: dict[str, tuple] = {}  # dataset -> (first_ts, last_ts) as datetimes
+        self._vouched: dict[str, set[str]] = {}
+
+    def _vouched_for(self, dataset: str) -> set[str]:
+        if dataset not in self._vouched:
+            manifest = self._root / dataset / "manifest.json"
+            self._vouched[dataset] = _manifest_sha256s(json.loads(manifest.read_text())) if manifest.exists() else set()
+        return self._vouched[dataset]
+
+    def vouched_status(self) -> dict[str, str]:
+        return {
+            d: (f"checked ({len(v)} vouched hashes)" if v else "inert (0 vouched hashes)")
+            for d, v in ((d, self._vouched_for(d)) for d in self._files)
+        }
+
+    def read_series(self, dataset: str, relpath: str, window: tuple[str, str] | None = None) -> pl.DataFrame:
+        key = (dataset, relpath)
+        if key in self._reads:
+            if self._reads[key] != window:
+                raise RegistryError(f"{dataset}/{relpath}: already read with window {self._reads[key]!r}; one record, one read discipline")
+            return read_parquet(self._root / dataset / relpath) if window is None else self._windowed(dataset, relpath, window)
+        path = self._root / dataset / relpath
+        digest = _sha256_file(path)
+        vouched = self._vouched_for(dataset)
+        if vouched and digest not in vouched:
+            raise RegistryError(f"{dataset}/{relpath}: computed sha256 is absent from the manifest's vouched set — the file changed since the freeze")
+        frame = self._windowed(dataset, relpath, window)
+        if frame.height == 0:
+            raise RegistryError(f"{dataset}/{relpath}: zero rows after windowing — a block that says nothing is refused")
+        self._reads[key] = window
+        self._files.setdefault(dataset, {})[relpath] = digest
+        self._rows[dataset] = self._rows.get(dataset, 0) + frame.height
+        first, last = frame["ts"][0], frame["ts"][-1]
+        lo, hi = self._span.get(dataset, (first, last))
+        self._span[dataset] = (min(lo, first), max(hi, last))
+        return frame
+
+    def _windowed(self, dataset: str, relpath: str, window: tuple[str, str] | None) -> pl.DataFrame:
+        frame = read_parquet(self._root / dataset / relpath)
+        if window is not None:
+            start, end = (datetime.fromisoformat(w) for w in window)
+            frame = frame.filter((pl.col("ts") >= start) & (pl.col("ts") <= end))
+        return frame
+
+    def block(self) -> dict:
+        if not self._files:
+            raise RegistryError("ObservedReader accumulated nothing — a block that says nothing is refused")
+        return {
+            d: {"files": dict(sorted(self._files[d].items())), "rows": self._rows[d],
+                "span": [_stamp(self._span[d][0]), _stamp(self._span[d][1])]}
+            for d in sorted(self._files)
+        }
 ```
 
-Anything unmatched raises `RegistryError` whose message contains the word `adapter` and the dataset name.
+(Note `from datetime import datetime` joins the imports; the implementer wires the exact polars filter expression to the frame's `Datetime("us", "UTC")` dtype and confirms `_stamp` output equals the test's expected strings — the tests are the contract, the sketch is not.)
 
-An empty `datasets` mapping raises before any adapter runs, with a message containing `no dataset` (D2: a record naming no dataset carries no provenance).
+- [ ] **Step 4: Run to verify they pass** — `uv run pytest tests/test_registry_observed.py -q`
+- [ ] **Step 5: Verify the deletion left nothing dangling** — `grep -rn "registry.provenance\|capture_datasets" cli/ tests/` → zero hits.
+- [ ] **Step 6: Commit** — `git rm cli/registry/provenance.py tests/test_registry_provenance.py`, `git add cli/registry/observed.py tests/test_registry_observed.py`, commit `feat(registry): the capturing loader replaces the manifest adapters`.
 
-**Axes.** Backfill declares `("pairs", "intervals")` and walks `series[pair][interval]`; holdout declares `("assets",)` and walks `series[asset]` (one level). Each adapter first checks `series` is a `dict` of the depth it expects and otherwise raises `RegistryError` naming the dataset, the key `series` and the expected shape — `ohlc-reach` already writes a `list[dict]`, so a writer drifting there must give a refusal, not an `AttributeError` traceback out of the on-disk conformance test. A `select` key outside the adapter's axes raises, naming the offending key and the allowed axes. Within an axis, an empty or absent list means all of it; a token matching no key on that axis raises, naming the token.
-
-**`select` is RESOLVED, not echoed** (D2). Per axis, compute the sorted deduplicated list of tokens the declaration actually selects — the caller's list when non-empty, else that axis's full membership from the manifest — and emit **that** as `select`. So `{}` and the fully spelled-out slice produce one digest, and the stored block names the pairs/intervals without the (gitignored) manifest. Resolve before the leaf walk and keep it on its own line: Probe 3 blanks only the leaf filter, and must leave `select` correct while `extent` collapses.
-
-The backfill leaf walk is quoted verbatim by Probe 3, so write the filter as its own line:
-
-```python
-    leaves = [
-        leaf
-        for pair, by_interval in series.items()
-        for interval, leaf in by_interval.items()
-        if _selected(pair, sel.get("pairs")) and _selected(interval, sel.get("intervals"))
-    ]
-```
-
-**Refuse an empty selection BEFORE computing `extent`.** Immediately after the leaf walk, `if not leaves: raise RegistryError(...)` naming the dataset and the resolved `select`. Two real cases reach it: an allowlisted manifest whose `series` is `{}`, and a legal per-axis selection over a ragged manifest where every token resolves on its own axis but the cross-product is empty (e.g. `pairs=["BTC/EUR"], intervals=["240"]` where that pair carries only `1440`). Without it, `min()` over no leaves raises a bare `ValueError`, which falsifies the spec's promise that a drifted manifest refuses with a `RegistryError` naming the dataset — and would make the on-disk conformance test fire as a traceback rather than the promised refusal. Keep this OUT of the two lines Probes 3 and 4 quote verbatim, so those seds stay non-no-op.
-
-`extent` per D2, in one shared helper over the selected leaves — `rows = sum(leaf["rows"] for leaf in leaves)` verbatim (Probe 4 quotes it), `series` = `len(leaves)`, `span` = `[min(first_ts), max(last_ts)]` as **raw strings** (the holdout's stamps use a space, not `T`; do not parse or normalise them — a round-trip through a datetime would silently change the recorded value). Sort each `select` axis list and drop duplicates. Emit **only** `select`, `set_digest`, `extent`.
-
-- [ ] **Step 4: Run to verify they pass**
-
-Run: `uv run pytest tests/test_registry_provenance.py -q`
-Expected: PASS.
-
-- [ ] **Step 5: Add the on-disk conformance tests**
-
-Enumerate from disk, not from a hardcoded tuple — a set present but unlisted must be visible. **Skip, never pass, on an empty glob**: `data/` is gitignored except its own `.gitignore` (`git ls-files data/` returns exactly that one file), so on a bare CI checkout `_DATA.exists()` is TRUE and the glob is EMPTY — a bare `for` loop would report a green having asserted nothing.
-
-All three sets are **frozen** — a revision mints a sibling, never an overwrite — so all three get a measured extent pin. Without one the loop asserts only `rows > 0`, which any non-empty manifest satisfies, and it is `ohlc-full`/`ohlc-15m` that back every historical trial.
-
-```python
-_DATA = Path(__file__).resolve().parent.parent / "data"
-
-# Measured from this repo's data root 2026-08-08. Same "canonical dataset drifted -- STOP" contract as
-# tests/test_crossfreq_system.py::EXTENT: a revision mints a sibling, so these never move in place.
-_PINS = {
-    "ohlc-full": {"series": 36, "rows": 1052322,
-                  "span": ["2013-09-10T00:00:00+00:00", "2026-03-31T23:00:00+00:00"]},
-    "ohlc-15m": {"series": 12, "rows": 3122044,
-                 "span": ["2013-09-10T23:45:00+00:00", "2026-03-31T23:45:00+00:00"]},
-    "ohlc-holdout-2026-07-10": {"series": 10, "rows": 30032,
-                                "span": ["2013-09-10 00:00:00+00:00", "2026-07-09 00:00:00+00:00"]},
-}
-
-
-def _listed(name: str) -> bool:
-    return any(name == k or name.startswith(k + "-") for k in ALLOWLIST)
-
-
-def test_every_allowlisted_dataset_on_disk_captures_and_every_other_is_refused():
-    manifests = sorted(_DATA.glob("*/manifest.json"))
-    if not manifests:
-        pytest.skip("no dataset manifests on this host (the data root is gitignored)")
-    captured = 0
-    for manifest in manifests:
-        name = manifest.parent.name
-        if _listed(name):
-            block = capture_datasets({name: {}}, _DATA)[name]
-            assert block["extent"]["rows"] > 0 and len(block["set_digest"]) == 64
-            captured += 1
-        else:
-            with pytest.raises(RegistryError, match="adapter"):
-                capture_datasets({name: {}}, _DATA)
-    assert captured, f"no allowlisted dataset among {[m.parent.name for m in manifests]}"
-
-
-@pytest.mark.parametrize("name", sorted(_PINS))
-def test_a_frozen_canonical_extent_matches_its_measured_pin(name):
-    if not (_DATA / name / "manifest.json").is_file():
-        pytest.skip(f"{name} absent on this host (the data root is gitignored)")
-    assert capture_datasets({name: {}}, _DATA)[name]["extent"] == _PINS[name], (
-        f"canonical dataset drifted — STOP: {name}'s whole-set extent moved. These sets are frozen; a "
-        f"revision mints a sibling dir. Investigate before updating this pin."
-    )
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add cli/registry/provenance.py tests/test_registry_provenance.py
-git commit -m "feat(registry): two manifest adapters capture a declared dataset slice"
-```
-
-______________________________________________________________________
+---
 
 ### Task 2: Schema 4, the key-set split, `append()`, and the load-time checks — ONE commit
 
-Everything that changes the record contract lands together. Splitting it leaves an intermediate commit whose own `append()` writes records its own validator rejects.
+Everything that changes the record contract lands together. `append()` no longer computes anything from disk: it receives the loader's finished block, validates, derives, writes. `TrialRegistry` gains **no** constructor parameter.
 
 **Files (5):**
 
@@ -260,17 +261,17 @@ Everything that changes the record contract lands together. Splitting it leaves 
 
 **Interfaces:**
 
-- Produces: `SCHEMA_VERSION = 4`; `TrialRecord.datasets: dict | None`; `append(*, datasets: dict[str, dict[str, list[str]]], ...)` with **no** `dataset_hash` parameter; `TrialRegistry(path, *, data_root: Path | None = None)`.
-- Consumes: `capture_datasets` (Task 1).
+- Produces: `SCHEMA_VERSION = 4`; `TrialRecord.datasets: dict | None`; `append(*, datasets: dict, ...)` with **no** `dataset_hash` parameter.
+- Consumes: block dicts (from `ObservedReader.block()` or literals in tests — `append()` does not care who produced the dict; the shape check does the caring).
 
 - [ ] **Step 1: The key-set move ALONE, then a real load**
 
 Four edits to `cli/registry/record.py`, nothing else yet:
 
 1. `_STORE_OWNED` gains `"dataset_hash"`.
-1. `_REQUIRED_CALLER` loses `"dataset_hash"`. `_BASE_STORED_KEYS` is the union of both, so it is unchanged — that is what makes the move safe. **Do NOT add `datasets` to either set** (D3 mistake 2).
-1. `validate_caller_fields`'s hardcoded type-check tuple `("iteration", "family", "spec_hash", "dataset_hash")` loses `"dataset_hash"` (D3 mistake 1). `validate_stored_record` strips `_STORE_OWNED` before calling it, so leaving it there raises a bare `KeyError` on record 1.
-1. `TrialRegistry.append` sets `dataset_hash` on `rec` **after** `validate_caller_fields(caller)` — passing it in `caller` now trips the store-owned refusal. For this step only, keep the parameter and assign `rec["dataset_hash"] = dataset_hash`.
+1. `_REQUIRED_CALLER` loses `"dataset_hash"`. `_BASE_STORED_KEYS` is the union of both, so it is unchanged — that is what makes the move safe. **Do NOT add `datasets` to either set.**
+1. `validate_caller_fields`'s hardcoded type-check tuple `("iteration", "family", "spec_hash", "dataset_hash")` loses `"dataset_hash"` — `validate_stored_record` strips `_STORE_OWNED` before calling it, so leaving it there raises a bare `KeyError` on record 1.
+1. `TrialRegistry.append` sets `rec["dataset_hash"]` **after** `validate_caller_fields(caller)` — for this step only, keep the old parameter and assign it directly.
 
 Then load the real file through the real loader:
 
@@ -283,28 +284,18 @@ print('loaded', len(reg), 'schema versions', sorted({r.schema_version for r in r
 assert len(reg) == 46"
 ```
 
-Expected: `loaded 46 schema versions [2, 3]`. Anything else — a `RegistryError`, a `KeyError`, a short count — means the move is wrong; fix it here, before schema 4 exists. Then `uv run pytest tests/test_registry_store.py -q` — expect **36 passed**, nothing red: `_append` still passes `dataset_hash=` and every stored body still carries the key, so nothing in that file moves yet. `tests/test_registry_record.py` is what reds at this step, because its `_caller()` still supplies the now-store-owned `dataset_hash` — leave it; Step 4 fixes it. Do not "repair" it here, or you will undo the move.
+Expected: `loaded 46 schema versions [2, 3]`. Anything else means the move is wrong; fix HERE, before schema 4 exists. `tests/test_registry_record.py` reds at this step (its `_caller()` still supplies `dataset_hash`) — leave it for Step 4.
 
-- [ ] **Step 2: Write the failing tests** — all in `tests/test_registry_store.py`, beside the helpers they reuse (`_write`, `_new_registry`, `_append`, `canonical_json`, `compute_hash` are already there; add `import inspect`)
+- [ ] **Step 2: Write the failing tests** — in `tests/test_registry_store.py` (helpers `_write`, `_new_registry`, `_append`, `canonical_json`, `compute_hash` are already there; add `import inspect`)
 
 ```python
-def _data_root(tmp_path):
-    """Two pairs x two intervals, so both backfill axes discriminate."""
-    root = tmp_path / "data" / "ohlc-full"
-    root.mkdir(parents=True, exist_ok=True)
-    leaf = lambda n, last: {"rows": n, "first_ts": "2020-01-01T00:00:00+00:00", "last_ts": last, "sha256": "c" * 64}
-    (root / "manifest.json").write_text(json.dumps({
-        "basket_sha256": "a" * 64, "fetched_at": "x",
-        "series": {"BTC/EUR": {"1440": leaf(10, "2020-01-10T00:00:00+00:00"), "240": leaf(60, "2020-01-10T20:00:00+00:00")},
-                   "ETH/EUR": {"1440": leaf(7, "2020-01-10T00:00:00+00:00"), "240": leaf(42, "2020-01-10T20:00:00+00:00")}}}))
-    return tmp_path / "data"
-
-
 _REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
+
+_BLOCK = {"files": {"BTC/EUR/1440.parquet": "c" * 64}, "rows": 10,
+          "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"]}
 
 
 def test_all_46_committed_records_still_load():
-    """The defect that sank the first attempt. Assert against the REAL file, not a fixture."""
     reg = TrialRegistry(_REGISTRY)
     assert len(reg) >= 46  # floored, never pinned: the file grows with every registered trial
     assert all(r.schema_version in (2, 3) or r.datasets for r in reg.records)
@@ -316,37 +307,38 @@ def test_append_has_no_dataset_hash_parameter():
 
 def test_a_schema_four_record_round_trips_through_disk(tmp_path):
     reg = _new_registry(tmp_path)
-    written = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-full": {"intervals": ["1440"]}})
+    written = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
     reloaded = _new_registry(tmp_path).records[-1]
     assert reloaded.schema_version == 4
     assert reloaded.dataset_hash == compute_hash(reloaded.datasets) == written.dataset_hash
 
 
-def test_different_declared_intervals_give_different_digests(tmp_path):
+def test_different_file_sets_give_different_digests(tmp_path):
+    """The slice IS the file list: daily-only vs daily+4h differ by construction (D2)."""
     reg = _new_registry(tmp_path)
-    daily = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-full": {"intervals": ["1440"]}})
-    both = _append(reg, family="B", n_trials_in_family=1, datasets={"ohlc-full": {"intervals": ["1440", "240"]}})
+    daily = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
+    both_files = {**_BLOCK["files"], "BTC/EUR/240.parquet": "d" * 64}
+    both = _append(reg, family="B", n_trials_in_family=1,
+                   datasets={"ohlc-test": {**_BLOCK, "files": both_files, "rows": 70}})
     assert daily.dataset_hash != both.dataset_hash
 
 
-def test_different_declared_pairs_give_different_digests(tmp_path):
-    """The axis the registry's own history varies on: trials 1-8 vs 9-16 differ on pairs alone."""
+def test_a_windowed_read_gives_a_different_digest(tmp_path):
+    """The sample window is expressible (D2): same files, different rows/span, different digest."""
     reg = _new_registry(tmp_path)
-    one = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-full": {"pairs": ["BTC/EUR"]}})
-    two = _append(reg, family="B", n_trials_in_family=1, datasets={"ohlc-full": {}})
-    assert one.dataset_hash != two.dataset_hash
-
-
-_BLOCK = {"select": {"intervals": ["1440"]}, "set_digest": "a" * 64,
-          "extent": {"series": 1, "rows": 10, "span": ["2020-01-01", "2020-01-10"]}}
+    full = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
+    windowed = _append(reg, family="B", n_trials_in_family=1,
+                       datasets={"ohlc-test": {**_BLOCK, "rows": 3,
+                                 "span": ["2020-01-03 00:00:00+00:00", "2020-01-05 00:00:00+00:00"]}})
+    assert full.dataset_hash != windowed.dataset_hash
 
 
 def _schema4_line(**over):
     body = dict(
-        trial_id=1, schema_version=4, timestamp="2026-08-08T00:00:00+00:00", iteration="iter-001",
+        trial_id=1, schema_version=4, timestamp="2026-08-09T00:00:00+00:00", iteration="iter-001",
         family="A1", spec_hash="s", seeds=[0], metrics={"dsr": 0.1}, n_trials_in_family=1,
         verdict="adopt", run_ref=None, notes="", prev_hash=GENESIS_HASH,
-        datasets={"ohlc-full": dict(_BLOCK)},
+        datasets={"ohlc-test": dict(_BLOCK)},
     )
     body.update(over)
     body["dataset_hash"] = over.get("dataset_hash", compute_hash(body["datasets"]))
@@ -356,21 +348,21 @@ def _schema4_line(**over):
 @pytest.mark.parametrize(
     "over, match",
     [
-        ({"dataset_hash": "deadbeef" * 8}, "dataset_hash"),   # D4: derivation, not a caller claim
-        ({"datasets": "ba47e37e"}, "datasets"),               # D2a: the original failure, verbatim
-        ({"datasets": {}}, "datasets"),                       # D2: empty carries no provenance
-        ({"datasets": {"ohlc-full": {"select": {}, "set_digest": "zz"}}}, "datasets"),  # short + bad digest
-        # D2a's emptiness/strictness clauses. Each block below is otherwise perfectly shaped AND correctly
-        # derived (`_schema4_line` re-derives `dataset_hash` from whatever it is given), so nothing but the
-        # named clause can reject it -- and each defeats D2's property while satisfying the letter.
-        ({"datasets": {"ohlc-full": {**_BLOCK, "select": {}}}}, "select"),
-        ({"datasets": {"ohlc-full": {**_BLOCK, "select": {"intervals": []}}}}, "select"),
-        ({"datasets": {"ohlc-full": {**_BLOCK, "extent": {"series": 0, "rows": 0, "span": ["a", "b"]}}}}, "extent"),
-        ({"datasets": {"ohlc-full": {**_BLOCK, "extent": {"series": True, "rows": True, "span": ["a", "b"]}}}}, "extent"),
+        ({"dataset_hash": "deadbeef" * 8}, "dataset_hash"),        # D4: derivation, not a caller claim
+        ({"datasets": "ba47e37e"}, "datasets"),                    # the original failure, verbatim
+        ({"datasets": {}}, "datasets"),                            # empty carries no provenance
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {}}}}, "files"),          # says nothing
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a.parquet": "C" * 64}}}}, "files"),  # uppercase hex
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a.parquet": "c" * 63}}}}, "files"),  # short hex
+        ({"datasets": {"ohlc-test": {**_BLOCK, "rows": 0}}}, "rows"),             # zero-extent
+        ({"datasets": {"ohlc-test": {**_BLOCK, "rows": True}}}, "rows"),          # bool-as-int
+        ({"datasets": {"ohlc-test": {**_BLOCK, "span": ["a"]}}}, "span"),         # wrong arity
+        ({"datasets": {"ohlc-test": {k: v for k, v in _BLOCK.items() if k != "span"}}}, "span"),  # missing key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "extra": 1}}}, "datasets"),        # surplus key
     ],
 )
 def test_a_forged_schema_four_record_is_rejected_at_load(tmp_path, over, match):
-    """D4/D2a: the invariant is a property of the FILE, not of append()."""
+    """D4/D2: the invariant is a property of the FILE, not of append()."""
     with pytest.raises(RegistryCorruptionError, match=match):
         TrialRegistry(_write(tmp_path, [_schema4_line(**over)]))
 
@@ -385,12 +377,9 @@ def test_a_schema_four_record_missing_datasets_entirely_is_rejected(tmp_path):
 
 @pytest.mark.parametrize("bad", ["", 123])
 def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_path, bad):
-    """D3: this check ran on EVERY load via `validate_caller_fields` until `dataset_hash` became
-    store-owned. Nothing else covers schema 2/3 — the derivation check binds only >= 4 — so unless it
-    is re-homed the guard lapses silently, with the whole suite green and 46 records still loading.
-    `RegistryError` catches either spelling (`RegistryCorruptionError` is a subclass).
-    """
-    body = json.loads(_line(1))  # `_line` is the schema-3 helper, pinned to a literal 3 in Step 4
+    """This check ran on EVERY load via `validate_caller_fields` until the key became store-owned;
+    nothing else covers schema 2/3, so unless re-homed the guard lapses silently."""
+    body = json.loads(_line(1))  # the schema-3 helper, pinned to a literal 3 in Step 4
     del body["record_hash"]
     body["dataset_hash"] = bad
     with pytest.raises(RegistryError, match="dataset_hash"):
@@ -398,31 +387,26 @@ def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_pat
 
 
 def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
-    """D4: what actually binds record 47. The load check binds only >= 4, and nothing else makes a NEW
-    record say 4 -- the next direct JSONL writer templates off record 46, which says 3.
-
-    Built on the REAL 46 records (read-only, never rewritten), because that is the file it appends to.
-    """
+    """D4: what actually binds record 47 — built on the REAL 46 records (read-only)."""
     real = _REGISTRY.read_text(encoding="utf-8").splitlines()
     prev = json.loads(real[-1])
 
     def _line47(**over):
         body = dict(
-            trial_id=prev["trial_id"] + 1, schema_version=4, timestamp="2026-08-08T00:00:00+00:00",
+            trial_id=prev["trial_id"] + 1, schema_version=4, timestamp="2026-08-09T00:00:00+00:00",
             iteration="iter-001", family="FLOOR", spec_hash="s", seeds=[0], metrics={"dsr": 0.1},
             n_trials_in_family=1, verdict="adopt", run_ref=None, notes="", prev_hash=prev["record_hash"],
-            datasets={"ohlc-full": dict(_BLOCK)},
+            datasets={"ohlc-test": dict(_BLOCK)},
         )
         body.update(over)
         body["dataset_hash"] = compute_hash(body["datasets"])
         return canonical_json(dict(body, record_hash=compute_hash(body)))
 
-    # Non-vacuous in both directions: at schema 4 the very same record loads, so it is the floor that
-    # rejects the schema-3 one -- not the chain, the contiguity or the family-count rule.
+    # Non-vacuous both directions: the same record at schema 4 loads, so the floor is what rejects.
     assert len(TrialRegistry(_write(tmp_path, [*real, _line47()]))) == prev["trial_id"] + 1
 
     v3 = json.loads(_line47())
-    del v3["datasets"], v3["record_hash"]  # schema 3 may not carry the key at all (surplus-key check)
+    del v3["datasets"], v3["record_hash"]
     v3["schema_version"] = 3
     v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # verbatim
     forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
@@ -430,15 +414,11 @@ def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
         TrialRegistry(_write(tmp_path, [*real, forged]))
 
 
-def test_a_manifest_the_loader_would_reject_is_refused_at_append_and_nothing_is_written(tmp_path):
-    """D4: capture succeeds, the loader would not -- and the file is append-only, so it must not land."""
-    reg = _new_registry(tmp_path)  # FIRST -- _data_root() rewrites the manifest, undoing the edit below
-    mf = tmp_path / "data" / "ohlc-full" / "manifest.json"
-    m = json.loads(mf.read_text())
-    m["basket_sha256"] = m["basket_sha256"].upper()  # an external writer's legal-looking spelling
-    mf.write_text(json.dumps(m))
+def test_append_revalidates_and_a_bad_block_writes_nothing(tmp_path):
+    """One bad line is permanent (append-only, hash-chained) — refuse BEFORE the write."""
+    reg = _new_registry(tmp_path)
     with pytest.raises(RegistryError):
-        _append(reg, family="A", n_trials_in_family=1)
+        _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": {**_BLOCK, "rows": 0}})
     assert not reg.path.exists() or reg.path.read_text() == ""
 ```
 
@@ -449,34 +429,30 @@ Run: `uv run pytest tests/test_registry_store.py -q` — expected FAIL.
 `cli/registry/record.py`:
 
 - `SCHEMA_VERSION = 4`; `_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4})`.
-- `_EXPECTED_STORED_KEYS = {2: _BASE_STORED_KEYS, 3: _BASE_STORED_KEYS | {"variant"}, 4: _BASE_STORED_KEYS | {"variant", "datasets"}}`. That entry only *permits* `datasets`; it does not require it — the surplus check is a superset test and the missing check is over `_BASE_STORED_KEYS`.
-- `validate_caller_fields` gets **no** `datasets` check. `capture_datasets` is its only writer and always emits a valid shape; the block's shape is D2a's load-time business, and a caller-layer raise here would be a plain `RegistryError`, which `pytest.raises(RegistryCorruptionError)` cannot catch (corruption is a **subclass**, so it does not catch its parent). Its `_REQUIRED_CALLER` sweep must not name `datasets` either.
-- `validate_stored_record` gains, for **every** version, the non-empty-str check on `rec["dataset_hash"]` that `validate_caller_fields` used to perform — it no longer sees the key, so without this the guard silently lapses for schema 2/3 with the whole suite green. Probe 6 seds this text, so write it exactly:
+- `_EXPECTED_STORED_KEYS = {2: _BASE_STORED_KEYS, 3: _BASE_STORED_KEYS | {"variant"}, 4: _BASE_STORED_KEYS | {"variant", "datasets"}}` — the `4:` entry *permits* `datasets`; the requirement is an explicit check below.
+- `validate_stored_record` gains, for **every** version, the re-homed non-empty-str check — Probe 6 seds this text, so write it exactly:
 
 ```python
     if type(rec.get("dataset_hash")) is not str or not rec["dataset_hash"]:
         raise RegistryCorruptionError(f"{where}: dataset_hash must be a non-empty str")
 ```
 
-- `validate_stored_record`, for `version >= 4`, in order, each raising its own `RegistryCorruptionError` **naming `datasets` or `dataset_hash`, plus the offending sub-field where there is one** (`select`, `set_digest`, `extent`): (a) `datasets` present; (b) `_validate_datasets_shape(rec["datasets"], where)`; (c) the derivation, written verbatim as `rec["dataset_hash"] != compute_hash(rec["datasets"])` because Probe 1 seds that text. Order matters: (a) before (c), or (c) raises a bare `KeyError`.
-- **Every `_validate_datasets_shape` message names exactly ONE sub-field and interpolates NEITHER the block NOR the offending value.** The parametrized cases match on the bare substrings `select` / `extent`, so an `f"{where}: bad datasets block {value!r}"` — which contains every sub-field name — would let the zero-`extent` case match `select` and vice versa: all four degenerate cases pass for the wrong reason, with nothing to detect it. Name the dataset key and the sub-field; state the rule violated, not the input.
-- `_validate_datasets_shape` (D2a — no disk access, no axis-name knowledge): non-empty `dict`; each value a dict with **exactly** `{select, set_digest, extent}`; `select` a **non-empty** `dict[str, list[str]]` whose lists are each **non-empty**, sorted and deduplicated; `set_digest` 64-char lowercase hex; `extent` exactly `{series: int, rows: int, span: [str, str]}` with `series >= 1` and `rows >= 1`. Write the int checks as `type(x) is int`, **never `isinstance`** — `isinstance(True, int)` is `True`, and `_assert_finite` two functions up already uses the is-strict form with the comment saying why. The emptiness clauses are not decoration: without them `{"select": {}, "set_digest": <hex>, "extent": {"series": 0, "rows": 0, ...}}` satisfies every other clause, hashes and loads clean, and carries no slice — defeating D2's "the block says which pairs and intervals were read without the gitignored manifest". Capture can never emit one, so refusing it is free. Probe 7 seds the non-empty-`select` clause, so write that one exactly:
+- `validate_stored_record`, for `version >= 4`, in order, each its own `RegistryCorruptionError` naming the offending sub-field (`files` / `rows` / `span`) or `datasets`/`dataset_hash`: (a) `datasets` present; (b) `_validate_datasets_shape(rec["datasets"], where)`; (c) the derivation, written verbatim as `rec["dataset_hash"] != compute_hash(rec["datasets"])` (Probe 1 seds that text). **(a) before (c)** or (c) raises a bare `KeyError`. **Every message names exactly ONE sub-field and interpolates neither the block nor the offending value** — the parametrized cases match bare substrings, so a message containing every name lets cases pass for the wrong reason.
+- `_validate_datasets_shape` (no disk access, no dataset-name knowledge): non-empty `dict`; each value a dict with **exactly** `{files, rows, span}`; `files` a **non-empty** `dict[str, str]` whose values are 64-char lowercase hex (`re.fullmatch(r"[0-9a-f]{64}", v)`); `rows` `type(x) is int` and `>= 1`; `span` a list of exactly 2 `str`. Probe 7 seds the non-empty-`files` clause, so write it exactly:
 
 ```python
-        if type(block["select"]) is not dict or not block["select"]:
-            raise RegistryCorruptionError(f"{where}: datasets[{name!r}] select must be a non-empty dict")
+        if type(block["files"]) is not dict or not block["files"]:
+            raise RegistryCorruptionError(f"{where}: datasets[{name!r}] files must be a non-empty dict")
 ```
 
-- **Place that whole `version >= 4` block BEFORE the `caller = {k: v for k, v in rec.items() ...}` / `validate_caller_fields(...)` lines**, which are today the last two statements of the function — anything raised from the caller layer is a plain `RegistryError` the corruption tests cannot catch.
+- **Place the whole `version >= 4` block BEFORE the `caller = ...` / `validate_caller_fields(...)` lines** (today the function's last two statements) — the caller layer raises plain `RegistryError`, which `pytest.raises(RegistryCorruptionError)` cannot catch.
 - `TrialRecord` gains `datasets: dict | None = None`.
 
 `cli/registry/store.py`:
 
 - `_to_record` passes `datasets=rec.get("datasets")` — without it the field is always `None` and the round-trip test fails silently.
-- `TrialRegistry.__init__(self, path, *, data_root: Path | None = None)`, stored on the instance. **No `cli.config` default** — resolving it there would make a plain read of the registry raise `ConfigError` on an unconfigured host, and there is no production `append()` caller to serve. `append()` raises `RegistryError` naming `data_root` when it is `None`.
-- `append()` drops `dataset_hash`, gains `datasets: dict[str, dict[str, list[str]]]`, calls `capture_datasets(datasets, self._data_root)`, puts the captured block in `caller["datasets"]`, and sets `rec["dataset_hash"] = compute_hash(caller["datasets"])` **after** `validate_caller_fields` (it is store-owned now).
-- `append()` then calls `validate_stored_record(rec, f"{self.path} (append)")` **after** `rec["record_hash"] = compute_hash(rec)` and **before** `lock_f.write(...)`. Schema 4 is the first path where a successful capture can yield a record the loader rejects — `set_digest` and `extent.rows` come straight from a manifest, and the holdout's is written by an external freeze — and the file is append-only and hash-chained, so one such line makes the registry permanently unloadable with no legal repair (`_read_healing` heals only a torn *trailing* line).
-- `_assert_cross_record` gains the **schema-4 floor** (D4) — the rule that binds record 47, and the only thing that does. Measured: the 46 committed records are `[2]×32` then `[3]×14` and the highest `trial_id` is 46, so the floor costs nothing against history and bites on the very next record. A weaker "non-decreasing `schema_version`" was considered and rejected: an unbroken run of 3s satisfies it, so it binds nothing until a first schema-4 append that nothing compels. Module constant, with the comment, then the guard — Probe 5 seds the guard line, so write both exactly:
+- `append()` drops `dataset_hash`, gains `datasets: dict`, puts it in the stored body, sets `rec["dataset_hash"] = compute_hash(rec["datasets"])` **after** `validate_caller_fields` (store-owned), then calls `validate_stored_record(rec, f"{self.path} (append)")` **after** `rec["record_hash"] = compute_hash(rec)` and **before** `lock_f.write(...)`.
+- `_assert_cross_record` gains the schema-4 floor — module constant + guard, written exactly (Probe 5 seds the guard line):
 
 ```python
 # The highest trial_id committed when the datasets block landed. Records 1-46 predate it and the file is
@@ -493,236 +469,171 @@ _LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
             )
 ```
 
-- Update the `TrialRegistry` class docstring: `loads schema v2+v3, writes v3` → `loads schema v2-v4, writes v4`, plus one clause naming the v4 addition (a `datasets` block whose `compute_hash` is `dataset_hash`). Both halves are false after this task, and the constant sits three lines below. **Do NOT touch the two specs it cites** (`docs/specs/00000-…`, `docs/specs/00012-…`): their sha256 is pinned as `spec_hash` in committed records, so editing either dangles a pin that can never be repaired.
+- Update the `TrialRegistry` class docstring (`loads schema v2+v3, writes v3` → `loads schema v2-v4, writes v4`, one clause naming the v4 block). **Do NOT touch the two specs it cites** — their sha256 is pinned as `spec_hash` in committed records.
 
 - [ ] **Step 4: Update every existing test that constructs a record**
 
-`tests/test_registry_record.py`:
+`tests/test_registry_record.py`: `test_constants` `SCHEMA_VERSION == 3` → `== 4`; `_caller()` drops `dataset_hash="d"`; `test_invalid_caller_rejected` adds the case `{"dataset_hash": "d"}` (store-owned refusal); every stored body built from `_caller()` (`test_stored_record_hash_and_schema_checks`, `test_stored_record_schema_version_variant_compat` with its derived copies, `test_stored_record_validation_stays_lenient_about_run_ref`) adds `dataset_hash="d"` explicitly and pins `schema_version=3` — they are v3-semantics tests; left on `SCHEMA_VERSION` they become schema-4 bodies with no `datasets` and pass or fail for the wrong reason.
 
-- `test_constants`: `SCHEMA_VERSION == 3` → `== 4`.
-- `_caller()`: drop `dataset_hash="d"` — it is store-owned, so `validate_caller_fields(_caller())` would now refuse it.
-- `test_invalid_caller_rejected`: add the case `{"dataset_hash": "d"}` beside `{"trial_id": 9}` — same rule, newly applicable.
-- Every stored body built from `_caller()` — in `test_stored_record_hash_and_schema_checks`, `test_stored_record_schema_version_variant_compat` (its two `_caller()`-built bodies, `body_v2` and `body_v3`; the three derived copies `body_v3_variant`/`body_v2_bad`/`body_v3_bad` inherit), and `test_stored_record_validation_stays_lenient_about_run_ref` — must now add `dataset_hash="d"` explicitly and pin `schema_version=3` instead of `SCHEMA_VERSION`. They are v3-semantics tests; left on `SCHEMA_VERSION` they become schema-4 bodies with no `datasets` and pass or fail for the wrong reason.
+`tests/test_registry_store.py`: `_line` pins `schema_version=3` (keep `dataset_hash="d"` — legal in a *stored* v3 body); the four inline bodies in `test_v3_record_with_nonstr_variant_is_corruption`, `test_v3_unknown_key_forge_is_corruption`, `test_missing_base_key_is_corruption`, `test_v3_without_variant_still_loads` pin `schema_version=3` — left on `SCHEMA_VERSION`, the last fails outright and the other three keep passing **for the wrong reason** (raising on missing `datasets`, silently retiring the guards they pin). `_append` drops `dataset_hash="d"`, gains `datasets={"ohlc-test": dict(_BLOCK)}` as its default. `test_append_requires_run_ref_explicitly` passes `datasets=...` instead of `dataset_hash="d"` or its `TypeError` fires for the wrong keyword. `TrialRegistry` gains no constructor parameter, so the fourteen construction sites need **no** routing changes.
 
-`tests/test_registry_store.py` — the same v3 pin, and it is the trap in this task. Six construction sites:
+`tests/test_trial_registry_provenance.py`: its `_caller()` drops `dataset_hash="d"`.
 
-- `_line` (`schema_version=SCHEMA_VERSION` → literal `3`) and `_line_v2` (already `2`; both keep `dataset_hash="d"`, which is legal in a *stored* body).
-- The four inline bodies in `test_v3_record_with_nonstr_variant_is_corruption`, `test_v3_unknown_key_forge_is_corruption`, `test_missing_base_key_is_corruption`, `test_v3_without_variant_still_loads`: pin `schema_version=3`. Left on `SCHEMA_VERSION` the last one fails outright and the other three keep **passing for the wrong reason** — they would raise on the missing `datasets`, silently retiring the variant / forge / missing-base-key guards they exist to pin. Step 6's full-suite run cannot detect that; only this pin can.
-- `_append`: drop `dataset_hash="d"`, add `datasets={"ohlc-full": {}}`.
-- `_new_registry` takes the path, because two callers do **not** use `t.jsonl` and routing them blind would silently swap in an empty file:
+- [ ] **Step 5: Run the whole suite** — `uv run pytest -q`, FULL, not `-k registry` (`test_portfolio_builder.py` and `test_record44_legs.py` construct `TrialRegistry` over the real file). Expected: PASS.
+- [ ] **Step 6: Commit** (stage all five files) — `feat(registry)!: schema 4 — dataset_hash is derived from an observed datasets block`.
 
-```python
-def _new_registry(tmp_path, path=None):
-    return TrialRegistry(path or tmp_path / "t.jsonl", data_root=_data_root(tmp_path))
-```
+---
 
-- Every site that builds a `TrialRegistry` inline and then calls `_append` must route through it — otherwise `data_root` stays `None` and `append()` raises the new `RegistryError`. **Fourteen** sites, split **eleven** whose registry really is `tmp_path/"t.jsonl"` and may route blind as `_new_registry(tmp_path)`: `test_append_assigns_contiguous_ids_across_reopen`, `test_append_rejects_nonfinite_before_writing`, `test_append_family_count_floor`, `test_append_then_records_snapshot`, `test_concurrent_registries_get_unique_ids`, `test_append_with_variant_round_trips`, `test_append_without_variant_omits_key_from_raw_line`, `test_append_rejects_invalid_variant_before_writing`, `test_append_records_a_committed_run_ref_end_to_end`, `test_variant_does_not_affect_family_budget_monotonic_check`, and **`test_chain_continues_across_registry_instances`** (its `reg2 = TrialRegistry(reg.path)` reopen is an `_append` caller that reads as a plain construction) — and **three** that must pass their own path as `_new_registry(tmp_path, p)`:
-  - `test_append_after_torn_trailing_line_self_heal` — `p = _write(tmp_path, [_line(1)])` is `tmp_path/"trials.jsonl"` (the `_write` helper's filename), deliberately torn and then healed; on `t.jsonl` the append lands in an empty file and `assert r.trial_id == 2` fails.
-  - `test_mixed_v2_and_v3_file_loads_with_intact_chain` — `p = tmp_path/"trials.jsonl"` pre-seeded with two v2 lines; on `t.jsonl` its first assertion `len(reg) == 2` fails.
-  - `test_append_rejects_unprovenanced_run_ref_before_writing` — `p = tmp_path/f"t{hash(str(bad))}.jsonl"`, a fresh path per loop iteration. This is the dangerous one: `_validate_run_ref` fires inside `validate_caller_fields` **before** `open(self.path, "a")`, so no file is ever created either way and the trailing `assert not p.exists() or p.read_text() == ""` stays true whichever path the registry actually used — routing it blind retires that assertion silently instead of failing loudly.
-- `grep -n "TrialRegistry(" tests/test_registry_store.py` finds the *names*, not the paths — so check each site's path expression, not just that it appears here.
-- `test_append_requires_run_ref_explicitly` passes `dataset_hash="d"` directly to `append()`: replace with `datasets={"ohlc-full": {}}`, or the `TypeError` it asserts fires for the wrong keyword.
-
-`tests/test_trial_registry_provenance.py`: its own `_caller()` supplies `dataset_hash="d"` (used by `test_both_layers_agree_on_path_spelling`) — drop it.
-
-- [ ] **Step 5: Run the whole suite**
-
-Run: `uv run pytest -q`
-Expected: PASS. Run the FULL suite, not `-k registry` — `tests/test_portfolio_builder.py` and `tests/test_record44_legs.py` construct `TrialRegistry` over the real file and match no registry-shaped keyword.
-
-- [ ] **Step 6: Commit** (stage all five files listed above)
-
-______________________________________________________________________
-
-### Task 3: The legacy pins table
+### Task 3: The legacy pins table — the ruling, executed
 
 **Files:**
 
 - Create: `docs/reference/legacy-dataset-pins.jsonl`
 - Test: `tests/test_legacy_dataset_pins.py`
 
-- [ ] **Step 1: Write the failing tests**
+**Interfaces:** four JSONL lines, keys `{hash, confidence, referent, trial_ids, evidence}`; `confidence ∈ {reproduced, inferred, unrecoverable}`; an `unrecoverable` row has `referent: null`; every non-null referent carries its epistemics inline.
+
+- [ ] **Step 1: Extract the full hashes and operands** (workstation, one-off, results become literals):
+
+```bash
+uv run python -c "
+import json
+recs = [json.loads(l) for l in open('docs/reference/trial-registry.jsonl')]
+for pfx in ('ba47e37e','81dc9b44','45275ebe','cccb8d17'):
+    ids = [r['trial_id'] for r in recs if r['dataset_hash'].startswith(pfx)]
+    print(pfx, recs[[r['trial_id'] for r in recs].index(ids[0])]['dataset_hash'], ids)
+print('15m basket:', json.load(open('data/ohlc-15m/manifest.json'))['basket_sha256'])"
+```
+
+- [ ] **Step 2: Write the failing tests**
 
 ```python
+"""The four pre-schema-4 hashes: ruled 2026-08-09 — documented, never repaired (spec 00086 D6)."""
+
 import hashlib
 import json
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parents[1]
-_REGISTRY = _REPO / "docs" / "reference" / "trial-registry.jsonl"
-_PINS_PATH = _REPO / "docs" / "reference" / "legacy-dataset-pins.jsonl"
+_PINS = Path(__file__).resolve().parents[1] / "docs" / "reference" / "legacy-dataset-pins.jsonl"
+_REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
 
 
-def _jsonl(path):
-    return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+def _rows():
+    return [json.loads(l) for l in _PINS.read_text().splitlines()]
 
 
-def _records():
-    return _jsonl(_REGISTRY)
+def test_exactly_the_four_known_hashes_with_registry_true_trial_ids():
+    rows = {r["hash"][:8]: r for r in _rows()}
+    assert set(rows) == {"ba47e37e", "81dc9b44", "45275ebe", "cccb8d17"}
+    recs = [json.loads(l) for l in _REGISTRY.read_text().splitlines()]
+    for row in rows.values():
+        cited = sorted(r["trial_id"] for r in recs if r["dataset_hash"] == row["hash"])
+        assert row["trial_ids"] == cited, f"{row['hash'][:8]}: pins say {row['trial_ids']}, registry says {cited}"
 
 
-def _pins():
-    return _jsonl(_PINS_PATH)
+def test_the_reproduced_recipe_executes_from_its_own_literals():
+    row = next(r for r in _rows() if r["confidence"] == "reproduced")
+    h4, h15 = row["evidence"]["operand_4h"], row["evidence"]["operand_15m"]
+    assert hashlib.sha256(f"{h4}:{h15}".encode()).hexdigest() == row["hash"]
 
 
-def test_a_pin_record_has_exactly_the_documented_keys_and_names_its_citers():
-    """Pins the artifact's shape against the three tests that index into it — otherwise Step 3's four
-    entries and this file can silently disagree about key names. `trial_ids` is checked against the
-    real registry, so it is the link from a schema-2/3 record to its pin and cannot rot."""
-    for pin in _pins():
-        assert set(pin) == {"dataset_hash", "referent", "confidence", "trial_ids", "evidence"}
-        assert len(pin["dataset_hash"]) == 64 and pin["dataset_hash"] == pin["dataset_hash"].lower()
-        assert pin["trial_ids"] == sorted(
-            r["trial_id"] for r in _records() if r["dataset_hash"] == pin["dataset_hash"]
-        )
+def test_epistemics_live_in_the_referent_value():
+    for row in _rows():
+        if row["confidence"] == "unrecoverable":
+            assert row["referent"] is None
+        elif row["confidence"] == "inferred":
+            assert "INFERRED" in row["referent"] and "never recomputed" in row["referent"]
+        else:  # reproduced — the row a careless reader trusts most needs the qualifier most
+            assert "unrecoverable" in row["referent"]
 
 
-def test_every_pre_schema_four_hash_is_pinned():
-    historical = {r["dataset_hash"] for r in _records() if r["schema_version"] < 4}
-    assert historical == {p["dataset_hash"] for p in _pins()}
-
-
-def test_cccb8d17_reproduces():
-    """The one entry whose recipe executes. Inline, not a data-driven interpreter."""
-    pin = next(p for p in _pins() if p["dataset_hash"].startswith("cccb8d17"))
-    assert pin["confidence"] == "reproduced"
-    a, b = pin["evidence"]["operands"]
-    assert hashlib.sha256(f"{a}:{b}".encode()).hexdigest() == pin["dataset_hash"]
-
-
-def test_the_qualification_lives_in_the_referent_value():
-    """A careless grep must not return a bare path that reads as verified fact -- for ANY confidence."""
-    for pin in _pins():
-        assert pin["confidence"] in ("reproduced", "inferred", "unrecoverable")
-        if pin["confidence"] == "inferred":
-            assert "INFERRED" in pin["referent"]
-        if pin["confidence"] == "unrecoverable":
-            assert pin["referent"] is None
-        if pin["confidence"] == "reproduced":
-            # `reproduced` names the RECIPE, not the data: cccb8d17's 4h operand is 81dc9b44, which this
-            # same table classes unrecoverable. This is the row a careless reader trusts unconditionally.
-            assert "UNRECOVERABLE" in pin["referent"]
-            assert any(p["dataset_hash"].startswith("81dc9b44") and p["confidence"] == "unrecoverable"
-                       for p in _pins())
+def test_no_pin_claims_more_than_t0065_measured():
+    assert all(r["confidence"] in ("reproduced", "inferred", "unrecoverable") for r in _rows())
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 3: Run to verify they fail**, then **write the four entries**, every claim taken from T0065's measured table and nothing beyond it: `ba47e37e` `inferred`, referent `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`, trial_ids from Step 1 (expected 1–35 ∪ 40–42, 38 ids), evidence naming the 4581-row/2013→2026 extent match + v0 exclusion + the trials-33/35 scope mismatch; `81dc9b44` `unrecoverable`, `referent: null`, evidence "resisted ~226,000 candidates; no driver ever committed"; `45275ebe` `inferred`, referent naming the `UNION_BARS` pins and that its composition inherits `81dc9b44`'s unrecoverability and the runbook's stated recipe does not reproduce; `cccb8d17` `reproduced`, referent naming inline that its 4h operand is the unrecoverable `81dc9b44`, evidence `{"operand_4h": "<full 81dc9b44 hash>", "operand_15m": "<basket literal>", "recipe": "sha256(hex_4h + ':' + hex_15m)"}`.
+- [ ] **Step 4: Run to verify they pass**, plus a workstation-gated check that `operand_15m` equals `data/ohlc-15m/manifest.json`'s `basket_sha256` on disk (skip off-workstation with a reason).
+- [ ] **Step 5: Commit** — stage both paths explicitly: `docs(registry): the legacy dataset pins — ruled unverifiable, documented with epistemics inline`.
 
-- [ ] **Step 3: Write the four entries**, taking every claim from `docs/open-topics/T0065-...md`'s measured table and asserting nothing beyond it. Each carries `trial_ids`, measured from the registry and asserted by the shape test: `ba47e37e` trials 1–35 and 40–42 (38), `81dc9b44` 36–39, `45275ebe` 43–44, `cccb8d17` 45–46.
+---
 
-- `cccb8d17` — `reproduced`, evidence `operands` = the 4h and 15m hex operands, recipe `sha256(hex_4h + ":" + hex_15m)`. Referent `"sha256(81dc9b44 [UNRECOVERABLE 4h primitive] : data/ohlc-15m basket_sha256) — the RECIPE reproduces; the 4h operand's referent does not"`. T0065's words: "fully reproducible but only half traceable to bytes." Verified at full precision 2026-08-08 — the 15m operand is `data/ohlc-15m/manifest.json`'s on-disk `basket_sha256`.
-- `ba47e37e` — `inferred`, referent `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`. Evidence is T0065's own measured extent and nothing else: BTC/EUR daily **4581 rows**, span `2013-09-10 → 2026-03-31`, `UNION_BARS[1440] = 4582` union stamps, plus the v0 exclusion (721 bars from 2024-07-17, zero hash overlap). **Do not record a whole-set row count as T0065 evidence** — the 1440 leaves sum to 34,460 over all 12 `ohlc-full` pairs and 29,032 over the 10-pair EUR basket (measured on disk 2026-08-08), and neither figure appears in T0065. T0065's argument covers the **daily** series only; do not widen it. Note also that 2 of its 38 citers (trials 33 and 35, `P1`) read daily **and** 4h, so the pin is narrower than some of the records pointing at it — say so in the evidence.
-- `81dc9b44` — `unrecoverable`, `referent: null`. T0065 classes it an unresolved **4h primitive**, and nothing in the repo establishes a referent. Do **not** write "inherits" — only `45275ebe` inherits. Evidence records the negative: ~226,000 candidates tested, no driver ever committed.
-- `45275ebe` — `inferred`, referent naming `data/ohlc-full` daily+4h with the INFERRED qualification; evidence names the two hashes it composes, that `81dc9b44` is unrecoverable so it cannot be recomputed, that the runbook's stated composition does **not** reproduce, and `tests/test_record44_legs.py`'s `UNION_BARS = {1440: 4582, 240: 27338}` as the actual extent evidence.
+### Task 4: `zcrypto research eval` — the door
 
-- [ ] **Step 4: Run to verify they pass**
+**Files:**
 
-- [ ] **Step 5: Commit** — stage **both** paths explicitly:
+- Create: `cli/research/__init__.py`, `cli/research/subjects.py`, `cli/research/command.py`
+- Modify: `cli/__main__.py` (register `research_app`), `cli/portfolio/record44_legs.py` (`load_union` gains `read=` — optional, default preserves behavior), `README.md` (`## Usage`)
+- Test: `tests/test_research_command.py`
 
-```bash
-git add docs/reference/legacy-dataset-pins.jsonl tests/test_legacy_dataset_pins.py
+**Interfaces:**
+
+- Produces: `research_app` (Typer sub-app); `SUBJECTS: dict[str, Subject]` with `Subject(name, intervals: tuple[int, ...], build: Callable)`; `zcrypto research eval --subject <name> --dataset <dir> [--window START END] [--register --iteration I --family F --spec-hash H --verdict V [--notes N] [--seed S]...] [--registry PATH]`.
+- Consumes: `ObservedReader` (Task 1), `TrialRegistry.append(datasets=...)` (Task 2), `build_crossfreq_system_fast`, `build_combined_system`, `load_union`.
+
+- [ ] **Step 1: `load_union` gains a `read` parameter** — `load_union(interval, *, root=DATA_ROOT, read=read_parquet)`; the body's one `read_parquet(path)` call becomes `read(path)`. Run `uv run pytest tests/test_record44_legs.py -q` (skips off-workstation; on the workstation it must still pass — the default preserves behavior byte-for-byte).
+
+- [ ] **Step 2: Write the failing tests** — `tests/test_research_command.py`, CliRunner, with a stub subject monkeypatched into `SUBJECTS` (production entries stay clean):
+
+```python
+def _stub_subject(monkeypatch, tmp_path):
+    """A subject whose build returns fixed metrics over whatever the reader hands it."""
+    from cli.research import subjects
+    def build(reader, dataset, window):
+        reader.read_series(dataset, "BTC/EUR/1440.parquet", window=window)
+        return {"sharpe": 1.0}
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", subjects.Subject("stub", (1440,), build))
 ```
 
-`mutate-probe.sh` refuses on `git status --porcelain`, which reports untracked files too, so a forgotten `git add` here makes every Task 4 probe exit 3.
+Tests: (1) `eval --subject stub --dataset ohlc-test` over a synthetic dataset prints a report containing the block's rows and the vouched-status line, exit 0, **no registry write**; (2) with `--register --registry <tmp> --iteration iter-001 --family STUB --spec-hash s --verdict adopt` the tmp registry gains one schema-4 record whose `dataset_hash == compute_hash(datasets)` and whose `datasets` block names `BTC/EUR/1440.parquet`; (3) `--register` without `--iteration`/`--family`/`--spec-hash`/`--verdict` exits non-zero naming the missing flag; (4) a subject whose required series the dataset lacks (crossfreq on a daily-only synthetic dataset) exits non-zero **naming the missing files**; (5) an unknown subject exits non-zero listing the known ones.
 
-______________________________________________________________________
+- [ ] **Step 3: Run to verify they fail**, then **implement**:
 
-### Task 4: Prove the guards by construction
+`cli/research/subjects.py` — `Subject` dataclass (`name`, `intervals`, `build: Callable[[ObservedReader, str, tuple | None], dict]`); `required_relpaths(subject) -> list[str]` = `[f"{a}/EUR/{i}.parquet" for a in CrossfreqSystemConfig().assets for i in subject.intervals]`; `SUBJECTS` with the two production entries:
 
-Runs after Tasks 1–3 are committed — `mutate-probe.sh` refuses a dirty tree. Only **Probe 4** needs a data-bearing host; every other probe rides tmp fixtures or the committed registry (Probe 2's control and mutation both bite tmp-fixture tests). On a bare checkout Probe 4's baseline skips-and-passes and its control cannot fail (rc 5), which is itself the finding.
+- `record44-crossfreq` (`intervals=(1440, 240)`): loads both unions via `load_union(interval, root=data_root/dataset, read=<reader-bound closure mapping path→relpath>)`, calls `build_crossfreq_system_fast`, returns its headline metrics dict.
+- `record33-combined` (`intervals=(1440,)`): daily union → `build_combined_system`, returns its metrics dict.
 
-**Verify each `-k` selector with `--collect-only -q` before running its probe.** `-k` is plain substring matching, not gapped, and these test names do not exist until this plan is executed — a near-miss silently deselects the only mutation-sensitive test and the probe returns a confident SURVIVED. Expected counts: Probe 3 → 2, Probe 4 → 4, Probe 5 → 2, Probe 6 → 3, Probe 7 → 8.
+`cli/research/command.py` — `research_app = typer.Typer(...)`; `eval` command: resolve `_DATA_ROOT = <repo>/data` (module constant, `record44_legs` pattern); refuse unknown subject (list known); refuse missing required series **before any read** (`(data_root/dataset/rel).exists()` sweep, message naming every missing file); instantiate `ObservedReader`; run `subject.build(reader, dataset, window)`; print the report (metrics, the block summary, `reader.vouched_status()`); on `--register`, require the caller flags, then `TrialRegistry(registry_path).append(iteration=..., family=..., spec_hash=..., seeds=[...], metrics=..., n_trials_in_family=1, verdict=..., run_ref="cli/research/command.py — spec 00086 D5", notes=..., datasets=reader.block())`. `--registry` defaults to `docs/reference/trial-registry.jsonl`. Register in `cli/__main__.py`: `app.add_typer(research_app, name="research")`. Operator-facing text: no `T<NNNN>`/iter tokens in any printed literal (`run_ref` cites the spec serial — that is a stored document field read with the repo open, and `tests/test_internal_terms_not_operator_visible.py` must stay green; if it flags the literal, move the serial into `notes` supplied by the caller instead).
 
-- [ ] **Step 1: The load-time derivation bites**
+- [ ] **Step 4: Run to verify they pass** — `uv run pytest tests/test_research_command.py tests/test_internal_terms_not_operator_visible.py -q`, then the full suite.
+- [ ] **Step 5: README `## Usage`** — the `research eval` section with the two subjects and the `--register` contract, same change (readme-usage rule).
+- [ ] **Step 6: Commit** — `feat(research): the committed eval command is the registry's door`.
 
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/record.py \
-  --control 's|_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4})|_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3})|' \
-  --mutation 's|!= compute_hash(rec\["datasets"\])|!= rec["dataset_hash"]|' \
-  -- uv run pytest tests/test_registry_store.py -q
-```
+---
 
-Expected: `KILLED`. The control drops schema 4 from the loadable set, failing the round-trip test; the mutation makes the derivation check tautological, which the forged-record case carrying an inconsistent `dataset_hash` must catch.
+### Task 5: Controls — the runner proves itself against history; conformance over the real registry
 
-- [ ] **Step 2: The allowlist refusal bites**
+**Files:**
 
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
-  --control 's|"ohlc-full": "backfill"|"ohlc-FULL": "backfill"|' \
-  --mutation 's|if name == key or name.startswith(key + "-"):|if True:|' \
-  -- uv run pytest tests/test_registry_provenance.py -q
-```
+- Test: `tests/test_research_control.py`, `tests/test_registry_conformance.py`
 
-Expected: `KILLED`. The control breaks the exact-match key so every backfill test reds; the mutation makes any dataset resolve to the first adapter, so the refusal test reds.
+- [ ] **Step 1: The record-44 control** (workstation-gated, skip-with-reason off it): drive the runner's own loading path — `load_union(1440/240, root=data/ohlc-full, read=<ObservedReader closure>)` — feed `build_crossfreq_system_fast`, and assert `governor_engaged_bars` and `cap_breach_bars` equal the registry record 44 values read from the REAL registry (the same figures `instrument_self_check` reproduces), and the block equals the frozen extent: 20 files, rows 202,405, span `["2013-09-10 00:00:00+00:00", "2026-03-31 20:00:00+00:00"]` — measured 2026-08-08. A drifted canonical must turn this red — same STOP contract as `tests/test_crossfreq_system.py`.
+- [ ] **Step 2: The everywhere end-to-end** (CI, bare checkout): synthetic dataset in tmp → `ObservedReader` → `block()` → `append()` to a tmp registry → reload → `dataset_hash == compute_hash(datasets)` re-derived — the full pipeline with zero real data.
+- [ ] **Step 3: The disk conformance pass** — for every schema-4 record in the real registry: re-hash its `files` against `data/`, memoised per `(path, size, mtime)`; verdicts `rederived` / `absent-here` (dataset dir missing) / **finding** (dir present, hash mismatch or named file missing) — a finding fails the test naming record and file. Zero schema-4 records today → the real-file half **skips** with reason "no schema-4 records yet"; the mechanism is proven NOW against a constructed tmp registry + tmp data tree (one rederived, one absent-here, one finding case), so the test is non-vacuous from birth.
+- [ ] **Step 4: Full suite**, then **commit** — `test(registry): the runner reproduces record 44, and conformance re-hashes what records cite`.
 
-- [ ] **Step 3: The declared slice actually resolves the extent**
+---
 
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
-  --control 's|^def capture_datasets|def capture_datasets_RENAMED|' \
-  --mutation 's|if _selected(pair, sel.get("pairs")) and _selected(interval, sel.get("intervals"))||' \
-  -- uv run pytest tests/test_registry_provenance.py -k "declared_slice or each_axis" -q
-```
+### Task 6: Prove the guards by construction
 
-Expected: `KILLED`. The control renames the function every test imports (ImportError, whole file reds); the mutation ignores the leaf filter, so `extent` collapses to the whole set — `test_backfill_shape_captures_the_declared_slice` pins `{"series": 1, "rows": 10, ...}` and `test_each_axis_is_independently_selectable_and_empty_means_all` pins `series == 2 and rows == 49` / `rows == 102`, so both red. (The blanked line stays inside the comprehension's brackets, so the file is still valid Python — a behaviour mutation, not a syntax error.)
+All probes through `infra/scripts/mutate-probe.sh` (clean tree, controls first). Record WHICH failure fired for each — a red exit can be the harness misfiring.
 
-**Do NOT aim this at the `different_declared_*` digest tests**: `select` is itself a hashed field of the block, so two records declaring different slices get different `dataset_hash` even when the extent collapses — those tests stay green under this mutation and would score it SURVIVED. The extent assertions are the ones the leaf filter actually moves.
+- [ ] **Probe 1 — derivation:** sed Task 2's verbatim `rec["dataset_hash"] != compute_hash(rec["datasets"])` to `==` → the forged-hash case must fail. Control: unmutated suite green.
+- [ ] **Probe 2 — floor:** sed the guard's `< 4` to `< 3` → `test_a_record_past_the_legacy_floor_must_declare_schema_four` must fail.
+- [ ] **Probe 3 — files emptiness:** sed the verbatim non-empty-`files` clause (`not block["files"]` → `False`) → the empty-files case must fail.
+- [ ] **Probe 4 — re-homed non-empty-str:** sed Task 2's verbatim `dataset_hash` str check → its parametrized test must fail.
+- [ ] **Probe 5 — loader hash:** sed `observed.py`'s `h.update(chunk)` to `pass` → `test_block_records_files_rows_span…` (known digest) must fail.
+- [ ] **Probe 6 — zero-row refusal:** sed the `frame.height == 0` refusal → its test must fail.
+- [ ] **Probe 7 — missing-series refusal:** sed the command's pre-read existence sweep → CliRunner test (4) must fail.
+- [ ] **Probe 8 — `--register` gating:** sed the register gate to always-append → CliRunner test (1)'s no-write assertion must fail.
+- [ ] **Commit** any probe-revealed fixes; otherwise no commit (probes leave no tree changes).
 
-- [ ] **Step 4: The on-disk conformance test can go red**
+---
 
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/provenance.py \
-  --control 's|"manifest_sha256"|"manifest_sha256_ABSENT"|' \
-  --mutation 's|rows = sum(leaf\["rows"\] for leaf in leaves)|rows = max(leaf["rows"] for leaf in leaves)|' \
-  -- uv run pytest tests/test_registry_provenance.py -k "on_disk or measured_pin" -q
-```
+### Task 7: Closeout
 
-Expected: `KILLED`. This is the probe the previous version lacked: the on-disk test is the whole mechanism behind the spec's sustainability claim, and without a measured pin it passes for any non-empty manifest. `max` instead of `sum` leaves every other assertion true and moves only the pinned row counts — all three of them, so the probe does not hang on one dataset being present.
-
-- [ ] **Step 5: Record 47 cannot be schema 3**
-
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/store.py \
-  --control 's|if rec\["prev_hash"\] != expected_prev:|if True:|' \
-  --mutation 's|and rec\["schema_version"\] < 4:|and False:|' \
-  -- uv run pytest tests/test_registry_store.py -k "past_the_legacy_floor or all_46" -q
-```
-
-Expected: `KILLED`. The control makes the chain check fire unconditionally, so `test_all_46_committed_records_still_load` reds — a control chosen to red *this selection*, not the deselected contiguity test. The mutation disables the floor, so the forged schema-3 record 47 loads clean while `test_all_46_committed_records_still_load` stays green: only the floor test can catch it, which is exactly why the selector must be verified first.
-
-- [ ] **Step 6: The re-homed `dataset_hash` non-empty-str check bites**
-
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/record.py \
-  --control 's|if type(rec.get("prev_hash")) is not str or len(rec\["prev_hash"\]) != 64:|if True:|' \
-  --mutation 's|if type(rec.get("dataset_hash")) is not str or not rec\["dataset_hash"\]:|if False:|' \
-  -- uv run pytest tests/test_registry_store.py -k "nonempty_str or all_46" -q
-```
-
-Expected: `KILLED`. This is the guard the key-set move silently strips (D3): every other stored body in the suite carries a valid `dataset_hash` and the derivation check binds only `>= 4`, so nothing else would notice its absence. The control makes the `prev_hash` check fire unconditionally, reddening `test_all_46_committed_records_still_load` within this selection; the mutation disables the re-homed check, so only the two schema-3 cases (`""` and `123`) can catch it.
-
-- [ ] **Step 7: D2a's emptiness clause bites**
-
-```bash
-infra/scripts/mutate-probe.sh --file cli/registry/record.py \
-  --control 's|_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4})|_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3})|' \
-  --mutation 's|or not block\["select"\]:|:|' \
-  -- uv run pytest tests/test_registry_store.py -k forged_schema_four -q
-```
-
-Expected: `KILLED`. The spec names the emptiness clauses as the ones carrying D2's property, so they need a constructed failure like every other guard. The control drops schema 4 from the loadable set, so every forged case raises `unknown schema_version` — matching none of the `match=` strings; the mutation keeps the type check and drops only the non-emptiness, so exactly the `"select": {}` case survives validation and reds. Confirm the collect count is **8** first: a selector collecting fewer means some parametrized cases were dropped and the probe proves less than it reports.
-
-- [ ] **Step 8: Record every verdict.** A probe reporting `CONTROL mutation did not fail` means the harness does not bite — choose a control the probe must detect and re-run. Never record a verdict from an unproven harness.
-
-______________________________________________________________________
-
-### Task 5: Closeout
-
-- [ ] **Step 1:** `docs/reference/data-catalog-full.md` — at its existing `dataset_hash` line, add: the registry's dataset reference is now a `datasets` block whose `select` is resolved per axis; the legacy table explains pre-4 hashes; the allowlist is named, including that its keys prefix-match re-freeze siblings.
-  **Then state the supersession here, because it cannot be stated where the convention lives.** The "`dataset_hash` must equal record 1's, else STOP" gate is permanently unsatisfiable under schema 4 — the digest now hashes a declaration, not content — and its home `docs/specs/00035-combination-trial-design.md` is **immutable**: its sha256 `110b5a3479309f58…` is a committed `spec_hash` on a registry record, so per `spec-plan-locations.md` it can never be edited. Write the supersession as a positive line in `data-catalog-full.md` naming that unrepairable home, so a future trial author reading 00035 finds the correction rather than applying a gate that reads every new record as drift. The replacement is "declare the same `select` and compare the block", backed by the extent pins in `tests/test_crossfreq_system.py` and `tests/test_record44_legs.py`.
-  Its other homes — `docs/plans/00035-combination-trial.md`, `docs/research/13.phase5-decisions.md` — are point-in-time records of executed work; leave them alone.
-
-- [ ] **Step 2:** [[T0065]] — mark the going-forward sub-item done and retire its "`dataset_hash` == record 1's else STOP" line, pointing at Step 1's supersession; topic stays `partial` (the research-run command remains). **Do NOT edit `docs/reference/data-catalog.md`** — it is the retired v0 catalog (its own line 3 records the 2026-07-18 retirement and that the paths no longer exist), and its `dataset_hash` line names the per-frame content hash from `cli.ohlc.dataset.dataset_hash`, which schema 4 does not touch. Editing it would inject a false statement into a frozen record. [[T0132]] and [[T0133]] stay `open`; [[T0133]] was opened by this iteration (D5's holdout byte-coverage gap).
-- [ ] **Step 3:** Iterations-history entry (phase 6 per `iteration-closeout`), naming the probe verdicts, D5's bounded claim, that a generic design failed four review rounds before the reshape, and that the on-disk conformance test plus Probe 4 are **workstation-only** — `data/` is gitignored, so CI skips them and a green CI branch has proven nothing about manifest shape.
-- [ ] **Step 4:** Phase-6 decisions-log entry for D1 (allowlist over generality), D2 (per-axis `select`, resolved at capture — the pair axis is the one the registry's history varies on, and a resolved axis makes the block readable without the gitignored manifest), D3 (derived, store-owned) and D5 (do not rebuild byte verification here; register the holdout gap), each with options and the owner's pick.
-- [ ] **Step 5:** Report ready. **Do not open the PR without the owner's explicit word.**
+- [ ] **Step 1:** `docs/reference/data-catalog-full.md` — at its `dataset_hash` line: the registry's reference is now a `datasets` block of observed per-file sha256 + rows + span, derived and enforced at load; the legacy pins table explains pre-4 hashes; state positively that spec 00035's "== record 1's input else STOP" gate is superseded by schema 4 and its home is immutable (spec_hash-pinned). **Do NOT edit `docs/reference/data-catalog.md`** (retired v0; its `dataset_hash` line names the per-frame content hash — editing it injects a false statement into a frozen record).
+- [ ] **Step 2:** T0065 — the execution-reproducibility round moves to `## Done so far` **whole**: recipe (loader + schema 4), command (`zcrypto research eval`), ruling (pins table), each with commit links; `ripe_when` rewritten to name the REACH round alone; status stays `partial` (REACH lives, gated on the Q2 dump — external, not this round's subject). Index bullet updated to match (topic-ops). T0132 body: provenance no longer waits on the manifest contract; the vouched cross-check is not a generic consumer. T0133 body: record-scoped file hashes exist from record 47 on; freeze-side verification remains its scope.
+- [ ] **Step 3:** Iterations-history entry (phase 6, `iteration-closeout` skill): the referent pivot (declarations → observed bytes) and why nine rounds died on the old referent; the probe verdicts; the bounded claims (hand-rolled-writer door, file-grain identity, bypass reads); that conformance's real-file half skips until record 47 exists.
+- [ ] **Step 4:** Phase-6 decisions-log entry: D-referent (manifest-declared / committed-pin / observed-bytes → observed, Decision 3), D-door (registration requires a committed subject — options and the ruling), D6 (the owner's unverifiable ruling, ratified with the spec).
+- [ ] **Step 5:** Full suite + `uv run pre-commit run -a` clean; report ready. **Do not open the PR without the owner's explicit word.**
