@@ -42,19 +42,25 @@ The measured 6 h floor series on `zcrypto-red`, oldest → newest, **none of the
 **Why this is still not a discharge.** The read was taken at 16:13Z — inside the step band, and two hours before this topic's own trigger. Only the last ~1 h is genuinely ambiguous (a step landing now has no full post-step window yet to raise a floor), but that is exactly the residual the trigger exists to remove, and the first verdict on this topic was wrong through precisely this kind of strong-but-early reasoning. One clean read settles it.
 ## Resolution
 
-**Discharged 2026-08-08 18:26Z (T+77.0 h) — no leak. The floor settled; the third step never came.**
+**Discharged 2026-08-09 — no leak in `ccedc9dd6bf4`. The floor settled; the third step never came.**
 
-Step 2 is pinned to ~2026-08-07 15:00Z, so step 3 was due ~24 h later. 2 h floors across and after that band — ending 10:26 / 12:26 / 14:26 / 16:26 / **18:26Z** — read `141.39 · 141.29 · 141.27 · 141.43 · 141.37` MiB: **28 hours flat inside 0.25 MiB**, with the final window sitting entirely past the anniversary. The predicted ~+1.5 MiB step would read ~142.8, and step 2 was unmissable at this resolution (`138.23 → 140.43 → 141.32`).
+**Measured on a band-avoiding pair, which is the only evidence that satisfies this topic's own rule.** Step 2 is a **~4 h ramp, 2026-08-07 13:20 → 17:20Z** (1 h floors `138.23 · 139.92 · 140.43 · 141.26 · 141.43`), so the step-3 anniversary is a *band*, 08-08 13:20–17:20Z — not a point. Two 10 h floors each entirely outside it: **before 141.293 MiB** (ending 08-08 13:20Z), **after 141.316 MiB** (ending 08-09 03:20Z). **Δ +0.023 MiB**, against step 2's own +3.20. The daily cadence is broken. Corroborated by 36 h flat inside 0.25 MiB.
 
-Confirmed on the host: `RestartCount` 0, digest `ccedc9dd6bf4`, instantaneous 144.08 MiB against a 141.37 floor — a ~2.7 MiB sawtooth around a settled level, matching the decaying-amplitude model's predicted ~144 MiB asymptote. **13.8 % of red's 1 GiB limit.**
+**Stated as the bound it is:** least-squares over the clean floors gives **+0.068 ± 0.057 MiB/day**, 2σ upper **0.182 MiB/day** — 3.6 % of the 5.06 MiB/day that raised the alarm, 13+ years to the 1 GiB limit at that bound. A leak slower than that is not excluded and cannot matter on a container re-pinned every few days.
 
-**The lesson this topic actually carries is about the instrument, and it failed three times.** Every wrong answer here came from a measurement window misaligned with the event it measured, never from a wrong number:
+**The ~144 MiB asymptote was an over-prediction, not a validation.** That two-point extrapolation was of the FLOOR; the floor settled at 141.4, ~2.6 MiB below it, because step 3 never arrived. Instantaneous ~144 readings are the sawtooth PEAK — a different quantity, and quoting them as agreement swaps peak for floor. Capture's real amplitude is ~3.47 MiB (141.29 floor → 144.76 peak).
 
-1. The original "no leak" verdict read 12 h of flat floor inside a signal with a 24 h step period — the trough, not a plateau.
-2. This topic's own `ripe_when` then specified a `[6h]` read after 18:20Z. That window covers 12:20–18:20Z and **straddles** the step band, so its floor reports the pre-step value whether or not a step occurred. The rule written to prevent the error reproduced it.
-3. A scheduled background watch carrying that same `[6h]` query fired at 18:25Z and returned "asymptote confirmed" — the right conclusion, reached by an instrument that could not have detected the alternative. It was discarded and re-measured.
+**Same digest, second workload, independently flat:** `ccedc9dd6bf4` also runs as the engine on the primary — 12 h floor 539.1 MiB, `deriv[24h]` −4.42 MiB/day, `RestartCount` 0. Two unrelated workloads, both flat. **Capture's 13.8 % headroom does not carry across**: the engine sits at ~53 % of its own 1 GiB limit and holds the live trade key.
 
-**The rule worth keeping: a floor read must sit ENTIRELY past the event band.** A `[2h]` window after the band closes, or `[6h]` only 6 h later. This generalises beyond RSS — it is the same defect as reading `count_over_time` on a burst emitter and concluding it is continuous.
+**The instrument failed FOUR times on this one question — the fourth inside the correction itself.** Every failure was a measurement window misaligned with the event; not one was a wrong arithmetic result.
+
+1. The original verdict read 12 h of flat floor inside a 24 h step cycle — the trough.
+2. The corrected `ripe_when` specified a `[6h]` read after 18:20Z, a window that straddles the band and reports the pre-step value regardless. The rule written to prevent the error reproduced it.
+3. A scheduled watch carrying that query fired and returned "asymptote confirmed" — the right conclusion from an instrument that could not have detected the alternative.
+4. The first discharge claimed its deciding window sat "entirely past the anniversary" when it **overlapped the band by 54 minutes**, on a step-2 timing the same paragraph stated two different ways, neither matching the data.
+
+**The rule worth keeping: a floor read must sit ENTIRELY outside the event band — and the band is a RAMP, so measure its width before trusting any clearance.** This generalises past RSS: it is the same defect as reading `count_over_time` on a burst emitter and concluding it is continuous.
+
 ## Suggested next steps
 
 _(none — resolved. The follow-on lesson about window-vs-event alignment is recorded above and in `fleet-pins.md`, where the next person reading a floor will be standing.)_
