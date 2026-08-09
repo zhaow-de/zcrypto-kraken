@@ -78,7 +78,7 @@ def test_same_file_read_twice_is_one_entry_and_a_window_mismatch_is_refused(tmp_
 
 def test_empty_accumulation_and_zero_row_dataset_are_refused(tmp_path):
     root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
-    with pytest.raises(RegistryError, match="nothing"):
+    with pytest.raises(RegistryError, match="accumulated nothing"):
         ObservedReader(root).block()
     reader = ObservedReader(root)
     with pytest.raises(RegistryError, match="zero rows"):
