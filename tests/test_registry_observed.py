@@ -76,6 +76,21 @@ def test_same_file_read_twice_is_one_entry_and_a_window_mismatch_is_refused(tmp_
         reader.read_series("ohlc-test", "BTC/EUR/1440.parquet", window=("2020-01-03 00:00:00+00:00", "2020-01-05 00:00:00+00:00"))
 
 
+@pytest.mark.parametrize(
+    "bad, match",
+    [
+        (("2020-01-03", "2020-01-05"), "no timezone"),  # valid ISO-8601, and the natural spelling
+        (("garbage", "2020-01-05 00:00:00+00:00"), "not an ISO-8601 timestamp"),
+    ],
+)
+def test_an_unusable_window_is_refused_typed(tmp_path, bad, match):
+    """Naive bounds are the trap: polars raises SchemaError comparing tz-aware `ts` against a naive
+    literal, so without this the paved door dies with a traceback on its most natural spelling."""
+    root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
+    with pytest.raises(RegistryError, match=match):
+        ObservedReader(root).read_series("ohlc-test", "BTC/EUR/1440.parquet", window=bad)
+
+
 def test_empty_accumulation_and_zero_row_dataset_are_refused(tmp_path):
     root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
     with pytest.raises(RegistryError, match="accumulated nothing"):

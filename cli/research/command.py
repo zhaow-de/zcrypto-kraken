@@ -1,7 +1,7 @@
 """The `zcrypto research` Typer sub-app: evaluate a committed system over a frozen dataset and,
 optionally, register the trial.
 
-This is the registry's door (spec 00086 D3). Before it existed, `TrialRegistry.append` had no
+This is the registry's door (spec 00086 D5). Before it existed, `TrialRegistry.append` had no
 committed caller at all -- every record was written by a scratchpad script, which is why most of
 their dataset pins can no longer be resolved to anything. Here provenance is not supplied by the
 caller: the fit reads through `ObservedReader`, and the block that reader accumulated is what the

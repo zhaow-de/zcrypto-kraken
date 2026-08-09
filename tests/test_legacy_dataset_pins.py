@@ -41,7 +41,10 @@ def test_epistemics_live_in_the_referent_value():
             assert "unrecoverable" in row["referent"]
 
 
-def test_no_pin_claims_more_than_t0065_measured():
+def test_every_confidence_is_one_of_the_three_ruled_grades():
+    """Deliberately narrow, and named for what it can prove. Whether a row claims more than the
+    measured evidence supports is a judgement no assertion makes -- it is carried by the sibling
+    tests that re-derive the recipe and cross-check trial_ids against the registry, and by review."""
     assert all(r["confidence"] in ("reproduced", "inferred", "unrecoverable") for r in _rows())
 
 

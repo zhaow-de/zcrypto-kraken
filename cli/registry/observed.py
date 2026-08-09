@@ -87,7 +87,19 @@ class ObservedReader:
                 )
         frame = full
         if window is not None:
-            start, end = (datetime.fromisoformat(w) for w in window)
+            # A naive or unparseable bound is a caller mistake, not a corrupt dataset: refuse it
+            # typed, or polars raises a SchemaError comparing tz-aware `ts` against a naive literal
+            # and the paved door dies with a traceback on its most natural spelling.
+            bounds = []
+            for w in window:
+                try:
+                    parsed = datetime.fromisoformat(w)
+                except ValueError as exc:
+                    raise RegistryError(f"window bound {w!r} is not an ISO-8601 timestamp: {exc}") from exc
+                if parsed.tzinfo is None:
+                    raise RegistryError(f"window bound {w!r} has no timezone — give an explicit offset, e.g. '{w}+00:00'")
+                bounds.append(parsed)
+            start, end = bounds
             frame = frame.filter((pl.col("ts") >= start) & (pl.col("ts") <= end))
         if frame.height == 0:
             raise RegistryError(f"{dataset}/{relpath}: zero rows after windowing — a block that says nothing is refused")
