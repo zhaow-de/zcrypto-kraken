@@ -21,6 +21,10 @@ from cli.registry.record import (
 
 logger = get_logger("registry.store")
 
+# The highest trial_id committed when the datasets block landed. Records 1-46 predate it and the file is
+# append-only, so they can never carry one -- the exemption is by ID precisely because that cannot grow.
+_LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
+
 
 def _to_record(rec: dict) -> TrialRecord:
     return TrialRecord(
@@ -32,6 +36,7 @@ def _to_record(rec: dict) -> TrialRecord:
         variant=rec.get("variant"),
         spec_hash=rec["spec_hash"],
         dataset_hash=rec["dataset_hash"],
+        datasets=rec.get("datasets"),
         seeds=tuple(rec["seeds"]),
         metrics=rec["metrics"],
         n_trials_in_family=rec["n_trials_in_family"],
@@ -48,6 +53,12 @@ def _assert_cross_record(recs: list[dict], path: Path) -> None:
     for idx, rec in enumerate(recs):
         if rec["trial_id"] != idx + 1:
             raise RegistryCorruptionError(f"{path}: trial_id {rec['trial_id']} not contiguous (expected {idx + 1})")
+        if rec["trial_id"] > _LEGACY_UNPROVENANCED_MAX_TRIAL_ID and rec["schema_version"] < 4:
+            raise RegistryCorruptionError(
+                f"{path}: trial {rec['trial_id']} declares schema_version {rec['schema_version']}; every "
+                f"record past trial {_LEGACY_UNPROVENANCED_MAX_TRIAL_ID} must be schema_version 4+ and carry "
+                f"a derived datasets block"
+            )
         expected_prev = GENESIS_HASH if idx == 0 else recs[idx - 1]["record_hash"]
         if rec["prev_hash"] != expected_prev:
             raise RegistryCorruptionError(f"{path}: trial {rec['trial_id']} prev_hash breaks the chain")
@@ -98,7 +109,9 @@ def _now_utc_iso() -> str:
 
 class TrialRegistry:
     """Append-only, integrity-checked JSONL store of validation trials. See docs/specs/00000-trial-registry-design.md
-    and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain; loads schema v2+v3, writes v3).
+    and docs/specs/00012-registry-hash-chain-design.md (the prev_hash chain; loads schema v2-v4, writes v4).
+    A v4 record carries a `datasets` block of the file digests/rows/span a run actually read, and its
+    `dataset_hash` is derived from that block rather than claimed by the caller.
 
     The record_hash self-check catches accidental/careless in-place edits; contiguity + monotone family counts
     catch deletion/reorder/truncation. The prev_hash chain (each record commits to its predecessor's record_hash,
@@ -124,7 +137,7 @@ class TrialRegistry:
         iteration: str,
         family: str,
         spec_hash: str,
-        dataset_hash: str,
+        datasets: dict,  # the observed block (see ObservedReader.block); dataset_hash is derived from it
         seeds: list[int],
         metrics: dict,
         n_trials_in_family: int,
@@ -137,7 +150,6 @@ class TrialRegistry:
             iteration=iteration,
             family=family,
             spec_hash=spec_hash,
-            dataset_hash=dataset_hash,
             seeds=list(seeds),
             metrics=metrics,
             n_trials_in_family=n_trials_in_family,
@@ -163,8 +175,11 @@ class TrialRegistry:
                 "schema_version": SCHEMA_VERSION,
                 "timestamp": _now_utc_iso(),
                 "prev_hash": prev_hash,
+                "datasets": datasets,
             }
+            rec["dataset_hash"] = compute_hash(rec["datasets"])
             rec["record_hash"] = compute_hash(rec)
+            validate_stored_record(rec, f"{self.path} (append)")  # one bad line is permanent: refuse before the write
             lock_f.write(canonical_json(rec) + "\n")
             lock_f.flush()
             os.fsync(lock_f.fileno())
