@@ -126,17 +126,50 @@ def test_empty_accumulation_and_zero_row_dataset_are_refused(tmp_path):
                            window=("2031-01-01 00:00:00+00:00", "2031-01-02 00:00:00+00:00"))
 
 
-def test_vouched_hash_mismatch_refuses_and_absence_is_inert(tmp_path):
+def test_vouched_check_true_positive_mismatch_and_absence(tmp_path):
+    from cli.ohlc.dataset import dataset_hash as content_hash, read_parquet
+
     root = _dataset(tmp_path)
     # No manifest at all -> inert, and the reader says so.
     reader = ObservedReader(root)
     reader.read_series("ohlc-test", "BTC/EUR/1440.parquet")
     assert reader.vouched_status()["ohlc-test"] == "inert (0 vouched hashes)"
-    # A manifest vouching a DIFFERENT hash for some series -> the file changed since the freeze: refuse.
-    (root / "ohlc-test" / "manifest.json").write_text(json.dumps({"series": {"X": {"sha256": "f" * 64}}}))
+    # TRUE POSITIVE — the round-1 blocker's regression test. The frozen manifests vouch FRAME-CONTENT
+    # hashes (dataset_hash = sha256 of canonical CSV), not file-byte hashes; a manifest vouching the
+    # correct content hash MUST pass, or the loader refuses every healthy read of ohlc-full/ohlc-15m
+    # while CI stays green. A mismatch-only suite cannot catch a wrong-grade comparison.
+    good = content_hash(read_parquet(root / "ohlc-test" / "BTC/EUR/1440.parquet"))
+    (root / "ohlc-test" / "manifest.json").write_text(json.dumps({"series": {"BTC": {"sha256": good}}}))
     reader2 = ObservedReader(root)
+    reader2.read_series("ohlc-test", "BTC/EUR/1440.parquet")  # healthy read passes
+    assert reader2.vouched_status()["ohlc-test"] == "checked (1 vouched hashes)"
+    # A manifest vouching a DIFFERENT hash -> the data changed since the freeze: refuse.
+    (root / "ohlc-test" / "manifest.json").write_text(json.dumps({"series": {"X": {"sha256": "f" * 64}}}))
+    reader3 = ObservedReader(root)
     with pytest.raises(RegistryError, match="vouched"):
-        reader2.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+        reader3.read_series("ohlc-test", "BTC/EUR/1440.parquet")
+
+
+_FULL_SET_EXPECTATIONS = {  # measured 2026-08-08; spans in the loader's own stamp format
+    "ohlc-full": (36, 1_052_322, "2013-09-10 00:00:00+00:00", "2026-03-31 23:00:00+00:00"),
+    "ohlc-15m": (12, 3_122_044, "2013-09-10 23:45:00+00:00", "2026-03-31 23:45:00+00:00"),
+    "ohlc-holdout-2026-07-10": (10, 30_032, "2013-09-10 00:00:00+00:00", "2026-07-09 00:00:00+00:00"),
+}
+
+
+@pytest.mark.parametrize("dataset", sorted(_FULL_SET_EXPECTATIONS))
+def test_loader_reproduces_the_frozen_full_set_extents(dataset):
+    # Workstation-gated: the loader over every frozen set reproduces the frozen figures. Same
+    # "canonical dataset drifted -- STOP" contract as tests/test_crossfreq_system.py.
+    root = Path(__file__).resolve().parents[1] / "data"
+    if not (root / dataset).is_dir():
+        pytest.skip(f"{dataset} not on this host — data-bearing workstation only")
+    reader = ObservedReader(root)
+    for f in sorted((root / dataset).rglob("*.parquet")):
+        reader.read_series(dataset, f.relative_to(root / dataset).as_posix())
+    files, rows, first, last = _FULL_SET_EXPECTATIONS[dataset]
+    entry = reader.block()[dataset]
+    assert (len(entry["files"]), entry["rows"], *entry["span"]) == (files, rows, first, last)
 ```
 
 - [ ] **Step 2: Run to verify they fail** — `uv run pytest tests/test_registry_observed.py -q` — expected: import error (`cli.registry.observed` does not exist).
@@ -162,8 +195,10 @@ from pathlib import Path
 
 import polars as pl
 
+from datetime import datetime
+
 from cli.data.sync import _manifest_sha256s
-from cli.ohlc.dataset import read_parquet
+from cli.ohlc.dataset import dataset_hash, read_parquet
 from cli.registry.errors import RegistryError
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S%z"  # matches the frozen manifests' stamp style: space, not 'T'
@@ -205,31 +240,32 @@ class ObservedReader:
 
     def read_series(self, dataset: str, relpath: str, window: tuple[str, str] | None = None) -> pl.DataFrame:
         key = (dataset, relpath)
-        if key in self._reads:
-            if self._reads[key] != window:
-                raise RegistryError(f"{dataset}/{relpath}: already read with window {self._reads[key]!r}; one record, one read discipline")
-            return read_parquet(self._root / dataset / relpath) if window is None else self._windowed(dataset, relpath, window)
+        if key in self._reads and self._reads[key] != window:
+            raise RegistryError(f"{dataset}/{relpath}: already read with window {self._reads[key]!r}; one record, one read discipline")
         path = self._root / dataset / relpath
-        digest = _sha256_file(path)
-        vouched = self._vouched_for(dataset)
-        if vouched and digest not in vouched:
-            raise RegistryError(f"{dataset}/{relpath}: computed sha256 is absent from the manifest's vouched set — the file changed since the freeze")
-        frame = self._windowed(dataset, relpath, window)
-        if frame.height == 0:
-            raise RegistryError(f"{dataset}/{relpath}: zero rows after windowing — a block that says nothing is refused")
-        self._reads[key] = window
-        self._files.setdefault(dataset, {})[relpath] = digest
-        self._rows[dataset] = self._rows.get(dataset, 0) + frame.height
-        first, last = frame["ts"][0], frame["ts"][-1]
-        lo, hi = self._span.get(dataset, (first, last))
-        self._span[dataset] = (min(lo, first), max(hi, last))
-        return frame
-
-    def _windowed(self, dataset: str, relpath: str, window: tuple[str, str] | None) -> pl.DataFrame:
-        frame = read_parquet(self._root / dataset / relpath)
+        full = read_parquet(path)
+        if key not in self._reads:
+            digest = _sha256_file(path)  # the IDENTITY: file bytes as on disk
+            vouched = self._vouched_for(dataset)
+            # The cross-check runs at the manifests' own grade: the frozen manifests vouch FRAME-CONTENT
+            # hashes (dataset_hash = sha256 of canonical CSV), never file-byte hashes -- a byte-grade
+            # membership test here refuses every healthy read of ohlc-full/ohlc-15m (the round-1 blocker).
+            # Checked on the FULL frame, before windowing: the freeze vouched the whole series.
+            if vouched and dataset_hash(full) not in vouched:
+                raise RegistryError(f"{dataset}/{relpath}: frame-content hash absent from the manifest's vouched set — the data changed since the freeze")
+        frame = full
         if window is not None:
             start, end = (datetime.fromisoformat(w) for w in window)
             frame = frame.filter((pl.col("ts") >= start) & (pl.col("ts") <= end))
+        if frame.height == 0:
+            raise RegistryError(f"{dataset}/{relpath}: zero rows after windowing — a block that says nothing is refused")
+        if key not in self._reads:
+            self._reads[key] = window
+            self._files.setdefault(dataset, {})[relpath] = digest
+            self._rows[dataset] = self._rows.get(dataset, 0) + frame.height
+            first, last = frame["ts"][0], frame["ts"][-1]
+            lo, hi = self._span.get(dataset, (first, last))
+            self._span[dataset] = (min(lo, first), max(hi, last))
         return frame
 
     def block(self) -> dict:
@@ -242,7 +278,7 @@ class ObservedReader:
         }
 ```
 
-(Note `from datetime import datetime` joins the imports; the implementer wires the exact polars filter expression to the frame's `Datetime("us", "UTC")` dtype and confirms `_stamp` output equals the test's expected strings — the tests are the contract, the sketch is not.)
+(The implementer wires the exact polars filter expression to the frame's `Datetime("us", "UTC")` dtype and confirms `_stamp` output equals the test's expected strings — the tests are the contract, the sketch is not. The full-set expectations test belongs to the data-dependent tier: ~tens of seconds on the workstation, skipped elsewhere.)
 
 - [ ] **Step 4: Run to verify they pass** — `uv run pytest tests/test_registry_observed.py -q`
 - [ ] **Step 5: Verify the deletion left nothing dangling** — `grep -rn "registry.provenance\|capture_datasets" cli/ tests/` → zero hits.
@@ -356,6 +392,8 @@ def _schema4_line(**over):
         ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a.parquet": "c" * 63}}}}, "files"),  # short hex
         ({"datasets": {"ohlc-test": {**_BLOCK, "rows": 0}}}, "rows"),             # zero-extent
         ({"datasets": {"ohlc-test": {**_BLOCK, "rows": True}}}, "rows"),          # bool-as-int
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"/etc/x": "c" * 64}}}}, "files"),      # absolute key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"../x.parquet": "c" * 64}}}}, "files"),  # escaping key
         ({"datasets": {"ohlc-test": {**_BLOCK, "span": ["a"]}}}, "span"),         # wrong arity
         ({"datasets": {"ohlc-test": {k: v for k, v in _BLOCK.items() if k != "span"}}}, "span"),  # missing key
         ({"datasets": {"ohlc-test": {**_BLOCK, "extra": 1}}}, "datasets"),        # surplus key
@@ -430,7 +468,7 @@ Run: `uv run pytest tests/test_registry_store.py -q` — expected FAIL.
 
 - `SCHEMA_VERSION = 4`; `_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4})`.
 - `_EXPECTED_STORED_KEYS = {2: _BASE_STORED_KEYS, 3: _BASE_STORED_KEYS | {"variant"}, 4: _BASE_STORED_KEYS | {"variant", "datasets"}}` — the `4:` entry *permits* `datasets`; the requirement is an explicit check below.
-- `validate_stored_record` gains, for **every** version, the re-homed non-empty-str check — Probe 6 seds this text, so write it exactly:
+- `validate_stored_record` gains, for **every** version, the re-homed non-empty-str check — Probe 4 seds this text, so write it exactly:
 
 ```python
     if type(rec.get("dataset_hash")) is not str or not rec["dataset_hash"]:
@@ -438,7 +476,7 @@ Run: `uv run pytest tests/test_registry_store.py -q` — expected FAIL.
 ```
 
 - `validate_stored_record`, for `version >= 4`, in order, each its own `RegistryCorruptionError` naming the offending sub-field (`files` / `rows` / `span`) or `datasets`/`dataset_hash`: (a) `datasets` present; (b) `_validate_datasets_shape(rec["datasets"], where)`; (c) the derivation, written verbatim as `rec["dataset_hash"] != compute_hash(rec["datasets"])` (Probe 1 seds that text). **(a) before (c)** or (c) raises a bare `KeyError`. **Every message names exactly ONE sub-field and interpolates neither the block nor the offending value** — the parametrized cases match bare substrings, so a message containing every name lets cases pass for the wrong reason.
-- `_validate_datasets_shape` (no disk access, no dataset-name knowledge): non-empty `dict`; each value a dict with **exactly** `{files, rows, span}`; `files` a **non-empty** `dict[str, str]` whose values are 64-char lowercase hex (`re.fullmatch(r"[0-9a-f]{64}", v)`); `rows` `type(x) is int` and `>= 1`; `span` a list of exactly 2 `str`. Probe 7 seds the non-empty-`files` clause, so write it exactly:
+- `_validate_datasets_shape` (no disk access, no dataset-name knowledge): non-empty `dict`; each value a dict with **exactly** `{files, rows, span}`; `files` a **non-empty** `dict[str, str]` whose values are 64-char lowercase hex (`re.fullmatch(r"[0-9a-f]{64}", v)`) and whose KEYS are relative POSIX paths — refuse a key that is empty, starts with `/`, contains `\\`, or carries a `..` segment (message naming `files`), so a forged block cannot point the conformance pass outside `data/`; `rows` `type(x) is int` and `>= 1`; `span` a list of exactly 2 `str`. Probe 3 seds the non-empty-`files` clause, so write it exactly:
 
 ```python
         if type(block["files"]) is not dict or not block["files"]:
@@ -452,7 +490,7 @@ Run: `uv run pytest tests/test_registry_store.py -q` — expected FAIL.
 
 - `_to_record` passes `datasets=rec.get("datasets")` — without it the field is always `None` and the round-trip test fails silently.
 - `append()` drops `dataset_hash`, gains `datasets: dict`, puts it in the stored body, sets `rec["dataset_hash"] = compute_hash(rec["datasets"])` **after** `validate_caller_fields` (store-owned), then calls `validate_stored_record(rec, f"{self.path} (append)")` **after** `rec["record_hash"] = compute_hash(rec)` and **before** `lock_f.write(...)`.
-- `_assert_cross_record` gains the schema-4 floor — module constant + guard, written exactly (Probe 5 seds the guard line):
+- `_assert_cross_record` gains the schema-4 floor — module constant + guard, written exactly (Probe 2 seds the guard line):
 
 ```python
 # The highest trial_id committed when the datasets block landed. Records 1-46 predate it and the file is
@@ -475,7 +513,7 @@ _LEGACY_UNPROVENANCED_MAX_TRIAL_ID = 46
 
 `tests/test_registry_record.py`: `test_constants` `SCHEMA_VERSION == 3` → `== 4`; `_caller()` drops `dataset_hash="d"`; `test_invalid_caller_rejected` adds the case `{"dataset_hash": "d"}` (store-owned refusal); every stored body built from `_caller()` (`test_stored_record_hash_and_schema_checks`, `test_stored_record_schema_version_variant_compat` with its derived copies, `test_stored_record_validation_stays_lenient_about_run_ref`) adds `dataset_hash="d"` explicitly and pins `schema_version=3` — they are v3-semantics tests; left on `SCHEMA_VERSION` they become schema-4 bodies with no `datasets` and pass or fail for the wrong reason.
 
-`tests/test_registry_store.py`: `_line` pins `schema_version=3` (keep `dataset_hash="d"` — legal in a *stored* v3 body); the four inline bodies in `test_v3_record_with_nonstr_variant_is_corruption`, `test_v3_unknown_key_forge_is_corruption`, `test_missing_base_key_is_corruption`, `test_v3_without_variant_still_loads` pin `schema_version=3` — left on `SCHEMA_VERSION`, the last fails outright and the other three keep passing **for the wrong reason** (raising on missing `datasets`, silently retiring the guards they pin). `_append` drops `dataset_hash="d"`, gains `datasets={"ohlc-test": dict(_BLOCK)}` as its default. `test_append_requires_run_ref_explicitly` passes `datasets=...` instead of `dataset_hash="d"` or its `TypeError` fires for the wrong keyword. `TrialRegistry` gains no constructor parameter, so the fourteen construction sites need **no** routing changes.
+`tests/test_registry_store.py`: `_line` pins `schema_version=3` (keep `dataset_hash="d"` — legal in a *stored* v3 body); the four inline bodies in `test_v3_record_with_nonstr_variant_is_corruption`, `test_v3_unknown_key_forge_is_corruption`, `test_missing_base_key_is_corruption`, `test_v3_without_variant_still_loads` pin `schema_version=3` — left on `SCHEMA_VERSION`, the last fails outright and the other three keep passing **for the wrong reason** (raising on missing `datasets`, silently retiring the guards they pin). `_append` drops `dataset_hash="d"`, gains `datasets={"ohlc-test": dict(_BLOCK)}` as its default. `test_append_requires_run_ref_explicitly` passes `datasets=...` instead of `dataset_hash="d"` or its `TypeError` fires for the wrong keyword. `TrialRegistry` gains no constructor parameter, so existing `TrialRegistry(...)` construction sites need **no** routing changes (verified: no test file outside the three named here — plus the deleted `test_registry_provenance.py` — supplies `dataset_hash=`).
 
 `tests/test_trial_registry_provenance.py`: its `_caller()` drops `dataset_hash="d"`.
 
@@ -551,7 +589,7 @@ def test_no_pin_claims_more_than_t0065_measured():
     assert all(r["confidence"] in ("reproduced", "inferred", "unrecoverable") for r in _rows())
 ```
 
-- [ ] **Step 3: Run to verify they fail**, then **write the four entries**, every claim taken from T0065's measured table and nothing beyond it: `ba47e37e` `inferred`, referent `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`, trial_ids from Step 1 (expected 1–35 ∪ 40–42, 38 ids), evidence naming the 4581-row/2013→2026 extent match + v0 exclusion + the trials-33/35 scope mismatch; `81dc9b44` `unrecoverable`, `referent: null`, evidence "resisted ~226,000 candidates; no driver ever committed"; `45275ebe` `inferred`, referent naming the `UNION_BARS` pins and that its composition inherits `81dc9b44`'s unrecoverability and the runbook's stated recipe does not reproduce; `cccb8d17` `reproduced`, referent naming inline that its 4h operand is the unrecoverable `81dc9b44`, evidence `{"operand_4h": "<full 81dc9b44 hash>", "operand_15m": "<basket literal>", "recipe": "sha256(hex_4h + ':' + hex_15m)"}`.
+- [ ] **Step 3: Run to verify they fail**, then **write the four entries**, every claim taken from T0065's measured table and nothing beyond it: `ba47e37e` `inferred`, referent `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`, trial_ids from Step 1 (expected 1–35 ∪ 40–42, 38 ids), evidence naming the 4581-row/2013→2026 extent match + v0 exclusion + the trials-33/35 scope mismatch; `81dc9b44` `unrecoverable`, `referent: null`, evidence "resisted ~226,000 candidates; no driver ever committed"; `45275ebe` `inferred`, referent `"composition of ba47e37e + 81dc9b44 (INFERRED — never recomputed; pinned by tests/test_record44_legs.py's UNION_BARS extents)"`, evidence noting it inherits `81dc9b44`'s unrecoverability and that the runbook's stated recipe does not reproduce; `cccb8d17` `reproduced`, referent naming inline that its 4h operand is the unrecoverable `81dc9b44`, evidence `{"operand_4h": "<full 81dc9b44 hash>", "operand_15m": "<basket literal>", "recipe": "sha256(hex_4h + ':' + hex_15m)"}`.
 - [ ] **Step 4: Run to verify they pass**, plus a workstation-gated check that `operand_15m` equals `data/ohlc-15m/manifest.json`'s `basket_sha256` on disk (skip off-workstation with a reason).
 - [ ] **Step 5: Commit** — stage both paths explicitly: `docs(registry): the legacy dataset pins — ruled unverifiable, documented with epistemics inline`.
 
@@ -576,24 +614,27 @@ def test_no_pin_claims_more_than_t0065_measured():
 
 ```python
 def _stub_subject(monkeypatch, tmp_path):
-    """A subject whose build returns fixed metrics over whatever the reader hands it."""
+    """A subject whose build returns fixed metrics over whatever the reader hands it. Declares its
+    OWN assets — required_relpaths derives from subject.assets x subject.intervals, so the stub needs
+    only the one BTC file, not CrossfreqSystemConfig's ten. Tests also monkeypatch
+    cli.research.command._DATA_ROOT to tmp_path/"data" (the module constant is repo-anchored)."""
     from cli.research import subjects
     def build(reader, dataset, window):
         reader.read_series(dataset, "BTC/EUR/1440.parquet", window=window)
         return {"sharpe": 1.0}
-    monkeypatch.setitem(subjects.SUBJECTS, "stub", subjects.Subject("stub", (1440,), build))
+    monkeypatch.setitem(subjects.SUBJECTS, "stub", subjects.Subject("stub", (1440,), ("BTC",), build))
 ```
 
-Tests: (1) `eval --subject stub --dataset ohlc-test` over a synthetic dataset prints a report containing the block's rows and the vouched-status line, exit 0, **no registry write**; (2) with `--register --registry <tmp> --iteration iter-001 --family STUB --spec-hash s --verdict adopt` the tmp registry gains one schema-4 record whose `dataset_hash == compute_hash(datasets)` and whose `datasets` block names `BTC/EUR/1440.parquet`; (3) `--register` without `--iteration`/`--family`/`--spec-hash`/`--verdict` exits non-zero naming the missing flag; (4) a subject whose required series the dataset lacks (crossfreq on a daily-only synthetic dataset) exits non-zero **naming the missing files**; (5) an unknown subject exits non-zero listing the known ones.
+Tests: (1) `eval --subject stub --dataset ohlc-test` over a synthetic dataset prints a report containing the block's rows and the vouched-status line, exit 0, **no registry write**; (2) with `--register --registry <tmp> --iteration iter-001 --family STUB --spec-hash s --verdict adopt --n-trials 1` the tmp registry gains one schema-4 record whose `dataset_hash == compute_hash(datasets)` and whose `datasets` block names `BTC/EUR/1440.parquet` — and a SECOND register into the same family with `--n-trials 2` succeeds while a repeat with `--n-trials 1` is refused by the registry's family floor (the flag exists precisely because the floor demands `prior + 1`; a hardcoded 1 forbids every second trial in any family — A1 already holds 40); (3) `--register` without `--iteration`/`--family`/`--spec-hash`/`--verdict` exits non-zero naming the missing flag; (4) a subject whose required series the dataset lacks (crossfreq on a daily-only synthetic dataset) exits non-zero **naming the missing files**; (5) an unknown subject exits non-zero listing the known ones.
 
 - [ ] **Step 3: Run to verify they fail**, then **implement**:
 
-`cli/research/subjects.py` — `Subject` dataclass (`name`, `intervals`, `build: Callable[[ObservedReader, str, tuple | None], dict]`); `required_relpaths(subject) -> list[str]` = `[f"{a}/EUR/{i}.parquet" for a in CrossfreqSystemConfig().assets for i in subject.intervals]`; `SUBJECTS` with the two production entries:
+`cli/research/subjects.py` — `Subject` dataclass (`name`, `intervals: tuple[int, ...]`, `assets: tuple[str, ...]`, `build: Callable[[ObservedReader, str, tuple | None], dict]`); `required_relpaths(subject) -> list[str]` = `[f"{a}/EUR/{i}.parquet" for a in subject.assets for i in subject.intervals]`; `SUBJECTS` with the two production entries (both with `assets=CrossfreqSystemConfig().assets`):
 
 - `record44-crossfreq` (`intervals=(1440, 240)`): loads both unions via `load_union(interval, root=data_root/dataset, read=<reader-bound closure mapping path→relpath>)`, calls `build_crossfreq_system_fast`, returns its headline metrics dict.
 - `record33-combined` (`intervals=(1440,)`): daily union → `build_combined_system`, returns its metrics dict.
 
-`cli/research/command.py` — `research_app = typer.Typer(...)`; `eval` command: resolve `_DATA_ROOT = <repo>/data` (module constant, `record44_legs` pattern); refuse unknown subject (list known); refuse missing required series **before any read** (`(data_root/dataset/rel).exists()` sweep, message naming every missing file); instantiate `ObservedReader`; run `subject.build(reader, dataset, window)`; print the report (metrics, the block summary, `reader.vouched_status()`); on `--register`, require the caller flags, then `TrialRegistry(registry_path).append(iteration=..., family=..., spec_hash=..., seeds=[...], metrics=..., n_trials_in_family=1, verdict=..., run_ref="cli/research/command.py — spec 00086 D5", notes=..., datasets=reader.block())`. `--registry` defaults to `docs/reference/trial-registry.jsonl`. Register in `cli/__main__.py`: `app.add_typer(research_app, name="research")`. Operator-facing text: no `T<NNNN>`/iter tokens in any printed literal (`run_ref` cites the spec serial — that is a stored document field read with the repo open, and `tests/test_internal_terms_not_operator_visible.py` must stay green; if it flags the literal, move the serial into `notes` supplied by the caller instead).
+`cli/research/command.py` — `research_app = typer.Typer(...)`; `eval` command: resolve `_DATA_ROOT = <repo>/data` (module constant, `record44_legs` pattern); refuse unknown subject (list known); refuse missing required series **before any read** (`(data_root/dataset/rel).exists()` sweep, message naming every missing file); instantiate `ObservedReader`; run `subject.build(reader, dataset, window)`; print the report (metrics, the block summary, `reader.vouched_status()`); on `--register`, require the caller flags (including `--n-trials`), then `TrialRegistry(registry_path).append(iteration=..., family=..., spec_hash=..., seeds=[...], metrics=..., n_trials_in_family=<--n-trials>, variant=<--variant or omitted>, verdict=..., run_ref="cli/research/command.py — docs/specs/00086-verifiable-dataset-provenance-design.md", notes=..., datasets=reader.block())`. `--registry` defaults to a REPO-ANCHORED module constant (`_REGISTRY = <repo root> / "docs" / "reference" / "trial-registry.jsonl"`, the `record44_legs` pattern) — a cwd-relative default on a registry WRITE would silently create a fresh registry elsewhere. Register in `cli/__main__.py`: `app.add_typer(research_app, name="research")`. Operator-facing text: no internal tokens in any printed literal; the `run_ref` literal cites the spec by its full `docs/` path, which the vocabulary scan's PATH_LIKE rule excuses (verified) — `tests/test_internal_terms_not_operator_visible.py` must stay green.
 
 - [ ] **Step 4: Run to verify they pass** — `uv run pytest tests/test_research_command.py tests/test_internal_terms_not_operator_visible.py -q`, then the full suite.
 - [ ] **Step 5: README `## Usage`** — the `research eval` section with the two subjects and the `--register` contract, same change (readme-usage rule).
@@ -607,9 +648,9 @@ Tests: (1) `eval --subject stub --dataset ohlc-test` over a synthetic dataset pr
 
 - Test: `tests/test_research_control.py`, `tests/test_registry_conformance.py`
 
-- [ ] **Step 1: The record-44 control** (workstation-gated, skip-with-reason off it): drive the runner's own loading path — `load_union(1440/240, root=data/ohlc-full, read=<ObservedReader closure>)` — feed `build_crossfreq_system_fast`, and assert `governor_engaged_bars` and `cap_breach_bars` equal the registry record 44 values read from the REAL registry (the same figures `instrument_self_check` reproduces), and the block equals the frozen extent: 20 files, rows 202,405, span `["2013-09-10 00:00:00+00:00", "2026-03-31 20:00:00+00:00"]` — measured 2026-08-08. A drifted canonical must turn this red — same STOP contract as `tests/test_crossfreq_system.py`.
+- [ ] **Step 1: The record-44 control** (workstation-gated, skip-with-reason off it): drive the runner's own loading path — `load_union(1440/240, root=data/ohlc-full, read=<ObservedReader closure>)` — feed `build_crossfreq_system_fast`, and assert `governor_engaged_bars == 7302` and `cap_breach_bars == 1318` as literals AND equal to the registry record 44 values read from the REAL registry (the same figures `instrument_self_check` reproduces; literals so a drifted registry and a drifted build cannot cancel), and the block equals the frozen extent: 20 files, rows 202,405, span `["2013-09-10 00:00:00+00:00", "2026-03-31 20:00:00+00:00"]` — measured 2026-08-08. A drifted canonical must turn this red — same STOP contract as `tests/test_crossfreq_system.py`.
 - [ ] **Step 2: The everywhere end-to-end** (CI, bare checkout): synthetic dataset in tmp → `ObservedReader` → `block()` → `append()` to a tmp registry → reload → `dataset_hash == compute_hash(datasets)` re-derived — the full pipeline with zero real data.
-- [ ] **Step 3: The disk conformance pass** — for every schema-4 record in the real registry: re-hash its `files` against `data/`, memoised per `(path, size, mtime)`; verdicts `rederived` / `absent-here` (dataset dir missing) / **finding** (dir present, hash mismatch or named file missing) — a finding fails the test naming record and file. Zero schema-4 records today → the real-file half **skips** with reason "no schema-4 records yet"; the mechanism is proven NOW against a constructed tmp registry + tmp data tree (one rederived, one absent-here, one finding case), so the test is non-vacuous from birth.
+- [ ] **Step 3: The disk conformance pass** — for every schema-4 record in the real registry: re-hash its `files` against `data/`, memoised per `(path, size, mtime)`; verdicts `rederived` / `absent-here` / **finding** (dir present with a hash mismatch or a named file missing — fails the test naming record and file). `absent-here` is legal ONLY for dataset dirs named in `_ABSENT_OK: frozenset[str] = frozenset()` — a committed module constant in the test file, empty at birth, grown only by reviewed PR: an UNLISTED citation that does not resolve is a **finding** too, so a fabricated citation cannot be laundered as merely-elsewhere (it either fails the suite or is itself a visible commit). One taxonomy clause: a mismatch on an in-place, undated dir is STOP-class under the data-model rule that a re-freeze mints a sibling — consistent with the existing STOP contracts, not in tension with D2's "re-examine" reading, which governs cross-SIBLING digest differences. Zero schema-4 records today → the real-file half **skips** with reason "no schema-4 records yet"; the mechanism is proven NOW against a constructed tmp registry + tmp data tree (one rederived, one listed-absent, one UNLISTED-absent→finding, one mismatch→finding case), so the test is non-vacuous from birth.
 - [ ] **Step 4: Full suite**, then **commit** — `test(registry): the runner reproduces record 44, and conformance re-hashes what records cite`.
 
 ---
@@ -626,6 +667,7 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree, controls first).
 - [ ] **Probe 6 — zero-row refusal:** sed the `frame.height == 0` refusal → its test must fail.
 - [ ] **Probe 7 — missing-series refusal:** sed the command's pre-read existence sweep → CliRunner test (4) must fail.
 - [ ] **Probe 8 — `--register` gating:** sed the register gate to always-append → CliRunner test (1)'s no-write assertion must fail.
+- [ ] **Probe 9 — the cross-check's grade:** sed `observed.py`'s `dataset_hash(full)` to `_sha256_file(path)` — the round-1 blocker, reconstructed verbatim → the true-positive vouched test must fail (a byte-grade comparison refuses the healthy read). Control: unmutated suite green.
 - [ ] **Commit** any probe-revealed fixes; otherwise no commit (probes leave no tree changes).
 
 ---
@@ -633,7 +675,7 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree, controls first).
 ### Task 7: Closeout
 
 - [ ] **Step 1:** `docs/reference/data-catalog-full.md` — at its `dataset_hash` line: the registry's reference is now a `datasets` block of observed per-file sha256 + rows + span, derived and enforced at load; the legacy pins table explains pre-4 hashes; state positively that spec 00035's "== record 1's input else STOP" gate is superseded by schema 4 and its home is immutable (spec_hash-pinned). **Do NOT edit `docs/reference/data-catalog.md`** (retired v0; its `dataset_hash` line names the per-frame content hash — editing it injects a false statement into a frozen record).
-- [ ] **Step 2:** T0065 — the execution-reproducibility round moves to `## Done so far` **whole**: recipe (loader + schema 4), command (`zcrypto research eval`), ruling (pins table), each with commit links; `ripe_when` rewritten to name the REACH round alone; status stays `partial` (REACH lives, gated on the Q2 dump — external, not this round's subject). Index bullet updated to match (topic-ops). T0132 body: provenance no longer waits on the manifest contract; the vouched cross-check is not a generic consumer. T0133 body: record-scoped file hashes exist from record 47 on; freeze-side verification remains its scope.
+- [ ] **Step 2:** T0065 — the execution-reproducibility round moves to `## Done so far` **whole**: recipe (loader + schema 4), command (`zcrypto research eval`), ruling (pins table), each with commit links; `ripe_when` rewritten to name the REACH round alone; status stays `partial` (REACH lives, gated on the Q2 dump — external, not this round's subject). Index bullet updated to match (topic-ops). T0132 body AND `ripe_when` (it names the discarded allowlist shape): provenance no longer waits on the manifest contract; the vouched cross-check is not a generic consumer. T0133 body: record-scoped file hashes exist from record 47 on; freeze-side verification remains its scope.
 - [ ] **Step 3:** Iterations-history entry (phase 6, `iteration-closeout` skill): the referent pivot (declarations → observed bytes) and why nine rounds died on the old referent; the probe verdicts; the bounded claims (hand-rolled-writer door, file-grain identity, bypass reads); that conformance's real-file half skips until record 47 exists.
 - [ ] **Step 4:** Phase-6 decisions-log entry: D-referent (manifest-declared / committed-pin / observed-bytes → observed, Decision 3), D-door (registration requires a committed subject — options and the ruling), D6 (the owner's unverifiable ruling, ratified with the spec).
 - [ ] **Step 5:** Full suite + `uv run pre-commit run -a` clean; report ready. **Do not open the PR without the owner's explicit word.**
