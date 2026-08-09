@@ -5,6 +5,8 @@ ripe_when: `data/ohlc-holdout-*` is next re-frozen or a second holdout is cut �
 
 # The holdout set is the one canonical dataset with no byte verification
 
+**Update 2026-08-09 (spec `00086`):** partial mitigation now exists, and its limit is the point. Every schema-4 record stores the per-file sha256 of the bytes it read, and a conformance pass re-hashes those citations on the canonical data host — so a later edit to a file a registered evaluation READ is caught. That is record-scoped and after-the-fact: it says nothing about whether the freeze was faithful when it was cut, and covers no file no record cites. Freeze-side hashes and a fail-closed sync remain this topic's scope.
+
 ## Context — what
 
 `cli/data/sync.py::_verify_new_files` re-hashes each newly transferred parquet and refuses content the manifest does not attest. It works off `_manifest_sha256s`, which collects **per-artifact `sha256` keys only** — its docstring says the manifest-level `manifest_sha256` is deliberately not collected, because it is not a per-parquet hash.

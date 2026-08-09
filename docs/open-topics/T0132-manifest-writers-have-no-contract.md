@@ -1,9 +1,11 @@
 ---
 status: open
-ripe_when: a second consumer needs to read manifests generically — i.e. anything beyond spec `00086`'s two-adapter allowlist. The first attempt at such a consumer failed four consecutive cold-review rounds against this exact heterogeneity, so the trigger is "someone proposes a generic manifest reader again", and the answer should be "normalise first". Also ripe if a manifest writer is being touched for another reason and the change could cheaply carry a shared shape
+ripe_when: a consumer needs to read manifests generically. Spec `00086` no longer counts as one and no longer waits on this: its provenance identity is computed from file bytes, and its only manifest touch is a vouched-hash cross-check that walks any JSON shape without extracting structure. So the trigger is "someone proposes a generic manifest reader again", and the answer should be "normalise first". The first attempt at such a consumer failed four consecutive cold-review rounds against this exact heterogeneity, so the trigger is "someone proposes a generic manifest reader again", and the answer should be "normalise first". Also ripe if a manifest writer is being touched for another reason and the change could cheaply carry a shared shape
 ---
 
 # The manifest writers have no contract, so nothing can read them generically
+
+**Update 2026-08-09 (spec `00086`):** the consumer that made this urgent is gone. Registry provenance now derives dataset identity from the bytes a run reads, so the four `series` shapes, two digest spellings, per-run nonce and machine-local path cost it nothing. The zoo remains a real liability for any future generic reader — that is what this topic still holds — but nothing is currently blocked on it.
 
 ## Context — what
 
