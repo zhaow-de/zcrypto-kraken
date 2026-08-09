@@ -74,7 +74,7 @@ uv run zcrypto research eval --subject <name> --dataset <dir> [--window A B] [--
 `docs/reference/legacy-dataset-pins.jsonl`, one line per distinct pre-schema-4 hash: `referent`, `confidence` (`reproduced` | `inferred` | `unrecoverable`), `trial_ids`, evidence. The epistemics live **in the referent value**, not only in a sibling field, so a careless grep can never return a bare path that reads as verified fact:
 
 - `cccb8d17` — `reproduced`: re-derives as `sha256(hex_4h + ":" + hex_15m)`, **executed by a test** rather than asserted; its referent names inline that its 4h operand is the unrecoverable `81dc9b44` — the row a careless reader trusts most needs the qualifier most.
-- `ba47e37e` — `inferred`: identified by extent + the v0 exclusion, daily series only; referent reads `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`; `trial_ids` exposes the scope mismatch (36 A1 + trials 33/35 which also read 4h).
+- `ba47e37e` — `inferred`: identified by extent + the v0 exclusion, daily series only; referent reads `"data/ohlc-full daily (INFERRED from extent + exclusion — never recomputed)"`; `trial_ids` exposes the scope mismatch (36 A1 + 2 P1, trials 33/35) — and states the honest negative rather than guessing its direction: committed state does not establish what those two P1 runs read (both ran from scratchpad drivers; their registry notes describe daily-cadence sleeves), so the daily-only inference simply does not extend to them.
 - `81dc9b44` — `unrecoverable`, `referent: null`.
 - `45275ebe` — `inferred`: composes the two above, inherits unrecoverability; pinned by `tests/test_record44_legs.py`'s `UNION_BARS` extent assertion; the runbook's stated composition does not reproduce, and the entry says so.
 
