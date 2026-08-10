@@ -1560,6 +1560,104 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-tapebars-permanent-gap
+    title: "Ops · tape-bars permanent gap"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The ONLY durable report of this event. A settled day that stayed unpublished until the
+      # sweep window moved past it is gone from every other counter at exactly the moment its
+      # absence became final -- days_unhealed stops counting it, the exit code stays 0, and the
+      # dataset simply reads short forever. days_gap is computed from the calendar and the
+      # published set, so it keeps reporting after the fact; this rule is what says it out loud.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 7200, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_tapebars_days_gap
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: before the first sweep the series does not exist, and the dead-man below
+    # already owns "did it run at all".
+    noDataState: OK
+    execErrState: Alerting
+    for: 1h
+    annotations:
+      summary: >-
+        A settled tape-bars day was never published and has now fallen outside the re-scan window --
+        it is a permanent hole in the dataset, and no other signal reports it. Read the runner log for
+        the day and pair, then decide whether the trade archive can still be healed for it.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-tapebars-permanent-gap
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "405"
+      unit: "days permanently missing"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-tapebars-not-advancing
+    title: "Ops · tape-bars not advancing"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Deliberately LAST_PUBLISH, not last_success. The unhealed path exits 0 by design, so a
+      # stalled healer would advance a success stamp hourly while the dataset froze -- the exact
+      # green silence this timer's failure mode produces. last_publish moves only when a day is
+      # actually written. A day becomes eligible ~26h after it ends, so publishing is ~daily;
+      # 48h means two consecutive days produced nothing.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 21600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: time() - zcrypto_tapebars_last_publish_timestamp_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [172800]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 1h
+    annotations:
+      summary: >-
+        tape-bars has published no new day for over 48 hours. The sweep may still be exiting 0 --
+        an incomplete trade tape defers a day without failing -- so check the trade backfill and the
+        archive before the materializer itself.
+        Runbook: infra/runbooks/README.md#zcrypto-ops-tapebars-not-advancing
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "402"
+      unit: "seconds since the last published day"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-panel-exit-nonzero
     title: "Ops · panel non-zero exit"
     ruleGroup: zcrypto-ops

@@ -268,6 +268,62 @@ Two things this alert deliberately does **not** do. It does not fire when the en
 
 ______________________________________________________________________
 
+<a name="zcrypto-ops-tapebars-permanent-gap"></a>
+
+## zcrypto-ops-tapebars-permanent-gap — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Ops · tape-bars permanent gap`): `zcrypto_tapebars_days_gap` is above zero. One or more settled days were never published into `tape-bars` and have now fallen outside the sweep's re-scan window.
+
+### What it means
+
+**This is the only signal that will ever report this event, which is why it pages rather than sitting on a dashboard.** While a day is inside the re-scan window the sweep keeps retrying it and counts it as `days_unhealed`. Once the watermark carries the window past it, the day leaves every other counter — `days_unhealed` stops counting it, the exit code stays 0, and the dataset simply reads short. `days_gap` is computed from the archive calendar and the set of published files, so it keeps reporting after the fact.
+
+The usual cause is a trade-tape hole the healer could not close: the sweep refuses a day whose `trade_id` sequence is not contiguous, because publishing it would write a silently short day into a dataset with no rewrite path. A day the reconciler booked `trades_unrecoverable` will never become publishable, and that is the honest outcome — a permanent, *named* hole rather than a quiet wrong number.
+
+It is **not** an urgent outage. Nothing is degrading; a day that was already missing has become permanently missing.
+
+### What to do
+
+1. **Find which pair and day.** Read the runner's log on `zcrypto-ops` for the `days_gap` line, or list what is absent: compare the archive's day calendar against the published finals under the dataset root.
+2. **Ask whether the tape can still be healed for it.** `uv run zcrypto archive backfill-trades <primary> <reconciled> --detect-only --pair <PAIR>` reports the loss without minting. If REST can still serve the missing ids, a heal followed by a widened `--rescan-days` on one manual run will let the day publish.
+3. **If the ids are unrecoverable, record the gap and stop.** Note the pair, the day and the reason where the dataset's consumers will read it. Do not widen the settle gate or relax the heal check to make the day publish — a short day is indistinguishable from a quiet market once written, which is precisely what this design refuses to do.
+4. **Do not re-run with a fresh output root to "fix" it.** Re-materialising rebuilds every day the archive still holds, which hides the gap rather than closing it, and costs the full history.
+
+### Retire when
+
+`zcrypto-ops-tapebars-permanent-gap` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_tapebars_days_gap` is no longer in the ops role's keep-list (`infra/ansible/roles/ops/files/config.alloy`).
+
+______________________________________________________________________
+
+<a name="zcrypto-ops-tapebars-not-advancing"></a>
+
+## zcrypto-ops-tapebars-not-advancing — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Ops · tape-bars not advancing`): no new `tape-bars` day has been published for more than 48 hours.
+
+### What it means
+
+**The materializer is probably reporting success.** A day whose trade tape is not yet heal-complete is deferred, not failed — the sweep counts it in `days_unhealed` and exits 0 by design, so the exit-code alert stays quiet and a naive "last success" stamp would keep advancing hourly while the dataset froze. That is why this rule reads `zcrypto_tapebars_last_publish_timestamp_seconds`, which moves only when a day is actually written.
+
+A day becomes eligible roughly 26 hours after it ends, so publishing is about daily; 48 hours means two consecutive days produced nothing. The cause is almost always **upstream of the materializer**: the daily REST trade backfill has stopped healing the tape, the archive pull has stalled, or capture itself is down. The materializer refusing to publish an unhealed day is the design working, not the fault.
+
+### What to do
+
+1. **Check the healer before the materializer.** On `zcrypto-ops`, confirm the archive pull is running and that the daily `backfill-trades` leg ran: its stamp is `.trade-backfill-last-utc-day` in the ops data dir, and it fires on the first pull cycle after 00:00 UTC.
+2. **Check capture is still writing.** If the trade tape has no new hours, nothing downstream can advance — that is a capture incident, and the capture dead-men own it.
+3. **Read `days_unhealed` and `errors` from the same runner log.** A high `days_unhealed` with zero `errors` confirms the deferral path (upstream); non-zero `errors` points at the materializer or a corrupt segment instead.
+4. **Do not lower the settle gate or bypass the heal check to make days publish.** The gate is what keeps un-healed bars out of a dataset that has no rewrite path.
+
+### Retire when
+
+`zcrypto-ops-tapebars-not-advancing` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_tapebars_last_publish_timestamp_seconds` is no longer exported by the ops runner.
+
+______________________________________________________________________
+
 <a name="refdata-sweep-due"></a>
 
 ## refdata-sweep-due — SCHEDULED REMINDER
