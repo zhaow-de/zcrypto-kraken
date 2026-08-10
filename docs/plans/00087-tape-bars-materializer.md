@@ -13,7 +13,7 @@
 - Spec: `docs/specs/00087-tape-bars-materializer-design.md`. Decision numbers (D1…D6) refer to it.
 - **Heal-completeness is MEASURED by `cli.trades.gaps.detect`, never inferred from the clock** (D3). `TAPE_SETTLE = timedelta(hours=26)` past day end survives only as a cheap pre-filter and is no longer load-bearing.
 - The healer's settle rule is `_SETTLE` in **`cli/trades/backfill.py`** — a module-local constant it does NOT import from `cli/archive/settle.py`. Cite the one the healer actually reads.
-- **`RESCAN_DAYS = 3`** trailing settled days re-attempted per sweep, publishing only days with no existing file.
+- **`RESCAN_DAYS = 3`** — the trailing window is measured in CALENDAR days back from the newest settled day (the code subtracts a timedelta), so for a pair with whole quiet days it spans fewer settled days than the number suggests.
 - **Base grid is 15 minutes.** 60/240/1440 are derived, never materialized.
 - **Reconciled-first always**: `canonical_segments(primary_root, reconciled_root, kind="trades")`. A bare glob over `capture-segments/` is forbidden — it double-counts pre-2026-07-16 hours.
 - **Column rename is mandatory**: the archive's `TRADE_SCHEMA` uses `qty`; `ticks_to_bars` consumes `volume`. Rename before aggregating or every bar's volume/vwap is wrong.
@@ -36,7 +36,7 @@
 
 **Interfaces:**
 
-- Produces: `BASE_INTERVAL_MINUTES = 15`; `SegmentIndex`; `segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex` — `reconciled_root` is REQUIRED (D4), an empty directory is legal and omission is not expressible; `build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame` returning the `_BAR_SCHEMA` frame for that UTC day; raises `TickError` naming the pair, day and missing hours when the day's tape is incomplete.
+- Produces: `BASE_INTERVAL_MINUTES = 15`; `SegmentIndex`; `segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex` — `reconciled_root` is REQUIRED (D4), an empty directory is legal and omission is not expressible; `build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame` returning the `_BAR_SCHEMA` frame for that UTC day; raises `TickError` only when the day has no segments at all (completeness is the heal gate's business, not hour counting).
 - Consumes: `cli.archive.reader.canonical_segments`, `cli.tick.aggregate.ticks_to_bars`, `cli.tick.errors.TickError`.
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_materialize.py`
@@ -365,7 +365,7 @@ git commit -m "feat(tick): derive 60/240/1440 from the 15m base, exactly"
 
 **Interfaces:**
 
-- Produces: `TAPE_SETTLE`, `RESCAN_DAYS`, `SCHEMA_VERSION = 1`; `is_heal_complete(index: SegmentIndex, pair, day) -> bool`; `publish_day(out_root, pair, day, bars) -> Path`; `@dataclass MaterializeResult(days_written, days_skipped, days_unsettled, rows, errors)`; `materialize(primary_root, reconciled_root, out_root, *, now: datetime, settle: timedelta = TAPE_SETTLE) -> MaterializeResult`.
+- Produces: `TAPE_SETTLE`, `RESCAN_DAYS`; `is_heal_complete(index: SegmentIndex, pair, day) -> bool`; `publish_day(out_root, pair, day, bars) -> Path`; `@dataclass MaterializeResult(days_written, days_skipped, days_unsettled, rows, errors)`; `materialize(primary_root, reconciled_root, out_root, *, now: datetime, settle: timedelta = TAPE_SETTLE) -> MaterializeResult`.
 - Consumes: `build_day` (Task 1).
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_sweep.py`
@@ -560,8 +560,9 @@ def test_a_healed_day_inside_the_rescan_window_is_picked_up_later(tmp_path):
     assert first.days_written == 2 and len(first.errors) == 1  # 08-01 and 08-09 publish; 08-05 errors
 
     hole.write_bytes(kept)  # a late overlay mint replaces the corrupt segment
-    materialize(src, tmp_path / "r", out, now=now, rescan_days=0)
+    tight = materialize(src, tmp_path / "r", out, now=now, rescan_days=0)
     assert not (out / "BTC" / "EUR" / "2026" / "08" / "05.parquet").exists()
+    assert tight.days_gap == 1  # the healed-but-outside-window day is a VISIBLE gap, not a vanished one
 
     wide = materialize(src, tmp_path / "r", out, now=now, rescan_days=9)
     assert wide.days_written == 1
@@ -601,7 +602,6 @@ Write the constant with its derivation attached — the number alone rots the mo
 # the measured trade_id contiguity check, which is why this constant is no longer load-bearing.
 TAPE_SETTLE = timedelta(hours=26)
 RESCAN_DAYS = 3
-SCHEMA_VERSION = 1
 ```
 
 ```python
@@ -614,6 +614,11 @@ class MaterializeResult:
     days_skipped: int
     days_unsettled: int
     days_unhealed: int
+    #: settled, unpublished days that have fallen OUTSIDE the candidate window -- permanent gaps.
+    #: Counted from the calendar and the published set alone (zero file reads), so the signal never
+    #: expires: without it, a day that leaves the window also leaves every counter, and the dataset's
+    #: one permanent failure mode becomes invisible at exactly the moment it becomes final.
+    days_gap: int
     rows: int
     errors: list[tuple[str, date, str]]
 
@@ -640,7 +645,10 @@ def is_heal_complete(index: SegmentIndex, pair: str, day: date) -> bool:
     after = [h for h in hours if h >= end]
     if not after:
         return False  # live edge: nothing after the day, so its tail id is an endpoint, not proof
-    span = own + [max(before)] * bool(before) + [min(after)]
+    # `[max(before)] * bool(before)` LOOKS lazy but is not: Python evaluates max() before the
+    # multiply, so an empty `before` -- the genesis day, the case this rule ACCEPTS -- crashed with
+    # ValueError, and the sweep's broad except turned every pair's first day into a permanent error.
+    span = own + ([max(before)] if before else []) + [min(after)]
     detection = detect(pl.concat(pl.read_parquet(hours[h]) for h in sorted(span)))
     return not detection.gaps and not detection.duplicate_ids
 
@@ -658,24 +666,26 @@ def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Pat
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_suffix(f".parquet.{os.getpid()}.tmp")
     bars.write_parquet(tmp)
-    # fsync the DATA before the rename -- mint.py's `_replace_durably` does this, and a rename
-    # without it publishes a name whose contents may not have reached disk.
-    fd = os.open(tmp, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    _fsync(tmp)  # data before rename -- mint.py's `_replace_durably` semantics, for BOTH artifacts
     digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
     sidecar_tmp = final.with_suffix(f".parquet.sha256.{os.getpid()}.tmp")
     sidecar_tmp.write_text(f"{digest}  {final.name}\n")
+    # A torn sidecar is PERMANENT: the .exists() skip means the day is never re-published, so an
+    # un-fsynced sidecar that loses its bytes at power loss reads as corruption on an irreplaceable
+    # final, forever. The sidecar gets the same durability as the final it vouches for.
+    _fsync(sidecar_tmp)
     os.replace(sidecar_tmp, final.with_suffix(".parquet.sha256"))
     os.replace(tmp, final)
-    fd = os.open(final.parent, os.O_RDONLY)
+    _fsync(final.parent)
+    return final
+
+
+def _fsync(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
     finally:
         os.close(fd)
-    return final
 
 
 def _archive_calendar(index: SegmentIndex) -> dict[str, list[date]]:
@@ -708,7 +718,7 @@ def materialize(
     `now - (day_end) >= settle`; an unsettled day is counted and left alone, so a later sweep takes
     it once heal-complete (D3 / T0066 option (a)). A day that raises is isolated into `errors`.
     """
-    written = skipped = unsettled = unhealed = rows = 0
+    written = skipped = unsettled = unhealed = gap = rows = 0
     errors: list[tuple[str, date, str]] = []
     index = segment_index(primary_root, reconciled_root)
     for pair, days in _archive_calendar(index).items():
@@ -729,6 +739,7 @@ def materialize(
         else:
             floor = min(settled[-1] - timedelta(days=rescan_days), watermark + timedelta(days=1))
             candidates = [d for d in settled if d >= floor]
+            gap += sum(1 for d in settled if d < floor and not _final_path(out_root, pair, d).exists())
         for day in candidates:
             if _final_path(out_root, pair, day).exists():
                 skipped += 1
@@ -746,7 +757,7 @@ def materialize(
             publish_day(out_root, pair, day, bars)
             written += 1
             rows += bars.height
-    return MaterializeResult(written, skipped, unsettled, unhealed, rows, errors)
+    return MaterializeResult(written, skipped, unsettled, unhealed, gap, rows, errors)
 ```
 
 Add `import hashlib`, `import os`, `from dataclasses import dataclass`, and `from cli.trades.gaps import detect` to the module imports.
@@ -785,7 +796,7 @@ git commit -m "feat(tick): settle-gated, watermark-skipping sweep with atomic da
 ```python
 """The `zcrypto tick materialize` surface (spec 00087 D6)."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -887,14 +898,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import typer
 
-from cli.logging import get_logger
 from cli.tick.materialize import RESCAN_DAYS, TAPE_SETTLE, materialize
 
-logger = get_logger("tick.command")
 tick_app = typer.Typer(help="Bars derived from the captured trade tape.")
 
 
@@ -922,6 +930,7 @@ def materialize_cmd(
     typer.echo(
         f"days_written={result.days_written} days_skipped={result.days_skipped} "
         f"days_unsettled={result.days_unsettled} days_unhealed={result.days_unhealed} "
+        f"days_gap={result.days_gap} "
         f"rows={result.rows} errors={len(result.errors)}"
     )
     for pair, day, message in result.errors:
@@ -1010,7 +1019,7 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree; it refuses a dir
 - [ ] **Probe 2 — the qty→volume rename:** sed `.rename({"qty": "volume"})` to `.rename({})` → `test_volume_comes_from_qty_not_a_missing_column` must fail.
 - [ ] **Probe 3 — the empty-day refusal:** sed `if not present:` in `build_day` to `if False:` → `test_a_day_with_no_segments_is_refused` must fail.
 - [ ] **Probe 4 — reconciled-first:** sed `canonical_segments(primary_root, reconciled_root, kind="trades")` in `segment_index` to pass `None` as the overlay → `test_the_reconciled_overlay_wins_over_the_primary` must fail. (`reconciled_root` is a required argument, so the un-healed path is unreachable through the API; this probe proves the reader is genuinely overlay-aware rather than that a caller remembered a flag.)
-- [ ] **Probe 5 — the weighted vwap:** sed `(pl.col("vwap") * pl.col("volume")).sum()` to `pl.col("vwap").mean() * pl.col("volume").sum()` → `test_derived_equals_direct_aggregation` must fail. **This is the most important probe in the set**: it is the exact wrong formula D1 warns about, and the one a reimplementation would reach for.
+- [ ] **Probe 5 — the weighted vwap:** sed `(pl.col("vwap") * pl.col("volume")).sum().alias("_pv_sum")` to `(pl.col("vwap").mean() * pl.col("volume").sum()).alias("_pv_sum")` → `test_derived_equals_direct_aggregation` must fail **by VALUE, not by crash** — the alias is kept precisely so the wrong formula flows silently into the equality assertion, which is the failure mode D1 warns about. (An alias-dropping sed dies on `ColumnNotFoundError` instead: that proves the line load-bearing, but not that the test catches a silently wrong number.)
 - [ ] **Probe 6 — no-rewrite:** sed the `_final_path(...).exists()` skip to `False` → `test_a_published_day_is_skipped_not_rewritten` must fail.
 - [ ] **Probe 7 — the measured heal gate:** sed `is_heal_complete(...)` in the sweep to `True` → `test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed` must fail. This is the guard that replaced a wall-clock proxy cold review killed; if it does not bite, the design is back to publishing un-healed days permanently.
 - [ ] **Probe 8 — the neighbour extension:** sed the `span = own + ...` line to `span = own` (no neighbours) → `test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension` must fail. Without the extension `detect` reads a boundary hole as clean, so this probe is what proves the test is not passing for the wrong reason.
@@ -1029,7 +1038,7 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree; it refuses a dir
 - Modify: `infra/ansible/roles/ops/tasks/main.yml` (render + enable, mirroring the panel's block)
 
 - [ ] **Step 1: Read the panel's three templates and its task block** — `panel-materialize.{sh,service,timer}.j2`. Mirror them exactly: same `docker run --rm --pull never` shape, same image/digest variables, same log handling, same `--limit`-free structure.
-- [ ] **Step 2: Write the three templates.** The timer is `OnCalendar=*-*-* *:52:00` — clear of the `:12,42` pull, the panel's `:22`, and the `02:25` auto-reboot. Hourly though the grain is daily: a day becomes eligible ~26 h after it ends and is taken within the hour, and an hourly sweep catches up after any outage with no backlog logic.
+- [ ] **Step 2: Write the three templates.** The runner mirrors the panel's OBSERVABILITY as well as its shape — the panel is protected by textfile metrics, an alert rule and a dead-man, and a runner with none of those can stall forever with every surface green, because the unhealed path exits 0 by design. The sh template therefore exports textfile gauges after every run (`zcrypto_tapebars_exit_code`, `_days_written`, `_days_unhealed`, `_days_gap`, `_errors`, and `_last_success_timestamp_seconds` on success), following the panel runner's export pattern exactly. The timer is `OnCalendar=*-*-* *:52:00` — clear of the `:12,42` pull, the panel's `:22`, and the `02:25` auto-reboot. Hourly though the grain is daily: a day becomes eligible ~26 h after it ends and is taken within the hour, and an hourly sweep catches up after any outage with no backlog logic.
 - [ ] **Step 3: Verify by rendering, not by converging.** Run `uv run pytest tests/test_converge_sh.py -q` plus any template-rendering test the repo has, and `uv run ansible-lint infra/ansible` if the pre-commit hook does not already cover it.
 - [ ] **Step 4: Commit**
 
@@ -1049,6 +1058,7 @@ git commit -m "feat(ops): render the tape-bars materializer timer"
 
 - [ ] **Step 1:** `docs/reference/data-catalog-full.md` — add `tape-bars` to the accruing operational members: producer (`zcrypto tick materialize` on ops, hourly), location and layout, the 15m base with derived grids, the 26 h settle and why, and that it carries `.sha256` sidecars and **no manifest** (D5).
 - [ ] **Step 2:** [[T0065]] — move the materializer to `## Done so far` with its commits; rewrite `ripe_when` so **REACH's remaining half is the Q2/Q3 ingest alone**, still gated on Kraken publishing (verified absent 2026-08-10). Index bullet updated to match (`topic-ops`). Do **not** mark T0065 resolved — the ingest half is live.
-- [ ] **Step 3:** Iterations-history entry (phase 6 per `iteration-closeout`), naming: the measured settle derivation and that it corrects [[T0066]]'s estimate's *mechanism*; the no-overlap verification problem and the perishable REST control; the probe verdicts; and that the ops converge is owed and un-run.
-- [ ] **Step 4:** Phase-6 decisions-log entry for D1 (15m base + derived grids), D2 (daily finals), D3 (26 h settle, measured) and D5 (no manifest), each with its options and the ruling.
-- [ ] **Step 5:** Full suite + `uv run pre-commit run -a` clean. Report ready, naming the owed ops converge explicitly. **Do not open the PR without the owner's word.**
+- [ ] **Step 3:** Two alert rules into `infra/grafana/alerts.yaml`, pushed and verified BY VALUE at the attended converge (never before it): `zcrypto_tapebars_days_gap > 0` — a permanent gap just became final, and nothing else will ever say so again — and staleness on `zcrypto_tapebars_last_success_timestamp_seconds`, the stalled-healer case where the watermark freezes with every other surface green. Follow `.claude/rules/capture-deploys.md`'s push/verify/prune discipline.
+- [ ] **Step 4:** Iterations-history entry (phase 6 per `iteration-closeout`), naming: the measured settle derivation and that it corrects [[T0066]]'s estimate's *mechanism*; the no-overlap verification problem and the perishable REST control; the probe verdicts; and that the ops converge is owed and un-run.
+- [ ] **Step 5:** Phase-6 decisions-log entry for D1 (15m base + derived grids), D2 (daily finals), D3 (26 h settle, measured) and D5 (no manifest), each with its options and the ruling.
+- [ ] **Step 6:** Full suite + `uv run pre-commit run -a` clean. Report ready, naming the owed ops converge explicitly. **Do not open the PR without the owner's word.**
