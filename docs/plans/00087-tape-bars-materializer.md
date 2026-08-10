@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - Spec: `docs/specs/00087-tape-bars-materializer-design.md`. Decision numbers (D1…D6) refer to it.
-- **`TAPE_SETTLE = timedelta(hours=26)`** past day end. The code carries D3's derivation beside the constant, never the bare number.
+- **Heal-completeness is MEASURED by `cli.trades.gaps.detect`, never inferred from the clock** (D3). `TAPE_SETTLE = timedelta(hours=26)` past day end survives only as a cheap pre-filter and is no longer load-bearing.
+- The healer's settle rule is `_SETTLE` in **`cli/trades/backfill.py`** — a module-local constant it does NOT import from `cli/archive/settle.py`. Cite the one the healer actually reads.
 - **`RESCAN_DAYS = 3`** trailing settled days re-attempted per sweep, publishing only days with no existing file.
 - **Base grid is 15 minutes.** 60/240/1440 are derived, never materialized.
 - **Reconciled-first always**: `canonical_segments(primary_root, reconciled_root, kind="trades")`. A bare glob over `capture-segments/` is forbidden — it double-counts pre-2026-07-16 hours.
@@ -35,7 +36,7 @@
 
 **Interfaces:**
 
-- Produces: `BASE_INTERVAL_MINUTES = 15`; `build_day(primary_root: Path, reconciled_root: Path | None, pair: str, day: date) -> pl.DataFrame` returning the `_BAR_SCHEMA` frame for that UTC day; raises `TickError` naming the pair, day and missing hours when the day's tape is incomplete.
+- Produces: `BASE_INTERVAL_MINUTES = 15`; `build_day(primary_root: Path, reconciled_root: Path, pair: str, day: date) -> pl.DataFrame` — `reconciled_root` is REQUIRED (D4); an empty directory is legal, omission is not expressible returning the `_BAR_SCHEMA` frame for that UTC day; raises `TickError` naming the pair, day and missing hours when the day's tape is incomplete.
 - Consumes: `cli.archive.reader.canonical_segments`, `cli.tick.aggregate.ticks_to_bars`, `cli.tick.errors.TickError`.
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_materialize.py`
@@ -55,8 +56,14 @@ from cli.tick.materialize import build_day
 
 
 def _seg(root: Path, pair: str, hour: datetime, rows: list[tuple[float, float, int]]) -> None:
-    """Write one canonical trades segment: <root>/<PAIR>/trades/<Y>/<m>/<d>/<H>.parquet."""
-    d = root / pair.replace("/", "") / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
+    """Write one canonical trades segment.
+
+    The canonical layout is <root>/<BASE>/<QUOTE>/<kind>/<Y>/<m>/<d>/<H>.parquet -- the pair spans
+    TWO path levels. `canonical_segments` globs `*/*/{kind}/*/*/*/*.parquet` and reads the pair from
+    parts[-7]/parts[-6], so a flattened `BTCEUR/` tree is INVISIBLE to it and every positive test
+    would fail against a correct implementation.
+    """
+    d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
     d.mkdir(parents=True, exist_ok=True)
     frame = pl.DataFrame(
         {
@@ -80,7 +87,7 @@ def _full_day(root: Path, pair: str, day: date, *, per_hour=((10.0, 2.0, 5),)) -
 
 def test_a_full_day_yields_one_bar_per_traded_window(tmp_path):
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    bars = build_day(tmp_path, None, "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
     assert list(bars.columns) == ["ts", "open", "high", "low", "close", "volume", "count", "vwap"]
     # One trade per hour at :05 -> exactly one 15m bar per hour, not 96: empty windows emit NO row.
     assert bars.height == 24
@@ -91,7 +98,7 @@ def test_volume_comes_from_qty_not_a_missing_column(tmp_path):
     """The archive's TRADE_SCHEMA says `qty`; ticks_to_bars consumes `volume`. Without the rename
     the aggregation raises or produces null volume -- and a null vwap silently follows."""
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1), per_hour=((10.0, 3.0, 5),))
-    bars = build_day(tmp_path, None, "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
     assert bars["volume"].sum() == pytest.approx(72.0)  # 24 hours x 3.0
     assert bars["vwap"].null_count() == 0
     assert bars["vwap"][0] == pytest.approx(10.0)
@@ -101,9 +108,9 @@ def test_a_day_missing_an_hour_is_refused_naming_it(tmp_path):
     """D4: a 96-row file with 71 rows is indistinguishable from a quiet market, so a short day is
     refused rather than published."""
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    (tmp_path / "BTCEUR" / "trades" / "2026" / "08" / "01" / "07.parquet").unlink()
+    (tmp_path / "BTC" / "EUR" / "trades" / "2026" / "08" / "01" / "07.parquet").unlink()
     with pytest.raises(TickError, match="07"):
-        build_day(tmp_path, None, "BTC/EUR", date(2026, 8, 1))
+        build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
 
 
 def test_the_reconciled_overlay_wins_over_the_primary(tmp_path):
@@ -119,7 +126,7 @@ def test_the_reconciled_overlay_wins_over_the_primary(tmp_path):
 def test_only_the_named_day_is_included(tmp_path):
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1))
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 2))
-    bars = build_day(tmp_path, None, "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
     assert bars["ts"].min() >= datetime(2026, 8, 1, tzinfo=UTC)
     assert bars["ts"].max() < datetime(2026, 8, 2, tzinfo=UTC)
 ```
@@ -154,7 +161,7 @@ BASE_INTERVAL_MINUTES = 15
 _HOURS_PER_DAY = 24
 
 
-def build_day(primary_root: Path, reconciled_root: Path | None, pair: str, day: date) -> pl.DataFrame:
+def build_day(primary_root: Path, reconciled_root: Path, pair: str, day: date) -> pl.DataFrame:
     """The healed tape for `pair` on UTC `day`, aggregated to 15m bars.
 
     Reconciled-first via `canonical_segments`: a bare glob over the primary would return the
@@ -224,7 +231,7 @@ def _tape(tmp_path: Path, pair: str, day: date) -> Path:
     root = tmp_path / "p"
     for h in range(24):
         hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
-        d = root / pair.replace("/", "") / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
+        d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
         d.mkdir(parents=True, exist_ok=True)
         n = 4 + (h % 5)
         pl.DataFrame(
@@ -247,11 +254,11 @@ def test_derived_equals_direct_aggregation(tmp_path, interval):
     """THE property D1 claims. Derived-from-15m must equal ticks_to_bars run at that interval on the
     same ticks -- every column, not just the ones that trivially telescope."""
     root = _tape(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    base = build_day(root, None, "BTC/EUR", date(2026, 8, 1))
+    base = build_day(root, root.parent / "r", "BTC/EUR", date(2026, 8, 1))
     derived = derive_bars(base, interval_minutes=interval)
 
     ticks = pl.concat(
-        pl.read_parquet(p) for p in sorted((root / "BTCEUR" / "trades").rglob("*.parquet"))
+        pl.read_parquet(p) for p in sorted((root / "BTC" / "EUR" / "trades").rglob("*.parquet"))
     ).rename({"qty": "volume"}).select("ts", "price", "volume")
     direct = ticks_to_bars(ticks, interval_minutes=interval)
 
@@ -266,7 +273,7 @@ def test_an_averaged_vwap_would_be_wrong(tmp_path):
     """Guards the formula, not just the result: on lopsided volume the weighted vwap differs from a
     plain mean of sub-bar vwaps, so a naive implementation cannot pass the test above by accident."""
     root = _tape(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    base = build_day(root, None, "BTC/EUR", date(2026, 8, 1))
+    base = build_day(root, root.parent / "r", "BTC/EUR", date(2026, 8, 1))
     derived = derive_bars(base, interval_minutes=60)
     naive = base.group_by_dynamic("ts", every="60m", closed="left").agg(pl.col("vwap").mean())
     assert derived["vwap"].to_list() != pytest.approx(naive["vwap"].to_list())
@@ -275,7 +282,7 @@ def test_an_averaged_vwap_would_be_wrong(tmp_path):
 def test_a_coarse_window_exists_iff_a_sub_bar_does(tmp_path):
     """Sparse input stays sparse: no gap-filling, and a coarse bar is never invented."""
     root = _tape(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    base = build_day(root, None, "BTC/EUR", date(2026, 8, 1)).filter(
+    base = build_day(root, root.parent / "r", "BTC/EUR", date(2026, 8, 1)).filter(
         pl.col("ts") >= datetime(2026, 8, 1, 12, tzinfo=UTC)
     )
     derived = derive_bars(base, interval_minutes=60)
@@ -342,7 +349,7 @@ git commit -m "feat(tick): derive 60/240/1440 from the 15m base, exactly"
 
 **Interfaces:**
 
-- Produces: `TAPE_SETTLE`, `RESCAN_DAYS`, `SCHEMA_VERSION = 1`; `publish_day(out_root, pair, day, bars) -> Path`; `@dataclass MaterializeResult(days_written, days_skipped, days_unsettled, rows, errors)`; `materialize(primary_root, reconciled_root, out_root, *, now: datetime, settle: timedelta = TAPE_SETTLE) -> MaterializeResult`.
+- Produces: `TAPE_SETTLE`, `RESCAN_DAYS`, `SCHEMA_VERSION = 1`; `is_heal_complete(primary_root, reconciled_root, pair, day) -> bool`; `publish_day(out_root, pair, day, bars) -> Path`; `@dataclass MaterializeResult(days_written, days_skipped, days_unsettled, rows, errors)`; `materialize(primary_root, reconciled_root, out_root, *, now: datetime, settle: timedelta = TAPE_SETTLE) -> MaterializeResult`.
 - Consumes: `build_day` (Task 1).
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_sweep.py`
@@ -364,7 +371,7 @@ from cli.tick.materialize import TAPE_SETTLE, MaterializeResult, materialize
 def _day(root: Path, pair: str, day: date) -> None:
     for h in range(24):
         hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
-        d = root / pair.replace("/", "") / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
+        d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
         d.mkdir(parents=True, exist_ok=True)
         pl.DataFrame(
             {"ts": [hour], "symbol": [pair], "side": ["buy"], "price": [10.0], "qty": [1.0],
@@ -384,11 +391,11 @@ def test_an_unsettled_day_is_deferred_then_taken_once_settled(tmp_path):
     d = date(2026, 8, 1)
     _day(src, "BTC/EUR", d)
 
-    early = materialize(src, None, out, now=_after(d, hours=25))
+    early = materialize(src, tmp_path / "r", out, now=_after(d, hours=25))
     assert early.days_written == 0 and early.days_unsettled == 1
     assert not list(out.rglob("*.parquet"))
 
-    late = materialize(src, None, out, now=_after(d, hours=27))
+    late = materialize(src, tmp_path / "r", out, now=_after(d, hours=27))
     assert late.days_written == 1 and late.days_unsettled == 0
     assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
 
@@ -397,10 +404,10 @@ def test_a_published_day_is_skipped_not_rewritten(tmp_path):
     src, out = tmp_path / "src", tmp_path / "out"
     d = date(2026, 8, 1)
     _day(src, "BTC/EUR", d)
-    materialize(src, None, out, now=_after(d, hours=27))
+    materialize(src, tmp_path / "r", out, now=_after(d, hours=27))
     final = out / "BTC" / "EUR" / "2026" / "08" / "01.parquet"
     before = final.stat().st_mtime_ns
-    again = materialize(src, None, out, now=_after(d, hours=27))
+    again = materialize(src, tmp_path / "r", out, now=_after(d, hours=27))
     assert again.days_written == 0 and again.days_skipped == 1
     assert final.stat().st_mtime_ns == before
 
@@ -409,7 +416,7 @@ def test_a_sidecar_is_written_and_matches_the_final(tmp_path):
     src, out = tmp_path / "src", tmp_path / "out"
     d = date(2026, 8, 1)
     _day(src, "BTC/EUR", d)
-    materialize(src, None, out, now=_after(d, hours=27))
+    materialize(src, tmp_path / "r", out, now=_after(d, hours=27))
     final = out / "BTC" / "EUR" / "2026" / "08" / "01.parquet"
     sidecar = final.with_suffix(".parquet.sha256")
     assert sidecar.exists()
@@ -421,9 +428,9 @@ def test_a_bad_day_is_isolated_and_the_sweep_continues(tmp_path):
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2026, 8, 1))
     _day(src, "BTC/EUR", date(2026, 8, 2))
-    (src / "BTCEUR" / "trades" / "2026" / "08" / "01" / "07.parquet").unlink()
+    (src / "BTC" / "EUR" / "trades" / "2026" / "08" / "01" / "07.parquet").unlink()
 
-    res = materialize(src, None, out, now=_after(date(2026, 8, 2), hours=27))
+    res = materialize(src, tmp_path / "r", out, now=_after(date(2026, 8, 2), hours=27))
     assert res.days_written == 1
     assert len(res.errors) == 1 and res.errors[0][0] == "BTC/EUR"
     assert (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists()
@@ -440,11 +447,57 @@ def test_a_healed_day_inside_the_rescan_window_is_picked_up_later(tmp_path):
     hole.unlink()
 
     now = _after(date(2026, 8, 2), hours=27)
-    assert materialize(src, None, out, now=now).days_written == 1
+    assert materialize(src, tmp_path / "r", out, now=now).days_written == 1
     hole.write_bytes(kept)  # a late overlay mint heals it
-    res = materialize(src, None, out, now=now)
+    res = materialize(src, tmp_path / "r", out, now=now)
     assert res.days_written == 1
     assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
+
+
+def _holed_day(root: Path, pair: str, day: date, *, drop_id: int | None = None) -> None:
+    """A day whose trade_ids run 0..23 across the hours, optionally with one id missing."""
+    for h in range(24):
+        hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
+        if drop_id is not None and h == drop_id:
+            ids: list[int] = []
+        else:
+            ids = [h]
+        d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
+        d.mkdir(parents=True, exist_ok=True)
+        pl.DataFrame(
+            {"ts": [hour] * len(ids), "symbol": [pair] * len(ids), "side": ["buy"] * len(ids),
+             "price": [10.0] * len(ids), "qty": [1.0] * len(ids), "ord_type": ["limit"] * len(ids),
+             "trade_id": ids},
+            schema=TRADE_SCHEMA,
+        ).write_parquet(d / f"{hour:%H}.parquet")
+
+
+def test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed(tmp_path):
+    """D3, the load-bearing gate. The clock cannot see this: the day is long settled and still
+    un-healed, which is exactly the state a wall-clock proxy publishes permanently."""
+    src, out, overlay = tmp_path / "src", tmp_path / "out", tmp_path / "r"
+    d = date(2026, 8, 1)
+    _holed_day(src, "BTC/EUR", d, drop_id=7)
+
+    res = materialize(src, overlay, out, now=_after(d, hours=99))
+    assert res.days_written == 0 and res.days_unhealed == 1
+    assert not list(out.rglob("*.parquet"))
+
+    _holed_day(src, "BTC/EUR", d)  # the healer fills the hole
+    ok = materialize(src, overlay, out, now=_after(d, hours=99))
+    assert ok.days_written == 1 and ok.days_unhealed == 0
+
+
+def test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension(tmp_path):
+    """`detect` treats the first and last observed id as endpoints, never gaps -- so over exactly one
+    day a boundary hole reads CLEAN. The neighbouring-hour extension is what makes it visible; without
+    it this test passes for the wrong reason and un-healed edges publish forever."""
+    src, out, overlay = tmp_path / "src", tmp_path / "out", tmp_path / "r"
+    _holed_day(src, "BTC/EUR", date(2026, 8, 1))          # ids 0..23
+    _holed_day(src, "BTC/EUR", date(2026, 8, 2), drop_id=0)  # its first id missing
+    res = materialize(src, overlay, out, now=_after(date(2026, 8, 2), hours=99))
+    assert res.days_unhealed >= 1
+    assert not (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists()
 
 
 def test_every_pair_in_the_archive_is_swept(tmp_path):
@@ -453,7 +506,7 @@ def test_every_pair_in_the_archive_is_swept(tmp_path):
     d = date(2026, 8, 1)
     _day(src, "BTC/EUR", d)
     _day(src, "ETH/BTC", d)
-    res = materialize(src, None, out, now=_after(d, hours=27))
+    res = materialize(src, tmp_path / "r", out, now=_after(d, hours=27))
     assert res.days_written == 2
     assert (out / "ETH" / "BTC" / "2026" / "08" / "01.parquet").exists()
 ```
@@ -489,8 +542,30 @@ class MaterializeResult:
     days_written: int
     days_skipped: int
     days_unsettled: int
+    days_unhealed: int
     rows: int
     errors: list[tuple[str, date, str]]
+
+
+def is_heal_complete(primary_root: Path, reconciled_root: Path, pair: str, day: date) -> bool:
+    """Has the healer finished with this day? MEASURED, never inferred from the clock (D3).
+
+    Kraken's `trade_id` is dense and per-pair monotone, so a hole in the sequence IS missing data --
+    `cli.trades.gaps.detect` proves it with no REST call. The day is read WITH the last hour of D-1
+    and the first hour of D+1 when they exist, because `detect` treats the first and last observed id
+    as endpoints rather than gaps: over exactly one day, a hole on either boundary reads clean.
+    """
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    lo, hi = start - timedelta(hours=1), start + timedelta(days=1, hours=1)
+    paths = [
+        path
+        for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades")
+        if seg_pair == pair and lo <= hour < hi
+    ]
+    if not paths:
+        return False
+    detection = detect(pl.concat(pl.read_parquet(p) for p in paths))
+    return not detection.gaps and not detection.duplicate_ids
 
 
 def _final_path(out_root: Path, pair: str, day: date) -> Path:
@@ -506,6 +581,13 @@ def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Pat
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_suffix(f".parquet.{os.getpid()}.tmp")
     bars.write_parquet(tmp)
+    # fsync the DATA before the rename -- mint.py's `_replace_durably` does this, and a rename
+    # without it publishes a name whose contents may not have reached disk.
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
     sidecar_tmp = final.with_suffix(f".parquet.sha256.{os.getpid()}.tmp")
     sidecar_tmp.write_text(f"{digest}  {final.name}\n")
@@ -519,7 +601,7 @@ def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Pat
     return final
 
 
-def _archive_calendar(primary_root: Path, reconciled_root: Path | None) -> dict[str, list[date]]:
+def _archive_calendar(primary_root: Path, reconciled_root: Path) -> dict[str, list[date]]:
     """Every archived pair -> its sorted distinct UTC days. Enumerated ONCE: `canonical_segments`
     walks the whole archive, so calling it per pair would be O(pairs x archive) every sweep."""
     calendar: dict[str, set[date]] = {}
@@ -540,7 +622,7 @@ def _watermark(out_root: Path, pair: str) -> date | None:
 
 def materialize(
     primary_root: Path,
-    reconciled_root: Path | None,
+    reconciled_root: Path,
     out_root: Path,
     *,
     now: datetime,
@@ -553,7 +635,7 @@ def materialize(
     `now - (day_end) >= settle`; an unsettled day is counted and left alone, so a later sweep takes
     it once heal-complete (D3 / T0066 option (a)). A day that raises is isolated into `errors`.
     """
-    written = skipped = unsettled = rows = 0
+    written = skipped = unsettled = unhealed = rows = 0
     errors: list[tuple[str, date, str]] = []
     for pair, days in _archive_calendar(primary_root, reconciled_root).items():
         settled = [d for d in days if now - (datetime(d.year, d.month, d.day, tzinfo=UTC) + timedelta(days=1)) >= settle]
@@ -564,14 +646,23 @@ def materialize(
         # so a day that failed while its tape was incomplete is retried while a late overlay mint can
         # still rescue it -- and then becomes a permanent, VISIBLE gap rather than an unbounded retry.
         watermark = _watermark(out_root, pair)
-        floor = settled[-1] - timedelta(days=rescan_days)
-        if watermark is not None:
-            floor = min(floor, watermark + timedelta(days=1))
-        for day in [d for d in settled if d >= floor]:
+        if watermark is None:
+            # FIRST RUN: sweep the whole archive. Bounding it here would silently strand the entire
+            # backlog -- the watermark would jump to the newest day and everything below the floor
+            # would never be attempted again, with no error and no counter. A permanently short
+            # dataset that looks complete is the worst outcome this design can produce.
+            candidates = settled
+        else:
+            floor = min(settled[-1] - timedelta(days=rescan_days), watermark + timedelta(days=1))
+            candidates = [d for d in settled if d >= floor]
+        for day in candidates:
             if _final_path(out_root, pair, day).exists():
                 skipped += 1
                 continue
             try:
+                if not is_heal_complete(primary_root, reconciled_root, pair, day):
+                    unhealed += 1
+                    continue
                 bars = build_day(primary_root, reconciled_root, pair, day)
             except TickError as exc:
                 errors.append((pair, day, str(exc)))
@@ -579,10 +670,10 @@ def materialize(
             publish_day(out_root, pair, day, bars)
             written += 1
             rows += bars.height
-    return MaterializeResult(written, skipped, unsettled, rows, errors)
+    return MaterializeResult(written, skipped, unsettled, unhealed, rows, errors)
 ```
 
-Add `import hashlib`, `import os`, and `from dataclasses import dataclass` to the module imports.
+Add `import hashlib`, `import os`, `from dataclasses import dataclass`, and `from cli.trades.gaps import detect` to the module imports.
 
 **Note on `days_unsettled`:** it counts unsettled days across the whole archive calendar, not only recent ones, so on a fresh archive the newest day or two register there — that is the D3 gate working. The candidate range, by contrast, is bounded by the watermark and the trailing window, which is what keeps a sweep O(recent) on an archive that grows forever.
 
@@ -633,7 +724,7 @@ runner = CliRunner()
 def _day(root: Path, pair: str, day: date) -> None:
     for h in range(24):
         hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
-        d = root / pair.replace("/", "") / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
+        d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
         d.mkdir(parents=True, exist_ok=True)
         pl.DataFrame(
             {"ts": [hour], "symbol": [pair], "side": ["buy"], "price": [10.0], "qty": [1.0],
@@ -645,7 +736,7 @@ def _day(root: Path, pair: str, day: date) -> None:
 def test_materialize_publishes_and_reports(tmp_path):
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2020, 1, 1))  # long past -- settled against the real clock
-    res = runner.invoke(app, ["tick", "materialize", str(src), str(out)])
+    res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r")])
     assert res.exit_code == 0, res.output
     assert "days_written=1" in res.output
     assert (out / "BTC" / "EUR" / "2020" / "01" / "01.parquet").exists()
@@ -655,29 +746,37 @@ def test_a_failed_day_exits_nonzero_and_names_the_pair(tmp_path):
     """A sweep that isolated an error must not report success -- the exit code is what a timer sees."""
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2020, 1, 1))
-    (src / "BTCEUR" / "trades" / "2020" / "01" / "01" / "07.parquet").unlink()
-    res = runner.invoke(app, ["tick", "materialize", str(src), str(out)])
+    (src / "BTC" / "EUR" / "trades" / "2020" / "01" / "01" / "07.parquet").unlink()
+    res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r")])
     assert res.exit_code != 0
     assert "BTC/EUR" in res.output
 
 
 def test_rescan_days_reaches_the_sweep(tmp_path):
-    """A flag that is accepted and ignored is a lie in --help. With a zero-width re-scan window and
-    no watermark, a day older than the window is out of range and must not be published."""
+    """A flag that is accepted and ignored is a lie in --help -- so prove it reaches the sweep. The
+    window bounds SUBSEQUENT sweeps, never the first: on a first run the whole archive is swept, or
+    the backlog is stranded silently."""
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2020, 1, 1))
     _day(src, "BTC/EUR", date(2020, 1, 9))
-    res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--rescan-days", "0"])
-    assert res.exit_code == 0, res.output
+
+    first = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r"), "--rescan-days", "0"])
+    assert first.exit_code == 0, first.output
+    assert (out / "BTC" / "EUR" / "2020" / "01" / "01.parquet").exists(), "first run must not strand the backlog"
     assert (out / "BTC" / "EUR" / "2020" / "01" / "09.parquet").exists()
-    assert not (out / "BTC" / "EUR" / "2020" / "01" / "01.parquet").exists()
+
+    # Now a watermark exists. A day older than a zero-width window is out of range on a LATER sweep.
+    _day(src, "BTC/EUR", date(2020, 1, 5))
+    later = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r"), "--rescan-days", "0"])
+    assert later.exit_code == 0, later.output
+    assert not (out / "BTC" / "EUR" / "2020" / "01" / "05.parquet").exists()
 
 
 def test_settle_hours_is_overridable(tmp_path):
     """An operator must be able to widen the gate; the default is TAPE_SETTLE."""
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2020, 1, 1))
-    res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--settle-hours", "999999"])
+    res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r"), "--settle-hours", "999999"])
     assert res.exit_code == 0
     assert "days_unsettled=1" in res.output
     assert not list(out.rglob("*.parquet"))
@@ -712,7 +811,7 @@ tick_app = typer.Typer(help="Bars derived from the captured trade tape.")
 def materialize_cmd(
     primary_root: Path = typer.Argument(..., help="The primary (raw) canonical trade archive."),
     out_root: Path = typer.Argument(..., help="Dataset root the daily finals are published into."),
-    reconciled_root: Optional[Path] = typer.Option(None, "--reconciled-root", help="The healed overlay; read first when present."),
+    reconciled_root: Path = typer.Option(..., "--reconciled-root", help="The healed overlay, read first. REQUIRED: an optional overlay is one forgotten flag away from publishing the un-healed stream."),
     settle_hours: int = typer.Option(int(TAPE_SETTLE.total_seconds() // 3600), "--settle-hours", help="Hours past a day's end before it may be published."),
     rescan_days: int = typer.Option(RESCAN_DAYS, "--rescan-days", help="Trailing settled days re-attempted, so a late-healed day is still picked up."),
 ) -> None:
@@ -731,7 +830,8 @@ def materialize_cmd(
     )
     typer.echo(
         f"days_written={result.days_written} days_skipped={result.days_skipped} "
-        f"days_unsettled={result.days_unsettled} rows={result.rows} errors={len(result.errors)}"
+        f"days_unsettled={result.days_unsettled} days_unhealed={result.days_unhealed} "
+        f"rows={result.rows} errors={len(result.errors)}"
     )
     for pair, day, message in result.errors:
         typer.echo(f"  ERROR {pair} {day.isoformat()}: {message}", err=True)
@@ -821,7 +921,10 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree; it refuses a dir
 - [ ] **Probe 4 — reconciled-first:** sed `canonical_segments(primary_root, reconciled_root, kind="trades")` in `build_day` to pass `None` as the overlay → `test_the_reconciled_overlay_wins_over_the_primary` must fail.
 - [ ] **Probe 5 — the weighted vwap:** sed `(pl.col("vwap") * pl.col("volume")).sum()` to `pl.col("vwap").mean() * pl.col("volume").sum()` → `test_derived_equals_direct_aggregation` must fail. **This is the most important probe in the set**: it is the exact wrong formula D1 warns about, and the one a reimplementation would reach for.
 - [ ] **Probe 6 — no-rewrite:** sed the `_final_path(...).exists()` skip to `False` → `test_a_published_day_is_skipped_not_rewritten` must fail.
-- [ ] **Probe 7 — error isolation:** sed the `except TickError` block to re-raise → `test_a_bad_day_is_isolated_and_the_sweep_continues` must fail.
+- [ ] **Probe 7 — the measured heal gate:** sed `is_heal_complete(...)` in the sweep to `True` → `test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed` must fail. This is the guard that replaced a wall-clock proxy cold review killed; if it does not bite, the design is back to publishing un-healed days permanently.
+- [ ] **Probe 8 — the neighbour extension:** sed `start - timedelta(hours=1), start + timedelta(days=1, hours=1)` to `start, start + timedelta(days=1)` → `test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension` must fail. Without the extension `detect` reads a boundary hole as clean, so this probe is what proves the test is not passing for the wrong reason.
+- [ ] **Probe 9 — the first-run backlog:** sed the `if watermark is None:` branch to take the bounded path → `test_rescan_days_reaches_the_sweep`'s first-run assertion must fail. The defect it reconstructs strands a month of tape silently, with no error and no counter.
+- [ ] **Probe 10 — error isolation:** sed the `except TickError` block to re-raise → `test_a_bad_day_is_isolated_and_the_sweep_continues` must fail.
 - [ ] **Record every verdict** in the task report: probe, sed target, which test failed, and the control's result. A probe whose control did not fail proves nothing — choose a control the probe must detect and re-run.
 
 ---

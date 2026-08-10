@@ -28,7 +28,7 @@ Rejected: materializing each grid independently from the tape. It multiplies the
 
 ### D2 — Daily finals, because the publish grain must match the heal cadence
 
-`<pair>/<YYYY>/<MM>/<DD>.parquet`, 96 rows for a fully-traded day, written by the `cli/archive/mint.py` atomic pattern (tmp in the destination dir → `os.replace` → fsync, `.sha256` sidecar minted from the tmp bytes before the publishing rename), exactly as the panel does.
+`<pair>/<YYYY>/<MM>/<DD>.parquet`, 96 rows for a fully-traded day, written by the `cli/archive/mint.py` atomic pattern, which is **fsync the tmp file's data → `os.replace` → fsync the destination directory** (`_replace_durably`; `segment_writer.py` calls these "byte-identical durability semantics"). Omitting the data fsync — as a first draft of this spec's plan did — leaves a renamed file whose contents may not have reached disk, which is a different and weaker guarantee than the one this cites. The `.sha256` sidecar is minted from the tmp bytes and published before the final's rename, so a reader never sees a final without its digest.
 
 The grain is chosen by D3's arithmetic, not by taste: a day cannot be finalized until it is heal-complete, so publishing at any finer grain would either publish un-healed data or defer it anyway. Daily finals keep **final-once-written** literally true — there is no rewrite path in this design.
 
@@ -36,23 +36,24 @@ Rejected: hourly finals (the panel's grain) — 4-row parquets whose metadata dw
 
 **Columns** are `ticks_to_bars`' own: `[ts, open, high, low, close, volume, count, vwap]`. Note this is the same *set* as `ohlc-full`'s but a different *order* (`ohlc-full` is `…close, vwap, volume, count`), so any union selects columns by name — never by position.
 
-### D3 — Settle at 26 h past day end, measured from the healer's own mechanics
+### D3 — Heal-completeness is MEASURED, not inferred from the clock
 
-An hour of tape is heal-complete only after the daily REST trade backfill has repaired it. Traced through the actual mechanism rather than estimated:
+A day may be published only when its tape is heal-complete. The first draft of this spec gated that on wall-clock alone — `now - day_end >= 26 h`, derived from the healer's nominal cadence. **Cold review killed it, and the reasoning is worth keeping**: a time gate is a *proxy* for "the backfill has run", and the healer has designed modes that break the proxy by an order of magnitude — the fail-closed NAS gate skips a whole cycle, the UTC-day stamp is written *before* the run so one failure costs the entire day's attempt, and a leftover container after a dockerd crash "extends the outage by up to 24 h" (the runner's own comment). Under any of them the clock says settled while the tape is not, and this design has **no rewrite path** — so a proxy failure is silent, permanent, and indistinguishable from a quiet market.
 
-- `cli/archive/settle.py` sets `SETTLE_HOURS = 2`: `zcrypto archive backfill-trades` **defers** any hour younger than 2 h (`trades_deferred` — "never minted and never silently dropped").
-- The backfill is gated to run **once per UTC day**, on the first `archive-pull` cycle after midnight (the `.trade-backfill-last-utc-day` stamp; the pull timer is `*:12,42`), so ≈ **00:12 UTC**.
-- At the D+1 00:12 run, day D's hours 00–22 are settled and heal; **hour 23 is still inside the 2 h gate and is deferred**. It heals at the *next* run, D+2 00:12.
+**The direct check exists and costs nothing.** `cli/trades/gaps.py::detect(frame) -> Detection` finds missing and duplicated `trade_id`s, and its docstring states the property that makes it decisive: *"Kraken's `trade_id` is DENSE and per-pair monotone (spec `00053` D1, verified empirically), so a hole in the sequence IS missing data — provable with no REST call."* That is exactly heal-completeness, measured from the bytes rather than assumed from the hour.
 
-**So day D is heal-complete at D+2 00:12 UTC ≈ 24.2 h after the day closes.** `TAPE_SETTLE = 26 h` past day end adds ~1.8 h of buffer for the NAS pull cycle and clock skew.
+So the gate is:
 
-This corrects the estimate [[T0066]] recorded ("≤ ~28 h"): the bound is close but the mechanism is different — it is the 2 h gate colliding with a once-daily job that strands the last hour of every day, not a 28 h backfill lag. **If either input changes — the backfill's cadence or `SETTLE_HOURS` — this constant is wrong**, so the code states the derivation next to the constant rather than the number alone.
+1. **`TAPE_SETTLE = 26 h` past day end remains, demoted to a cheap pre-filter** — it stops the sweep from re-reading a day the healer has demonstrably not reached yet, nothing more. It is no longer load-bearing, so its drift is no longer dangerous.
+2. **`detect` must come back clean** — zero `gaps`, zero `duplicate_ids` — or the day is refused into `days_unhealed` and retried on a later sweep. A day is published because its tape was *measured* contiguous, never because a clock said so.
 
-**Discipline is [[T0066]]'s option (a):** an unsettled day is counted into `days_unsettled` and **leaves the per-pair watermark untouched**, so a later sweep takes it once heal-complete. Option (b), ledger-driven invalidation, is rejected here for the same reason it was rejected for the panel — it buys freshness that no consumer wants, and adds the rewrite path D2 exists to avoid.
+**The neighbouring-hour extension is required, not an optimisation.** `detect` bounds its span by the first and last observed id and treats neither endpoint as a gap (capture-start and the live edge are not holes). Run over exactly one day, that blinds it to a gap at either day boundary. The check therefore reads the day **plus the last hour of D−1 and the first hour of D+1 when they exist**, so the day's own edges are interior to the span. Bars are still built from the day's own 24 hours only.
+
+**Naming the right constant matters here.** The healer's settle rule is `_SETTLE = dt.timedelta(hours=2)` in `cli/trades/backfill.py` — a module-local constant it does **not** import from `cli/archive/settle.py`. An earlier draft of this spec cited `cli.archive.settle.SETTLE_HOURS`, which the healer never reads; a maintainer told to watch that constant would have watched the wrong one. The nominal timeline (day D's hour 23 is deferred at the D+1 ≈00:12 run and heals at D+2) explains *why* 26 h is a sensible pre-filter, and is now only that — an explanation, not a guarantee.
 
 ### D4 — Reconciled-first reads, watermarked sweep, per-day isolation
 
-Input is `canonical_segments(primary_root, reconciled_root, kind="trades")` — the healed view. **A bare glob over `capture-segments/` is forbidden**: it returns the un-healed stream and, for pre-2026-07-16 hours, silently double-counts (10,986 duplicate `trade_id`s existed archive-wide before the reconcile pass).
+Input is `canonical_segments(primary_root, reconciled_root, kind="trades")` — the healed view. **`reconciled_root` is a REQUIRED argument with no default at every layer** — `build_day`, `materialize`, and the CLI — because an optional overlay is one forgotten flag away from publishing the un-healed stream, and the ops runner's argument order differs from the panel's it is modelled on, which is exactly how a flag gets transposed. An empty overlay directory is legal and means "nothing healed yet"; *omitting* it is not expressible. **A bare glob over `capture-segments/` is forbidden**: it returns the un-healed stream and, for pre-2026-07-16 hours, silently double-counts (10,986 duplicate `trade_id`s existed archive-wide before the reconcile pass).
 
 `materialize_day(pair, day)` builds one day; `materialize()` sweeps per pair, isolating a failed day into `MaterializeResult.errors` rather than aborting the sweep — the same isolation contract `verify_replay` and the panel already use.
 
@@ -77,17 +78,19 @@ An ops systemd timer at `*-*-* *:52:00` — clear of the `:12/:42` pull, the pan
 - **The REST control (decisive, and perishable).** Materialize a recent day from the tape; fetch Kraken's public REST OHLC at 15m for the same day; require equality on every bar. This proves the whole chain — reconciled read → `ticks_to_bars` → day file — against an independent witness on live data. Kraken serves 15m for only ~7.5 days back, so **the control expires**: it must run against a day inside that window, and is written data-gated so it skips honestly (never passes vacuously) when the window no longer reaches or the archive is absent.
 - **Derived-vs-direct equality.** `derive_bars(15m→N)` must equal `ticks_to_bars(tape, interval_minutes=N)` for N ∈ {60, 240, 1440} on the same tape day. This is the property D1 claims; asserting it is what makes the claim more than arithmetic on paper.
 - **Settle behaviour, deterministically.** With an injected `now`, a day inside `TAPE_SETTLE` is deferred, counted into `days_unsettled`, and leaves the watermark untouched; the same day past the boundary is taken. This is the exact shape of T0066's panel test.
-- **Refusals bite**: a day missing an hour lands in `errors` and publishes nothing; a bare-primary read path is not reachable from the public API.
+- **The heal gate bites, measured not mocked**: a day whose tape carries a `trade_id` hole is refused into `days_unhealed` and publishes nothing, and the same day publishes once the hole is filled. A gap sitting exactly on a day boundary must be caught too — that is what the neighbouring-hour extension is for, and a test asserts it, because without the extension `detect` reports the day clean.
+- **Refusals bite**: a day missing an hour lands in `errors` and publishes nothing. The bare-primary path is unreachable *by signature* — `reconciled_root` has no default — so there is nothing to test rather than a behaviour to assert.
 - **Every guard proven by a constructed defect** through `infra/scripts/mutate-probe.sh`, each with a control that fails first — never asserted.
 
 ## What this does NOT do — bounded claims
 
 1. **It does not extend `ohlc-full`.** Frozen canonicals are immutable; `rebuild_sets` mints a sibling and never writes into a live set. Whether a future re-freeze unions `tape-bars` is that freeze's decision, and the column-order caveat in D2 applies when it does.
 2. **It covers 2026-07-08 onward only** — the tape's own start. Fine-grain history before that has no source but the dumps, and the Q2/Q3 ingest remains [[T0065]]'s other half.
-3. **It inherits the tape's losses.** A trade the reconciler booked as `trades_unrecoverable` is absent from the bars too; the bars are exactly as complete as the healed archive and no more. The dataset does not re-litigate archive completeness.
-4. **`vwap` is tick-weighted, and coarser grids inherit that** — it is not comparable to a close-price reconstruction proxy such as `cli.backfill.aggregate.aggregate_minutes` produces.
-5. **The REST control cannot be re-run for an old day.** Once the 15m window recedes past a day, that day's independent witness is gone permanently — the control proves the pipeline, not every day it ever produced.
-6. **No backfill of the dataset itself.** If a day is missed beyond the archive's retention, it stays missing; there is no re-mint path, by D2's design.
+3. **The heal gate proves contiguity, not truth.** `detect` shows the `trade_id` sequence has no hole and no duplicate; it cannot show that Kraken served the right trades in the first place, and a run the reconciler booked `trades_unrecoverable` is a permanent hole that will refuse the day forever rather than publish it short — visible in `days_unhealed`, never silent, but it does mean an unrecoverable loss costs the whole day. At the archive's first and last hour the neighbouring-hour extension has nothing to extend into, so those two boundaries keep `detect`'s endpoint blindness.
+4. **It inherits the tape's losses.** A trade the reconciler booked as `trades_unrecoverable` is absent from the bars too; the bars are exactly as complete as the healed archive and no more. The dataset does not re-litigate archive completeness.
+5. **`vwap` is tick-weighted, and coarser grids inherit that** — it is not comparable to a close-price reconstruction proxy such as `cli.backfill.aggregate.aggregate_minutes` produces.
+6. **The REST control cannot be re-run for an old day.** Once the 15m window recedes past a day, that day's independent witness is gone permanently — the control proves the pipeline, not every day it ever produced.
+7. **No backfill of the dataset itself.** If a day is missed beyond the archive's retention, it stays missing; there is no re-mint path, by D2's design.
 
 ## Out of scope
 
