@@ -859,13 +859,16 @@ def test_liquidations_refuses_a_compose_file_without_a_digest_line():
 def test_panel_timer_hold_excludes_only_the_panel_timer():
     from ansible.template import trust_as_template
 
-    task = find_task(load_tasks(OPS), "enable + start the replay + panel timers")
+    task = find_task(load_tasks(OPS), "enable + start the replay + panel + tape-bars timers")
     loop_expr = task["loop"]
     held = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": True}).template(trust_as_template(loop_expr))
     live = Templar(loader=DataLoader(), variables={"ops_panel_timer_hold": False}).template(trust_as_template(loop_expr))
     # the hold is OPT-IN: an ordinary converge (variable unset) must still arm the panel timer.
     unset = Templar(loader=DataLoader(), variables={}).template(trust_as_template(loop_expr))
+    # ONLY the panel timer is held: the hold exists for the panel-regeneration window, and tape-bars
+    # writes a different tree that the rebuild never touches.
     assert "panel-materialize" not in held and "verify-replay" in held and "verified-replay" in held
+    assert "tape-bars" in held and "tape-bars" in live and "tape-bars" in unset
     assert "panel-materialize" in live
     assert "panel-materialize" in unset
 

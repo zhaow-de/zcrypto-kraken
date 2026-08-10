@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-tape-bars — do not hand-edit on the
+# host, edit infra/ansible/roles/ops/templates/tape-bars.sh.j2 and re-converge instead.
+#
+# Hourly materialize of the healed trade tape into daily 15m bar finals (spec 00087 D6): runs
+# `zcrypto tick materialize` in the digest-pinned default-AVX image. The primary tree is read
+# straight from the NAS's read-only NFS export at /nas (ro,soft, so a hung NAS surfaces EIO, which
+# the CLI treats as a loud per-day error, never as absence); the reconciled overlay and the
+# tape-bars OUTPUT both live locally under /data — the NAS re-acquires the output through its own
+# rrsync pull, so custody stays NAS-initiated, exactly like the panel.
+#
+# ARGUMENT ORDER DIFFERS FROM THE PANEL RUNNER'S, deliberately and dangerously: the panel takes
+# (primary, reconciled, --panel-root), this takes (primary, OUT, --reconciled-root). Transposing
+# them publishes the UN-HEALED stream, permanently, with no error — `tape-bars` has no rewrite
+# path. tests/test_infra_tape_bars_template.py pins the rendered argv structurally for that reason.
+#
+# Hourly though the grain is daily, on purpose: a day becomes eligible ~26 h after it ends and is
+# taken within the hour, and an hourly sweep catches up by construction after any outage, with no
+# backlog logic to write. A run that publishes nothing is the ordinary case, not a fault.
+set -u
+
+PROM="{{ ops_textfile_dir }}/tape-bars.prom"
+
+# The /data mount is not `:ro` like the replay mounts -- this run WRITES the day finals under
+# {{ ops_tape_bars_subdir }}/ inside the data root.
+#
+# A stable `--name`, same reasoning as the panel runner: a leftover container after a dockerd crash
+# makes the NEXT run fail loudly on a name conflict (unit rc!=0 -> the exit-code alert) rather than
+# quietly starting a second sweep; `--rm` cleans up in every normal path.
+#
+# Output is captured rather than streamed so the summary counters can be read out of it, then
+# replayed to the journal unchanged. No pipe on the run itself: this script sets `set -u` but NOT
+# pipefail, so `docker run | tee` would report tee's status and every failure would read as success.
+log="$(mktemp)"
+docker run --rm --pull never \
+    --name zcrypto-tape-bars \
+    --user "{{ ops_uid }}:{{ ops_gid }}" \
+    -v "{{ ops_nas_mount }}:/nas:ro" \
+    -v "{{ ops_data_dir }}:/data" \
+    --entrypoint zcrypto \
+    "{{ ops_image }}@{{ ops_image_digest }}" \
+    tick materialize "/nas/{{ ops_capture_subdir }}" "/data/{{ ops_tape_bars_subdir }}" --reconciled-root "/data/{{ ops_reconciled_subdir }}" \
+    > "$log" 2>&1
+rc=$?
+cat "$log"
+# The CLI's one-line summary, anchored to its own first field so a per-day ERROR line on stderr can
+# never be parsed as counters. Absent when the run died before the CLI reported at all.
+summary=$(grep -E '^days_written=' "$log" | tail -1)
+rm -f "$log"
+
+now=$(date -u +%s)
+
+# Every counter is PARSED from that summary rather than re-derived here — this script must not hold
+# a second opinion about what the sweep did. A wording drift on either side then shows up as a
+# carried-forward value, and the template test runs the real sed over a line built from the CLI's
+# own format string so the drift fails in CI instead of on the host.
+#
+# A run that produced no summary MEASURED nothing, so its previous value is carried forward instead
+# of publishing a 0: a measured-looking `days_gap 0` would silently retract the permanent-gap alert
+# on any run that died before the CLI reported (leftover container, missing image, EIO on the
+# mount), and that alert is the only thing that will ever report a finalised gap.
+gauge() {  # $1 = the CLI's field name, $2 = the series name to carry forward from
+    value=$(printf '%s\n' "$summary" | sed -n "s/.*$1=\([0-9][0-9]*\).*/\1/p" | tail -1)
+    if [ -z "$value" ]; then
+        value=$(awk -v k="$2" '$1 == k {print $2}' "$PROM" 2>/dev/null | tail -1)
+    fi
+    printf '%s' "${value:-0}"
+}
+days_written=$(gauge days_written zcrypto_tapebars_days_written)
+days_unhealed=$(gauge days_unhealed zcrypto_tapebars_days_unhealed)
+days_gap=$(gauge days_gap zcrypto_tapebars_days_gap)
+errors=$(gauge errors zcrypto_tapebars_errors)
+
+# A failed run must not erase "when did this last succeed" — carry the previous value forward, so
+# "time since last clean run" stays directly alertable (the reconcile exporter, the replay scripts
+# and the panel runner all freeze last_success on failure for the same reason).
+prev_success=$(awk '/^zcrypto_tapebars_last_success_timestamp_seconds/ {print $2}' "$PROM" 2>/dev/null | tail -1)
+if [ "$rc" -eq 0 ]; then
+    success=$now
+else
+    success="${prev_success:-0}"
+fi
+
+# The watermark-freeze signal, and the reason it is a SEPARATE series from last_success: the
+# not-yet-healed path exits 0 by design, so a stalled healer leaves last_success advancing every
+# hour while the dataset stops growing — a staleness rule on last_success alone can never see it.
+# This one advances only when a day was actually published. A healthy pipeline publishes at least
+# one day per pair per day, so hours of no publish are normal and a day-and-a-half of none is not.
+# Carried forward on every other run, including one with no summary at all.
+prev_publish=$(awk '/^zcrypto_tapebars_last_publish_timestamp_seconds/ {print $2}' "$PROM" 2>/dev/null | tail -1)
+if [ -n "$summary" ] && [ "$days_written" -gt 0 ]; then
+    publish=$now
+else
+    publish="${prev_publish:-0}"
+fi
+
+# Atomic publish (tmp in the same dir, then rename): a textfile is scraped in place, so a
+# half-written one is scraped as garbage — same pattern as the reconcile exporter's _write_textfile.
+tmp="$PROM.tmp"
+{
+    printf '# HELP zcrypto_tapebars_exit_code Exit code of the last tape-bars materialize run (0 = no day errored).\n'
+    printf '# TYPE zcrypto_tapebars_exit_code gauge\n'
+    printf 'zcrypto_tapebars_exit_code %s\n' "$rc"
+    printf '# HELP zcrypto_tapebars_days_written Day files published by the last run (0 is the ordinary case: a day is eligible once, roughly a day after it ends).\n'
+    printf '# TYPE zcrypto_tapebars_days_written gauge\n'
+    printf 'zcrypto_tapebars_days_written %s\n' "$days_written"
+    printf '# HELP zcrypto_tapebars_days_unhealed Settled days the last run refused because their trade sequence still has a hole; they are retried while the heal window still reaches them.\n'
+    printf '# TYPE zcrypto_tapebars_days_unhealed gauge\n'
+    printf 'zcrypto_tapebars_days_unhealed %s\n' "$days_unhealed"
+    printf '# HELP zcrypto_tapebars_days_gap Settled days that will never be published: past the retry window with no file. Permanent, and nothing else reports it.\n'
+    printf '# TYPE zcrypto_tapebars_days_gap gauge\n'
+    printf 'zcrypto_tapebars_days_gap %s\n' "$days_gap"
+    printf '# HELP zcrypto_tapebars_errors Days the last run failed on unexpectedly (a corrupt segment, an unwritable output); each costs one day, never the sweep.\n'
+    printf '# TYPE zcrypto_tapebars_errors gauge\n'
+    printf 'zcrypto_tapebars_errors %s\n' "$errors"
+    printf '# HELP zcrypto_tapebars_last_run_timestamp_seconds Unix time of the last run, clean or not.\n'
+    printf '# TYPE zcrypto_tapebars_last_run_timestamp_seconds gauge\n'
+    printf 'zcrypto_tapebars_last_run_timestamp_seconds %s\n' "$now"
+    printf '# HELP zcrypto_tapebars_last_success_timestamp_seconds Unix time of the last run that completed with no day in error (0 = never).\n'
+    printf '# TYPE zcrypto_tapebars_last_success_timestamp_seconds gauge\n'
+    printf 'zcrypto_tapebars_last_success_timestamp_seconds %s\n' "$success"
+    printf '# HELP zcrypto_tapebars_last_publish_timestamp_seconds Unix time of the last run that actually published a day (0 = never). Stale here means the dataset stopped growing while the runs kept exiting clean.\n'
+    printf '# TYPE zcrypto_tapebars_last_publish_timestamp_seconds gauge\n'
+    printf 'zcrypto_tapebars_last_publish_timestamp_seconds %s\n' "$publish"
+} > "$tmp"
+mv "$tmp" "$PROM"
+
+exit "$rc"

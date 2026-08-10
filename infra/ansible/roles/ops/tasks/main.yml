@@ -499,8 +499,9 @@
       ignore_errors: "{{ ansible_check_mode }}"
 
 # --- OPS-2/3/4 (specs 00051/00052): the liquidations-poller compose file + the daily
-# continuity-replay/verified-path replay timers + the hourly panel-materialize timer. Installed
-# only when the pinned image digest is supplied (-e ops_image_digest=sha256:<...>): a converge
+# continuity-replay/verified-path replay timers + the hourly panel-materialize and tape-bars
+# (spec 00087 D6) materialize timers. Installed only when the pinned image digest is supplied
+# (-e ops_image_digest=sha256:<...>): a converge
 # without it skips this whole block rather than rendering artifacts that point at a broken image
 # reference.
 - name: install the ops stack — recorder compose + replay/panel timers (needs the pinned image digest)
@@ -520,23 +521,23 @@
         group: zcrypto-deploy
         mode: "0600"
 
-    - name: install the replay + panel runner scripts
+    - name: install the replay + panel + tape-bars runner scripts
       ansible.builtin.template:
         src: "{{ item }}.sh.j2"
         dest: "/usr/local/sbin/zcrypto-{{ item }}"
         owner: root
         group: root
         mode: "0755"
-      loop: [verify-replay, verified-replay, panel-materialize]
+      loop: [verify-replay, verified-replay, panel-materialize, tape-bars]
 
-    - name: render the replay + panel systemd services + timers
+    - name: render the replay + panel + tape-bars systemd services + timers
       ansible.builtin.template:
         src: "{{ item.0 }}.{{ item.1 }}.j2"
         dest: "/etc/systemd/system/zcrypto-{{ item.0 }}.{{ item.1 }}"
         owner: root
         group: root
         mode: "0644"
-      loop: "{{ ['verify-replay', 'verified-replay', 'panel-materialize'] | product(['service', 'timer']) | list }}"
+      loop: "{{ ['verify-replay', 'verified-replay', 'panel-materialize', 'tape-bars'] | product(['service', 'timer']) | list }}"
 
     # Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
     # too would run both replays on every boot (same rationale as the capture prune timer).
@@ -545,14 +546,15 @@
     # back on after the operator stopped it, so a converge inside a panel-regeneration window fires
     # a materialize against a half-rebuilt tree. `-e ops_panel_timer_hold=true` drops ONLY
     # panel-materialize from the loop, leaving it stopped for the length of that window; the two
-    # replay timers are unaffected. Opt-in: an ordinary converge still arms all three.
-    - name: enable + start the replay + panel timers
+    # replay timers are unaffected, and so is tape-bars: it writes a different tree and reads
+    # nothing the panel rebuild touches. Opt-in: an ordinary converge still arms all four.
+    - name: enable + start the replay + panel + tape-bars timers
       ansible.builtin.systemd_service:
         name: "zcrypto-{{ item }}.timer"
         daemon_reload: true
         enabled: true
         state: started
-      loop: "{{ ['verify-replay', 'verified-replay'] + ([] if ops_panel_timer_hold | default(false) | bool else ['panel-materialize']) }}"
+      loop: "{{ ['verify-replay', 'verified-replay', 'tape-bars'] + ([] if ops_panel_timer_hold | default(false) | bool else ['panel-materialize']) }}"
 
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
 # systemd and rm), and the operator needs it on the host regardless of whether the converge that

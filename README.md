@@ -22,6 +22,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto panel`](#zcrypto-panel)
   - [`zcrypto data`](#zcrypto-data)
   - [`zcrypto research`](#zcrypto-research)
+  - [`zcrypto tick`](#zcrypto-tick)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -329,6 +330,26 @@ zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
 | `--registry <PATH>` | Registry file to append to. Defaults to the committed `docs/reference/trial-registry.jsonl`. |
 
 The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes). Exits **1** on an unknown subject (listing the known ones), on a dataset missing any series the subject needs (naming every missing file, before a single read), on a `--register` run missing one of its required flags, and when the registry refuses the record.
+
+### `zcrypto tick`<a name="zcrypto-tick"></a>
+
+Derives bars from the captured trade tape — the only fine-cadence source whose reach does not expire — and publishes them as one Parquet final per pair per UTC day (with a `.sha256` sidecar, written before the publishing rename).
+
+```bash
+zcrypto tick materialize <PRIMARY_ROOT> <OUT_ROOT> --reconciled-root <PATH> [OPTIONS]
+```
+
+| Argument / Option | Description |
+| -- | -- |
+| `PRIMARY_ROOT` | The primary (raw) canonical trade archive, laid out `BASE/QUOTE/trades/YYYY/MM/DD/HH.parquet`. |
+| `OUT_ROOT` | Dataset root the daily finals are published into, as `BASE/QUOTE/YYYY/MM/DD.parquet`. |
+| `--reconciled-root <PATH>` | The healed overlay, read first. **Required** — an optional overlay is one forgotten flag away from publishing the un-healed stream. |
+| `--settle-hours <N>` | Hours past a day's end before it may be published (default `26`). |
+| `--rescan-days <N>` | Trailing settled days re-attempted, so a late-healed day is still picked up (default `3`). |
+
+The sweep publishes each settled day whose tape is measurably heal-complete (per-pair `trade_id` contiguity — an absent hour means a quiet hour, not a hole), skips days that already have a final, and isolates a failing day into the error list rather than aborting the pair. One line reports `days_written`, `days_skipped`, `days_unsettled`, `days_unhealed`, `days_gap` (settled, unpublished days that have fallen outside the re-scan window — permanent gaps), `rows`, and `errors`; each failure is then named on stderr as `pair`, day and message. Exits **1** if any day failed, else **0**.
+
+A run against a fresh archive reports `days_unsettled` for its newest day (or two) and publishes nothing for it — that is the settle gate working, not a failure. The live-edge day is likewise held back until a later segment exists to prove its tail is not truncated.
 
 ## Configuration<a name="configuration"></a>
 
