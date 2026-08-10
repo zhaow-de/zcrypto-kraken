@@ -158,7 +158,6 @@ from cli.tick.aggregate import ticks_to_bars
 from cli.tick.errors import TickError
 
 BASE_INTERVAL_MINUTES = 15
-_HOURS_PER_DAY = 24
 
 
 SegmentIndex = dict[str, dict[datetime, Path]]
@@ -180,18 +179,22 @@ def segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex:
 def build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame:
     """The healed tape for `pair` on UTC `day`, aggregated to 15m bars.
 
-    Reconciled-first via `canonical_segments`: a bare glob over the primary would return the
-    UN-healed stream, which double-counts pre-2026-07-16 hours. Refuses a day missing any of its 24
-    hours -- a short day is indistinguishable from a quiet market once written (D4).
+    Reads the pre-built index (reconciled-first by construction). Aggregates whatever hours the day
+    HAS: hour-file presence is not a completeness signal, because a quiet hour writes no final.
+    Completeness is `is_heal_complete`'s measured trade_id contiguity (D3/D4).
     """
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
     hours = index.get(pair, {})
     present = {hour: path for hour, path in hours.items() if start <= hour < end}
-    missing = [f"{(start + timedelta(hours=i)):%H}" for i in range(_HOURS_PER_DAY) if start + timedelta(hours=i) not in present]
-    if missing:
-        raise TickError(f"tape-bars: {pair} {day.isoformat()} is missing {len(missing)} hour(s): {', '.join(missing)}")
+    if not present:
+        raise TickError(f"tape-bars: {pair} {day.isoformat()} has no trade segments at all")
 
+    # Deliberately NO 24-hour completeness check. The capture writer commits no final for an hour
+    # with no events, and zero-print trades hours are production-measured (settle.py records
+    # LINK/EUR: 8 prints in hour 01, 9 in hour 04, zero between), so an absent hour means "quiet",
+    # not "missing". Requiring 24 would make every day with a quiet hour permanently unpublishable.
+    # Completeness is trade_id contiguity -- is_heal_complete -- which tells the two apart.
     frames = [pl.read_parquet(present[hour]) for hour in sorted(present)]
     ticks = pl.concat(frames).rename({"qty": "volume"}).select("ts", "price", "volume")
     return ticks_to_bars(ticks, interval_minutes=BASE_INTERVAL_MINUTES)
@@ -381,14 +384,24 @@ from cli.capture.segment_writer import TRADE_SCHEMA
 from cli.tick.materialize import TAPE_SETTLE, MaterializeResult, materialize
 
 
-def _day(root: Path, pair: str, day: date) -> None:
-    for h in range(24):
+_EPOCH = date(2020, 1, 1)
+
+
+def _day(root: Path, pair: str, day: date, *, hours: range | list[int] | None = None) -> None:
+    """One trade per hour, with GLOBALLY MONOTONE trade_ids across days.
+
+    Ids must not restart per day: `is_heal_complete` extends into the neighbouring day, so a per-day
+    0..23 restart makes the neighbour's ids look like DUPLICATES and every day with a neighbour is
+    refused -- a fixture bug that reads exactly like a code bug.
+    """
+    base = (day - _EPOCH).days * 24
+    for h in (range(24) if hours is None else hours):
         hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
         d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
         d.mkdir(parents=True, exist_ok=True)
         pl.DataFrame(
             {"ts": [hour], "symbol": [pair], "side": ["buy"], "price": [10.0], "qty": [1.0],
-             "ord_type": ["limit"], "trade_id": [h]},
+             "ord_type": ["limit"], "trade_id": [base + h]},
             schema=TRADE_SCHEMA,
         ).write_parquet(d / f"{hour:%H}.parquet")
 
@@ -436,18 +449,32 @@ def test_a_sidecar_is_written_and_matches_the_final(tmp_path):
     assert sidecar.read_text().split()[0] == hashlib.sha256(final.read_bytes()).hexdigest()
 
 
-def test_a_bad_day_is_isolated_and_the_sweep_continues(tmp_path):
-    """D4: one broken day must not cost the others -- the panel's isolation contract."""
+def test_a_corrupt_segment_is_isolated_and_the_sweep_continues(tmp_path):
+    """D4: one broken day must not cost the others. `errors` is for the EXCEPTIONAL -- a corrupt
+    segment -- because an incomplete tape is `days_unhealed`, not an error."""
+    src, out = tmp_path / "src", tmp_path / "out"
+    for d in (date(2026, 8, 1), date(2026, 8, 2), date(2026, 8, 3)):
+        _day(src, "BTC/EUR", d)
+    (src / "BTC" / "EUR" / "trades" / "2026" / "08" / "01" / "07.parquet").write_bytes(b"not a parquet")
+
+    res = materialize(src, tmp_path / "r", out, now=_after(date(2026, 8, 3), hours=27))
+    assert len(res.errors) == 1 and res.errors[0][0] == "BTC/EUR"
+    assert res.days_written >= 1
+    assert not (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
+
+
+def test_a_quiet_hour_does_not_block_a_day(tmp_path):
+    """The withdrawn 24-hour rule would refuse this forever. The capture writer commits no final for
+    an hour with no events, and zero-print trades hours are production-measured -- so an absent hour
+    means QUIET, and the contiguous trade_ids prove nothing is missing."""
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2026, 8, 1))
-    _day(src, "BTC/EUR", date(2026, 8, 2))
-    (src / "BTC" / "EUR" / "trades" / "2026" / "08" / "01" / "07.parquet").unlink()
+    _day(src, "BTC/EUR", date(2026, 8, 2), hours=[h for h in range(24) if h != 13])  # hour 13 silent
+    _day(src, "BTC/EUR", date(2026, 8, 3))
 
-    res = materialize(src, tmp_path / "r", out, now=_after(date(2026, 8, 2), hours=27))
-    assert res.days_written == 1
-    assert len(res.errors) == 1 and res.errors[0][0] == "BTC/EUR"
+    res = materialize(src, tmp_path / "r", out, now=_after(date(2026, 8, 3), hours=27))
+    assert res.days_unhealed == 0, res
     assert (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists()
-    assert not (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
 
 
 def test_a_healed_day_inside_the_rescan_window_is_picked_up_later(tmp_path):
@@ -455,26 +482,29 @@ def test_a_healed_day_inside_the_rescan_window_is_picked_up_later(tmp_path):
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2026, 8, 1))
     _day(src, "BTC/EUR", date(2026, 8, 2))
-    hole = src / "BTCEUR" / "trades" / "2026" / "08" / "01" / "07.parquet"
+    hole = src / "BTC" / "EUR" / "trades" / "2026" / "08" / "01" / "07.parquet"
     kept = hole.read_bytes()
     hole.unlink()
 
     now = _after(date(2026, 8, 2), hours=27)
     assert materialize(src, tmp_path / "r", out, now=now).days_written == 1
-    hole.write_bytes(kept)  # a late overlay mint heals it
+    hole.write_bytes(kept)  # a late overlay mint replaces the corrupt segment
     res = materialize(src, tmp_path / "r", out, now=now)
     assert res.days_written == 1
     assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
 
 
-def _holed_day(root: Path, pair: str, day: date, *, drop_id: int | None = None) -> None:
-    """A day whose trade_ids run 0..23 across the hours, optionally with one id missing."""
+def _holed_day(root: Path, pair: str, day: date, *, drop_hour: int | None = None) -> None:
+    """A day of globally-monotone trade_ids, optionally with one hour's id MISSING (a real hole).
+
+    Ids are keyed off the date exactly as `_day` does. A per-day 0..23 restart would make the
+    neighbouring day's ids read as duplicates, so the heal gate would refuse every day for the wrong
+    reason -- and the boundary test below would then pass without the extension it exists to prove.
+    """
+    base = (day - _EPOCH).days * 24
     for h in range(24):
         hour = datetime(day.year, day.month, day.day, h, tzinfo=UTC)
-        if drop_id is not None and h == drop_id:
-            ids: list[int] = []
-        else:
-            ids = [h]
+        ids: list[int] = [] if drop_hour is not None and h == drop_hour else [base + h]
         d = root / pair.split("/")[0] / pair.split("/")[1] / "trades" / f"{hour:%Y}" / f"{hour:%m}" / f"{hour:%d}"
         d.mkdir(parents=True, exist_ok=True)
         pl.DataFrame(
@@ -490,15 +520,16 @@ def test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed(tmp_pa
     un-healed, which is exactly the state a wall-clock proxy publishes permanently."""
     src, out, overlay = tmp_path / "src", tmp_path / "out", tmp_path / "r"
     d = date(2026, 8, 1)
-    _holed_day(src, "BTC/EUR", d, drop_id=7)
+    _holed_day(src, "BTC/EUR", d, drop_hour=7)
+    _holed_day(src, "BTC/EUR", date(2026, 8, 2))  # a successor, so d is not at the live edge
 
-    res = materialize(src, overlay, out, now=_after(d, hours=99))
-    assert res.days_written == 0 and res.days_unhealed == 1
-    assert not list(out.rglob("*.parquet"))
+    res = materialize(src, overlay, out, now=_after(date(2026, 8, 2), hours=99))
+    assert res.days_unhealed >= 1
+    assert not (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
 
     _holed_day(src, "BTC/EUR", d)  # the healer fills the hole
-    ok = materialize(src, overlay, out, now=_after(d, hours=99))
-    assert ok.days_written == 1 and ok.days_unhealed == 0
+    ok = materialize(src, overlay, out, now=_after(date(2026, 8, 2), hours=99))
+    assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists()
 
 
 def test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension(tmp_path):
@@ -506,11 +537,12 @@ def test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension(tmp_pat
     day a boundary hole reads CLEAN. The neighbouring-hour extension is what makes it visible; without
     it this test passes for the wrong reason and un-healed edges publish forever."""
     src, out, overlay = tmp_path / "src", tmp_path / "out", tmp_path / "r"
-    _holed_day(src, "BTC/EUR", date(2026, 8, 1))          # ids 0..23
-    _holed_day(src, "BTC/EUR", date(2026, 8, 2), drop_id=0)  # its first id missing
-    res = materialize(src, overlay, out, now=_after(date(2026, 8, 2), hours=99))
-    assert res.days_unhealed >= 1
-    assert not (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists()
+    _holed_day(src, "BTC/EUR", date(2026, 8, 1))            # complete
+    _holed_day(src, "BTC/EUR", date(2026, 8, 2), drop_hour=0)  # its FIRST id missing
+    _holed_day(src, "BTC/EUR", date(2026, 8, 3))            # so 08-02 is not at the live edge
+    res = materialize(src, overlay, out, now=_after(date(2026, 8, 3), hours=99))
+    assert not (out / "BTC" / "EUR" / "2026" / "08" / "02.parquet").exists(), "a boundary hole must be seen"
+    assert (out / "BTC" / "EUR" / "2026" / "08" / "01.parquet").exists(), "its neighbours still publish"
 
 
 def test_every_pair_in_the_archive_is_swept(tmp_path):
@@ -535,12 +567,13 @@ Write the constant with its derivation attached — the number alone rots the mo
 
 ```python
 # D3, derived rather than estimated. An hour heals only when `zcrypto archive backfill-trades`
-# repairs it, and that job DEFERS any hour younger than `cli.archive.settle.SETTLE_HOURS` (2h) while
+# repairs it, and that job DEFERS any hour younger than its own module-local `_SETTLE` (2h) in `cli/trades/backfill.py` -- NOT `cli.archive.settle.SETTLE_HOURS`, which it never imports while
 # running only once per UTC day (~00:12, the `.trade-backfill-last-utc-day` stamp on the *:12,42 pull
 # timer). So at the D+1 run day D's hours 00-22 heal but hour 23 is still inside the 2h gate and is
 # deferred -- it heals at the D+2 run. Day D is therefore heal-complete at D+2 00:12 UTC, ~24.2h
 # after it closes; 26h adds buffer for the NAS pull cycle and clock skew. IF THE BACKFILL'S CADENCE
-# OR SETTLE_HOURS CHANGES, THIS CONSTANT IS WRONG.
+# OR backfill.py's _SETTLE CHANGES, THIS PRE-FILTER DRIFTS -- harmless now that the real gate is
+# the measured trade_id contiguity check, which is why this constant is no longer load-bearing.
 TAPE_SETTLE = timedelta(hours=26)
 RESCAN_DAYS = 3
 SCHEMA_VERSION = 1
@@ -564,17 +597,26 @@ def is_heal_complete(index: SegmentIndex, pair: str, day: date) -> bool:
     """Has the healer finished with this day? MEASURED, never inferred from the clock (D3).
 
     Kraken's `trade_id` is dense and per-pair monotone, so a hole in the sequence IS missing data --
-    `cli.trades.gaps.detect` proves it with no REST call. The day is read WITH the last hour of D-1
-    and the first hour of D+1 when they exist, because `detect` treats the first and last observed id
-    as endpoints rather than gaps: over exactly one day, a hole on either boundary reads clean.
+    `cli.trades.gaps.detect` proves it with no REST call. The day is read WITH the NEAREST PRESENT
+    segment on each side, not merely the adjacent hour: `detect` treats the first and last observed
+    id as endpoints rather than gaps, and the adjacent hour is often legitimately absent (a quiet
+    hour writes no final), so an adjacent-hour-only extension degrades silently back to endpoint
+    blindness and publishes a truncated day. No later segment at all means the live edge, which is
+    refused; no earlier segment at all means the archive's genesis day, where the endpoint rule is
+    correct and the day is accepted.
     """
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
-    lo, hi = start - timedelta(hours=1), start + timedelta(days=1, hours=1)
+    end = start + timedelta(days=1)
     hours = index.get(pair, {})
-    paths = [path for hour, path in sorted(hours.items()) if lo <= hour < hi]
-    if not paths:
+    own = sorted(h for h in hours if start <= h < end)
+    if not own:
         return False
-    detection = detect(pl.concat(pl.read_parquet(p) for p in paths))
+    before = [h for h in hours if h < start]
+    after = [h for h in hours if h >= end]
+    if not after:
+        return False  # live edge: nothing after the day, so its tail id is an endpoint, not proof
+    span = own + [max(before)] * bool(before) + [min(after)]
+    detection = detect(pl.concat(pl.read_parquet(hours[h]) for h in sorted(span)))
     return not detection.gaps and not detection.duplicate_ids
 
 
@@ -671,8 +713,10 @@ def materialize(
                     unhealed += 1
                     continue
                 bars = build_day(index, pair, day)
-            except TickError as exc:
-                errors.append((pair, day, str(exc)))
+            except Exception as exc:  # noqa: BLE001 -- one bad day must not abort the sweep
+                # Broad on purpose, matching cli/panel/materialize.py: a corrupt parquet or an
+                # unexpected error inside detect must cost one day, never every pair's whole sweep.
+                errors.append((pair, day, f"{type(exc).__name__}: {exc}"))
                 continue
             publish_day(out_root, pair, day, bars)
             written += 1
@@ -708,7 +752,7 @@ git commit -m "feat(tick): settle-gated, watermark-skipping sweep with atomic da
 
 **Interfaces:**
 
-- Produces: `tick_app` (Typer sub-app), registered as `zcrypto tick`; `zcrypto tick materialize <primary-root> <out-root> [--reconciled-root PATH] [--settle-hours INT] [--since-days INT]`.
+- Produces: `tick_app` (Typer sub-app), registered as `zcrypto tick`; `zcrypto tick materialize <primary-root> <out-root> --reconciled-root PATH [--settle-hours INT]`.
 - Consumes: `materialize`, `MaterializeResult`, `TAPE_SETTLE`, `RESCAN_DAYS` (Task 3).
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_command.py`
@@ -750,10 +794,12 @@ def test_materialize_publishes_and_reports(tmp_path):
 
 
 def test_a_failed_day_exits_nonzero_and_names_the_pair(tmp_path):
-    """A sweep that isolated an error must not report success -- the exit code is what a timer sees."""
+    """A sweep that isolated an error must not report success -- the exit code is what a timer sees.
+    A CORRUPT segment is the error case; an incomplete tape is days_unhealed and exits 0."""
     src, out = tmp_path / "src", tmp_path / "out"
     _day(src, "BTC/EUR", date(2020, 1, 1))
-    (src / "BTC" / "EUR" / "trades" / "2020" / "01" / "01" / "07.parquet").unlink()
+    _day(src, "BTC/EUR", date(2020, 1, 2))
+    (src / "BTC" / "EUR" / "trades" / "2020" / "01" / "01" / "07.parquet").write_bytes(b"not a parquet")
     res = runner.invoke(app, ["tick", "materialize", str(src), str(out), "--reconciled-root", str(tmp_path / "r")])
     assert res.exit_code != 0
     assert "BTC/EUR" in res.output
@@ -929,9 +975,10 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree; it refuses a dir
 - [ ] **Probe 5 — the weighted vwap:** sed `(pl.col("vwap") * pl.col("volume")).sum()` to `pl.col("vwap").mean() * pl.col("volume").sum()` → `test_derived_equals_direct_aggregation` must fail. **This is the most important probe in the set**: it is the exact wrong formula D1 warns about, and the one a reimplementation would reach for.
 - [ ] **Probe 6 — no-rewrite:** sed the `_final_path(...).exists()` skip to `False` → `test_a_published_day_is_skipped_not_rewritten` must fail.
 - [ ] **Probe 7 — the measured heal gate:** sed `is_heal_complete(...)` in the sweep to `True` → `test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed` must fail. This is the guard that replaced a wall-clock proxy cold review killed; if it does not bite, the design is back to publishing un-healed days permanently.
-- [ ] **Probe 8 — the neighbour extension:** sed `start - timedelta(hours=1), start + timedelta(days=1, hours=1)` to `start, start + timedelta(days=1)` → `test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension` must fail. Without the extension `detect` reads a boundary hole as clean, so this probe is what proves the test is not passing for the wrong reason.
+- [ ] **Probe 8 — the neighbour extension:** sed the `span = own + ...` line to `span = own` (no neighbours) → `test_a_hole_on_the_day_boundary_is_caught_by_the_neighbour_extension` must fail. Without the extension `detect` reads a boundary hole as clean, so this probe is what proves the test is not passing for the wrong reason.
 - [ ] **Probe 9 — the first-run backlog:** sed the `if watermark is None:` branch to take the bounded path → `test_rescan_days_reaches_the_sweep`'s first-run assertion must fail. The defect it reconstructs strands a month of tape silently, with no error and no counter.
-- [ ] **Probe 10 — error isolation:** sed the `except TickError` block to re-raise → `test_a_bad_day_is_isolated_and_the_sweep_continues` must fail.
+- [ ] **Probe 10 — error isolation:** sed the `except Exception` block to re-raise → `test_a_corrupt_segment_is_isolated_and_the_sweep_continues` must fail.
+- [ ] **Probe 11 — the quiet-hour acceptance:** reinstate the withdrawn 24-hour rule (add a `len(present) != 24` raise to `build_day`) → `test_a_quiet_hour_does_not_block_a_day` must fail. This reconstructs the defect cold review found: a rule that reads like completeness and actually refuses every thin day forever.
 - [ ] **Record every verdict** in the task report: probe, sed target, which test failed, and the control's result. A probe whose control did not fail proves nothing — choose a control the probe must detect and re-run.
 
 ---
