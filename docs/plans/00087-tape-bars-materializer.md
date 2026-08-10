@@ -36,7 +36,7 @@
 
 **Interfaces:**
 
-- Produces: `BASE_INTERVAL_MINUTES = 15`; `build_day(primary_root: Path, reconciled_root: Path, pair: str, day: date) -> pl.DataFrame` — `reconciled_root` is REQUIRED (D4); an empty directory is legal, omission is not expressible returning the `_BAR_SCHEMA` frame for that UTC day; raises `TickError` naming the pair, day and missing hours when the day's tape is incomplete.
+- Produces: `BASE_INTERVAL_MINUTES = 15`; `SegmentIndex`; `segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex` — `reconciled_root` is REQUIRED (D4), an empty directory is legal and omission is not expressible; `build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame` returning the `_BAR_SCHEMA` frame for that UTC day; raises `TickError` naming the pair, day and missing hours when the day's tape is incomplete.
 - Consumes: `cli.archive.reader.canonical_segments`, `cli.tick.aggregate.ticks_to_bars`, `cli.tick.errors.TickError`.
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_materialize.py`
@@ -52,7 +52,7 @@ import pytest
 
 from cli.capture.segment_writer import TRADE_SCHEMA
 from cli.tick.errors import TickError
-from cli.tick.materialize import build_day
+from cli.tick.materialize import build_day, segment_index
 
 
 def _seg(root: Path, pair: str, hour: datetime, rows: list[tuple[float, float, int]]) -> None:
@@ -87,7 +87,7 @@ def _full_day(root: Path, pair: str, day: date, *, per_hour=((10.0, 2.0, 5),)) -
 
 def test_a_full_day_yields_one_bar_per_traded_window(tmp_path):
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    bars = build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(segment_index(tmp_path, tmp_path / "r"), "BTC/EUR", date(2026, 8, 1))
     assert list(bars.columns) == ["ts", "open", "high", "low", "close", "volume", "count", "vwap"]
     # One trade per hour at :05 -> exactly one 15m bar per hour, not 96: empty windows emit NO row.
     assert bars.height == 24
@@ -98,7 +98,7 @@ def test_volume_comes_from_qty_not_a_missing_column(tmp_path):
     """The archive's TRADE_SCHEMA says `qty`; ticks_to_bars consumes `volume`. Without the rename
     the aggregation raises or produces null volume -- and a null vwap silently follows."""
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1), per_hour=((10.0, 3.0, 5),))
-    bars = build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(segment_index(tmp_path, tmp_path / "r"), "BTC/EUR", date(2026, 8, 1))
     assert bars["volume"].sum() == pytest.approx(72.0)  # 24 hours x 3.0
     assert bars["vwap"].null_count() == 0
     assert bars["vwap"][0] == pytest.approx(10.0)
@@ -110,7 +110,7 @@ def test_a_day_missing_an_hour_is_refused_naming_it(tmp_path):
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1))
     (tmp_path / "BTC" / "EUR" / "trades" / "2026" / "08" / "01" / "07.parquet").unlink()
     with pytest.raises(TickError, match="07"):
-        build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
+        build_day(segment_index(tmp_path, tmp_path / "r"), "BTC/EUR", date(2026, 8, 1))
 
 
 def test_the_reconciled_overlay_wins_over_the_primary(tmp_path):
@@ -118,7 +118,7 @@ def test_the_reconciled_overlay_wins_over_the_primary(tmp_path):
     primary, overlay = tmp_path / "p", tmp_path / "r"
     _full_day(primary, "BTC/EUR", date(2026, 8, 1), per_hour=((10.0, 1.0, 5),))
     _seg(overlay, "BTC/EUR", datetime(2026, 8, 1, 3, tzinfo=UTC), [(99.0, 1.0, 5)])
-    bars = build_day(primary, overlay, "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(segment_index(primary, overlay), "BTC/EUR", date(2026, 8, 1))
     hour3 = bars.filter(pl.col("ts") == datetime(2026, 8, 1, 3, 0, tzinfo=UTC))
     assert hour3["close"][0] == pytest.approx(99.0)
 
@@ -126,7 +126,7 @@ def test_the_reconciled_overlay_wins_over_the_primary(tmp_path):
 def test_only_the_named_day_is_included(tmp_path):
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 1))
     _full_day(tmp_path, "BTC/EUR", date(2026, 8, 2))
-    bars = build_day(tmp_path, tmp_path / "r", "BTC/EUR", date(2026, 8, 1))
+    bars = build_day(segment_index(tmp_path, tmp_path / "r"), "BTC/EUR", date(2026, 8, 1))
     assert bars["ts"].min() >= datetime(2026, 8, 1, tzinfo=UTC)
     assert bars["ts"].max() < datetime(2026, 8, 2, tzinfo=UTC)
 ```
@@ -161,7 +161,23 @@ BASE_INTERVAL_MINUTES = 15
 _HOURS_PER_DAY = 24
 
 
-def build_day(primary_root: Path, reconciled_root: Path, pair: str, day: date) -> pl.DataFrame:
+SegmentIndex = dict[str, dict[datetime, Path]]
+
+
+def segment_index(primary_root: Path, reconciled_root: Path) -> SegmentIndex:
+    """`{pair: {hour: path}}` for the whole healed trade archive, walked ONCE.
+
+    `canonical_segments` globs the entire archive, so calling it per pair or per day is
+    O(pairs x days x archive) on a tree that grows forever under an hourly sweep. Every consumer
+    below takes this index instead of the roots.
+    """
+    index: SegmentIndex = {}
+    for pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades"):
+        index.setdefault(pair, {})[hour] = path
+    return index
+
+
+def build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame:
     """The healed tape for `pair` on UTC `day`, aggregated to 15m bars.
 
     Reconciled-first via `canonical_segments`: a bare glob over the primary would return the
@@ -170,11 +186,8 @@ def build_day(primary_root: Path, reconciled_root: Path, pair: str, day: date) -
     """
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + timedelta(days=1)
-    present: dict[datetime, Path] = {
-        hour: path
-        for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades")
-        if seg_pair == pair and start <= hour < end
-    }
+    hours = index.get(pair, {})
+    present = {hour: path for hour, path in hours.items() if start <= hour < end}
     missing = [f"{(start + timedelta(hours=i)):%H}" for i in range(_HOURS_PER_DAY) if start + timedelta(hours=i) not in present]
     if missing:
         raise TickError(f"tape-bars: {pair} {day.isoformat()} is missing {len(missing)} hour(s): {', '.join(missing)}")
@@ -223,7 +236,7 @@ import pytest
 
 from cli.capture.segment_writer import TRADE_SCHEMA
 from cli.tick.aggregate import ticks_to_bars
-from cli.tick.materialize import build_day, derive_bars
+from cli.tick.materialize import build_day, derive_bars, segment_index
 
 
 def _tape(tmp_path: Path, pair: str, day: date) -> Path:
@@ -254,7 +267,7 @@ def test_derived_equals_direct_aggregation(tmp_path, interval):
     """THE property D1 claims. Derived-from-15m must equal ticks_to_bars run at that interval on the
     same ticks -- every column, not just the ones that trivially telescope."""
     root = _tape(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    base = build_day(root, root.parent / "r", "BTC/EUR", date(2026, 8, 1))
+    base = build_day(segment_index(root, root.parent / "r"), "BTC/EUR", date(2026, 8, 1))
     derived = derive_bars(base, interval_minutes=interval)
 
     ticks = pl.concat(
@@ -273,7 +286,7 @@ def test_an_averaged_vwap_would_be_wrong(tmp_path):
     """Guards the formula, not just the result: on lopsided volume the weighted vwap differs from a
     plain mean of sub-bar vwaps, so a naive implementation cannot pass the test above by accident."""
     root = _tape(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    base = build_day(root, root.parent / "r", "BTC/EUR", date(2026, 8, 1))
+    base = build_day(segment_index(root, root.parent / "r"), "BTC/EUR", date(2026, 8, 1))
     derived = derive_bars(base, interval_minutes=60)
     naive = base.group_by_dynamic("ts", every="60m", closed="left").agg(pl.col("vwap").mean())
     assert derived["vwap"].to_list() != pytest.approx(naive["vwap"].to_list())
@@ -282,7 +295,7 @@ def test_an_averaged_vwap_would_be_wrong(tmp_path):
 def test_a_coarse_window_exists_iff_a_sub_bar_does(tmp_path):
     """Sparse input stays sparse: no gap-filling, and a coarse bar is never invented."""
     root = _tape(tmp_path, "BTC/EUR", date(2026, 8, 1))
-    base = build_day(root, root.parent / "r", "BTC/EUR", date(2026, 8, 1)).filter(
+    base = build_day(segment_index(root, root.parent / "r"), "BTC/EUR", date(2026, 8, 1)).filter(
         pl.col("ts") >= datetime(2026, 8, 1, 12, tzinfo=UTC)
     )
     derived = derive_bars(base, interval_minutes=60)
@@ -349,7 +362,7 @@ git commit -m "feat(tick): derive 60/240/1440 from the 15m base, exactly"
 
 **Interfaces:**
 
-- Produces: `TAPE_SETTLE`, `RESCAN_DAYS`, `SCHEMA_VERSION = 1`; `is_heal_complete(primary_root, reconciled_root, pair, day) -> bool`; `publish_day(out_root, pair, day, bars) -> Path`; `@dataclass MaterializeResult(days_written, days_skipped, days_unsettled, rows, errors)`; `materialize(primary_root, reconciled_root, out_root, *, now: datetime, settle: timedelta = TAPE_SETTLE) -> MaterializeResult`.
+- Produces: `TAPE_SETTLE`, `RESCAN_DAYS`, `SCHEMA_VERSION = 1`; `is_heal_complete(index: SegmentIndex, pair, day) -> bool`; `publish_day(out_root, pair, day, bars) -> Path`; `@dataclass MaterializeResult(days_written, days_skipped, days_unsettled, rows, errors)`; `materialize(primary_root, reconciled_root, out_root, *, now: datetime, settle: timedelta = TAPE_SETTLE) -> MaterializeResult`.
 - Consumes: `build_day` (Task 1).
 
 - [ ] **Step 1: Write the failing tests** — `tests/test_tick_sweep.py`
@@ -547,7 +560,7 @@ class MaterializeResult:
     errors: list[tuple[str, date, str]]
 
 
-def is_heal_complete(primary_root: Path, reconciled_root: Path, pair: str, day: date) -> bool:
+def is_heal_complete(index: SegmentIndex, pair: str, day: date) -> bool:
     """Has the healer finished with this day? MEASURED, never inferred from the clock (D3).
 
     Kraken's `trade_id` is dense and per-pair monotone, so a hole in the sequence IS missing data --
@@ -557,11 +570,8 @@ def is_heal_complete(primary_root: Path, reconciled_root: Path, pair: str, day: 
     """
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     lo, hi = start - timedelta(hours=1), start + timedelta(days=1, hours=1)
-    paths = [
-        path
-        for seg_pair, hour, path in canonical_segments(primary_root, reconciled_root, kind="trades")
-        if seg_pair == pair and lo <= hour < hi
-    ]
+    hours = index.get(pair, {})
+    paths = [path for hour, path in sorted(hours.items()) if lo <= hour < hi]
     if not paths:
         return False
     detection = detect(pl.concat(pl.read_parquet(p) for p in paths))
@@ -601,13 +611,9 @@ def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Pat
     return final
 
 
-def _archive_calendar(primary_root: Path, reconciled_root: Path) -> dict[str, list[date]]:
-    """Every archived pair -> its sorted distinct UTC days. Enumerated ONCE: `canonical_segments`
-    walks the whole archive, so calling it per pair would be O(pairs x archive) every sweep."""
-    calendar: dict[str, set[date]] = {}
-    for pair, hour, _ in canonical_segments(primary_root, reconciled_root, kind="trades"):
-        calendar.setdefault(pair, set()).add(hour.date())
-    return {pair: sorted(days) for pair, days in sorted(calendar.items())}
+def _archive_calendar(index: SegmentIndex) -> dict[str, list[date]]:
+    """Every archived pair -> its sorted distinct UTC days, read off the one index walk."""
+    return {pair: sorted({hour.date() for hour in hours}) for pair, hours in sorted(index.items())}
 
 
 def _watermark(out_root: Path, pair: str) -> date | None:
@@ -637,7 +643,8 @@ def materialize(
     """
     written = skipped = unsettled = unhealed = rows = 0
     errors: list[tuple[str, date, str]] = []
-    for pair, days in _archive_calendar(primary_root, reconciled_root).items():
+    index = segment_index(primary_root, reconciled_root)
+    for pair, days in _archive_calendar(index).items():
         settled = [d for d in days if now - (datetime(d.year, d.month, d.day, tzinfo=UTC) + timedelta(days=1)) >= settle]
         unsettled += len(days) - len(settled)
         if not settled:
@@ -660,10 +667,10 @@ def materialize(
                 skipped += 1
                 continue
             try:
-                if not is_heal_complete(primary_root, reconciled_root, pair, day):
+                if not is_heal_complete(index, pair, day):
                     unhealed += 1
                     continue
-                bars = build_day(primary_root, reconciled_root, pair, day)
+                bars = build_day(index, pair, day)
             except TickError as exc:
                 errors.append((pair, day, str(exc)))
                 continue
@@ -918,7 +925,7 @@ All probes through `infra/scripts/mutate-probe.sh` (clean tree; it refuses a dir
 - [ ] **Probe 1 — the settle gate:** sed `TAPE_SETTLE = timedelta(hours=26)` to `hours=0` → `test_an_unsettled_day_is_deferred_then_taken_once_settled` must fail.
 - [ ] **Probe 2 — the qty→volume rename:** sed `.rename({"qty": "volume"})` to `.rename({})` → `test_volume_comes_from_qty_not_a_missing_column` must fail.
 - [ ] **Probe 3 — the missing-hour refusal:** sed the `if missing:` raise to `if False:` → `test_a_day_missing_an_hour_is_refused_naming_it` must fail.
-- [ ] **Probe 4 — reconciled-first:** sed `canonical_segments(primary_root, reconciled_root, kind="trades")` in `build_day` to pass `None` as the overlay → `test_the_reconciled_overlay_wins_over_the_primary` must fail.
+- [ ] **Probe 4 — reconciled-first:** sed `canonical_segments(primary_root, reconciled_root, kind="trades")` in `segment_index` to pass `None` as the overlay → `test_the_reconciled_overlay_wins_over_the_primary` must fail. (`reconciled_root` is a required argument, so the un-healed path is unreachable through the API; this probe proves the reader is genuinely overlay-aware rather than that a caller remembered a flag.)
 - [ ] **Probe 5 — the weighted vwap:** sed `(pl.col("vwap") * pl.col("volume")).sum()` to `pl.col("vwap").mean() * pl.col("volume").sum()` → `test_derived_equals_direct_aggregation` must fail. **This is the most important probe in the set**: it is the exact wrong formula D1 warns about, and the one a reimplementation would reach for.
 - [ ] **Probe 6 — no-rewrite:** sed the `_final_path(...).exists()` skip to `False` → `test_a_published_day_is_skipped_not_rewritten` must fail.
 - [ ] **Probe 7 — the measured heal gate:** sed `is_heal_complete(...)` in the sweep to `True` → `test_a_day_with_a_trade_id_hole_is_refused_then_published_once_healed` must fail. This is the guard that replaced a wall-clock proxy cold review killed; if it does not bite, the design is back to publishing un-healed days permanently.
