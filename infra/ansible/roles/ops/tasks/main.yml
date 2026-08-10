@@ -562,6 +562,12 @@
       # sanctioned path. Same guard, same reasoning as the engine role's restart handler. Scoped to
       # check mode only: in a real run the render above has already written the unit, so a
       # not-found here stays a genuine failure.
+      #
+      # COARSER than the engine role's, and the difference is worth knowing: `ops_unit_install`
+      # aggregates an 8-item loop, so in CHECK MODE any changed unit template -- even a mode or
+      # comment edit to an existing timer -- suppresses this preview for all four timers, hiding
+      # e.g. a manually-stopped verify-replay the real run would restart. Safe (real runs are never
+      # gated) but the preview under-reports in a wider window than "first install".
       when: not (ansible_check_mode and ops_unit_install is changed)
 
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
