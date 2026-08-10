@@ -47,7 +47,7 @@ def test_loads_strict_accepts_finite():
 
 
 def test_constants():
-    assert SCHEMA_VERSION == 3 and VERDICTS == frozenset({"adopt", "reject", "park"})
+    assert SCHEMA_VERSION == 4 and VERDICTS == frozenset({"adopt", "reject", "park"})
 
 
 COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: the only kind of run_ref that now validates
@@ -58,7 +58,6 @@ def _caller(**over):
         iteration="iter-001",
         family="A1",
         spec_hash="s",
-        dataset_hash="d",
         seeds=[0],
         metrics={"sharpe": 0.3, "dsr": 0.1},
         n_trials_in_family=1,
@@ -85,6 +84,7 @@ def test_valid_caller_passes():
         {"metrics": {"x": float("nan")}},  # flat NaN
         {"metrics": {"cv": {"paths": [0.1, float("inf")]}}},  # NaN/inf buried in a nested list
         {"trial_id": 9},  # caller supplied a store-owned field
+        {"dataset_hash": "d"},  # store-owned since schema 4: derived from `datasets`, never claimed
         {"variant": ""},  # empty string rejected
         {"variant": 123},  # non-str rejected
     ],
@@ -115,7 +115,8 @@ def test_stored_record_hash_and_schema_checks():
     body = dict(
         _caller(),
         trial_id=1,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,  # v3 semantics: a schema-4 body would additionally need a `datasets` block
+        dataset_hash="d",
         timestamp="2026-07-07T00:00:00+00:00",
         prev_hash=GENESIS_HASH,
         run_ref=None,
@@ -136,6 +137,7 @@ def test_stored_record_schema_version_variant_compat():
         _caller(),
         trial_id=1,
         schema_version=2,
+        dataset_hash="d",
         timestamp="2026-07-07T00:00:00+00:00",
         prev_hash=GENESIS_HASH,
         run_ref=None,
@@ -147,7 +149,8 @@ def test_stored_record_schema_version_variant_compat():
     body_v3 = dict(
         _caller(),
         trial_id=1,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,  # v3 semantics: a schema-4 body would additionally need a `datasets` block
+        dataset_hash="d",
         timestamp="2026-07-07T00:00:00+00:00",
         prev_hash=GENESIS_HASH,
         run_ref=None,
@@ -245,7 +248,8 @@ def test_stored_record_validation_stays_lenient_about_run_ref():
         body = dict(
             _caller(),
             trial_id=1,
-            schema_version=SCHEMA_VERSION,
+            schema_version=3,  # v3 semantics: a schema-4 body would additionally need a `datasets` block
+            dataset_hash="d",
             timestamp="2026-07-07T00:00:00+00:00",
             prev_hash=GENESIS_HASH,
             run_ref=legacy,

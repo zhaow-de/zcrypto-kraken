@@ -3,21 +3,28 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from cli.registry.errors import RegistryCorruptionError, RegistryError
 
-SCHEMA_VERSION = 3
-_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3})
+SCHEMA_VERSION = 4
+_LOADABLE_SCHEMA_VERSIONS = frozenset({2, 3, 4})
 GENESIS_HASH = "0" * 64
 VERDICTS = frozenset({"adopt", "reject", "park"})
 
-_STORE_OWNED = ("trial_id", "schema_version", "timestamp", "prev_hash", "record_hash")
-_REQUIRED_CALLER = ("iteration", "family", "spec_hash", "dataset_hash", "seeds", "metrics", "n_trials_in_family", "verdict")
+_STORE_OWNED = ("trial_id", "schema_version", "timestamp", "prev_hash", "record_hash", "dataset_hash")
+_REQUIRED_CALLER = ("iteration", "family", "spec_hash", "seeds", "metrics", "n_trials_in_family", "verdict")
 
 _BASE_STORED_KEYS = frozenset(_STORE_OWNED) | frozenset(_REQUIRED_CALLER) | {"run_ref", "notes"}
-_EXPECTED_STORED_KEYS = {2: _BASE_STORED_KEYS, 3: _BASE_STORED_KEYS | {"variant"}}
+_EXPECTED_STORED_KEYS = {
+    2: _BASE_STORED_KEYS,
+    3: _BASE_STORED_KEYS | {"variant"},
+    4: _BASE_STORED_KEYS | {"variant", "datasets"},
+}
+
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 def canonical_json(obj: dict) -> str:
@@ -137,7 +144,7 @@ def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) ->
     missing = [k for k in _REQUIRED_CALLER if k not in f]
     if missing:
         raise RegistryError(f"missing required field(s): {missing}")
-    for key in ("iteration", "family", "spec_hash", "dataset_hash"):
+    for key in ("iteration", "family", "spec_hash"):
         if type(f[key]) is not str or not f[key]:
             raise RegistryError(f"{key} must be a non-empty str")
     if type(f["seeds"]) is not list or any(type(s) is not int for s in f["seeds"]):
@@ -157,6 +164,39 @@ def validate_caller_fields(f: dict, *, check_run_ref_provenance: bool = True) ->
         raise RegistryError("variant must be a non-empty str or None")
     if type(f.get("notes", "")) is not str:
         raise RegistryError("notes must be a str")
+
+
+def _is_relative_posix_path(value) -> bool:
+    # Form only, no disk access: a key that escapes its dataset directory would point the conformance
+    # pass at a real repo file outside data/ and re-hash it green.
+    return type(value) is str and bool(value) and not value.startswith("/") and "\\" not in value and ".." not in value.split("/")
+
+
+def _validate_datasets_shape(datasets, where: str) -> None:
+    """Pure FORM check of the observed-datasets block — no disk access, no allowlist knowledge."""
+    if type(datasets) is not dict or not datasets:
+        raise RegistryCorruptionError(f"{where}: datasets must be a non-empty dict")
+    for name, block in datasets.items():
+        if not _is_relative_posix_path(name):
+            raise RegistryCorruptionError(f"{where}: datasets key must be a relative path with no '..' segment")
+        if type(block) is not dict:
+            raise RegistryCorruptionError(f"{where}: datasets entry must be a dict")
+        for key in ("files", "rows", "span"):
+            if key not in block:
+                raise RegistryCorruptionError(f"{where}: datasets[{name!r}] is missing {key}")
+        if set(block) - {"files", "rows", "span"}:
+            raise RegistryCorruptionError(f"{where}: datasets entry carries unknown key(s)")
+        if type(block["files"]) is not dict or not block["files"]:
+            raise RegistryCorruptionError(f"{where}: datasets[{name!r}] files must be a non-empty dict")
+        for relpath, digest in block["files"].items():
+            if not _is_relative_posix_path(relpath):
+                raise RegistryCorruptionError(f"{where}: datasets[{name!r}] files key must be a relative path with no '..' segment")
+            if type(digest) is not str or not _SHA256_HEX.fullmatch(digest):
+                raise RegistryCorruptionError(f"{where}: datasets[{name!r}] files value must be a 64-char lowercase hex digest")
+        if type(block["rows"]) is not int or block["rows"] < 1:
+            raise RegistryCorruptionError(f"{where}: datasets[{name!r}] rows must be an int >= 1")
+        if type(block["span"]) is not list or len(block["span"]) != 2 or any(type(s) is not str for s in block["span"]):
+            raise RegistryCorruptionError(f"{where}: datasets[{name!r}] span must be a list of exactly 2 str")
 
 
 def validate_stored_record(rec: dict, where: str) -> None:
@@ -182,6 +222,15 @@ def validate_stored_record(rec: dict, where: str) -> None:
         raise RegistryCorruptionError(f"{where}: prev_hash must be a 64-char hex str")
     if type(rec.get("trial_id")) is not int:
         raise RegistryCorruptionError(f"{where}: trial_id must be int")
+    # Re-homed from validate_caller_fields when dataset_hash became store-owned: nothing else covers v2/v3.
+    if type(rec.get("dataset_hash")) is not str or not rec["dataset_hash"]:
+        raise RegistryCorruptionError(f"{where}: dataset_hash must be a non-empty str")
+    if version >= 4:
+        if "datasets" not in rec:
+            raise RegistryCorruptionError(f"{where}: schema_version 4 record must carry a datasets block")
+        _validate_datasets_shape(rec["datasets"], where)
+        if rec["dataset_hash"] != compute_hash(rec["datasets"]):
+            raise RegistryCorruptionError(f"{where}: dataset_hash is not the digest of this record's datasets block")
     caller = {k: v for k, v in rec.items() if k not in _STORE_OWNED}
     # Provenance is a forward-only rule: history predates it and is immutable, so re-validating a stored
     # record must never reject it. The repo-level provenance test asserts that rule over the real file.
@@ -207,6 +256,7 @@ class TrialRecord:
     variant: str | None = None
     spec_hash: str
     dataset_hash: str
+    datasets: dict | None = None
     seeds: tuple[int, ...]
     metrics: dict
     n_trials_in_family: int

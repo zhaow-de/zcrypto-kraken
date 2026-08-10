@@ -1,3 +1,4 @@
+import inspect
 import json
 from pathlib import Path
 
@@ -6,11 +7,20 @@ import pytest
 from cli.registry import GENESIS_HASH, SCHEMA_VERSION, RegistryCorruptionError, RegistryError, TrialRegistry
 from cli.registry.record import canonical_json, compute_hash
 
+_REGISTRY = Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl"
+
+_BLOCK = {
+    "files": {"BTC/EUR/1440.parquet": "c" * 64},
+    "rows": 10,
+    "span": ["2020-01-01 00:00:00+00:00", "2020-01-10 00:00:00+00:00"],
+}
+
 
 def _line(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
+    # Pinned to a literal 3: this is the v3-semantics helper -- a v4 body would need a `datasets` block.
     body = dict(
         trial_id=trial_id,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family=family,
@@ -141,7 +151,7 @@ def _append(reg, **over):
         iteration="iter-001",
         family="A1",
         spec_hash="s",
-        dataset_hash="d",
+        datasets={"ohlc-test": dict(_BLOCK)},
         seeds=[0],
         metrics={"sharpe": 0.3, "dsr": 0.1},
         n_trials_in_family=2,
@@ -303,7 +313,8 @@ def test_append_rejects_invalid_variant_before_writing(tmp_path):
     assert not p.exists() or p.read_text() == ""
 
 
-def test_mixed_v2_and_v3_file_loads_with_intact_chain(tmp_path):
+def test_mixed_v2_and_v4_file_loads_with_intact_chain(tmp_path):
+    # Two legacy v2 lines plus a freshly appended one, which the writer now emits at schema 4.
     p = tmp_path / "trials.jsonl"
     l1 = _line_v2(1, n=1)
     l2 = _line_v2(2, n=2, prev_hash=_hash_of(l1))
@@ -335,7 +346,7 @@ def test_v2_record_with_variant_key_is_corruption(tmp_path):
 def test_v3_record_with_nonstr_variant_is_corruption(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -358,7 +369,7 @@ def test_v3_record_with_nonstr_variant_is_corruption(tmp_path):
 def test_v3_unknown_key_forge_is_corruption(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -390,7 +401,7 @@ def test_v2_unknown_key_forge_is_corruption(tmp_path):
 def test_missing_base_key_is_corruption(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -412,7 +423,7 @@ def test_missing_base_key_is_corruption(tmp_path):
 def test_v3_without_variant_still_loads(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=SCHEMA_VERSION,
+        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -478,7 +489,7 @@ def test_append_requires_run_ref_explicitly(tmp_path):
             iteration="iter-001",
             family="A1",
             spec_hash="s",
-            dataset_hash="d",
+            datasets={"ohlc-test": dict(_BLOCK)},
             seeds=[0],
             metrics={"sharpe": 0.3},
             n_trials_in_family=1,
@@ -494,3 +505,157 @@ def test_variant_does_not_affect_family_budget_monotonic_check(tmp_path):
         _append(reg, family="A1", n_trials_in_family=1, variant="v2")
     r2 = _append(reg, family="A1", n_trials_in_family=2, variant="v2")
     assert r2.trial_id == 2
+
+
+def test_all_46_committed_records_still_load():
+    reg = TrialRegistry(_REGISTRY)
+    assert len(reg) >= 46  # floored, never pinned: the file grows with every registered trial
+    assert all(r.schema_version in (2, 3) or r.datasets for r in reg.records)
+
+
+def test_append_has_no_dataset_hash_parameter():
+    assert "dataset_hash" not in inspect.signature(TrialRegistry.append).parameters
+
+
+def test_a_schema_four_record_round_trips_through_disk(tmp_path):
+    reg = _new_registry(tmp_path)
+    written = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
+    reloaded = _new_registry(tmp_path).records[-1]
+    assert reloaded.schema_version == 4
+    assert reloaded.dataset_hash == compute_hash(reloaded.datasets) == written.dataset_hash
+
+
+def test_different_file_sets_give_different_digests(tmp_path):
+    """The slice IS the file list: daily-only vs daily+4h differ by construction (D2)."""
+    reg = _new_registry(tmp_path)
+    daily = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
+    both_files = {**_BLOCK["files"], "BTC/EUR/240.parquet": "d" * 64}
+    both = _append(reg, family="B", n_trials_in_family=1, datasets={"ohlc-test": {**_BLOCK, "files": both_files, "rows": 70}})
+    assert daily.dataset_hash != both.dataset_hash
+
+
+def test_a_windowed_read_gives_a_different_digest(tmp_path):
+    """The sample window is expressible (D2): same files, different rows/span, different digest."""
+    reg = _new_registry(tmp_path)
+    full = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
+    windowed = _append(
+        reg,
+        family="B",
+        n_trials_in_family=1,
+        datasets={"ohlc-test": {**_BLOCK, "rows": 3, "span": ["2020-01-03 00:00:00+00:00", "2020-01-05 00:00:00+00:00"]}},
+    )
+    assert full.dataset_hash != windowed.dataset_hash
+
+
+def _schema4_line(**over):
+    body = dict(
+        trial_id=1,
+        schema_version=4,
+        timestamp="2026-08-09T00:00:00+00:00",
+        iteration="iter-001",
+        family="A1",
+        spec_hash="s",
+        seeds=[0],
+        metrics={"dsr": 0.1},
+        n_trials_in_family=1,
+        verdict="adopt",
+        run_ref=None,
+        notes="",
+        prev_hash=GENESIS_HASH,
+        datasets={"ohlc-test": dict(_BLOCK)},
+    )
+    body.update(over)
+    body["dataset_hash"] = over.get("dataset_hash", compute_hash(body["datasets"]))
+    return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+
+@pytest.mark.parametrize(
+    "over, match",
+    [
+        ({"dataset_hash": "deadbeef" * 8}, "dataset_hash"),  # D4: derivation, not a caller claim
+        ({"datasets": "ba47e37e"}, "datasets must be a non-empty dict"),  # the original failure, verbatim
+        ({"datasets": {}}, "datasets must be a non-empty dict"),  # empty carries no provenance
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {}}}}, "files"),  # says nothing
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a.parquet": "C" * 64}}}}, "files"),  # uppercase hex
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a.parquet": "c" * 63}}}}, "files"),  # short hex
+        ({"datasets": {"ohlc-test": {**_BLOCK, "rows": 0}}}, "rows"),  # zero-extent
+        ({"datasets": {"ohlc-test": {**_BLOCK, "rows": True}}}, "rows"),  # bool-as-int
+        ({"datasets": {"../infra": dict(_BLOCK)}}, "datasets key must be a relative path"),  # name escapes data/
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"": "c" * 64}}}}, "files"),  # empty key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a\\b.parquet": "c" * 64}}}}, "files"),  # backslash key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"/etc/x": "c" * 64}}}}, "files"),  # absolute key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"../x.parquet": "c" * 64}}}}, "files"),  # escaping key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "span": ["a"]}}}, "span"),  # wrong arity
+        ({"datasets": {"ohlc-test": {k: v for k, v in _BLOCK.items() if k != "span"}}}, "span"),  # missing key
+        ({"datasets": {"ohlc-test": {**_BLOCK, "extra": 1}}}, "datasets entry carries unknown key"),  # surplus
+    ],
+)
+def test_a_forged_schema_four_record_is_rejected_at_load(tmp_path, over, match):
+    """D4/D2: the invariant is a property of the FILE, not of append()."""
+    with pytest.raises(RegistryCorruptionError, match=match):
+        TrialRegistry(_write(tmp_path, [_schema4_line(**over)]))
+
+
+def test_a_schema_four_record_missing_datasets_entirely_is_rejected(tmp_path):
+    line = json.loads(_schema4_line())
+    del line["datasets"]
+    line["record_hash"] = compute_hash({k: v for k, v in line.items() if k != "record_hash"})
+    with pytest.raises(RegistryCorruptionError, match="datasets"):
+        TrialRegistry(_write(tmp_path, [canonical_json(line)]))
+
+
+@pytest.mark.parametrize("bad", ["", 123])
+def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_path, bad):
+    """This check ran on EVERY load via `validate_caller_fields` until the key became store-owned;
+    nothing else covers schema 2/3, so unless re-homed the guard lapses silently."""
+    body = json.loads(_line(1))  # the schema-3 helper, pinned to a literal 3 in Step 4
+    del body["record_hash"]
+    body["dataset_hash"] = bad
+    with pytest.raises(RegistryError, match="dataset_hash"):
+        TrialRegistry(_write(tmp_path, [canonical_json(dict(body, record_hash=compute_hash(body)))]))
+
+
+def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
+    """D4: what actually binds record 47 — built on the REAL 46 records (read-only)."""
+    real = _REGISTRY.read_text(encoding="utf-8").splitlines()
+    prev = json.loads(real[-1])
+
+    def _line47(**over):
+        body = dict(
+            trial_id=prev["trial_id"] + 1,
+            schema_version=4,
+            timestamp="2026-08-09T00:00:00+00:00",
+            iteration="iter-001",
+            family="FLOOR",
+            spec_hash="s",
+            seeds=[0],
+            metrics={"dsr": 0.1},
+            n_trials_in_family=1,
+            verdict="adopt",
+            run_ref=None,
+            notes="",
+            prev_hash=prev["record_hash"],
+            datasets={"ohlc-test": dict(_BLOCK)},
+        )
+        body.update(over)
+        body["dataset_hash"] = compute_hash(body["datasets"])
+        return canonical_json(dict(body, record_hash=compute_hash(body)))
+
+    # Non-vacuous both directions: the same record at schema 4 loads, so the floor is what rejects.
+    assert len(TrialRegistry(_write(tmp_path, [*real, _line47()]))) == prev["trial_id"] + 1
+
+    v3 = json.loads(_line47())
+    del v3["datasets"], v3["record_hash"]
+    v3["schema_version"] = 3
+    v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # verbatim
+    forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
+    with pytest.raises(RegistryCorruptionError, match="schema_version"):
+        TrialRegistry(_write(tmp_path, [*real, forged]))
+
+
+def test_append_revalidates_and_a_bad_block_writes_nothing(tmp_path):
+    """One bad line is permanent (append-only, hash-chained) — refuse BEFORE the write."""
+    reg = _new_registry(tmp_path)
+    with pytest.raises(RegistryError):
+        _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": {**_BLOCK, "rows": 0}})
+    assert not reg.path.exists() or reg.path.read_text() == ""

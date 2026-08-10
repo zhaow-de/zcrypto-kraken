@@ -136,7 +136,6 @@ def _caller(**over):
         iteration="iter-001",
         family="A1",
         spec_hash="s",
-        dataset_hash="d",
         seeds=[0],
         metrics={"sharpe": 0.3},
         n_trials_in_family=1,

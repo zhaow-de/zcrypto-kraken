@@ -103,6 +103,8 @@ The NAS (`/volume1/ZhaoCrypto`) keeps everything forever; both research nodes re
 
 Unlike the frozen `hot` baskets (pinned at the file level), the accruing operational members below are **hash-versioned at consumption**: a research iteration extracts its window and records that frame's `dataset_hash` in the trial registry (never "latest").
 
+**How the registry references a dataset, since schema 4 (spec `00086`, 2026-08-09):** a record carries a `datasets` block of the per-file sha256 of the bytes the run actually read, plus the rows and span it returned; `dataset_hash` is **derived** from that block by the registry itself and cannot be supplied by a caller. Records are written through `zcrypto research eval --register`, which computes the block as it loads. Pre-schema-4 hashes are explained by `docs/reference/legacy-dataset-pins.jsonl`, which marks each one reproduced / inferred / unrecoverable **in the referent value itself** — two of the four are accepted as permanently unverifiable. Spec `00035`'s "`dataset_hash` == record 1's input else STOP" gate is **superseded** by that derivation: its home is immutable (its sha256 is pinned as a `spec_hash` on committed records), so the supersession is stated here rather than edited there.
+
 ### Source dumps
 
 - `kraken-ohlcvt-updates` (13G) — Kraken's downloadable OHLCVT ZIP archive (base + quarterly), the source `ohlc-full` reconstructs from.

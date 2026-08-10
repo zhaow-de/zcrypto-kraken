@@ -21,6 +21,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
   - [`zcrypto data`](#zcrypto-data)
+  - [`zcrypto research`](#zcrypto-research)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -302,6 +303,32 @@ zcrypto data rebuild <SET>...
 All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose `ohlc-full` set is staler than the 7-day budget or whose `manifest.json` is missing/unreadable — the set then cannot identify itself, so no artifact is written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 
 `derivatives-oi` backfills open-interest history from Binance Vision daily `metrics` dumps (5-minute `sum_open_interest` + the free long/short and taker ratios, back to each perp's listing) into `data/derivatives-oi/`, the sibling of `derivatives-funding` — the second free-backfillable B2 input. Both come from the public `data.binance.vision` CDN (checksum-verified per file); liquidations, the third B2 input, have no free dump and are collected live via Coinalyze instead (see `docs/open-topics/T0023-*`).
+
+### `zcrypto research`<a name="zcrypto-research"></a>
+
+Evaluates a committed system over a frozen dataset and, on request, appends the resulting trial to the registry. This is the only supported way to add a registry record: the fit reads every series through the capturing loader, and the file digests / row counts / time span that loader accumulated become the record's `datasets` block — so a record's dataset identity is what the run actually read, never a hash supplied alongside it.
+
+```bash
+zcrypto research eval --subject <NAME> --dataset <DIR> [OPTIONS]
+```
+
+| Option | Description |
+| -- | -- |
+| `--subject <NAME>` | System to evaluate: `record44-crossfreq` (the cross-frequency system; daily + 4h series) or `record33-combined` (the combined system; daily series). |
+| `--dataset <DIR>` | Frozen dataset directory name under the repo's `data/` root, e.g. `ohlc-full`. |
+| `--window START END` | Restrict every series to the inclusive ISO-8601 range. Default: full history. |
+| `--register` | Append the result to the trial registry. Omitted, the command only reports. |
+| `--iteration <S>` | Iteration label of the run. Required with `--register`. |
+| `--family <S>` | Trial family this run belongs to. Required with `--register`. |
+| `--spec-hash <S>` | Hash of the design this run implements. Required with `--register`. |
+| `--verdict {adopt,reject,park}` | The run's verdict. Required with `--register`. |
+| `--n-trials <N>` | Trials in this family **including** this one. Required with `--register`, and must exceed the count already recorded for that family — the registry refuses anything lower. |
+| `--variant <S>` | Variant label within the family. |
+| `--notes <S>` | Free-text notes stored with the record. |
+| `--seed <N>` | Seed used by the run; repeat the flag for several. |
+| `--registry <PATH>` | Registry file to append to. Defaults to the committed `docs/reference/trial-registry.jsonl`. |
+
+The report names the metrics, the observed dataset block, and whether the dataset's own freeze record vouched for the bytes read (a dataset with no `manifest.json` reports as inert — nothing cross-checked the bytes). Exits **1** on an unknown subject (listing the known ones), on a dataset missing any series the subject needs (naming every missing file, before a single read), on a `--register` run missing one of its required flags, and when the registry refuses the record.
 
 ## Configuration<a name="configuration"></a>
 

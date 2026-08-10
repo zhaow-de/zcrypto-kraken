@@ -82,10 +82,15 @@ SPA_HEADLINE_SEED = 42
 SPA_GRID = ((30, 7), (30, 1234), (102, 42), (102, 7), (102, 1234))
 
 
-def load_union(interval: int, *, root: Path = DATA_ROOT) -> tuple[list[datetime], dict[str, list[float | None]]]:
-    """Union-calendar bar-START stamps and per-asset closes (None where an asset has no bar)."""
+def load_union(interval: int, *, root: Path = DATA_ROOT, read=read_parquet) -> tuple[list[datetime], dict[str, list[float | None]]]:
+    """Union-calendar bar-START stamps and per-asset closes (None where an asset has no bar).
+
+    `read` is the loader applied to each series path; the default reads the file directly. Passing a
+    capturing loader (`ObservedReader.read_series`) is how a run's dataset identity is observed from
+    the bytes this function actually opens, rather than claimed alongside it.
+    """
     assets = CrossfreqSystemConfig().assets
-    frames = {a: read_parquet(root / a / "EUR" / f"{interval}.parquet") for a in assets}
+    frames = {a: read(root / a / "EUR" / f"{interval}.parquet") for a in assets}
     union_ts = sorted(set().union(*[set(f["ts"].to_list()) for f in frames.values()]))
     prices = {}
     for a in assets:
