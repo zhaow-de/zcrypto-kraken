@@ -538,6 +538,7 @@
         group: root
         mode: "0644"
       loop: "{{ ['verify-replay', 'verified-replay', 'panel-materialize', 'tape-bars'] | product(['service', 'timer']) | list }}"
+      register: ops_unit_install
 
     # Only the TIMERS are enabled: the services are the oneshots they trigger, and enabling those
     # too would run both replays on every boot (same rationale as the capture prune timer).
@@ -555,6 +556,19 @@
         enabled: true
         state: started
       loop: "{{ ['verify-replay', 'verified-replay', 'tape-bars'] + ([] if ops_panel_timer_hold | default(false) | bool else ['panel-materialize']) }}"
+      # A NEWLY ADDED timer's unit file was never really written under --check, so systemd cannot
+      # find it and the preview fails -- and `converge.sh` refuses to run the real pass while the
+      # preview fails, so without this guard no new timer can EVER be converged through the
+      # sanctioned path. Same guard, same reasoning as the engine role's restart handler. Scoped to
+      # check mode only: in a real run the render above has already written the unit, so a
+      # not-found here stays a genuine failure.
+      #
+      # COARSER than the engine role's, and the difference is worth knowing: `ops_unit_install`
+      # aggregates an 8-item loop, so in CHECK MODE any changed unit template -- even a mode or
+      # comment edit to an existing timer -- suppresses this preview for all four timers, hiding
+      # e.g. a manually-stopped verify-replay the real run would restart. Safe (real runs are never
+      # gated) but the preview under-reports in a wider window than "first install".
+      when: not (ansible_check_mode and ops_unit_install is changed)
 
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives
 # systemd and rm), and the operator needs it on the host regardless of whether the converge that

@@ -34,6 +34,17 @@ check "reconcile freshness (s)" 'time() - node_textfile_mtime_seconds{file=~".*r
 check "residual-gap counter unbumped (2h)" 'increase(zcrypto_reconcile_residual_gap_seconds_total[2h])' zero
 check "healable-gap counter unbumped (2h)" 'increase(zcrypto_reconcile_healable_gap_seconds_total[2h])' zero
 check "healthchecks down" 'hc_checks_down_total' zero
+# tape-bars (spec 00087). Three checks, and the third is the one the others cannot make:
+#   - exit code catches a sweep that died.
+#   - days_gap catches a day that fell out of the re-scan window unpublished — permanent, and the
+#     ONLY signal that reports it, since days_unhealed stops counting it at exactly that moment.
+#   - freshness is on last_PUBLISH, not last_success: the not-yet-healed path exits 0 by design, so
+#     a stalled healer leaves last_success advancing hourly while the dataset stops growing. A day
+#     becomes eligible ~26 h after it ends, so publishing is ~daily; 48 h means two days produced
+#     nothing. Publishing legitimately pauses between days, which is why this is 48 h and not 2 h.
+check "tape-bars exit code" 'zcrypto_tapebars_exit_code' zero
+check "tape-bars permanent gaps" 'zcrypto_tapebars_days_gap' zero
+check "tape-bars publish freshness (s)" 'time() - zcrypto_tapebars_last_publish_timestamp_seconds' under 172800
 
 if [ "$fails" -eq 0 ]; then echo "ops-postverify: ALL PASS"; else echo "ops-postverify: $fails FAIL"; fi
 [ "$fails" -eq 0 ]

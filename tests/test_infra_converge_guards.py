@@ -1025,3 +1025,29 @@ def test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe():
     assert primary < probe  # the narrower primary refusal still speaks first
     assert probe < refusal  # nothing to assert on until the probe has registered
     assert refusal < task_index(tasks, "zcrypto-deploy sudo user")
+
+
+# --- the ops role's new-timer check-mode guard ------------------------------------------------
+# Its absence made ANY newly added timer unconvergeable through the sanctioned path: under --check
+# the unit file is never really written, so enable+start cannot find it, the preview fails, and
+# converge.sh refuses the real pass while the preview is red. Nothing pinned that before, so the
+# defect was found by hitting it on a live converge rather than in CI.
+OPS_TIMER_ENABLE = "enable + start the replay + panel + tape-bars timers"
+
+
+@pytest.mark.parametrize(
+    ("check_mode", "units_changed", "expected", "why"),
+    [
+        (True, True, False, "first install under --check: the unit was never written, so skip"),
+        (True, False, True, "check mode but units unchanged: they exist, so preview the enable"),
+        (False, True, True, "REAL run: the render already wrote them — never skip"),
+        (False, False, True, "real run, nothing new: enable is idempotent and still runs"),
+    ],
+)
+def test_the_new_timer_guard_never_skips_a_real_run(check_mode, units_changed, expected, why):
+    task = find_task(load_tasks(OPS), OPS_TIMER_ENABLE)
+    variables = {
+        "ansible_check_mode": check_mode,
+        "ops_unit_install": {"changed": units_changed},
+    }
+    assert truthy(when_conditions(task), variables) is expected, why

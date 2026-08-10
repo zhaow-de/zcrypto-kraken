@@ -21,6 +21,9 @@ case "$q" in
   *residual_gap*) printf '%s\\n' "$RESIDUAL_OUT" ;;
   *healable_gap*) printf '%s\\n' "$HEALABLE_OUT" ;;
   *hc_checks*)    printf '%s\\n' "$HC_OUT" ;;
+  *tapebars_exit*)    printf '%s\\n' "$TB_EXIT_OUT" ;;
+  *tapebars_days_gap*) printf '%s\\n' "$TB_GAP_OUT" ;;
+  *tapebars_last_publish*) printf '%s\\n' "$TB_PUBLISH_OUT" ;;
   *) echo "unexpected query: $q" >&2; exit 9 ;;
 esac
 """
@@ -32,6 +35,9 @@ GOOD = {
     "RESIDUAL_OUT": "query\n  {host=zcrypto-ops} = 0",
     "HEALABLE_OUT": "query\n  {host=zcrypto-ops} = 0",
     "HC_OUT": "hc_checks_down_total\n  {host=zcrypto-ops} = 0",
+    "TB_EXIT_OUT": "zcrypto_tapebars_exit_code\n  {host=ops} = 0",
+    "TB_GAP_OUT": "zcrypto_tapebars_days_gap\n  {host=ops} = 0",
+    "TB_PUBLISH_OUT": "query\n  {host=ops} = 3600",
 }
 
 
@@ -51,7 +57,7 @@ def check_lines(out, kind):
 def test_all_green_passes(tmp_path):
     r = run_postverify(tmp_path, {})
     assert r.returncode == 0
-    assert check_lines(r.stdout, "PASS") == 6 and check_lines(r.stdout, "FAIL") == 0
+    assert check_lines(r.stdout, "PASS") == 9 and check_lines(r.stdout, "FAIL") == 0
 
 
 def test_nonzero_exit_code_fails(tmp_path):
@@ -89,7 +95,42 @@ def test_query_error_is_a_fail(tmp_path):
     env = {**os.environ, "ZCRYPTO_GRAFANA_QUERY": str(stub)}
     r = subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env)
     assert r.returncode == 1
-    assert check_lines(r.stdout, "FAIL") == 6
+    assert check_lines(r.stdout, "FAIL") == 9
+
+
+def test_tape_bars_nonzero_exit_fails(tmp_path):
+    r = run_postverify(tmp_path, {"TB_EXIT_OUT": "zcrypto_tapebars_exit_code\n  {host=ops} = 1"})
+    assert r.returncode == 1
+    assert "tape-bars exit code" in r.stdout
+
+
+def test_a_permanent_gap_fails(tmp_path):
+    """days_gap > 0 means a settled day fell out of the re-scan window unpublished. Nothing else
+    reports it: days_unhealed stops counting that day at exactly the moment it becomes permanent."""
+    r = run_postverify(tmp_path, {"TB_GAP_OUT": "zcrypto_tapebars_days_gap\n  {host=ops} = 2"})
+    assert r.returncode == 1
+    assert "tape-bars permanent gaps" in r.stdout
+
+
+def test_a_frozen_watermark_fails_even_though_the_sweep_exits_clean(tmp_path):
+    """THE case last_success cannot see. A stalled healer leaves every sweep exiting 0 -- the
+    not-yet-healed path is a deferral, not a failure -- so exit_code stays 0 while the dataset stops
+    growing. Only publish-freshness catches it, which is why this check reads last_PUBLISH."""
+    r = run_postverify(
+        tmp_path,
+        {"TB_PUBLISH_OUT": "query\n  {host=ops} = 200000", "TB_EXIT_OUT": "zcrypto_tapebars_exit_code\n  {host=ops} = 0"},
+    )
+    assert r.returncode == 1
+    assert "publish freshness" in r.stdout
+    assert "tape-bars exit code (0)" in r.stdout, "the sweep is clean; only freshness may fail"
+
+
+def test_a_never_published_tape_bars_fails_rather_than_reading_as_fresh(tmp_path):
+    """The runner emits last_publish=0 before the first publish, so time()-0 is a huge number. It
+    must FAIL loudly rather than underflow into something that reads fresh."""
+    r = run_postverify(tmp_path, {"TB_PUBLISH_OUT": "query\n  {host=ops} = 1786000000"})
+    assert r.returncode == 1
+    assert "publish freshness" in r.stdout
 
 
 def test_header_containing_comparison_cannot_mint_a_value(tmp_path):
