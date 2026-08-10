@@ -57,3 +57,31 @@ def build_day(index: SegmentIndex, pair: str, day: date) -> pl.DataFrame:
     frames = [pl.read_parquet(present[hour]) for hour in sorted(present)]
     ticks = pl.concat(frames).rename({"qty": "volume"}).select("ts", "price", "volume")
     return ticks_to_bars(ticks, interval_minutes=BASE_INTERVAL_MINUTES)
+
+
+def derive_bars(bars: pl.DataFrame, *, interval_minutes: int) -> pl.DataFrame:
+    """Aggregate 15m base bars up to `interval_minutes` -- exactly, not approximately.
+
+    `ticks_to_bars` computes a TRUE tick-weighted vwap, so `Σ(vwap_i · volume_i)` over sub-bars
+    telescopes to `Σ(price · volume)` over the whole window and the coarse vwap re-derives as
+    `Σ(vwap_i·vol_i) / Σ(vol_i)`. A plain mean of sub-bar vwaps is the tempting form and is WRONG on
+    any window whose volume is not uniform. Empty windows stay absent: a coarse bar exists iff at
+    least one sub-bar does.
+    """
+    if bars.height == 0:
+        return bars
+    return (
+        bars.sort("ts")
+        .group_by_dynamic("ts", every=f"{interval_minutes}m", closed="left")
+        .agg(
+            pl.col("open").first(),
+            pl.col("high").max(),
+            pl.col("low").min(),
+            pl.col("close").last(),
+            pl.col("volume").sum(),
+            pl.col("count").sum(),
+            (pl.col("vwap") * pl.col("volume")).sum().alias("_pv_sum"),
+        )
+        .with_columns((pl.col("_pv_sum") / pl.col("volume")).alias("vwap"))
+        .select("ts", "open", "high", "low", "close", "volume", "count", "vwap")
+    )
