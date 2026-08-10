@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -87,8 +89,16 @@ def test_an_unusable_window_is_refused_typed(tmp_path, bad, match):
     """Naive bounds are the trap: polars raises SchemaError comparing tz-aware `ts` against a naive
     literal, so without this the paved door dies with a traceback on its most natural spelling."""
     root = _dataset(tmp_path, series=(("BTC/EUR/1440.parquet", 10),))
-    with pytest.raises(RegistryError, match=match):
+    with pytest.raises(RegistryError, match=match) as excinfo:
         ObservedReader(root).read_series("ohlc-test", "BTC/EUR/1440.parquet", window=bad)
+
+    # Advice that does not work is worse than none: every quoted example in the refusal must itself
+    # parse to a tz-aware datetime. The first version of this message suggested appending an offset
+    # to the caller's own bound, which yields '2020-01-03+00:00' -- read as NAIVE, because
+    # fromisoformat takes the '+' as the date/time separator -- looping the caller through the same
+    # refusal with a longer string each time.
+    for example in re.findall(r"e\.g\. '([^']+)'", str(excinfo.value)):
+        assert datetime.fromisoformat(example).tzinfo is not None, f"the refusal suggests {example!r}, which is still naive"
 
 
 def test_empty_accumulation_and_zero_row_dataset_are_refused(tmp_path):

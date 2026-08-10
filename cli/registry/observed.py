@@ -97,7 +97,13 @@ class ObservedReader:
                 except ValueError as exc:
                     raise RegistryError(f"window bound {w!r} is not an ISO-8601 timestamp: {exc}") from exc
                 if parsed.tzinfo is None:
-                    raise RegistryError(f"window bound {w!r} has no timezone — give an explicit offset, e.g. '{w}+00:00'")
+                    # Do NOT interpolate the caller's own string into the suggestion: appending an
+                    # offset to a date-only bound yields '2020-01-03+00:00', which fromisoformat
+                    # reads as NAIVE (the '+' is taken as the date/time separator), so the advice
+                    # would loop the caller through the same refusal. Name a spelling that works.
+                    raise RegistryError(
+                        f"window bound {w!r} has no timezone — bounds need an explicit offset, e.g. '2020-01-03 00:00:00+00:00'"
+                    )
                 bounds.append(parsed)
             start, end = bounds
             frame = frame.filter((pl.col("ts") >= start) & (pl.col("ts") <= end))
