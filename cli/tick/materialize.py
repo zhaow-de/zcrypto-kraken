@@ -174,6 +174,12 @@ def publish_day(out_root: Path, pair: str, day: date, bars: pl.DataFrame) -> Pat
     # final, forever. The sidecar gets the same durability as the final it vouches for.
     _fsync(sidecar_tmp)
     os.replace(sidecar_tmp, final.with_suffix(".parquet.sha256"))
+    # Fsync the DIRECTORY between the two renames, not only after both. mint.py's
+    # `_replace_durably` does this per replace, and it is what pins the ORDER: without it a crash
+    # can leave the final visible while the sidecar rename is still unpersisted, and the `.exists()`
+    # skip means that sidecar is never minted again -- a permanent missing digest on an
+    # irreplaceable final. The final is published LAST so a visible final always implies its digest.
+    _fsync(final.parent)
     os.replace(tmp, final)
     _fsync(final.parent)
     return final
@@ -248,12 +254,16 @@ def materialize(
                     unhealed += 1
                     continue
                 bars = build_day(index, pair, day)
+                publish_day(out_root, pair, day, bars)
             except Exception as exc:  # noqa: BLE001 -- one bad day must not abort the sweep
-                # Broad on purpose, matching cli/panel/materialize.py: a corrupt parquet or an
-                # unexpected error inside detect must cost one day, never every pair's whole sweep.
+                # Broad on purpose, matching cli/panel/materialize.py: a corrupt parquet, an
+                # unexpected error inside detect, or an environmental publish failure (ENOSPC,
+                # EACCES, a rename error) must cost one day, never every pair's whole sweep.
+                # publish_day is INSIDE the try deliberately: with it outside, a full disk on one
+                # day aborted every remaining pair for that tick, which is the opposite of what the
+                # isolation contract promises.
                 errors.append((pair, day, f"{type(exc).__name__}: {exc}"))
                 continue
-            publish_day(out_root, pair, day, bars)
             written += 1
             rows += bars.height
     return MaterializeResult(written, skipped, unsettled, unhealed, gap, rows, errors)
