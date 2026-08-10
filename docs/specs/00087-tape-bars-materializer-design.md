@@ -16,7 +16,7 @@ So the materializer's contribution is precisely the one neither other source can
 
 ### D1 — One accruing dataset at a 15m base, coarser grids derived
 
-`tape-bars`, an **accruing operational** member in the data-model taxonomy (ops-primary + NAS replica), never a frozen research canonical. The base grid is **15 minutes**; 60, 240 and 1440 are *derived on demand*, never separately materialized.
+`tape-bars`, an **accruing operational** member in the data-model taxonomy, never a frozen research canonical. **Ops-host only, and that is the correct end state rather than an unfinished one** — an earlier draft of this line said "ops-primary + NAS replica", which over-claimed: `tape-bars` is fully derived, and its source (the trade archive) is already NAS custody kept forever, so a lost ops copy costs a re-materialization, not data. No replication channel is owed for durability, and none was built. The base grid is **15 minutes**; 60, 240 and 1440 are *derived on demand*, never separately materialized.
 
 15m divides all three evenly (×4, ×16, ×96), so no boundary is ragged, and `ticks_to_bars` already buckets left-closed against the epoch — which puts 1440 on UTC midnight, matching the canonical OHLCVT convention.
 
