@@ -2148,7 +2148,7 @@
       "id": 401,
       "type": "timeseries",
       "title": "Job exit codes",
-      "description": "Did each of the four canonical-tree writers come back clean on its last pass? Any non-zero value pages, on all four, after `for: 5m` — but they are not equally severe: a failed panel materialize costs freshness on derived, recomputable data, while a verified-path mismatch or a failed trade backfill means the canonical result itself is in question, and those two are the critical pair. On the overlay-writer cycle, a gate skip and a trade-backfill failure both leave the code at zero; only the reconcile step sets it non-zero, and the backfill has its own series here. Published only by the ops machine.",
+      "description": "Did each of the five canonical-tree writers come back clean on its last pass? Any non-zero value pages on four of them, after `for: 5m` — but they are not equally severe: a failed panel materialize costs freshness on derived, recomputable data, while a verified-path mismatch or a failed trade backfill means the canonical result itself is in question, and those two are the critical pair. On the overlay-writer cycle, a gate skip and a trade-backfill failure both leave the code at zero; only the reconcile step sets it non-zero, and the backfill has its own series here. Published only by the ops machine. The tape-bars materializer is the fifth and is plotted unlined: a day it cannot publish yet is not an error, so its refusals show up as counts on its own panel rather than here, and only an unexpected failure — a corrupt segment, an unwritable output — lifts this series off zero.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2195,6 +2195,15 @@
           "expr": "zcrypto_trade_backfill_exit_code",
           "refId": "D",
           "legendFormat": "trade backfill"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_tapebars_exit_code",
+          "refId": "E",
+          "legendFormat": "tape-bars materialize"
         }
       ],
       "fieldConfig": {
@@ -2355,7 +2364,7 @@
       "id": 402,
       "type": "timeseries",
       "title": "Job last-success age",
-      "description": "How long since each writer last completed cleanly, each against the exact budget its own alert uses: 3 hours for the half-hourly overlay-writer cycle, about six missed cycles; 48 hours for the daily verified-path replay and 48 hours for the daily trade backfill, two missed days each. Two distinct budgets across three series, so each series carries its own bar and there is no shared ladder. All three page after `for: 5m`. The panel materialize has no staleness alert at all and is plotted unlined. A stamp of zero means never succeeded, which renders as time since the epoch rather than a small number and will flatten everything else on the axis. Published only by the ops machine.",
+      "description": "How long since each writer last completed cleanly, each against the exact budget its own alert uses: 3 hours for the half-hourly overlay-writer cycle, about six missed cycles; 48 hours for the daily verified-path replay and 48 hours for the daily trade backfill, two missed days each. Two distinct budgets across three series, so each series carries its own bar and there is no shared ladder. All three page after `for: 5m`. The panel materialize has no staleness alert at all and is plotted unlined. A stamp of zero means never succeeded, which renders as time since the epoch rather than a small number and will flatten everything else on the axis. Published only by the ops machine. The tape-bars materializer contributes two series, and the second is the one that matters: its not-yet-healed path completes cleanly by design, so a stalled healer leaves the clean-run stamp advancing every hour while the dataset stops growing. Only the since-a-day-was-last-published series can see that, and a healthy pipeline publishes at least one day per pair per day.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2402,6 +2411,24 @@
           "expr": "time() - ops_panel_last_success_timestamp",
           "refId": "D",
           "legendFormat": "panel materialize (no page line)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_tapebars_last_success_timestamp_seconds",
+          "refId": "E",
+          "legendFormat": "tape-bars materialize (no page line)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_tapebars_last_publish_timestamp_seconds",
+          "refId": "F",
+          "legendFormat": "tape-bars — since a day was last published (no page line)"
         }
       ],
       "fieldConfig": {
@@ -2587,6 +2614,15 @@
           "expr": "time() - zcrypto_trade_backfill_last_run_timestamp",
           "refId": "E",
           "legendFormat": "trade backfill"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_tapebars_last_run_timestamp_seconds",
+          "refId": "F",
+          "legendFormat": "tape-bars materialize"
         }
       ],
       "fieldConfig": {
@@ -2717,6 +2753,123 @@
       }
     },
     {
+      "id": 405,
+      "type": "timeseries",
+      "title": "Tape-bars — days published, refused & permanently missing",
+      "description": "The tape-bars materializer sweeps hourly and publishes a day of 15m bars once that day's trade tape is measured contiguous. Days published sits at zero most of the time: a day becomes eligible about a day after it ends, so one tick a day carries a one and the rest carry nothing — the flat line is the healthy shape, not a stall. Refused counts settled days whose trade sequence still has a hole; they are retried while the heal window still reaches them, and a steady one for a pair that left the capture set is documented noise rather than a fault. Permanently missing is the irreversible one: a settled day that fell past the retry window with no file will never be published, and nothing else in the fleet reports it. Days in error counts unexpected failures — a corrupt segment, an unwritable output — each costing exactly one day rather than the whole sweep. Published only by the ops machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_tapebars_days_written",
+          "refId": "A",
+          "legendFormat": "days published"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_tapebars_days_unhealed",
+          "refId": "B",
+          "legendFormat": "days refused — tape not healed yet"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_tapebars_days_gap",
+          "refId": "C",
+          "legendFormat": "days permanently missing"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_tapebars_errors",
+          "refId": "D",
+          "legendFormat": "days in error"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "lineInterpolation": "stepAfter"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 500,
       "type": "row",
       "title": "Gate",
@@ -2726,7 +2879,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 84
       }
     },
     {
@@ -2742,7 +2895,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 78
+        "y": 85
       },
       "targets": [
         {
@@ -2855,7 +3008,7 @@
         "h": 6,
         "w": 9,
         "x": 6,
-        "y": 78
+        "y": 85
       },
       "targets": [
         {
@@ -3014,7 +3167,7 @@
         "h": 6,
         "w": 9,
         "x": 15,
-        "y": 78
+        "y": 85
       },
       "targets": [
         {
@@ -3151,7 +3304,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 91
       },
       "targets": [
         {
@@ -3282,7 +3435,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 91
+        "y": 98
       }
     },
     {
@@ -3298,7 +3451,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 92
+        "y": 99
       },
       "targets": [
         {
@@ -3423,7 +3576,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 92
+        "y": 99
       },
       "targets": [
         {
@@ -3553,7 +3706,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 92
+        "y": 99
       },
       "targets": [
         {

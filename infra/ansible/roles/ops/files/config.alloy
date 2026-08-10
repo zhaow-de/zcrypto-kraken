@@ -64,7 +64,7 @@ prometheus.exporter.unix "host" {
   rootfs_path = "/host/root"
 
   textfile {
-    // The four timers' textfiles (archive-pull, panel-materialize, verify-replay,
+    // The five timers' textfiles (archive-pull, panel-materialize, tape-bars, verify-replay,
     // verified-replay), written since OPS-3/OPS-4 into ops_textfile_dir but scraped by nothing
     // until this task. alloy-compose.yaml.j2 mounts that host directory read-only at this exact
     // container path -- literal "/textfile", exactly like the NAS's, not a templated
@@ -199,7 +199,7 @@ prometheus.remote_write "grafana" {
     // this host's copy carries host="ops", so the two are distinguishable in Grafana.
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|zcrypto_tapebars_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds"
       action        = "keep"
     }
   }
@@ -207,8 +207,8 @@ prometheus.remote_write "grafana" {
 
 // ---- Logs: the host journal -- the zcrypto systemd jobs AND Alloy's own container -------------
 // Two unrelated sources share this one journal reader (00068 D6, the docker-socket residual
-// retired): the four zcrypto-*.service units (archive-pull half-hourly since T0058,
-// panel-materialize hourly, verify-replay + verified-replay daily) run their work as an ephemeral
+// retired): the five zcrypto-*.service units (archive-pull half-hourly since T0058,
+// panel-materialize + tape-bars hourly, verify-replay + verified-replay daily) run their work as an ephemeral
 // `docker run --rm` ATTACHED to the unit (T0060) -- so all container stdout/stderr flows through
 // the script into the unit's journal, alongside the orchestration script's OWN lines (including
 // the load-bearing gate warning "writer cycle SKIPPED (fail-closed gate): ...",
@@ -237,18 +237,18 @@ loki.relabel "journal_units" {
   // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
   forward_to = []
 
-  // KEEP the four zcrypto units' journal lines (source 1: __journal__systemd_unit) OR Alloy's own
+  // KEEP the five zcrypto units' journal lines (source 1: __journal__systemd_unit) OR Alloy's own
   // journald-driver stream (source 2: __journal_container_name = grafana-alloy, the container_name
   // the alloy compose service sets) -- everything else on the host journal (sshd, cron, dockerd,
   // ...) stays local.
   rule {
     source_labels = ["__journal__systemd_unit", "__journal_container_name"]
     separator     = ";"
-    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize)\\.service;.*|.*;grafana-alloy"
+    regex         = "zcrypto-(archive-pull|verify-replay|verified-replay|panel-materialize|tape-bars)\\.service;.*|.*;grafana-alloy"
     action        = "keep"
   }
 
-  // Unit name minus ".service" -> the `container` label. For the four zcrypto units this yields
+  // Unit name minus ".service" -> the `container` label. For the five zcrypto units this yields
   // e.g. "zcrypto-archive-pull" -- the label loki.process "parse" below's
   // `{container=~"zcrypto-.*"}` selector keys on, so these streams get parsed (level label, app
   // timestamp) with no selector change. Alloy's journald-driver entries carry
@@ -295,7 +295,7 @@ loki.source.journal "zcrypto_units" {
   // Bound on "lossless": after an Alloy outage this component resumes from its saved cursor, but
   // never reads further back than max_age -- UNSET it defaults to 7h, so an outage longer than
   // that would permanently skip the window between the cursor and now-7h. 48h was sized for the
-  // four zcrypto units alone (low-volume half-hourly/hourly/daily); this reader now also carries
+  // zcrypto units alone (low-volume half-hourly/hourly/daily); this reader now also carries
   // Alloy's own journald-driver stream (00068 D6), so a restart after an outage backfills up to
   // 48h of that too -- still a bounded, one-time replay, not a steady-state cost, so the same
   // ceiling stands.
@@ -303,7 +303,7 @@ loki.source.journal "zcrypto_units" {
 }
 
 // Parse ONCE, here at ingest -- never at query time. Two stages: our Python services' own
-// timestamped log line (the four zcrypto-*.service units), and Alloy's own logfmt output.
+// timestamped log line (the five zcrypto-*.service units), and Alloy's own logfmt output.
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
 

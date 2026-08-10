@@ -176,6 +176,16 @@ OPS_REQUIRED = [
     # only by the `zcrypto_trade_backfill_.*` wildcard — pinned by name so narrowing that wildcard
     # fails here rather than silently dropping the series.
     "zcrypto_trade_backfill_hours_repaired_after_loss_total",
+    # spec 00087: the tape-bars materializer's gauges. Admitted today only by the
+    # `zcrypto_tapebars_.*` wildcard, and the alert-bearing ones are pinned by name because this
+    # timer's failure mode is a GREEN SILENCE -- the not-yet-healed path exits 0 by design, so
+    # narrowing that wildcard would disarm the only two signals that can see a stalled healer:
+    # days_gap (a day just became permanently unpublishable, and nothing else will ever say so) and
+    # last_publish (the dataset stopped growing while every run kept exiting clean).
+    "zcrypto_tapebars_exit_code",
+    "zcrypto_tapebars_days_gap",
+    "zcrypto_tapebars_last_success_timestamp_seconds",
+    "zcrypto_tapebars_last_publish_timestamp_seconds",
     # T0083: the hc.io watchdog scrape's series. zcrypto-hcio-watchdog alerts on
     # hc_checks_down_total — dropping THAT silently disarms the Grafana half of the mutual
     # watchdog (same failure class as `up` above); hc_check_up is the per-check triage detail
