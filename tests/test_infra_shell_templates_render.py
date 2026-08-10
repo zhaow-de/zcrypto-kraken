@@ -51,6 +51,7 @@ REGISTERED = {
     "grafana-watchdog.sh.j2",
     "panel-materialize.sh.j2",
     "panel-regenerate.sh.j2",
+    "tape-bars.sh.j2",
     "verified-replay.sh.j2",
     "verify-replay.sh.j2",
     "zaccess-probe-ops.sh.j2",

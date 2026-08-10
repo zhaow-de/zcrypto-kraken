@@ -1,0 +1,19 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-tape-bars.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/tape-bars.timer.j2 instead.
+# Traceability: spec 00087 D6
+[Unit]
+Description=Hourly tape-bars materialize from the healed trade tape
+
+[Timer]
+# :52 — clear of the overlay-writer/archive-pull slots (:12,:42), the panel's :22, the ops reboot
+# window (02:25 UTC) and the daily replay timers (03:41/05:23). The host timezone is UTC (base
+# role). Hourly though the grain is daily: a day becomes eligible ~26 h after it ends and is
+# taken within the hour, and an hourly sweep needs no backlog logic to catch up after an outage.
+OnCalendar=*-*-* *:52:00
+# A host that was down at :52 sweeps on the next boot instead of skipping the slot — publishing is
+# idempotent (a day that already has a final is never re-attempted, never overwritten).
+Persistent=true
+Unit=zcrypto-tape-bars.service
+
+[Install]
+WantedBy=timers.target

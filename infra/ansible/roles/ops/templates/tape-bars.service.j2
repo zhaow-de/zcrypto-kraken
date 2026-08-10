@@ -1,0 +1,14 @@
+# Rendered by the `ops` Ansible role at /etc/systemd/system/zcrypto-tape-bars.service — do not
+# hand-edit on the host, edit infra/ansible/roles/ops/templates/tape-bars.service.j2 instead.
+# Traceability: spec 00087 D6
+[Unit]
+Description=Hourly tape-bars materialize from the healed trade tape
+Requires=docker.service
+After=docker.service
+# The runner reads the canonical trade tree through the NAS NFS automount, so it is ordered below
+# it (same as the panel materialize unit).
+RequiresMountsFor={{ ops_nas_mount }}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-tape-bars
