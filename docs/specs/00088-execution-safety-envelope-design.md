@@ -48,7 +48,11 @@ The asymmetry is the point: arming needs a slow recorded act *and* a fast human 
 
 The **kill switch** is a third file, independent of both, and it **overrides** them: present ⟹ `none`, whatever else is true.
 
+**The two-key claim is honest at rest-from-cold and degrades after the first probe — stated here rather than discovered later.** Once a probe has raised `exec_armed` to true, the resting state is config-true with the file removed, and from then until someone converges the flag back down, arming is **one key**: a single file creation suffices. The arm file also lives inside `<engine_state_dir>`, which is the backup and rsync unit, so a state-dir restore taken during a probe window can recreate it. Two consequences follow and both belong to 00090's probe checklist rather than here: converge `exec_armed` back to false when a probe window closes, and treat a state-dir restore as re-arming until proven otherwise. Registered in [[T0018]] with the rest of the sequence.
+
 Rejected: config-only. Disarming would then need a converge window, leaving the kill file as the sole fast revoke — and the resting state after a probe would be "armed, stopped only by a kill file", which anyone tidying up could undo. Rejected: file-only. Nothing in git or the deploy record would gate arming, so one stray or restored file would arm a host that already holds the trade key.
+
+**Rejected, and it is the cheapest alternative to this entire spec: simply setting `exec_enabled = false` (or unmounting the key) until 00090 lands.** It would remove the danger outright at the cost of one config line. It is rejected because the always-connected exec transport is *continuously proven* by being connected — `node.py` calls it part of the verified harness shape, and the supervision watchdog's connect-and-reconcile health check reads it — so disabling it would mean 00090's first submission is also the transport's first live test, converting a proven dependency into an unproven one at exactly the wrong moment. The trade is deliberate: keep the transport proven, and build the restraint that makes keeping it safe.
 
 ### D3 — The gate is a cheap, side-effect-free predicate, called per submission, default closed
 
@@ -84,6 +88,7 @@ A refusal to trade must therefore never touch it. The research path genuinely su
 
 - `cycle-HH.json` keeps schema v1, its validation, its no-peek invariants and its snapshot-hash byte layout **unchanged**.
 - Execution outcomes go to a new per-cycle artifact in the same day directory, with its own `schema_version`, recording the verdict, its inputs, and (in this spec, by construction) an empty submission list.
+- **The ledger is written unconditionally, not as a side effect of telemetry being switched on.** The engine installs its metrics sink only when `ZCRYPTO_METRICS_PORT` is set; production sets it, but a manual `zcrypto engine run` on the host does not, and an execution ledger that silently vanishes in that case is worthless as a forensic record — worse, 00090 extends this very artifact with the list of orders actually submitted, so inheriting the coupling would mean a misconfigured engine could trade with no record of having done so.
 - A test pins the invariant directly: a day whose every execution artifact records a refusal still scores **clean** under `evaluate_gate`.
 
 Rejected: reusing `failed-cycle-*`. It is the smallest change and it would reset the streak on every correct venue deferral, conflating "we deliberately did not trade" with "the cycle malfunctioned". Rejected: an execution section inside `CycleRecord` at schema v2. One artifact is tidier, but the snapshot content hash's byte layout is pinned *by* `schema_version`, so replay, compare and `evaluate_gate` would all have to straddle two versions — putting the machinery the streak rests on under the knife for a cosmetic gain.
@@ -116,8 +121,10 @@ Six gauges, named verbatim so the keep-list, the panels and the rules cannot dri
 | `zcrypto_exec_armed` | both keys present (config **and** arm file) |
 | `zcrypto_exec_kill_tripped` | the kill file is present |
 | `zcrypto_exec_venue_ok` | the last venue read said `online` |
-| `zcrypto_exec_venue_snapshot_age_seconds` | age of that read at publication |
+| `zcrypto_exec_last_evaluation_timestamp_seconds` | when the gate was last evaluated — the envelope's heartbeat |
 | `zcrypto_exec_restart_hold` | the restart hold is present |
+
+**The heartbeat replaces a snapshot-age gauge that would have carried no information.** Evaluations are hours apart while the snapshot bound is 30 seconds, so every evaluation necessarily re-reads and every published age would be ~0 forever — a series that looks like a measurement and is really a constant. The timestamp answers the question that actually matters and that nothing else can answer: **is the gate still being evaluated at all?** Without it, a regression that quietly drops the evaluation from the cycle path freezes all six gauges at their last values indefinitely, cycle telemetry stays perfectly healthy, and no alert fires — the envelope would be gone and every dashboard would still read green.
 
 They are published through the existing pattern — built on the same registry the exporter serves and installed via `cycle.py::set_metrics_sink`, as `_CycleGauges` already does.
 
@@ -125,7 +132,9 @@ They are published through the existing pattern — built on the same registry t
 
 Admission is part of this change, both directions of the trap: the keep-list `regex` in `infra/ansible/roles/capture/files/config.alloy` gains all six names (the engine is scraped there as job `engine_app`), and no name is admitted that is not published. A `config.alloy` edit ships only with `-e capture_alloy_digest=<currently-running>`; it is config-only, so no bake is owed.
 
-Two alert rules, both on the `Engine` board:
+Three alert rules, all on the `Engine` board:
+
+- **the gate has not been evaluated recently** — `time() - zcrypto_exec_last_evaluation_timestamp_seconds` past one cycle interval plus slack. This is the rule that catches the frozen-envelope state above, and it follows the existing `zcrypto-gate-exporter-stale` pattern, which alerts on an exported timestamp for exactly this reason.
 
 - **`zcrypto_exec_armed` continuously 1 for more than 6 h** — arming is episodic through 00088–00091 (an attended probe window is short), so a 6 h arm means one was forgotten, which is exactly the failure this spec exists to prevent. **This rule is phase-appropriate, and that is stated rather than discovered later**: 00092's rung-3 loop arms the engine continuously, at which point a duration rule fires forever and must be replaced — most likely by "armed while no cycle has completed recently". Registered with the rest of the sequence in [[T0018]] so the replacement is owed work rather than an alert someone silences.
 - **`zcrypto_exec_kill_tripped` is 1** — a deliberate state, but an invisible one is how it gets left on.
@@ -133,6 +142,8 @@ Two alert rules, both on the `Engine` board:
 Alert summaries carry no internal traceability tokens, per `operator-facing-text.md`, and each names its runbook anchor.
 
 **`zcrypto engine exec-status`** is the operator surface, and it belongs to this spec rather than being scope growth: `reasons` is the field that makes a refusal actionable, a gauge cannot carry a tuple of strings, and the deployment check below requires reading them on the host. It is also the only path that evaluates the gate **on demand** — see the freshness bound in the bounded claims.
+
+That division has a consequence worth naming: **`reasons` never reaches Grafana, and `zcrypto_exec_armed` deliberately conflates its two keys**, so remote telemetry can say *that* the engine is disarmed but not *which* key is missing. Both runbook sections therefore name `exec-status` on the host as the next diagnostic step, rather than leaving an operator to infer it.
 
 **The published gauges reflect the last evaluation, not the current instant.** In this spec the gate is evaluated at process start and after each cycle completes, so a control file changed mid-cycle is honoured immediately by the *gate* (the next `evaluate()` reads the filesystem) but is not visible in *Grafana* until the next cycle. That is acceptable here because nothing submits — the functional guarantee is freshness at the submission site, which 00090 provides by calling `evaluate()` there — and unacceptable to paper over, so it is stated in the bounded claims and drilled through `exec-status` rather than through the gauge.
 
@@ -151,7 +162,8 @@ Alert summaries carry no internal traceability tokens, per `operator-facing-text
 - **"Per-submission" is a property of the interface here, not an observed behaviour.** `evaluate()` is specified and tested as cheap, idempotent and side-effect-free so that calling it at every submission point is viable; that it *is* so called is 00090's obligation.
 - **The gate is designed before the state machine exists.** Its inputs may be extended by 00090; its verdict semantics may not be widened. This is the known structural risk of building containment first, and it is accepted deliberately in exchange for the containment existing before the capability.
 - **It does not check whether *this* pair is tradeable** — only whether the venue is. Per-instrument status is available from the adapter and is out of scope until an order needs it.
-- **The gauges are as fresh as the last evaluation, which here means process start and each cycle completion — up to four hours old.** A kill switch engaged mid-cycle is honoured by the gate immediately and appears in Grafana late. This is stated rather than fixed because the alternatives are both worse at this stage: evaluating on every metrics scrape puts a network call in the scrape path, where a hanging endpoint stalls the whole `/metrics` endpoint, and a dedicated timer is new machinery inside a live engine process for observability convenience alone. 00090 revisits it because submissions evaluate the gate anyway, which makes a heartbeat nearly free.
+- **The gauges are as fresh as the last evaluation, which here means process start and each cycle completion — up to four hours old.** A kill switch engaged mid-cycle is honoured by the gate immediately and appears in Grafana late. This is stated rather than fixed because the alternatives are both worse at this stage: evaluating on every metrics scrape puts a network call in the scrape path, where a hanging endpoint stalls the whole `/metrics` endpoint, and a dedicated timer is new machinery inside a live engine process for observability convenience alone. The heartbeat gauge makes the staleness itself *visible*, which is the part that must not be silent. 00090 revisits the interval, because submissions evaluate the gate anyway — registered in [[T0018]], since prose is not registration.
+- **It cannot make the gate unavoidable at a call site that does not yet exist.** The strongest remaining path to an unintended order is a future submission path that simply never calls `evaluate()` — a convention until 00090 wires it. Proving the gate *unreachable-around* (for instance, by making the submitting client constructible only from a fresh verdict) is 00090's obligation, named here so it is inherited rather than rediscovered.
 
 ## Out of scope
 
