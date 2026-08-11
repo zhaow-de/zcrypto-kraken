@@ -363,6 +363,54 @@ def test_refresh_universe_requires_live_ohlc_full(tmp_path, monkeypatch):
         rebuild._refresh_universe(ctx, tmp_path / "universe-20260718")
 
 
+def test_a_source_missing_a_candidate_leg_refuses_and_names_it(tmp_path, monkeypatch):
+    """The guard this task exists for. `escalate` cannot see a narrower SOURCE: a ten-of-twelve
+    source yields a ten-name universe with escalate False -- a silent shrink. The refusal must
+    also replace today's untyped FileNotFoundError from inside polars."""
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    for symbol in rebuild.CANDIDATE_SYMBOLS:
+        if symbol == "ETH/BTC":
+            continue  # the missing leg
+        base, quote = symbol.split("/")
+        _write_daily(ohlc_root / base / quote / "1440.parquet", vwap=100.0, volume=2_000.0)
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    with pytest.raises(DataSyncError, match="ETH/BTC"):
+        rebuild._refresh_universe(ctx, out_root)
+    assert not (out_root / "point-in-time-universe.json").exists()
+
+
+def test_a_symbol_the_floor_rejects_is_NOT_a_missing_source(tmp_path, monkeypatch):
+    """Presence, not outcome. A leg present but below the volume floor is a selection result and
+    must still flow through escalate -- it must NOT trip the guard."""
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    ohlc_root = tmp_path / "ohlc-full"
+    for symbol in rebuild.CANDIDATE_SYMBOLS:
+        base, quote = symbol.split("/")
+        # SOL/BTC is present but priced to land far below the volume floor -- a selection outcome,
+        # not a missing leg.
+        volume = 0.001 if symbol == "SOL/BTC" else 2_000.0
+        _write_daily(ohlc_root / base / quote / "1440.parquet", vwap=100.0, volume=volume)
+    (ohlc_root / "manifest.json").write_text(json.dumps({"basket_sha256": "deadbeef"}))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    rebuild._refresh_universe(ctx, out_root)  # must not raise
+
+    payload = json.loads((out_root / "point-in-time-universe.json").read_text())
+    entries = {e["symbol"]: e for e in payload["entries"]}
+    assert entries["SOL/BTC"]["selected"] is False
+    assert any("below floor" in reason for reason in entries["SOL/BTC"]["reasons"])
+
+
 def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
     """The reach builder must read the LIVE ohlc-full and write into the minted sibling only --
     reading the sibling instead would reach forward from an empty set."""

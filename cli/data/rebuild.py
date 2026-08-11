@@ -159,6 +159,13 @@ def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     pairs = derive_universe(assetpairs_result, assets_result, symbols)
 
     ohlc_root = _require_ohlc_full(ctx)
+    missing = [symbol for symbol in CANDIDATE_SYMBOLS if not (ohlc_root / Path(symbol) / "1440.parquet").exists()]
+    if missing:
+        # `escalate` compares the SELECTED set against band bounds; it cannot see that the SOURCE
+        # was narrower, so a missing leg would shrink the universe silently with escalate False.
+        # Refuse here, naming the legs, rather than raising an untyped FileNotFoundError from
+        # inside polars several frames later (T0093).
+        raise DataSyncError(f"data rebuild: universe source is missing candidate leg(s): {', '.join(missing)} -- under {ohlc_root}")
     btc_eur = read_parquet(ohlc_root / "BTC" / "EUR" / "1440.parquet")
     dailies = {s: read_parquet(ohlc_root / s.split("/")[0] / s.split("/")[1] / "1440.parquet") for s in symbols}
     # Freshness BEFORE the medians: `quote_volume_in_eur` raises on a short frame, so a stale set
