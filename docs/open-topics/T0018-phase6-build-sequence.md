@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: **the human convenes the 6b executor session.** That is the whole remaining trigger, and it is a deliberate act rather than a formality — the ten autonomous items below are the live order-submission path (state machine, kill-switch, reconciliation, reduce-only), which carries the Fable review floor per `spec-plan-locations.md`. The technical half is already discharged: the Stage-6a gate was measured met on 2026-08-08 at 28 consecutive clean complete-UTC days (2026-07-11 → 08-07), twice the ≥14 bar.
+ripe_when: **FIRED — the human convened the session on 2026-08-11, and the build is now active rather than waiting.** The gate was re-measured at convening through the canonical evaluator's export: `zcrypto_gate_status` 1, `zcrypto_gate_streak_days` **30**, `zcrypto_gate_mismatch_total` 0, the series 38 s old (fresh, not frozen). What remains is sequenced, not triggered: five specs (`00088`→`00092`, table under `## Suggested next steps`), each startable when its predecessor is merged **and converged** — with two human-money gates before `00090` can run (D3(ii) sleeve funding, D3(iii) probe sign-off) and the D3(vi) go/no-go after `00091`. The live order path carries the Fable review floor per `spec-plan-locations.md`.
   **Re-measure at convening time with the CANONICAL gate, not with a file count** — `zcrypto engine report`, or the exported `zcrypto_gate_status` / `zcrypto_gate_streak_days` / `zcrypto_gate_mismatch_total`. `cli/engine/concordance.py::evaluate_gate` (spec `00039`) makes a day clean iff all six cycles are present **and** each `completed_at` falls in `[boundary, boundary+30min]` **and** each carries no validation failure, no hash mismatch, and a **passing compare**. Replay/compare and hash verification run in a LATER pass, so a cycle that fails concordance still leaves a normal `cycle-HH.json` and no sidecar — it reads clean to a file count while `evaluate_gate` resets the streak to 0. Counting files is a cheap liveness cross-check and nothing more
 ---
 
@@ -46,7 +46,25 @@ Read the journal the way it was read, because a wrong path returns a plausible z
 
 ## Suggested next steps
 
-The sole remainder is the **6b executor iteration** — convene when the Stage-6a gate is met. Broken out below because a single paragraph hides both the sequencing and the human touchpoints; every bullet carries whether it is autonomous or a decision.
+**Convened 2026-08-11.** The gate was re-measured at convening through the canonical evaluator's own export rather than a file count — `zcrypto_gate_status` 1, `zcrypto_gate_streak_days` **30**, `zcrypto_gate_mismatch_total` 0, the series 38 s old at read — clearing the ≥14 bar with the export proven live rather than frozen.
+
+**The build is decomposed risk-first into five specs**, recorded here rather than only in the spec that decided it, so each is visible at pick time. The ordering principle: containment is built and deployed before the capability it contains, and the two specs carrying monetary blast radius both sit behind machinery proven while a mistake still cost nothing.
+
+| Spec | Subject | Blast radius | State |
+| --- | --- | --- | --- |
+| `00088` | the execution safety envelope — two-key arming, kill-switch, venue gate, reduce-only-on-restart | none (shadow, submits nothing) | in flight |
+| `00089` | venue truth — instrument map, venue-constraint sizing, the `held` read, realized-state artifact | none (read-only) | not started |
+| `00090` | the rung-1 order path — maker-first state machine, submission, fill/fee ingestion | **real money, ~€10–30** | not started |
+| `00091` | the weekly tracking-error report and cost recalibration from real fills | none (read-only) | not started |
+| `00092` | rung-3 accumulation — [[T0119]]'s `target − held`, skip-or-carry, the full loop | **real money, ~€1,000** | not started |
+
+Three deferrals the sequence creates, registered so they are owed work rather than assumptions:
+
+- **Automatic kill-switch trips** are deliberately absent from `00088` — fill anomalies, reconciliation divergence and drawdown breaches are all unobservable until `00089`/`00090`, and a guard whose defect cannot be constructed is unproven by this project's own rule. The hooks land where their conditions exist.
+- **Reconciliation-based clearing of the restart hold** is a later *narrowing* of `00088`'s human-only clear, never a widening: adding "and reconciliation agrees" is legitimate; removing the human act is not.
+- **The armed-too-long alert rule is phase-appropriate, not final.** It fires on `zcrypto_exec_armed` held at 1 for over 6 h, which is correct while arming is episodic (`00088`–`00091`) and fires forever once `00092` arms the engine continuously. It must be replaced at `00092`, most likely by an armed-while-no-recent-cycle condition — not silenced.
+
+The items below are the build's content, distributed across those five specs; every bullet carries whether it is autonomous or a decision.
 
 **The build (constraint 4's scope, extended 2026-08-02 with the four pieces the placeability audit found missing — the capability map showed each exists in Nautilus or nowhere, with no build item):**
 
