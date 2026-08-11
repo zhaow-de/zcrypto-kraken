@@ -35,7 +35,7 @@
 | `cli/engine/command.py` | *modify* — `_ExecGauges`, sink composition, the restart-hold write, the `exec-status` subcommand |
 | `infra/ansible/roles/engine/templates/zcrypto.toml.j2` | *modify* — render `exec_armed = false` |
 | `infra/ansible/roles/capture/files/config.alloy` | *modify* — admit the six families to the keep-list |
-| `infra/grafana/dashboards/*engine*.json`, `infra/grafana/alerts.yaml` | *modify* — panels and two rules |
+| `infra/grafana/engine-dashboard.json`, `infra/grafana/alerts.yaml` | *modify* — panels and two rules |
 | `infra/runbooks/README.md` | *modify* — one section per alert |
 | `tests/test_engine_venue.py`, `tests/test_engine_execgate.py`, `tests/test_engine_execledger.py` | *create* |
 | `tests/test_engine_command.py`, `tests/test_config.py`, `tests/test_engine_metrics.py` | *modify* |
@@ -82,7 +82,13 @@ def test_exec_armed_rejects_a_non_boolean(tmp_path):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_config.py -k exec_armed -v`
-Expected: FAIL — `AttributeError: 'EngineConfig' object has no attribute 'exec_armed'` on the first two; the third fails because no error is raised (`_build_engine` rejects unknown keys, so it may instead raise with a different message — either way it is red before the change).
+Expected: **2 failed, 1 passed** — and the passing one is expected, not a mistake. The first two fail with `AttributeError: 'EngineConfig' object has no attribute 'exec_armed'`. The third **passes before the change**, because `_build_engine`'s unknown-key guard already raises `ConfigError("[zcrypto.engine] … has unknown key(s): exec_armed")`, which satisfies `match="exec_armed"`. That is a genuinely weaker assertion than it looks: it would pass whether or not the boolean validation exists. Tighten it now, before implementing:
+
+```python
+    with pytest.raises(ConfigError, match="must be a boolean"):
+```
+
+Re-run and confirm all three are red for the right reason.
 
 - [ ] **Step 3: Add the field**
 
@@ -482,6 +488,18 @@ def test_every_applicable_reason_is_reported_not_just_the_first(tmp_path):
     assert v.reasons == ("config_not_armed", "arm_file_absent", "venue_not_online", "restart_hold")
 
 
+def test_a_reader_that_RETURNS_garbage_refuses_rather_than_raising(tmp_path):
+    # The sibling of the raising-reader case, and the easier one to get wrong: nothing about
+    # `None` triggers an except clause, so an unguarded `venue.ok` raises out of evaluate().
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True)
+    (d / ARM_FILE).touch()
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=lambda *, now: None)
+    v = gate.evaluate(NOW)  # must not raise
+    assert v.level == GateLevel.NONE
+    assert "venue_not_online" in v.reasons
+
+
 def test_a_missing_exec_dir_refuses_rather_than_raising(tmp_path):
     gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path / "nope", venue_reader=_venue())
     v = gate.evaluate(NOW)
@@ -592,6 +610,11 @@ class ExecutionGate:
             snap = self._venue_reader(now=now)
         except Exception:  # noqa: BLE001 -- a raising reader must refuse, never propagate
             snap = VenueStatus(status="unreachable", ok=False, observed_at=now)
+        # A reader that RETURNS garbage is as dangerous as one that raises: `venue.ok` on a None
+        # would raise AttributeError out of evaluate(), and at a 00090 submission site an
+        # unhandled exception is not a refusal -- it has no safe direction. Validate the type.
+        if not isinstance(snap, VenueStatus):
+            snap = VenueStatus(status="unreadable", ok=False, observed_at=now)
         self._snapshot = snap
         return snap
 
@@ -736,15 +759,28 @@ In `cli/engine/command.py`'s `run()`, immediately after the config is resolved a
 
 Use the same state-dir root the journal and store share (`journal_dir.parent` is `<engine_state_dir>` on the deployed host, per the role's template). Import `write_restart_hold` from `cli.engine.execgate` at the top of the file.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 5: Test the WIRING, not just the function**
+
+The function's own tests do not prove `run()` calls it, and the failure mode is silent: passing `config.journal_dir` instead of `config.journal_dir.parent` writes the hold to `<journal>/exec/restart-hold` while the gate reads `<state>/exec/restart-hold`. The hold is then permanently invisible, D6 is disarmed, and **every test above still passes**. Add to `tests/test_engine_command.py`, reusing that file's existing stubbed-node `run()` machinery (the "passable `engine run` environment" fixture):
+
+```python
+def test_engine_startup_latches_the_restart_hold(tmp_path, ...):
+    # ... set up the passable run environment with journal_dir = tmp_path / "journal"
+    # ... invoke run() with the node stubbed so it returns immediately
+    assert (tmp_path / "exec" / "restart-hold").exists(), (
+        "the hold must land beside the journal, not inside it — a hold the gate cannot see is no hold"
+    )
+```
+
+- [ ] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/test_engine_execgate.py tests/test_engine_command.py -v`
 Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add cli/engine/execgate.py cli/engine/command.py tests/test_engine_execgate.py
+git add cli/engine/execgate.py cli/engine/command.py tests/test_engine_execgate.py tests/test_engine_command.py
 git commit -m "feat(engine): latch reduce-only on every engine start"
 ```
 
@@ -813,8 +849,12 @@ def test_exec_records_are_invisible_to_every_journal_glob(tmp_path):
     so testing it directly would prove nothing. The globbing is `cli/engine/command.py`'s
     `_journal_artifacts`, and it derives the hour from `path.stem.rsplit("-", 1)[-1]`: `exec-12`
     yields "12", a perfectly valid boundary. The ONLY thing keeping an exec record out of the
-    concordance universe is that all seven call sites glob `cycle-*.json` / `failed-cycle-*.json`
-    and our prefix is neither. This test is what keeps that true.
+    concordance universe is that every call site globs `cycle-*.json` / `failed-cycle-*.json` and
+    our prefix is neither. This test is what keeps that true.
+
+    (There are eight `_journal_artifacts` call sites -- seven in `cli/engine/command.py`, one in
+    `cli/engine/soak.py` -- plus `cli/engine/cycle.py`'s own direct `*/cycle-*.json` back-search.
+    Verify by grep rather than trusting this count, which rots.)
     """
     from cli.engine.command import _journal_artifacts
 
@@ -847,6 +887,32 @@ def test_the_exec_prefix_would_be_swept_up_by_a_looser_glob(tmp_path):
     assert len(swept) == 1  # a loose glob DOES pick it up, with a parsed boundary
     assert swept[0][0].hour == 12
 ```
+
+- [ ] **Step 1b: Write the INTEGRATION test — the one that survives a loosened glob**
+
+The two tests above pin *filename disjointness*. They do **not** pin what the call sites pass: if someone later widens a call site's glob argument to `"*.json"`, both stay green (the names are still disjoint; the loose-glob canary still sweeps). The regression that would actually reset the streak therefore needs a test that drives the **real report path** — `report` → `_evaluate_journal` → the call-site globs → `evaluate_gate` — and compares its output with and without execution records present.
+
+Add to `tests/test_engine_command.py`, building on that file's existing report/gate fixture rather than hand-rolling journal JSON (the record shape is `CycleRecord` schema v1 and must come from `cli/engine/journal.py`'s own constructors):
+
+```python
+def test_execution_records_do_not_change_the_gate_report(tmp_path, ...):
+    # ... build a journal of complete clean days using the file's existing helper
+    before = runner.invoke(app, ["engine", "report", "--journal-dir", str(journal)])
+    assert before.exit_code == 0
+
+    for day_dir in sorted(journal.glob("20*-*-*")):
+        cycle_ts = ...  # each boundary in that day
+        write_exec_record(journal, cycle_ts, _refusing_verdict(), evaluated_at=cycle_ts)
+    assert list(journal.glob("*/exec-*.json")), "fixture wrote no exec records — the test is vacuous"
+
+    after = runner.invoke(app, ["engine", "report", "--journal-dir", str(journal)])
+    assert after.exit_code == 0
+    assert after.stdout == before.stdout, (
+        "a refusal to trade changed the concordance report — the streak is no longer immune"
+    )
+```
+
+**Non-vacuity matters here more than usual**: assert the fixture actually wrote exec records *before* comparing, or a test that writes nothing passes trivially and certifies nothing.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -999,7 +1065,9 @@ def test_the_venue_age_series_is_absent_until_a_reading_exists(tmp_path):
     reg = CollectorRegistry()
     _ExecGauges(reg)  # constructed, never updated
     assert reg.get_sample_value("zcrypto_exec_venue_snapshot_age_seconds") is None
-    # The four presence gauges ARE honest at construction: a file either exists or it does not.
+    # gate_level seeds at 0 = "nothing may be submitted", which is true of a process that has not
+    # evaluated anything yet. The other presence gauges also seed at 0, which is NOT necessarily
+    # true — hence the startup evaluation in Step 4b.
     assert reg.get_sample_value("zcrypto_exec_gate_level") == 0
 ```
 
@@ -1019,9 +1087,12 @@ class _ExecGauges:
 
     `zcrypto_exec_gate_level` is registered EAGERLY and seeded at 0: before anything is evaluated,
     "nothing may be submitted" is the true state, not an unmeasured claim -- the engine really is
-    refusing. `venue_snapshot_age_seconds` is LAZY for `_CycleGauges.cycle_duration`'s reason: a
-    published 0 before any read would assert a reading that never happened, and an absent series
-    is honest where a zero is a lie.
+    refusing. The other presence gauges are eager for the same reason, and `run()` evaluates once
+    at startup so none of them sits at its seeded default: a `kill_tripped` reading 0 while the
+    kill file exists is not a stale gauge, it is a false statement about the safety envelope.
+    `venue_snapshot_age_seconds` is LAZY for `_CycleGauges.cycle_duration`'s reason: a published 0
+    before any read would assert a reading that never happened, and an absent series is honest
+    where a zero is a lie.
     """
 
     def __init__(self, registry) -> None:
@@ -1071,20 +1142,54 @@ Import `LEVEL_CODE` from `cli.engine.execgate` at the top of the file.
 
 In `run()`, where `set_metrics_sink(gauges.update)` is currently installed, build the gate and an exec-aware sink instead. Read the existing installation site first and keep its structure; the shape is:
 
+Use `run()`'s own local names (the config local is `config`, not `cfg` — read the site first):
+
 ```python
     exec_gauges = _ExecGauges(registry)
-    gate = ExecutionGate(armed_in_config=cfg.exec_armed, state_dir=cfg.journal_dir.parent)
+    gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent)
 
     def _sink(result, completed_at, duration_seconds):
         gauges.update(result, completed_at, duration_seconds)
         verdict = gate.evaluate(completed_at)
         exec_gauges.update(verdict)
-        write_exec_record(cfg.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
+        write_exec_record(config.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
 
     set_metrics_sink(_sink)
 ```
 
 `cycle.py::_update_metrics` already wraps the sink in try/except-and-log, so a failure here can never affect the cycle or its journal artifact — the isolation invariant that file documents.
+
+- [ ] **Step 4b: Evaluate ONCE at startup, or every latch lies for up to four hours**
+
+The sink fires only at cycle completion — every four hours. Without a startup evaluation, all five eager gauges sit at their seeded `0` from process start until the first completion, and the consequences are not cosmetic:
+
+- After any restart, `zcrypto_exec_restart_hold` reads **0** while the hold file that the *same process just wrote* is present.
+- A kill switch engaged across a restart (the supervision watchdog's `os._exit(1)` is a routine path) makes `zcrypto_exec_kill_tripped` drop 1→0, **resolving the alert**, then re-fire hours later. The alert exists because the failure mode is forgetting — a built-in invisibility window is precisely wrong.
+
+So immediately after `set_metrics_sink(_sink)`, add:
+
+```python
+    # One evaluation at startup so no latch gauge sits at its seeded default. Inside the same
+    # isolation the sink enjoys: telemetry must never be able to stop the engine from starting.
+    try:
+        exec_gauges.update(gate.evaluate(_utc_now()))
+    except Exception:  # noqa: BLE001
+        logger.exception("startup execution-gate evaluation failed")
+```
+
+This costs one public REST call per process start. It does **not** make the gauges live between cycles — that bound is stated in the spec's bounded claims and drilled through `exec-status` instead.
+
+- [ ] **Step 4c: Test the composition, not just the pieces**
+
+`_ExecGauges.update` is tested with hand-built verdicts, but the closure above is the ledger's only production writer and `_update_metrics` swallows its exceptions by design — so a broken composition fails **silently in production**. Using the same stubbed-`run()` fixture as Task 4:
+
+```python
+def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, ...):
+    # ... run one cycle through the stubbed node
+    assert list((tmp_path / "journal").glob("*/exec-*.json")), "the sink never wrote an exec record"
+    # and the startup evaluation alone must already have published a truthful restart hold:
+    assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
+```
 
 - [ ] **Step 5: Run the tests**
 
@@ -1144,13 +1249,22 @@ Expected: FAIL — no such command.
 
 - [ ] **Step 3: Implement the command**
 
+The Typer app in this module is `engine_app`, not `app`; config is loaded through the file's own `_load_engine_config()` helper so a bad config aborts cleanly instead of printing a traceback; and `venue_reader` is passed **explicitly** — without it the monkeypatch in Step 1 replaces an unused name, the test silently calls `api.kraken.com` for real, and it *still passes* (offline the read returns `unreachable`, online the missing arm file forces `none` anyway, so all three asserted substrings appear either way). A test that passes in both worlds is not a test.
+
 ```python
-@app.command("exec-status")
-def exec_status(state_dir: Path = typer.Option(None, "--state-dir", help="Engine state directory.")) -> None:
+@engine_app.command("exec-status")
+def exec_status(
+    state_dir: Optional[Path] = typer.Option(None, "--state-dir", help="Engine state directory."),
+) -> None:
     """Report whether the engine may submit orders right now, and everything that decided it."""
-    cfg = load_config().engine
-    root = state_dir if state_dir is not None else cfg.journal_dir.parent
-    verdict = ExecutionGate(armed_in_config=cfg.exec_armed, state_dir=root).evaluate(_utc_now())
+    config = _load_engine_config()
+    root = state_dir if state_dir is not None else config.journal_dir.parent
+    gate = ExecutionGate(
+        armed_in_config=config.exec_armed,
+        state_dir=root,
+        venue_reader=read_system_status,  # explicit so tests can substitute it — see Step 1
+    )
+    verdict = gate.evaluate(_utc_now())
     typer.echo(f"level={verdict.level}")
     typer.echo(f"reasons={','.join(verdict.reasons) or '-'}")
     for key, value in sorted(verdict.inputs.items()):
@@ -1184,7 +1298,7 @@ git commit -m "feat(engine): add exec-status, the operator's view of the envelop
 
 **Files:**
 - Modify: `infra/ansible/roles/capture/files/config.alloy` (the keep-list `regex`)
-- Modify: `infra/grafana/dashboards/` (the `zcrypto-engine` board), `infra/grafana/alerts.yaml`
+- Modify: `infra/grafana/engine-dashboard.json` (the `zcrypto-engine` board), `infra/grafana/alerts.yaml`
 - Modify: `infra/runbooks/README.md`
 - Test: the repo's existing dashboard/alert coverage tests
 
@@ -1202,7 +1316,7 @@ Run: `uv run pytest tests/test_infra_alloy_series.py tests/test_dashboards_cover
 
 - [ ] **Step 3: Add panels to the Engine board**
 
-Add a row to the `zcrypto-engine` dashboard: gate level (with the 0/1/2 mapping as value mappings, not a raw number), armed, kill tripped, restart hold, venue ok, venue snapshot age. Titles carry no internal tokens.
+Add a row to `infra/grafana/engine-dashboard.json` (uid `zcrypto-engine`; boards live flat under `infra/grafana/`, there is no `dashboards/` subdirectory): gate level (with the 0/1/2 mapping as value mappings, not a raw number), armed, kill tripped, restart hold, venue ok, venue snapshot age. Titles carry no internal tokens.
 
 - [ ] **Step 4: Add the two alert rules**
 
@@ -1264,7 +1378,7 @@ Use `infra/scripts/mutate-probe.sh` (never a hand-rolled mutate-and-restore loop
 5. Delete `if hold:` → the restart-hold tests must go red.
 6. Change `_OK_STATUS` to accept `maintenance` → the maintenance test must go red.
 7. Change the snapshot bound from `<=` to `>=`, or `30.0` to `3000.0` → the staleness test must go red.
-8. Make `evaluate` return on the first failing reason (single-reason behaviour) → the multi-reason test must go red.
+8. Make `evaluate` return on the first failing reason → the multi-reason test must go red. `mutate-probe.sh` takes a single sed expression, so express this as one: rewrite the first `reasons.append(` line into an immediate `return GateVerdict(level=GateLevel.NONE, reasons=("kill_switch",), inputs={})`.
 9. Rename the exec record prefix to `cycle-` → the stage-gate-immunity test must go red.
 10. Remove the `except Exception` in `read_system_status` → the transport/malformed tests must go red.
 
@@ -1316,6 +1430,6 @@ Ordered, because two hosts are involved and the keep-list must be live before th
 1. **Capture-host converge** for the `config.alloy` keep-list, with `-e capture_alloy_digest=<currently-running>` — the drift assert refuses otherwise. Config-only, so **no canary bake is owed**.
 2. **Engine converge** inside the 4-hourly inter-cycle gap, `-e converge_primary=true`, digest recorded in `docs/reference/fleet-pins.md` first, canary-gated on that digest running as *capture* on `zcrypto-red`.
 3. **Grafana push** for the panels and the two rules.
-4. **Verify by outcome, by value not presence**: `zcrypto_exec_gate_level` reads **0** with `zcrypto_exec_armed` at 0 and `zcrypto_exec_restart_hold` at 1 — the correct disarmed resting state. `(no series)` reads FAIL, never a zero.
-5. **The live drill**: create the kill file on the host, watch `zcrypto_exec_kill_tripped` go 0→1, remove it, watch it return to 0 — the end-to-end proof, in the shape of the reboot-detector drill.
+4. **Verify by outcome, by value not presence.** Available within seconds of the restart, from the startup evaluation: `zcrypto_exec_gate_level` reads **0**, `zcrypto_exec_armed` **0**, `zcrypto_exec_restart_hold` **1** — the correct disarmed resting state, and a combination only a real startup evaluation produces (seeded defaults would show `restart_hold` at 0). `(no series)` reads FAIL, never a zero. The sink-written values — the exec record itself — appear after the first post-converge cycle completes, so check those at the next boundary, not immediately.
+5. **The live drill, in two parts, because the two paths have different latencies.** The gate: run `zcrypto engine exec-status` on the host, create the kill file, run it again and confirm `kill_switch` appears in the reasons, remove the file, confirm it disappears — seconds, and it proves the gate reads live filesystem state. The publication path: already proven by step 4's startup values. **Do not** plan a 0→1→0 gauge flip as the drill: between cycle completions that gauge does not move, so it would take up to eight hours and would read as a failure long before it read as a pass.
 6. Re-measure the active-series budget against the <1k ceiling and record the number.
