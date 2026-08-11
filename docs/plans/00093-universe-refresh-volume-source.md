@@ -12,7 +12,7 @@
 
 - **Symbol identity is the full `BASE/QUOTE` string** (`"ETH/EUR"`, `"ETH/BTC"`) everywhere this plan touches. A base-keyed structure cannot express two quotes for one base — that is the defect being fixed, so do not reintroduce it.
 - **The venue spells it `XBT`; we spell it `BTC`.** Pair keys are `XETHXXBT` / `SOLXBT` with `wsname` `ETH/XBT` / `SOL/XBT`. Any match on the venue's spelling without normalising produces a false negative that looks exactly like "the legs do not exist".
-- **`cli/engine/cycle.py`'s `PAIR_KEYS` is a DIFFERENT symbol**, imported from `cli.engine.store`. It is NOT touched by this plan. A grep that does not distinguish the two will over-scope the change.
+- **The engine CONSUMES `cli.ohlc.fetch.PAIR_KEYS`** — `cli/engine/store.py` imports and re-exports it to `cycle.py`, `soak.py` and the package root. An earlier draft of this constraint claimed the opposite; it was wrong, and the error came from a grep piped through `head` that dropped the `store.py` import. **Sweep without truncating.** Re-keying it unqualified widens the engine's basket from ten EUR legs to twelve and breaks its store paths, so Task 1 must land the derived EUR-only view in the same commit.
 - **Never write through `/mnt/zhao-crypto`** — it is a read-only NFS mount. Read datasets in place.
 - **Additive-only sync is a property, not an accident** (spec `00056`): `rsync --archive --ignore-existing`, never `--delete`. No task may add a delete, and no task may make a same-named artifact mutable on the hub.
 - **A guard is unproven until the defect it names is constructed and seen to trip it.** Every refusal in this plan needs a test that builds the bad state.
@@ -28,7 +28,8 @@
 | D1 — extend reach to the BTC-quoted legs | 2 (with the pair keys from 1) |
 | D2 — `PAIR_KEYS` re-keyed by full symbol | 1 |
 | D3 — manifest `series` keyed by full symbol | 2 |
-| D4 — a narrower source refuses | 3 |
+| D4 — a narrower source refuses | 3 (guard) + 3a (pointed at the resolved root) |
+| D4a — the source is resolved newest-wins | 3a |
 | D5 — stamped set, resolved newest-wins | 4 (read side) + 5 (publish side) |
 | D6 — the Markdown stays single and git-versioned | 6 (closeout) + the attended sitting |
 
@@ -112,19 +113,53 @@ PAIR_KEYS: dict[str, str] = {
 }
 ```
 
-- [ ] **Step 5: Update every consumer found in Step 1**
+- [ ] **Step 5: Keep the engine's basket at ten legs, by derivation**
 
-`cli/ohlc/reach.py`'s `PAIR_KEYS.get(symbol)` already passes whatever `_canonical_symbols` yields — Task 2 makes that a full symbol, so this call site becomes correct then. Do not change it here; verify only that no OTHER call site passes a bare base.
+This is the load-bearing half of the task. In `cli/engine/store.py`, replace the re-export with a derived view and keep the name the engine already imports:
 
-- [ ] **Step 6: Run the tests**
+```python
+from cli.ohlc.fetch import PAIR_KEYS as _FETCH_PAIR_KEYS
 
-Run: `uv run pytest tests/ -k 'pair_keys or fetch or reach' -v`
+# The engine trades EUR legs only. Derived from the one source of truth rather than duplicated,
+# and keyed by BASE because the store path is root/<base>/EUR/<interval>.parquet. Without this the
+# symbol re-key would silently widen the engine basket from 10 to 12 and produce paths like
+# root/ETH/BTC/EUR/1440.parquet.
+PAIR_KEYS: dict[str, str] = {
+    symbol.split("/")[0]: key for symbol, key in _FETCH_PAIR_KEYS.items() if symbol.endswith("/EUR")
+}
+```
+
+- [ ] **Step 6: Pin the derivation so a future leg cannot leak in**
+
+```python
+def test_the_engine_basket_stays_eur_only_and_ten_legs():
+    from cli.engine.store import PAIR_KEYS as ENGINE_KEYS
+    from cli.ohlc.fetch import PAIR_KEYS as FETCH_KEYS
+
+    assert len(ENGINE_KEYS) == 10
+    assert all("/" not in k for k in ENGINE_KEYS), "engine keys are BASE, its store path appends /EUR"
+    assert "ETH" in ENGINE_KEYS and ENGINE_KEYS["ETH"] == FETCH_KEYS["ETH/EUR"]
+    # A BTC-quoted leg must never reach the engine, however the fetch map grows.
+    assert not any(k.endswith("XBT") for k in ENGINE_KEYS.values())
+```
+
+- [ ] **Step 7: Update the two tests that pin the old shape**
+
+`tests/test_engine_store.py::test_pair_keys_content` pins the 10-entry base-keyed dict — it now describes `cli.engine.store.PAIR_KEYS`, which is still correct, so verify rather than assume it needs changing. `tests/test_tape_bars_rest_control.py` uses `PAIR_KEYS["BTC"]` at module level and will KeyError **at collection** if it imports from `cli.ohlc.fetch`; point it at the engine map or use `"BTC/EUR"`, whichever matches its intent. Read both before editing.
+
+- [ ] **Step 8: Update every other consumer found in Step 1**
+
+`cli/ohlc/reach.py`'s `PAIR_KEYS.get(symbol)` already passes whatever `_canonical_symbols` yields — Task 2 makes that a full symbol, so this call site becomes correct then. Do not change it here.
+
+- [ ] **Step 9: Run the tests**
+
+Run: `uv run pytest tests/test_engine_store.py tests/test_tape_bars_rest_control.py -v` first (the collection-time KeyError lives there), then `uv run pytest tests/ -k 'pair_keys or fetch or reach' -v`
 Expected: the two new tests pass. Reach tests may fail — Task 2 fixes them; note which, do not patch them here.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add cli/ohlc/fetch.py tests/
+git add cli/ohlc/fetch.py cli/engine/store.py tests/
 git commit -m "refactor(ohlc): key PAIR_KEYS by full symbol and add the BTC-quoted legs"
 ```
 
@@ -216,7 +251,7 @@ Every existing call site passes a bare base (`"BTC"`, `"ETH"`) and must become a
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `uv run pytest tests/ -k reach -v`
-Expected: FAIL — `_canonical_symbols` returns bases (`["ADA", "ETH"]`, with the two ETH legs collapsed to one entry).
+Expected: FAIL — `_canonical_symbols` returns bases `["ADA", "ETH"]`. Note the mechanism: the BTC leg is not "collapsed", it is INVISIBLE to the `*/EUR/` glob.
 
 - [ ] **Step 3: Make discovery quote-aware**
 
@@ -339,7 +374,7 @@ In `_refresh_universe`, immediately after the source root is resolved and **befo
         )
 ```
 
-Use the interval constant the function already uses for the daily grid; read the surrounding code and match it rather than hardcoding `1440`.
+`_refresh_universe` hardcodes `"1440.parquet"` today and there is no `_UNIVERSE_INTERVAL` constant — do NOT mint one for this guard; match the surrounding code's literal.
 
 - [ ] **Step 4: Run the tests**
 
@@ -355,6 +390,71 @@ Run the reversion through `infra/scripts/mutate-probe.sh` (never a hand-rolled m
 ```bash
 git add cli/data/rebuild.py tests/
 git commit -m "feat(data): refuse a universe source narrower than the candidate set"
+```
+
+---
+
+### Task 3a: Resolve the newest stamped SOURCE
+
+**Files:**
+- Modify: `cli/data/rebuild.py` (`_require_ohlc_full` and its caller)
+- Test: `tests/test_data_rebuild.py`
+
+**Interfaces:**
+- Produces: `resolve_ohlc_source(data_root: Path) -> Path` — newest `ohlc-reach-<stamp>/`, else `ohlc-full/`.
+
+**Why this task exists:** without it the whole iteration is undischarged. `_require_ohlc_full` hardcodes `data_root / "ohlc-full"`, so the attended sitting refuses at its rebuild step however fresh the reach round was — and a fresh round lands as `ohlc-reach-<stamp>` that nothing resolves, because `--ignore-existing` freezes the hub's promoted `ohlc-reach/` forever. This is the same rule as Task 4, applied to the source end.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_newest_stamped_source_wins_over_ohlc_full(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    for stamp in ("20260701", "20260811"):
+        (tmp_path / f"ohlc-reach-{stamp}").mkdir()
+    assert resolve_ohlc_source(tmp_path).name == "ohlc-reach-20260811"
+
+
+def test_ohlc_full_is_the_fallback_when_no_stamped_source_exists(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    assert resolve_ohlc_source(tmp_path).name == "ohlc-full"
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run pytest tests/test_data_rebuild.py -k resolve_ohlc_source -v`
+Expected: FAIL — the function does not exist.
+
+- [ ] **Step 3: Implement the resolver and point the caller at it**
+
+```python
+def resolve_ohlc_source(data_root: Path) -> Path:
+    """The newest stamped reach set, else the canonical dump-derived set.
+
+    Same newest-wins rule as the universe artifact, and for the same reason: publication is
+    additive (`rsync --ignore-existing`), so a fixed name can never be refreshed on the hub. The
+    stamp is %Y%m%d, so lexicographic order is chronological.
+    """
+    stamped = sorted((p for p in data_root.glob("ohlc-reach-*") if p.is_dir()), reverse=True)
+    return stamped[0] if stamped else data_root / "ohlc-full"
+```
+
+Replace `_require_ohlc_full`'s hardcoded path with this call. Keep its existing existence check and error message shape — only the path it checks changes.
+
+- [ ] **Step 4: Point Task 3's guard at the RESOLVED root**
+
+The presence guard added in Task 3 must run against `resolve_ohlc_source(...)`'s result, not against `ohlc-full`. This is the point of the pairing: `ohlc-full` always carries all twelve legs, so a guard pointed there can never trip — a reach set is where a ten-of-twelve source actually occurs.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `uv run pytest tests/test_data_rebuild.py -v`
+Expected: pass, including Task 3's guard tests, which now exercise the resolved root.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add cli/data/rebuild.py tests/test_data_rebuild.py
+git commit -m "feat(data): resolve the newest stamped reach set as the universe source"
 ```
 
 ---
@@ -393,8 +493,14 @@ def test_a_stamped_set_without_the_json_does_not_mask_an_older_complete_one(tmp_
     (tmp_path / "universe-20260101").mkdir()
     (tmp_path / "universe-20260101" / "point-in-time-universe.json").write_text("{}")
     (tmp_path / "universe-20260811").mkdir()  # newer stamp, NO artifact inside
-    assert resolve_universe_path(tmp_path).parent.name == "universe-20260101"
+    with caplog.at_level("ERROR"):
+        resolved = resolve_universe_path(tmp_path)
+    assert resolved.parent.name == "universe-20260101"
+    # The spec forbids a QUIET fall-back: asserting only the path would pin the defect.
+    assert any("universe-20260811" in r.message for r in caplog.records)
 ```
+
+Take `caplog` as a parameter. The implementation must therefore log an ERROR naming the skipped directory — see the spec's verification bullet, which rules quiet degradation out explicitly.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -476,9 +582,9 @@ Read the sync test file for its existing fake `runner` and reuse it; `_run_rsync
 
 Run: `uv run pytest tests/ -k 'push or sync' -v`
 
-- [ ] **Step 3: Wire the publication**
+- [ ] **Step 3: There is nothing to wire — pin what already exists**
 
-Pass the minted sibling's directory name as `extra_sets=[sibling_name]` at the existing `push_hot` call site. Do **not** add it to `authored_sets` in `zcrypto.toml`: `push_hot` requires every authored set to exist on disk, so a stamped name there would break every future push once that sibling is cleaned up.
+`cli/data/command.py` already calls `push_hot(data_root, [], dest, extra_sets=[p.name for p in minted])`, so every minted sibling including `universe-<stamp>` is already published, and `--push` defaults to true. Step 2 will therefore NOT fail as a red test would. Rewrite this task honestly as regression tests pinning that behaviour, and add the half the spec asks for that is genuinely untested: **pushing a NEW stamp must not modify a previously published one** — assert on the fake runner's per-set destination argv, not on the absence of an error. Do **not** add a stamped name to `authored_sets`: `push_hot` raises if any named set is missing from disk, so it would break every future push once that sibling is cleaned up.
 
 - [ ] **Step 4: Run the tests**
 
