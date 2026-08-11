@@ -74,3 +74,29 @@ def test_a_malformed_body_is_not_ok_and_does_not_raise():
 def test_a_missing_status_key_is_not_ok():
     st = read_system_status(now=NOW, opener=_opener_returning({"error": [], "result": {}}))
     assert st.ok is False
+    assert st.status == "unreadable"
+
+
+def test_a_json_array_body_is_not_ok_and_does_not_raise():
+    # Valid JSON, but not a dict -- `payload.get("error")` next would raise AttributeError on a
+    # list, which is exactly the unhandled-exception-at-a-submission-site case this reader exists
+    # to rule out.
+    @contextmanager
+    def array_body(url, timeout=None):
+        yield io.BytesIO(b"[1,2,3]")
+
+    st = read_system_status(now=NOW, opener=array_body)
+    assert st.ok is False
+    assert st.status == "unreadable"
+
+
+def test_a_body_with_no_result_key_is_not_ok_and_does_not_raise():
+    # `error` is present but falsy, so that check passes through; no "result" key means
+    # `payload.get("result")` is None, and `None.get("status")` next would raise AttributeError.
+    @contextmanager
+    def no_result_key(url, timeout=None):
+        yield io.BytesIO(b'{"error": []}')
+
+    st = read_system_status(now=NOW, opener=no_result_key)
+    assert st.ok is False
+    assert st.status == "unreadable"

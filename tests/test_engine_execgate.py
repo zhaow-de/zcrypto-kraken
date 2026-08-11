@@ -232,6 +232,34 @@ def test_an_unreadable_restart_hold_file_caps_at_reduce_only(tmp_path):
     assert v.reasons == ("restart_hold",)
 
 
+# --- Task 9 mutation-probe closeout -------------------------------------------------------------
+# A mutation probe against the ARM branch's `except OSError: return False` (removing/narrowing it)
+# survived every test above: on this Python's pathlib, `Path.exists()` already swallows OSError
+# (and ValueError) internally for every condition constructible on a real filesystem here --
+# chmod-000, a broken symlink, an embedded NUL byte all read `False` without raising (verified
+# directly against pathlib, not assumed). The kill/hold branch's sibling except is proven reachable
+# via `os.lstat`, which does NOT swallow those; the ARM branch's except has no such real-world
+# trigger, so the raise is forced directly to prove the line still fails closed if it is ever hit.
+
+
+def test_a_raising_arm_file_check_refuses_rather_than_propagating(tmp_path):
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True)
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=_venue())
+
+    def boom(self, *args, **kwargs):
+        raise OSError("simulated stat failure")
+
+    orig_exists = Path.exists
+    Path.exists = boom
+    try:
+        v = gate.evaluate(NOW)  # must not raise
+    finally:
+        Path.exists = orig_exists
+    assert v.level == GateLevel.NONE
+    assert "arm_file_absent" in v.reasons
+
+
 def test_a_naive_observed_at_refuses_rather_than_raising(tmp_path):
     # `NOW` (the `now` argument) is tz-aware throughout this suite. A reader that hands back a
     # naive `observed_at` makes `now - venue.observed_at` raise TypeError the moment evaluate()
