@@ -172,6 +172,24 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_engine_journal_prune_kept_days",
     "zcrypto_engine_journal_prune_oldest_day_age_seconds",
     "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
+    # The execution safety envelope's three unwatched families -- the other three
+    # (armed/kill_tripped/last_evaluation_timestamp_seconds) DO have rules, and this list is what
+    # keeps that true.
+    #   gate_level is the SUMMARY the other four inputs already reduce to (armed, kill switch,
+    #   restart hold, venue) -- every value 0/1/2 is legitimate depending on which of those inputs
+    #   is active, so no threshold on the level itself means anything on its own; the two inputs
+    #   that matter enough to page on (an unexpected arm, a tripped kill switch) have their own
+    #   rules instead.
+    "zcrypto_exec_gate_level",
+    # A LEVEL, not an event: HELD is the expected reading immediately after every restart and
+    # self-clears only by a human decision, so no duration or presence threshold on it means
+    # anything the two arming/kill rules do not already cover more precisely.
+    "zcrypto_exec_restart_hold",
+    # A gating INPUT, not the venue alert itself -- the underlying condition (Kraken reporting a
+    # non-online system state) already pages from the capture side via
+    # zcrypto-capture-venue-not-online, which reads the daemon's own zcrypto_capture_venue_status_total.
+    # A second rule on this engine-side cached copy would only double-page the same event.
+    "zcrypto_exec_venue_ok",
 }
 
 FAULT_SIGNAL_METRICS = sorted(set(_admitted_series()) - NOT_A_FAULT_SIGNAL)
