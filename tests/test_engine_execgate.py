@@ -187,3 +187,103 @@ def test_inputs_carry_every_value_the_verdict_was_derived_from(tmp_path):
     assert v.inputs["restart_hold"] is False
     assert v.inputs["venue_status"] == "online"
     assert v.inputs["venue_snapshot_age_seconds"] == 0.0
+
+
+# --- fix round 1 -------------------------------------------------------------------------------
+# Findings from the first review of commit 51b48e28. All three are the same class of bug: a
+# per-file or per-field failure mode that `_present`'s / `_venue`'s error handling maps to the
+# PERMISSIVE direction instead of the refusing one, in violation of the plan's global "no code
+# path from an error to a permissive verdict" constraint.
+
+
+def test_an_unreadable_kill_file_refuses(tmp_path):
+    # A broken symlink at KILL_FILE: `Path.exists()` follows the link, finds nothing at the
+    # target, and reports absent -- which used to read as "no kill switch" and permit. The file
+    # PRESENT AND UNREADABLE is exactly the case the kill switch exists to catch: refuse.
+    gate = _all_clear(tmp_path)
+    kill = exec_dir(tmp_path) / KILL_FILE
+    kill.symlink_to(exec_dir(tmp_path) / "does-not-exist")
+    v = gate.evaluate(NOW)
+    assert v.level == GateLevel.NONE
+    assert "kill_switch" in v.reasons
+
+
+def test_a_symlink_loop_kill_file_refuses(tmp_path):
+    # The other shape of "present but Path.exists() can't resolve it": a self-referential symlink.
+    gate = _all_clear(tmp_path)
+    kill = exec_dir(tmp_path) / KILL_FILE
+    kill.symlink_to(kill)
+    v = gate.evaluate(NOW)
+    assert v.level == GateLevel.NONE
+    assert "kill_switch" in v.reasons
+
+
+def test_an_unreadable_restart_hold_file_caps_at_reduce_only(tmp_path):
+    # Same fail_open asymmetry, the restart-hold sibling: a broken symlink used to read as
+    # "no hold" and permit FULL; it must cap at REDUCE_ONLY like a plain touch()'d hold file does.
+    gate = _all_clear(tmp_path)
+    hold = exec_dir(tmp_path) / RESTART_HOLD_FILE
+    hold.symlink_to(exec_dir(tmp_path) / "does-not-exist")
+    v = gate.evaluate(NOW)
+    assert v.level == GateLevel.REDUCE_ONLY
+    assert v.reasons == ("restart_hold",)
+
+
+def test_a_naive_observed_at_refuses_rather_than_raising(tmp_path):
+    # `NOW` (the `now` argument) is tz-aware throughout this suite. A reader that hands back a
+    # naive `observed_at` makes `now - venue.observed_at` raise TypeError the moment evaluate()
+    # (or a later cache check) subtracts them -- an unhandled exception at what will be a
+    # submission site, with no safe direction. Must refuse instead of raising.
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True)
+    (d / ARM_FILE).touch()
+
+    def naive(*, now, opener=None):
+        return VenueStatus(status="online", ok=True, observed_at=datetime(2026, 8, 11, 12, 0))
+
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=naive)
+    v = gate.evaluate(NOW)  # must not raise
+    assert v.level == GateLevel.NONE
+    assert "venue_not_online" in v.reasons
+
+
+def test_a_backwards_clock_forces_a_re_read(tmp_path):
+    # A cache valid whenever `delta <= max_age` (no floor) treats a backwards clock step as
+    # "still fresh" -- a negative delta satisfies `<= max_age` for any max_age -- and returns the
+    # stale, possibly-permissive snapshot without ever calling the reader again. The fix requires
+    # `0 <= delta <= max_age`, so a negative delta must force a re-read.
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True)
+    (d / ARM_FILE).touch()
+    calls = {"n": 0}
+
+    def flaky(*, now, opener=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return VenueStatus(status="online", ok=True, observed_at=now)
+        return VenueStatus(status="maintenance", ok=False, observed_at=now)
+
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=flaky)
+    assert gate.evaluate(NOW).level == GateLevel.FULL
+    assert calls["n"] == 1
+    # The clock steps backwards an hour. A cache bounded only above would still call this "fresh"
+    # (delta = -3600s <= 30s) and return the stale FULL verdict without touching the reader.
+    v = gate.evaluate(NOW - timedelta(hours=1))
+    assert calls["n"] == 2
+    assert v.level == GateLevel.NONE
+
+
+def test_the_reported_snapshot_age_is_not_clamped_when_negative(tmp_path):
+    # A future-dated reading (the venue reader's `observed_at` is ahead of the `now` evaluate()
+    # was called with) must show up as a negative age in `inputs`, not get floored to 0.0 -- the
+    # floor was hiding exactly the anomaly an operator needs to see.
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True)
+    (d / ARM_FILE).touch()
+
+    def future(*, now, opener=None):
+        return VenueStatus(status="online", ok=True, observed_at=now + timedelta(seconds=5))
+
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=future)
+    v = gate.evaluate(NOW)
+    assert v.inputs["venue_snapshot_age_seconds"] == -5.0

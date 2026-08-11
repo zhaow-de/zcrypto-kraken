@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -34,7 +35,7 @@ class GateVerdict:
     """`reasons` is a TUPLE, not a single string, and carries EVERY condition that restricted the
     level -- several routinely apply at once (the disarmed resting state has both an absent arm
     file and a restart hold), and reporting only the first sends an operator to fix one condition
-    while still refused. Order is declaration order in `_evaluate`, so output is deterministic."""
+    while still refused. Order is declaration order in `evaluate`, so output is deterministic."""
 
     level: str
     reasons: tuple[str, ...]
@@ -65,37 +66,61 @@ class ExecutionGate:
         self._max_age = snapshot_max_age_seconds
         self._snapshot: VenueStatus | None = None
 
-    def _present(self, name: str) -> bool:
-        # A missing exec dir, a permission error, a broken symlink -- all read as "absent", which
-        # is the safe direction for `armed` and, for `kill`, is why the kill file's absence is
-        # never load-bearing on its own: the gate still needs both arming keys.
+    def _present(self, name: str, *, fail_open: bool) -> bool:
+        """Presence of one control file, with the safe error-direction split by what the file
+        MEANS. `fail_open=False` (ARM_FILE): a missing dir, a permission error, a broken symlink
+        all read as "absent" -- the safe direction for a key that must be affirmatively present to
+        arm. `fail_open=True` (KILL_FILE, RESTART_HOLD_FILE): the safe direction is the opposite,
+        because absence is what PERMITS -- "can't tell" must read as "assume present" and refuse,
+        never as "no kill switch". Uses `os.path.lexists` rather than `Path.exists` for the
+        fail_open case: `exists` follows the final symlink, so a broken symlink or a symlink loop
+        reads as absent and silently permits -- `lexists` only asks whether something is there,
+        which a broken link or a loop both satisfy. A whole-directory failure (e.g. the exec dir
+        itself unreadable) still refuses either way, because the arm-file check on that same
+        directory reads absent too.
+        """
         try:
+            if fail_open:
+                return os.path.lexists(self._dir / name)
             return (self._dir / name).exists()
         except OSError:
-            return False
+            return fail_open
 
     def _venue(self, now: datetime) -> VenueStatus:
         snap = self._snapshot
-        if snap is not None and (now - snap.observed_at).total_seconds() <= self._max_age:
-            return snap
+        if snap is not None:
+            # Valid iff `now` is at or after the cached reading AND within the bound -- NOT just
+            # `delta <= max_age`. A clock that has stepped backwards makes delta negative, which
+            # satisfies `<= max_age` for any max_age, so the old snapshot (however permissive) is
+            # returned as still fresh and the reader is never called again. The floor forces a
+            # re-read whenever `now` is not sequenced after the reading it would be trusting.
+            delta = (now - snap.observed_at).total_seconds()
+            if 0 <= delta <= self._max_age:
+                return snap
         try:
             snap = self._venue_reader(now=now)
         except Exception:  # noqa: BLE001 -- a raising reader must refuse, never propagate
             snap = VenueStatus(status="unreachable", ok=False, observed_at=now)
         # A reader that RETURNS garbage is as dangerous as one that raises: `venue.ok` on a None
         # would raise AttributeError out of evaluate(), and at a 00090 submission site an
-        # unhandled exception is not a refusal -- it has no safe direction. Validate the type.
-        if not isinstance(snap, VenueStatus):
+        # unhandled exception is not a refusal -- it has no safe direction. Validate the type, and
+        # validate the one field evaluate() subtracts against `now`: a naive `observed_at` raises
+        # `TypeError: can't subtract offset-naive and offset-aware datetimes` the instant it meets
+        # an aware `now`, in both the age computation below and the cache check above -- the same
+        # unhandled-exception-at-a-submission-site problem as a bad type, so the same fallback.
+        if not isinstance(snap, VenueStatus) or snap.observed_at.tzinfo is None:
             snap = VenueStatus(status="unreadable", ok=False, observed_at=now)
         self._snapshot = snap
         return snap
 
     def evaluate(self, now: datetime) -> GateVerdict:
-        armed_file = self._present(ARM_FILE)
-        kill = self._present(KILL_FILE)
-        hold = self._present(RESTART_HOLD_FILE)
+        armed_file = self._present(ARM_FILE, fail_open=False)
+        kill = self._present(KILL_FILE, fail_open=True)
+        hold = self._present(RESTART_HOLD_FILE, fail_open=True)
         venue = self._venue(now)
-        age = max(0.0, (now - venue.observed_at).total_seconds())
+        # Unclamped on purpose: a negative age (the venue reading is dated AFTER `now`) is an
+        # anomaly an operator needs to see, not a value to floor away to a reassuring 0.0.
+        age = (now - venue.observed_at).total_seconds()
 
         reasons: list[str] = []
         level = GateLevel.FULL
