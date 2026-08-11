@@ -5,6 +5,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import signal
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -32,7 +33,9 @@ DATA_DIR_ENV_VAR = "ZCRYPTO_CAPTURE_DATA_DIR"
 HEALTHCHECK_ENV_VAR = "HEALTHCHECK_URL"
 HEALTHCHECK_INTERVAL_SECONDS = 60
 DISK_WATERMARK_INTERVAL_SECONDS = 30
-UNIVERSE_RELATIVE_PATH = Path("universe") / "point-in-time-universe.json"
+UNIVERSE_FILENAME = "point-in-time-universe.json"
+UNIVERSE_RELATIVE_PATH = Path("universe") / UNIVERSE_FILENAME  # legacy set, the fallback
+_STAMPED_UNIVERSE = re.compile(r"universe-\d{8}")
 LOCKFILE_NAME = ".capture.lock"
 
 
@@ -80,6 +83,34 @@ def single_instance_lock(data_dir: Path) -> Iterator[None]:
     finally:
         if fd is not None:
             os.close(fd)  # releases the lock
+
+
+def resolve_universe_path(data_root: Path) -> Path:
+    """The newest COMPLETE stamped universe set's artifact, else the legacy one.
+
+    Publication is additive (`rsync --ignore-existing`, never `--delete`), so a fixed filename can
+    never be updated on the hub -- the artifact is a SERIES of immutable sets instead. Only exact
+    `universe-<%Y%m%d>` names are candidates: fixed-width digits, so lexicographic order is
+    chronological, and a stray hand copy (`universe-backup`) never outranks a date. A stamped dir
+    lacking the artifact is skipped LOUDLY -- an ERROR names it, because silently degrading to an
+    older universe is the same defect class the source guard refuses -- but skipped, not fatal:
+    during an in-flight fetch a directory legitimately exists for seconds before its file lands.
+    """
+    stamped = sorted(
+        (p for p in data_root.glob("universe-*") if p.is_dir() and _STAMPED_UNIVERSE.fullmatch(p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    for candidate in stamped:
+        artifact = candidate / UNIVERSE_FILENAME
+        if artifact.exists():
+            return artifact
+        logger.error(
+            "universe resolution: %s lacks %s -- skipping a NEWER stamped set in favor of an older universe",
+            candidate.name,
+            UNIVERSE_FILENAME,
+        )
+    return data_root / UNIVERSE_RELATIVE_PATH
 
 
 def _default_pairs(universe_path: Path) -> list[str]:
@@ -719,7 +750,8 @@ def capture(
         None,
         "--pairs",
         help="Pair(s) to capture, e.g. --pairs BTC/EUR --pairs ETH/EUR. Defaults to the EUR majors "
-        "from data/universe/point-in-time-universe.json.",
+        "from the newest data/universe-<stamp>/point-in-time-universe.json, falling back to "
+        "data/universe/point-in-time-universe.json.",
     ),
     depth: int = typer.Option(DEFAULT_DEPTH, "--depth", help=f"Order book depth. One of {ALLOWED_DEPTHS}."),
     data_dir: Optional[Path] = typer.Option(
@@ -735,7 +767,7 @@ def capture(
 ) -> None:
     """Stream Kraken's public WS v2 book + trade feed for the universe pairs to hourly zstd-Parquet segments."""
     cfg = load_config()
-    resolved_pairs = pairs or _default_pairs((cfg.data_dir or Path("data")) / UNIVERSE_RELATIVE_PATH)
+    resolved_pairs = pairs or _default_pairs(resolve_universe_path(cfg.data_dir or Path("data")))
     resolved_data_dir = data_dir or Path(os.environ.get(DATA_DIR_ENV_VAR, str(DEFAULT_DATA_DIR)))
     healthcheck_url = os.environ.get(HEALTHCHECK_ENV_VAR)
 
