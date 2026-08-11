@@ -52,8 +52,8 @@
 
 **Files:**
 - Modify: `cli/ohlc/fetch.py`
-- Modify: every consumer found by grep (expected: `cli/ohlc/reach.py` only, within `cli/`)
-- Test: the existing fetch/reach test files
+- Modify: `cli/engine/store.py` — the derived EUR-only view (Step 5); this is IN scope, not collateral
+- Test: the existing fetch, engine-store, and tape-bars test files (`cli/ohlc/reach.py`'s call site is Task 2's)
 
 **Interfaces:**
 - Produces: `PAIR_KEYS: dict[str, str]` keyed `"BASE/QUOTE"` → Kraken pair key, with 12 entries.
@@ -61,7 +61,7 @@
 - [ ] **Step 1: Find every consumer before changing anything**
 
 Run: `grep -rn 'PAIR_KEYS' cli/ tests/`
-Record the hits. `cli/engine/cycle.py` and `cli/engine/store.py` are a **different** `PAIR_KEYS` and must not be edited. If a consumer outside `cli/ohlc/` imports from `cli.ohlc.fetch`, stop and report — the spec measured the blast radius as `reach.py` only, and a wider one is a finding.
+Record the hits and route each to its step. Expected importers of `cli.ohlc.fetch`: `cli/engine/store.py` (→ Steps 5–6; it re-exports the map to `cycle.py`, `soak.py` and the engine package root, so every `cli/engine/` hit is this one map by another path), `cli/ohlc/reach.py` (→ Task 2, per Step 8), and `tests/test_tape_bars_rest_control.py` (→ Step 7, alongside `tests/test_engine_store.py`). Any consumer NOT already named here: stop and report before editing anything — it is outside the measured blast radius.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -222,8 +222,11 @@ def test_manifest_entries_are_keyed_by_full_symbol(tmp_path):
     """Base-keyed entries collide the moment a base carries two quotes: two entries both
     claiming "ETH"."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
+    # Both legs get SEAM-CONSISTENT closes: one fetcher payload serves both pair keys, and a
+    # canonical whose overlap closes disagree with it would raise OHLCError at the seam check
+    # before the manifest exists -- this test is about manifest keys, not seam integrity.
     _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20, close=100.0)
-    _write_canonical(canonical, "ETH/BTC", 60, _BASE, 20, close=200.0)
+    _write_canonical(canonical, "ETH/BTC", 60, _BASE, 20, close=100.0)
     rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
     now = _BASE + timedelta(hours=40)
 
@@ -361,7 +364,7 @@ In `_refresh_universe`, immediately after the source root is resolved and **befo
     missing = [
         symbol
         for symbol in CANDIDATE_SYMBOLS
-        if not (ohlc_root / Path(symbol) / f"{_UNIVERSE_INTERVAL}.parquet").exists()
+        if not (ohlc_root / Path(symbol) / "1440.parquet").exists()
     ]
     if missing:
         # `escalate` compares the SELECTED set against the previous one; it cannot see that the
@@ -374,7 +377,7 @@ In `_refresh_universe`, immediately after the source root is resolved and **befo
         )
 ```
 
-`_refresh_universe` hardcodes `"1440.parquet"` today and there is no `_UNIVERSE_INTERVAL` constant — do NOT mint one for this guard; match the surrounding code's literal.
+The `"1440.parquet"` literal matches the surrounding code: `_refresh_universe` hardcodes it and there is no `_UNIVERSE_INTERVAL` constant — do NOT mint one for this guard.
 
 - [ ] **Step 4: Run the tests**
 
@@ -397,13 +400,15 @@ git commit -m "feat(data): refuse a universe source narrower than the candidate 
 ### Task 3a: Resolve the newest stamped SOURCE
 
 **Files:**
-- Modify: `cli/data/rebuild.py` (`_require_ohlc_full` and its caller)
+- Modify: `cli/data/rebuild.py` — add `resolve_ohlc_source`, re-point `_refresh_universe` and ONLY `_refresh_universe`; `_require_ohlc_full` is not edited
 - Test: `tests/test_data_rebuild.py`
 
 **Interfaces:**
 - Produces: `resolve_ohlc_source(data_root: Path) -> Path` — newest `ohlc-reach-<stamp>/`, else `ohlc-full/`.
 
-**Why this task exists:** without it the whole iteration is undischarged. `_require_ohlc_full` hardcodes `data_root / "ohlc-full"`, so the attended sitting refuses at its rebuild step however fresh the reach round was — and a fresh round lands as `ohlc-reach-<stamp>` that nothing resolves, because `--ignore-existing` freezes the hub's promoted `ohlc-reach/` forever. This is the same rule as Task 4, applied to the source end.
+**Why this task exists:** without it the whole iteration is undischarged. `_refresh_universe` reads the hardcoded `data_root / "ohlc-full"` (via `_require_ohlc_full`), so the attended sitting refuses at its rebuild step however fresh the reach round was — and a fresh round lands as `ohlc-reach-<stamp>` that nothing resolves, because `--ignore-existing` freezes the hub's promoted `ohlc-reach/` forever. This is the same rule as Task 4, applied to the source end.
+
+**`_require_ohlc_full` stays untouched, and that is load-bearing.** It has a SECOND caller: `_rebuild_ohlc_reach`, whose canonical anchor is the dump-derived set by design. `rebuild_sets` mkdirs the `ohlc-reach-<stamp>` sibling BEFORE invoking the builder, so a resolver inside the shared helper would hand the reach round its own just-minted EMPTY sibling as the canonical root — an empty set minted "successfully" and pushed to a hub the additive-only transport can never clean. `tests/test_data_rebuild.py::test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling` pins exactly this hazard ("reading the sibling instead would reach forward from an empty set") and **must stay green, unchanged** — if it goes red, the resolver has leaked into the reach path: fix the wiring, never the test.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -418,6 +423,16 @@ def test_newest_stamped_source_wins_over_ohlc_full(tmp_path):
 def test_ohlc_full_is_the_fallback_when_no_stamped_source_exists(tmp_path):
     (tmp_path / "ohlc-full").mkdir()
     assert resolve_ohlc_source(tmp_path).name == "ohlc-full"
+
+
+def test_a_stray_non_stamp_directory_never_outranks_a_dated_source(tmp_path):
+    """The glob alone is not identity: `ohlc-reach-backup` and `ohlc-reach-<stamp>.bak` sort
+    lexicographically AFTER every %Y%m%d stamp, so an operator's hand copy would silently win
+    newest-wins forever. Only exact 8-digit stamps are candidates."""
+    (tmp_path / "ohlc-full").mkdir()
+    for name in ("ohlc-reach-20260811", "ohlc-reach-backup", "ohlc-reach-20260811.bak"):
+        (tmp_path / name).mkdir()
+    assert resolve_ohlc_source(tmp_path).name == "ohlc-reach-20260811"
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -425,32 +440,51 @@ def test_ohlc_full_is_the_fallback_when_no_stamped_source_exists(tmp_path):
 Run: `uv run pytest tests/test_data_rebuild.py -k resolve_ohlc_source -v`
 Expected: FAIL — the function does not exist.
 
-- [ ] **Step 3: Implement the resolver and point the caller at it**
+- [ ] **Step 3: Implement the resolver as a NEW function and point `_refresh_universe` at it**
 
 ```python
+_STAMPED_REACH = re.compile(r"ohlc-reach-\d{8}")
+
+
 def resolve_ohlc_source(data_root: Path) -> Path:
     """The newest stamped reach set, else the canonical dump-derived set.
 
     Same newest-wins rule as the universe artifact, and for the same reason: publication is
-    additive (`rsync --ignore-existing`), so a fixed name can never be refreshed on the hub. The
-    stamp is %Y%m%d, so lexicographic order is chronological.
+    additive (`rsync --ignore-existing`), so a fixed name can never be refreshed on the hub. Only
+    exact `ohlc-reach-<%Y%m%d>` names are candidates -- fixed-width digits, so lexicographic order
+    is chronological, and a stray sibling (`ohlc-reach-backup`, `-<stamp>.bak`) never outranks a
+    date. NOT used by `_rebuild_ohlc_reach`: the reach round anchors on the dump-derived canonical
+    via `_require_ohlc_full`, and must never consume a freshly-minted reach sibling.
     """
-    stamped = sorted((p for p in data_root.glob("ohlc-reach-*") if p.is_dir()), reverse=True)
-    return stamped[0] if stamped else data_root / "ohlc-full"
+    stamped = sorted(
+        (p for p in data_root.glob("ohlc-reach-*") if p.is_dir() and _STAMPED_REACH.fullmatch(p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if stamped:
+        return stamped[0]
+    fallback = data_root / "ohlc-full"
+    if not fallback.exists():
+        raise DataSyncError(f"data rebuild: universe needs the live ohlc-full/ set, not found at {fallback}")
+    return fallback
 ```
 
-Replace `_require_ohlc_full`'s hardcoded path with this call. Keep its existing existence check and error message shape — only the path it checks changes.
+In `_refresh_universe`, replace `ohlc_root = _require_ohlc_full(ctx)` with `ohlc_root = resolve_ohlc_source(ctx.data_root)`. The fallback branch keeps `_require_ohlc_full`'s refusal contract (same `DataSyncError`, same message shape), so the existing no-source refusal test stays green. Do not edit `_require_ohlc_full` or `_rebuild_ohlc_reach`.
 
-- [ ] **Step 4: Point Task 3's guard at the RESOLVED root**
+- [ ] **Step 4: Correct `_refresh_universe`'s docstring**
+
+Its sentence "Quote volumes are read from the LIVE `ohlc-full` set, not a freshly-minted sibling: a universe refresh reuses the currently-live OHLC, it does not repull it" becomes false with this task — the resolved source IS a freshly-minted reach sibling whenever one exists. Rewrite it to state the resolution rule: quote volumes are read from `resolve_ohlc_source(...)` — the newest stamped reach set, else the live `ohlc-full` — and the universe refresh still never repulls OHLC itself.
+
+- [ ] **Step 5: Point Task 3's guard at the RESOLVED root**
 
 The presence guard added in Task 3 must run against `resolve_ohlc_source(...)`'s result, not against `ohlc-full`. This is the point of the pairing: `ohlc-full` always carries all twelve legs, so a guard pointed there can never trip — a reach set is where a ten-of-twelve source actually occurs.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/test_data_rebuild.py -v`
-Expected: pass, including Task 3's guard tests, which now exercise the resolved root.
+Expected: pass — including Task 3's guard tests (now exercising the resolved root) and the reach-builder sibling test named above, UNCHANGED.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add cli/data/rebuild.py tests/test_data_rebuild.py
@@ -486,6 +520,16 @@ def test_legacy_set_is_the_fallback_when_no_stamped_set_exists(tmp_path):
     assert resolve_universe_path(tmp_path).parent.name == "universe"
 
 
+def test_a_stray_non_stamp_directory_never_outranks_a_dated_set(tmp_path):
+    """Only exact `universe-<8 digits>` names are candidates -- `universe-backup` sorts
+    lexicographically after every date, so an unvalidated glob would hand it the win forever."""
+    for name in ("universe-20260811", "universe-backup"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "point-in-time-universe.json").write_text("{}")
+    assert resolve_universe_path(tmp_path).parent.name == "universe-20260811"
+
+
 def test_a_stamped_set_without_the_json_does_not_mask_an_older_complete_one(tmp_path):
     """The resolver's own silent-shrink case: degrading to an OLDER universe without saying so is
     the same defect class as a narrower source. A newer directory that lacks the artifact must not
@@ -514,23 +558,35 @@ In `cli/capture/command.py`:
 ```python
 UNIVERSE_FILENAME = "point-in-time-universe.json"
 UNIVERSE_RELATIVE_PATH = Path("universe") / UNIVERSE_FILENAME  # legacy set, the fallback
+_STAMPED_UNIVERSE = re.compile(r"universe-\d{8}")
 
 
 def resolve_universe_path(data_root: Path) -> Path:
-    """The newest stamped universe set's artifact, else the legacy one.
+    """The newest COMPLETE stamped universe set's artifact, else the legacy one.
 
     Publication is additive (`rsync --ignore-existing`, never `--delete`), so a fixed filename can
-    never be updated on the hub -- the artifact is a SERIES of immutable sets instead. The stamp is
-    %Y%m%d, so lexicographic order is chronological and no date parsing is needed. A stamped dir
-    without the artifact inside is skipped rather than chosen: silently degrading to an older
-    universe is the same defect class the source guard refuses.
+    never be updated on the hub -- the artifact is a SERIES of immutable sets instead. Only exact
+    `universe-<%Y%m%d>` names are candidates: fixed-width digits, so lexicographic order is
+    chronological, and a stray hand copy (`universe-backup`) never outranks a date. A stamped dir
+    lacking the artifact is skipped LOUDLY -- an ERROR names it, because silently degrading to an
+    older universe is the same defect class the source guard refuses -- but skipped, not fatal:
+    during an in-flight fetch a directory legitimately exists for seconds before its file lands.
     """
-    candidates = sorted(
-        (p for p in data_root.glob(f"universe-*/{UNIVERSE_FILENAME}")),
-        key=lambda p: p.parent.name,
+    stamped = sorted(
+        (p for p in data_root.glob("universe-*") if p.is_dir() and _STAMPED_UNIVERSE.fullmatch(p.name)),
+        key=lambda p: p.name,
         reverse=True,
     )
-    return candidates[0] if candidates else data_root / UNIVERSE_RELATIVE_PATH
+    for candidate in stamped:
+        artifact = candidate / UNIVERSE_FILENAME
+        if artifact.exists():
+            return artifact
+        logger.error(
+            "universe resolution: %s lacks %s -- skipping a NEWER stamped set in favor of an older universe",
+            candidate.name,
+            UNIVERSE_FILENAME,
+        )
+    return data_root / UNIVERSE_RELATIVE_PATH
 ```
 
 - [ ] **Step 4: Point the caller at it**
@@ -552,50 +608,63 @@ git commit -m "feat(capture): resolve the newest stamped universe set, legacy as
 
 ---
 
-### Task 5: Publish the stamped set
+### Task 5: Pin the stamped-set publication (already wired)
 
 **Files:**
-- Modify: whichever module invokes `push_hot` for a rebuild's output (find it: `grep -rn 'push_hot' cli/`)
-- Test: the existing sync test file
+- Test: `tests/test_data_sync.py` — regression tests only; no production module changes
 
 **Interfaces:**
 - Consumes: `push_hot(..., extra_sets=...)`, which already exists — do not add a parameter.
 
-- [ ] **Step 1: Write the failing tests**
+**There is nothing to wire.** `cli/data/command.py` already calls `push_hot(data_root, [], dest, extra_sets=[p.name for p in minted])` on `zcrypto data rebuild`, and `--push` defaults to true, so every minted sibling including `universe-<stamp>` is already published under its own name. This task PINS that behaviour and adds the half the spec asks for that is genuinely untested: pushing a NEW stamp must never modify a previously published one. Do **not** add a stamped name to `authored_sets`: `push_hot` raises if any named set is missing from disk, so it would break every future push once that sibling is cleaned up.
+
+- [ ] **Step 1: Write the regression tests**
+
+`tests/test_data_sync.py` has NO fake runner — every existing test drives REAL rsync against tmp dirs and asserts on `SyncReport.new_files`, which `push_hot` parses from rsync's own `--itemize-changes` output. That is exactly the spec's "assert on rsync's itemised output, not on the absence of an error" — reuse the file's `_mk` helper and style:
 
 ```python
-def test_a_stamped_set_is_published_via_extra_sets(tmp_path):
-    # The minted sibling is data/universe-<stamp>/; it must reach the hub under its own name,
-    # never overwriting the legacy universe/ set.
-    ...  # assert the rsync runner was called with a dest ending "universe-20260811/"
+def test_a_stamped_set_is_published_via_extra_sets_beside_the_legacy_one(tmp_path):
+    # The minted sibling reaches the hub under its own name; the legacy universe/ set is untouched.
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "universe-20260811/point-in-time-universe.json", b"new")
+    kept = _mk(dest, "universe/point-in-time-universe.json", b"legacy")
+    report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    assert report.new_files == ("universe-20260811/point-in-time-universe.json",)
+    assert kept.read_bytes() == b"legacy"
 
 
 def test_publishing_the_same_stamp_twice_creates_nothing_the_second_time(tmp_path):
-    """Additive by construction. Assert on rsync's itemised output, not on the absence of an
-    error -- a run that silently overwrote would also not error."""
-    ...
+    """Additive by construction: the second push's itemised output names no new files."""
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "universe-20260811/point-in-time-universe.json", b"v1")
+    dest.mkdir()
+    push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    assert report.new_files == () and report.skipped_existing == 1
+
+
+def test_a_new_stamp_never_modifies_a_previously_published_one(tmp_path):
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "universe-20260811/point-in-time-universe.json", b"v1")
+    dest.mkdir()
+    push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    _mk(data, "universe-20260812/point-in-time-universe.json", b"v2")
+    report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260812"])
+    # The itemised output names files under the NEW stamp only, and the old bytes are untouched.
+    assert report.new_files and all(n.startswith("universe-20260812/") for n in report.new_files)
+    assert (dest / "universe-20260811" / "point-in-time-universe.json").read_bytes() == b"v1"
 ```
 
-Read the sync test file for its existing fake `runner` and reuse it; `_run_rsync` takes `runner=subprocess.run`.
+- [ ] **Step 2: Run them**
 
-- [ ] **Step 2: Run to verify they fail**
+Run: `uv run pytest tests/test_data_sync.py -v`
+Expected: pass on the FIRST run — these pin existing behaviour, so there is no red-green cycle; a failure here is a finding about `push_hot`, not a test to adjust.
 
-Run: `uv run pytest tests/ -k 'push or sync' -v`
-
-- [ ] **Step 3: There is nothing to wire — pin what already exists**
-
-`cli/data/command.py` already calls `push_hot(data_root, [], dest, extra_sets=[p.name for p in minted])`, so every minted sibling including `universe-<stamp>` is already published, and `--push` defaults to true. Step 2 will therefore NOT fail as a red test would. Rewrite this task honestly as regression tests pinning that behaviour, and add the half the spec asks for that is genuinely untested: **pushing a NEW stamp must not modify a previously published one** — assert on the fake runner's per-set destination argv, not on the absence of an error. Do **not** add a stamped name to `authored_sets`: `push_hot` raises if any named set is missing from disk, so it would break every future push once that sibling is cleaned up.
-
-- [ ] **Step 4: Run the tests**
-
-Run: `uv run pytest tests/ -k 'push or sync' -v`
-Expected: pass.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add cli/ tests/
-git commit -m "feat(data): publish the universe as a stamped set via extra_sets"
+git add tests/test_data_sync.py
+git commit -m "test(data): pin the stamped universe set's additive publication"
 ```
 
 ---
@@ -625,10 +694,9 @@ git commit -m "feat(data): publish the universe as a stamped set via extra_sets"
 
 One sitting, in order. Splitting it rebuilds the canonical universe more than once, and every downstream selection reads that artifact.
 
-1. `zcrypto data rebuild ohlc-reach` — mints all twelve legs now that Task 2 has landed. Verify `ETH/BTC` and `SOL/BTC` come back `status: continuous` with non-zero `overlap_bars`; a `detached` status on either is a failure of this iteration, not a caveat to accept.
-2. `zcrypto data fetch` — `data/ohlc-reach` is absent on the workstation; the promoted set lives only on the read-only NAS.
-3. `zcrypto data rebuild universe` — re-measure selection on the fresh window and state every median. The last measured window gave 12/12 with DOT/EUR thinnest at 194,771.98; a different outcome is a finding to report, not a number to adjust.
-4. Publish the stamped set; confirm the hub carries `universe-<stamp>/` and that the legacy `universe/` is untouched.
-5. Regenerate `docs/universe/point-in-time-universe.md` by hand, set its `as_of` to the published stamp, and run `uv run pytest tests/test_universe_provenance.py` — its basket-hash line is pinned against `docs/reference/data-catalog.md`, whose rows are irreplaceable.
+1. `zcrypto data rebuild ohlc-reach` — mints all twelve legs now that Task 2 has landed, into the LOCAL `data/ohlc-reach-<stamp>` sibling (which `--push` also publishes). No fetch step follows: the resolver reads that local sibling directly, and the hub's promoted unstamped `ohlc-reach/` — frozen at 2026-07-22 — is deliberately not a resolution candidate. Verify `ETH/BTC` and `SOL/BTC` come back `status: continuous` with non-zero `overlap_bars`; a `detached` status on either is a failure of this iteration, not a caveat to accept.
+2. `zcrypto data rebuild universe` — re-measure selection on the fresh window and state every median. The last measured window gave 12/12 with DOT/EUR thinnest at 194,771.98; a different outcome is a finding to report, not a number to adjust.
+3. Confirm the publish: the hub carries `universe-<stamp>/` (pushed by step 2's `--push`) and the legacy `universe/` is untouched.
+4. Regenerate `docs/universe/point-in-time-universe.md` by hand, set its `as_of` to the published stamp, and run `uv run pytest tests/test_universe_provenance.py` — its basket-hash line is pinned against `docs/reference/data-catalog.md`, whose rows are irreplaceable.
 
 **Two live Kraken public GETs fire before any guard runs**, so a "just see what happens" invocation is not free of network side effects. `--push` defaults to true on `zcrypto data rebuild`; pass `--no-push` for a local trial.
