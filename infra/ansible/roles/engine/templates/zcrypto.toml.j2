@@ -8,5 +8,9 @@
 store_dir = "{{ engine_state_dir }}/store"
 journal_dir = "{{ engine_state_dir }}/journal"
 exec_enabled = true
+# Rendered explicitly rather than omitted so a converge diff shows the value. FALSE is the only
+# value that belongs here outside an attended probe window: arming also needs the `exec/armed`
+# file on the host, and the resting state is disarmed.
+exec_armed = false
 shadow_nav_eur = {{ engine_shadow_nav_eur }}
 settle_delay_secs = {{ engine_settle_delay_secs }}

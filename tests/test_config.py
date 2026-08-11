@@ -172,6 +172,28 @@ def test_engine_settle_delay_secs_non_int_raises(tmp_path):
         load_config(_write(tmp_path, '[zcrypto.engine]\nsettle_delay_secs = "x"\n'))
 
 
+def test_exec_armed_defaults_to_false_when_absent(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text("[zcrypto.engine]\nexec_enabled = true\n")
+    cfg = load_config(cfg_path)
+    assert cfg.engine.exec_armed is False
+    # The two flags are independent: connecting the transport never arms anything.
+    assert cfg.engine.exec_enabled is True
+
+
+def test_exec_armed_reads_true_when_set(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text("[zcrypto.engine]\nexec_armed = true\n")
+    assert load_config(cfg_path).engine.exec_armed is True
+
+
+def test_exec_armed_rejects_a_non_boolean(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text('[zcrypto.engine]\nexec_armed = "yes"\n')
+    with pytest.raises(ConfigError, match="must be a boolean"):
+        load_config(cfg_path)
+
+
 def test_committed_zcrypto_toml_has_no_engine_table():
     # the committed config stays unchanged — EngineConfig defaults live in code (spec precedent).
     cfg = load_config(Path("zcrypto.toml"))
