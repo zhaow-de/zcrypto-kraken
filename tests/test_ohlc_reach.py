@@ -26,6 +26,7 @@ def _rest_rows(start: datetime, n: int, *, interval_s: int = _HOUR, close: float
 
 
 def _write_canonical(root, symbol: str, interval: int, start: datetime, n: int, *, close: float = 100.0) -> None:
+    base, quote = symbol.split("/")
     frame = pl.DataFrame(
         {
             "ts": [start + timedelta(minutes=interval * i) for i in range(n)],
@@ -38,7 +39,7 @@ def _write_canonical(root, symbol: str, interval: int, start: datetime, n: int, 
             "count": [3] * n,
         }
     ).with_columns(pl.col("ts").dt.cast_time_unit("us").dt.replace_time_zone("UTC"))
-    write_parquet(frame, root / symbol / "EUR" / f"{interval}.parquet")
+    write_parquet(frame, root / base / quote / f"{interval}.parquet")
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -56,7 +57,7 @@ def test_overlapping_rest_tail_merges_into_one_continuous_series(tmp_path):
     """The canonical tail and the REST window overlap -> one continuous file a normal reader globs."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
     # canonical: 20 hourly bars from _BASE (so its tail is _BASE + 19h)
-    _write_canonical(canonical, "BTC", 60, _BASE, 20)
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
     # REST: starts 10 bars in (10 shared stamps) and runs 15 bars past the canonical tail
     rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
     now = _BASE + timedelta(hours=40)
@@ -87,7 +88,7 @@ def test_detached_tail_is_kept_but_under_a_name_canonical_readers_do_not_glob(tm
     must NOT land where an ohlc-full reader would splice them across the gap.
     """
     canonical, out = tmp_path / "canon", tmp_path / "out"
-    _write_canonical(canonical, "BTC", 60, _BASE, 20)  # tail at _BASE + 19h
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)  # tail at _BASE + 19h
     # REST starts 100 h after the canonical tail: a real gap, no shared stamp
     rest_start = _BASE + timedelta(hours=119)
     rest = _rest_rows(rest_start, 30, close=500.0)
@@ -115,7 +116,7 @@ def test_detached_tail_is_kept_but_under_a_name_canonical_readers_do_not_glob(tm
 def test_seam_close_mismatch_aborts(tmp_path):
     """A shared stamp whose close disagrees means the two sources are not the same series."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
-    _write_canonical(canonical, "BTC", 60, _BASE, 20, close=100.0)
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20, close=100.0)
     # overlapping stamps, but closes are offset -> every shared stamp disagrees
     rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=999.0)
     now = _BASE + timedelta(hours=40)
@@ -127,7 +128,7 @@ def test_seam_close_mismatch_aborts(tmp_path):
 def test_thin_overlap_aborts_rather_than_joining_on_one_bar(tmp_path):
     """An overlap below the floor is an unverified seam: refuse, don't guess."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
-    _write_canonical(canonical, "BTC", 60, _BASE, 20)  # tail at _BASE + 19h
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)  # tail at _BASE + 19h
     # start so that only 2 stamps are shared (< MIN_SEAM_OVERLAP)
     rest = _rest_rows(_BASE + timedelta(hours=18), 20, close=118.0)
     now = _BASE + timedelta(hours=45)
@@ -140,7 +141,7 @@ def test_thin_overlap_aborts_rather_than_joining_on_one_bar(tmp_path):
 def test_in_progress_candle_is_dropped(tmp_path):
     """Kraken's last row is the currently-forming candle; it must never be persisted."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
-    _write_canonical(canonical, "BTC", 60, _BASE, 20)
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
     rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
     # `now` sits mid-way through the final REST bar, so that bar has not closed yet
     now = _BASE + timedelta(hours=34, minutes=30)
@@ -158,8 +159,8 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     """A reach set is routinely mixed -- some intervals continuous, some detached. The manifest is
     where a consumer learns which, so it must carry the status per series, not one set-wide claim."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
-    _write_canonical(canonical, "BTC", 60, _BASE, 20)
-    _write_canonical(canonical, "BTC", 240, _BASE, 20)
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    _write_canonical(canonical, "BTC/EUR", 240, _BASE, 20)
     now = _BASE + timedelta(days=30)
 
     def _fetch(pair_key: str, interval: int) -> list[list]:
@@ -177,6 +178,68 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     assert manifest["basket_sha256"] != manifest["detached_sha256"]
     assert all("sha256" in e and e["rows"] for e in manifest["series"])
     by_key = {(e["symbol"], e["interval"]): e for e in manifest["series"]}
-    assert by_key[("BTC", 240)]["status"] == "continuous"
-    assert by_key[("BTC", 60)]["status"] == "detached"
+    assert by_key[("BTC/EUR", 240)]["status"] == "continuous"
+    assert by_key[("BTC/EUR", 60)]["status"] == "detached"
     assert {e.status for e in report.entries} == {"continuous", "detached"}
+
+
+def test_reach_discovers_both_quotes_of_a_base(tmp_path):
+    from cli.ohlc.reach import _canonical_symbols
+
+    for leg in ("ETH/EUR", "ETH/BTC", "ADA/EUR"):
+        base, quote = leg.split("/")
+        d = tmp_path / base / quote
+        d.mkdir(parents=True)
+        (d / "1440.parquet").touch()
+
+    assert _canonical_symbols(tmp_path, 1440) == ["ADA/EUR", "ETH/BTC", "ETH/EUR"]
+
+
+def test_reach_writes_under_base_and_quote(tmp_path):
+    """Two quotes of one base must not collapse onto one path -- that would have one leg
+    silently overwrite the other."""
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20, close=100.0)
+    _write_canonical(canonical, "ETH/BTC", 60, _BASE, 20, close=200.0)
+    rest_eur = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+    rest_btc = _rest_rows(_BASE + timedelta(hours=10), 25, close=210.0)
+    now = _BASE + timedelta(hours=40)
+
+    report = reach_round(
+        canonical,
+        out,
+        fetch_fn=_fetcher({"XETHZEUR": rest_eur, "XETHXXBT": rest_btc}),
+        clock=lambda: now,
+        sleep_fn=_no_sleep,
+    )
+
+    assert len(report.entries) == 2
+    eur = read_parquet(out / "ETH" / "EUR" / "60.parquet")
+    btc = read_parquet(out / "ETH" / "BTC" / "60.parquet")
+    assert eur.height == 35 and btc.height == 35
+    # Distinct content, so neither path was written twice.
+    assert eur["close"].to_list() != btc["close"].to_list()
+
+
+def test_manifest_entries_are_keyed_by_full_symbol(tmp_path):
+    """Base-keyed entries collide the moment a base carries two quotes: two entries both
+    claiming "ETH"."""
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    # Both legs get SEAM-CONSISTENT closes: one fetcher payload serves both pair keys, and a
+    # canonical whose overlap closes disagree with it would raise OHLCError at the seam check
+    # before the manifest exists -- this test is about manifest keys, not seam integrity.
+    _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20, close=100.0)
+    _write_canonical(canonical, "ETH/BTC", 60, _BASE, 20, close=100.0)
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+    now = _BASE + timedelta(hours=40)
+
+    reach_round(
+        canonical,
+        out,
+        fetch_fn=_fetcher({"XETHZEUR": rest, "XETHXXBT": rest}),
+        clock=lambda: now,
+        sleep_fn=_no_sleep,
+    )
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert {e["symbol"] for e in manifest["series"]} == {"ETH/EUR", "ETH/BTC"}
