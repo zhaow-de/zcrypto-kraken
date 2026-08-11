@@ -666,12 +666,14 @@ def run() -> None:
     exec_gauges = _ExecGauges(registry) if registry is not None else None
 
     def _sink(result, completed_at, duration_seconds):
+        # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
+        # either gauge group is touched, so a raising gauge update can never cost this cycle's record.
+        verdict = gate.evaluate(completed_at)
+        write_exec_record(config.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
         if cycle_gauges is not None:
             cycle_gauges.update(result, completed_at, duration_seconds)
-        verdict = gate.evaluate(completed_at)
         if exec_gauges is not None:
             exec_gauges.update(verdict, evaluated_at=completed_at)
-        write_exec_record(config.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
 
     set_metrics_sink(_sink)
 

@@ -38,14 +38,8 @@ N_H4, N_DAILY = 6, 4
 TARGETS = {asset: round(0.1 * (i + 1), 3) for i, asset in enumerate(ASSETS)}
 NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
-
-@pytest.fixture(autouse=True)
-def _reset_metrics_sink():
-    """`cycle._metrics_sink` is module-level global state -- leaking a test's sink into the next
-    test (or into an unrelated test file sharing this process) would be a real isolation bug of
-    its own. Reset it unconditionally after every test in this file."""
-    yield
-    cycle.set_metrics_sink(None)
+# `_reset_metrics_sink` (cycle._metrics_sink reset after every test) now lives in tests/conftest.py
+# so every file in the suite is protected, not just this one.
 
 
 def _base(asset: str) -> float:
@@ -955,6 +949,35 @@ def test_the_startup_evaluation_alone_seeds_the_latch_gauges(tmp_path, monkeypat
     assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
     assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
     assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") is not None
+
+
+class _RaisingGate:
+    """Guard-proving probe for the startup-evaluation try/except in run(): a guard is unproven
+    until the defect it names is constructed and seen to trip it. `evaluate()` always raises, so
+    this is the exact failure the wrap exists to isolate -- a broken gate at startup must log, not
+    stop the engine from starting."""
+
+    def __init__(self, *, armed_in_config, state_dir):
+        pass
+
+    def evaluate(self, now):
+        raise RuntimeError("gate boom")
+
+
+def test_a_raising_startup_evaluation_never_prevents_the_engine_from_starting(tmp_path, monkeypatch, caplog):
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    _run_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(command, "ExecutionGate", _RaisingGate)  # overrides _run_env's _StubGate
+
+    with caplog.at_level("ERROR"):
+        cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 0  # seeded default, never reached
 
 
 def test_the_exec_ledger_writes_even_when_the_metrics_port_is_unset(tmp_path, monkeypatch):
