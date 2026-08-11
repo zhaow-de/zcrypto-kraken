@@ -18,10 +18,17 @@ import polars as pl
 from cli.engine.errors import EngineError
 from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
-from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
+from cli.ohlc.fetch import PAIR_KEYS as _FETCH_PAIR_KEYS
+from cli.ohlc.fetch import fetch_ohlc
 from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 
 logger = get_logger("engine.store")
+
+# The engine trades EUR legs only. Derived from the one source of truth rather than duplicated,
+# and keyed by BASE because the store path is root/<base>/EUR/<interval>.parquet. Without this the
+# symbol re-key would silently widen the engine basket from 10 to 12 and produce paths like
+# root/ETH/BTC/EUR/1440.parquet.
+PAIR_KEYS: dict[str, str] = {symbol.split("/")[0]: key for symbol, key in _FETCH_PAIR_KEYS.items() if symbol.endswith("/EUR")}
 
 GRID_INTERVALS = (1440, 240)
 

@@ -54,3 +54,20 @@ def test_fetch_ohlc_raises_on_result_with_only_last_key():
     body = {"error": [], "result": {"last": 1234567890}}
     with pytest.raises(OHLCError):
         fetch_ohlc("XXBTZEUR", 1440, opener=_opener(body))
+
+
+def test_pair_keys_are_symbol_keyed_and_cover_every_candidate():
+    from cli.ohlc.fetch import PAIR_KEYS
+    from cli.snapshot.assetpairs import CANDIDATE_SYMBOLS
+
+    assert all("/" in k for k in PAIR_KEYS), "PAIR_KEYS must be keyed BASE/QUOTE, not by base alone"
+    missing = [s for s in CANDIDATE_SYMBOLS if s not in PAIR_KEYS]
+    assert missing == [], f"no REST pair key for {missing}"
+
+
+def test_the_btc_quoted_legs_carry_the_venues_xbt_spelling():
+    # The venue spells it XBT and we spell it BTC. A key that reads "...BTC" would be wrong.
+    from cli.ohlc.fetch import PAIR_KEYS
+
+    assert PAIR_KEYS["ETH/BTC"] == "XETHXXBT"
+    assert PAIR_KEYS["SOL/BTC"] == "SOLXBT"

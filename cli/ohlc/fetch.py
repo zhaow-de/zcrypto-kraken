@@ -9,19 +9,21 @@ from cli.ohlc.errors import OHLCError
 _BASE_URL = "https://api.kraken.com/0/public/OHLC"
 _TIMEOUT_SECONDS = 15
 
-# The ten EUR-quoted assets of data/ohlc-full, transcribed from the snapshot register
-# (docs/reference/kraken-snapshot-register.md) -- display asset -> Kraken pair key.
+# Keyed by FULL symbol, not by base: ETH and SOL each carry two quotes, which a base key cannot
+# express. Kraken spells bitcoin XBT in both the pair key and the wsname; our symbols say BTC.
 PAIR_KEYS: dict[str, str] = {
-    "BTC": "XXBTZEUR",
-    "ETH": "XETHZEUR",
-    "SOL": "SOLEUR",
-    "XRP": "XXRPZEUR",
-    "ADA": "ADAEUR",
-    "LINK": "LINKEUR",
-    "DOGE": "XDGEUR",
-    "LTC": "XLTCZEUR",
-    "DOT": "DOTEUR",
-    "AVAX": "AVAXEUR",
+    "BTC/EUR": "XXBTZEUR",
+    "ETH/EUR": "XETHZEUR",
+    "SOL/EUR": "SOLEUR",
+    "XRP/EUR": "XXRPZEUR",
+    "ADA/EUR": "ADAEUR",
+    "LINK/EUR": "LINKEUR",
+    "DOGE/EUR": "XDGEUR",
+    "LTC/EUR": "XLTCZEUR",
+    "DOT/EUR": "DOTEUR",
+    "AVAX/EUR": "AVAXEUR",
+    "ETH/BTC": "XETHXXBT",
+    "SOL/BTC": "SOLXBT",
 }
 
 
