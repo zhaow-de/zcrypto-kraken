@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import os
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
+
+import pytest
 
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, exec_dir
 from cli.engine.venue import VenueStatus
@@ -287,3 +290,60 @@ def test_the_reported_snapshot_age_is_not_clamped_when_negative(tmp_path):
     gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=future)
     v = gate.evaluate(NOW)
     assert v.inputs["venue_snapshot_age_seconds"] == -5.0
+
+
+# --- fix round 2 -------------------------------------------------------------------------------
+# The round-1 kill/restart-hold fix used `os.path.lexists`, whose `except OSError` branch is
+# provably unreachable (CPython's `posixpath.lexists` swallows every OSError into False itself),
+# so the fail-open direction never actually engaged for anything but ENOENT -- a chmod-000
+# directory (EACCES), EIO, ELOOP, or ENAMETOOLONG all still silently read as "no kill switch".
+# FIX 1 replaces it with a direct `os.lstat`, whose exceptions this module now handles itself.
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+def test_a_chmod_000_directory_reads_the_kill_file_as_present(tmp_path):
+    # `test_an_unreadable_kill_file_refuses` (round 1) used a broken symlink, which `lexists`
+    # already handled correctly -- it does not prove the `except OSError` branch is reachable at
+    # all. A chmod-000 exec dir does: `os.lstat` on the kill file raises PermissionError, which
+    # round 1's `lexists`-based code silently swallowed to False. It also makes `armed` read
+    # absent (via the SAME denied directory), so checking only `level == NONE` would not tell
+    # whether the kill-specific fail-open logic engaged, or whether `arm_file_absent` alone was
+    # doing the work -- assert the reason directly.
+    gate = _all_clear(tmp_path)
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    exec_dir(tmp_path).chmod(0o000)
+    try:
+        v = gate.evaluate(NOW)
+    finally:
+        exec_dir(tmp_path).chmod(0o755)  # restore so tmp_path's own cleanup can remove it
+    assert v.level == GateLevel.NONE
+    assert "kill_switch" in v.reasons
+
+
+def test_a_tzinfo_with_no_utcoffset_refuses_rather_than_raising(tmp_path):
+    # Python defines "naive" as `tzinfo is None OR utcoffset() is None`. Round 1's guard checked
+    # only `tzinfo is None`, so a reader whose `observed_at` carries a tzinfo object that itself
+    # returns None from `utcoffset()` is still naive by Python's own rule and still raises the
+    # identical `TypeError: can't subtract offset-naive and offset-aware datetimes` the guard was
+    # meant to close off.
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True)
+    (d / ARM_FILE).touch()
+
+    class _NoOffsetTzinfo(tzinfo):
+        def utcoffset(self, dt):
+            return None
+
+        def dst(self, dt):
+            return None
+
+        def tzname(self, dt):
+            return None
+
+    def broken_tz(*, now, opener=None):
+        return VenueStatus(status="online", ok=True, observed_at=datetime(2026, 8, 11, 12, 0, tzinfo=_NoOffsetTzinfo()))
+
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=broken_tz)
+    v = gate.evaluate(NOW)  # must not raise
+    assert v.level == GateLevel.NONE
+    assert "venue_not_online" in v.reasons

@@ -48,8 +48,8 @@ class ExecutionGate:
     Cheap and side-effect-free by construction so that callers evaluate it immediately before
     EVERY submission rather than once per cycle: a resting post-only order that later crosses is a
     second submission decision, taken minutes after cycle entry, by which time the arm file, the
-    kill file and the venue may all have changed. The only cost is two/three `Path.exists()` calls
-    plus a venue read that is cached for `snapshot_max_age_seconds`.
+    kill file and the venue may all have changed. The only cost is one `Path.exists()` call plus
+    two `os.lstat()` calls plus a venue read that is cached for `snapshot_max_age_seconds`.
     """
 
     def __init__(
@@ -67,24 +67,35 @@ class ExecutionGate:
         self._snapshot: VenueStatus | None = None
 
     def _present(self, name: str, *, fail_open: bool) -> bool:
-        """Presence of one control file, with the safe error-direction split by what the file
-        MEANS. `fail_open=False` (ARM_FILE): a missing dir, a permission error, a broken symlink
-        all read as "absent" -- the safe direction for a key that must be affirmatively present to
-        arm. `fail_open=True` (KILL_FILE, RESTART_HOLD_FILE): the safe direction is the opposite,
-        because absence is what PERMITS -- "can't tell" must read as "assume present" and refuse,
-        never as "no kill switch". Uses `os.path.lexists` rather than `Path.exists` for the
-        fail_open case: `exists` follows the final symlink, so a broken symlink or a symlink loop
-        reads as absent and silently permits -- `lexists` only asks whether something is there,
-        which a broken link or a loop both satisfy. A whole-directory failure (e.g. the exec dir
-        itself unreadable) still refuses either way, because the arm-file check on that same
-        directory reads absent too.
+        """Presence of one control file. The arm file fails closed by reading ABSENT on any
+        doubt; the kill and restart-hold files fail closed by reading PRESENT on any doubt --
+        opposite directions, both deliberate, because absence is what ARMS the first and PERMITS
+        the second.
+
+        `fail_open=False` (ARM_FILE): `Path.exists()`, `except OSError: return False`. A missing
+        dir, a permission error, a broken symlink -- anything that keeps us from confirming the
+        file is there -- reads as "not armed".
+
+        `fail_open=True` (KILL_FILE, RESTART_HOLD_FILE): a direct `os.lstat()`, not
+        `Path.exists()`/`os.path.lexists()` -- both of those swallow EVERY `OSError` (EACCES,
+        EIO, ELOOP, ENAMETOOLONG, a stale mount, a chmod-000 parent) into `False`, which is
+        exactly the wrong direction for a fail-open file: "can't tell" would silently read as "no
+        kill switch" and permit. Only `FileNotFoundError` -- the file genuinely is not there --
+        reads as absent; every other `OSError` reads as present and refuses.
         """
+        path = self._dir / name
+        if not fail_open:
+            try:
+                return path.exists()
+            except OSError:
+                return False
         try:
-            if fail_open:
-                return os.path.lexists(self._dir / name)
-            return (self._dir / name).exists()
+            os.lstat(path)
+        except FileNotFoundError:
+            return False
         except OSError:
-            return fail_open
+            return True  # can't tell -> assume present -> refuse
+        return True
 
     def _venue(self, now: datetime) -> VenueStatus:
         snap = self._snapshot
@@ -108,7 +119,12 @@ class ExecutionGate:
         # `TypeError: can't subtract offset-naive and offset-aware datetimes` the instant it meets
         # an aware `now`, in both the age computation below and the cache check above -- the same
         # unhandled-exception-at-a-submission-site problem as a bad type, so the same fallback.
-        if not isinstance(snap, VenueStatus) or snap.observed_at.tzinfo is None:
+        # Python's own definition of naive is `tzinfo is None OR utcoffset() is None` -- a tzinfo
+        # object that itself returns None from utcoffset() is still naive by that rule and still
+        # raises the identical TypeError, so check utcoffset() rather than tzinfo alone; it
+        # subsumes the plain `tzinfo is None` case for free (datetime.utcoffset() returns None
+        # whenever tzinfo is None, without raising).
+        if not isinstance(snap, VenueStatus) or snap.observed_at.utcoffset() is None:
             snap = VenueStatus(status="unreadable", ok=False, observed_at=now)
         self._snapshot = snap
         return snap
