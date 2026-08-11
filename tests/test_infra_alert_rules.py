@@ -189,6 +189,13 @@ NOT_A_FAULT_SIGNAL = {
     # non-online system state) already pages from the capture side via
     # zcrypto-capture-venue-not-online, which reads the daemon's own zcrypto_capture_venue_status_total.
     # A second rule on this engine-side cached copy would only double-page the same event.
+    # NOT covered by that reasoning: cli/engine/execgate.py's venue reader fails CLOSED to
+    # status="unreachable"/"unreadable" on a raise or a garbage return, so an engine-side REST-read
+    # failure parks this gauge at 0 while the venue is genuinely online -- a divergence the
+    # capture-side rule cannot see, since it reads a different series entirely. Registered as a
+    # deferred alert in docs/open-topics/T0018-phase6-build-sequence.md rather than covered here,
+    # because before the first order-submission call site exists "the engine cannot trade" has no
+    # operational meaning yet.
     "zcrypto_exec_venue_ok",
 }
 
