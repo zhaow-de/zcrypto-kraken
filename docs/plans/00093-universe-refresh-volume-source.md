@@ -42,8 +42,9 @@
 | `cli/ohlc/fetch.py` | *modify* — `PAIR_KEYS` re-keyed by full symbol, plus the two BTC-quoted legs |
 | `cli/ohlc/reach.py` | *modify* — quote-aware discovery, read/write paths, manifest entries; correct a false docstring |
 | `cli/data/rebuild.py` | *modify* — the `CANDIDATE_SYMBOLS` presence guard in `_refresh_universe` |
-| `cli/capture/command.py` | *modify* — resolve the newest stamped universe set, legacy fallback |
-| `cli/data/sync.py` or its caller | *modify* — publish the stamped sibling via `push_hot`'s existing `extra_sets` |
+| `cli/capture/command.py` | *modify* — resolve the newest stamped universe set, legacy fallback; `--pairs` help text |
+| `README.md` | *modify* — the `--pairs` Usage row, in step with the help text (`readme-usage.md`) |
+| `tests/test_data_sync.py` | *tests only* — the publish path is already wired via `push_hot`'s `extra_sets` (Task 5); no production sync change |
 | `tests/test_ohlc_reach.py`, `tests/test_data_rebuild.py`, `tests/test_capture_command.py`, `tests/test_data_sync.py` | *modify* — find the real filenames first; do not create parallel files |
 
 ---
@@ -61,7 +62,7 @@
 - [ ] **Step 1: Find every consumer before changing anything**
 
 Run: `grep -rn 'PAIR_KEYS' cli/ tests/`
-Record the hits and route each to its step. Expected importers of `cli.ohlc.fetch`: `cli/engine/store.py` (→ Steps 5–6; it re-exports the map to `cycle.py`, `soak.py` and the engine package root, so every `cli/engine/` hit is this one map by another path), `cli/ohlc/reach.py` (→ Task 2, per Step 8), and `tests/test_tape_bars_rest_control.py` (→ Step 7, alongside `tests/test_engine_store.py`). Any consumer NOT already named here: stop and report before editing anything — it is outside the measured blast radius.
+Record the hits and route each to its step. Expected importers of `cli.ohlc.fetch`: `cli/engine/store.py` (→ Steps 5–6; it re-exports the map to `cycle.py`, `soak.py` and the engine package root, so every `cli/engine/` hit is this one map by another path), `cli/ohlc/reach.py` (→ Task 2, per Step 8), and `tests/test_tape_bars_rest_control.py` (→ Step 7, alongside `tests/test_engine_store.py`). The grep also hits `tests/test_engine_metrics.py` and `tests/test_engine_cycle.py`, which import the ENGINE map from `cli.engine.store` at module level — expected to stay green under the derivation (same ten base-keyed entries); verify rather than assume, as with Step 7. Any consumer NOT already named here: stop and report before editing anything — it is outside the measured blast radius.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -469,7 +470,7 @@ def resolve_ohlc_source(data_root: Path) -> Path:
     return fallback
 ```
 
-In `_refresh_universe`, replace `ohlc_root = _require_ohlc_full(ctx)` with `ohlc_root = resolve_ohlc_source(ctx.data_root)`. The fallback branch keeps `_require_ohlc_full`'s refusal contract (same `DataSyncError`, same message shape), so the existing no-source refusal test stays green. Do not edit `_require_ohlc_full` or `_rebuild_ohlc_reach`.
+`cli/data/rebuild.py` does not import `re` today — add the import. In `_refresh_universe`, replace `ohlc_root = _require_ohlc_full(ctx)` with `ohlc_root = resolve_ohlc_source(ctx.data_root)`. The fallback branch keeps `_require_ohlc_full`'s refusal contract (same `DataSyncError`, same message shape), so the existing no-source refusal test stays green. Do not edit `_require_ohlc_full` or `_rebuild_ohlc_reach`.
 
 - [ ] **Step 4: Correct `_refresh_universe`'s docstring**
 
@@ -496,7 +497,8 @@ git commit -m "feat(data): resolve the newest stamped reach set as the universe 
 ### Task 4: Resolve the newest stamped universe set
 
 **Files:**
-- Modify: `cli/capture/command.py` (`UNIVERSE_RELATIVE_PATH` and `_default_pairs`'s caller)
+- Modify: `cli/capture/command.py` (`UNIVERSE_RELATIVE_PATH`, `_default_pairs`'s caller, and the `--pairs` help text)
+- Modify: `README.md` (the `--pairs` Usage row — same change, per `readme-usage.md`)
 - Test: the existing capture-command test file
 
 **Interfaces:**
@@ -530,7 +532,7 @@ def test_a_stray_non_stamp_directory_never_outranks_a_dated_set(tmp_path):
     assert resolve_universe_path(tmp_path).parent.name == "universe-20260811"
 
 
-def test_a_stamped_set_without_the_json_does_not_mask_an_older_complete_one(tmp_path):
+def test_a_stamped_set_without_the_json_does_not_mask_an_older_complete_one(tmp_path, caplog):
     """The resolver's own silent-shrink case: degrading to an OLDER universe without saying so is
     the same defect class as a narrower source. A newer directory that lacks the artifact must not
     be chosen, and the older complete one must be."""
@@ -544,7 +546,7 @@ def test_a_stamped_set_without_the_json_does_not_mask_an_older_complete_one(tmp_
     assert any("universe-20260811" in r.message for r in caplog.records)
 ```
 
-Take `caplog` as a parameter. The implementation must therefore log an ERROR naming the skipped directory — see the spec's verification bullet, which rules quiet degradation out explicitly.
+The implementation must log an ERROR naming the skipped directory — see the spec's verification bullet, which rules quiet degradation out explicitly.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -589,20 +591,26 @@ def resolve_universe_path(data_root: Path) -> Path:
     return data_root / UNIVERSE_RELATIVE_PATH
 ```
 
+`cli/capture/command.py` does not import `re` today — add the import.
+
 - [ ] **Step 4: Point the caller at it**
 
 Replace `_default_pairs((cfg.data_dir or Path("data")) / UNIVERSE_RELATIVE_PATH)` with
 `_default_pairs(resolve_universe_path(cfg.data_dir or Path("data")))`.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 5: Update the two operator-facing statements the resolver makes false**
+
+The `--pairs` help text says "Defaults to the EUR majors from data/universe/point-in-time-universe.json", and `README.md`'s `--pairs` Usage row repeats it — both name the fixed legacy path this task supersedes. Reword both to the resolution rule, operator-facing (no spec serials, no topic IDs in the help text): defaults to the EUR majors from the newest stamped `data/universe-<stamp>/point-in-time-universe.json`, falling back to `data/universe/point-in-time-universe.json`. The README row rides in this same commit (`readme-usage.md`).
+
+- [ ] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/ -k 'resolve_universe or default_pairs or capture_command' -v`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add cli/capture/command.py tests/
+git add cli/capture/command.py README.md tests/
 git commit -m "feat(capture): resolve the newest stamped universe set, legacy as fallback"
 ```
 
@@ -682,7 +690,7 @@ git commit -m "test(data): pin the stamped universe set's additive publication"
 
 - [ ] **Step 3: Decisions-log entries**, `[iter-<N>]` prefixed, 2–3 options each with `(Decision: N)`: the volume source; the `PAIR_KEYS` key shape; the stamped-set publication versus deleting the hub copy versus a guarded promote command.
 
-- [ ] **Step 4: Update the topics.** T0093 moves to `partial` or `resolved` per what actually landed — the wiring is done here, the *operational sitting* is not. T0024's `pending-capture` remainder is NOT discharged by this branch: it is discharged by the rebuild run, which is attended work after merge. Say so rather than flipping it early.
+- [ ] **Step 4: Update the topics.** T0093 moves to `partial` or `resolved` per what actually landed — the wiring is done here, the *operational sitting* is not. Rewrite T0093's frontmatter `ripe_when` in the same edit: the old wiring-decision trigger is discharged by this very branch, and the registered legacy-fallback remainder's trigger (the first verified stamped publish) moves INTO the frontmatter rather than living only in its bullet. T0024's `pending-capture` remainder is NOT discharged by this branch: it is discharged by the rebuild run, which is attended work after merge. Say so rather than flipping it early.
 
 - [ ] **Step 5: State explicitly that no dataset-catalog change is owed** by the code branch — the reach set's shape changes only when a fresh round is minted, which is the attended sitting.
 
