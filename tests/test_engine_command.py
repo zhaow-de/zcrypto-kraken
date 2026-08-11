@@ -22,8 +22,11 @@ from cli.config import AppConfig, ConfigError, DataConfig, EngineConfig, FetchCo
 from cli.engine import concordance
 from cli.engine.cycle import CycleResult
 from cli.engine.errors import EngineError
+from cli.engine.execgate import GateLevel, GateVerdict
+from cli.engine.execledger import write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import SeedEntry, SeedReport
+from cli.engine.venue import VenueStatus
 from cli.ohlc.dataset import write_parquet
 
 runner = CliRunner()
@@ -131,6 +134,14 @@ def _write_sidecar(journal_dir: Path, cycle_ts: datetime, *, reason: str = "stal
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
+
+
+def _refusing_verdict() -> GateVerdict:
+    return GateVerdict(
+        level=GateLevel.NONE,
+        reasons=("arm_file_absent", "restart_hold"),
+        inputs={"armed_in_config": False, "venue_status": "online"},
+    )
 
 
 def _fake_builder(targets: dict[str, float]):
@@ -536,6 +547,39 @@ def test_report_empty_journal_is_a_zero_streak_not_an_error(tmp_path, monkeypatc
     assert "streak: 0" in out
 
 
+def test_execution_records_do_not_change_the_gate_report(tmp_path, monkeypatch):
+    """Task 5's load-bearing invariant, pinned at the real call sites rather than against
+    `evaluate_gate` directly (which never globs, so a test against it proves nothing): drive
+    `report` -> `_evaluate_journal` -> the `_journal_artifacts` call-site globs -> `evaluate_gate`
+    over a journal of clean days, once with no execution records and once with a refusing verdict
+    written beside every cycle record, and require byte-identical output. If a future call site
+    widens its glob to something that also sweeps up `exec-*.json`, this is the test that catches
+    the streak silently resetting on a deliberate refusal to trade."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    day1 = datetime(2026, 7, 7, tzinfo=UTC)
+    day2 = datetime(2026, 7, 8, tzinfo=UTC)
+    for day in (day1, day2):
+        for hour in (0, 4, 8, 12, 16, 20):
+            _write_success_record(journal, day + timedelta(hours=hour))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: datetime(2026, 7, 8, 21, 0, tzinfo=UTC))
+
+    before = runner.invoke(app, ["engine", "report"])
+    assert before.exit_code == 0, _output(before)
+
+    for day_dir in sorted(journal.glob("20*-*-*")):
+        day = datetime.strptime(day_dir.name, "%Y-%m-%d").replace(tzinfo=UTC)
+        for hour in (0, 4, 8, 12, 16, 20):
+            cycle_ts = day + timedelta(hours=hour)
+            write_exec_record(journal, cycle_ts, _refusing_verdict(), evaluated_at=cycle_ts)
+    assert list(journal.glob("*/exec-*.json")), "fixture wrote no exec records -- the test is vacuous"
+
+    after = runner.invoke(app, ["engine", "report"])
+    assert after.exit_code == 0, _output(after)
+    assert _output(after) == _output(before), "a refusal to trade changed the concordance report -- the streak is no longer immune"
+
+
 # --- the sub-app itself ----------------------------------------------------------------------------
 
 
@@ -708,6 +752,46 @@ def test_run_watchdog_does_nothing_when_the_trader_is_running(tmp_path, monkeypa
 
     assert result.exit_code == 0, _output(result)
     assert exits == []
+
+
+def test_engine_startup_latches_the_restart_hold(tmp_path, monkeypatch):
+    # The hold must land beside the journal (journal_dir.parent), not inside it -- a hold at
+    # journal_dir/exec/restart-hold is where the gate never looks (see execgate.exec_dir), so
+    # the latch would be silently invisible and every other test would still pass.
+    _run_env(monkeypatch, tmp_path, is_running=True)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 0, _output(result)
+    assert (tmp_path / "exec" / "restart-hold").exists(), (
+        "the hold must land beside the journal, not inside it -- a hold the gate cannot see is no hold"
+    )
+
+
+# --- exec-status -------------------------------------------------------------------------------------
+
+
+def test_exec_status_prints_the_level_and_every_reason(tmp_path, monkeypatch):
+    from cli.engine.execgate import exec_dir
+
+    exec_dir(tmp_path).mkdir(parents=True)
+    (exec_dir(tmp_path) / "restart-hold").touch()
+    # --state-dir makes the config's journal_dir irrelevant here; the venue read is stubbed so no
+    # test touches the network. Patch the symbol as imported INTO command.py, not at its source.
+    # The status "stubbed-by-test" is a sentinel no real reader can produce (Kraken's own strings,
+    # or "unreachable"/"unreadable") -- unlike "unreachable" it cannot pass by accident if the
+    # `venue_reader=read_system_status` seam were ever dropped from exec_status, in which case this
+    # test would silently start making a real network call instead of catching the regression.
+    monkeypatch.setattr(
+        "cli.engine.command.read_system_status",
+        lambda *, now, opener=None: VenueStatus(status="stubbed-by-test", ok=False, observed_at=now),
+    )
+    result = runner.invoke(app, ["engine", "exec-status", "--state-dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "level=none" in result.stdout
+    assert "arm_file_absent" in result.stdout
+    assert "restart_hold" in result.stdout
+    assert "venue_status=stubbed-by-test" in result.stdout
 
 
 # --- --journal-dir overrides on replay/report ------------------------------------------------------

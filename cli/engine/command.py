@@ -28,6 +28,8 @@ from cli.config import AppConfig, ConfigError, EngineConfig, load_config
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
+from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
+from cli.engine.execledger import write_exec_record
 from cli.engine.feeders import accumulation_report, decompose_report, load_minimums
 from cli.engine.gate_cache import (
     GateCache,
@@ -41,6 +43,7 @@ from cli.engine.gate_cache import (
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
+from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
@@ -522,6 +525,65 @@ class _CycleGauges:
             self.active_sleeves.set(sum(1 for gross in result.sleeve_gross.values() if gross > 0.0))
 
 
+class _ExecGauges:
+    """The execution envelope's published state. Built on the SAME registry the exporter serves,
+    exactly as `_CycleGauges` is, and updated from the gate's verdict after every cycle.
+
+    `zcrypto_exec_gate_level` is registered EAGERLY and seeded at 0: before anything is evaluated,
+    "nothing may be submitted" is the true state, not an unmeasured claim -- the engine really is
+    refusing. The other presence gauges are eager for the same reason, and `run()` evaluates once
+    at startup so none of them sits at its seeded default: a `kill_tripped` reading 0 while the
+    kill file exists is not a stale gauge, it is a false statement about the safety envelope.
+    `last_evaluation` is LAZY for `_CycleGauges.cycle_duration`'s reason: a published 0 before any
+    evaluation would claim the gate was last read at the Unix epoch, and an absent series is
+    honest where a zero is a lie -- which matters doubly here, since the staleness alert reads
+    this series and a seeded 0 would page instantly on every fresh process.
+    """
+
+    def __init__(self, registry) -> None:
+        self._registry = registry
+        self.gate_level = Gauge(
+            "zcrypto_exec_gate_level",
+            "What the engine may submit right now: 0 = nothing, 1 = reducing orders only, 2 = anything.",
+            registry=registry,
+        )
+        self.armed = Gauge(
+            "zcrypto_exec_armed",
+            "Whether both arming keys are present (the config flag and the arm file on the host).",
+            registry=registry,
+        )
+        self.kill_tripped = Gauge("zcrypto_exec_kill_tripped", "Whether the kill switch file is present.", registry=registry)
+        self.restart_hold = Gauge(
+            "zcrypto_exec_restart_hold",
+            "Whether this process is still held at reducing-only after a restart.",
+            registry=registry,
+        )
+        self.venue_ok = Gauge(
+            "zcrypto_exec_venue_ok", "Whether the last venue reading said the exchange is online.", registry=registry
+        )
+        # The envelope's heartbeat, and the ONLY series that can answer "is the gate still being
+        # evaluated at all". A snapshot-AGE gauge was rejected: evaluations are hours apart and the
+        # snapshot bound is 30 s, so every evaluation re-reads and the age would publish ~0 forever
+        # -- a constant wearing a measurement's clothes. Lazy for `_CycleGauges.cycle_duration`'s
+        # reason: before the first evaluation there is no timestamp to state.
+        self.last_evaluation: Gauge | None = None
+
+    def update(self, verdict: GateVerdict, *, evaluated_at: datetime) -> None:
+        i = verdict.inputs
+        self.gate_level.set(LEVEL_CODE[verdict.level])
+        self.armed.set(1 if (i["armed_in_config"] and i["arm_file"]) else 0)
+        self.kill_tripped.set(1 if i["kill_file"] else 0)
+        self.restart_hold.set(1 if i["restart_hold"] else 0)
+        self.venue_ok.set(1 if i["venue_status"] == "online" else 0)
+        if self.last_evaluation is None:
+            self.last_evaluation = Gauge(
+                "zcrypto_exec_last_evaluation_timestamp_seconds",
+                "Unix timestamp the execution gate was last evaluated.",
+                registry=self._registry,
+            )
+        self.last_evaluation.set(evaluated_at.timestamp())
+
+
 def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:
     """The startup seed for BOTH `zcrypto_engine_cycle_completed_at_seconds` and
     `zcrypto_engine_cycle_success` (spec 00069 D5; the latter cold-review I4): the newest journal
@@ -565,6 +627,9 @@ def run() -> None:
             "node (exec off, journal under the CWD) would run indistinguishably from a healthy one; fix the bind-mount"
         )
     config = _load_engine_config()
+    # Every start latches reduce-only. Deliberately unconditional: an engine that has just come
+    # up must not be able to widen its own permission.
+    write_restart_hold(config.journal_dir.parent, _utc_now())
     if not any(config.store_dir.glob("*/EUR/*.parquet")):
         raise _abort(
             f"store_dir {config.store_dir} is missing or holds no */EUR/*.parquet series -- a node without a store is "
@@ -574,9 +639,11 @@ def run() -> None:
         "engine run: exec_enabled=%s, store_dir=%s, journal_dir=%s", config.exec_enabled, config.store_dir, config.journal_dir
     )
 
-    # Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server, no gauges, no
-    # sink installed -- cycle.py's `_metrics_sink` stays None and every update below is a no-op.
+    # Opt-in exporter (spec 00069 D5): unset ZCRYPTO_METRICS_PORT means no server, no gauges --
+    # but the sink and the execution ledger are installed regardless (see below).
     port = metrics_port_from_env()
+    registry = None
+    cycle_gauges = None
     if port is not None:
         registry = build_registry()
         # Startup seeding reads arbitrary on-disk journal artifacts (_seed_cycle_state ->
@@ -586,15 +653,41 @@ def run() -> None:
         # the engine daemon (spec 00069 D5's isolation invariant; mirrors capture's
         # CaptureCollector registration guard below). Serve process metrics regardless.
         try:
-            gauges = _CycleGauges(registry)
+            cycle_gauges = _CycleGauges(registry)
             completed_at, success = _seed_cycle_state(config.journal_dir)
-            gauges.cycle_completed_at.set(completed_at.timestamp())
+            cycle_gauges.cycle_completed_at.set(completed_at.timestamp())
             if success is not None:  # None => empty/unreadable journal -- leave cycle_success absent
-                gauges.seed_cycle_success(success)
-            set_metrics_sink(gauges.update)
+                cycle_gauges.seed_cycle_success(success)
         except Exception:
             logger.exception("engine metrics setup failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
+
+    # Built regardless of telemetry: the ledger is a forensic artifact, not a metric. venue_reader
+    # is passed explicitly (rather than relying on the class's default) so a test can substitute it
+    # via `monkeypatch.setattr(command, "read_system_status", ...)` -- see exec_status below.
+    gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
+    exec_gauges = _ExecGauges(registry) if registry is not None else None
+
+    def _sink(result, completed_at, duration_seconds):
+        # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
+        # either gauge group is touched, so a raising gauge update can never cost this cycle's record.
+        verdict = gate.evaluate(completed_at)
+        write_exec_record(config.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
+        if cycle_gauges is not None:
+            cycle_gauges.update(result, completed_at, duration_seconds)
+        if exec_gauges is not None:
+            exec_gauges.update(verdict, evaluated_at=completed_at)
+
+    set_metrics_sink(_sink)
+
+    # One evaluation at startup so no latch gauge sits at its seeded default. Inside the same
+    # isolation the sink enjoys: telemetry must never be able to stop the engine from starting.
+    if exec_gauges is not None:
+        try:
+            now = _utc_now()
+            exec_gauges.update(gate.evaluate(now), evaluated_at=now)
+        except Exception:  # noqa: BLE001 -- telemetry must never prevent the engine from starting
+            logger.exception("startup execution-gate evaluation failed")
 
     # Lazy: cli.engine.node imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
     from cli.engine.node import build_shadow_node
@@ -1105,3 +1198,28 @@ def accum_replay(
     except EngineError as exc:
         raise _abort(str(exc)) from exc
     _emit_report(text, payload, as_json=json_out)
+
+
+@engine_app.command(name="exec-status")
+def exec_status(
+    state_dir: Optional[Path] = typer.Option(
+        None,
+        "--state-dir",
+        help="Engine state directory to read the control files from. Defaults to the configured journal_dir's parent.",
+    ),
+) -> None:
+    """Report whether the engine may submit orders right now, and every input that decided it.
+
+    Remote telemetry can only say THAT the engine is disarmed, never WHICH key is missing -- `zcrypto_exec_gate_level` carries a number, and `zcrypto_exec_armed` conflates its two arming keys into one gauge. This command reads the same gate and prints every reason and every input, for the deployment checklist to read on the host."""
+    config = _load_engine_config()
+    root = state_dir if state_dir is not None else config.journal_dir.parent
+    gate = ExecutionGate(
+        armed_in_config=config.exec_armed,
+        state_dir=root,
+        venue_reader=read_system_status,  # explicit so tests can substitute it (no --no-venue-check flag)
+    )
+    verdict = gate.evaluate(_utc_now())
+    typer.echo(f"level={verdict.level}")
+    typer.echo(f"reasons={','.join(verdict.reasons) or '-'}")
+    for key, value in sorted(verdict.inputs.items()):
+        typer.echo(f"  {key}={value}")

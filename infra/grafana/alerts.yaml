@@ -618,6 +618,142 @@ rules:
     notification_settings:
       receiver: logs
 
+  # The execution safety envelope (cli/engine/execgate.py, `_ExecGauges` in cli/engine/command.py):
+  # three rules over the six `zcrypto_exec_*` gauges. `reasons` never reaches Grafana and
+  # `zcrypto_exec_armed` deliberately conflates its two arming keys into one gauge, so every
+  # summary below sends the responder to `zcrypto engine exec-status` on the engine host for the
+  # breakdown remote telemetry cannot show. `zcrypto_exec_gate_level`, `zcrypto_exec_venue_ok` and
+  # `zcrypto_exec_restart_hold` are deliberately NOT alerted here -- every value each can take is
+  # legitimate on its own (see the panel descriptions on the Engine board's execution-envelope row
+  # and NOT_A_FAULT_SIGNAL in tests/test_infra_alert_rules.py), and venue_ok's underlying condition
+  # already has a page from the capture side (zcrypto-capture-venue-not-online).
+  - uid: zcrypto-engine-exec-armed-too-long
+    title: "Engine · order submission has been armed for over six hours"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # min_over_time == 1 means it was armed for the WHOLE window: a single dip to 0 (a disarm)
+    # clears it. `> 0` on an average would fire on a brief, correct probe window.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 21600, to: 0}  # 6h, matching the min_over_time window below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min_over_time(zcrypto_exec_armed{host="zcrypto"}[6h])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
+    # OK, not Alerting: absence means the engine itself is down, which zcrypto-engine-cycle-stale
+    # already pages on. This rule's job is the ARMED-too-long condition specifically, and a fresh
+    # process (or one between restarts) legitimately starts disarmed with no history to alarm on.
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "The engine has been armed to submit orders continuously for more than six hours. Arming is expected only inside an attended probe window and is normally removed when it ends, so this most likely means an arm was left on. Deleting the arm file on the engine host disarms it immediately, with no deploy and no restart. This is not itself an incident — several other conditions must also be permissive before anything could be submitted — but an engine left armed removes one of the two keys that are supposed to stand between a mistake and real money. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-armed-too-long"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "52"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-exec-kill-tripped
+    title: "Engine · the execution kill switch is engaged"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_exec_kill_tripped{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # stands in for == 1 -- this file's evaluators are gt/lt only
+    # OK, not Alerting: absence means the engine itself is down (owned by zcrypto-engine-cycle-stale),
+    # and this eager gauge always carries a real 0/1 sample once the engine has started.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The execution kill switch is engaged, so the engine will refuse to submit any order until it is removed. This is a deliberate state and firing does not mean anything is broken — the alert exists because the failure mode is forgetting, not tripping. If the switch was engaged deliberately and the reason still holds, silence this for the expected duration; otherwise remove the kill file on the engine host. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-kill-tripped"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "53"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-exec-not-evaluated
+    title: "Engine · the execution safety gate has stopped being evaluated"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The rule that catches the one failure nothing else can see: a regression that drops the
+    # gate evaluation from the cycle path freezes all six gauges at their last values, cycle
+    # telemetry stays healthy, and every dashboard reads green while the envelope is gone.
+    # Follows zcrypto-gate-exporter-stale's shape. Threshold = one cycle interval plus slack.
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - zcrypto_exec_last_evaluation_timestamp_seconds{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [17100]}  # 4h45m
+    # noDataState MUST be Alerting: a gate that never published at all is this rule's worst
+    # case, not an exemption from it.
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The engine has not evaluated its execution safety gate for more than four and three quarter hours, so every published value describing whether it may trade is frozen at whatever it last read. Nothing else reports this: the cycle metrics can look perfectly healthy while the safety gate is no longer consulted at all, and a stale reading of `disarmed` is indistinguishable from a live one. Check that cycles are still completing, then read the current state directly on the engine host with the exec-status command rather than trusting the dashboard. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-not-evaluated"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "56"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas

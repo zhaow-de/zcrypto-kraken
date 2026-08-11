@@ -18,8 +18,9 @@ import cli.engine.command as command
 import cli.engine.cycle as cycle
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
-from cli.engine.command import _CycleGauges, _seed_completed_at
+from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at
 from cli.engine.cycle import CycleResult, run_cycle
+from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS
 from cli.obs.metrics import METRICS_PORT_ENV_VAR
@@ -35,15 +36,10 @@ H4_LAST = CYCLE_TS - timedelta(hours=4)
 DAILY_LAST = datetime(2026, 7, 9, tzinfo=UTC)
 N_H4, N_DAILY = 6, 4
 TARGETS = {asset: round(0.1 * (i + 1), 3) for i, asset in enumerate(ASSETS)}
+NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
-
-@pytest.fixture(autouse=True)
-def _reset_metrics_sink():
-    """`cycle._metrics_sink` is module-level global state -- leaking a test's sink into the next
-    test (or into an unrelated test file sharing this process) would be a real isolation bug of
-    its own. Reset it unconditionally after every test in this file."""
-    yield
-    cycle.set_metrics_sink(None)
+# `_reset_metrics_sink` (cycle._metrics_sink reset after every test) now lives in tests/conftest.py
+# so every file in the suite is protected, not just this one.
 
 
 def _base(asset: str) -> float:
@@ -655,6 +651,68 @@ def test_seed_cycle_state_returns_none_success_when_the_journal_is_empty(tmp_pat
     assert success is None
 
 
+# --- command.py: _ExecGauges -------------------------------------------------------------------------
+
+
+def test_exec_gauges_publish_the_verdict():
+    reg = CollectorRegistry()
+    g = _ExecGauges(reg)
+    g.update(
+        GateVerdict(
+            level=GateLevel.REDUCE_ONLY,
+            reasons=("restart_hold",),
+            inputs={
+                "armed_in_config": True,
+                "arm_file": True,
+                "kill_file": False,
+                "restart_hold": True,
+                "venue_status": "online",
+                "venue_snapshot_age_seconds": 4.0,
+            },
+        ),
+        evaluated_at=NOW,
+    )
+    assert reg.get_sample_value("zcrypto_exec_gate_level") == 1
+    assert reg.get_sample_value("zcrypto_exec_armed") == 1
+    assert reg.get_sample_value("zcrypto_exec_kill_tripped") == 0
+    assert reg.get_sample_value("zcrypto_exec_restart_hold") == 1
+    assert reg.get_sample_value("zcrypto_exec_venue_ok") == 1
+    assert reg.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == NOW.timestamp()
+
+
+def test_armed_requires_BOTH_keys():
+    for cfg_armed, file_armed in ((True, False), (False, True), (False, False)):
+        reg = CollectorRegistry()
+        _ExecGauges(reg).update(
+            GateVerdict(
+                level=GateLevel.NONE,
+                reasons=("x",),
+                inputs={
+                    "armed_in_config": cfg_armed,
+                    "arm_file": file_armed,
+                    "kill_file": False,
+                    "restart_hold": False,
+                    "venue_status": "online",
+                    "venue_snapshot_age_seconds": 0.0,
+                },
+            ),
+            evaluated_at=NOW,
+        )
+        assert reg.get_sample_value("zcrypto_exec_armed") == 0
+
+
+def test_the_heartbeat_series_is_absent_until_an_evaluation_exists():
+    # `_CycleGauges` precedent: an absent series is honest, a published 0 is a claim. Before any
+    # venue read, "the snapshot is 0 seconds old" would assert a reading that never happened.
+    reg = CollectorRegistry()
+    _ExecGauges(reg)  # constructed, never updated
+    assert reg.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") is None
+    # gate_level seeds at 0 = "nothing may be submitted", which is true of a process that has not
+    # evaluated anything yet. The other presence gauges also seed at 0, which is NOT necessarily
+    # true -- hence the startup evaluation in run().
+    assert reg.get_sample_value("zcrypto_exec_gate_level") == 0
+
+
 # --- run(): opt-in wiring ---------------------------------------------------------------------------
 
 
@@ -687,12 +745,46 @@ def _patch_engine_config(monkeypatch, tmp_path: Path) -> EngineConfig:
     return cfg.engine
 
 
+class _StubGate:
+    """Replaces `ExecutionGate` for every `run()` test in this file: the gate's own logic (venue
+    reads, control-file presence, restart hold) is proven exhaustively in
+    tests/test_engine_execgate.py, so these tests only need a canned, network-free verdict to
+    exercise the WIRING `run()` builds around it -- the sink it installs, the gauges it updates,
+    the ledger it writes. `instances` records every construction so a test can pin the args `run()`
+    passed (e.g. `state_dir` -- Task 4's exact silent-failure shape: `journal_dir` instead of
+    `journal_dir.parent` would leave the hold permanently invisible with every other test green)."""
+
+    instances: list["_StubGate"] = []
+
+    def __init__(self, *, armed_in_config, state_dir, venue_reader=None):
+        self.armed_in_config = armed_in_config
+        self.state_dir = state_dir
+        self.venue_reader = venue_reader
+        _StubGate.instances.append(self)
+
+    def evaluate(self, now):
+        return GateVerdict(
+            level=GateLevel.REDUCE_ONLY,
+            reasons=("restart_hold",),
+            inputs={
+                "armed_in_config": self.armed_in_config,
+                "arm_file": False,
+                "kill_file": False,
+                "restart_hold": True,
+                "venue_status": "online",
+                "venue_snapshot_age_seconds": 0.0,
+            },
+        )
+
+
 def _run_env(monkeypatch, tmp_path):
     engine_cfg = _patch_engine_config(monkeypatch, tmp_path)
     (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)
     (engine_cfg.store_dir / "BTC" / "EUR" / "240.parquet").write_bytes(b"")  # never read; the node is stubbed
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
+    _StubGate.instances.clear()
+    monkeypatch.setattr(command, "ExecutionGate", _StubGate)  # no live venue read in these tests
     return engine_cfg
 
 
@@ -786,3 +878,153 @@ def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2.0) as resp:
         body = resp.read().decode()
     assert "process_resident_memory_bytes" in body  # process metrics still serve
+
+
+# --- run(): the sink's exec-envelope half (spec 00088 T6) --------------------------------------------
+# `_ExecGauges.update` is tested above with hand-built verdicts, but the closure `run()` installs is
+# the ledger's only production writer and `cycle.py::_update_metrics` swallows its exceptions by
+# design -- so a broken composition (wrong journal_dir, a swapped state_dir, the update guarded by
+# the wrong None-check) fails SILENTLY in production. These tests drive that closure directly.
+
+
+def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, monkeypatch):
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    engine_cfg = _run_env(monkeypatch, tmp_path)
+
+    completed_at = CYCLE_TS + timedelta(minutes=3)
+    result = CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json"),
+        sidecar_path=None,
+        targets=dict(TARGETS),
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+    )
+
+    def _run_and_complete_a_cycle():
+        cycle._metrics_sink(result, completed_at, 30.0)  # the same call cycle.py makes post-artifact
+
+    monkeypatch.setattr(
+        "cli.engine.node.build_shadow_node",
+        lambda config: types.SimpleNamespace(
+            _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
+            trader=types.SimpleNamespace(is_running=True),
+            run=_run_and_complete_a_cycle,
+            dispose=lambda: None,
+        ),
+    )
+
+    cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    (gate_instance,) = _StubGate.instances
+    assert gate_instance.state_dir == engine_cfg.journal_dir.parent  # Task 4's exact silent-fail shape
+    # run() passes venue_reader explicitly rather than relying on ExecutionGate's default, so
+    # `monkeypatch.setattr(command, "read_system_status", ...)` is a working seam for tests.
+    assert gate_instance.venue_reader is command.read_system_status
+    assert list((engine_cfg.journal_dir / f"{CYCLE_TS:%Y-%m-%d}").glob("exec-*.json")), "the sink never wrote an exec record"
+    # the startup evaluation alone -- before the cycle above ever ran -- must already have
+    # published a truthful restart hold, or a kill switch tripped across a restart would resolve
+    # the alert for up to 4h until the next cycle completes.
+    assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
+
+
+def test_the_startup_evaluation_alone_seeds_the_latch_gauges(tmp_path, monkeypatch):
+    # Isolates the startup-evaluation property from the sink: no cycle ever completes here (the
+    # node's run() is the file's ordinary no-op stub), so if run() dropped the startup evaluation
+    # every latch gauge would sit at its seeded 0 for up to 4h -- a kill switch engaged across a
+    # restart would read zcrypto_exec_kill_tripped=0, resolving the alert, until the next cycle.
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    _run_env(monkeypatch, tmp_path)  # _fake_node(): run() is a no-op, no cycle ever completes
+
+    cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
+    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") is not None
+
+
+class _RaisingGate:
+    """Guard-proving probe for the startup-evaluation try/except in run(): a guard is unproven
+    until the defect it names is constructed and seen to trip it. `evaluate()` always raises, so
+    this is the exact failure the wrap exists to isolate -- a broken gate at startup must log, not
+    stop the engine from starting."""
+
+    def __init__(self, *, armed_in_config, state_dir, venue_reader=None):
+        pass
+
+    def evaluate(self, now):
+        raise RuntimeError("gate boom")
+
+
+def test_a_raising_startup_evaluation_never_prevents_the_engine_from_starting(tmp_path, monkeypatch, caplog):
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    _run_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(command, "ExecutionGate", _RaisingGate)  # overrides _run_env's _StubGate
+
+    with caplog.at_level("ERROR"):
+        cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
+    assert registry.get_sample_value("zcrypto_exec_gate_level") == 0  # seeded default, never reached
+
+
+def test_the_exec_ledger_writes_even_when_the_metrics_port_is_unset(tmp_path, monkeypatch):
+    # THE property this task exists to fix: a manual `zcrypto engine run` on the host never sets
+    # ZCRYPTO_METRICS_PORT, and the pre-fix code installed the sink INSIDE `if port is not None:` --
+    # so a misconfigured/manual engine would journal cycles with no execution record and no error.
+    # No registry is built here at all (build_registry/start_metrics_server are left unpatched and
+    # must never be called), so this also pins that the gauge half stays correctly inert.
+    monkeypatch.delenv(METRICS_PORT_ENV_VAR, raising=False)
+    registry_calls = []
+    monkeypatch.setattr(command, "build_registry", lambda: registry_calls.append(1) or CollectorRegistry())
+    engine_cfg = _run_env(monkeypatch, tmp_path)
+
+    completed_at = CYCLE_TS + timedelta(minutes=3)
+    result = CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json"),
+        sidecar_path=None,
+        targets=dict(TARGETS),
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+    )
+
+    def _run_and_complete_a_cycle():
+        cycle._metrics_sink(result, completed_at, 30.0)
+
+    monkeypatch.setattr(
+        "cli.engine.node.build_shadow_node",
+        lambda config: types.SimpleNamespace(
+            _config=types.SimpleNamespace(timeout_connection=1.5, timeout_reconciliation=2.0),
+            trader=types.SimpleNamespace(is_running=True),
+            run=_run_and_complete_a_cycle,
+            dispose=lambda: None,
+        ),
+    )
+
+    cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert registry_calls == [], "no registry may be built when the metrics port is unset"
+    assert list((engine_cfg.journal_dir / f"{CYCLE_TS:%Y-%m-%d}").glob("exec-*.json")), (
+        "the ledger must not be a side effect of telemetry being switched on"
+    )

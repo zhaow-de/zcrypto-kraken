@@ -1341,6 +1341,460 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Execution safety envelope",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      }
+    },
+    {
+      "id": 51,
+      "type": "stat",
+      "title": "Execution gate level",
+      "description": "What the engine may submit right now, decoded from the raw 0/1/2 the gate publishes: 0 = nothing may be submitted, 1 = reducing orders only, 2 = anything. This is the SUMMARY the gate computed from the four inputs beside it (armed, kill switch, restart hold, venue) -- it says THAT the envelope sits at a given level, never WHICH input put it there, because `reasons` never reaches Grafana and this board cannot show it. Read `zcrypto engine exec-status` on the engine host for the full breakdown. No alert reads this tile directly -- the two conditions that matter most, an unexpected arm and a tripped kill switch, have their own rules on the tiles beside it. Absence here means the exporter itself is gone, the same fault the cycle-age reading at the top of this board covers. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 50
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_gate_level{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · gate level",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NOTHING MAY SUBMIT",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "REDUCING ORDERS ONLY",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "2": {
+                  "text": "ANYTHING MAY SUBMIT",
+                  "color": "orange",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO GATE DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 52,
+      "type": "stat",
+      "title": "Order submission armed",
+      "description": "Whether BOTH arming keys are present: the `armed` config flag and the arm file on the engine host. Deliberately conflated into one gauge -- this tile can say THAT the engine is armed or disarmed, never WHICH of the two keys is set, so `zcrypto engine exec-status` on the host is the next step whenever this needs explaining. Pages after six continuous hours armed, because arming is expected only inside an attended probe window and is normally removed when the window ends -- an armed reading is not itself an incident, but it removes one of the two keys standing between a mistake and real money. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-armed-too-long. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 50
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_armed{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "armed",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DISARMED",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "ARMED",
+                  "color": "orange",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO ARM DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 53,
+      "type": "stat",
+      "title": "Execution kill switch",
+      "description": "Whether the kill-switch file is present on the engine host. TRIPPED means the engine refuses every order regardless of any other reading on this row. This is a deliberate control, not a fault by itself -- deleting the kill file on the engine host clears it immediately, with no deploy and no restart. The alert beside it pages after 5 minutes tripped, because the failure mode it guards against is forgetting to remove the file, not tripping it. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-kill-tripped. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 50
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_kill_tripped{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "kill switch",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NOT TRIPPED",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "TRIPPED",
+                  "color": "blue",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO KILL-SWITCH DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 54,
+      "type": "stat",
+      "title": "Restart hold (reduce-only latch)",
+      "description": "Whether this process is still latched to reduce-only after its most recent restart. Written unconditionally on every engine start and cleared only by a human -- nothing in the gate clears it on its own. HELD is the expected reading immediately after any restart (a converge, the watchdog, a reboot). No alert reads this tile directly; it is one of the four inputs behind the gate-level reading beside it. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 55
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_restart_hold{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · restart hold",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "CLEARED",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "HELD AT REDUCE-ONLY",
+                  "color": "blue",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO HOLD DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 55,
+      "type": "stat",
+      "title": "Venue status — last cached reading",
+      "description": "Whether the engine's own last read of the Kraken system status said the venue is online -- cached for up to 30 seconds, so this can lag the capture board's own venue reading by that much. NOT ONLINE forces the gate level to 0 regardless of arming. This is a gating INPUT, not the venue alert itself: `Capture · Kraken reports the venue is not online` already pages on the underlying condition from the capture side, so this tile carries no alert of its own -- one would only double-page the same event. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 55
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_venue_ok{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · venue ok",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NOT ONLINE",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "ONLINE",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO VENUE DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 56,
+      "type": "stat",
+      "title": "Gate evaluation heartbeat",
+      "description": "How long since the execution gate was last evaluated -- the heartbeat that makes every other tile on this row trustworthy. The gate runs at process start and after every cycle, roughly four-hourly, so a healthy reading tracks the cycle-age reading at the top of this board. If this stops advancing, EVERY gauge on this row freezes at its last value: cycle telemetry can stay perfectly healthy while the safety envelope is silently no longer being read at all. Pages above 17100s (4h45m) after `for: 10m`, including on absence -- a gate that never published at all is this alert's worst case, not an exemption from it. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-not-evaluated. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 55
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_exec_last_evaluation_timestamp_seconds{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "gate age",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 17100
+              }
+            ]
+          },
+          "noValue": "NEVER EVALUATED"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
     }
   ],
   "refresh": "1m",

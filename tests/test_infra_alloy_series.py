@@ -88,6 +88,16 @@ ENGINE_APP_SERIES = [
     # responder reads to see WHICH sleeve moved.
     "zcrypto_engine_sleeve_gross",
     "zcrypto_engine_active_sleeves",
+    # The execution safety envelope's published state (cli/engine/command.py's `_ExecGauges`).
+    # Three are alert-bearing (zcrypto-engine-exec-armed-too-long, -exec-kill-tripped,
+    # -exec-not-evaluated); dropping any of the six from the keep-regex leaves its dashboard panel
+    # permanently NoData and, for the alerted three, the rule unable to ever fire.
+    "zcrypto_exec_gate_level",
+    "zcrypto_exec_armed",
+    "zcrypto_exec_kill_tripped",
+    "zcrypto_exec_venue_ok",
+    "zcrypto_exec_last_evaluation_timestamp_seconds",
+    "zcrypto_exec_restart_hold",
 ]
 LIQUIDATIONS_APP_SERIES = [
     "zcrypto_liquidations_polls_total",

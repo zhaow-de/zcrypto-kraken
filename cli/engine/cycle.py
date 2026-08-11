@@ -50,10 +50,15 @@ _BACKOFF_MAX_SECS = 60.0
 _sleep = time.sleep  # module-level so tests can stub the backoff wait
 _hc_opener = urllib.request.urlopen  # module-level so tests can stub the dead-man's-switch ping
 
-# The engine's metrics-update hook (spec 00069 D5/T4): `run()` installs this exactly when
-# ZCRYPTO_METRICS_PORT is set; None (the default) makes every call below a no-op, so the
-# workstation soak -- and every one-shot subcommand (`cycle`, `replay`, `report`, `soak-check`),
-# none of which ever calls `set_metrics_sink`, since each is a fresh process -- runs unaffected.
+# The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
+# longer depends on ZCRYPTO_METRICS_PORT, because the sink now also writes the execution ledger,
+# which is a forensic artifact rather than telemetry and must not vanish when metrics are off.
+# Only the gauge updates inside it are conditional on a registry existing.
+# None (the default) makes every call below a no-op, so the workstation soak -- and every one-shot
+# subcommand (`cycle`, `replay`, `report`, `soak-check`), none of which ever calls
+# `set_metrics_sink`, since each is a fresh process -- runs unaffected. That last clause is why a
+# one-shot `cycle` journals no execution record; it is registered as a deferral on the phase-6
+# build-sequence topic.
 _metrics_sink = None
 
 

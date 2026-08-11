@@ -268,6 +268,85 @@ Two things this alert deliberately does **not** do. It does not fire when the en
 
 ______________________________________________________________________
 
+<a name="zcrypto-engine-exec-armed-too-long"></a>
+
+## zcrypto-engine-exec-armed-too-long — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · order submission has been armed for over six hours`): `zcrypto_exec_armed` has read 1 continuously for the whole of the last six hours.
+
+### What it means
+
+The engine may submit orders only when BOTH arming keys are present: the `armed` flag baked into its deployed config, and an arm file the operator places on the engine host. `zcrypto_exec_armed` deliberately conflates the two into one 0/1 gauge — remote telemetry can say THAT the engine is armed, never WHICH of the two keys is set. The alert reads `min_over_time(zcrypto_exec_armed[6h]) == 1`: the MINIMUM over the window, not an average, so a single dip to 0 — a disarm at any point — clears the condition; only a gauge that has read 1 at every sample for the whole six hours trips it.
+
+Arming is expected only inside an attended probe window, and is normally removed by the operator when that window ends. This alert exists because the failure mode is forgetting to remove it, not the arming itself — firing does not by itself mean anything went wrong, or that an order was actually submitted: the gate-level reading still needs the kill switch clear, the restart hold cleared, and the venue online before anything could move. But an engine left armed for six unattended hours has quietly removed one of the two keys that are supposed to stand between a mistake and real money, which is worth resolving even when nothing downstream has gone wrong yet.
+
+### What to do
+
+1. **Read the full picture on the engine host**: `zcrypto engine exec-status`. This is the only place `reasons` and the two arming keys are visible separately — the dashboard and this page can show only that the engine is armed, never which key put it there.
+2. **If the probe window is over, remove the arm file.** Deleting it disarms the engine immediately — no deploy, no restart, no engine downtime. `zcrypto_exec_armed` reads 0 on the engine's next evaluation (at most one cycle, roughly four hours), and because the rule reads `min_over_time` over the window, a single 0 sample is enough to drop it — the alert clears at the very next rule evaluation after that disarmed reading lands, not after six more hours have to pass.
+3. **If the probe window is still legitimately open, leave it and let the alert ride.** It re-fires on the same condition every time `for: 15m` re-qualifies, so expect it to keep paging for the length of a long window; that repetition is intentional, not a bug.
+4. **If you did not expect the engine to be armed at all**, treat this as a live safety-envelope breach: read the engine log and the `exec-status` output together, remove the arm file, and confirm nothing was submitted through the same window — there is no order-submission telemetry on this board yet, so check the engine journal and process log directly.
+
+### Retire when
+
+The engine begins arming continuously as its normal operating mode (order submission goes live and stays live). At that point a duration-based "armed too long" rule fires forever, and this rule must be **REPLACED** by one shaped for continuous arming — never silenced in place. Until then, `zcrypto-engine-exec-armed-too-long` retires only if it is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-engine-exec-kill-tripped"></a>
+
+## zcrypto-engine-exec-kill-tripped — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · the execution kill switch is engaged`): `zcrypto_exec_kill_tripped` has read 1 for the last five minutes.
+
+### What it means
+
+The kill file is present on the engine host, which forces the gate level to 0 (nothing may be submitted) regardless of arming, restart hold, or venue state — it is the one input that overrides every other reading. This is a deliberate control, not a fault: the switch exists so a human can refuse all submission immediately, and the alert exists because the failure mode is forgetting the switch is engaged, not the engagement itself. Firing does not mean anything is broken.
+
+### What to do
+
+1. **Read the full picture on the engine host**: `zcrypto engine exec-status`. `reasons` will list `kill_switch` alongside whatever else the gate is currently refusing on — remote telemetry alone cannot show this.
+2. **If the switch was engaged deliberately and the reason still holds**, silence this alert in Grafana for the expected duration rather than letting it keep paging — it re-fires every time `for: 5m` re-qualifies for as long as the file exists.
+3. **If the reason no longer holds, remove the kill file on the engine host.** This clears immediately: no deploy, no restart, no engine downtime.
+4. **If you did not expect the kill switch to be engaged**, that is itself the finding — read the engine log for whatever wrote the file before removing it.
+
+### Retire when
+
+`zcrypto-engine-exec-kill-tripped` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zcrypto-engine-exec-not-evaluated"></a>
+
+## zcrypto-engine-exec-not-evaluated — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · the execution safety gate has stopped being evaluated`): `time() - zcrypto_exec_last_evaluation_timestamp_seconds` has read above 17100 s (4h45m) for 10 minutes, or the series is missing entirely.
+
+### What it means
+
+This is the heartbeat for the whole execution envelope, not a reading of any one input. The gate is evaluated at engine start and again after every cycle, roughly four-hourly, and every one of the six `zcrypto_exec_*` families is only ever updated as a side effect of that evaluation. If the evaluation call is dropped by a regression — anywhere in the cycle path, however unrelated it looks — every one of those six gauges FREEZES at its last published value. Cycle telemetry (`zcrypto_engine_cycle_success`, `zcrypto_engine_cycle_completed_at_seconds`) can keep reading perfectly healthy through this, because nothing about the cycle itself needs to fail for the gate call inside it to be skipped. A stale `disarmed` reading is indistinguishable on this dashboard from a live one — this alert is the only signal that can tell the difference.
+
+`noDataState` is `Alerting` here, deliberately unlike the two rules above: a gate that has NEVER published at all — a fresh converge that never ran, or an exporter that never started — is this rule's worst case, not a state it should stay quiet through. Every other exec gauge already reads a safe default (0 / disarmed) before the first evaluation, so their own absence is comparatively low-stakes; this heartbeat is the one thing that must page on total silence too.
+
+### What to do
+
+1. **Check whether cycles are still completing** (the cycle-staleness alert, the cycle-age panel above this one on the Engine board). If cycles are also stopped, this is a symptom of the engine being down entirely — follow that alert instead, and expect this one to clear once the engine restarts and evaluates once at startup.
+2. **If cycles ARE completing but this still fires**, the gate evaluation call has been dropped from the cycle path specifically — a code regression, not an infrastructure problem. Do not trust any of the other five `zcrypto_exec_*` readings on the board until it is fixed: every one of them is frozen at whatever it last read, and a frozen `disarmed` looks identical to a live one.
+3. **Read the current state directly on the engine host**, never from the dashboard, while this is firing: `zcrypto engine exec-status`. It re-evaluates the gate on the spot rather than reading a possibly-stale published value, and it is the only place `reasons` is visible at all — that field never reaches Grafana, so there is no dashboard reading it could otherwise be checked against.
+4. **Restore evaluation** (a code fix and a redeploy, or a restart if the process itself has wedged without crashing) and confirm the heartbeat panel starts advancing again before considering this resolved — the alert clears itself once a fresh sample lands.
+
+### Retire when
+
+`zcrypto-engine-exec-not-evaluated` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_last_evaluation_timestamp_seconds` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`) — either way the rule can no longer fire and this section describes nothing.
+
+______________________________________________________________________
+
 <a name="zcrypto-ops-tapebars-permanent-gap"></a>
 
 ## zcrypto-ops-tapebars-permanent-gap — ALERT

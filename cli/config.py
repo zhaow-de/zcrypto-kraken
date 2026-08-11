@@ -34,6 +34,10 @@ class EngineConfig:
     journal_dir: Path = Path("data/engine-journal")
     shadow_nav_eur: float = 1000.0
     exec_enabled: bool = False
+    # Whether the engine may SUBMIT. Independent of exec_enabled (which only says the transport is
+    # connected) and, on its own, insufficient: arming also requires the arm file on the host, so
+    # no single change can arm the live trade path.
+    exec_armed: bool = False
     settle_delay_secs: int = 90
 
 
@@ -113,6 +117,12 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
         if not isinstance(value, bool):
             raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_enabled in {config_path} must be a boolean")
         overrides["exec_enabled"] = value
+
+    if "exec_armed" in raw:
+        value = raw["exec_armed"]
+        if not isinstance(value, bool):
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_armed in {config_path} must be a boolean")
+        overrides["exec_armed"] = value
 
     if "settle_delay_secs" in raw:
         value = raw["settle_delay_secs"]
