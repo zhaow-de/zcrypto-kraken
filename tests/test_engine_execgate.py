@@ -347,3 +347,23 @@ def test_a_tzinfo_with_no_utcoffset_refuses_rather_than_raising(tmp_path):
     v = gate.evaluate(NOW)  # must not raise
     assert v.level == GateLevel.NONE
     assert "venue_not_online" in v.reasons
+
+
+# --- fix round 3 -------------------------------------------------------------------------------
+# FIX 1's os.lstat call is a regression risk of its own: os.lstat raises ValueError, not OSError,
+# for a path with an embedded NUL byte (`Path.exists()`/`os.path.lexists()` swallow both, which is
+# how round 1's dead branch masked this too), so the round-2 `except OSError:` alone let a NUL byte
+# in the config-derived state_dir propagate straight out of evaluate().
+
+
+def test_an_embedded_nul_in_the_state_dir_refuses_rather_than_raising(tmp_path):
+    # `os.lstat` raises `ValueError: embedded null character in path`, not `OSError`, so
+    # `except OSError:` alone does not catch it. The path is built from `state_dir` (config-
+    # derived) plus a constant basename, so this can only arise from a malformed state_dir --
+    # low likelihood, but the same "no code path from an error to a permissive verdict" rule
+    # applies, and a raise is not a refusal.
+    bad_dir = str(tmp_path) + "\x00evil"
+    gate = ExecutionGate(armed_in_config=True, state_dir=bad_dir, venue_reader=_venue())
+    v = gate.evaluate(NOW)  # must not raise
+    assert v.level == GateLevel.NONE
+    assert "kill_switch" in v.reasons

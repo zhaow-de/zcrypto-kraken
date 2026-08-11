@@ -77,11 +77,13 @@ class ExecutionGate:
         file is there -- reads as "not armed".
 
         `fail_open=True` (KILL_FILE, RESTART_HOLD_FILE): a direct `os.lstat()`, not
-        `Path.exists()`/`os.path.lexists()` -- both of those swallow EVERY `OSError` (EACCES,
-        EIO, ELOOP, ENAMETOOLONG, a stale mount, a chmod-000 parent) into `False`, which is
-        exactly the wrong direction for a fail-open file: "can't tell" would silently read as "no
-        kill switch" and permit. Only `FileNotFoundError` -- the file genuinely is not there --
-        reads as absent; every other `OSError` reads as present and refuses.
+        `Path.exists()`/`os.path.lexists()` -- both of those swallow EVERY `OSError`/`ValueError`
+        (EACCES, EIO, ELOOP, ENAMETOOLONG, a stale mount, a chmod-000 parent, an embedded NUL)
+        into `False`, which is exactly the wrong direction for a fail-open file: "can't tell"
+        would silently read as "no kill switch" and permit. Only `FileNotFoundError` -- the file
+        genuinely is not there -- reads as absent; every other `OSError`, and `ValueError` (which
+        `os.lstat` raises rather than `OSError` for an embedded NUL byte -- there is no path on
+        disk for that to be a filesystem error about), reads as present and refuses.
         """
         path = self._dir / name
         if not fail_open:
@@ -93,7 +95,7 @@ class ExecutionGate:
             os.lstat(path)
         except FileNotFoundError:
             return False
-        except OSError:
+        except OSError, ValueError:
             return True  # can't tell -> assume present -> refuse
         return True
 
