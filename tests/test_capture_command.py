@@ -73,9 +73,10 @@ def test_legacy_set_is_the_fallback_when_no_stamped_set_exists(tmp_path):
 
 
 def test_a_stray_non_stamp_directory_never_outranks_a_dated_set(tmp_path):
-    """Only exact `universe-<8 digits>` names are candidates -- `universe-backup` sorts
-    lexicographically after every date, so an unvalidated glob would hand it the win forever."""
-    for name in ("universe-20260811", "universe-backup"):
+    """Only exact `universe-<8 digits>` names are candidates -- `universe-backup` and
+    `universe-<stamp>.bak` sort lexicographically after every date, so an unvalidated glob (or a
+    `match`-not-`fullmatch` regression) would hand either the win forever."""
+    for name in ("universe-20260811", "universe-backup", "universe-20260811.bak"):
         d = tmp_path / name
         d.mkdir()
         (d / "point-in-time-universe.json").write_text("{}")

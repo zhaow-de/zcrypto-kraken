@@ -70,6 +70,38 @@ def test_push_extra_sets_pushes_minted_siblings(tmp_path):
     assert (dest / "ohlc-full-20260718/a.parquet").read_bytes() == b"A"
 
 
+def test_a_stamped_set_is_published_via_extra_sets_beside_the_legacy_one(tmp_path):
+    # The minted sibling reaches the hub under its own name; the legacy universe/ set is untouched.
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "universe-20260811/point-in-time-universe.json", b"new")
+    kept = _mk(dest, "universe/point-in-time-universe.json", b"legacy")
+    report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    assert report.new_files == ("universe-20260811/point-in-time-universe.json",)
+    assert kept.read_bytes() == b"legacy"
+
+
+def test_publishing_the_same_stamp_twice_creates_nothing_the_second_time(tmp_path):
+    """Additive by construction: the second push's itemised output names no new files."""
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "universe-20260811/point-in-time-universe.json", b"v1")
+    dest.mkdir()
+    push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    assert report.new_files == () and report.skipped_existing == 1
+
+
+def test_a_new_stamp_never_modifies_a_previously_published_one(tmp_path):
+    data, dest = tmp_path / "data", tmp_path / "dest"
+    _mk(data, "universe-20260811/point-in-time-universe.json", b"v1")
+    dest.mkdir()
+    push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
+    _mk(data, "universe-20260812/point-in-time-universe.json", b"v2")
+    report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260812"])
+    # The itemised output names files under the NEW stamp only, and the old bytes are untouched.
+    assert report.new_files and all(n.startswith("universe-20260812/") for n in report.new_files)
+    assert (dest / "universe-20260811" / "point-in-time-universe.json").read_bytes() == b"v1"
+
+
 def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
     import json
 
