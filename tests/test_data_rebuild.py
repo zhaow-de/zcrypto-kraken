@@ -411,6 +411,65 @@ def test_a_symbol_the_floor_rejects_is_NOT_a_missing_source(tmp_path, monkeypatc
     assert any("below floor" in reason for reason in entries["SOL/BTC"]["reasons"])
 
 
+def test_newest_stamped_source_wins_over_ohlc_full(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    for stamp in ("20260701", "20260811"):
+        (tmp_path / f"ohlc-reach-{stamp}").mkdir()
+    assert rebuild.resolve_ohlc_source(tmp_path).name == "ohlc-reach-20260811"
+
+
+def test_ohlc_full_is_the_fallback_when_no_stamped_source_exists(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    assert rebuild.resolve_ohlc_source(tmp_path).name == "ohlc-full"
+
+
+def test_a_stray_non_stamp_directory_never_outranks_a_dated_source(tmp_path):
+    """The glob alone is not identity: `ohlc-reach-backup` and `ohlc-reach-<stamp>.bak` sort
+    lexicographically AFTER every %Y%m%d stamp, so an operator's hand copy would silently win
+    newest-wins forever. Only exact 8-digit stamps are candidates."""
+    (tmp_path / "ohlc-full").mkdir()
+    for name in ("ohlc-reach-20260811", "ohlc-reach-backup", "ohlc-reach-20260811.bak"):
+        (tmp_path / name).mkdir()
+    assert rebuild.resolve_ohlc_source(tmp_path).name == "ohlc-reach-20260811"
+
+
+def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
+    """The WIRING, not just the resolver in isolation: `_refresh_universe` must call
+    `resolve_ohlc_source(ctx.data_root)`, not `_require_ohlc_full(ctx)` directly. Every other
+    `_refresh_universe` test in this file builds only an `ohlc-full` tree, so they all exercise the
+    resolver's fallback branch and would stay green even if the production line were reverted --
+    proven by hand: reverting that one line left the full suite passing. Here `ohlc-full` is stale
+    (refuses if read) and a fresh, complete stamped sibling is what must actually get read, so a
+    revert flips this test from a passing rebuild to an unhandled staleness DataSyncError."""
+    monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
+
+    # Stale ohlc-full: newest bar far past the 7-day budget. If _refresh_universe still reads this
+    # (the reverted wiring), the rebuild refuses here instead of succeeding.
+    stale_root = tmp_path / "ohlc-full"
+    for symbol in rebuild.CANDIDATE_SYMBOLS:
+        base, quote = symbol.split("/")
+        _write_daily(stale_root / base / quote / "1440.parquet", vwap=100.0, volume=2_000.0, last=date(2026, 3, 31))
+    (stale_root / "manifest.json").write_text(json.dumps({"basket_sha256": "stale"}))
+
+    # Fresh, complete stamped sibling -- what an operator's reach round mints, and what
+    # resolve_ohlc_source must pick as newest-wins.
+    fresh_root = tmp_path / "ohlc-reach-20260717"
+    for symbol in rebuild.CANDIDATE_SYMBOLS:
+        base, quote = symbol.split("/")
+        _write_daily(fresh_root / base / quote / "1440.parquet", vwap=100.0, volume=2_000.0, last=date(2026, 7, 16))
+    (fresh_root / "manifest.json").write_text(json.dumps({"basket_sha256": "fresh"}))
+
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260718")
+    out_root = tmp_path / "universe-20260718"
+    out_root.mkdir()
+
+    rebuild._refresh_universe(ctx, out_root)  # must succeed by reading the FRESH sibling
+
+    payload = json.loads((out_root / "point-in-time-universe.json").read_text())
+    assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-reach-20260717"
+    assert payload["provenance"]["ohlc_dataset_hash"] == "fresh"
+
+
 def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
     """The reach builder must read the LIVE ohlc-full and write into the minted sibling only --
     reading the sibling instead would reach forward from an empty set."""

@@ -6,6 +6,7 @@ a sibling, never overwrites the live set)."""
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -146,19 +147,47 @@ def _require_ohlc_full(ctx: RebuildContext) -> Path:
     return ohlc_root
 
 
+_STAMPED_REACH = re.compile(r"ohlc-reach-\d{8}")
+
+
+def resolve_ohlc_source(data_root: Path) -> Path:
+    """The newest stamped reach set, else the canonical dump-derived set.
+
+    Same newest-wins rule as the universe artifact, and for the same reason: publication is
+    additive (`rsync --ignore-existing`), so a fixed name can never be refreshed on the hub. Only
+    exact `ohlc-reach-<%Y%m%d>` names are candidates -- fixed-width digits, so lexicographic order
+    is chronological, and a stray sibling (`ohlc-reach-backup`, `-<stamp>.bak`) never outranks a
+    date. NOT used by `_rebuild_ohlc_reach`: the reach round anchors on the dump-derived canonical
+    via `_require_ohlc_full`, and must never consume a freshly-minted reach sibling.
+    """
+    stamped = sorted(
+        (p for p in data_root.glob("ohlc-reach-*") if p.is_dir() and _STAMPED_REACH.fullmatch(p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if stamped:
+        return stamped[0]
+    fallback = data_root / "ohlc-full"
+    if not fallback.exists():
+        raise DataSyncError(f"data rebuild: universe needs the live ohlc-full/ set, not found at {fallback}")
+    return fallback
+
+
 def _refresh_universe(ctx: RebuildContext, out_root: Path) -> None:
     """Refresh the point-in-time universe file via the canonical builders (`derive_universe` +
     `finalize_universe` + `build_universe_file`), matching the live set's filename
     (`point-in-time-universe.json`) and payload shape -- including the `selected` key
-    `zcrypto capture` reads (spec D3). Quote volumes are read from the LIVE `ohlc-full` set, not a
-    freshly-minted sibling: a universe refresh reuses the currently-live OHLC, it does not repull it."""
+    `zcrypto capture` reads (spec D3). Quote volumes are read from `resolve_ohlc_source(...)`: the
+    newest stamped `ohlc-reach-<stamp>` sibling if one exists, else the live `ohlc-full` set. Either
+    way the universe refresh never repulls OHLC itself -- it only reads whichever set already
+    reaches furthest."""
     symbols = list(CANDIDATE_SYMBOLS)
     assetpairs_result = fetch_public("AssetPairs")
     assets_result = fetch_public("Assets")
     snapshot = build_snapshot(assetpairs_result, assets_result, symbols, datetime.now(UTC).isoformat())
     pairs = derive_universe(assetpairs_result, assets_result, symbols)
 
-    ohlc_root = _require_ohlc_full(ctx)
+    ohlc_root = resolve_ohlc_source(ctx.data_root)
     missing = [symbol for symbol in CANDIDATE_SYMBOLS if not (ohlc_root / Path(symbol) / "1440.parquet").exists()]
     if missing:
         # `escalate` compares the SELECTED set against band bounds; it cannot see that the SOURCE
