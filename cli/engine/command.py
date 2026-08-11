@@ -43,6 +43,7 @@ from cli.engine.gate_cache import (
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
+from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
@@ -661,8 +662,10 @@ def run() -> None:
             logger.exception("engine metrics setup failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
 
-    # Built regardless of telemetry: the ledger is a forensic artifact, not a metric.
-    gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent)
+    # Built regardless of telemetry: the ledger is a forensic artifact, not a metric. venue_reader
+    # is passed explicitly (rather than relying on the class's default) so a test can substitute it
+    # via `monkeypatch.setattr(command, "read_system_status", ...)` -- see exec_status below.
+    gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
     exec_gauges = _ExecGauges(registry) if registry is not None else None
 
     def _sink(result, completed_at, duration_seconds):
@@ -1195,3 +1198,28 @@ def accum_replay(
     except EngineError as exc:
         raise _abort(str(exc)) from exc
     _emit_report(text, payload, as_json=json_out)
+
+
+@engine_app.command(name="exec-status")
+def exec_status(
+    state_dir: Optional[Path] = typer.Option(
+        None,
+        "--state-dir",
+        help="Engine state directory to read the control files from. Defaults to the configured journal_dir's parent.",
+    ),
+) -> None:
+    """Report whether the engine may submit orders right now, and every input that decided it.
+
+    Remote telemetry can only say THAT the engine is disarmed, never WHICH key is missing -- `zcrypto_exec_gate_level` carries a number, and `zcrypto_exec_armed` conflates its two arming keys into one gauge. This command reads the same gate and prints every reason and every input, for the deployment checklist to read on the host."""
+    config = _load_engine_config()
+    root = state_dir if state_dir is not None else config.journal_dir.parent
+    gate = ExecutionGate(
+        armed_in_config=config.exec_armed,
+        state_dir=root,
+        venue_reader=read_system_status,  # explicit so tests can substitute it (no --no-venue-check flag)
+    )
+    verdict = gate.evaluate(_utc_now())
+    typer.echo(f"level={verdict.level}")
+    typer.echo(f"reasons={','.join(verdict.reasons) or '-'}")
+    for key, value in sorted(verdict.inputs.items()):
+        typer.echo(f"  {key}={value}")

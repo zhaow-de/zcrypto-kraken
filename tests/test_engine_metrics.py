@@ -756,9 +756,10 @@ class _StubGate:
 
     instances: list["_StubGate"] = []
 
-    def __init__(self, *, armed_in_config, state_dir):
+    def __init__(self, *, armed_in_config, state_dir, venue_reader=None):
         self.armed_in_config = armed_in_config
         self.state_dir = state_dir
+        self.venue_reader = venue_reader
         _StubGate.instances.append(self)
 
     def evaluate(self, now):
@@ -924,6 +925,9 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
     assert cli_result.exit_code == 0, cli_result.output
     (gate_instance,) = _StubGate.instances
     assert gate_instance.state_dir == engine_cfg.journal_dir.parent  # Task 4's exact silent-fail shape
+    # run() passes venue_reader explicitly rather than relying on ExecutionGate's default, so
+    # `monkeypatch.setattr(command, "read_system_status", ...)` is a working seam for tests.
+    assert gate_instance.venue_reader is command.read_system_status
     assert list((engine_cfg.journal_dir / f"{CYCLE_TS:%Y-%m-%d}").glob("exec-*.json")), "the sink never wrote an exec record"
     # the startup evaluation alone -- before the cycle above ever ran -- must already have
     # published a truthful restart hold, or a kill switch tripped across a restart would resolve
@@ -957,7 +961,7 @@ class _RaisingGate:
     this is the exact failure the wrap exists to isolate -- a broken gate at startup must log, not
     stop the engine from starting."""
 
-    def __init__(self, *, armed_in_config, state_dir):
+    def __init__(self, *, armed_in_config, state_dir, venue_reader=None):
         pass
 
     def evaluate(self, now):

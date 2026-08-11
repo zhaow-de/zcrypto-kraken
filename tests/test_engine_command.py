@@ -26,6 +26,7 @@ from cli.engine.execgate import GateLevel, GateVerdict
 from cli.engine.execledger import write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import SeedEntry, SeedReport
+from cli.engine.venue import VenueStatus
 from cli.ohlc.dataset import write_parquet
 
 runner = CliRunner()
@@ -765,6 +766,32 @@ def test_engine_startup_latches_the_restart_hold(tmp_path, monkeypatch):
     assert (tmp_path / "exec" / "restart-hold").exists(), (
         "the hold must land beside the journal, not inside it -- a hold the gate cannot see is no hold"
     )
+
+
+# --- exec-status -------------------------------------------------------------------------------------
+
+
+def test_exec_status_prints_the_level_and_every_reason(tmp_path, monkeypatch):
+    from cli.engine.execgate import exec_dir
+
+    exec_dir(tmp_path).mkdir(parents=True)
+    (exec_dir(tmp_path) / "restart-hold").touch()
+    # --state-dir makes the config's journal_dir irrelevant here; the venue read is stubbed so no
+    # test touches the network. Patch the symbol as imported INTO command.py, not at its source.
+    # The status "stubbed-by-test" is a sentinel no real reader can produce (Kraken's own strings,
+    # or "unreachable"/"unreadable") -- unlike "unreachable" it cannot pass by accident if the
+    # `venue_reader=read_system_status` seam were ever dropped from exec_status, in which case this
+    # test would silently start making a real network call instead of catching the regression.
+    monkeypatch.setattr(
+        "cli.engine.command.read_system_status",
+        lambda *, now, opener=None: VenueStatus(status="stubbed-by-test", ok=False, observed_at=now),
+    )
+    result = runner.invoke(app, ["engine", "exec-status", "--state-dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "level=none" in result.stdout
+    assert "arm_file_absent" in result.stdout
+    assert "restart_hold" in result.stdout
+    assert "venue_status=stubbed-by-test" in result.stdout
 
 
 # --- --journal-dir overrides on replay/report ------------------------------------------------------
