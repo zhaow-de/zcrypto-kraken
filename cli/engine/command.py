@@ -28,6 +28,7 @@ from cli.config import AppConfig, ConfigError, EngineConfig, load_config
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
+from cli.engine.execgate import write_restart_hold
 from cli.engine.feeders import accumulation_report, decompose_report, load_minimums
 from cli.engine.gate_cache import (
     GateCache,
@@ -565,6 +566,9 @@ def run() -> None:
             "node (exec off, journal under the CWD) would run indistinguishably from a healthy one; fix the bind-mount"
         )
     config = _load_engine_config()
+    # Every start latches reduce-only. Deliberately unconditional: an engine that has just come
+    # up must not be able to widen its own permission.
+    write_restart_hold(config.journal_dir.parent, _utc_now())
     if not any(config.store_dir.glob("*/EUR/*.parquet")):
         raise _abort(
             f"store_dir {config.store_dir} is missing or holds no */EUR/*.parquet series -- a node without a store is "

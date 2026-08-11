@@ -174,3 +174,21 @@ class ExecutionGate:
                 "venue_snapshot_age_seconds": age,
             },
         )
+
+
+def write_restart_hold(state_dir: Path, started_at: datetime) -> Path:
+    """Latch `reduce_only` for this process. Written unconditionally on every engine start.
+
+    After a restart -- a converge, the supervision watchdog's `os._exit(1)`, a host reboot -- what
+    has NOT been re-established is the engine's belief about what it holds, so holding at
+    reduce-only until a human says otherwise is the honest response. Nothing in this module
+    removes it; a later spec may add a further PRECONDITION to clearing (e.g. reconciliation
+    agrees), never a path that clears it without the human.
+
+    The timestamp is informational: it lets an operator tell which restart the marker belongs to.
+    """
+    d = exec_dir(state_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / RESTART_HOLD_FILE
+    path.write_text(started_at.isoformat())
+    return path

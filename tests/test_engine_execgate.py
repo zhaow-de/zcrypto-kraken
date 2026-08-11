@@ -367,3 +367,33 @@ def test_an_embedded_nul_in_the_state_dir_refuses_rather_than_raising(tmp_path):
     v = gate.evaluate(NOW)  # must not raise
     assert v.level == GateLevel.NONE
     assert "kill_switch" in v.reasons
+
+
+# --- the restart hold, written at startup (Task 4) ----------------------------------------------
+
+
+def test_write_restart_hold_creates_the_marker_and_the_dir(tmp_path):
+    from cli.engine.execgate import write_restart_hold
+
+    p = write_restart_hold(tmp_path, NOW)
+    assert p.exists()
+    assert p.name == RESTART_HOLD_FILE
+    assert "2026-08-11T12:00:00" in p.read_text()  # informational only
+
+
+def test_write_restart_hold_is_idempotent_and_restamps(tmp_path):
+    from cli.engine.execgate import write_restart_hold
+
+    write_restart_hold(tmp_path, NOW)
+    later = NOW + timedelta(hours=3)
+    p = write_restart_hold(tmp_path, later)
+    assert "15:00:00" in p.read_text()  # the newest restart owns the marker
+
+
+def test_nothing_in_the_gate_clears_the_restart_hold(tmp_path):
+    # The latch is the point: only a human removes it. Evaluating many times must never clear it.
+    gate = _all_clear(tmp_path)
+    (exec_dir(tmp_path) / RESTART_HOLD_FILE).touch()
+    for _ in range(5):
+        assert gate.evaluate(NOW).level == GateLevel.REDUCE_ONLY
+    assert (exec_dir(tmp_path) / RESTART_HOLD_FILE).exists()

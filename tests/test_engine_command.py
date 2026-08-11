@@ -710,6 +710,20 @@ def test_run_watchdog_does_nothing_when_the_trader_is_running(tmp_path, monkeypa
     assert exits == []
 
 
+def test_engine_startup_latches_the_restart_hold(tmp_path, monkeypatch):
+    # The hold must land beside the journal (journal_dir.parent), not inside it -- a hold at
+    # journal_dir/exec/restart-hold is where the gate never looks (see execgate.exec_dir), so
+    # the latch would be silently invisible and every other test would still pass.
+    _run_env(monkeypatch, tmp_path, is_running=True)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 0, _output(result)
+    assert (tmp_path / "exec" / "restart-hold").exists(), (
+        "the hold must land beside the journal, not inside it -- a hold the gate cannot see is no hold"
+    )
+
+
 # --- --journal-dir overrides on replay/report ------------------------------------------------------
 
 
