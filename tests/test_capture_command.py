@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from cli.__main__ import app
 from cli.capture.book import OrderBook
-from cli.capture.command import _default_pairs, _parse_ts, single_instance_lock
+from cli.capture.command import _default_pairs, _parse_ts, resolve_universe_path, single_instance_lock
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, SegmentWriter, verify_manifest
 
@@ -55,6 +55,46 @@ def test_default_pairs_from_local_universe_file():
     assert all(p.endswith("/EUR") for p in pairs)
     assert "BTC/EUR" in pairs
     assert "ETH/BTC" not in pairs
+
+
+def test_newest_stamped_set_wins(tmp_path):
+    for stamp in ("20260101", "20260811", "20260501"):
+        d = tmp_path / f"universe-{stamp}"
+        d.mkdir()
+        (d / "point-in-time-universe.json").write_text("{}")
+    assert resolve_universe_path(tmp_path).parent.name == "universe-20260811"
+
+
+def test_legacy_set_is_the_fallback_when_no_stamped_set_exists(tmp_path):
+    d = tmp_path / "universe"
+    d.mkdir()
+    (d / "point-in-time-universe.json").write_text("{}")
+    assert resolve_universe_path(tmp_path).parent.name == "universe"
+
+
+def test_a_stray_non_stamp_directory_never_outranks_a_dated_set(tmp_path):
+    """Only exact `universe-<8 digits>` names are candidates -- `universe-backup` and
+    `universe-<stamp>.bak` sort lexicographically after every date, so an unvalidated glob (or a
+    `match`-not-`fullmatch` regression) would hand either the win forever."""
+    for name in ("universe-20260811", "universe-backup", "universe-20260811.bak"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "point-in-time-universe.json").write_text("{}")
+    assert resolve_universe_path(tmp_path).parent.name == "universe-20260811"
+
+
+def test_a_stamped_set_without_the_json_does_not_mask_an_older_complete_one(tmp_path, caplog):
+    """The resolver's own silent-shrink case: degrading to an OLDER universe without saying so is
+    the same defect class as a narrower source. A newer directory that lacks the artifact must not
+    be chosen, and the older complete one must be."""
+    (tmp_path / "universe-20260101").mkdir()
+    (tmp_path / "universe-20260101" / "point-in-time-universe.json").write_text("{}")
+    (tmp_path / "universe-20260811").mkdir()  # newer stamp, NO artifact inside
+    with caplog.at_level("ERROR"):
+        resolved = resolve_universe_path(tmp_path)
+    assert resolved.parent.name == "universe-20260101"
+    # The spec forbids a QUIET fall-back: asserting only the path would pin the defect.
+    assert any("universe-20260811" in r.message for r in caplog.records)
 
 
 def test_parse_ts_parses_kraken_rfc3339():

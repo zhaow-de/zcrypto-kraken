@@ -83,13 +83,15 @@ def _utc_now() -> datetime:
 
 
 def _canonical_symbols(canonical_root: Path, interval: int) -> list[str]:
-    """Symbols carrying a canonical file for `interval`, in sorted order.
+    """Full `BASE/QUOTE` symbols carrying a canonical file for `interval`, sorted.
 
-    Derived from the canonical tree rather than from a hardcoded basket, so a symbol the canonical
-    set does not carry (e.g. the BTC-quoted legs, which capture holds but the dumps do not) is simply
-    out of scope here instead of raising.
+    Derived from the canonical tree rather than a hardcoded basket, so a symbol the canonical set
+    does not carry is out of scope here instead of raising. The quote is discovered, not assumed:
+    an earlier version globbed `*/EUR/` and its docstring claimed the BTC-quoted legs were ones
+    "capture holds but the dumps do not" -- measurably false, `ohlc-full` carries ETH/BTC and
+    SOL/BTC dailies. That claim made a wiring limit read as a data limit.
     """
-    return sorted(p.parent.parent.name for p in canonical_root.glob(f"*/EUR/{interval}.parquet"))
+    return sorted(f"{p.parent.parent.name}/{p.parent.name}" for p in canonical_root.glob(f"*/*/{interval}.parquet"))
 
 
 def _merge_or_detach(
@@ -165,7 +167,9 @@ def reach_round(
                 logger.warning("reach_round: no REST pair key for %s -- skipping", symbol)
                 continue
 
-            canonical = read_parquet(canonical_root / symbol / "EUR" / f"{interval}.parquet")
+            base, quote = symbol.split("/")
+
+            canonical = read_parquet(canonical_root / base / quote / f"{interval}.parquet")
             # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
             if fetched:
                 sleep_fn(MIN_REST_INTERVAL_SECONDS)
@@ -177,7 +181,7 @@ def reach_round(
 
             status, frame, overlap_bars, gap_bars = _merge_or_detach(canonical, rest, symbol=symbol, interval=interval)
             name = f"{interval}.parquet" if status == "continuous" else f"{interval}.detached.parquet"
-            write_parquet(frame, out_root / symbol / "EUR" / name)
+            write_parquet(frame, out_root / base / quote / name)
 
             appended = frame.height - canonical.height if status == "continuous" else frame.height
             entries.append(
@@ -214,7 +218,8 @@ def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
     series: list[dict] = []
     for entry in report.entries:
         name = f"{entry.interval}.parquet" if entry.status == "continuous" else f"{entry.interval}.detached.parquet"
-        frame = read_parquet(out_root / entry.symbol / "EUR" / name)
+        base, quote = entry.symbol.split("/")
+        frame = read_parquet(out_root / base / quote / name)
         series.append(
             {
                 **asdict(entry),

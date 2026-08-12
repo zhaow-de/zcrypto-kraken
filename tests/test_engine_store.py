@@ -89,6 +89,17 @@ def test_grid_intervals():
     assert GRID_INTERVALS == (1440, 240)
 
 
+def test_the_engine_basket_stays_eur_only_and_ten_legs():
+    from cli.engine.store import PAIR_KEYS as ENGINE_KEYS
+    from cli.ohlc.fetch import PAIR_KEYS as FETCH_KEYS
+
+    assert len(ENGINE_KEYS) == 10
+    assert all("/" not in k for k in ENGINE_KEYS), "engine keys are BASE, its store path appends /EUR"
+    assert "ETH" in ENGINE_KEYS and ENGINE_KEYS["ETH"] == FETCH_KEYS["ETH/EUR"]
+    # A BTC-quoted leg must never reach the engine, however the fetch map grows.
+    assert not any(k.endswith("XBT") for k in ENGINE_KEYS.values())
+
+
 def test_seed_store_happy_path(tmp_path):
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"

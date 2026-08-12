@@ -64,7 +64,7 @@ zcrypto capture [OPTIONS]
 
 | Option | Description |
 | -- | -- |
-| `--pairs <PAIR>` | Pair to capture, e.g. `--pairs BTC/EUR`; repeat for multiple. Defaults to the EUR majors in `data/universe/point-in-time-universe.json`. |
+| `--pairs <PAIR>` | Pair to capture, e.g. `--pairs BTC/EUR`; repeat for multiple. Defaults to the EUR majors in the newest `data/universe-<stamp>/point-in-time-universe.json`, falling back to `data/universe/point-in-time-universe.json`. |
 | `--depth <INT>` | Order book depth: one of `10`, `25`, `100`, `500`, `1000` (default `100`). |
 | `--data-dir <PATH>` | Segment output base directory. Defaults to `$ZCRYPTO_CAPTURE_DATA_DIR` if set, else `/var/lib/zcrypto-capture/segments`. |
 | `--duration <SECS>` | Run for this many seconds then stop cleanly (for smoke-testing); omit to run until interrupted. |
@@ -302,7 +302,7 @@ zcrypto data rebuild <SET>...
 | `SETS...` | Dataset names to rebuild: `ohlc-full`, `ohlc-reach`, `ohlc-15m`, `derivatives-funding`, `derivatives-oi`, `snapshots`, `universe`. |
 | `--push` / `--no-push` | Push the minted sibling(s) to `push_dest` after rebuilding (default `--push`). |
 
-All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose `ohlc-full` set is staler than the 7-day budget or whose `manifest.json` is missing/unreadable — the set then cannot identify itself, so no artifact is written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
+All three exit **1** on a configuration or sync error (a missing/unmountable hot source `nfs_mount_dir/hot`, an unlisted authored set, an unknown rebuild set, a mismatched manifest hash, a `universe` rebuild whose resolved OHLC source (the newest `ohlc-reach-<stamp>` sibling, else `ohlc-full`) is staler than the 7-day budget, is missing any candidate leg, or whose `manifest.json` is missing/unreadable — the set then cannot identify itself, so no artifact is written), else **0**. The transport is always plain rsync `--archive --ignore-existing` — never `--delete` — so the append-only contract is enforced structurally: a content-changed file is simply untransmittable.
 
 `derivatives-oi` backfills open-interest history from Binance Vision daily `metrics` dumps (5-minute `sum_open_interest` + the free long/short and taker ratios, back to each perp's listing) into `data/derivatives-oi/`, the sibling of `derivatives-funding` — the second free-backfillable B2 input. Both come from the public `data.binance.vision` CDN (checksum-verified per file); liquidations, the third B2 input, have no free dump and are collected live via Coinalyze instead (see `docs/open-topics/T0023-*`).
 

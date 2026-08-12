@@ -25,7 +25,7 @@ from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.tick.materialize import BASE_INTERVAL_MINUTES, build_day, is_heal_complete, segment_index
 
 PAIR = "BTC/EUR"
-PAIR_KEY = PAIR_KEYS["BTC"]
+PAIR_KEY = PAIR_KEYS[PAIR]
 
 _MOUNT = load_config().nfs_mount_dir
 PRIMARY_ROOT = _MOUNT / "capture-segments"
