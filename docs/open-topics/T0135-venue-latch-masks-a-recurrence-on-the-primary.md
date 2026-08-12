@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ---
 
 # The venue-not-online latch masks a recurrence on the primary
@@ -25,9 +25,14 @@ The live trading gate does **not** depend on this signal: spec `00088`'s engine 
 - The secondary corroborates independently: its re-pin restarted the daemon 2026-08-11 14:13:17Z, which reset its counter, and it now carries `online=10` with **no** non-online series — so nothing non-online has occurred fleet-wide since. It also demonstrates that a restart is what clears the latch.
 - The masking is structural, not a misconfiguration: `by (host, system)` grouping is load-bearing for the responder (planned `maintenance` versus degraded `cancel_only`/`post_only` demand opposite responses), and the `on()` on the `vector(0)` fallback is load-bearing against a permanent extra series. Any fix must preserve both.
 
+## Done so far
+
+- **The recurrence shape was decided and built: a second rule that SUPPLEMENTS the latch, never replaces it.** `zcrypto-capture-venue-state-recurrence` reads `increase(...[15m])` over the same counter, grouped `by (host, system)` with the same `on()`-guarded fallback. The annotation/`__value__` candidate was rejected on analysis rather than taste: Grafana notifies on state transitions, so a richer annotation on an instance that is already `Alerting` produces no new notification and closes nothing. Replacing the latch was rejected too — it would lose first-observation detection entirely, since `increase()` is blind to a series born at 1. The two forms partition the space: presence catches the first sighting (including the first after any restart, the counter being in-memory), `increase()` catches every sighting thereafter, and the new rule self-resolves ~15 min after the last sighting so it can answer "is it happening again?" with a no.
+- **Four tests pin what a future edit would silently break** — the uid fits Grafana's 40-char column, the `[15m]` window agrees with `relativeTimeRange.from`, the two rules keep OPPOSITE forms, and both keep `by (host, system)` plus the `on()` fallback. All proven load-bearing by mutation probe, including a vacuity probe that deletes the whole rule.
+- **The deploy is purely additive**, so no uid is superseded, no prune is owed, and the rule-replacing order collapses to push → verify by value. No converge either: the metric already reaches Grafana Cloud through the capture keep-regex.
+- **The runbook carries the new uid**, with its own anchor and the explicit instruction never to silence it — the sibling's "silence this rule once triaged" step is scoped to the latch, since silencing the recurrence rule would re-open the exact blind spot it closes.
+- **The 2026-08-06 outage is recorded** in `docs/reference/capture-era-data-hygiene-map.md`'s "Structural windows" table, with the gap-seconds as the durable figure and the reconciler's `both_streams_silent` number reconciled against it.
+
 ## Suggested next steps
 
-- Decide the shape of recurrence detection and whether it replaces or supplements the latch. Two candidates, neither yet evaluated against the rule's stated properties: a second rule on `increase(zcrypto_capture_venue_status_total{system!="online"}[15m]) > 0` as a *recurrence* signal beside the latch (the rule comment explains why `increase()` cannot be the primary form — a series is born at 1 and Prometheus inserts no implicit zero, so a first transition would sit green — but that argument does not apply to a series that already exists at a non-zero value, which is exactly the post-latch state); or an annotation/`__value__` surface that makes the counter's current value visible in the notification so a responder can see it move.
-- Whichever is chosen, land it with the rule-replacing deploy order from `capture-deploys.md`: converge → push → verify the first sample **by value** → prune → confirm the old uid 404s. Never prune the superseded rule before its replacement has a verified first sample.
-- Prefer landing it **before** the next primary capture converge. That converge restarts the daemon and clears the latch, which makes the alert green again and removes the evidence that motivated the change — easy to then forget until the next outage re-latches it.
-- Record the 2026-08-06 outage and its 10,711.7 gap-seconds (~15 min/stream) in `docs/reference/capture-era-data-hygiene-map.md`'s "Structural windows" table, which does not yet carry that date, so a future continuity run over a window containing 2026-08-06 is not re-investigated from scratch as a new defect.
+- Push the rule to Grafana Cloud and verify the first sample **by value, not presence** (`capture-deploys.md`): the A arm should read labeled `0`s on the primary, where the standing latch already holds `maintenance=1, cancel_only=2, post_only=1` — a `>0` on that first read is the page it would otherwise have been, and a `(no series)` is a FAIL rather than a zero. Confirm the rule is *evaluating* (`state=inactive health=ok lastError=none`), not merely stored. This is the only step between here and `resolved`.
