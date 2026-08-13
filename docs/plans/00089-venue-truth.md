@@ -23,7 +23,7 @@
 
 | File | Responsibility |
 | --- | --- |
-| `cli/engine/instruments.py` | *create* — asset→`InstrumentId` map (ten legs) + the pure `size_order` function |
+| `cli/engine/instruments.py` | *create* — asset→`InstrumentId` map (ten legs), the committed `COSTMIN_EUR` constant (D5a), + the pure `size_order` function |
 | `cli/engine/venuestate.py` | *create* — `InstrumentConstraints` + `VenueState` frozen dataclasses; `venue_state_from_cache` (the only new Nautilus-touching code) |
 | `cli/engine/venueledger.py` | *create* — `venue-HH.json` writer/reader, `VENUE_SCHEMA_VERSION = 1`, `_PREFIX = "venue"` |
 | `cli/engine/cycle.py` | *modify* — `run_cycle(..., venue_state=None)` seam; write the venue record FIRST; `_code_version()`; `CycleResult.venue` summary |
@@ -32,7 +32,7 @@
 | `.github/workflows/capture-image.yml` + `infra/docker/Dockerfile` | *modify* — T0130: `GIT_REVISION` build-arg → `ENV ZCRYPTO_BUILD_REVISION` |
 | `infra/ansible/roles/capture/files/config.alloy` | *modify* — admit the four `zcrypto_venue_*` names to the keep-regex |
 | `infra/grafana/alerts.yaml` | *modify* — the two venue rules (concordance failures, snapshot staleness); additive, no prune owed |
-| `tests/test_engine_instruments.py`, `tests/test_engine_venuestate.py`, `tests/test_engine_venueledger.py`, `tests/test_basket_concordance.py` | *create* |
+| `tests/test_engine_instruments.py`, `tests/test_engine_venuestate.py`, `tests/test_engine_venueledger.py`, `tests/test_basket_concordance.py`, `tests/test_costmin_drift.py` | *create* |
 | `tests/test_engine_cycle.py`, `tests/test_engine_node.py`, `tests/test_engine_metrics.py` (T0134 fix + gauge tests), `tests/test_infra_alert_rules.py` | *modify* — find the real files first; do not create parallel ones |
 | Closeout: `docs/iterations-history-phase6.md`, `docs/research/14.phase6-decisions.md`, T0130 + T0134 archive moves, `docs/open-topics/README.md`, the `00089` row in `docs/open-topics/T0018-phase6-build-sequence.md` | *modify* (Task 9 only) |
 
@@ -91,17 +91,36 @@ def test_flooring_can_push_a_passing_target_below_ordermin():
 
 - [ ] **Step 3: Run to verify they fail** — `uv run pytest tests/test_engine_instruments.py -v` → import error.
 - [ ] **Step 4: Implement** — the map by comprehension over `PAIR_KEYS` (with the probe-confirmed alias overrides where the venue form differs); `size_order` floors `target_qty` to `lot_step` and `reference_price` to `tick_size` via `math.floor(x / step) * step` (guard both steps `> 0`), checks the FLOORED qty against `ordermin`, then `qty * floored_price` against `costmin`, in that order, reasons naming the failing constraint and both numbers.
-- [ ] **Step 5: Run to green**, then `uv run pre-commit run -a`, stage `cli/engine/instruments.py tests/test_engine_instruments.py`, commit `feat(engine): the instrument map and the pure constraint-sizing function`.
+- [ ] **Step 5: Add the committed costmin constant and its drift test (D5a).** In `cli/engine/instruments.py`: `COSTMIN_EUR: dict[str, float]` — base → costmin, all ten currently `0.45`, with a docstring stating WHY it is committed rather than read live (the adapter drops it; the engine host carries no snapshot) and that `tests/test_costmin_drift.py` is its guard. In `tests/test_costmin_drift.py`, pin it against the venue's own published data via the existing research reader:
+
+```python
+def test_the_committed_costmin_matches_the_newest_refdata_snapshot():
+    """costmin ships as a constant because the Kraken adapter never maps it (min_notional is
+    always None) and the engine host carries no snapshot. This is its drift guard: a venue change
+    turns this red instead of silently mis-sizing an order."""
+    import glob, os
+    from pathlib import Path
+    from cli.engine.feeders import load_minimums
+    from cli.engine.instruments import COSTMIN_EUR
+
+    snaps = sorted(glob.glob("data/snapshots/kraken-refdata-*.json"), key=os.path.getmtime)
+    if not snaps:
+        pytest.skip("no refdata snapshot present (gitignored data root)")
+    minimums, _ = load_minimums(Path(snaps[-1]))
+    assert {b: c for b, (_, c) in minimums.items() if b in COSTMIN_EUR} == COSTMIN_EUR
+```
+
+- [ ] **Step 6: Run to green**, then `uv run pre-commit run -a`, stage `cli/engine/instruments.py tests/test_engine_instruments.py tests/test_costmin_drift.py`, commit `feat(engine): the instrument map, the committed costmin constant, and the pure sizing function`.
 
 ### Task 2: `VenueState` and the Cache reader
 
 **Files:** Create `cli/engine/venuestate.py`, `tests/test_engine_venuestate.py`.
 
 **Interfaces:**
-- Produces: `InstrumentConstraints(base: str, instrument_id: str, ordermin: float, costmin: float, lot_step: float, tick_size: float)` — frozen.
+- Produces: `InstrumentConstraints(base: str, instrument_id: str, ordermin: float, costmin: float, lot_step: float, tick_size: float)` — frozen. **`costmin` does NOT come from the Cache (D5a, measured):** nautilus 1.230.0's Kraken adapter never maps it, so `min_notional` is always `None`. It is filled from the committed `COSTMIN_EUR` constant, and `to_payload()` labels the source per field (`"costmin_source": "snapshot-constant"`) so no reader mistakes it for something the venue said this cycle. The other three come live from the Cache.
 - Produces: `VenueState(snapshot_at: datetime, instruments: dict[str, InstrumentConstraints], positions: dict[str, float], balances: dict[str, float])` — frozen; `to_payload() -> dict` (JSON-ready, ISO timestamps).
 - Produces: `venue_state_from_cache(cache, *, clock) -> VenueState` — reads the ten `INSTRUMENT_IDS` from the Cache, open positions (signed base qty per base), account balances (currency code → free balance as float). Raises on any read failure — the CALLER (Task 5's strategy hook) converts to `None`.
-- Produces: `ConcordanceVerdict(ok: bool, failures: tuple[str, ...])` frozen + `runtime_concordance(state: VenueState) -> ConcordanceVerdict` — for each of the ten bases: instrument present, `ordermin/costmin/lot_step/tick_size` all `> 0`; failure strings `"BASE: <what>"`. Lives here (it judges a `VenueState`), so Task 3 consumes the real type and Task 4 only wires.
+- Produces: `ConcordanceVerdict(ok: bool, failures: tuple[str, ...])` frozen + `runtime_concordance(state: VenueState) -> ConcordanceVerdict` — for each of the ten bases: instrument present, and the three **Cache-supplied** constraints `ordermin/lot_step/tick_size` all `> 0`. **costmin is deliberately NOT checked here** (D5a: it is snapshot-sourced, so its correctness is `tests/test_costmin_drift.py`'s job; checking it at runtime would fail all ten legs forever and hold D6's alert red — the T0135 failure). Failure strings `"BASE: <what>"`. Lives here (it judges a `VenueState`), so Task 3 consumes the real type and Task 4 only wires.
 
 - [ ] **Step 1: Probe the real Cache API before writing anything** — the exact accessor names on nautilus 1.230.0 are load-bearing and must not be guessed:
 
