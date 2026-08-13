@@ -13,7 +13,7 @@
 - **Read-only, provable:** nothing calls `size_order` from any production path, and `run_cycle`'s outputs (targets, orders, journal record content other than the new `venue-HH.json`) are IDENTICAL with and without a `VenueState` — pinned by test (Task 4), not asserted.
 - **The traded basket is record 44's ten EUR legs** (`cli/engine/store.py::PAIR_KEYS`, base-keyed). Nothing in this plan changes it; the concordance baseline's ruled exceptions cite [[T0137]].
 - **The Stage-6a gate must stay blind to the new artifact:** `_journal_artifacts` filters on the `cycle-` prefix; `venue-HH.json` must be structurally invisible, proven by test the way `exec-HH.json`'s invisibility was.
-- **Metric admission travels both directions in the same change:** the capture-host Alloy keep-regex (`infra/ansible/roles/capture/files/config.alloy`) AND the admitted-list test (`tests/test_infra_alert_rules.py`) — a gauge that publishes but is not admitted silently vanishes from Cloud; one admitted but never published trips the stale-exclusion test.
+- **Metric admission travels both directions in the same change:** the capture-host Alloy keep-regex (`infra/ansible/roles/capture/files/config.alloy:147`, one `regex` line of explicit names) AND the watched-or-excluded guard (`tests/test_infra_alert_rules.py` derives the admitted set from that regex; every name must be queried by a rule in `infra/grafana/alerts.yaml` or excluded in `NOT_A_FAULT_SIGNAL` with a written reason). The published→admitted direction is `tests/test_infra_alloy_series.py`. A gauge that publishes but is not admitted silently vanishes from Cloud; never-published-at-all is caught only by the deploy-time value check.
 - **Operator-facing text carries no internal tokens** (`T<NNNN>`, spec serials, `iter-<N>`) — metric HELP strings are in scope; `tests/test_internal_terms_not_operator_visible.py` enforces.
 - Python 3.14 / PEP 758: unparenthesized `except A, B:` is valid — do not "fix" it.
 - Tests make **no network calls**; Nautilus imports stay out of every test file except `tests/test_engine_venuestate.py` and the existing node tests.
@@ -30,7 +30,8 @@
 | `cli/engine/node.py` | *modify* — `snapshot_fn` plumbing through `on_start_logic`/`on_alert_logic`/`_invoke_cycle`; `ShadowStrategy._snapshot_venue_state` |
 | `cli/engine/command.py` | *modify* — `VenueGauges` (the `ExecGauges` pattern) updated from the existing sink |
 | `.github/workflows/capture-image.yml` + `infra/docker/Dockerfile` | *modify* — T0130: `GIT_REVISION` build-arg → `ENV ZCRYPTO_BUILD_REVISION` |
-| `infra/ansible/roles/capture/files/config.alloy` | *modify* — admit `zcrypto_venue_*` to the keep-regex |
+| `infra/ansible/roles/capture/files/config.alloy` | *modify* — admit the four `zcrypto_venue_*` names to the keep-regex |
+| `infra/grafana/alerts.yaml` | *modify* — the two venue rules (concordance failures, snapshot staleness); additive, no prune owed |
 | `tests/test_engine_instruments.py`, `tests/test_engine_venuestate.py`, `tests/test_engine_venueledger.py`, `tests/test_basket_concordance.py` | *create* |
 | `tests/test_engine_cycle.py`, `tests/test_engine_node.py`, `tests/test_engine_metrics.py` (T0134 fix + gauge tests), `tests/test_infra_alert_rules.py` | *modify* — find the real files first; do not create parallel ones |
 | Closeout: `docs/iterations-history-phase6.md`, `docs/research/14.phase6-decisions.md`, T0130 + T0134 archive moves, `docs/open-topics/README.md`, the `00089` row in `docs/open-topics/T0018-phase6-build-sequence.md` | *modify* (Task 9 only) |
@@ -45,7 +46,8 @@
 - Produces: `INSTRUMENT_IDS: dict[str, str]` — base → `"BASE/EUR.KRAKEN"`, derived from `cli.engine.store.PAIR_KEYS` keys, exactly ten entries.
 - Produces: `InstrumentConstraints` is Task 2's — this task defines `size_order(target_qty: float, reference_price: float, *, ordermin: float, costmin: float, lot_step: float, tick_size: float) -> SizedOrder | BelowMinimum` with frozen dataclasses `SizedOrder(qty: float, price: float, notional: float)` and `BelowMinimum(reason: str)`. Both quantizations happen here so `00090` inherits ONE proven function: qty floors to `lot_step`, the reference price floors to `tick_size`, and `notional = qty * price` (the quantized pair) feeds the `costmin` check.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Probe the adapter's instrument-ID normalization BEFORE pinning the map** — Kraken spells bitcoin XBT and doge XDG (`cli/ohlc/fetch.py`), and the one measured example (`ADA/EUR.KRAKEN`, `cli/engine/node.py`) is alias-free, so it proves nothing about BTC/DOGE. Inspect the installed adapter's instrument provider (`uv run python - <<'PY'` over `nautilus_trader.adapters.kraken` — find the symbol-normalization code and print what XBTEUR/XDGEUR become). If the adapter preserves venue aliases, the map's VALUES are `XBT/EUR.KRAKEN`/`XDG/EUR.KRAKEN` while the KEYS stay our bases (`BTC`, `DOGE`) — adjust the test's expected literals to the probe's answer and record the probe output in the task report. Guessing here costs a second engine converge on the trade-key host.
+- [ ] **Step 2: Write the failing tests** (literals per the Step 1 probe)
 
 ```python
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
@@ -87,9 +89,9 @@ def test_flooring_can_push_a_passing_target_below_ordermin():
     assert isinstance(r, BelowMinimum)
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `uv run pytest tests/test_engine_instruments.py -v` → import error.
-- [ ] **Step 3: Implement** — the map by comprehension over `PAIR_KEYS`; `size_order` floors `target_qty` to `lot_step` and `reference_price` to `tick_size` via `math.floor(x / step) * step` (guard both steps `> 0`), checks the FLOORED qty against `ordermin`, then `qty * floored_price` against `costmin`, in that order, reasons naming the failing constraint and both numbers.
-- [ ] **Step 4: Run to green**, then `uv run pre-commit run -a`, stage `cli/engine/instruments.py tests/test_engine_instruments.py`, commit `feat(engine): the instrument map and the pure constraint-sizing function`.
+- [ ] **Step 3: Run to verify they fail** — `uv run pytest tests/test_engine_instruments.py -v` → import error.
+- [ ] **Step 4: Implement** — the map by comprehension over `PAIR_KEYS` (with the probe-confirmed alias overrides where the venue form differs); `size_order` floors `target_qty` to `lot_step` and `reference_price` to `tick_size` via `math.floor(x / step) * step` (guard both steps `> 0`), checks the FLOORED qty against `ordermin`, then `qty * floored_price` against `costmin`, in that order, reasons naming the failing constraint and both numbers.
+- [ ] **Step 5: Run to green**, then `uv run pre-commit run -a`, stage `cli/engine/instruments.py tests/test_engine_instruments.py`, commit `feat(engine): the instrument map and the pure constraint-sizing function`.
 
 ### Task 2: `VenueState` and the Cache reader
 
@@ -115,7 +117,7 @@ print(inspect.signature(Cache.account_for_venue))
 PY
 ```
 
-Record the output in the task report. Kraken instrument objects carry `min_quantity` (ordermin), `min_notional` (costmin), `size_increment` (lot), `price_increment` (tick) — verify the attribute names on the loaded class the same way (`nautilus_trader.model.instruments.CurrencyPair`) and use what the probe shows, not what this plan guesses.
+Record the output in the task report. Kraken instrument objects carry `min_quantity` (ordermin), `min_notional` (costmin), `size_increment` (lot), `price_increment` (tick) — verify the attribute names on the loaded class the same way (`nautilus_trader.model.instruments.CurrencyPair`) and use what the probe shows, not what this plan guesses. Extend the probe to the **Position and Account surfaces** the reader traverses (signed base qty per position; currency code → free balance on the account object) — the scripted probe above covers only Cache accessors and instrument attributes, and those two object shapes are equally load-bearing.
 
 - [ ] **Step 2: Write the failing tests** — construct fakes with the probed attribute shapes (plain `SimpleNamespace` stand-ins; this file is the ONE test file allowed to import Nautilus, but prefer fakes so the tests document the consumed surface):
 
@@ -164,7 +166,7 @@ def test_venue_records_are_invisible_to_the_stage6a_gate(tmp_path):
     assert [p.name for p in arts] == ["cycle-08.json"]
 ```
 
-(Adapt the call to `_journal_artifacts`' real signature — read it in `cli/engine/command.py` first; if the exec test `tests/` already contains this pin for `exec-`, extend that test's parametrization instead of duplicating the fixture.)
+(The sketch's arity is wrong on purpose-of-illustration: the real signature is `_journal_artifacts(journal_dir, pattern, name_glob) -> list[tuple[datetime, Path]]` at `cli/engine/command.py:108`. Do not write a parallel fixture — EXTEND the two existing exec pins in `tests/test_engine_execledger.py`: `test_exec_records_are_invisible_to_every_journal_glob` (carries the non-vacuity guard) and the looser-glob canary `test_the_exec_prefix_would_be_swept_up_by_a_looser_glob`, parametrizing both over the `venue-` prefix.)
 
 - [ ] **Step 2–3: red → implement → green.** Writer never raises on serialization of a well-formed input; a `state=None` with no `error` is a programming error → `ValueError`.
 - [ ] **Step 4: Gate, stage, commit** `feat(engine): the venue ledger -- venue-HH.json beside the cycle record`.
@@ -177,7 +179,7 @@ def test_venue_records_are_invisible_to_the_stage6a_gate(tmp_path):
 - Consumes: Task 2's `runtime_concordance` and `ConcordanceVerdict`; Task 3's `write_venue_record`.
 - Produces: `run_cycle(cycle_ts, *, config, fetch_fn=fetch_ohlc, clock=_utc_now, venue_state: VenueState | None = None)`.
 - Produces: `_code_version() -> str` in `cycle.py` — `version("zcrypto")` plus `+{ZCRYPTO_BUILD_REVISION[:12]}` when that env var is non-empty (T0130, D8). Replace the literal at `cli/engine/cycle.py:413` (`code_version=version("zcrypto")`) with a call.
-- Produces: `CycleResult.venue: dict | None` — the summary the metrics sink reads (`{"loaded": int, "expected": 10, "failures": int, "snapshot_at": iso-str}`), `None` when no snapshot.
+- Produces: `CycleResult.venue: dict | None` — the summary the metrics sink reads (`{"loaded": int, "expected": len(INSTRUMENT_IDS), "failures": int, "snapshot_at": iso-str}` — expected DERIVED, never a literal; tests assert `== 10`), `None` when no snapshot.
 
 - [ ] **Step 1: Failing tests**, the three load-bearing ones first:
 
@@ -191,8 +193,10 @@ def test_venue_record_is_written_first_and_survives_a_failing_cycle(...):
 
 def test_targets_are_identical_with_and_without_venue_state(...):
     """THE read-only pin: venue truth is journaled, never consulted. Two runs, same inputs,
-    one with a full VenueState -- final_targets, orders, and the cycle record byte-identical
-    except the venue summary field."""
+    one with an ADVERSARIAL VenueState -- ordermin/costmin set ABOVE every order the fixture
+    produces, positions/balances that would change targets if netted -- final_targets, orders,
+    and the journaled cycle-HH.json byte-identical, full stop; only CycleResult.venue differs.
+    A permissive VenueState would pass even if the cycle consulted it, proving nothing."""
 
 
 def test_no_snapshot_writes_an_error_record_and_the_cycle_proceeds(...):
@@ -218,7 +222,7 @@ def test_code_version_composes_the_build_revision(monkeypatch):
 - `on_start_logic(..., snapshot_fn=lambda: None)` / `on_alert_logic(..., snapshot_fn=lambda: None)` — pure functions stay pure; the default keeps every existing test valid.
 - `ShadowStrategy._snapshot_venue_state(self)` — `venue_state_from_cache(self.cache, clock=...)` wrapped so any exception logs (`logger.exception`) and returns `None`; passed as `snapshot_fn` from `on_start`/the alert handler.
 
-- [ ] **Step 1: Failing tests** — the pure-logic ones with a recording fake: `on_alert_logic` passes the snapshot product into `run_cycle_fn`; a raising `snapshot_fn` still invokes `run_cycle_fn` with `venue_state=None` (assert from the fake's captured kwargs, and assert the exception was logged); `ShadowStrategy` wires its own hook (existing `_fake_node` fixtures in `tests/test_engine_node.py` show the harness — extend, don't rebuild).
+- [ ] **Step 1: Failing tests** — the pure-logic ones with a recording fake: `on_alert_logic` passes the snapshot product into `run_cycle_fn`; a raising `snapshot_fn` still invokes `run_cycle_fn` with `venue_state=None` (assert from the fake's captured kwargs, and assert the exception was logged); `ShadowStrategy` wires its own hook. The node test harness is `_recorders`/`FakeClock` (`tests/test_engine_node.py:118,222`) — extend it, don't rebuild; note its recording `run_fn(cycle_ts, *, config)` fakes must gain the `venue_state` kwarg or every existing pure-logic test breaks on the new pass-through.
 - [ ] **Step 2–3: red → green.**
 - [ ] **Step 4: Gate, stage, commit** `feat(engine): the boundary snapshot hook -- venue truth crosses at the alert, degrades to None`.
 
@@ -277,10 +281,14 @@ def test_the_basket_and_the_universe_diverge_exactly_as_ruled():
 
 **Files:** Modify `cli/engine/command.py`, `tests/test_engine_metrics.py`, `infra/ansible/roles/capture/files/config.alloy`, `tests/test_infra_alert_rules.py`.
 
-- [ ] **Step 1: Read how `zcrypto_exec_*` entered the keep-regex** (`config.alloy`, the drop/keep pair ~line 114) and the admitted list (`tests/test_infra_alert_rules.py`, the list opening ~line 100). Mirror exactly — pattern or explicit names, whichever the exec family used.
+- [ ] **Step 1: Read how `zcrypto_exec_*` entered the keep-list** — it is ONE `regex = "..."` line (`config.alloy:147`), entered as **explicit names**; mirror that, never a wildcard. The admitted set in `tests/test_infra_alert_rules.py` is *derived* from that regex by `_admitted_series()` — there is no hand-list to edit; what you WILL edit is `NOT_A_FAULT_SIGNAL` (the exclusions with written reasons). The published→admitted direction is guarded by `tests/test_infra_alloy_series.py` (tree-derived), which goes green automatically once the keep-regex carries the four names — run it in Step 5 anyway.
 - [ ] **Step 2: Failing tests** in `tests/test_engine_metrics.py`: the four gauges exist after seeding (`zcrypto_venue_snapshot_timestamp_seconds`, `zcrypto_venue_instruments_loaded`, `zcrypto_venue_instruments_expected` seeded to `10`, `zcrypto_venue_concordance_failures` seeded to `0`); a sink update from a `CycleResult` carrying `venue={"loaded": 10, "expected": 10, "failures": 0, "snapshot_at": ...}` moves them; a `CycleResult` with `venue=None` moves NONE of them (the timestamp keeps its last value — absence must look stale, not fresh). HELP strings carry no internal tokens — `uv run pytest tests/test_internal_terms_not_operator_visible.py` must stay green.
-- [ ] **Step 3: Implement** — `VenueGauges` beside `ExecGauges` in `command.py`, eager registration, updated inside the existing sink. Then the keep-regex + admitted-list edits, together.
-- [ ] **Step 4:** `uv run pytest tests/test_engine_metrics.py tests/test_infra_alert_rules.py tests/test_internal_terms_not_operator_visible.py -q` to green. Gate, stage, commit `feat(engine): the zcrypto_venue_* gauge family, admitted end to end`.
+- [ ] **Step 3: Implement the gauges** — `VenueGauges` beside `ExecGauges` in `command.py`, eager registration, updated inside the existing sink. `instruments_expected` is DERIVED (`len(INSTRUMENT_IDS)`), never a literal — a T0137 re-ratification must change it in one committed place; the tests assert `== 10`.
+- [ ] **Step 4: The two alert rules + exclusions (spec D6)** — without these, admitting the names auto-fails `test_every_fault_signal_metric_is_watched_by_a_rule`, because every admitted series must be watched or excluded with a reason. In `infra/grafana/alerts.yaml`, following the sibling engine rules' shape (instant query + threshold node, `folderUID`/`datasourceUid` templated, `noDataState: OK`, `execErrState: Alerting`, `for: 5m`, `severity: warning`, `receiver: metrics`, uid ≤ 40 chars):
+  - `zcrypto-venue-concordance-failed` — expr `zcrypto_venue_concordance_failures > 0`; summary: a ratified instrument went missing or unparseable at the venue (operator-facing — no serials/topic tokens).
+  - `zcrypto-venue-snapshot-stale` — expr `(time() - zcrypto_venue_snapshot_timestamp_seconds) > 18000` (one 4h cycle + 1h slack); summary: the venue snapshot writer has stopped producing.
+  In `tests/test_infra_alert_rules.py::NOT_A_FAULT_SIGNAL`, exclude `zcrypto_venue_instruments_loaded` and `zcrypto_venue_instruments_expected` with the reason: the failures count already reduces them; a rule on each would double-page one event.
+- [ ] **Step 5:** `uv run pytest tests/test_engine_metrics.py tests/test_infra_alert_rules.py tests/test_infra_alloy_series.py tests/test_internal_terms_not_operator_visible.py -q` to green. Gate, stage, commit `feat(engine): the zcrypto_venue_* gauge family, admitted and watched end to end`.
 
 ### Task 8: T0130 build identity + T0134 caplog fix
 
@@ -299,7 +307,7 @@ finally:
 ```
 
 - [ ] **Step 3: Prove it:** `uv run pytest "tests/test_engine_metrics.py::test_run_survives_an_unreadable_journal_record_at_metrics_seed_time" -v` ALONE (the previously-failing shape) → green; then the whole file → green.
-- [ ] **Step 4: Gate, stage, commit** `fix(build): bake the git revision into the image; fix the order-dependent caplog test` — this commit deliberately mixes `ci`-kind and `test`-kind files with the engine change absent; if the staged-kind hook objects, split into two commits (`ci(build): ...` and `test(engine): ...`).
+- [ ] **Step 4: Gate, then TWO commits, unconditionally** — the staged-kind hook only enforces claude-kind vs everything else, so it would not stop a mixed commit; the split is `commit-messages.md` discipline, not hook appeasement. First `ci(build): bake the git revision into the image as ZCRYPTO_BUILD_REVISION` (workflow + Dockerfile), then `test(engine): capture the zcrypto logger directly -- the order-dependent caplog fix` (the T0134 file). T0130 and T0134 share nothing; they only ride the same task for dispatch economy.
 
 ### Task 9: Closeout
 
