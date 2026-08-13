@@ -112,6 +112,8 @@ def test_the_committed_costmin_matches_the_newest_refdata_snapshot():
 
 - [ ] **Step 6: Run to green**, then `uv run pre-commit run -a`, stage `cli/engine/instruments.py tests/test_engine_instruments.py tests/test_costmin_drift.py`, commit `feat(engine): the instrument map, the committed costmin constant, and the pure sizing function`.
 
+> **Closeout note (iter-138):** Steps 5–6 as drafted here did not land in Task 1's commit (`282b67e0`). The D5a ruling — costmin is not Cache-supplied at all — arrived mid-Task-2, after Task 1 had already been committed and Fable-reviewed; rewriting that already-reviewed commit to absorb `COSTMIN_EUR` and its drift test would have invalidated its review anchor. They shipped instead inside Task 2's commit (`82ef1419`), alongside `VenueState`. Task 1 as actually committed stopped at the plain instrument map + `size_order`. See `docs/specs/00089-venue-truth-design.md` D5a and the iter-138 entry in `docs/iterations-history-phase6.md`.
+
 ### Task 2: `VenueState` and the Cache reader
 
 **Files:** Create `cli/engine/venuestate.py`, `tests/test_engine_venuestate.py`.
