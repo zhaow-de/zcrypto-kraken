@@ -1,6 +1,6 @@
 ---
-status: partial
-ripe_when: **the WIRING decision is DISCHARGED 2026-08-11** (branch `feat/t0093-universe-volume-source`, spec `00093`, the owner's ruling) — `_refresh_universe` now resolves its source and the canonical artifact through newest-wins resolvers, a quote-aware reach round, and a refuse-on-narrower-source guard. What remains ripe is the SECOND registered remainder: retiring the legacy `universe/` resolver fallback in `cli/capture/command.py::resolve_universe_path` — ripe when the first stamped `universe-<stamp>/` set is published to the hub and verified (the resolver selects it and the attended sitting's post-publish checks pass)
+status: resolved
+
 ---
 
 # The universe rebuild reads an OHLC set that stops months short, so its volume floor measures the past
@@ -70,6 +70,16 @@ Provenance hardened 2026-07-22/23 in the same spirit (completed by [[T0094]]): t
 - **The attended sitting RAN 2026-08-13 (iter-137) and discharged the DATA gap.** `zcrypto data rebuild ohlc-reach` minted all twelve legs into `data/ohlc-reach-20260813`: every daily series `continuous`, 586 overlap bars, 134 appended, `gap_bars: 0`, reaching 2026-08-12 — `ETH/BTC` and `SOL/BTC` indistinguishable from the EUR legs, which was the open question. `zcrypto data rebuild universe` then selected on that fresh window and published `universe-20260813/` to the hub with the legacy `universe/` untouched; the artifact cites `ohlc_dataset_dir: ohlc-reach-20260813` and `ohlc_stalest_daily_bar: 2026-08-12`, so the volume signal no longer reads a dead window, and `resolve_universe_path` selects the stamped set in production.
 - **Eleven of twelve selected, and the exclusion is the mirror image of this topic's defect.** DOT/EUR fell below the 150,000 floor at 146,957.37, down from 194,771.98 on the window ending 2026-07-22 — a real ~25% liquidity decline. The frozen window had instead wrongly dropped AVAX/EUR at 132,274.82; on the fresh window AVAX clears at 183,593.90. `escalate` stayed False (11 within 8–15). This is the presence-versus-outcome distinction the source guard was built around: a thin leg flows through to selection and is excluded on merit, with the reason recorded.
 - **The intraday reach series cannot seam at this staleness**, and are quarantined by filename as `240.detached.parquet` / `60.detached.parquet` for all twelve symbols, so a consumer globbing `240.parquet` finds nothing rather than a series with a hole. Kraken's REST returns ~720 bars at every interval — 719 days at 1440, ~120 at 240, ~30 at 60 — against a 135-day canonical gap. Only the daily series, which the universe depends on, bridged it. A reach round must run inside those reach-backs to keep the intraday legs seamable.
+
+## Resolution
+
+Resolved 2026-08-13 (iter-137). Both halves are discharged — the DATA gap by the attended sitting recorded above, and the repo-side remainder by retiring the legacy fallback in the same iteration once the sitting fired its trigger.
+
+**The fallback is gone.** `resolve_universe_path` no longer returns the unstamped `universe/` artifact: that directory cannot be updated through the additive transport, so it is frozen at its 2026-07-07 content, and returning it would hand a six-week-old basket to the caller as though it were current — the silent time-travel this remainder named. Absence of a stamped set is now fatal, with a message naming both recoveries. The test was replaced rather than deleted: it builds a READABLE legacy set and asserts the resolver raises anyway, which is the only shape distinguishing retirement from a plain missing-file error, and it is mutation-proven against a restored fallback.
+
+**Both couplings the remainder flagged were honoured, not discovered late.** `universe` stays in `authored_sets` and the directory stays on disk and on the hub, because `push_hot` raises when a named set is missing — deleting it would break every future push. And no host fetch was required: measured, not assumed, from the Dockerfile entrypoint expanding `CAPTURE_PAIRS` into explicit `--pairs` flags and the Ansible compose always setting it, so the fleet never reaches the resolver at all.
+
+The licensing set is **`universe-20260813`**, published to the hub and verified selected by the resolver in production.
 
 ## Suggested next steps
 
