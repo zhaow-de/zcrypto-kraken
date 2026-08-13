@@ -754,6 +754,86 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-venue-concordance-failed
+    title: "Engine · venue concordance failed"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'zcrypto_venue_concordance_failures{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    # OK, not Alerting: absence means the engine itself is down, which zcrypto-engine-cycle-stale
+    # already pages on -- this eager gauge always carries a real sample once the engine has started,
+    # seeded at startup from the newest venue-<HH>.json on disk (_seed_venue_state) so a restart
+    # never leaves it parked at the eager 0 default, masking a real failure count as healthy.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "A ratified instrument went missing or unparseable at the venue on the most recent cycle. Check the newest venue snapshot record on the engine host for which leg and why."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-venue-snapshot-stale
+    title: "Engine · venue snapshot is stale"
+    ruleGroup: zcrypto-gate
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - zcrypto_venue_snapshot_timestamp_seconds{host="zcrypto"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [18000]}  # one 4h cycle + 1h slack
+    # OK, not Alerting: absence means the engine itself is down, which zcrypto-engine-cycle-stale
+    # already pages on -- this eager gauge always carries a real sample once the engine has started,
+    # seeded at startup from the newest venue-<HH>.json on disk (_seed_venue_state) so a routine
+    # restart never leaves it at its 0.0 (1970) default and false-pages this very rule.
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "The venue snapshot writer has stopped producing -- no successful venue-truth snapshot in over five hours. Check the engine log and the newest venue snapshot record on the engine host."
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-nas-disk-low
     title: "NAS · /volume1 free space low"
     ruleGroup: zcrypto-nas

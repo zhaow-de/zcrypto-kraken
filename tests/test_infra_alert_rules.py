@@ -197,6 +197,12 @@ NOT_A_FAULT_SIGNAL = {
     # because before the first order-submission call site exists "the engine cannot trade" has no
     # operational meaning yet.
     "zcrypto_exec_venue_ok",
+    # Venue-truth LEVELS (spec 00089 D6): loaded vs expected are the detail read once
+    # zcrypto-venue-concordance-failed has already paged, not fault signals of their own -- the
+    # failures count already reduces both into the one number that matters, and a threshold on
+    # either directly would double-page the same event.
+    "zcrypto_venue_instruments_loaded",
+    "zcrypto_venue_instruments_expected",
 }
 
 FAULT_SIGNAL_METRICS = sorted(set(_admitted_series()) - NOT_A_FAULT_SIGNAL)

@@ -18,9 +18,10 @@ import cli.engine.command as command
 import cli.engine.cycle as cycle
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
-from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at
+from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at, _VenueGauges
 from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
+from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS
 from cli.obs.metrics import METRICS_PORT_ENV_VAR
@@ -595,6 +596,32 @@ def _write_sidecar(journal_dir: Path, cycle_ts: datetime, *, completed_at: datet
     (day_dir / f"failed-cycle-{cycle_ts:%H}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def _write_venue_record(
+    journal_dir: Path,
+    cycle_ts: datetime,
+    *,
+    status: str = "ok",
+    loaded: int = 10,
+    failures: int = 0,
+    snapshot_at: datetime | None = None,
+) -> None:
+    """A raw venue-<HH>.json matching `venueledger.write_venue_record`'s schema, written directly
+    (rather than through `VenueState`/`write_venue_record`) so this file never has to import
+    `cli.engine.venuestate` -> nautilus_trader."""
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    doc = {"schema_version": 1, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
+    if status == "ok":
+        doc["state"] = {
+            "snapshot_at": (snapshot_at or cycle_ts).isoformat(),
+            "instruments": {f"ASSET{i}": {} for i in range(loaded)},
+        }
+        doc["concordance"] = {"ok": failures == 0, "failures": [f"F{i}" for i in range(failures)]}
+    else:
+        doc["error"] = "no venue snapshot available for this cycle"
+    (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
 def test_seed_completed_at_falls_back_to_process_start_when_the_journal_is_empty(tmp_path, monkeypatch):
     fixed_now = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(command, "_utc_now", lambda: fixed_now)
@@ -649,6 +676,39 @@ def test_seed_cycle_state_returns_none_success_when_the_journal_is_empty(tmp_pat
     completed_at, success = command._seed_cycle_state(tmp_path / "journal")
     assert completed_at == fixed_now
     assert success is None
+
+
+# --- command.py: _seed_venue_state (spec 00089 D6, cold-review MAJOR 1) ------------------------------
+
+
+def test_seed_venue_state_returns_none_when_the_journal_is_empty(tmp_path):
+    assert command._seed_venue_state(tmp_path / "journal") is None
+
+
+def test_seed_venue_state_reads_the_newest_ok_record(tmp_path):
+    journal_dir = tmp_path / "journal"
+    older = datetime(2026, 7, 10, 4, 1, tzinfo=UTC)
+    newer = datetime(2026, 7, 10, 8, 1, tzinfo=UTC)
+    _write_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), loaded=8, failures=2, snapshot_at=older)
+    _write_venue_record(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), loaded=10, failures=0, snapshot_at=newer)
+
+    seed = command._seed_venue_state(journal_dir)
+
+    assert seed == {"loaded": 10, "expected": len(INSTRUMENT_IDS), "failures": 0, "snapshot_at": newer.isoformat()}
+
+
+def test_seed_venue_state_an_error_record_never_overrides_the_last_ok_one(tmp_path):
+    # An "error" record (00089 D7: no VenueState that cycle) must not overwrite the last REAL
+    # snapshot, even though it is chronologically newer -- the same "absence never overwrites a
+    # real value" invariant _VenueGauges.update itself enforces for venue=None.
+    journal_dir = tmp_path / "journal"
+    ok_at = datetime(2026, 7, 10, 4, 1, tzinfo=UTC)
+    _write_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), loaded=10, failures=0, snapshot_at=ok_at)
+    _write_venue_record(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), status="error")
+
+    seed = command._seed_venue_state(journal_dir)
+
+    assert seed == {"loaded": 10, "expected": len(INSTRUMENT_IDS), "failures": 0, "snapshot_at": ok_at.isoformat()}
 
 
 # --- command.py: _ExecGauges -------------------------------------------------------------------------
@@ -711,6 +771,65 @@ def test_the_heartbeat_series_is_absent_until_an_evaluation_exists():
     # evaluated anything yet. The other presence gauges also seed at 0, which is NOT necessarily
     # true -- hence the startup evaluation in run().
     assert reg.get_sample_value("zcrypto_exec_gate_level") == 0
+
+
+# --- command.py: _VenueGauges (spec 00089 D6) --------------------------------------------------------
+
+
+def _venue_result(venue: dict | None) -> CycleResult:
+    return CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json"),
+        sidecar_path=None,
+        targets={},
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+        venue=venue,
+    )
+
+
+def test_venue_gauges_exist_after_seeding():
+    reg = CollectorRegistry()
+    _VenueGauges(reg)
+    assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == 0.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 0.0
+    # DERIVED from len(INSTRUMENT_IDS), never a literal -- a future basket re-ratification moves one
+    # committed place; this pins the CURRENT basket size at 10.
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 10
+    assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 0.0
+
+
+def test_venue_gauges_update_moves_all_four_from_a_cycle_results_venue_summary():
+    reg = CollectorRegistry()
+    gauges = _VenueGauges(reg)
+    snapshot_at = CYCLE_TS + timedelta(minutes=1)
+    result = _venue_result({"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": snapshot_at.isoformat()})
+
+    gauges.update(result.venue)
+
+    assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == pytest.approx(snapshot_at.timestamp())
+    assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 9.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 10.0
+    assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 1.0
+
+
+def test_venue_gauges_update_with_a_venueless_cycle_result_moves_nothing():
+    # 00089 D7: absence must look STALE, not fresh -- the timestamp keeps its last real value rather
+    # than being reset or left untouched-but-fresh-looking.
+    reg = CollectorRegistry()
+    gauges = _VenueGauges(reg)
+    snapshot_at = CYCLE_TS + timedelta(minutes=1)
+    gauges.update(_venue_result({"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": snapshot_at.isoformat()}).venue)
+
+    gauges.update(_venue_result(None).venue)
+
+    assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == pytest.approx(snapshot_at.timestamp())
+    assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 9.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 10.0
+    assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 1.0
 
 
 # --- run(): opt-in wiring ---------------------------------------------------------------------------
@@ -880,6 +999,62 @@ def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path
     assert "process_resident_memory_bytes" in body  # process metrics still serve
 
 
+def test_run_seeds_the_venue_timestamp_from_the_newest_on_disk_record(tmp_path, monkeypatch):
+    # Cold-review MAJOR 1: without this seed, a routine restart (which always lands inside the
+    # inter-cycle gap, capture-deploys.md) would leave zcrypto_venue_snapshot_timestamp_seconds at
+    # its eager 0.0 default -- read as `time() - 0` ~= 1.77e9 -- and zcrypto-venue-snapshot-stale
+    # would false-page "the writer has stopped" against an engine that merely restarted.
+    journal_dir = tmp_path / "journal"
+    snapshot_at = datetime(2026, 7, 9, 12, 1, tzinfo=UTC)
+    _write_venue_record(journal_dir, datetime(2026, 7, 9, 12, 0, tzinfo=UTC), loaded=9, failures=1, snapshot_at=snapshot_at)
+
+    port = _free_port()
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(port))
+    _run_env(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["engine", "run"])
+    assert result.exit_code == 0, result.output
+
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2.0) as resp:
+        body = resp.read().decode()
+    families = {family.name: family for family in text_string_to_metric_families(body)}
+    assert families["zcrypto_venue_snapshot_timestamp_seconds"].samples[0].value == pytest.approx(
+        snapshot_at.timestamp()
+    )  # seeded, not the eager 0.0 (1970) default
+    assert families["zcrypto_venue_instruments_loaded"].samples[0].value == 9.0
+    assert families["zcrypto_venue_concordance_failures"].samples[0].value == 1.0
+
+
+def test_run_survives_an_unreadable_venue_record_at_metrics_seed_time(tmp_path, monkeypatch, caplog):
+    # Mirrors test_run_survives_an_unreadable_journal_record_at_metrics_seed_time above, for the
+    # venue seed's own read: an unreadable venue-<HH>.json (bad mode/ownership on the bind mount)
+    # must degrade -- logged, gauges left at their eager defaults -- never abort run().
+    journal_dir = tmp_path / "journal"
+    _write_venue_record(journal_dir, datetime(2026, 7, 9, 12, 0, tzinfo=UTC))
+    bad_path = journal_dir / "2026-07-09" / "venue-12.json"
+    bad_path.chmod(0o000)
+
+    port = _free_port()
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(port))
+    _run_env(monkeypatch, tmp_path)
+    node_started = []
+    monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: (node_started.append(True), _fake_node())[1])
+
+    try:
+        with caplog.at_level("ERROR"):
+            result = runner.invoke(app, ["engine", "run"])
+    finally:
+        bad_path.chmod(0o644)  # restore so tmp_path cleanup never depends on the test's outcome
+
+    assert result.exit_code == 0, result.output
+    assert node_started == [True]  # build_shadow_node/node.run() was still reached
+    assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2.0) as resp:
+        body = resp.read().decode()
+    families = {family.name: family for family in text_string_to_metric_families(body)}
+    assert families["zcrypto_venue_snapshot_timestamp_seconds"].samples[0].value == 0.0  # left at its eager default
+
+
 # --- run(): the sink's exec-envelope half (spec 00088 T6) --------------------------------------------
 # `_ExecGauges.update` is tested above with hand-built verdicts, but the closure `run()` installs is
 # the ledger's only production writer and `cycle.py::_update_metrics` swallows its exceptions by
@@ -905,6 +1080,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
         reason=None,
         offending_pairs=None,
         sleeve_gross=None,
+        venue={"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": completed_at.isoformat()},
     )
 
     def _run_and_complete_a_cycle():
@@ -934,6 +1110,11 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
     # the alert for up to 4h until the next cycle completes.
     assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
     assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
+    # The venue half of the same sink closure (cold-review MAJOR 2): _VenueGauges.update is tested
+    # directly elsewhere with hand-built dicts, but only this test drives run()'s actual composition
+    # -- `if venue_gauges is not None: venue_gauges.update(result.venue)` -- so a broken wire (a
+    # dropped call, the wrong attribute) fails SILENTLY in production exactly like the exec half would.
+    assert registry.get_sample_value("zcrypto_venue_concordance_failures") == 1
 
 
 def test_the_startup_evaluation_alone_seeds_the_latch_gauges(tmp_path, monkeypatch):
