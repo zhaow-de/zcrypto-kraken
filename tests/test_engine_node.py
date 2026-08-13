@@ -7,6 +7,7 @@ which construct both exec_enabled shapes without credentials or network).
 
 import functools
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -18,7 +19,7 @@ import pytest
 from nautilus_trader.model.enums import AccountType
 
 from cli.config import EngineConfig
-from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, startup_action
+from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, node, startup_action
 from cli.engine.cycle import run_cycle
 from cli.engine.errors import EngineError
 from cli.engine.node import _node_config, on_alert_logic, on_start_logic
@@ -117,13 +118,14 @@ def test_startup_action_rejects_naive(tmp_path):
 
 def _recorders(events: list, *, raise_on_run: Exception | None = None):
     """A schedule recorder and a run_cycle stub appending into one shared list, so ordering
-    between scheduling and invocation is directly observable."""
+    between scheduling and invocation is directly observable. run_fn captures venue_state too, so
+    a test can read back what snapshot_fn's product (or its None degrade) reached run_cycle_fn."""
 
     def schedule_alert(boundary, alert_time):
         events.append(("schedule", boundary, alert_time))
 
-    def run_fn(cycle_ts, *, config):
-        events.append(("run", cycle_ts, config))
+    def run_fn(cycle_ts, *, config, venue_state=None):
+        events.append(("run", cycle_ts, config, venue_state))
         if raise_on_run is not None:
             raise raise_on_run
 
@@ -139,7 +141,8 @@ def test_on_alert_logic_schedules_following_alert_before_invoking_run_cycle(tmp_
     assert [e[0] for e in events] == ["schedule", "run"]
     assert events[0][1:] == (B12, B12 + timedelta(seconds=config.settle_delay_secs))
     # cycle_ts is the BOUNDARY (exact grid stamp), never the alert time (boundary + settle delay).
-    assert events[1][1:] == (B08, config)
+    # venue_state is None here: no snapshot_fn was passed, so on_alert_logic's default (lambda: None) ran.
+    assert events[1][1:] == (B08, config, None)
 
 
 def test_on_alert_logic_respects_settle_delay(tmp_path):
@@ -172,6 +175,38 @@ def test_on_alert_logic_contains_run_cycle_exception(tmp_path):
     assert [e[0] for e in events] == ["schedule", "run"]
 
 
+def test_on_alert_logic_passes_snapshot_product_as_venue_state(tmp_path):
+    # The Cache snapshot taken at the boundary crosses into run_cycle_fn as venue_state -- this is
+    # the loop that gives run_cycle real venue truth instead of the None it always got before.
+    config = _config(tmp_path)
+    events: list = []
+    schedule_alert, run_fn = _recorders(events)
+    sentinel = object()
+    on_alert_logic(boundary=B08, config=config, schedule_alert=schedule_alert, run_cycle_fn=run_fn, snapshot_fn=lambda: sentinel)
+    assert events[1][1:] == (B08, config, sentinel)
+
+
+def test_on_alert_logic_raising_snapshot_fn_degrades_to_none_and_still_runs_the_cycle(tmp_path, caplog):
+    # 00089 D7: venue-truth availability can never cost the engine a boundary. A raising snapshot_fn
+    # is caught in its OWN try (separate from run_cycle_fn's), logged, and run_cycle_fn still runs --
+    # with venue_state=None, so it journals an error venue record instead of skipping the boundary.
+    config = _config(tmp_path)
+    events: list = []
+    schedule_alert, run_fn = _recorders(events)
+
+    def raising_snapshot_fn():
+        raise RuntimeError("cache blew up")
+
+    with caplog.at_level(logging.ERROR, logger="zcrypto.engine.node"):
+        following = on_alert_logic(
+            boundary=B08, config=config, schedule_alert=schedule_alert, run_cycle_fn=run_fn, snapshot_fn=raising_snapshot_fn
+        )
+    assert following == B12
+    assert [e[0] for e in events] == ["schedule", "run"]
+    assert events[1][1:] == (B08, config, None)
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+
 def test_on_start_logic_runs_startup_boundary_after_scheduling(tmp_path):
     # Restart at B+5min with no journal artifact: the upcoming alert is scheduled FIRST (the alert
     # chain never depends on a cycle completing), then B's cycle runs immediately.
@@ -183,7 +218,8 @@ def test_on_start_logic_runs_startup_boundary_after_scheduling(tmp_path):
     assert upcoming == B12
     assert [e[0] for e in events] == ["schedule", "run"]
     assert events[0][1:] == (B12, B12 + timedelta(seconds=config.settle_delay_secs))
-    assert events[1][1:] == (B08, config)
+    # venue_state is None here: no snapshot_fn was passed, so on_start_logic's default (lambda: None) ran.
+    assert events[1][1:] == (B08, config, None)
 
 
 def test_on_start_logic_no_catch_up_for_lapsed_boundary(tmp_path):
@@ -258,7 +294,7 @@ def test_shadow_strategy_on_start_and_alert_delegate(tmp_path):
     config = _config(tmp_path)
     events: list = []
 
-    def run_fn(cycle_ts, *, config):
+    def run_fn(cycle_ts, *, config, venue_state=None):
         events.append(("run", cycle_ts))
 
     now = B08 + timedelta(minutes=5)
@@ -279,6 +315,42 @@ def test_shadow_strategy_on_start_and_alert_delegate(tmp_path):
         ("schedule", B12 + timedelta(hours=4), B12 + timedelta(hours=4, seconds=config.settle_delay_secs)),
         ("run", B12),
     ]
+
+
+def test_shadow_strategy_wires_its_own_snapshot_hook(tmp_path):
+    # on_start / _on_cycle_alert must pass ShadowStrategy._snapshot_venue_state as snapshot_fn --
+    # proven by overriding it with a sentinel-returning stub and reading the sentinel back off
+    # run_cycle_fn's captured venue_state kwarg.
+    config = _config(tmp_path)
+    events: list = []
+    schedule_alert, run_fn = _recorders(events)
+    sentinel = object()
+    now = B08 + timedelta(minutes=5)
+    strategy = ShadowStrategy(config, run_cycle_fn=run_fn, clock=lambda: now)
+    strategy._schedule_alert = schedule_alert
+    strategy._snapshot_venue_state = lambda: sentinel
+    strategy.on_start()
+    assert events[1][1:] == (B08, config, sentinel)
+
+    strategy._next_cycle_ts = B12
+    strategy._on_cycle_alert(None)  # the B12 alert fires
+    assert events[3][1:] == (B12, config, sentinel)
+
+
+def test_snapshot_venue_state_logs_and_returns_none_on_any_exception(tmp_path, monkeypatch, caplog):
+    # ShadowStrategy._snapshot_venue_state wraps venue_state_from_cache itself (00089 D7), on top of
+    # _invoke_cycle's own catch -- so its own contract (log + None) holds even called directly.
+    config = _config(tmp_path)
+    strategy = ShadowStrategy(config)
+
+    def boom(cache, *, clock):
+        raise RuntimeError("cache blew up")
+
+    monkeypatch.setattr(node, "venue_state_from_cache", boom)
+    with caplog.at_level(logging.ERROR, logger="zcrypto.engine.node"):
+        result = strategy._snapshot_venue_state()
+    assert result is None
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
 
 
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------
