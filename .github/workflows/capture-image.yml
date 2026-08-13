@@ -69,6 +69,7 @@ jobs:
           platforms: ${{ matrix.platforms }}
           build-args: |
             POLARS_RUNTIME=${{ matrix.runtime }}
+            GIT_REVISION=${{ github.sha }}
           # Disable SLSA provenance attestations: they publish an extra `unknown/unknown` manifest in
           # GHCR's "OS/Arch" list (an attestation blob, not a runnable image). Off = the list shows
           # exactly linux/amd64 + linux/arm64. (Re-enable with provenance: mode=max if supply-chain
