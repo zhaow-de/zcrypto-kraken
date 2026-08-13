@@ -2,9 +2,11 @@
 command.py's gauge holder + startup seeding + `run()` wiring."""
 
 import json
+import logging
 import socket
 import types
 import urllib.request
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -966,6 +968,22 @@ def test_run_with_an_empty_journal_leaves_cycle_success_unpublished(tmp_path, mo
     assert "zcrypto_engine_cycle_success" not in body
 
 
+@contextmanager
+def _zcrypto_caplog_attached(caplog):
+    """`cli.logging.config.configure()` sets `propagate = False` on the "zcrypto" logger on the
+    CLI's first-ever invocation in the process; caplog only auto-attaches its capture handler to a
+    logger that is ALREADY non-propagating when the fixture sets up, so a session whose first CLI
+    call is one of these tests would otherwise capture nothing. Attach the handler to "zcrypto"
+    directly so the assertion holds regardless of test order/selection (same fix as
+    `test_cli_verify_replay_failed_hour_logs_at_warning_not_error` in test_archive_replay.py)."""
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        yield
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
+
+
 def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path, monkeypatch, caplog):
     # THE Critical (spec 00069 T3/T4 review): _seed_completed_at reads arbitrary on-disk journal
     # artifacts (from_json / _sidecar_fields); an unreadable cycle-*.json (bad mode/ownership on
@@ -986,7 +1004,7 @@ def test_run_survives_an_unreadable_journal_record_at_metrics_seed_time(tmp_path
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: (node_started.append(True), _fake_node())[1])
 
     try:
-        with caplog.at_level("ERROR"):
+        with _zcrypto_caplog_attached(caplog), caplog.at_level("ERROR"):
             result = runner.invoke(app, ["engine", "run"])
     finally:
         bad_path.chmod(0o644)  # restore so tmp_path cleanup never depends on the test's outcome
@@ -1041,7 +1059,7 @@ def test_run_survives_an_unreadable_venue_record_at_metrics_seed_time(tmp_path, 
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: (node_started.append(True), _fake_node())[1])
 
     try:
-        with caplog.at_level("ERROR"):
+        with _zcrypto_caplog_attached(caplog), caplog.at_level("ERROR"):
             result = runner.invoke(app, ["engine", "run"])
     finally:
         bad_path.chmod(0o644)  # restore so tmp_path cleanup never depends on the test's outcome
@@ -1157,7 +1175,7 @@ def test_a_raising_startup_evaluation_never_prevents_the_engine_from_starting(tm
     _run_env(monkeypatch, tmp_path)
     monkeypatch.setattr(command, "ExecutionGate", _RaisingGate)  # overrides _run_env's _StubGate
 
-    with caplog.at_level("ERROR"):
+    with _zcrypto_caplog_attached(caplog), caplog.at_level("ERROR"):
         cli_result = runner.invoke(app, ["engine", "run"])
 
     assert cli_result.exit_code == 0, cli_result.output
