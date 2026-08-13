@@ -1,4 +1,4 @@
-from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+from cli.engine.instruments import COSTMIN_EUR, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 
 
 def test_instrument_ids_cover_exactly_the_ratified_basket():
@@ -7,6 +7,13 @@ def test_instrument_ids_cover_exactly_the_ratified_basket():
     assert set(INSTRUMENT_IDS) == set(PAIR_KEYS)
     assert INSTRUMENT_IDS["BTC"] == "BTC/EUR.KRAKEN"
     assert all(v == f"{base}/EUR.KRAKEN" for base, v in INSTRUMENT_IDS.items())
+
+
+def test_costmin_eur_covers_exactly_the_ratified_basket():
+    # venue_state_from_cache does COSTMIN_EUR[base] for every INSTRUMENT_IDS base -- a missing
+    # entry would KeyError at read time rather than degrade gracefully. The values themselves are
+    # pinned against the venue's own published data by tests/test_costmin_drift.py.
+    assert set(COSTMIN_EUR) == set(INSTRUMENT_IDS)
 
 
 def test_sizing_floors_qty_to_the_lot_step_and_price_to_the_tick():
