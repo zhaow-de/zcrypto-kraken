@@ -34,7 +34,6 @@ HEALTHCHECK_ENV_VAR = "HEALTHCHECK_URL"
 HEALTHCHECK_INTERVAL_SECONDS = 60
 DISK_WATERMARK_INTERVAL_SECONDS = 30
 UNIVERSE_FILENAME = "point-in-time-universe.json"
-UNIVERSE_RELATIVE_PATH = Path("universe") / UNIVERSE_FILENAME  # legacy set, the fallback
 _STAMPED_UNIVERSE = re.compile(r"universe-\d{8}")
 LOCKFILE_NAME = ".capture.lock"
 
@@ -86,7 +85,7 @@ def single_instance_lock(data_dir: Path) -> Iterator[None]:
 
 
 def resolve_universe_path(data_root: Path) -> Path:
-    """The newest COMPLETE stamped universe set's artifact, else the legacy one.
+    """The newest COMPLETE stamped universe set's artifact.
 
     Publication is additive (`rsync --ignore-existing`, never `--delete`), so a fixed filename can
     never be updated on the hub -- the artifact is a SERIES of immutable sets instead. Only exact
@@ -95,6 +94,14 @@ def resolve_universe_path(data_root: Path) -> Path:
     lacking the artifact is skipped LOUDLY -- an ERROR names it, because silently degrading to an
     older universe is the same defect class the source guard refuses -- but skipped, not fatal:
     during an in-flight fetch a directory legitimately exists for seconds before its file lands.
+
+    The legacy unstamped `universe/` set was the fallback here until the first stamped set was
+    published (2026-08-13, `universe-20260813`). It is no longer consulted: that directory is frozen
+    at its 2026-07-07 content and cannot be updated through the additive transport, so a fallback to
+    it would present a six-week-old basket as the current one -- a resolution bug wearing the costume
+    of a successful read. Absence is therefore FATAL rather than silently satisfied. The directory
+    itself stays on disk and on the hub: `universe` remains in the config's `authored_sets`, and
+    `push_hot` raises when a named set is missing, so removing it would break every future push.
     """
     stamped = sorted(
         (p for p in data_root.glob("universe-*") if p.is_dir() and _STAMPED_UNIVERSE.fullmatch(p.name)),
@@ -110,7 +117,11 @@ def resolve_universe_path(data_root: Path) -> Path:
             candidate.name,
             UNIVERSE_FILENAME,
         )
-    return data_root / UNIVERSE_RELATIVE_PATH
+    raise FileNotFoundError(
+        f"no stamped universe set under {data_root} carries {UNIVERSE_FILENAME} -- "
+        f"run `zcrypto data fetch` to pull the published sets, or `zcrypto data rebuild universe` to mint one. "
+        f"The legacy unstamped set is deliberately not a fallback: it is frozen at its 2026-07-07 content."
+    )
 
 
 def _default_pairs(universe_path: Path) -> list[str]:
@@ -750,8 +761,8 @@ def capture(
         None,
         "--pairs",
         help="Pair(s) to capture, e.g. --pairs BTC/EUR --pairs ETH/EUR. Defaults to the EUR majors "
-        "from the newest data/universe-<stamp>/point-in-time-universe.json, falling back to "
-        "data/universe/point-in-time-universe.json.",
+        "from the newest data/universe-<stamp>/point-in-time-universe.json; if no stamped set is "
+        "present the command fails rather than reading the frozen unstamped one.",
     ),
     depth: int = typer.Option(DEFAULT_DEPTH, "--depth", help=f"Order book depth. One of {ALLOWED_DEPTHS}."),
     data_dir: Optional[Path] = typer.Option(

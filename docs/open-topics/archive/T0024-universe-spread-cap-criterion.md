@@ -1,6 +1,6 @@
 ---
-status: partial
-ripe_when: the next universe rebuild — the criterion, its calibration and its measured effect are delivered, but the canonical artifact still carries `spread_cap: "pending-capture"` until `_refresh_universe` runs (a live `AssetPairs` fetch plus a canonical-set write). It rides [[T0025]]'s pre-live refresh, which re-runs selection anyway
+status: resolved
+
 ---
 
 # Universe selection — spread-cap criterion
@@ -29,6 +29,16 @@ Selection currently filters on margin + median quote volume only; a thin-book pa
 **What the "unchanged" result proves, and what it does not.** The replay is faithful — without the criterion it reproduces the live file's `selected`, `escalate` *and every* `reasons` list exactly, so the cap is the only variable. But `max_leverage` and `median_quote_volume` are read from that same file, so it establishes that **adding the criterion changes nothing given those inputs**, not that a fresh rebuild against today's Kraken refdata would select the same twelve. **Measured 2026-07-22: it would not** — a rebuild on the live `data/ohlc-full` drops AVAX/EUR (132,274.82 EUR/day vs the 150,000 floor) and selects eleven, because that set's last bar is 2026-03-31 and the artifact's cited OHLC dir no longer exists. Registered as [[T0093]]; unrelated to the spread cap, which passes AVAX at 3.33 bps/side.
 
 **The finding that outlasted the criterion — now DISCHARGED (2026-08-08, spec `00085`, [[T0092]]).** As written 2026-07-22 this said the cap could screen only **10 of the 12** selected symbols, because the capture daemon subscribed to EUR-quoted pairs only and `ETH/BTC` / `SOL/BTC` had no L2 at all. Both halves are now false: the legs have been captured since 2026-07-23, the panel ladder went per-quote and the tree was regenerated 2026-08-07 (their `fill_bps_*` columns read 100 % non-null), and `SPREAD_CALIBRATION` carries real rows for both. **The cap now screens 12 of 12** and `unevaluated_count` is 0. `SOL/BTC` sits at 233,595 EUR/day, barely over the volume floor — the blind spot is exactly where the criterion was most wanted. Registered as [[T0092]].
+
+## Resolution
+
+Resolved 2026-08-13 by iter-137's attended universe rebuild — the run this topic's trigger named, and the criterion it stated is met literally.
+
+The artifact `data/universe-20260813/point-in-time-universe.json` carries a computed `spread_cap` record in place of the `pending-capture` placeholder every prior generation held: `max_spread_bps` 10.0, `reference_notional_eur` 1400.0, `source` `cli/costs/spread.py` (mean effective spread at size), **`unevaluated_count: 0`**. All twelve symbols carry a numeric `spread_bps` — the two BTC-quoted legs included, at 1.178 (ETH/BTC) and 1.842 (SOL/BTC), where a null on either would now be the failure signal rather than the expected state after the 2026-08-08 inversion.
+
+The cap **binds on nothing this run**: the widest spread is DOT/EUR at 4.930 bps against the 10 bps cap, so it excludes no symbol that the volume floor did not already exclude (DOT/EUR was dropped on volume at 146,957.37 against the 150,000 floor). That is a measured non-binding, not an untested criterion — the calibration reached every candidate.
+
+`docs/universe/point-in-time-universe.md` records the same numbers in its own Spread cap section.
 
 ## Suggested next steps
 

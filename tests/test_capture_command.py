@@ -65,11 +65,22 @@ def test_newest_stamped_set_wins(tmp_path):
     assert resolve_universe_path(tmp_path).parent.name == "universe-20260811"
 
 
-def test_legacy_set_is_the_fallback_when_no_stamped_set_exists(tmp_path):
-    d = tmp_path / "universe"
-    d.mkdir()
-    (d / "point-in-time-universe.json").write_text("{}")
-    assert resolve_universe_path(tmp_path).parent.name == "universe"
+def test_the_frozen_legacy_set_is_no_longer_a_fallback(tmp_path):
+    """Retired 2026-08-13, once `universe-20260813` was published and this resolver selected it.
+
+    The unstamped directory cannot be updated through the additive transport, so it is frozen at its
+    2026-07-07 content -- falling back to it would hand a six-week-old basket to the caller as if it
+    were current, which is a resolution bug wearing the costume of a successful read. A present
+    legacy set must therefore NOT satisfy the lookup: the assertion is that it raises even though the
+    old path exists and is readable, which is the only shape that distinguishes retirement from a
+    plain missing-file error.
+    """
+    legacy = tmp_path / "universe"
+    legacy.mkdir()
+    (legacy / "point-in-time-universe.json").write_text("{}")
+
+    with pytest.raises(FileNotFoundError, match="no stamped universe set"):
+        resolve_universe_path(tmp_path)
 
 
 def test_a_stray_non_stamp_directory_never_outranks_a_dated_set(tmp_path):
