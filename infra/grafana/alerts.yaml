@@ -3107,6 +3107,73 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-capture-venue-state-recurrence
+    title: "Capture · Kraken reported a degraded venue state again"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The deliberate COMPLEMENT to zcrypto-capture-venue-not-online, which latches. That rule fires
+      # on PRESENCE and never falls until the daemon restarts, so once a state has been seen its alert
+      # instance sits in Alerting indefinitely -- and a SECOND occurrence of that same state merely
+      # increments a counter whose instance is already firing, producing no new notification. On the
+      # primary the latch has no scheduled clearing event at all: capture there is deliberately parked
+      # on its digest, so a standing latch would mask every repeat for as long as that holds.
+      #
+      # increase() is exactly wrong as the PRIMARY form and exactly right as the SECOND one. The
+      # sibling's comment explains why it cannot lead: a non-online series is BORN at 1 and Prometheus
+      # inserts no implicit zero before a series' first sample, so increase() returns nothing on the
+      # very transition that rule exists to catch. That argument does not transfer to a series ALREADY
+      # sitting at a non-zero value -- a 1 -> 2 step is an ordinary counter increase and increase()
+      # reports it. The two rules therefore partition the space: presence catches the first sighting
+      # (including the first after any restart, since the counter is in-memory and resets with the
+      # process), and this one catches every sighting thereafter. Neither alone covers both, which is
+      # why this supplements rather than replaces -- swapping the sibling out for this form would lose
+      # first-observation detection entirely.
+      #
+      # This one SELF-RESOLVES, the behavioural opposite of the latch, and that is the point: it
+      # answers "is it happening again, right now?", so it must be able to say no. The [15m] window is
+      # how long it stays up after the last sighting; `for: 5m` inside that leaves 10 minutes of margin
+      # against the group's evaluation cadence. The window and `relativeTimeRange.from` must agree --
+      # the sibling increase()/delta() rules carry a test pinning exactly that coupling, and so does
+      # this one.
+      #
+      # `by (host, system)` and the `on()` fallback carry over from the sibling for the reasons
+      # documented there: the responder acts on `system` (planned `maintenance` versus degraded
+      # `cancel_only`/`post_only`), and `vector(0)` is unlabelled, so a bare `or` would ride through as
+      # a permanent extra series beside the real one once the left arm carries labels.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'sum by (host, system) (increase(zcrypto_capture_venue_status_total{host=~"zcrypto|zcrypto-red", system!="online"}[15m])) or on() vector(0)'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "{{ if $labels.system }}Kraken reported the trading venue in state `{{ $labels.system }}` rather than `online` within the last 15 minutes -- a NEW sighting, not a standing latch.{{ else }}This fired with no venue state attached, so nothing was observed to recur: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before treating this as a recurrence at all.{{ end }} The sibling venue alert latches on the first sighting of each state and stays red until the capture daemon restarts, so it cannot tell you a degradation is recurring; this one clears itself once 15 minutes pass with no further sighting. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "108"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-logship-worker-stalled
     title: "Logs · the shipping worker has stopped cycling"
     ruleGroup: zcrypto-capture

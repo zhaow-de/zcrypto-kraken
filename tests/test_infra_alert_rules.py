@@ -642,3 +642,57 @@ def test_no_define_carries_a_leading_trim_marker(path):
         "Grafana's provisioning API rejects a define whose action opens with a trim marker, and the "
         "push aborts before any rule ships. Drop the leading `-` (keep the trailing `-}}`):\n  " + "\n  ".join(offenders)
     )
+
+
+# --- the venue pair: a latch that cannot self-resolve, plus the recurrence signal that can --------
+# `zcrypto-capture-venue-not-online` fires on PRESENCE of a non-online series and never falls until
+# the capture daemon restarts. That latch is deliberate, but it means a repeat of an already-seen
+# state only steps a counter whose alert instance is already Alerting, so nothing notifies. The
+# recurrence rule below closes that, and the two only partition the space while each keeps its own
+# form: presence catches a series born at 1, increase() catches every step thereafter. Swap either
+# to the other's form and a real venue degradation goes unreported.
+
+_VENUE_LATCH = "zcrypto-capture-venue-not-online"
+_VENUE_RECURRENCE = "zcrypto-capture-venue-state-recurrence"
+
+
+def test_the_venue_recurrence_rule_exists_and_fits_the_uid_column():
+    """Pinned separately so the shape tests below fail on their own subject rather than on a
+    `StopIteration` from the lookup helper."""
+    assert _VENUE_RECURRENCE in [r["uid"] for r in _rules()], "a repeat venue degradation has no alert rule"
+    assert len(_VENUE_RECURRENCE) <= _UID_MAX, f"{len(_VENUE_RECURRENCE)} chars -- the create call will 400"
+
+
+def test_the_venue_recurrence_window_matches_its_relative_time_range():
+    """Same coupling the residual-gap and new-breakage rules carry: `relativeTimeRange.from` and the
+    `increase()` window must agree, or a future edit to one silently truncates what the other reads."""
+    rule = _rule(_VENUE_RECURRENCE)
+    ranges = [n["relativeTimeRange"]["from"] for n in rule["data"] if n.get("relativeTimeRange", {}).get("from")]
+    expr = " ".join(n.get("model", {}).get("expr", "") for n in rule["data"])
+
+    assert max(ranges) == 900, f"query range {max(ranges)}s is not the 15m the summary promises"
+    assert "[15m]" in expr, "the increase() window must match the query range"
+
+
+def test_the_two_venue_rules_keep_opposite_forms():
+    """The whole point of the pair. increase() cannot lead -- a non-online series is born at 1 and
+    Prometheus inserts no implicit zero, so it reports nothing on the first transition; presence
+    cannot follow -- it is already firing, so a repeat produces no new notification. If a future edit
+    makes both rules the same form, one of the two venue failures stops being reported and nothing
+    else in this file would notice."""
+    latch = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_VENUE_LATCH)["data"])
+    recurrence = " ".join(n.get("model", {}).get("expr", "") for n in _rule(_VENUE_RECURRENCE)["data"])
+
+    assert "increase(" not in latch, "the latch must stay a PRESENCE form -- increase() is blind to a series born at 1"
+    assert "increase(" in recurrence, "the recurrence rule must stay an increase() form -- presence cannot re-notify"
+
+
+def test_both_venue_rules_group_by_the_label_the_responder_acts_on():
+    """`maintenance` (planned, wait) and `cancel_only`/`post_only` (degraded, act) demand opposite
+    responses, so collapsing `system` discards the one label the page is read for. The `on()` on the
+    fallback is load-bearing for the same grouping: `vector(0)` is unlabelled, so a bare `or` stops
+    being mutually exclusive once the left arm carries labels and rides through as a permanent series."""
+    for uid in (_VENUE_LATCH, _VENUE_RECURRENCE):
+        expr = " ".join(n.get("model", {}).get("expr", "") for n in _rule(uid)["data"])
+        assert "by (host, system)" in expr, f"{uid} collapsed the label the responder acts on"
+        assert "or on() vector(0)" in expr, f"{uid} lost the labelled-arm-safe NoData fallback"
