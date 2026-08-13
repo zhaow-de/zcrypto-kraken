@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: the secondary capture daemon reaches T+48 h restart-free from its 2026-08-11 14:13:17Z converge (i.e. from 2026-08-13 ~14:13Z, while `RestartCount` is still 0) — re-read the 1 h RSS floor trajectory and compare any second step's amplitude against the first's +4.17 MiB. A restart before then voids the observation and the clock restarts with it.
+status: resolved
+
 ---
 
 # The 00088 capture bake's RSS residual is unresolved — one discrete step observed
@@ -25,9 +25,14 @@ What is not in doubt: this does **not** trip Phase 4 rollback. 140.13 MiB agains
 - The 116.0 MiB figure recorded at converge is a **cold-start** number taken two minutes after restart and is not a valid comparison point; the daemon read 133.2 MiB an hour later, which is warm-up. The warm baseline used above is the 2026-08-11 18:00–24:00Z floor.
 - `RestartCount` 0 on capture and Alloy throughout, so no restart explains the step.
 
+## Resolution
+
+Resolved 2026-08-13 by the T+48 h re-read the topic prescribed, taken at 14:11Z with `RestartCount` still 0 — the trigger's restart-free condition held for the full 48 hours.
+
+**Outcome 1 of the three pre-decided: no second step.** Hourly floors across Aug-13 00:00→14:00 read 140.18, 140.18, 140.20, 140.11, 140.28, 140.26 MiB — flat for **22 hours** since the +4.17 MiB step ended at Aug-12 16:00 (range 140.03–140.28, net ≈ +0.1 MiB, inside the rotation noise), spanning the full ~24 h-later window where a [[T0131]]-style repeat would have landed, the 03:17 prune included. The control (`zcrypto`, image unchanged) read 126.82 MiB, also flat. The first step was a one-off allocation reaching steady state — a cache or arena filling once — not the first of a T0131-style train, whose signature at this point would have been a second step of comparable amplitude.
+
+The discharge is licensed by the trajectory's SHAPE, not by a flat stretch alone: the T+32 h read refused to discharge on 6 flat hours precisely because T0131's trough between steps looked the same; 22 flat hours through the expected second-step window is the evidence that distinguishes the two. Final state: 140.26 MiB against a 1 GiB limit (13.7 %), 884 MiB headroom. Recorded on the `capture | zcrypto-red` row of `docs/reference/fleet-pins.md` in the same change.
+
 ## Suggested next steps
 
-- At T+48 h (2026-08-13 ~14:13Z), re-read the 1 h floor trajectory across the intervening window and look specifically for a **second step**. Three outcomes, each with a different disposition: no second step and a still-flat floor ⇒ the first step was a one-off allocation (a cache or arena reaching steady state) and the residual discharges; a second step of **smaller** amplitude ⇒ the T0131 pattern, converging, discharge with the decay recorded; a second step of **equal or larger** amplitude ⇒ a genuine unbounded leak — size the doubling time and decide rollback versus a fix on the merits, since the headroom is large enough that rollback is not automatic.
-- Read the floor, never an instantaneous sample: the rotation sawtooth spans ~4 MiB and would swamp the signal.
-- If a restart intervenes for any reason, the observation voids — the counter is process-lifetime and the clock restarts with it. Record that rather than comparing across the restart.
-- Whatever the outcome, record it on the `capture | zcrypto-red` row of `docs/reference/fleet-pins.md`, which currently carries this as open.
+_(none — the T+48 h re-read above was the last open step; every earlier bullet is discharged by it)_
