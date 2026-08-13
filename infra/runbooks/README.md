@@ -372,6 +372,54 @@ This is the heartbeat for the whole execution envelope, not a reading of any one
 
 ______________________________________________________________________
 
+<a name="zcrypto-venue-concordance-failed"></a>
+
+## zcrypto-venue-concordance-failed — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · venue concordance failed`): `zcrypto_venue_concordance_failures` read above zero on the most recent cycle — a ratified instrument is missing from the venue's loaded instrument set, or its constraints came back absent or unparseable.
+
+### What it means
+
+The executor's basket and what the venue actually reports have diverged for at least one leg: a delisting, a halted instrument, or a change to the constraint schema the parser does not yet handle are the usual causes. This is read-only observability — venue truth is journaled, never consulted for targets or orders, so a concordance failure changes nothing about what the engine does and no order path is affected by it on its own.
+
+### What to do
+
+1. Read the newest `venue-<HH>.json` on the engine host for the per-leg failure strings — it names which instrument and why.
+2. This is read-only observability, so nothing here is auto-remediated. Do not converge on this alone.
+3. Confirm recovery: the next cycle's `venue-<HH>.json` reads `status: "ok"` with an empty failures list, and `zcrypto_venue_concordance_failures` reads back to 0.
+
+### Retire when
+
+`zcrypto-venue-concordance-failed` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zcrypto-venue-snapshot-stale"></a>
+
+## zcrypto-venue-snapshot-stale — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · venue snapshot is stale`): no successful venue-truth snapshot has landed in over five hours — one 4h cycle plus slack.
+
+### What it means
+
+The boundary snapshot hook has stopped producing a fresh reading. The cycle itself may still be running and journaling targets fine — venue truth can never block a boundary by design, so a stuck or failing snapshot hook does not by itself mean the engine is down; check cycle liveness separately before assuming otherwise. Note that the gauge is seeded from the newest on-disk venue record at startup, so a routine engine restart alone does not trigger this — something has to actually stop producing.
+
+### What to do
+
+1. Check the engine container is up and cycles are landing — the newest `cycle-<HH>.json` on the engine host.
+2. Read the newest `venue-<HH>.json` for a `status: "error"` and its reason.
+3. Confirm recovery: the snapshot-age gauge reads within the last cycle interval and the newest `venue-<HH>.json` reads `status: "ok"`.
+
+### Retire when
+
+`zcrypto-venue-snapshot-stale` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
 <a name="zcrypto-ops-tapebars-permanent-gap"></a>
 
 ## zcrypto-ops-tapebars-permanent-gap — ALERT
