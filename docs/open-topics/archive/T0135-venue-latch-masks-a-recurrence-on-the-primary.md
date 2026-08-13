@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # The venue-not-online latch masks a recurrence on the primary
@@ -33,6 +33,10 @@ The live trading gate does **not** depend on this signal: spec `00088`'s engine 
 - **The runbook carries the new uid**, with its own anchor and the explicit instruction never to silence it — the sibling's "silence this rule once triaged" step is scoped to the latch, since silencing the recurrence rule would re-open the exact blind spot it closes.
 - **The 2026-08-06 outage is recorded** in `docs/reference/capture-era-data-hygiene-map.md`'s "Structural windows" table, with the gap-seconds as the durable figure and the reconciler's `both_streams_silent` number reconciled against it.
 
-## Suggested next steps
+## Resolution
 
-- Push the rule to Grafana Cloud and verify the first sample **by value, not presence** (`capture-deploys.md`): the A arm should read labeled `0`s on the primary, where the standing latch already holds `maintenance=1, cancel_only=2, post_only=1` — a `>0` on that first read is the page it would otherwise have been, and a `(no series)` is a FAIL rather than a zero. Confirm the rule is *evaluating* (`state=inactive health=ok lastError=none`), not merely stored. This is the only step between here and `resolved`.
+Resolved 2026-08-13. The recurrence rule `zcrypto-capture-venue-state-recurrence` is live in Grafana Cloud and **verified by value, not presence**: its A arm reads three labeled zeros — `{zcrypto, maintenance}`, `{zcrypto, cancel_only}`, `{zcrypto, post_only}` — where the standing latch holds 1/2/1, so the rule arrived green rather than inheriting the latch's red. A `(no series)` there would have been a FAIL and a `>0` would have been a real page; neither occurred. The rule is **evaluating**, not merely stored: `state=inactive health=ok lastError=(none)`, `lastEvaluation` fresh, 3 alert instances tracking the three latched pairs.
+
+The push was upsert-only with `GRAFANA_PRUNE` deliberately unset, and the push's own orphan check reported none — the change is purely additive, so no uid was superseded and the dangerous prune step of a rule-replacing deploy never arose.
+
+The gap this topic named is closed: a repeat of an already-seen `system` value now steps the counter, `increase()` sees the step, and a notification fires — where before it landed on an instance already `Alerting` and produced nothing. The two rules keep deliberately opposite forms, each covering the venue failure the other structurally cannot, with four tests and a runbook section pinning that so a future edit cannot quietly collapse them into one.
