@@ -9,10 +9,12 @@ import pytest
 from cli.config import EngineConfig
 from cli.engine import concordance, cycle
 from cli.engine.concordance import compare_targets, replay_cycle
-from cli.engine.cycle import run_cycle
+from cli.engine.cycle import _code_version, run_cycle
 from cli.engine.errors import EngineError
+from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, from_json, to_json, validate_record
 from cli.engine.store import GRID_INTERVALS, PAIR_KEYS
+from cli.engine.venuestate import InstrumentConstraints, VenueState
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
 
@@ -121,6 +123,31 @@ def _journal_reader(root: Path):
         return frame["ts"].to_list(), frame["close"].to_list()
 
     return reader
+
+
+def _adversarial_venue_state() -> VenueState:
+    """A VenueState hostile to the read-only pin: every ordermin/costmin sits far above any order
+    the fixture produces (the largest here is BTC's 0.2 * 1000.0 nav = 200 EUR notional), and
+    positions/balances carry large, non-flat values that would visibly move targets if netted. A
+    permissive VenueState (e.g. every constraint 0.0) would pass this test even if run_cycle
+    consulted it -- these numbers make the pin actually adversarial."""
+    instruments = {
+        asset: InstrumentConstraints(
+            base=asset,
+            instrument_id=INSTRUMENT_IDS[asset],
+            ordermin=1_000_000.0,
+            costmin=1_000_000.0,
+            lot_step=0.00000001,
+            tick_size=0.01,
+        )
+        for asset in ASSETS
+    }
+    return VenueState(
+        snapshot_at=CYCLE_TS,
+        instruments=instruments,
+        positions=dict.fromkeys(ASSETS, 1_000.0),
+        balances={"EUR": 1_000_000.0},
+    )
 
 
 # --- happy path ----------------------------------------------------------------------------------
@@ -555,3 +582,77 @@ def test_raising_opener_leaves_the_result_identical_to_the_no_ping_run(tmp_path,
     assert raising.record_path.exists()  # the record landed before the ping even tried
     for field in ("status", "cycle_ts", "targets", "orders", "reason", "offending_pairs", "sidecar_path"):
         assert getattr(raising, field) == getattr(baseline, field)
+
+
+# --- venue truth: the seam (00089 Task 4) ---------------------------------------------------------
+
+
+def test_venue_record_is_written_first_and_survives_a_failing_cycle(tmp_path, monkeypatch):
+    """The record lands BEFORE target computation, so a cycle that dies later still leaves the venue
+    evidence for the boundary: a fetch_fn that raises kills run_cycle deep inside step 1 (settle-
+    verify refresh), well before any target work -- venue-HH.json must already exist."""
+    config, _, _ = _env(tmp_path, monkeypatch)
+
+    def boom(pair_key: str, interval: int) -> list[list]:
+        raise RuntimeError("transport is gone")
+
+    with pytest.raises(RuntimeError, match="transport is gone"):
+        run_cycle(CYCLE_TS, config=config, fetch_fn=boom, clock=_clock(), venue_state=_adversarial_venue_state())
+
+    venue_path = config.journal_dir / "2026-07-10" / "venue-08.json"
+    assert venue_path.exists()
+    doc = json.loads(venue_path.read_text())
+    assert doc["status"] == "ok"
+    assert not (config.journal_dir / "2026-07-10" / "cycle-08.json").exists()
+
+
+def test_targets_are_identical_with_and_without_venue_state(tmp_path, monkeypatch):
+    """THE read-only pin: venue truth is journaled, never consulted. Two runs, identical inputs, one
+    with venue_state=None, the other with an ADVERSARIAL VenueState (ordermin/costmin set far above
+    every order the fixture produces; positions/balances that would visibly move targets if netted)
+    -- final_targets, orders, and the journaled cycle-HH.json bytes must be identical, full stop;
+    only CycleResult.venue differs. A permissive VenueState would pass even if the cycle consulted
+    it, proving nothing."""
+    monkeypatch.setattr(cycle, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+
+    results = {}
+    for name, state in (("none", None), ("adversarial", _adversarial_venue_state())):
+        rows_by = _store_rows()
+        store = tmp_path / name / "store"
+        _write_store(store, rows_by)
+        config = EngineConfig(store_dir=store, journal_dir=tmp_path / name / "journal")
+        results[name] = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=state)
+
+    none_result, adversarial_result = results["none"], results["adversarial"]
+    assert none_result.status == adversarial_result.status == "success"
+    assert none_result.targets == adversarial_result.targets == TARGETS
+    assert none_result.orders == adversarial_result.orders
+    assert none_result.record_path.read_bytes() == adversarial_result.record_path.read_bytes()
+
+    assert none_result.venue is None
+    assert adversarial_result.venue == {
+        "loaded": len(PAIR_KEYS),
+        "expected": len(INSTRUMENT_IDS),
+        "failures": 0,
+        "snapshot_at": CYCLE_TS.isoformat(),
+    }
+
+
+def test_no_snapshot_writes_an_error_record_and_the_cycle_proceeds(tmp_path, monkeypatch):
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=None)
+
+    assert result.status == "success"
+    assert result.venue is None
+    doc = json.loads((config.journal_dir / "2026-07-10" / "venue-08.json").read_text())
+    assert doc["status"] == "error"
+    assert "state" not in doc
+
+
+def test_code_version_composes_the_build_revision(monkeypatch):
+    monkeypatch.setenv("ZCRYPTO_BUILD_REVISION", "0daa2c12aaaaabbbbbcccc")
+    assert _code_version().endswith("+0daa2c12aaaa")
+    monkeypatch.delenv("ZCRYPTO_BUILD_REVISION")
+    assert "+" not in _code_version()
