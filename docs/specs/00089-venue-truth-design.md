@@ -1,0 +1,60 @@
+# 00089 — venue truth: the instrument map, constraint sizing, the held read, and the realized-state artifact
+
+Second of [[T0018]]'s five-spec risk-first sequence, after `00088` (the execution safety envelope, live on the engine since 2026-08-12). Read-only: nothing here places, amends, or cancels an order, and the deployed engine's behaviour changes only by what it *records*. This spec is what makes fill anomalies and reconciliation divergence observable — `00090`'s real-money rung and the automatic kill-switch trips are blocked behind it because a guard whose defect cannot be constructed cannot be proven.
+
+## Context — the engine computes targets against a basket nobody compares to anything
+
+The deployed engine runs a `TradingNode` with the exec client connected and `reconciliation=True` (`cli/engine/node.py`), so Nautilus's Cache holds live venue truth — instruments, positions, balances — maintained continuously. The 4-hourly cycle executes *inside* that node's event loop (`ShadowStrategy` timer → `on_alert_logic` → `run_cycle`) yet is deliberately isolated from it: `run_cycle(cycle_ts, config=config)` never sees the Cache. Targets are journaled per cycle; nothing records what the venue said we held, what an order would have had to satisfy, or whether the instruments we intend to trade even loaded.
+
+Meanwhile three basket divergences exist today, all structural and none observed by anything:
+
+- **The traded basket is a code constant.** The engine's ten-asset EUR basket derives from `cli/ohlc/fetch.py::PAIR_KEYS` at import time (`cli/engine/store.py`). No path connects it to the universe artifact — which is why 2026-08-13's universe refresh (iter-137) could not and did not change what the engine trades. Safe, but unwritten.
+- **DOT is traded-but-deselected.** `universe-20260813` dropped DOT/EUR below the volume floor (146,957.37 vs 150,000, a real ~25% decline); the engine's basket still carries it. Dormant — the strategy currently targets DOT at exactly 0.0 — but structurally the executor could size a name the universe judged too thin.
+- **ETH/BTC and SOL/BTC are selected-but-unreachable.** The universe selects them; the engine's EUR-only filter excludes them, and the adapter's single `margin_balance_asset="ZEUR"` cannot cover a XXBT-quoted book beside the EUR one (`cli/engine/node.py`'s own comment: 31 instruments quote in XXBT; one quote currency only).
+
+Venue minimums are likewise already read in this repo — `cli/engine/feeders.py::load_minimums` parses `ordermin`/`costmin` per EUR pair — but on the research path only ("Neither writes anything"): proven reader, wrong side of the wall.
+
+## Decisions
+
+**D1 — the combined picture: one spec builds the four venue-truth pieces AND rules all three divergences; blast radius stays none.** The owner reversed the initial narrow-scope plan (which would have deferred the divergences as topics) in favour of one coherent design. Everything below is read-only; the one thing no read-only spec can close — whether the basket ever changes — is registered as [[T0137]] rather than left in prose (D9).
+
+**D2 — the traded basket stays record 44's ten EUR legs, as code; concordance makes every divergence observable instead of silent.** A data refresh must not change what the live engine trades — the basket was ratified as part of the deployable (registry record 44), and iter-137 proved the isolation held. What was missing is the *observation*: nothing said "the universe and the basket now disagree." This spec adds that surface (D5) with the current divergence as its **ruled baseline**: DOT `traded-but-deselected`, ETH/BTC + SOL/BTC `selected-but-unreachable`, each named with [[T0137]] as its owner. The alert-shaped signal fires only on **new, unruled** divergence — the `00088`-era venue-latch lesson (T0135): a signal red from day one trains its reader to ignore it, so the acknowledged state must be encoded, not endured.
+
+**D3 — venue truth reaches the cycle as a frozen snapshot, passed through a new injectable seam.** At the boundary, the strategy reads the Cache once and freezes it into a plain `VenueState` (held positions, account balances, per-instrument constraints, `snapshot_at`), then invokes `run_cycle(..., venue_state=...)` beside the existing `fetch_fn`/`clock` seams. Rejected: passing the Cache/strategy handle in (drags Nautilus into `run_cycle`'s tests; the cycle would read live mutable state mid-computation), and an independent REST read inside the cycle (a second source of venue truth beside the one reconciliation maintains — two sources that can disagree is the disease this spec treats). The snapshot's one moment of staleness is bounded by a cycle's duration and is a feature: every number in the artifact was true at one instant the artifact names. `VenueState` construction is the only new code that touches Nautilus types; what crosses the seam is frozen plain data.
+
+**D4 — the realized-state artifact is `venue-<HH>.json` in the journal day-dir, the `execledger.py` pattern.** Own `VENUE_SCHEMA_VERSION`, own `venue-` prefix, written by the cycle after the snapshot is consumed. Structurally invisible to the Stage-6a gate: `_journal_artifacts` filters on the `cycle-` prefix, the property `exec-HH.json` already proved and this prefix re-proves by test. Contents: the `VenueState` verbatim (positions, balances, constraints, `snapshot_at`), the runtime concordance verdict (D5), and `code_version` (D8). A boundary with no snapshot writes the artifact with an `error` status rather than not writing (D7).
+
+**D5 — concordance splits into a repo-side test and a runtime check; the engine host never needs the universe artifact.** The selection is *committed* — `docs/universe/point-in-time-universe.md` is git-versioned (00093 D6) — so:
+
+- **Repo-side (a test, runs on every commit):** traded basket vs the committed doc's selected list, judged against the ruled-exceptions baseline of D2. A future universe regeneration that shifts selection turns the test red and forces a conscious baseline edit — divergence can never again arrive silently, and no runtime component ever reads the universe artifact on the engine host.
+- **Runtime (per cycle, from the snapshot):** basket vs venue — every ratified leg's instrument loaded, tradeable, constraints present and parseable. Verdict journaled in `venue-HH.json` and surfaced as gauges (D6). This is the leg that catches what only the venue knows: a delisting, a halted instrument, a constraint schema change.
+
+**D6 — metrics: a small `zcrypto_venue_*` family, admitted end to end in the same change.** Gauges: `zcrypto_venue_snapshot_age_seconds` (staleness of the last successful snapshot), `zcrypto_venue_instruments_loaded` vs `zcrypto_venue_instruments_expected`, `zcrypto_venue_concordance_failures` (count of unruled runtime failures, 0 in the healthy state). Kept inside the active-series budget; the capture-host Alloy keep-list admits the family **in the same change**, and the deploy verifies both directions of the admission trap by value — `00088`'s discipline, unchanged.
+
+**D7 — the cycle proceeds without venue truth; absence is loud, never blocking.** Targets journaling must never be hostage to venue-truth availability (`00088`'s stance: telemetry must never prevent the engine from starting). A failed snapshot → `venue-HH.json` with `status: error` and the reason, the age gauge goes stale, the cycle completes. The fail-closed consequence — "no venue truth → no orders" — is deliberately `00090`'s rule to implement, where orders exist to refuse; writing it here would be a guard whose defect cannot be constructed.
+
+**D8 — [[T0130]] rides this build: `code_version` becomes real.** Its `ripe_when` names "the next engine-image build," and this iteration is it. `cli/engine/cycle.py` already writes `code_version=version("zcrypto")`; the value reads `0.0.0` because the container's installed package carries no version stamp — a packaging defect, fixed in the image build so `importlib.metadata` reads the released version. Acceptance is by value at the converge: the first `cycle-HH.json` *and* `venue-HH.json` under the new image carry the release version, not `0.0.0`. The new artifact carries `code_version` from birth for the same reason the cycle record does: an artifact that cannot say which build produced it forces the fleet-pins join T0130 documented.
+
+**D9 — the basket re-ratification decision is registered as [[T0137]], human-gated, the spec's only deferral.** The owner's call ("maybe" the /BTC legs go live during 6b) — so the decision stays genuinely open rather than ruled frozen. T0137 carries both halves: DOT's membership (universe says drop; record 44 says trade) and the /BTC legs' reachability, the latter naming the single-`margin_balance_asset` multi-quote problem as the thing a "yes" must solve. The concordance baseline (D2) cites T0137 at both ruled exceptions, so the code and the registration point at each other.
+
+**D10 — [[T0134]] is fixed in this iteration: its trigger fires.** Its `ripe_when` names "the next time `tests/test_engine_metrics.py` is touched for another reason" — D6's gauges touch it. The order-dependent caplog failure (`configure()` sets the `zcrypto` logger's `propagate = False`, starving caplog's root handler when the test runs alone) is fixed so the test passes standalone and in-suite, and T0134 resolves.
+
+## Verification
+
+- TDD throughout; every load-bearing guard proven by constructing the defect it names (`infra/scripts/mutate-probe.sh`): the repo-side concordance test goes red on a selection shift *and* on a baseline edit that drops a ruled exception; the gate-glob immunity of `venue-HH.json` proven the way `exec-HH.json`'s was; the sizing function's `ordermin`/`costmin`/lot/tick handling pinned against constructed boundary cases (a target one lot below `ordermin`, a cost a cent below `costmin`, a tick-misaligned price).
+- The seam: `run_cycle` with `venue_state=None` completes and journals the error-status artifact; with a constructed `VenueState` it journals it verbatim. No test imports Nautilus except `venuestate.py`'s own construction tests.
+- Deploy verification by value, per `capture-deploys.md`: first `venue-HH.json` on the host read and its `code_version` ≠ `0.0.0` (D8's acceptance), `zcrypto_venue_*` families in Grafana Cloud with `concordance_failures` read as a **number equal to 0**, never `(no series)`.
+
+## What this does NOT do — bounded claims
+
+- Places no order, sizes no live order, arms nothing: the sizing function is pure and uncalled by any production path until `00090`.
+- Changes no basket: record 44's ten EUR legs before, the same ten after. The universe artifact gains no runtime consumer on the engine host.
+- Trips no kill switch: divergence becomes *observable*; acting on it is `00090`+.
+- Does not solve multi-quote margin: the /BTC legs stay unreachable, now with the fact recorded and owned ([[T0137]]) instead of implied by a filter comment.
+
+## Out of scope
+
+- The order state machine, submission, fills — `00090`.
+- The tracking-error report and recalibration — `00091`.
+- Accumulation and the full loop — `00092`.
+- Any change to `cli/engine/feeders.py`'s research-side minimums reader: it stays the measurement path's own; the executor side reads the Cache through the snapshot, and the two deliberately serve different consumers from different sources.
