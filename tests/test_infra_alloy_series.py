@@ -98,6 +98,15 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_venue_ok",
     "zcrypto_exec_last_evaluation_timestamp_seconds",
     "zcrypto_exec_restart_hold",
+    # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
+    # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,
+    # zcrypto-venue-snapshot-stale); dropping any of the four from the keep-regex leaves the alerted
+    # two unable to ever fire and all four invisible to the dashboard panel 00090's engine-board
+    # metrics pass owes them (NOT_CHARTED in tests/test_dashboards_cover_metrics.py).
+    "zcrypto_venue_snapshot_timestamp_seconds",
+    "zcrypto_venue_instruments_loaded",
+    "zcrypto_venue_instruments_expected",
+    "zcrypto_venue_concordance_failures",
 ]
 LIQUIDATIONS_APP_SERIES = [
     "zcrypto_liquidations_polls_total",
