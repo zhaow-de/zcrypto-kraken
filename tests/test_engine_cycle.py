@@ -651,6 +651,54 @@ def test_no_snapshot_writes_an_error_record_and_the_cycle_proceeds(tmp_path, mon
     assert "state" not in doc
 
 
+def test_a_venue_state_none_rerun_leaves_an_ok_record_alone(tmp_path, monkeypatch):
+    """The write-first design's whole point (00089 D7): a boundary whose venue-<HH>.json already
+    reads status "ok" is never clobbered by a later call carrying no VenueState. This is exactly the
+    CLI's `cycle --replace` path (cli/engine/command.py): it calls run_cycle with no venue_state at
+    all, so a manual re-run of an already-journaled boundary must not destroy the live engine's own
+    soak evidence for it -- or, absent --replace, a crashed boundary's only surviving evidence."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    first = run_cycle(
+        CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=_adversarial_venue_state()
+    )
+    assert first.status == "success"
+    venue_path = config.journal_dir / "2026-07-10" / "venue-08.json"
+    before = venue_path.read_text()
+
+    second = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=None)
+
+    assert second.status == "success"
+    assert venue_path.read_text() == before
+    assert second.venue is None
+
+
+def test_a_venue_state_none_rerun_still_overwrites_an_error_record(tmp_path, monkeypatch):
+    """Only an "ok" record is protected -- an existing "error" record for the boundary is fair game
+    and must be REWRITTEN, not left with stale content, on a later venue_state=None call."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    venue_dir = config.journal_dir / "2026-07-10"
+    venue_dir.mkdir(parents=True)
+    venue_path = venue_dir / "venue-08.json"
+    venue_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "cycle_ts": CYCLE_TS.isoformat(),
+                "code_version": "stale-fixture",
+                "status": "error",
+                "error": "STALE FIXTURE MARKER",
+            }
+        )
+    )
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=None)
+
+    assert result.status == "success"
+    doc = json.loads(venue_path.read_text())
+    assert doc["status"] == "error"
+    assert doc["error"] == "no venue snapshot available for this cycle"
+
+
 def test_code_version_composes_the_build_revision(monkeypatch):
     monkeypatch.setenv("ZCRYPTO_BUILD_REVISION", "0daa2c12aaaaabbbbbcccc")
     assert _code_version().endswith("+0daa2c12aaaa")

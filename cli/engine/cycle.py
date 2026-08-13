@@ -342,15 +342,28 @@ def _record_venue_state(config: EngineConfig, cycle_ts: datetime, venue_state: V
     record behind. `venue_state` is READ-ONLY evidence: consulted only here, for the ledger and the
     CycleResult summary the metrics sink reads -- never for targets or orders.
 
+    `venue_state=None` normally journals an error record -- EXCEPT when this boundary's
+    venue-<HH>.json already reads status "ok". That record is exactly the write-first design's own
+    evidence: the CLI's `cycle --replace` (cli/engine/command.py) calls run_cycle with no
+    venue_state at all, so without this guard a manual re-run of an already-journaled boundary would
+    silently clobber the live engine's own soak evidence for it -- or, worse, destroy a crashed
+    boundary's only surviving evidence by re-running it (without --replace) once the venue record is
+    the sole artifact on disk. Left alone in that case; the return value stays None either way, since
+    no fresh snapshot was taken this cycle.
+
     Local imports: cli.engine.venueledger pulls in cli.engine.venuestate, which imports
     nautilus_trader (~1s) at module level -- deferred to here (paid only when a cycle actually runs)
     so cli.engine.command's module-level import of this module stays nautilus-free (`zcrypto --help`).
     """
-    from cli.engine.venueledger import write_venue_record
+    from cli.engine.venueledger import read_venue_record, venue_record_path, write_venue_record
     from cli.engine.venuestate import runtime_concordance
 
     code_version = _code_version()
     if venue_state is None:
+        existing_path = venue_record_path(config.journal_dir, cycle_ts)
+        if existing_path.exists() and read_venue_record(existing_path).get("status") == "ok":
+            logger.info("run_cycle: venue_state=None but %s already reads status 'ok' -- leaving it alone", existing_path)
+            return None
         write_venue_record(
             config.journal_dir,
             cycle_ts,
