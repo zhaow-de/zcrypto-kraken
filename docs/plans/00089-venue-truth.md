@@ -336,7 +336,9 @@ finally:
 - [ ] **Step 2:** T0130 → `resolved`: rewrite its "packaging default" hypothesis in place (D8's measured correction — no release was ever cut), record the fix (workflow build-arg → `ZCRYPTO_BUILD_REVISION` → `code_version` composition) and that final acceptance is **by value at the converge** (the first `cycle-HH.json`/`venue-HH.json` under the new image reading `0.0.0+<sha12>`); archive per topic-ops. T0134 → `resolved`: the fix, the standalone-green proof; archive. Index bullets move with links repointed.
 - [ ] **Step 3:** Update T0018's spec table: `00089` → `landed (iter-<N>)`.
 - [ ] **Step 4:** Decisions-log entries per the closeout skill's format for the spec's D-numbers that were genuine option-picks (D2, D3, D5, D9 at minimum), `(Decision: N)` marked.
-- [ ] **Step 5:** Gate, stage by explicit path, commit `docs(engine): iter-<N> closeout -- venue truth lands; T0130 and T0134 resolve`.
+- [ ] **Step 5: Land D5a's ruling on its operating surface.** `tests/test_costmin_drift.py` is the committed constant's ONLY guard, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored. So the guard has no mechanical trigger at the moment drift actually arrives. Add `uv run pytest tests/test_costmin_drift.py` to the routine of the skill that mints a fresh refdata snapshot (`.claude/skills/zcrypto-refdata-sweep/` — read its SKILL.md and place the step where the new snapshot has just landed). This is `spec-plan-locations.md`'s rule that a ruling recorded only in a spec is invisible at execution time; it is owed in THIS change, not deferred. Exposure is nil today (`size_order` is uncalled until 00090) and real the moment it sizes money.
+- [ ] **Step 6:** Reconcile the plan's Task 1 Step 5/6 checkboxes against history — `COSTMIN_EUR` and its drift test landed in Task 2's commit, not Task 1's, because the ruling arrived mid-Task-2 and rewriting an already-reviewed commit would have invalidated its review anchor. Note it rather than restructure.
+- [ ] **Step 7:** Gate, stage by explicit path, commit `docs(engine): iter-<N> closeout -- venue truth lands; T0130 and T0134 resolve`.
 
 ---
 
