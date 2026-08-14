@@ -73,6 +73,10 @@ VALID_DAILY_LAST = datetime(2026, 7, 9, 0, 0)
 
 
 def _valid_record(**overrides) -> CycleRecord:
+    # schema_version is a LITERAL 1, not the imported SCHEMA_VERSION (now 2 post spec 00094) --
+    # this fixture's base-keyed pair/final_targets are a v1 shape, and schema-version-generic
+    # tests below (snapshot-boundary, field-type checks, ...) must stay pinned to v1 regardless of
+    # which schema is newest. See _valid_record_v2 for the symbol-keyed v2 counterpart.
     snapshots = overrides.pop(
         "snapshots",
         (
@@ -81,7 +85,7 @@ def _valid_record(**overrides) -> CycleRecord:
         ),
     )
     fields = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": 1,
         "cycle_ts": CYCLE_TS,
         "snapshots": snapshots,
         "final_targets": {"BTC": 0.1},
@@ -118,8 +122,12 @@ def test_valid_record_at_midnight_cycle():
 
 
 def test_wrong_schema_version():
-    with pytest.raises(EngineJournalError):
-        validate_record(_valid_record(schema_version=2))
+    # 99 is not in _LOADABLE_SCHEMA_VERSIONS ({1, 2}) -- must be refused for THAT reason (match
+    # pins the message), not incidentally via the schema-aware key check (2 is now a valid,
+    # loadable version, so validate_record(_valid_record(schema_version=2)) would raise for the
+    # wrong reason -- _valid_record's fixture stays base-keyed, which is a v1 shape).
+    with pytest.raises(EngineJournalError, match="unsupported schema_version"):
+        validate_record(_valid_record(schema_version=99))
 
 
 def test_cycle_ts_not_datetime():
@@ -241,3 +249,155 @@ def test_from_json_malformed():
 def test_from_json_missing_key():
     with pytest.raises(EngineJournalError):
         from_json('{"schema_version": 1}')
+
+
+# --- schema 2 (spec 00094): the v1 golden compatibility pin --------------------------------------
+
+# Captured with `to_json` from the code AS IT STOOD BEFORE schema 2 existed (SCHEMA_VERSION == 1,
+# no _LOADABLE_SCHEMA_VERSIONS, no schema-aware key checks) -- a literal byte-for-byte snapshot of
+# what a real v1 journal record on disk looks like. This is the compatibility pin: schema 2 must
+# not change one byte of how a v1 record round-trips. Regenerating this string from current code
+# would prove nothing about compatibility -- it must stay exactly as captured.
+_V1_GOLDEN_JSON = (
+    '{"builder_path": "fast", "code_version": "1.4.2+fast", "completed_at": "2026-07-10T08:03:12", '
+    '"cycle_ts": "2026-07-10T08:00:00", "final_targets": {"BTC": 0.1373, "ETH": -0.0621}, "schema_version": 1, '
+    '"snapshots": [{"content_hash": "c1c1132ceec88bc8f14ea18070aff5d80e9f2a6a3019840ce021e7dc6379fa3d", '
+    '"first_ts": "2026-07-09T20:00:00", "grid": "240", "last_ts": "2026-07-10T04:00:00", "n_bars": 3, "pair": "BTC", '
+    '"path": "2026-07-10/snapshots/cycle-08/BTC-240.parquet"}, '
+    '{"content_hash": "4d6df27cceb88b722664c7dea214817284a5f051d196b3320643965920b79374", '
+    '"first_ts": "2026-07-06T00:00:00", "grid": "1440", "last_ts": "2026-07-09T00:00:00", "n_bars": 4, "pair": "BTC", '
+    '"path": "2026-07-10/snapshots/cycle-08/BTC-1440.parquet"}, '
+    '{"content_hash": "af9e732daa317f02170116cd8d0e4a1ceeaea65a2e678878f73f357f65c0a33b", '
+    '"first_ts": "2026-07-09T20:00:00", "grid": "240", "last_ts": "2026-07-10T04:00:00", "n_bars": 3, "pair": "ETH", '
+    '"path": "2026-07-10/snapshots/cycle-08/ETH-240.parquet"}, '
+    '{"content_hash": "05dafb9cdb865a60fa168efa3dc89089be3bee34f1b19b571155a05d79402a55", '
+    '"first_ts": "2026-07-06T00:00:00", "grid": "1440", "last_ts": "2026-07-09T00:00:00", "n_bars": 4, "pair": "ETH", '
+    '"path": "2026-07-10/snapshots/cycle-08/ETH-1440.parquet"}], "started_at": "2026-07-10T08:01:35"}'
+)
+
+# The raw (ts, closes) inputs that produced each golden snapshot's content_hash, so the hash-
+# stability test recomputes from source rather than re-reading the pinned string back at itself.
+_GOLDEN_BTC_240_TS = [datetime(2026, 7, 9, 20, 0), datetime(2026, 7, 10, 0, 0), datetime(2026, 7, 10, 4, 0)]
+_GOLDEN_BTC_240_CLOSES = [41000.123, 41001.123, 41002.123]
+_GOLDEN_BTC_1440_TS = [
+    datetime(2026, 7, 6, 0, 0),
+    datetime(2026, 7, 7, 0, 0),
+    datetime(2026, 7, 8, 0, 0),
+    datetime(2026, 7, 9, 0, 0),
+]
+_GOLDEN_BTC_1440_CLOSES = [40500.5, 40501.5, None, 40503.5]
+_GOLDEN_ETH_240_TS = _GOLDEN_BTC_240_TS
+_GOLDEN_ETH_240_CLOSES = [2200.75, 2201.75, 2202.75]
+_GOLDEN_ETH_1440_TS = _GOLDEN_BTC_1440_TS
+_GOLDEN_ETH_1440_CLOSES = [2100.25, 2101.25, None, 2103.25]
+
+
+def test_v1_golden_round_trips_byte_identically():
+    # The compatibility pin itself: parse the golden, re-serialize, and the bytes must be identical
+    # to what was captured pre-schema-2 -- a real v1 record on disk must still load and re-emit
+    # exactly the same JSON post-change.
+    restored = from_json(_V1_GOLDEN_JSON)
+    assert to_json(restored) == _V1_GOLDEN_JSON
+    validate_record(restored)  # a real v1 record must still validate post-change
+
+
+def test_v1_golden_hash_stability():
+    # snapshot_content_hash is untouched by schema 2 (no record-level hash exists) -- recomputing
+    # from the golden's raw (ts, closes) inputs must still reproduce the exact hashes embedded in
+    # the golden JSON, proving the byte layout has not silently shifted.
+    assert (
+        snapshot_content_hash(_GOLDEN_BTC_240_TS, _GOLDEN_BTC_240_CLOSES)
+        == "c1c1132ceec88bc8f14ea18070aff5d80e9f2a6a3019840ce021e7dc6379fa3d"
+    )
+    assert (
+        snapshot_content_hash(_GOLDEN_BTC_1440_TS, _GOLDEN_BTC_1440_CLOSES)
+        == "4d6df27cceb88b722664c7dea214817284a5f051d196b3320643965920b79374"
+    )
+    assert (
+        snapshot_content_hash(_GOLDEN_ETH_240_TS, _GOLDEN_ETH_240_CLOSES)
+        == "af9e732daa317f02170116cd8d0e4a1ceeaea65a2e678878f73f357f65c0a33b"
+    )
+    assert (
+        snapshot_content_hash(_GOLDEN_ETH_1440_TS, _GOLDEN_ETH_1440_CLOSES)
+        == "05dafb9cdb865a60fa168efa3dc89089be3bee34f1b19b571155a05d79402a55"
+    )
+
+
+# --- schema 2: symbol-keyed final_targets and snapshot pairs -------------------------------------
+
+
+def _valid_record_v2(**overrides) -> CycleRecord:
+    snapshots = overrides.pop(
+        "snapshots",
+        (
+            _entry("BTC/EUR", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST),
+            _entry("BTC/EUR", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST),
+        ),
+    )
+    fields = {
+        "schema_version": SCHEMA_VERSION,
+        "cycle_ts": CYCLE_TS,
+        "snapshots": snapshots,
+        "final_targets": {"BTC/EUR": 0.1},
+        "started_at": CYCLE_TS,
+        "completed_at": CYCLE_TS + timedelta(minutes=5),
+        "code_version": "0.1.0+fast",
+        "builder_path": "fast",
+    }
+    fields.update(overrides)
+    return CycleRecord(**fields)
+
+
+def test_v2_valid_record_passes():
+    validate_record(_valid_record_v2())  # no raise
+
+
+def test_v2_json_round_trip():
+    snapshots = (
+        _entry("BTC/EUR", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST),
+        _entry("BTC/EUR", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST),
+        _entry("ETH/BTC", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST),
+        _entry("ETH/BTC", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST),
+    )
+    record = _valid_record_v2(snapshots=snapshots, final_targets={"BTC/EUR": 0.1, "ETH/BTC": 0.0})
+    restored = from_json(to_json(record))
+    assert restored == record
+    validate_record(restored)
+
+
+def test_v2_final_targets_base_key_refused():
+    # Only final_targets is wrong (snapshots stay v2-valid) -- isolates the final_targets check.
+    record = _valid_record_v2(final_targets={"BTC/EUR": 0.1, "ETH": -0.05})
+    with pytest.raises(EngineJournalError, match="final_targets"):
+        validate_record(record)
+
+
+def test_v2_snapshot_pair_base_key_refused():
+    # Only the snapshot pair is wrong (final_targets stays v2-valid) -- isolates the pair check.
+    record = _valid_record_v2(
+        snapshots=(
+            _entry("BTC", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST),
+            _entry("BTC", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST),
+        )
+    )
+    with pytest.raises(EngineJournalError, match="snapshot pair"):
+        validate_record(record)
+
+
+def test_v1_final_targets_symbol_key_refused():
+    # Only final_targets is wrong (snapshots stay v1-valid) -- isolates the final_targets check.
+    record = _valid_record(final_targets={"BTC/EUR": 0.1})
+    with pytest.raises(EngineJournalError, match="final_targets"):
+        validate_record(record)
+
+
+def test_v1_snapshot_pair_symbol_key_refused():
+    # Only the snapshot pair is wrong (final_targets stays v1-valid) -- isolates the pair check.
+    record = _valid_record(
+        snapshots=(
+            _entry("BTC/EUR", "240", datetime(2026, 7, 9, 20, 0), VALID_H4_LAST),
+            _entry("BTC/EUR", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST),
+        )
+    )
+    with pytest.raises(EngineJournalError, match="snapshot pair"):
+        validate_record(record)
