@@ -32,7 +32,7 @@
 | `cli/engine/concordance.py` | *modify* — schema-aware replay + key normalization; `evaluate_gate` untouched |
 | `cli/engine/command.py` | *modify* — gauges' label keys, `instruments_expected` derivation, the self-test's record pin |
 | `cli/engine/soak.py` + `cli/engine/feeders.py` | *modify where the sweep routes hits* — both read targets/universe shapes |
-| `docs/research/<successor spec for the widened deployable>` | *create* (Task 7) — the doc the new record's `spec_hash` pins; IMMUTABLE once hashed |
+| `docs/specs/<next free serial — the successor spec for the widened deployable>` | *create* (Task 7) — the doc the new record's `spec_hash` pins (record 44's own resolves to `docs/specs/00038-...`); IMMUTABLE once hashed |
 | `docs/reference/trial-registry.jsonl` | *append-only* (Task 7) — the successor record, owner-adopted |
 | `tests/test_basket_concordance.py` | *modify* — the `/BTC` exception retires; DOT's cites the ruling |
 | `tests/` engine files | *modify* — find the real files first; do not create parallel ones |
@@ -61,7 +61,7 @@
 
 **Interfaces:**
 - Produces: `INSTRUMENT_IDS: dict[str, str]` — symbol → `f"{base}/{quote}.KRAKEN"`, derived from `BASKET`, twelve entries (`"ETH/BTC" -> "ETH/BTC.KRAKEN"` — Task 1 of `00089` proved the adapter strips venue aliases, so no XBT form appears in IDs).
-- Produces: `COSTMIN: dict[str, tuple[float, str]]` — symbol → `(value, quote_currency)`: ten `(0.45, "ZEUR")`, `("ETH/BTC")`/`("SOL/BTC")` → `(2e-05, "XXBT")`. `COSTMIN_EUR` is deleted; its consumers (swept in Task 1) re-route.
+- Produces: `COSTMIN: dict[str, tuple[float, str]]` — symbol → `(value, quote_currency)` in the SNAPSHOT'S OWN vocabulary (`"EUR"`/`"BTC"` — the drift test's declared source spells them so; the venue-alias forms `ZEUR`/`XXBT` belong to the adapter layer and are mapped where consumed, never stored here): ten `(0.45, "EUR")`, the two `/BTC` legs `(2e-05, "BTC")`. `COSTMIN_EUR` is deleted; its consumers (swept in Task 1) re-route.
 - Produces: `fx_eur_notional(symbol: str, qty: float, price: float, btc_eur_close: float) -> float` — EUR-quoted: `qty * price`; XBT-quoted: `qty * price * btc_eur_close`. Pure, uncalled by production (the `size_order` precedent); `btc_eur_close <= 0` raises.
 - `size_order` is unchanged — the caller owns denomination, and the docstring says so at the seam.
 
@@ -85,8 +85,8 @@
 **Interfaces:**
 - `SCHEMA_VERSION = 2`; `_LOADABLE_SCHEMA_VERSIONS = frozenset({1, 2})` (the registry's own pattern, named in its comment).
 - `from_json` loads BOTH: a v1 record keeps its base-keyed `final_targets` **as-is** (no rewriting — the gate normalizes at compare time, Task 6); a v2 record requires full-symbol keys.
-- `validate_record` is schema-aware: v2 refuses base keys (`"ETH"` in a v2 record is a hard `EngineJournalError` — D3's verification bullet: wrong keying is refused, never silently normalized); v1 refuses symbol keys likewise (a v1 record was written by code that could not produce them).
-- The record hash: v1 records verify under the v1 byte layout unchanged; v2 defines its layout with `schema_version` in the hashed prefix exactly as v1 did. Existing journaled records on the live host MUST still round-trip — pin with a fixture captured from the current `to_json` output before any edit.
+- `validate_record` is schema-aware over `final_targets` AND the snapshot `pair` fields: v2 refuses base keys (`"ETH"` in a v2 record is a hard `EngineJournalError` — D3's verification bullet: wrong keying is refused, never silently normalized); v1 refuses symbol keys likewise (a v1 record was written by code that could not produce them).
+- **There is NO record-level hash — do not invent one.** The journal's only hash is `snapshot_content_hash` over `(ts, closes)`, schema-agnostic and needing no change ("pinned by schema_version" in its docstring means the layout is fixed per schema, not that the version is hashed). The compatibility pin is byte-level: existing journaled records on the live host MUST still round-trip — capture a golden fixture from the current `to_json` output BEFORE any edit, and pin both the v1 round-trip bytes and the snapshot-hash stability against it.
 
 - [ ] **Step 1: Capture the v1 golden fixture FIRST** — serialize a `CycleRecord` with today's code, commit the literal into the test as the compatibility pin.
 - [ ] **Step 2: Failing tests** — v1 golden round-trips byte-identically post-change; v2 round-trips; v2-with-base-keys refused; v1-with-symbol-keys refused; unknown schema refused; hash stability for the v1 golden.
@@ -97,19 +97,27 @@
 **Files:** Modify `cli/engine/cycle.py`, `tests/test_engine_cycle.py`.
 
 **Interfaces:**
+- Produces: `select_model_inputs(store_series: dict[str, ...]) -> dict[str, ...]` — the shared builder-input contraction (spec D2): picks the ten `/EUR` series, re-keys by base, unions the calendar over the ten EUR pairs ONLY. Imported by the cycle, Task 6's replay, and the soak loaders — one implementation, three consumers, never copies.
 - Produces: `_expand_to_basket(model_targets: dict[str, float]) -> dict[str, float]` — base-keyed ten in, symbol-keyed twelve out: each base maps to its `<base>/EUR` symbol carrying the model's value; `BASKET` members with no model output (`ETH/BTC`, `SOL/BTC`) emit **exactly `0.0`**. A model base with no `<base>/EUR` in `BASKET` raises (fail loud).
 - `run_cycle` journals the expanded twelve (schema 2); orders derive from symbol-keyed deltas — a `0.0` target with a `0.0` previous target produces **no order row** for the `/BTC` legs (assert it: order emission is delta-driven and structurally silent there).
+- **`_previous_success` normalizes a v1 predecessor's keys (`base → base/EUR`) before the delta.** Without this, the FIRST schema-2 cycle reads a base-keyed prev, every `.get(symbol, 0.0)` misses, and the engine writes a phantom from-flat rebalance into `orders.jsonl` and the exec ledger — silently, since the gate never reads orders. Pin it: a v2 cycle following a v1 fixture record emits orders only for genuine deltas.
+- **Snapshot filenames sanitize the symbol** (`symbol.replace("/", "-")` → `ETH-BTC-1440.parquet`) so the day-dir's `snapshots/` stays flat; the NAS pull is rsync-archive and parses no names (confirm via the sweep, and say so in the report).
 
 - [ ] **Step 1: THE TWO D1 PINS, written before any edit:**
 
 ```python
-def test_eur_targets_are_the_models_own_values_under_symbol_keys(...):
-    """D1's identity pin: the expansion relabels, never recomputes. The model's ten outputs
-    appear verbatim under their /EUR symbols."""
-    model_out = {"BTC": 0.2, "ETH": -0.1, ...}  # a full ten-base dict, exact fixture values
-    expanded = _expand_to_basket(model_out)
-    assert expanded["BTC/EUR"] == 0.2 and expanded["ETH/EUR"] == -0.1
-    assert set(expanded) == set(BASKET)
+def test_eur_targets_equal_a_standalone_ten_asset_build(...):
+    """D1's identity pin, through the REAL path: the full cycle build (fixture store ->
+    select_model_inputs -> builder -> _expand_to_basket) produces /EUR-keyed targets equal to a
+    standalone build_crossfreq_system_fast run over the ten EUR series alone. A hand-built
+    expansion-only test would stay green if the pipeline fed the model differently -- this one
+    goes red if CrossfreqSystemConfig.assets widens OR a /BTC calendar stamp shifts an EUR
+    window. Also assert set(expanded) == set(BASKET)."""
+
+
+def test_a_btc_stamp_the_eur_legs_lack_moves_no_eur_window(...):
+    """The calendar pin (spec D2): a fixture where the twelve-symbol stamp union differs from
+    the ten-EUR union -- one /BTC-only timestamp -- leaves every EUR target identical."""
 
 
 def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
@@ -125,9 +133,9 @@ def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
 
 **Files:** Modify `cli/engine/concordance.py`, `tests/test_engine_concordance.py` (find the real name); sweep-routed edits in `cli/engine/soak.py`.
 
-- [ ] **Step 1:** `replay_cycle` dispatches on `record.schema_version`: v1 replays the ten-asset builder path and **normalizes its base keys to `<base>/EUR`** for comparison; v2 replays the twelve-leg path (model + `_expand_to_basket` — the same code the cycle runs, imported, never duplicated). `compare_targets` itself stays key-agnostic.
-- [ ] **Step 2: THE STRADDLE TEST** — construct a journaled run of outcomes spanning the boundary (v1 records before, v2 after, same underlying fixture data) and assert `evaluate_gate` scores an **unbroken streak** across it. Then the refusal leg: a v2 record with base keys never reaches comparison (Task 4's validation refuses it first — assert the error surfaces, not a silent pass).
-- [ ] **Step 3:** Route the sweep's `soak.py`/`feeders.py` hits (both read target/universe shapes); the soak's own tests move to symbol keys, values preserved.
+- [ ] **Step 1:** `replay_cycle` dispatches on `record.schema_version`, and **each schema replays AND compares in its native key space** — v1 through the ten-asset path, base-keyed, against its own base-keyed record; v2 through `select_model_inputs` + the builder + `_expand_to_basket` (imported from cycle, never duplicated), symbol-keyed. **No cross-schema normalization at compare time**: the gate never compares one record against another, and normalizing v1 replay output while the journaled record stays base-keyed would make EVERY v1 record a structural mismatch — the design defeating its own goal. `compare_targets` stays key-agnostic.
+- [ ] **Step 2: THE STRADDLE TEST, through the REAL replay path** — journaled v1 records before the boundary and v2 after, over the same fixture data, with outcomes produced by `_replay_one`/`_evaluate_journal` (NOT hand-built `CycleOutcome`s — `evaluate_gate` is structurally blind to schema, so hand-built outcomes prove arithmetic that was never at risk). Assert an **unbroken streak**; assert a v1 record still compares clean natively; then the refusal leg: a v2 record with base keys never reaches comparison (Task 4's validation refuses it first — assert the error surfaces, not a silent pass).
+- [ ] **Step 3: The soak is a first-class consumer, not a sweep footnote.** `realized_series` ABORTS on a mixed-schema window today (it raises when the clean segment's asset set changes, and reads the store by target keys — wrong paths post-re-key), and `_assemble_latest_grids`/`_load_canonical` are documented parallel loaders that would leave `realized_internals` permanently degraded once the latest record is v2. Route all of them: normalize v1 records' keys at load (share Task 5's normalizer), point the loaders through `select_model_inputs`' selection rules, and add a mixed-window test — a soak report spanning the boundary neither aborts nor mis-paths.
 - [ ] **Step 4: red → green; gate, stage, commit** `feat(engine): schema-aware gate replay -- the streak survives the boundary`.
 
 ### Task 7: Re-ratification — the successor spec, the record, the owner's adopt
@@ -135,9 +143,9 @@ def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
 **Files:** Create the successor research spec under `docs/research/`; append to `docs/reference/trial-registry.jsonl`; modify the engine self-test's pin in `cli/engine/command.py`.
 
 - [ ] **Step 1: Locate record 44's own spec doc** (resolve its `spec_hash` against committed files — `git grep` the hash in `docs/`; read how that doc is structured) and how records are appended (`cli/registry/record.py`'s writer surface and the append-only discipline). Do not guess either.
-- [ ] **Step 2: Author the successor spec** — the widened deployable: the twelve-leg basket (DOT deliberately kept, the T0137 ruling cited), the ten-asset model unchanged, the `/BTC` legs at structural zero via `_expand_to_basket`, metrics expected identical to record 44's on the EUR legs. **This doc is immutable once its sha256 lands in the record** — write it final.
-- [ ] **Step 3: Mint the record** via the committed builder/reproduction path with `verdict: "park"` INITIALLY — the append is autonomous, the ADOPT is not.
-- [ ] **Step 4 (ATTENDED — the owner's act):** present the record and its reproduced metrics; the owner speaks the adopt. Only then flip the engine self-test's pin to the new `trial_id` (the registry's next id at append — do NOT assume 45; trial 46 is already taken by a B1 reject).
+- [ ] **Step 2: Author the successor spec** — in `docs/specs/` at the next free serial (record 44's own `spec_hash` resolves to `docs/specs/00038-...`, and `spec-plan-locations.md` owns the convention; the plan's earlier `docs/research/` placement was wrong): the widened deployable — the twelve-leg basket (DOT deliberately kept, the T0137 ruling cited), the ten-asset model unchanged, the `/BTC` legs at structural zero via `_expand_to_basket`, metrics expected identical to record 44's on the EUR legs. **This doc is immutable once its sha256 lands in the record** — write it final.
+- [ ] **Step 3: Prepare, do NOT append.** The registry is hash-chained and append-only with the verdict inside the hashed body — a verdict can never change after append, so a park-then-adopt sequence is unimplementable. This step produces the record's full field set and the reproduced metrics as an artifact for the owner's eyes, appending nothing.
+- [ ] **Step 4 (ATTENDED — the owner's act, and the ONLY append):** present the prepared record and metrics; the owner speaks the adopt; append ONCE with `verdict: "adopt"`; then flip the engine self-test's pin to the new `trial_id` (the registry's next id at append — do NOT assume 45; trial 46 is already taken by a B1 reject, so the next is 47 unless something appends first).
 - [ ] **Step 5: Gate, stage, commit** `feat(engine): re-ratify the deployable on the twelve-leg basket` (the spec-doc commit may precede the record commit; keep the doc and its hash consistent).
 
 ### Task 8: The concordance baseline and the sequence table
@@ -157,11 +165,18 @@ def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
 - [ ] **Step 2:** Decisions log: the three owner rulings (fully-tradeable depth over minimal; keep-DOT over retire; coupled re-ratification over capability-first) plus D1's construction and D3's mixed-window design, options and `(Decision: N)` marked.
 - [ ] **Step 3:** **T0137 → `resolved` + archived**, both halves cited, `ripe_when` absent, index bullet moved and repointed.
 - [ ] **Step 4: THE FULL SUITE, in this task, foreground** — `uv run pytest -q`, the `00089` lesson as standing practice. Green before the closeout commit.
-- [ ] **Step 5:** Deploy notes into the closeout entry: this payload stacks with `00089`'s still-owed converge — one converge may carry both or two may run; decided at deploy time under `capture-deploys.md`, with D3's specific by-value check (the gate streak after the first schema-2 cycle equals the streak before it plus one).
-- [ ] **Step 6: Gate, stage by explicit path, commit** `docs(engine): iter-<N> closeout -- the /BTC widening lands; T0137 resolves`.
+- [ ] **Step 5:** Refresh the memo's queue via the ad-hoc procedure (`memo-protocol.md`): the `00094` item under T0018's WP2 records this iteration's completion state, so a session dying between merge and deploy leaves the pick-time view true.
+- [ ] **Step 6:** Deploy notes into the closeout entry: this payload stacks with `00089`'s still-owed converge — one converge may carry both or two may run; decided at deploy time under `capture-deploys.md`, with D3's specific by-value check (the gate streak after the first schema-2 cycle equals the streak before it plus one).
+- [ ] **Step 7: Gate, stage by explicit path, commit** `docs(engine): iter-<N> closeout -- the /BTC widening lands; T0137 resolves`.
 
 ---
 
 ## The deploy (after merge — NOT part of task execution)
 
-Standard engine discipline: canary via the secondary's capture bake, inter-cycle window, `fleet-pins.md` first, attended converge. **Stacking with `00089`'s owed converge is an operational call at deploy time.** Verify by value: the first schema-2 `cycle-HH.json` carries twelve symbol-keyed targets with both `/BTC` legs at `0.0`; `venue-HH.json` reads twelve instruments; the gate streak after that cycle equals its pre-deploy value plus one — a streak reset is the D3 failure and rolls back.
+**Three surfaces, in this order — the order is load-bearing (spec D8):**
+
+1. **NAS and ops images first.** The gate is scored on the NAS (`gate-export` under the NAS image pin, after every journal pull) and re-verified on ops (`verified-replay` under the ops pin). Old code on either raises `unsupported schema_version 2` → the day classifies unclean → **the ratified streak zeroes on the scoring surface** with the engine deploy fully correct. Converging them first is safe in advance: every existing record is v1, and the widened code loads `{1, 2}`.
+2. **The engine last**, standard discipline: canary via the secondary's capture bake, inter-cycle window, `fleet-pins.md` first, attended converge — **and inside the converge window, before the first boundary: stage the two `/BTC` canonical parquets to the host and run the store seed.** The engine host mounts no data root, and `refresh_store` over a missing file kills the first post-converge cycle outright.
+3. Stacking with `00089`'s still-owed engine payload: an operational call at deploy time under `capture-deploys.md`.
+
+**Verify by value:** the first schema-2 `cycle-HH.json` carries twelve symbol-keyed targets with both `/BTC` legs at exactly `0.0`; **`orders.jsonl` shows no phantom rebalance** (the v1-predecessor normalization working — a full-book order set here is the B3 failure and rolls back); `venue-HH.json` reads twelve instruments; on the NAS/ops replay surfaces `validation_failures` and `mismatches` are **unchanged** and `replayed_ok` advances. **The streak moves only at the deploy day's 20:30 UTC evaluation** — it is a complete-days counter, so expecting +1 immediately after the first cycle is wrong arithmetic; at 20:30, streak = pre-deploy + 1 or the deploy rolls back.
