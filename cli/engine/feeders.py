@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
+from cli.engine.cycle import _expand_to_basket, select_model_inputs
 from cli.engine.errors import EngineError
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, validate_record
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, apply_whole_book_limits, build_crossfreq_system_fast
@@ -96,6 +97,18 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
     `final_targets` -- which the internal one structurally cannot catch, since a self-consistent
     rebuild that diverges from what the engine actually traded would agree with itself all the way
     and both reports would describe a book that never existed.
+
+    Both journal schemas rebuild here (spec 00094 D2/D3). A schema-1 record's journaled pairs already
+    ARE the ten-asset model's base keys; a schema-2 record's are the twelve full symbols, which the
+    builder REFUSES -- and refuses with `PortfolioError`, which is not an `EngineError`, so it would
+    escape `decompose_report`'s per-record catch and kill the whole command rather than counting one
+    named cycle. `select_model_inputs` contracts them (imported from the cycle, never copied).
+
+    Only the JOURNAL identity crosses into symbol space, via `_expand_to_basket`, because that is the
+    key space the record was written in. The returned `CycleStages` stays BASE-keyed whatever the
+    schema: both consumers want base keys -- `accumulation_payload` looks its floors up in
+    `load_minimums`' output, which the refdata snapshot keys by base -- and no sleeve, cap or
+    whole-book limit has ever seen a `/BTC` leg to report on.
     """
     c = config or CrossfreqSystemConfig()
     validate_record(record)  # no-peek + snapshot-boundary discipline, before any snapshot is read
@@ -135,7 +148,14 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
             f"cycle_ts - 4h ({expected_h4_last!r})"
         )
 
-    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=c)
+    if record.schema_version == 1:
+        model_daily_ts, model_daily = daily_ts, daily_prices
+        model_h4_ts, model_h4 = h4_ts, h4_prices
+    else:
+        model_daily_ts, model_daily = select_model_inputs(by_grid["1440"])
+        model_h4_ts, model_h4 = select_model_inputs(by_grid["240"])
+
+    result = build_crossfreq_system_fast(model_daily, model_daily_ts, model_h4, model_h4_ts, config=c)
     n = result.n_periods
 
     sleeves = {name: {a: result.sleeve_positions[name][a][n] for a in c.assets} for name in SLEEVES}
@@ -155,23 +175,26 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
 
     _check_stage_identity(multiplier, limited, final, cycle_ts=record.cycle_ts)
 
-    # The journal identity: what we rebuilt must be what the engine actually traded.
-    if set(final) != set(record.final_targets):
+    # The journal identity: what we rebuilt must be what the engine actually traded -- compared in
+    # the key space the RECORD was written in, so a schema-2 record's twelve symbols are met by the
+    # cycle's own expansion of the ten the model produced.
+    journaled_space = final if record.schema_version == 1 else _expand_to_basket(final)
+    if set(journaled_space) != set(record.final_targets):
         raise EngineError(
             f"rebuilt asset set differs from the journaled one at cycle_ts={record.cycle_ts}: "
-            f"{sorted(set(final) ^ set(record.final_targets))}"
+            f"{sorted(set(journaled_space) ^ set(record.final_targets))}"
         )
     for a, journaled in record.final_targets.items():
-        if final[a] != journaled:
+        if journaled_space[a] != journaled:
             raise EngineError(
                 f"replay disagrees with the journal for asset={a!r} at cycle_ts={record.cycle_ts}: "
-                f"rebuilt={final[a]!r} != journaled={journaled!r} -- this cycle's rebuild does not "
+                f"rebuilt={journaled_space[a]!r} != journaled={journaled!r} -- this cycle's rebuild does not "
                 "describe the book the engine traded"
             )
 
     closes = {}
     for a in c.assets:
-        series = h4_prices[a]
+        series = model_h4[a]
         value = series[-1]
         if value is None:
             raise EngineError(f"the forming row's close is missing for asset={a!r} at cycle_ts={record.cycle_ts}")

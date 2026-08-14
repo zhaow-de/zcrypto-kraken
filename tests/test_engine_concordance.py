@@ -1,10 +1,17 @@
 """Tests for the concordance core (cli/engine/concordance.py): compare_targets, evaluate_gate, and
-replay_cycle. Everything here is synthetic -- replay_cycle tests use a stub snapshot_reader and a
-monkeypatched builder, never the real (dataset-backed, ~2min) build_crossfreq_system[_fast]."""
+replay_cycle. Everything here is synthetic. The single-pair replay_cycle tests use a stub
+snapshot_reader and a monkeypatched builder; the schema-straddle section at the bottom runs the REAL
+builder over a synthetic twelve-symbol fixture (fast -- hundreds of bars, not the dataset-backed
+~2min canonical build), because a stub keyed by whatever it is handed cannot tell the two schemas'
+key spaces apart."""
 
+import math
 import types
-from datetime import date, datetime, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
+import polars as pl
 import pytest
 
 import cli.engine.concordance as concordance
@@ -20,6 +27,11 @@ from cli.engine import (
     replay_cycle,
     snapshot_content_hash,
 )
+from cli.engine.cycle import _expand_to_basket
+from cli.engine.journal import to_json
+from cli.engine.store import BASKET
+from cli.ohlc.dataset import write_parquet
+from cli.portfolio import build_crossfreq_system_fast
 
 # --- compare_targets ------------------------------------------------------------------------------
 
@@ -624,3 +636,232 @@ def test_replay_cycle_multi_pair_calendar_mismatch_raises(monkeypatch):
     with pytest.raises(EngineJournalError):
         replay_cycle(record, two_pair_reader, path="fast")
     assert calls == []  # the builder must never run once the pairs' calendars disagree
+
+
+# --- the schema straddle: one journal, both schemas, through the REAL replay path ------------------
+#
+# Everything above replays a synthetic single-pair record against a STUBBED builder. These do not:
+# the journal below is built by the real ten-asset builder over a twelve-symbol fixture store, and
+# every outcome comes from `_replay_one`/`_evaluate_journal`. That is deliberate. `evaluate_gate` is
+# structurally blind to schema -- hand-built CycleOutcomes would exercise arithmetic that was never
+# at risk, and a builder keyed by whatever it is handed agrees with any grid, so neither could tell
+# a v2 record replayed through the contraction from one replayed straight into the builder (which is
+# a hard PortfolioError, i.e. the state this branch inherited).
+
+STRADDLE_DAYS = (date(2026, 7, 8), date(2026, 7, 9), date(2026, 7, 10))
+STRADDLE_FLIP = datetime(2026, 7, 9, 12, tzinfo=timezone.utc)  # the first schema-2 boundary
+STRADDLE_NOW = datetime(2026, 7, 11, 0, 0, tzinfo=timezone.utc)  # past the last day's 20:00 + 30 min
+_N_DAILY_MASTER = 320  # > the longest daily lookback in play; a shorter history makes every target 0.0
+_N_H4_MASTER = 520
+
+
+def _straddle_closes(symbol: str, n: int, scale: int) -> list[float]:
+    """A distinct trending-plus-cycling path per symbol, so the ten EUR targets come out non-zero
+    AND pairwise distinct -- a value carried through the pipeline must not be confusable with a
+    default nobody wrote (mirrors tests/test_engine_cycle.py's `_real_closes`)."""
+    k = BASKET.index(symbol)
+    level, amplitude, period = 100.0 * (1 + k), 0.10 + 0.03 * k, (37 + 7 * k) * scale
+    return [level * (1.0 + amplitude * math.sin(2 * math.pi * i / period) + 0.003 * i / scale) for i in range(n)]
+
+
+def _straddle_master() -> dict[int, tuple[list[datetime], dict[str, list[float]]]]:
+    """The full fixture history per grid: (ts, {symbol: closes}) over all twelve BASKET symbols, on
+    ONE calendar per grid. Every journaled cycle below is a prefix of this."""
+    daily_last = datetime(STRADDLE_DAYS[-1].year, STRADDLE_DAYS[-1].month, STRADDLE_DAYS[-1].day, tzinfo=timezone.utc)
+    daily_last -= timedelta(days=1)  # the newest daily bar any cycle here may see
+    h4_last = datetime(STRADDLE_DAYS[-1].year, STRADDLE_DAYS[-1].month, STRADDLE_DAYS[-1].day, 16, tzinfo=timezone.utc)
+    grids = {}
+    for interval, last, n, step, scale in (
+        (1440, daily_last, _N_DAILY_MASTER, timedelta(days=1), 1),
+        (240, h4_last, _N_H4_MASTER, timedelta(hours=4), 6),
+    ):
+        ts = [last - (n - 1 - i) * step for i in range(n)]
+        grids[interval] = (ts, {s: _straddle_closes(s, n, scale) for s in BASKET})
+    return grids
+
+
+_STRADDLE_MASTER = _straddle_master()
+
+
+def _straddle_window(interval: int, last_ts: datetime) -> tuple[list[datetime], dict[str, list[float]]]:
+    ts, by_symbol = _STRADDLE_MASTER[interval]
+    upto = [i for i, t in enumerate(ts) if t <= last_ts]
+    assert ts[upto[-1]] == last_ts, f"grid {interval} has no bar at {last_ts!r}"
+    return [ts[i] for i in upto], {s: [closes[i] for i in upto] for s, closes in by_symbol.items()}
+
+
+def _straddle_model_targets(cycle_ts: datetime) -> dict[str, float]:
+    """What the ten-asset model produces for this boundary -- computed by the REAL builder over the
+    ten EUR legs alone, base-keyed. Both schemas' records journal this same build: v1 verbatim, v2
+    expanded onto the twelve-symbol basket."""
+    midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_ts, daily = _straddle_window(1440, midnight - timedelta(days=1))
+    h4_ts, h4 = _straddle_window(240, cycle_ts - timedelta(hours=4))
+    eur = [s for s in BASKET if s.endswith("/EUR")]
+    result = build_crossfreq_system_fast(
+        {s.split("/")[0]: daily[s] for s in eur}, daily_ts, {s.split("/")[0]: h4[s] for s in eur}, h4_ts
+    )
+    return {base: series[result.n_periods] for base, series in result.final_targets.items()}
+
+
+def _write_straddle_cycle(journal_dir, cycle_ts: datetime, schema_version: int) -> CycleRecord:
+    """Journal one cycle at `schema_version`: its snapshot parquets (base-keyed ten for v1, the
+    full symbol-keyed twelve for v2 -- the two key spaces the two schemas actually wrote) and its
+    cycle-<HH>.json, whose final_targets are the real build above in that schema's own key space."""
+    midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    entries = []
+    for interval, last_ts in ((1440, midnight - timedelta(days=1)), (240, cycle_ts - timedelta(hours=4))):
+        ts, by_symbol = _straddle_window(interval, last_ts)
+        if schema_version == 1:
+            series = {s.split("/")[0]: by_symbol[s] for s in BASKET if s.endswith("/EUR")}
+        else:
+            series = dict(by_symbol)
+        # The daily grid is identical across a day's six boundaries, so its file is shared per
+        # (day, schema); only the 4h tail moves cycle to cycle.
+        stem = f"{last_ts:%Y%m%dT%H}" if interval == 1440 else f"{cycle_ts:%H}"
+        for pair, closes in series.items():
+            rel = (
+                Path(f"{cycle_ts:%Y-%m-%d}") / "snapshots" / f"v{schema_version}-{stem}-{pair.replace('/', '-')}-{interval}.parquet"
+            )
+            path = journal_dir / rel
+            if not path.exists():
+                frame = pl.DataFrame({"ts": ts, "close": closes}, schema={"ts": pl.Datetime("us", "UTC"), "close": pl.Float64})
+                write_parquet(frame, path)
+            entries.append(
+                SnapshotEntry(
+                    pair=pair,
+                    grid=str(interval),
+                    n_bars=len(ts),
+                    first_ts=ts[0],
+                    last_ts=ts[-1],
+                    content_hash=snapshot_content_hash(ts, closes),
+                    path=rel.as_posix(),
+                )
+            )
+    model = _straddle_model_targets(cycle_ts)
+    record = CycleRecord(
+        schema_version=schema_version,
+        cycle_ts=cycle_ts,
+        snapshots=tuple(entries),
+        final_targets=model if schema_version == 1 else _expand_to_basket(model),
+        started_at=cycle_ts,
+        completed_at=cycle_ts + timedelta(minutes=1),
+        code_version="test",
+        builder_path="fast",
+    )
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / f"cycle-{cycle_ts:%H}.json").write_text(to_json(record) + "\n")
+    return record
+
+
+@pytest.fixture(scope="module")
+def straddle_journal(tmp_path_factory):
+    """A journal that crosses the schema boundary mid-day: 2026-07-08 all v1, 2026-07-09 v1 through
+    08:00 then v2 from 12:00, 2026-07-10 all v2. Module-scoped -- 18 real builds."""
+    journal_dir = tmp_path_factory.mktemp("straddle-journal")
+    records = {}
+    for day in STRADDLE_DAYS:
+        for hour in CYCLE_HOURS:
+            cycle_ts = datetime(day.year, day.month, day.day, hour, tzinfo=timezone.utc)
+            records[cycle_ts] = _write_straddle_cycle(journal_dir, cycle_ts, 1 if cycle_ts < STRADDLE_FLIP else 2)
+    return journal_dir, records
+
+
+def test_straddle_fixture_is_discriminating(straddle_journal):
+    """The fixture's own honesty check, before anything is asserted on it: the ten EUR targets are
+    non-zero and pairwise distinct at every boundary, so a value carried through the pipeline cannot
+    be mistaken for a structural zero or a shared default; and the two schemas really do sit on
+    either side of the flip, in their own key spaces."""
+    _, records = straddle_journal
+    eur = [s for s in BASKET if s.endswith("/EUR")]
+    for cycle_ts, record in records.items():
+        expected_schema = 1 if cycle_ts < STRADDLE_FLIP else 2
+        assert record.schema_version == expected_schema
+        values = [record.final_targets[s.split("/")[0] if expected_schema == 1 else s] for s in eur]
+        assert 0.0 not in values and len(set(values)) == 10, (cycle_ts, values)
+        if expected_schema == 1:
+            assert set(record.final_targets) == {s.split("/")[0] for s in eur}
+            assert {e.pair for e in record.snapshots} == {s.split("/")[0] for s in eur}
+        else:
+            assert set(record.final_targets) == set(BASKET)
+            assert {e.pair for e in record.snapshots} == set(BASKET)
+            assert all(record.final_targets[s] == 0.0 for s in BASKET if not s.endswith("/EUR"))
+    assert {r.schema_version for r in records.values()} == {1, 2}
+
+
+def test_the_streak_survives_the_schema_boundary(straddle_journal):
+    """THE PIN this whole task exists for: a journal whose records flip from schema 1 to schema 2
+    mid-window replays clean on BOTH sides and the gate's streak never resets. Outcomes come from
+    `_evaluate_journal` (real replay, real compare), never hand-built."""
+    from cli.engine.command import _evaluate_journal
+
+    journal_dir, records = straddle_journal
+    entries, counts, newest_ts, _ = _evaluate_journal(journal_dir, cache_path=None, now=STRADDLE_NOW)
+
+    assert counts.replayed_ok == len(records)
+    assert counts.mismatches == 0 and counts.validation_failures == 0 and counts.sidecar_count == 0
+    assert newest_ts == max(records)
+
+    status = evaluate_gate(entries, now=STRADDLE_NOW)
+    assert status.streak == len(STRADDLE_DAYS)
+    assert status.last_failure is None  # nothing reset it anywhere in the evaluated range
+
+
+def test_each_schema_replays_and_compares_in_its_own_key_space(straddle_journal):
+    """The half `evaluate_gate` cannot see: a v1 record's replay comes back BASE-keyed and compares
+    clean against its own base-keyed record, and a v2 record's comes back SYMBOL-keyed against its
+    own. Normalizing either into the other's space would make one side a structural mismatch -- the
+    failure mode that would have zeroed the ratified streak at deploy."""
+    from cli.engine.command import _snapshot_reader
+
+    journal_dir, records = straddle_journal
+    reader = _snapshot_reader(journal_dir)
+    v1_ts = max(t for t in records if t < STRADDLE_FLIP)
+    v2_ts = min(t for t in records if t >= STRADDLE_FLIP)
+
+    v1_replayed = replay_cycle(records[v1_ts], reader, path="fast")
+    assert all("/" not in asset for asset in v1_replayed)
+    assert v1_replayed == records[v1_ts].final_targets  # bit-exact in its own key space
+
+    v2_replayed = replay_cycle(records[v2_ts], reader, path="fast")
+    assert set(v2_replayed) == set(BASKET)
+    assert v2_replayed == records[v2_ts].final_targets
+
+    # The two adjacent boundaries are 4h apart on the SAME fixture history, so the model's ten
+    # values track each other -- the key spaces differ, the arithmetic does not.
+    assert compare_targets(v1_replayed, v2_replayed).structural_mismatch
+    assert not compare_targets(v1_replayed, records[v1_ts].final_targets).structural_mismatch
+    assert not compare_targets(v2_replayed, records[v2_ts].final_targets).structural_mismatch
+
+
+def test_a_schema_2_record_with_base_keys_is_refused_before_any_build(straddle_journal, monkeypatch):
+    """The refusal leg. A v2 record carrying base keys can only come from a writer bug or a hand
+    edit, and it must never reach comparison at all: validate_record refuses it first, so the error
+    SURFACES as a validation failure that breaks the day -- never a silent pass, and never a
+    structural mismatch reported as if the arithmetic had been checked."""
+    from cli.engine.command import _replay_one, _snapshot_reader
+
+    journal_dir, records = straddle_journal
+    v1_ts = max(t for t in records if t < STRADDLE_FLIP)
+    mislabelled = replace(records[v1_ts], schema_version=2)  # base keys, schema 2 -- the forbidden pair
+
+    calls = []
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder({}, 0, calls))
+    with pytest.raises(EngineJournalError):
+        replay_cycle(mislabelled, _snapshot_reader(journal_dir), path="fast")
+    assert calls == []  # refused before any build, so nothing was ever compared
+
+    outcome = _replay_one(mislabelled, _snapshot_reader(journal_dir))
+    assert outcome.validation_failed is True
+    assert outcome.compare_passed is True  # never evaluated -- the flag above is what the gate reads
+
+    entries = [outcome if e.cycle_ts == v1_ts else e for e in _clean_journal_outcomes(records)]
+    broken = evaluate_gate(entries, now=STRADDLE_NOW)
+    assert broken.streak < len(STRADDLE_DAYS)
+    assert broken.last_failure is not None
+    assert "validation failed" in broken.last_failure.reason
+
+
+def _clean_journal_outcomes(records) -> list[CycleOutcome]:
+    return [CycleOutcome(cycle_ts=t, completed_at=r.completed_at) for t, r in sorted(records.items())]

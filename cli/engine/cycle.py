@@ -291,6 +291,11 @@ def select_model_inputs(
     for symbol, (ts, closes) in present.items():
         by_ts = dict(zip(ts, closes))
         prices[symbol.split("/")[0]] = [by_ts.get(t) for t in union_ts]
+    # The base re-key above is lossy by construction: only `_MODEL_SYMBOLS`' `/EUR` filter keeps two
+    # quotes of one base apart. Were it ever widened to admit `ETH/BTC`, `prices["ETH"]` would be
+    # overwritten silently and the survivor's ten keys would still satisfy `_validate_grid` -- a
+    # wrong grid the builder cannot refuse. Three consumers share this seam; one line closes it.
+    assert len(prices) == len(_MODEL_SYMBOLS), f"select_model_inputs: two model symbols share a base -- {sorted(present)}"
     return union_ts, prices
 
 

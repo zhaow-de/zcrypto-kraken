@@ -105,9 +105,11 @@ def _clock(step: timedelta = timedelta(seconds=10)) -> SteppingClock:
 
 
 def _fake_builder(targets: dict[str, float], calls: list | None = None):
-    """Keyed by whatever it is handed: the cycle feeds it select_model_inputs' BASE keys (so
-    `targets` is MODEL_TARGETS there), while replay_cycle feeds it the journaled snapshots' full
-    SYMBOL keys (so `targets` is TARGETS there)."""
+    """Keyed by whatever it is handed -- which, on BOTH sides of the round trip, is
+    select_model_inputs' BASE keys, so `targets` is MODEL_TARGETS everywhere: the cycle contracts
+    the store to the ten EUR legs, and replay_cycle contracts the journaled twelve-symbol snapshots
+    the same way (one implementation, imported from cycle). The symbol-keyed TARGETS appear only
+    AFTER `_expand_to_basket`, which this stub never stands in for."""
 
     def builder(daily_prices, daily_ts, h4_prices, h4_ts, *, config=None):
         if calls is not None:
@@ -201,16 +203,24 @@ def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):
         assert (config.journal_dir / entry.path).exists()
 
 
-def test_happy_path_round_trips_through_replay_cycle(tmp_path, monkeypatch):
+def test_happy_path_round_trips_through_replay_cycle_under_a_stub_builder(tmp_path, monkeypatch):
+    """SCOPE, because the name alone once promised more than the test delivered: the builder is
+    STUBBED on both sides here, so this pins the plumbing -- journaling, the snapshot manifest, the
+    key spaces the two sides hand the builder, the expansion -- and nothing about the grid the real
+    builder would actually receive. The real-builder round trip is
+    `test_real_builder_round_trips_through_replay_cycle` at the bottom of this file; a stub keyed by
+    whatever it is handed cannot tell a right grid from a wrong one."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
 
     record = from_json(result.record_path.read_text())
-    # TARGETS, not MODEL_TARGETS: replay assembles the journaled SYMBOL-keyed snapshots.
-    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    # MODEL_TARGETS, not TARGETS: replay contracts the journaled twelve-symbol snapshots down to the
+    # same base-keyed ten the cycle handed the builder, then expands the result back to the basket.
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
     replayed = replay_cycle(record, _journal_reader(config.journal_dir), path="fast")
 
     assert compare_targets(record.final_targets, replayed).passed
+    assert replayed == TARGETS  # the expansion really ran: twelve symbol keys, /BTC at 0.0
 
 
 # --- failure sidecars ----------------------------------------------------------------------------
@@ -439,7 +449,7 @@ def test_union_alignment_journals_none_at_absences_and_replays_clean(tmp_path, m
 
     # And it replays clean.
     record = from_json(result.record_path.read_text())
-    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
     replayed = replay_cycle(record, _journal_reader(config.journal_dir), path="fast")
     assert compare_targets(record.final_targets, replayed).passed
 
@@ -452,7 +462,7 @@ def test_journal_relocation_round_trip(tmp_path, monkeypatch):
     shutil.move(str(config.journal_dir), str(new_root))
 
     record = from_json((new_root / "2026-07-10" / "cycle-08.json").read_text())
-    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
     replayed = replay_cycle(record, _journal_reader(new_root), path="fast")
     assert compare_targets(record.final_targets, replayed).passed
 
@@ -970,3 +980,36 @@ def test_a_btc_stamp_the_eur_legs_lack_moves_no_eur_window(tmp_path, monkeypatch
 
     standalone = _standalone_ten_asset_targets()
     assert {s: result.targets[s] for s in EUR_SYMBOLS} == {f"{base}/EUR": v for base, v in standalone.items()}
+
+
+def test_real_builder_round_trips_through_replay_cycle(tmp_path, monkeypatch):
+    """The round trip with NO stub anywhere: run_cycle reads the fixture store, contracts, builds,
+    expands and journals; replay_cycle then reads those journaled twelve-symbol snapshots back and
+    must reach the SAME builder grid and reproduce the same twelve targets exactly.
+
+    This is the pin the stubbed round trip above structurally cannot be: a builder keyed by whatever
+    it is handed agrees with any grid, so it would stay green if replay fed the model a different
+    calendar, a different key space, or all twelve legs -- the last of which is a hard PortfolioError
+    on the real builder. `_real_store_rows(btc_only_stamp=True)` is deliberate: the journaled
+    snapshots then carry a stamp no EUR leg has, so the replay only matches if its own contraction
+    drops that stamp exactly as the cycle's did."""
+    config = _real_env(tmp_path, monkeypatch)
+    rows_by = _real_store_rows(btc_only_stamp=True)
+    _write_store(config.store_dir, rows_by)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+    assert result.status == "success"
+
+    record = from_json(result.record_path.read_text())
+    replayed = replay_cycle(record, _journal_reader(config.journal_dir), path="fast")
+
+    verdict = compare_targets(record.final_targets, replayed)
+    assert verdict.passed, (verdict, replayed)
+    assert not verdict.structural_mismatch
+    assert replayed == record.final_targets  # bit-exact, not merely within tol
+    assert set(replayed) == set(BASKET)
+    # The fixture can tell "carried the model's value" from "a structural zero nobody wrote": the
+    # ten EUR legs are non-zero and pairwise distinct, the two /BTC legs are exactly 0.0.
+    eur = {replayed[s] for s in EUR_SYMBOLS}
+    assert len(eur) == 10 and 0.0 not in eur
+    assert all(replayed[leg] == 0.0 for leg in BTC_SYMBOLS)
