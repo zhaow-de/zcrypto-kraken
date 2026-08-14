@@ -149,7 +149,7 @@ def mismatch_journal(tmp_path, monkeypatch) -> Path:
     _write_clean_day(journal, DAY0)
     record_path = journal / f"{DAY0:%Y-%m-%d}" / f"cycle-{DAY0:%H}.json"
     payload = json.loads(record_path.read_text())
-    payload["schema_version"] = 2
+    payload["schema_version"] = 99  # unsupported at ANY schema -- never 2, which 00094 made loadable
     record_path.write_text(json.dumps(payload))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     monkeypatch.setattr(command, "_utc_now", lambda: DAY0.replace(hour=21))
@@ -219,7 +219,7 @@ def recovered_gate_journal(tmp_path, monkeypatch) -> Path:
     _write_clean_day(journal, DAY0)
     corrupt_path = journal / f"{DAY0:%Y-%m-%d}" / f"cycle-{DAY0:%H}.json"
     payload = json.loads(corrupt_path.read_text())
-    payload["schema_version"] = 2
+    payload["schema_version"] = 99  # unsupported at ANY schema -- never 2, which 00094 made loadable
     corrupt_path.write_text(json.dumps(payload))
     _write_clean_day(journal, day1)
     _write_clean_day(journal, day2)

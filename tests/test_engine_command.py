@@ -395,7 +395,10 @@ def test_replay_classifies_a_validation_failure(tmp_path, monkeypatch):
     journal = engine_cfg.journal_dir
     record_path = _write_success_record(journal, CYCLE_TS)
     payload = json.loads(record_path.read_text())
-    payload["schema_version"] = 2  # from_json still parses; replay_cycle's validate_record rejects
+    # from_json still parses; replay_cycle's validate_record rejects. 99 is unsupported at ANY
+    # schema -- never 2, which 00094 made loadable, so the tamper would be a no-op once the
+    # writer emits v2 and this test would stop exercising the rejection path at all.
+    payload["schema_version"] = 99
     record_path.write_text(json.dumps(payload))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
 
