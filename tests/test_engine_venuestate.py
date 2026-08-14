@@ -138,6 +138,22 @@ def test_balances_are_read_by_currency_code(fake_cache):
     assert vs.balances == {"EUR": 987.65, "BTC": 0.5}
 
 
+def test_the_xbt_legs_freeze_their_own_cache_constraints(fake_cache):
+    """What makes _XBT_LEG_ATTRS' distinctness deliberate rather than decorative: the reader must
+    carry each leg's OWN Cache-supplied ordermin/lot_step/tick_size through to the frozen state. A
+    reader that reused the EUR legs' generic fixture values for these two -- or defaulted them --
+    would go undetected without this."""
+    vs = venue_state_from_cache(fake_cache, clock=lambda: FIXED_NOW)
+
+    for symbol, attrs in _XBT_LEG_ATTRS.items():
+        constraints = vs.instruments[symbol]
+        assert constraints.ordermin == attrs["ordermin"]
+        assert constraints.lot_step == attrs["lot_step"]
+        assert constraints.tick_size == attrs["tick_size"]
+    eur = vs.instruments["BTC/EUR"]  # and the EUR legs keep _fake_instrument's generic defaults
+    assert (eur.ordermin, eur.lot_step, eur.tick_size) == (0.01, 0.0001, 0.01)
+
+
 def test_a_missing_min_notional_from_the_cache_produces_no_concordance_failure(fake_cache):
     # D5a's fix, pinned directly: min_notional is None on every fake instrument by construction
     # (matching observed live reality), yet costmin reads the committed constant -- not 0.0/None

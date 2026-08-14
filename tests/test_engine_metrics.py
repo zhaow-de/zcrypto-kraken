@@ -25,20 +25,26 @@ from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
 from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, to_json, validate_record
-from cli.engine.store import GRID_INTERVALS, PAIR_KEYS
+from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS
 from cli.obs.metrics import METRICS_PORT_ENV_VAR
 from cli.ohlc.dataset import to_frame, write_parquet
 
 runner = CliRunner()
 
 UTC = timezone.utc
-ASSETS = tuple(sorted(PAIR_KEYS))
+ASSETS = tuple(sorted(PAIR_KEYS))  # the twelve full symbols
+EUR_SYMBOLS = tuple(s for s in BASKET if s.endswith("/EUR"))
+BTC_SYMBOLS = tuple(s for s in BASKET if s.endswith("/BTC"))
+MODEL_BASES = tuple(s.split("/")[0] for s in EUR_SYMBOLS)
 KEY_TO_ASSET = {v: k for k, v in PAIR_KEYS.items()}
 CYCLE_TS = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
 H4_LAST = CYCLE_TS - timedelta(hours=4)
 DAILY_LAST = datetime(2026, 7, 9, tzinfo=UTC)
 N_H4, N_DAILY = 6, 4
-TARGETS = {asset: round(0.1 * (i + 1), 3) for i, asset in enumerate(ASSETS)}
+# Base-keyed going in (the key space select_model_inputs hands the model), symbol-keyed coming out
+# with the two /BTC legs at the structural zero (spec 00094 D1) -- the shape run_cycle journals.
+MODEL_TARGETS = {base: round(0.1 * (i + 1), 3) for i, base in enumerate(MODEL_BASES)}
+TARGETS = {f"{base}/EUR": value for base, value in MODEL_TARGETS.items()} | dict.fromkeys(BTC_SYMBOLS, 0.0)
 NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
 # `_reset_metrics_sink` (cycle._metrics_sink reset after every test) now lives in tests/conftest.py
@@ -70,8 +76,9 @@ def _store_rows(overrides: dict | None = None) -> dict:
 
 
 def _write_store(store_dir: Path, rows_by: dict) -> None:
-    for (asset, interval), rows in rows_by.items():
-        write_parquet(to_frame(rows), store_dir / asset / "EUR" / f"{interval}.parquet")
+    for (symbol, interval), rows in rows_by.items():
+        base, quote = symbol.split("/")
+        write_parquet(to_frame(rows), store_dir / base / quote / f"{interval}.parquet")
 
 
 def _tail_fetch(rows_by: dict):
@@ -104,10 +111,11 @@ def _clock(step: timedelta = timedelta(seconds=10)) -> _SteppingClock:
 #   - the abs(): two sleeves carry a NEGATIVE leg, so an extraction that summed raw positions would
 #     read A1 as -0.5 and A2 as 0.125 rather than 0.5 and 0.375.
 # B is flat, mirroring the measured dormant state; A1/A2 carry the book.
+# Base-keyed: sleeve books come back from the builder in the model's own key space.
 SLEEVE_FORMING = {
-    "B": dict.fromkeys(ASSETS, 0.0),
-    "A1": {**dict.fromkeys(ASSETS, 0.0), ASSETS[0]: -0.5},
-    "A2": {**dict.fromkeys(ASSETS, 0.0), ASSETS[0]: 0.25, ASSETS[1]: -0.125},
+    "B": dict.fromkeys(MODEL_BASES, 0.0),
+    "A1": {**dict.fromkeys(MODEL_BASES, 0.0), MODEL_BASES[0]: -0.5},
+    "A2": {**dict.fromkeys(MODEL_BASES, 0.0), MODEL_BASES[0]: 0.25, MODEL_BASES[1]: -0.125},
 }
 SLEEVE_GROSS_EXPECTED = {"B": 0.0, "A1": 0.5, "A2": 0.375}
 
@@ -129,7 +137,7 @@ def _env(tmp_path, monkeypatch, *, rows_by: dict | None = None) -> EngineConfig:
     _write_store(store_dir, rows_by)
     config = EngineConfig(store_dir=store_dir, journal_dir=tmp_path / "journal", shadow_nav_eur=1000.0)
     monkeypatch.setattr(cycle, "_sleep", lambda seconds: None)
-    monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
     return config
 
 
@@ -188,7 +196,7 @@ def test_run_cycle_extracts_each_sleeves_forming_row_gross(tmp_path, monkeypatch
 def test_run_cycle_leaves_sleeve_gross_none_on_a_failed_cycle(tmp_path, monkeypatch):
     # The other half of the contract the gauges depend on: a cycle that never reached the build has
     # no composition, so the gauges must hold their previous values rather than read as "all flat".
-    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
     config = _env(tmp_path, monkeypatch, rows_by=store_rows)
 
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(store_rows), clock=_clock(step=timedelta(minutes=5)))
@@ -198,7 +206,7 @@ def test_run_cycle_leaves_sleeve_gross_none_on_a_failed_cycle(tmp_path, monkeypa
 
 
 def test_sink_called_on_a_failed_cycle_with_the_sidecars_own_timing(tmp_path, monkeypatch):
-    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
     config = _env(tmp_path, monkeypatch, rows_by=store_rows)
     calls = []
     cycle.set_metrics_sink(lambda result, completed_at, duration_seconds: calls.append((result, completed_at, duration_seconds)))
@@ -236,7 +244,7 @@ def test_a_raising_sink_leaves_the_cycle_result_and_journal_artifact_intact(tmp_
 
 
 def test_a_raising_sink_leaves_a_failed_cycles_sidecar_intact(tmp_path, monkeypatch):
-    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
     config = _env(tmp_path, monkeypatch, rows_by=store_rows)
     cycle.set_metrics_sink(lambda *a: (_ for _ in ()).throw(RuntimeError("sink boom")))
 
