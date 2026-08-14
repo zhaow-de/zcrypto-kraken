@@ -799,8 +799,8 @@ def test_venue_gauges_exist_after_seeding():
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == 0.0
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 0.0
     # DERIVED from len(INSTRUMENT_IDS), never a literal -- a future basket re-ratification moves one
-    # committed place; this pins the CURRENT basket size at 10.
-    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 10
+    # committed place; this pins the CURRENT basket size at 12.
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 12
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 0.0
 
 
@@ -808,13 +808,16 @@ def test_venue_gauges_update_moves_all_four_from_a_cycle_results_venue_summary()
     reg = CollectorRegistry()
     gauges = _VenueGauges(reg)
     snapshot_at = CYCLE_TS + timedelta(minutes=1)
-    result = _venue_result({"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": snapshot_at.isoformat()})
+    # 11, not 12: the eager constructor seed (`command.py:623`) also sets this gauge to
+    # len(INSTRUMENT_IDS) == 12, so a value equal to the seed can't tell "update() moved it" from
+    # "the seed was never touched" -- 11 is a value the seed cannot produce.
+    result = _venue_result({"loaded": 9, "expected": 11, "failures": 1, "snapshot_at": snapshot_at.isoformat()})
 
     gauges.update(result.venue)
 
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == pytest.approx(snapshot_at.timestamp())
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 9.0
-    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 10.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 11.0
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 1.0
 
 
@@ -824,13 +827,14 @@ def test_venue_gauges_update_with_a_venueless_cycle_result_moves_nothing():
     reg = CollectorRegistry()
     gauges = _VenueGauges(reg)
     snapshot_at = CYCLE_TS + timedelta(minutes=1)
-    gauges.update(_venue_result({"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": snapshot_at.isoformat()}).venue)
+    # 11, not 12 -- same reason as the update-moves-all-four test above.
+    gauges.update(_venue_result({"loaded": 9, "expected": 11, "failures": 1, "snapshot_at": snapshot_at.isoformat()}).venue)
 
     gauges.update(_venue_result(None).venue)
 
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == pytest.approx(snapshot_at.timestamp())
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 9.0
-    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 10.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 11.0
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 1.0
 
 

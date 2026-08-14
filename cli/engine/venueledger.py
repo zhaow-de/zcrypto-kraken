@@ -6,7 +6,11 @@ from pathlib import Path
 
 from cli.engine.venuestate import ConcordanceVerdict, VenueState
 
-VENUE_SCHEMA_VERSION = 1
+# Bumped 1 -> 2 (spec 00094): `state.to_payload()`'s shape changed four ways -- instruments/positions
+# keys go base -> symbol, `InstrumentConstraints.symbol` (was `.base`), and the new `costmin_quote`
+# field -- so a pre- and post-deploy record are distinguishable on inspection. Write-only: nothing
+# reads or validates this constant against a record's actual shape.
+VENUE_SCHEMA_VERSION = 2
 
 # Same rationale as `execledger.py`'s `_PREFIX`: deliberately not `cycle-<HH>.json` and not a
 # `failed-cycle-*` sidecar, so the Stage-6a streak's globs never see this file -- structural, not

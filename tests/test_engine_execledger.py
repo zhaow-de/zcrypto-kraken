@@ -26,10 +26,11 @@ def _venue_state():
         snapshot_at=CYCLE_TS,
         instruments={
             "BTC": InstrumentConstraints(
-                base="BTC",
+                symbol="BTC",
                 instrument_id="XBTEUR.KRAKEN",
                 ordermin=0.0001,
                 costmin=0.5,
+                costmin_quote="EUR",
                 lot_step=0.00000001,
                 tick_size=0.1,
             )

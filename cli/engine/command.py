@@ -600,7 +600,7 @@ class _VenueGauges:
     at a healthy-looking value when its writer dies, which is the exact failure this must surface,
     and an UNSEEDED 0.0 (a brand-new deployment with no journal yet, or the startup seed read itself
     failing) reads as honestly ancient (1970), never a false "just happened". `instruments_expected`
-    is seeded from `len(INSTRUMENT_IDS)` -- DERIVED, never a literal 10, so a future basket
+    is seeded from `len(INSTRUMENT_IDS)` -- DERIVED, never a literal 12, so a future basket
     re-ratification moves one committed place.
     """
 
