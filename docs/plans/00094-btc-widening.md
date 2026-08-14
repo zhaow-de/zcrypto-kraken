@@ -65,7 +65,7 @@
 - Produces: `fx_eur_notional(symbol: str, qty: float, price: float, btc_eur_close: float) -> float` — EUR-quoted: `qty * price`; XBT-quoted: `qty * price * btc_eur_close`. Pure, uncalled by production (the `size_order` precedent); `btc_eur_close <= 0` raises.
 - `size_order` is unchanged — the caller owns denomination, and the docstring says so at the seam.
 
-- [ ] **Step 1: Failing tests** — twelve IDs incl. both `/BTC` forms; `COSTMIN` quotes explicit (`COSTMIN["ETH/BTC"] == (2e-05, "XXBT")`); `fx_eur_notional("ETH/EUR", 2.0, 100.0, 30000.0) == 200.0` and `fx_eur_notional("ETH/BTC", 2.0, 0.05, 30000.0) == 3000.0`; the raise on a non-positive FX close.
+- [ ] **Step 1: Failing tests** — twelve IDs incl. both `/BTC` forms; `COSTMIN` quotes explicit (`COSTMIN["ETH/BTC"] == (2e-05, "BTC")` — the snapshot's vocabulary, per the Produces contract above, NOT the venue alias); `fx_eur_notional("ETH/EUR", 2.0, 100.0, 30000.0) == 200.0` and `fx_eur_notional("ETH/BTC", 2.0, 0.05, 30000.0) == 3000.0`; the raise on a non-positive FX close.
 - [ ] **Step 2: The drift test widens.** `tests/test_costmin_drift.py` pins all twelve against the newest snapshot. `cli/engine/feeders.py::load_minimums` filters `quote == "EUR"`, so the two XBT entries are read **directly from the snapshot's `universe` block** in the test (same file, no new production reader) — assert value AND quote currency for all twelve.
 - [ ] **Step 3–4: red → green.** **Step 5: Gate, stage, commit** `feat(engine): symbol-keyed instruments, per-symbol costmin with explicit quote, the FX term`.
 
