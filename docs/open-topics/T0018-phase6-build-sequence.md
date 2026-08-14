@@ -51,10 +51,13 @@ Read the journal the way it was read, because a wrong path returns a plausible z
 
 **The build is decomposed risk-first into five specs**, recorded here rather than only in the spec that decided it, so each is visible at pick time. The ordering principle: containment is built and deployed before the capability it contains, and the two specs carrying monetary blast radius both sit behind machinery proven while a mistake still cost nothing.
 
+**The table is EXECUTION order, not serial order.** `00094` was specced after `00093` but runs before `00090` — the owner's 2026-08-14 ruling on [[T0137]] put the `/BTC` widening ahead of the first real-money rung, because `00090`'s state machine, sizing and fill ingestion all consume the symbol keying `00094` changes, and building that path twice on the live-trade path is the waste. Read the rows top to bottom regardless of their numbers.
+
 | Spec | Subject | Blast radius | State |
 | --- | --- | --- | --- |
 | `00088` | the execution safety envelope — two-key arming, kill-switch, venue gate, reduce-only-on-restart | none (shadow, submits nothing) | landed (iter-135) |
 | `00089` | venue truth — instrument map, venue-constraint sizing, the `held` read, realized-state artifact | none (read-only) | landed (iter-138) |
+| `00094` | the /BTC widening — symbol-keyed PAIR_KEYS/INSTRUMENT_IDS/VenueState, EUR→BTC FX sizing, XBT costmin, AND the deployable re-ratification on the twelve-leg basket | none directly (no order path), but it **re-ratifies what is traded** | not started |
 | `00090` | the rung-1 order path — maker-first state machine, submission, fill/fee ingestion | **real money, ~€10–30** | not started |
 | `00091` | the weekly tracking-error report and cost recalibration from real fills | none (read-only) | not started |
 | `00092` | rung-3 accumulation — [[T0119]]'s `target − held`, skip-or-carry, the full loop | **real money, ~€1,000** | not started |
