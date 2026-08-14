@@ -1,0 +1,49 @@
+# 00094 — the /BTC widening: a twelve-leg engine pipeline and the re-ratified deployable
+
+Runs **before** `00090` in [[T0018]]'s sequence despite its later serial — the owner's 2026-08-14 ruling: `00090`'s state machine, sizing and fill ingestion all consume the symbol keying this spec changes, and building the first real-money order path twice on the live-trade path is the waste. The spec exists because [[T0137]]'s survey overturned the recorded obstacle (the adapter already sees the XXBT-quoted legs; what is EUR-only is the engine), and the owner ruled the `/BTC` half of that topic for 6b rather than phase 7, with the re-plumb and the deployable re-ratification **coupled in one iteration** — the accepted risk of that coupling is recorded on T0137.
+
+## Context — every engine surface assumes one quote currency, and two of them are ratified machinery
+
+The engine pipeline is base-keyed end to end: `cli/engine/store.py::PAIR_KEYS` derives ten EUR entries and its store paths are literally `root/<asset>/EUR/<interval>.parquet`; the model (`cli/portfolio/crossfreq_system.py::CrossfreqSystemConfig.assets`) defaults to the ten bases; `run_cycle` journals base-keyed `final_targets`; `cli/engine/instruments.py::INSTRUMENT_IDS` and `00089`'s `VenueState` key by base; `COSTMIN_EUR` is EUR by name and value. A base key cannot express `ETH/BTC` beside `ETH/EUR` — the collision `00093` already solved on the fetch side (`cli/ohlc/fetch.py::PAIR_KEYS` is symbol-keyed twelve) stops today at the engine's door.
+
+Two of the surfaces this touches are **ratified machinery**: the journal schema (`cli/engine/journal.py::SCHEMA_VERSION = 1`, `validate_record` refusing all others, the record hash byte-layout pinned by it) and the Stage-6a gate (`cli/engine/concordance.py` replays a journaled cycle through the deployable's own builder and compares targets — the streak that convened T0018 runs on those comparisons). The owner chose the **fully-tradeable** widening depth knowing this, over a minimal addressable-only alternative; the risk accepted is that ratified machinery changes for targets that are structurally zero.
+
+Data is not a constraint: `ohlc-reach-20260813` carries both `/BTC` dailies `continuous` to 2026-08-12, capture has covered both legs since [[T0092]], and Kraken's pair metadata (leverage bands 2–5×/2–4×, `margin_call 80`/`margin_stop 40`, costmin `0.00002` XBT) is in the committed snapshot.
+
+## Decisions
+
+**D1 — the STRATEGY does not change: the model stays the ten-asset book, and the /BTC legs enter the basket at structurally-zero targets — by construction, not by model output.** `CrossfreqSystemConfig.assets` stays the ten EUR bases; the sleeves never see the `/BTC` series. The twelve-leg expression happens downstream: after the model runs, the cycle expands its ten targets onto the twelve-leg basket, emitting `ETH/BTC` and `SOL/BTC` at exactly `0.0`. Widening `assets` instead would have the momentum/A1/A2/B sleeves compute *real* weights for the `/BTC` legs — an unvalidated strategy change smuggled in as plumbing, contradicting the discipline [[T0064]] archived (a deployed strategy carries holdout evidence; record 44's evidence covers the ten-asset book). A future RV sleeve flips those zeros through its own ratified record, which is precisely what "addressable and tradeable, not yet traded" buys. Verification pins both halves: the EUR-leg targets replay **identically** to record-44's replay across the full window, and the `/BTC` targets read exactly `0.0` in every journaled and replayed cycle.
+
+**D2 — full-symbol keying end to end, `00093`'s convention.** Engine store `PAIR_KEYS` becomes the symbol-keyed twelve (derived from the fetch map by membership in the ratified basket, still one source of truth); store paths become `root/<base>/<quote>/<interval>.parquet` (the shape `ohlc-full` and the reach sets already use); `ASSETS`/`KEY_TO_ASSET` become symbol-keyed with every consumer swept — the `00093` re-key found the blast radius by grep once already, and this spec's plan must re-run that sweep rather than inherit it. `final_targets`, orders, `INSTRUMENT_IDS`, `VenueState`, and the venue gauges (`instruments_expected` → 12, **derived**) all key by full symbol. The store seeds and refreshes the two `/BTC` series on both grids with the same reconcile discipline; their genesis rows carry provenance like any seeded series.
+
+**D3 — journal schema 2, and the gate becomes mixed-window-aware — the streak must survive the deploy boundary by construction.** Symbol-keyed `final_targets` is a schema break (the record-hash byte layout is pinned by `schema_version`), so cycle records move to `SCHEMA_VERSION = 2` with `{1, 2}` loadable — the registry's own `_LOADABLE_SCHEMA_VERSIONS` pattern. The gate window will straddle the deploy: `replay_cycle` replays a schema-1 record through the **ten-asset** builder path and normalizes its base keys to `<base>/EUR` for comparison; a schema-2 record replays through the twelve-leg path. `evaluate_gate` scores a mixed run without a discontinuity, proven by a test that builds a window straddling the boundary and asserts the streak arithmetic is unbroken. A deploy that zeroes the ratified 30-day streak is a self-inflicted gate breach and would be caught here, not on the host.
+
+**D4 — costmin goes per-symbol with its denomination explicit.** `COSTMIN_EUR` becomes a per-symbol table carrying `(value, quote_currency)`: ten entries at `0.45 ZEUR`, two at `0.00002 XXBT` (values from the committed snapshot, drift-guarded by the existing `tests/test_costmin_drift.py` extended over twelve). `InstrumentConstraints` carries the quote so no consumer can compare an XBT floor against a EUR notional; `size_order` gains nothing — it already takes `costmin` as a number, and the **caller** owns denomination (00090's problem, documented at the seam).
+
+**D5 — the EUR→BTC FX term lands as a pure, tested, uncalled function** — `fx_eur_notional(symbol, qty, price, btc_eur_close) -> float`: for EUR-quoted symbols the identity, for XBT-quoted ones the conversion through the BTC/EUR close, the same normalization `quote_volume_in_eur` performs on the research side. Nothing calls it in production until `00090` sizes a `/BTC` order — the `size_order` precedent exactly.
+
+**D6 — re-ratification is the coupled half: a new registry record, produced against the re-keyed code, adopted by the owner.** The committed builder runs over the widened config (D1's construction), the metrics reproduce record 44's on the EUR legs, and the new record names the twelve-leg basket with the `/BTC` legs at structural zero. The engine's instrument self-test re-pins to the new record in the same change. The **adopt verdict is the owner's act** — the plan schedules it as an explicit human step, not an autonomous one, and the record append follows the registry's append-only discipline. Sequencing inside the iteration honours the coupling ruling: plumbing first, the record produced against the re-keyed tree, never beside it.
+
+**D7 — the concordance baseline shrinks: `selected-but-unreachable` retires.** With the basket at twelve, `tests/test_basket_concordance.py`'s ruled exceptions reduce to `DOT/EUR` traded-but-deselected alone (still owned by [[T0137]], whose DOT half stays open). The `/BTC` exception is deleted **in this spec**, with the survey and ruling cited — exactly the conscious baseline edit the test was built to force.
+
+**D8 — deploy rides the standard engine discipline, and the plan must note the stacking.** `00089`'s engine converge has not happened yet; landing `00094` means one converge can carry both payloads or two can run separately — an operational call made at deploy time under `capture-deploys.md`, not pre-decided here. Either way: canary via the secondary's capture bake, inter-cycle window, pins first, verify by value — including D3's specific check that the gate streak read **after** the first schema-2 cycle equals the streak before it plus one.
+
+## Verification
+
+- D1's two pins: EUR-leg replay identity against record-44's replay over the full window; `/BTC` targets exactly `0.0` in every record and replay. Both mutation-probed (a sleeve seeing an eleventh asset must trip the identity pin; a nonzero `/BTC` target must trip the zero pin).
+- D3's mixed-window gate test: a constructed run straddling schema 1→2 scores an unbroken streak; a schema-2 record with base keys (the wrong keying) is **refused**, not silently normalized.
+- The `00093`-style consumer sweep for the re-key, untruncated, with every hit routed; the `--help`-never-imports-nautilus and gate-glob invariants re-asserted.
+- Full suite in the closeout task itself — the `00089` lesson, now standing practice.
+
+## What this does NOT do — bounded claims
+
+- Places no order, arms nothing: the order path remains `00090`'s.
+- Changes no strategy: the ten-asset model's outputs are byte-equal on the EUR legs; the `/BTC` legs are expressible, held at structural zero, and no sleeve computes for them.
+- Does not rule DOT: that half of [[T0137]] stays open.
+- Does not touch capture, the universe pipeline, or the fetch-side `PAIR_KEYS` (already symbol-keyed since `00093`).
+
+## Out of scope
+
+- RV sleeves for the `/BTC` legs — alpha research with its own evidence bar, arriving through its own ratified record.
+- `00090`'s consumption of the FX term and per-symbol costmin.
+- Any capture-host or universe-side change.
