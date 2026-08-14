@@ -27,12 +27,33 @@ What is not in doubt: this does **not** trip Phase 4 rollback. 140.13 MiB agains
 
 ## Resolution
 
-Resolved 2026-08-13 by the T+48 h re-read the topic prescribed, taken at 14:11Z with `RestartCount` still 0 — the trigger's restart-free condition held for the full 48 hours.
+Resolved 2026-08-14. **Outcome 2 of the three this topic pre-decided: a second step of smaller amplitude — the T0131 pattern, converging.** Discharged with the decay recorded.
 
-**Outcome 1 of the three pre-decided: no second step.** Hourly floors across Aug-13 00:00→14:00 read 140.18, 140.18, 140.20, 140.11, 140.28, 140.26 MiB — flat for **22 hours** since the +4.17 MiB step ended at Aug-12 16:00 (range 140.03–140.28, net ≈ +0.1 MiB, inside the rotation noise), spanning the full ~24 h-later window where a [[T0131]]-style repeat would have landed, the 03:17 prune included. The control (`zcrypto`, image unchanged) read 126.82 MiB, also flat. The first step was a one-off allocation reaching steady state — a cache or arena filling once — not the first of a T0131-style train, whose signature at this point would have been a second step of comparable amplitude.
+**The first attempt to close this was wrong, and the correction is the point.** A T+48 h read taken 2026-08-13 14:11Z reported 22 flat hours and was written up as "no second step". Review refused it: step 1's mass sat in Aug-12 12:00→16:00, so the ~24 h anniversary band was Aug-13 ~08:00–16:00 with jitter to ~18:00, and the 14:11Z read sat **inside** it — breaking the rule [[T0131]]'s own file codifies, that a floor read must sit ENTIRELY outside the event band because the band is a ramp. T0131 refused a discharge at 26 flat hours for exactly this reason, and its failure #4 was a discharge overlapping the band by 54 minutes. The read was also clock-driven (T+48 h fell at 14:13Z) rather than band-driven, and was taken two minutes *before* its own trigger.
 
-The discharge is licensed by the trajectory's SHAPE, not by a flat stretch alone: the T+32 h read refused to discharge on 6 flat hours precisely because T0131's trough between steps looked the same; 22 flat hours through the expected second-step window is the evidence that distinguishes the two. Final state: 140.26 MiB against a 1 GiB limit (13.7 %), 884 MiB headroom. Recorded on the `capture | zcrypto-red` row of `docs/reference/fleet-pins.md` in the same change.
+The band-clearing reads then found what the premature one had missed: the floor had **left the plateau**. Step 2 ran Aug-13 14:00→18:00 for **+1.38 MiB**, landing exactly where the anniversary band predicted.
+
+**Floor trajectory, `min_over_time(...[1h])` at named hours, restart-free throughout (`RestartCount` 0 for 61 h):**
+
+| Sample | MiB | Δ |
+| --- | --- | --- |
+| Aug-12 16:00 (step 1 ends) | 140.20 | — |
+| Aug-12 22:00 | 140.13 | −0.07 |
+| Aug-13 14:00 (the premature read) | 140.13 | +0.00 |
+| Aug-13 16:00 (band clears) | 141.05 | +0.92 |
+| Aug-13 18:00 (step 2 ends) | 141.51 | +0.46 |
+| Aug-13 20:00 | 141.46 | −0.05 |
+| Aug-14 00:00 | 141.64 | +0.18 |
+| Aug-14 03:00 | 141.54 | −0.10 |
+
+**Two steps, each followed by a flat trough: +4.17 MiB then +1.38 MiB — a measured decay ratio of 0.33, steeper than T0131's 0.49.** Step 1 was followed by 22 flat hours, step 2 by 9 and counting (141.46–141.64, range 0.18 MiB, inside the ±0.1 MiB noise). Geometric continuation at 0.33 sums to roughly **+0.7 MiB** of remaining growth — the series converges rather than running away. Final state **141.5 MiB against a 1 GiB limit (13.8%)**, ~882 MiB headroom.
+
+The control (`zcrypto`, image unchanged) read 126.77 MiB at the close, against 126.61–126.86 across the observation — flat throughout, so the steps are the re-pinned image's own behaviour and not environmental.
+
+**No Phase 4 rollback.** Converging allocation at 13.8% of limit is not a trip, and a rollback would restart live capture on the unbackfillable path to buy nothing.
+
+**The rule that made this correctable now has an operating home**: `zcrypto-captures-rollout`'s Phase 2 residual carries the band-clearing requirement, so the next RSS re-read is scheduled against the event band rather than a clock. A ruling recorded only in an archived topic is invisible at execution time — this session broke the same rule twice in one day to prove it.
 
 ## Suggested next steps
 
-_(none — the T+48 h re-read above was the last open step; every earlier bullet is discharged by it)_
+_(none — the band-clearing re-reads above were the last open step; every earlier bullet is discharged by them)_
