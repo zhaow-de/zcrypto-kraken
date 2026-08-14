@@ -23,8 +23,8 @@ loopback-served canned `AssetPairs`), the compiled Rust parser reads `ordermin`/
 `min_quantity`/`price_increment` correctly but never maps `costmin` into `min_notional` -- it
 comes back `None` for every pair, always, on this adapter version. Kraken's costmin is also not a
 single venue constant (0.5 / 0.45 / 0.00002 depending on the pair), so it can't be hardcoded as
-one number either. It is instead read from the committed `cli.engine.instruments.COSTMIN_EUR`
-per-base constant, labelled `"costmin_source": "snapshot-constant"` in `to_payload()` so no future
+one number either. It is instead read from the committed `cli.engine.instruments.COSTMIN`
+constant, labelled `"costmin_source": "snapshot-constant"` in `to_payload()` so no future
 reader mistakes it for something the venue said this cycle, and its correctness is
 `tests/test_costmin_drift.py`'s job -- `runtime_concordance` deliberately never checks it (a
 constant that failed all ten legs on the first cycle would hold D6's alert red forever, the exact
@@ -51,7 +51,7 @@ from datetime import datetime
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 
 from cli.engine.errors import EngineError
-from cli.engine.instruments import COSTMIN_EUR, INSTRUMENT_IDS
+from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS
 
 _VENUE = Venue("KRAKEN")
 
@@ -60,7 +60,7 @@ _VENUE = Venue("KRAKEN")
 class InstrumentConstraints:
     """One base's venue-quoted order constraints, evidence -- not live-precision, hence float.
     `ordermin`/`lot_step`/`tick_size` are read live from the Cache; `costmin` is NOT (module
-    docstring, D5a) -- it comes from the committed `COSTMIN_EUR` constant."""
+    docstring, D5a) -- it comes from the committed `COSTMIN` constant."""
 
     base: str
     instrument_id: str
@@ -113,7 +113,7 @@ def venue_state_from_cache(cache, *, clock: Callable[[], datetime]) -> VenueStat
     the Cache, the Cache's own instrument id disagreeing with the expected one, or no account
     cached for the venue (each named in the message). The caller converts the raise to `None`;
     this function never narrows a failure into a partial/silent result. `costmin` is never read
-    from `cache` at all (module docstring, D5a) -- it comes from the committed `COSTMIN_EUR`.
+    from `cache` at all (module docstring, D5a) -- it comes from the committed `COSTMIN`.
     """
     instruments: dict[str, InstrumentConstraints] = {}
     positions: dict[str, float] = {}
@@ -131,7 +131,7 @@ def venue_state_from_cache(cache, *, clock: Callable[[], datetime]) -> VenueStat
             base=base,
             instrument_id=str(instrument.id),
             ordermin=_to_float(instrument.min_quantity),
-            costmin=COSTMIN_EUR[base],
+            costmin=COSTMIN[base][0],
             lot_step=_to_float(instrument.size_increment),
             tick_size=_to_float(instrument.price_increment),
         )
