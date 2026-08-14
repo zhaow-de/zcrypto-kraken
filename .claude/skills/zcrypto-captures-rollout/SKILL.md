@@ -38,6 +38,12 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 
 **The residual, named:** a leak slower than the window can still pass the slope row — re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host.
 
+- **Read the FLOOR, never an instantaneous sample** — `min_over_time(...[1h])` at named hours. The rotation sawtooth spans several MiB and swamps the signal.
+- **Compare against the WARM floor, not the converge-time number** — RSS climbs for ~1 h after a restart as buffers fill; the cold sample manufactures a rise that means nothing.
+- **Schedule the read against the EVENT BAND, not the clock, and let the band close first.** A leak arrives as a ramp of some width, and its repeat lands ~24 h later at the same clock offset. Measure step 1's width, then take the read entirely PAST that band plus jitter — a read taken inside it sees a trough and reports a plateau. T0131 refused a discharge at 26 flat hours for this reason, and T0136's first close claimed "no second step" from a read sitting inside the band; the band-clearing read found the step exactly where predicted.
+- **A flat stretch alone discharges nothing** — the shape does. Two steps of decaying amplitude, each with a flat trough, is a converging allocation (T0136: +4.17 then +1.38, ratio 0.33); equal-or-growing steps are a real leak. One step and a quiet stretch cannot tell them apart, so hold the topic open rather than closing on it.
+- **A restart voids the observation** — the counter is process-lifetime. Re-check `RestartCount` at every read and restart the clock if it moved.
+
 Schedule the Slack reminder (`slack_schedule_message` — survives the session) at the **computed gate-open time**, carrying the Phase-3 checklist. The checklist opens the gate, never the reminder itself. **Skipping or degrading the gate — any of the three events unmet, or the prune only in weak form (`deleted=0`) — requires the user's explicit approval — never silently.**
 
 ### Abort signals — read on the just-converged host; any one trips the rollback decision
