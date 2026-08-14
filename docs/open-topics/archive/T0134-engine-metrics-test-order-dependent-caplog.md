@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: the next time `tests/test_engine_metrics.py` is touched for another reason, or any iteration that changes `cli/logging/config.py`'s logging configuration (handler wiring, `propagate`) — either touch is the natural moment to fix the ordering dependency alongside.
+status: resolved
 ---
 
 # `test_run_survives_an_unreadable_journal_record_at_metrics_seed_time` fails when run alone
@@ -22,8 +21,10 @@ The defect is in test infrastructure — an ordering-dependent `caplog` assertio
 - Reproduced twice by execution, and independently by two reviewers, during the branch's final whole-branch review.
 - Cause isolated to `cli/logging/config.py::configure()`'s `lg.propagate = False` on the `zcrypto` logger, which starves the root-attached `caplog` handler.
 - The order-sensitive assertion is `assert any(r.levelno >= 40 for r in caplog.records)` in `test_run_survives_an_unreadable_journal_record_at_metrics_seed_time`.
+- **A third instance of the identical shape was found by sweeping the defect class, not by its own trigger** (spec `00089` Task 8, 2026-08-13): `test_a_raising_startup_evaluation_never_prevents_the_engine_from_starting` — pre-existing, unrelated to spec `00089` — also fails standalone for the same `configure()`-starves-`caplog` reason. A fourth near-instance was born the same iteration: `test_run_survives_an_unreadable_venue_record_at_metrics_seed_time`, spec `00089`'s own new test, inherited the identical order-dependence at birth.
 
-## Suggested next steps
+## Resolution
 
-- **(autonomous, when ripe)** Make the test order-independent: capture against the `zcrypto` logger directly (e.g. `caplog.set_level` targeted at that logger's own handler, or attaching a handler explicitly to it for the duration of the `with caplog.at_level(...)` block) instead of relying on root propagation.
-- **(autonomous, when ripe)** After fixing, verify both ways go green: the single test run alone, and the full file — `uv run pytest tests/test_engine_metrics.py::test_run_survives_an_unreadable_journal_record_at_metrics_seed_time` and `uv run pytest tests/test_engine_metrics.py`.
+Fixed 2026-08-13 (spec/plan `00089` Task 8, commit `bd935f6b`): all three affected tests — this topic's own, `test_run_survives_an_unreadable_venue_record_at_metrics_seed_time` (born the same iteration), and `test_a_raising_startup_evaluation_never_prevents_the_engine_from_starting` (pre-existing, found only by sweeping the defect class) — now attach `caplog`'s handler directly to the `zcrypto` logger via a small shared context manager for the duration of the assertion, mirroring the existing fix in `test_archive_replay.py`, instead of relying on root-logger propagation `configure()` turns off. Production code (`cli/logging/config.py`) is untouched.
+
+Verified both ways for all three: `uv run pytest tests/test_engine_metrics.py::<name> -v` run alone, and the whole file in its normal collection order — both green. Each fix proven non-tautological by mutation: silencing the `logger.exception(...)` call the assertion depends on turns the corresponding test red.

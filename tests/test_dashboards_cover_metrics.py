@@ -152,7 +152,27 @@ PUBLISHER_HOSTS = (
 # ever thresholds on it, that rule owes a panel like any other; what it must NOT get is a `free`
 # series plotted beside the avail-based lines the other three filesystem rules page on, since `free`
 # counts the root-reserved blocks `avail` excludes and the two percentages differ.
-NOT_CHARTED: dict[str, str] = {}
+NOT_CHARTED: dict[str, str] = {
+    # Venue truth (spec 00089): the family joins the Engine board with the metrics pass that also
+    # adds order/position/PnL panels (spec 00090). Until then a panel link would point at nothing --
+    # worse than none -- so these four are deliberately deferred, not forgotten.
+    "zcrypto_venue_snapshot_timestamp_seconds": (
+        "venue truth joins the Engine board with 00090's order/position/PnL metrics pass; until "
+        "then a panel link would point at nothing"
+    ),
+    "zcrypto_venue_instruments_loaded": (
+        "venue truth joins the Engine board with 00090's order/position/PnL metrics pass; until "
+        "then a panel link would point at nothing"
+    ),
+    "zcrypto_venue_instruments_expected": (
+        "venue truth joins the Engine board with 00090's order/position/PnL metrics pass; until "
+        "then a panel link would point at nothing"
+    ),
+    "zcrypto_venue_concordance_failures": (
+        "venue truth joins the Engine board with 00090's order/position/PnL metrics pass; until "
+        "then a panel link would point at nothing"
+    ),
+}
 
 
 # --- PromQL family extraction --------------------------------------------------------------------

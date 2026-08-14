@@ -27,6 +27,7 @@ from cli.config import EngineConfig
 # exactly while a restarted cycle can still complete inside the ratified 30-min gate window.
 from cli.engine.cycle import _REFRESH_RESERVE, run_cycle
 from cli.engine.errors import EngineError
+from cli.engine.venuestate import VenueState, venue_state_from_cache
 from cli.logging import get_logger
 
 logger = get_logger("engine.node")
@@ -72,16 +73,31 @@ def startup_action(now: datetime, journal_dir: Path) -> datetime | None:
     return boundary
 
 
-def _invoke_cycle(run_cycle_fn: Callable, cycle_ts: datetime, config: EngineConfig) -> None:
+def _invoke_cycle(run_cycle_fn: Callable, cycle_ts: datetime, config: EngineConfig, snapshot_fn: Callable) -> None:
     """Invoke run_cycle, catching and logging any exception -- the node must survive; an
-    evidence-less boundary is honestly scored missing by the gate."""
+    evidence-less boundary is honestly scored missing by the gate. `snapshot_fn` is called in its
+    OWN try first (00089 D7): venue-truth availability can never cost the engine a boundary, so a
+    raising snapshot logs and degrades to venue_state=None rather than skipping the cycle -- run_cycle
+    still runs and journals an error venue record."""
     try:
-        run_cycle_fn(cycle_ts, config=config)
+        venue_state = snapshot_fn()
+    except Exception:
+        logger.exception("shadow node: snapshot_fn() raised; the cycle proceeds with venue_state=None")
+        venue_state = None
+    try:
+        run_cycle_fn(cycle_ts, config=config, venue_state=venue_state)
     except Exception:
         logger.exception("shadow node: run_cycle(%s) raised; the boundary stays journal-absent", cycle_ts.isoformat())
 
 
-def on_start_logic(*, now: datetime, config: EngineConfig, schedule_alert: Callable, run_cycle_fn: Callable) -> datetime:
+def on_start_logic(
+    *,
+    now: datetime,
+    config: EngineConfig,
+    schedule_alert: Callable,
+    run_cycle_fn: Callable,
+    snapshot_fn: Callable = lambda: None,
+) -> datetime:
     """Startup: schedule the upcoming boundary's alert FIRST (the alert chain must never depend on
     a cycle completing), then run the startup boundary's cycle if startup_action grants one.
     Returns the upcoming boundary whose alert was scheduled."""
@@ -90,18 +106,25 @@ def on_start_logic(*, now: datetime, config: EngineConfig, schedule_alert: Calla
     pending = startup_action(now, config.journal_dir)
     if pending is not None:
         logger.info("shadow node: restart inside %s's passable window; running its cycle now", pending.isoformat())
-        _invoke_cycle(run_cycle_fn, pending, config)
+        _invoke_cycle(run_cycle_fn, pending, config, snapshot_fn)
     return upcoming
 
 
-def on_alert_logic(*, boundary: datetime, config: EngineConfig, schedule_alert: Callable, run_cycle_fn: Callable) -> datetime:
+def on_alert_logic(
+    *,
+    boundary: datetime,
+    config: EngineConfig,
+    schedule_alert: Callable,
+    run_cycle_fn: Callable,
+    snapshot_fn: Callable = lambda: None,
+) -> datetime:
     """One alert: FIRST schedule the following boundary's alert, THEN invoke run_cycle for the
     boundary this alert belongs to -- the exact 00/04/.../20 grid stamp, never the alert time
     (boundary + settle delay), which run_cycle's grid check would reject. Returns the following
     boundary whose alert was scheduled."""
     following = next_boundary(boundary)
     schedule_alert(following, following + timedelta(seconds=config.settle_delay_secs))
-    _invoke_cycle(run_cycle_fn, boundary, config)
+    _invoke_cycle(run_cycle_fn, boundary, config, snapshot_fn)
     return following
 
 
@@ -122,12 +145,22 @@ class ShadowStrategy(Strategy):
         self._next_cycle_ts = boundary
         self.clock.set_time_alert(f"shadow-cycle-{boundary:%Y-%m-%dT%H}", alert_time, self._on_cycle_alert)
 
+    def _snapshot_venue_state(self) -> VenueState | None:
+        """venue_state_from_cache(self.cache, ...) wrapped so ANY exception logs and degrades to
+        None (00089 D7): venue-truth availability can never cost the engine a boundary."""
+        try:
+            return venue_state_from_cache(self.cache, clock=self._now)
+        except Exception:
+            logger.exception("shadow node: venue_state_from_cache raised; snapshot degrades to None")
+            return None
+
     def on_start(self) -> None:
         on_start_logic(
             now=self._now(),
             config=self._engine_config,
             schedule_alert=self._schedule_alert,
             run_cycle_fn=self._run_cycle_fn,
+            snapshot_fn=self._snapshot_venue_state,
         )
 
     def _on_cycle_alert(self, event) -> None:
@@ -136,6 +169,7 @@ class ShadowStrategy(Strategy):
             config=self._engine_config,
             schedule_alert=self._schedule_alert,
             run_cycle_fn=self._run_cycle_fn,
+            snapshot_fn=self._snapshot_venue_state,
         )
 
 

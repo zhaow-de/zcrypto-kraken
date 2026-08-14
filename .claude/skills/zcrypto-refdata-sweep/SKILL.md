@@ -10,7 +10,7 @@ disable-model-invocation: false
 
 The master plan marks fees, fee tiers, borrow-rollover rates, pair lists, MiCA status, tax rules and data pricing as **externally owned** — third-party facts that move without notice, where a stale one is **silent**. This sweep re-confirms the machine-readable subset and stamps the result, so "re-confirmed, identical" is always distinguishable from "never re-run".
 
-Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier (step 5) — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it (that run belongs to `T0085`).
+Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier (step 6) — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it (that run belongs to `T0085`).
 
 ## The one rule that makes the verdict meaningful
 
@@ -37,26 +37,28 @@ print(render_markdown(snap))
 
 The raw snapshot is gitignored on purpose — it is the evidence, not the artifact. **Keep it**: two archived snapshots are what let a later review compute an actual set difference instead of netting two totals.
 
-2. **Diff the rendered tables** against the committed ones — the candidate basket, the fee/borrow/margin table, the alias ledger. Markdown separator styling differs harmlessly; compare cells.
+2. **Run the costmin drift guard** — `uv run pytest tests/test_costmin_drift.py`. This is `COSTMIN_EUR`'s (spec `00089` D5a) only guard, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored — so this sweep, right after Step 1 mints a fresh snapshot, is the only place the guard can actually fire. Red means Kraken moved a ratified leg's `costmin`; update the constant in `cli/engine/instruments.py` to match and record the change here alongside the rest of the sweep's findings.
 
-3. **Update `docs/reference/kraken-snapshot-register.md`**: header (`Fetched at:`, `Raw snapshot sha256:`, the response counts), the provenance raw-file path, the changed tables, and **append a row to the re-confirmation log** — sweep number, timestamp, counts, hash prefix, verdict. **The stamp moves even when nothing changed**; that is the whole mechanism.
+3. **Diff the rendered tables** against the committed ones — the candidate basket, the fee/borrow/margin table, the alias ledger. Markdown separator styling differs harmlessly; compare cells.
 
-4. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
+4. **Update `docs/reference/kraken-snapshot-register.md`**: header (`Fetched at:`, `Raw snapshot sha256:`, the response counts), the provenance raw-file path, the changed tables, and **append a row to the re-confirmation log** — sweep number, timestamp, counts, hash prefix, verdict. **The stamp moves even when nothing changed**; that is the whole mechanism.
 
-5. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
+5. **State the consequence of any delta, do not just report it.** A delta touching **fees** or **`margin_rate`** (the borrow/rollover rate) invalidates downstream numbers — name them: `T0090`'s cost basis, the deployable's quoted band. Silence here is how a stale fee reaches a go/no-go.
+
+6. **The attended half — re-read the account's own fee tier.** The public endpoint cannot see it, and `docs/reference/kraken-fee-schedule.md` is authoritative precisely because it was read from the logged-in account. Ask the owner to open **Kraken Pro → Fee tab** and report two values: the **current tier** and the **30-day USD spot volume**. Then:
    - **Unchanged** → note it in the register's log row (`account tier` column) and bump nothing else. The confirmation is the point; an unbumped stamp is indistinguishable from a skipped read.
    - **Changed** → correct `kraken-fee-schedule.md` *and* say what it invalidates: `cli/costs/fees.py` encodes that ladder verbatim, so a tier move re-prices every quoted figure that reads it — name `T0090`'s cost basis and the deployable's quoted band explicitly.
    - **Owner unavailable** → record the row as `not re-read`, never as unchanged. A blank is honest; a false confirmation is the failure this whole routine exists to prevent.
 
    At \$0 30-day volume the tier *cannot* move, so this step is cheap today and becomes load-bearing the moment RUNG 1 puts real fills through — that is also when the endpoint's own drift detector starts mattering.
 
-6. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
+7. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
 
 ## What this sweep does and does not cover
 
 - **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, per-asset **`margin_rate`** (the per-4h rollover rate) and `collateral_value`, `margin_call`/`margin_stop`, position limits.
 - **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint was still serving the **pre-2026-07-09** schedule when checked on 2026-08-04, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
-- **No endpoint covers, so step 5 asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `T0000` recorded them at Phase 0 and is now archived, so `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
+- **No endpoint covers, so step 6 asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `T0000` recorded them at Phase 0 and is now archived, so `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
 - **Does not cover** (no endpoint): MiCA status, tax rules, market-data pricing — human re-reads, and they belong to the go/no-go run.
 
 ## Failure modes worth naming

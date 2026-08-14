@@ -40,6 +40,7 @@ from cli.engine.gate_cache import (
     replay_fingerprint,
     save_cache,
 )
+from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
 from cli.engine.store import seed_store
@@ -584,6 +585,59 @@ class _ExecGauges:
         self.last_evaluation.set(evaluated_at.timestamp())
 
 
+class _VenueGauges:
+    """The venue-truth family (spec 00089 D6). Built on the SAME registry as `_CycleGauges` and
+    `_ExecGauges`, updated from the metrics sink when `CycleResult.venue` is present -- and seeded
+    at startup from the newest on-disk `venue-<HH>.json` (`_seed_venue_state`, mirroring
+    `_seed_cycle_state`'s reasoning for `zcrypto_engine_cycle_completed_at_seconds`). Without that
+    seed, a routine engine restart -- which always lands inside the inter-cycle gap
+    (`capture-deploys.md`) -- would leave every gauge at its eager default until the NEXT boundary
+    cycle, and `zcrypto-venue-snapshot-stale` would false-page "the writer has stopped" against an
+    engine that merely restarted (cold-review MAJOR 1).
+
+    All four are registered EAGERLY, unlike `_ExecGauges.last_evaluation`:
+    `zcrypto_venue_snapshot_timestamp_seconds` is a TIMESTAMP, never an age -- an age gauge freezes
+    at a healthy-looking value when its writer dies, which is the exact failure this must surface,
+    and an UNSEEDED 0.0 (a brand-new deployment with no journal yet, or the startup seed read itself
+    failing) reads as honestly ancient (1970), never a false "just happened". `instruments_expected`
+    is seeded from `len(INSTRUMENT_IDS)` -- DERIVED, never a literal 10, so a future basket
+    re-ratification moves one committed place.
+    """
+
+    def __init__(self, registry) -> None:
+        self.snapshot_timestamp = Gauge(
+            "zcrypto_venue_snapshot_timestamp_seconds",
+            "Unix timestamp of the last successful venue-truth snapshot.",
+            registry=registry,
+        )
+        self.instruments_loaded = Gauge(
+            "zcrypto_venue_instruments_loaded",
+            "Ratified instruments successfully loaded from the venue in the last snapshot.",
+            registry=registry,
+        )
+        self.instruments_expected = Gauge(
+            "zcrypto_venue_instruments_expected",
+            "Ratified instruments the venue is expected to carry.",
+            registry=registry,
+        )
+        self.instruments_expected.set(len(INSTRUMENT_IDS))
+        self.concordance_failures = Gauge(
+            "zcrypto_venue_concordance_failures",
+            "Ratified instruments that failed runtime concordance in the last snapshot.",
+            registry=registry,
+        )
+
+    def update(self, venue: dict | None) -> None:
+        # None (00089 D7): no snapshot this cycle -- move NOTHING, not even the timestamp, so a dead
+        # writer's last real reading keeps aging honestly instead of being masked by a fresh update.
+        if venue is None:
+            return
+        self.snapshot_timestamp.set(datetime.fromisoformat(venue["snapshot_at"]).timestamp())
+        self.instruments_loaded.set(venue["loaded"])
+        self.instruments_expected.set(venue["expected"])
+        self.concordance_failures.set(venue["failures"])
+
+
 def _seed_cycle_state(journal_dir: Path) -> tuple[datetime, bool | None]:
     """The startup seed for BOTH `zcrypto_engine_cycle_completed_at_seconds` and
     `zcrypto_engine_cycle_success` (spec 00069 D5; the latter cold-review I4): the newest journal
@@ -616,6 +670,46 @@ def _seed_completed_at(journal_dir: Path) -> datetime:
     return _seed_cycle_state(journal_dir)[0]
 
 
+def _seed_venue_state(journal_dir: Path) -> dict | None:
+    """The startup seed for `_VenueGauges` (spec 00089 D6, cold-review MAJOR 1): the newest
+    `venue-<HH>.json` whose `status` is `"ok"`, reduced to the same `{"loaded", "expected",
+    "failures", "snapshot_at"}` shape `cli.engine.cycle._record_venue_state` puts on
+    `CycleResult.venue` -- so `run()` can feed it straight into `_VenueGauges.update`. An `"error"`
+    record (no `VenueState` that cycle) is skipped rather than treated as newer: the last REAL
+    snapshot must keep aging honestly, the same "absence never overwrites a real value" invariant
+    `_VenueGauges.update` itself enforces for `venue=None`. Returns `None` when the journal holds no
+    readable `ok` record yet (a brand-new deployment) -- the caller then leaves every gauge at its
+    eager default, exactly `_seed_cycle_state`'s `success=None` case.
+
+    Deliberately NO try/except of its own, mirroring `_seed_cycle_state`: an unreadable file
+    (PermissionError) or a malformed record propagates to the caller's own guard, which must never
+    let telemetry setup kill the engine daemon.
+
+    Local import: `cli.engine.venueledger` pulls in `cli.engine.venuestate`, which imports
+    nautilus_trader (~1s) at module level -- deferred to here for the same reason `cycle.py`'s
+    `_record_venue_state` defers it, so `cli.engine.command`'s own module-level import stays
+    nautilus-free (`zcrypto --help`)."""
+    from cli.engine.venueledger import read_venue_record
+
+    newest: tuple[datetime, dict] | None = None
+    for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
+        doc = read_venue_record(path)
+        if doc.get("status") != "ok":
+            continue
+        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
+        if newest is None or cycle_ts > newest[0]:
+            newest = (cycle_ts, doc)
+    if newest is None:
+        return None
+    doc = newest[1]
+    return {
+        "loaded": len(doc["state"]["instruments"]),
+        "expected": len(INSTRUMENT_IDS),
+        "failures": len(doc["concordance"]["failures"]),
+        "snapshot_at": doc["state"]["snapshot_at"],
+    }
+
+
 @engine_app.command()
 def run() -> None:
     """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this).
@@ -644,6 +738,7 @@ def run() -> None:
     port = metrics_port_from_env()
     registry = None
     cycle_gauges = None
+    venue_gauges = None
     if port is not None:
         registry = build_registry()
         # Startup seeding reads arbitrary on-disk journal artifacts (_seed_cycle_state ->
@@ -660,6 +755,19 @@ def run() -> None:
                 cycle_gauges.seed_cycle_success(success)
         except Exception:
             logger.exception("engine metrics setup failed -- continuing with process metrics only")
+        # Its own guard, isolated from the cycle seed above (00089 D6, cold-review MAJOR 1): without
+        # this, a routine restart (always inside the inter-cycle gap, capture-deploys.md) would leave
+        # `zcrypto_venue_snapshot_timestamp_seconds` at its eager 0.0 default until the NEXT boundary
+        # cycle, and `zcrypto-venue-snapshot-stale` would false-page "the writer has stopped" for up
+        # to ~4h against an engine that merely restarted. An unreadable/absent venue-<HH>.json must
+        # never prevent the engine from starting, same isolation invariant as the cycle seed.
+        try:
+            venue_gauges = _VenueGauges(registry)
+            seed = _seed_venue_state(config.journal_dir)
+            if seed is not None:  # None => no readable "ok" record yet -- leave every gauge eager
+                venue_gauges.update(seed)
+        except Exception:
+            logger.exception("venue metrics setup failed -- continuing with process metrics only")
         start_metrics_server(port, registry)
 
     # Built regardless of telemetry: the ledger is a forensic artifact, not a metric. venue_reader
@@ -677,6 +785,8 @@ def run() -> None:
             cycle_gauges.update(result, completed_at, duration_seconds)
         if exec_gauges is not None:
             exec_gauges.update(verdict, evaluated_at=completed_at)
+        if venue_gauges is not None:
+            venue_gauges.update(result.venue)
 
     set_metrics_sink(_sink)
 

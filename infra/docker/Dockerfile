@@ -42,6 +42,13 @@ RUN uv sync --frozen --no-dev \
     && /app/.venv/bin/python -c "import polars; polars.DataFrame({'a':[1]}).select('a')" \
     && chown -R capture:capture /app
 
+# GIT_REVISION (the commit sha, CI-supplied) changes on every build; declared after `uv sync`
+# so a new revision never busts that layer's cache. cli/engine/cycle.py::_code_version() reads
+# ZCRYPTO_BUILD_REVISION to append `+<sha12>` to the package version -- see
+# docs/specs/00089-venue-truth-design.md D8. Empty by default, so a local `docker build` is unaffected.
+ARG GIT_REVISION=""
+ENV ZCRYPTO_BUILD_REVISION=$GIT_REVISION
+
 USER capture
 
 # CAPTURE_DATA_DIR / CAPTURE_DEPTH / CAPTURE_PAIRS (comma-separated) map to `zcrypto capture`'s

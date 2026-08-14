@@ -17,11 +17,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
+from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import (
     SCHEMA_VERSION,
     CycleRecord,
@@ -37,6 +39,13 @@ from cli.ohlc.dataset import write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.fetch import fetch_ohlc
 from cli.portfolio import build_crossfreq_system_fast
+
+if TYPE_CHECKING:
+    # Typing only: cli.engine.venuestate imports nautilus_trader at module level (~1s), and this
+    # module is imported eagerly by cli.engine.command -- `zcrypto --help` must never pay that cost.
+    # The actual runtime imports (write_venue_record, runtime_concordance) are local to
+    # _record_venue_state, paid only when a cycle with venue truth actually runs.
+    from cli.engine.venuestate import ConcordanceVerdict, VenueState
 
 logger = get_logger("engine.cycle")
 
@@ -64,6 +73,18 @@ _metrics_sink = None
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _code_version() -> str:
+    """`version("zcrypto")`, plus `+{first 12 chars of ZCRYPTO_BUILD_REVISION}` when that env var is
+    non-empty (T0130, D8) -- the cycle record and the venue record both take their value from this
+    one function, so the two artifacts never disagree. The env var is populated by a build arg
+    (00089 Task 8); until then it is unset and this is bare."""
+    base = version("zcrypto")
+    revision = os.environ.get("ZCRYPTO_BUILD_REVISION")
+    if not revision:
+        return base
+    return f"{base}+{revision[:12]}"
 
 
 def set_metrics_sink(sink) -> None:
@@ -124,6 +145,11 @@ class CycleResult:
     # occupancy gauges. Deliberately NOT part of the journal record: schema v1 is validated and
     # replayed, and this is derivable from the snapshots any replay already reads.
     sleeve_gross: dict[str, float] | None
+    # The venue-truth summary for this boundary (00089 Task 4): {"loaded", "expected", "failures",
+    # "snapshot_at"}, or None when no VenueState was available. In-memory only, for the metrics sink
+    # -- like sleeve_gross, deliberately NOT part of the journal record; the full snapshot lives in
+    # venue-<HH>.json. Defaults to None so call sites built before this field existed keep working.
+    venue: dict | None = None
 
 
 def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
@@ -310,6 +336,53 @@ def _append_orders(
     return orders
 
 
+def _record_venue_state(config: EngineConfig, cycle_ts: datetime, venue_state: VenueState | None) -> dict | None:
+    """Journal this boundary's venue-truth evidence FIRST (00089 D7), before any target computation
+    below -- a cycle that dies later in the settle-verify refresh or the build still leaves this
+    record behind. `venue_state` is READ-ONLY evidence: consulted only here, for the ledger and the
+    CycleResult summary the metrics sink reads -- never for targets or orders.
+
+    `venue_state=None` normally journals an error record -- EXCEPT when this boundary's
+    venue-<HH>.json already reads status "ok". That record is exactly the write-first design's own
+    evidence: the CLI's `cycle --replace` (cli/engine/command.py) calls run_cycle with no
+    venue_state at all, so without this guard a manual re-run of an already-journaled boundary would
+    silently clobber the live engine's own soak evidence for it -- or, worse, destroy a crashed
+    boundary's only surviving evidence by re-running it (without --replace) once the venue record is
+    the sole artifact on disk. Left alone in that case; the return value stays None either way, since
+    no fresh snapshot was taken this cycle.
+
+    Local imports: cli.engine.venueledger pulls in cli.engine.venuestate, which imports
+    nautilus_trader (~1s) at module level -- deferred to here (paid only when a cycle actually runs)
+    so cli.engine.command's module-level import of this module stays nautilus-free (`zcrypto --help`).
+    """
+    from cli.engine.venueledger import read_venue_record, venue_record_path, write_venue_record
+    from cli.engine.venuestate import runtime_concordance
+
+    code_version = _code_version()
+    if venue_state is None:
+        existing_path = venue_record_path(config.journal_dir, cycle_ts)
+        if existing_path.exists() and read_venue_record(existing_path).get("status") == "ok":
+            logger.info("run_cycle: venue_state=None but %s already reads status 'ok' -- leaving it alone", existing_path)
+            return None
+        write_venue_record(
+            config.journal_dir,
+            cycle_ts,
+            state=None,
+            concordance=None,
+            code_version=code_version,
+            error="no venue snapshot available for this cycle",
+        )
+        return None
+    verdict: ConcordanceVerdict = runtime_concordance(venue_state)
+    write_venue_record(config.journal_dir, cycle_ts, state=venue_state, concordance=verdict, code_version=code_version)
+    return {
+        "loaded": len(venue_state.instruments),
+        "expected": len(INSTRUMENT_IDS),  # derived, never a literal -- a basket re-ratification moves one place
+        "failures": len(verdict.failures),
+        "snapshot_at": venue_state.snapshot_at.isoformat(),
+    }
+
+
 def _failed(
     day_dir: Path,
     cycle_ts: datetime,
@@ -317,6 +390,7 @@ def _failed(
     clock,
     reason: str,
     offending: tuple[str, ...],
+    venue: dict | None,
 ) -> CycleResult:
     """The failed-cycle sidecar: a shape alongside -- not a change to -- schema v1, written WITHOUT
     validate_record (which by design can never pass for a failure)."""
@@ -343,23 +417,36 @@ def _failed(
         reason=reason,
         offending_pairs=offending,
         sleeve_gross=None,  # no build ran, so the book's composition this boundary is unknown
+        venue=venue,
     )
     _update_metrics(result, completed_at, (completed_at - started_at).total_seconds())
     return result
 
 
-def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, clock=_utc_now) -> CycleResult:
+def run_cycle(
+    cycle_ts: datetime,
+    *,
+    config: EngineConfig,
+    fetch_fn=fetch_ohlc,
+    clock=_utc_now,
+    venue_state: VenueState | None = None,
+) -> CycleResult:
     """Run one shadow cycle at the 4h boundary `cycle_ts` (spec 00041 SS the cycle core, steps 1-8).
 
-    1. Settle-verify refresh of the store, transport + settle retries bounded by cycle_ts + 25 min;
-       exhausting the reserve writes a failed-cycle sidecar (reason "refresh_deadline"). 2. Staleness
-    on each pair's raw series vs the boundary invariant; a stale pair writes a sidecar (reason
-    "stale_pair") and skips the build; the fresh series are then union-aligned per grid. 3. Snapshot
-    parquets journaled under <YYYY-MM-DD>/snapshots/cycle-<HH>/, manifest paths relative to
-    journal_dir, hashes via the one shared snapshot_content_hash. 4. build_crossfreq_system_fast
-    (default config) -> the newest-row final_targets. 5. Intended orders vs the most recent
-    successful record's targets, appended to the day's orders.jsonl. 6. The schema-v1 CycleRecord,
-    validated before write, at <YYYY-MM-DD>/cycle-<HH>.json.
+    0. `venue_state` (00089 Task 4), if given, is run through `runtime_concordance` and journaled to
+       venue-<HH>.json FIRST -- before anything below -- so a cycle that dies later still leaves this
+    boundary's venue evidence; `venue_state=None` journals an error record instead. Either way
+    `venue_state` is READ-ONLY: it is never consulted for targets or orders, only journaled and
+    summarized onto `CycleResult.venue`. 1. Settle-verify refresh of the store, transport + settle
+    retries bounded by cycle_ts + 25 min; exhausting the reserve writes a failed-cycle sidecar
+    (reason "refresh_deadline"). 2. Staleness on each pair's raw series vs the boundary invariant; a
+    stale pair writes a sidecar (reason "stale_pair") and skips the build; the fresh series are then
+    union-aligned per grid. 3. Snapshot parquets journaled under <YYYY-MM-DD>/snapshots/cycle-<HH>/,
+    manifest paths relative to journal_dir, hashes via the one shared snapshot_content_hash.
+    4. build_crossfreq_system_fast (default config) -> the newest-row final_targets. 5. Intended
+    orders vs the most recent successful record's targets, appended to the day's orders.jsonl.
+    6. The schema-v1 CycleRecord, validated before write, at <YYYY-MM-DD>/cycle-<HH>.json -- carries
+    NO venue field; the full snapshot lives only in venue-<HH>.json.
 
     cycle_ts must be aware and on the 4h UTC grid (normalized to UTC; naive raises EngineError), and
     the injected clock must return aware datetimes. A store data-integrity failure (refresh_store's
@@ -371,16 +458,19 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
     started_at = read_clock()
     day_dir = config.journal_dir / f"{cycle_ts:%Y-%m-%d}"
 
+    # 0. Venue truth: journaled FIRST, before target computation -- read-only from here on.
+    venue = _record_venue_state(config, cycle_ts, venue_state)
+
     # 1. Settle-verify refresh, bounded by the 25-min reserve.
     offending = _refresh_with_settle_verify(config.store_dir, cycle_ts, fetch_fn=fetch_fn, clock=read_clock)
     if offending:
-        return _failed(day_dir, cycle_ts, started_at, read_clock, "refresh_deadline", offending)
+        return _failed(day_dir, cycle_ts, started_at, read_clock, "refresh_deadline", offending, venue)
 
     # 2. Staleness on the RAW series first, then union-align per grid.
     raw_series = {(a, iv): read_store_series(config.store_dir, a, iv) for a in PAIR_KEYS for iv in GRID_INTERVALS}
     stale = _stale_pairs(raw_series, cycle_ts)
     if stale:
-        return _failed(day_dir, cycle_ts, started_at, read_clock, "stale_pair", stale)
+        return _failed(day_dir, cycle_ts, started_at, read_clock, "stale_pair", stale, venue)
     aligned = {interval: _union_align(raw_series, interval) for interval in GRID_INTERVALS}
 
     # 3. Journal the union-aligned snapshots.
@@ -410,7 +500,7 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
         final_targets=targets,
         started_at=started_at,
         completed_at=completed_at,
-        code_version=version("zcrypto"),
+        code_version=_code_version(),
         builder_path="fast",
     )
     validate_record(record)
@@ -428,6 +518,7 @@ def run_cycle(cycle_ts: datetime, *, config: EngineConfig, fetch_fn=fetch_ohlc, 
         reason=None,
         offending_pairs=None,
         sleeve_gross=sleeve_gross,
+        venue=venue,
     )
     _update_metrics(cycle_result, completed_at, (completed_at - started_at).total_seconds())
     return cycle_result
