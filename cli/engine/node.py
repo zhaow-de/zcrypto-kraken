@@ -191,8 +191,18 @@ def _node_config(config: EngineConfig) -> TradingNodeConfig:
             # code ZEUR and ZERO carry EUR. Only the instrument ID is normalized (ADA/EUR.KRAKEN),
             # and that ID-vs-Currency split is the trap -- "EUR" here would match nothing, as would
             # the adapter's own "USDT" default.
-            # One quote currency only: our ETH/BTC and SOL/BTC pairs quote in XXBT (31 instruments
-            # do), so this field can never cover them alongside the EUR book.
+            # NOT a tradeability constraint -- measured 2026-08-14 against the installed adapter
+            # (T0137's survey). `margin_balance_asset` has exactly ONE call site,
+            # `_update_account_state` -> `request_account_state_with_metrics`: it selects the
+            # currency the ACCOUNT SUMMARY is denominated in, and appears nowhere in order
+            # submission, instrument handling, or position reporting. The OpenPositions branch this
+            # config takes is quote-agnostic -- it reports side and net base quantity only -- so this
+            # single client already SEES the XXBT-quoted ETH/BTC and SOL/BTC. What keeps those legs
+            # out of the basket is engine-side, not here: base-keyed PAIR_KEYS (where "ETH" would
+            # collide), the root/<base>/EUR/ store path, EUR-NAV sizing with no FX term, and a
+            # EUR-denominated cost floor. An earlier comment here claimed this field "can never
+            # cover them alongside the EUR book"; that was wrong about the mechanism and is
+            # corrected rather than annotated, because the wrong reason was being inherited.
             # Currently unread: the adapter consults it only when spot_account_type is NOT MARGIN
             # AND use_spot_position_reports is True; under MARGIN it takes the OpenPositions branch.
             spot_positions_quote_currency="ZEUR",
