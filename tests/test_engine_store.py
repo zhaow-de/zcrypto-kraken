@@ -1,12 +1,17 @@
+import importlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import cli.engine.store as store_module
+import cli.ohlc.fetch as fetch_module
 from cli.engine.errors import EngineError
 from cli.engine.store import (
+    BASKET,
     GRID_INTERVALS,
     PAIR_KEYS,
+    _store_path,
     read_store_series,
     refresh_store,
     seed_store,
@@ -57,47 +62,74 @@ def _fetch_override(pair_key_target: str, interval_target: int, override_rows: l
     return _fn
 
 
-def _store_path(root: Path, asset: str, interval: int) -> Path:
-    return root / asset / "EUR" / f"{interval}.parquet"
-
-
 def _write_full_universe(root: Path, row_fn) -> None:
-    for asset in PAIR_KEYS:
+    for symbol in PAIR_KEYS:
         for interval in GRID_INTERVALS:
-            write_parquet(to_frame(row_fn(interval)), _store_path(root, asset, interval))
+            write_parquet(to_frame(row_fn(interval)), _store_path(root, symbol, interval))
+
+
+def test_basket_has_twelve_sorted_members_with_both_btc_legs():
+    assert len(BASKET) == 12
+    assert list(BASKET) == sorted(BASKET)
+    assert "ETH/BTC" in BASKET
+    assert "SOL/BTC" in BASKET
 
 
 def test_pair_keys_content():
     # Independently transcribed from docs/reference/kraken-snapshot-register.md's candidate
-    # basket table -- the ten EUR-quoted rows only (ETH/BTC and SOL/BTC are BTC-quoted, excluded).
+    # basket table -- all twelve symbols, EUR-quoted and BTC-quoted alike.
     expected = {
-        "BTC": "XXBTZEUR",
-        "ETH": "XETHZEUR",
-        "SOL": "SOLEUR",
-        "XRP": "XXRPZEUR",
-        "ADA": "ADAEUR",
-        "LINK": "LINKEUR",
-        "DOGE": "XDGEUR",
-        "LTC": "XLTCZEUR",
-        "DOT": "DOTEUR",
-        "AVAX": "AVAXEUR",
+        "ADA/EUR": "ADAEUR",
+        "AVAX/EUR": "AVAXEUR",
+        "BTC/EUR": "XXBTZEUR",
+        "DOGE/EUR": "XDGEUR",
+        "DOT/EUR": "DOTEUR",
+        "ETH/BTC": "XETHXXBT",
+        "ETH/EUR": "XETHZEUR",
+        "LINK/EUR": "LINKEUR",
+        "LTC/EUR": "XLTCZEUR",
+        "SOL/BTC": "SOLXBT",
+        "SOL/EUR": "SOLEUR",
+        "XRP/EUR": "XXRPZEUR",
     }
     assert PAIR_KEYS == expected
+    assert PAIR_KEYS["ETH/BTC"] == "XETHXXBT"
+    assert PAIR_KEYS["SOL/BTC"] == "SOLXBT"
 
 
 def test_grid_intervals():
     assert GRID_INTERVALS == (1440, 240)
 
 
-def test_the_engine_basket_stays_eur_only_and_ten_legs():
+def test_the_engine_basket_now_spans_both_quotes_and_twelve_legs():
     from cli.engine.store import PAIR_KEYS as ENGINE_KEYS
     from cli.ohlc.fetch import PAIR_KEYS as FETCH_KEYS
 
-    assert len(ENGINE_KEYS) == 10
-    assert all("/" not in k for k in ENGINE_KEYS), "engine keys are BASE, its store path appends /EUR"
-    assert "ETH" in ENGINE_KEYS and ENGINE_KEYS["ETH"] == FETCH_KEYS["ETH/EUR"]
-    # A BTC-quoted leg must never reach the engine, however the fetch map grows.
-    assert not any(k.endswith("XBT") for k in ENGINE_KEYS.values())
+    assert len(ENGINE_KEYS) == 12
+    assert all("/" in k for k in ENGINE_KEYS), "engine keys are now full BASE/QUOTE symbols"
+    assert ENGINE_KEYS["ETH/EUR"] == FETCH_KEYS["ETH/EUR"]
+    # The two BTC-quoted legs the old ten-EUR-only basket excluded are now present, carrying the
+    # fetch map's own venue spelling unchanged (never re-derived here).
+    assert ENGINE_KEYS["ETH/BTC"] == FETCH_KEYS["ETH/BTC"] == "XETHXXBT"
+    assert ENGINE_KEYS["SOL/BTC"] == FETCH_KEYS["SOL/BTC"] == "SOLXBT"
+
+
+def test_store_path_is_quote_aware():
+    root = Path("/root")
+    assert _store_path(root, "ETH/BTC", 1440) == root / "ETH" / "BTC" / "1440.parquet"
+    assert _store_path(root, "ETH/EUR", 1440) == root / "ETH" / "EUR" / "1440.parquet"
+
+
+def test_basket_symbol_missing_from_fetch_map_raises_at_import(monkeypatch):
+    reduced = dict(fetch_module.PAIR_KEYS)
+    del reduced["ETH/BTC"]
+    monkeypatch.setattr(fetch_module, "PAIR_KEYS", reduced)
+    try:
+        with pytest.raises(KeyError):
+            importlib.reload(store_module)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(store_module)
 
 
 def test_seed_store_happy_path(tmp_path):
@@ -111,12 +143,12 @@ def test_seed_store_happy_path(tmp_path):
     assert sum(e.appended for e in report.entries) == len(report.entries) * 3
     assert sum(e.replaced_tail_rows for e in report.entries) == 0
 
-    btc_daily = next(e for e in report.entries if e.pair == "BTC" and e.interval == 1440)
+    btc_daily = next(e for e in report.entries if e.pair == "BTC/EUR" and e.interval == 1440)
     assert btc_daily.overlap_bars == 6
     assert btc_daily.appended == 3
     assert btc_daily.replaced_tail_rows == 0
 
-    ts, closes = read_store_series(store_dir, "BTC", 1440)
+    ts, closes = read_store_series(store_dir, "BTC/EUR", 1440)
     assert len(ts) == N_CANON + 3
     assert closes == [100.0 + i for i in range(N_CANON + 3)]
     assert ts[-1] == DAILY_START + timedelta(days=N_CANON + 2)
@@ -167,7 +199,7 @@ def test_seed_store_idempotent_reseed_appends_only_missing(tmp_path):
     assert sum(e.appended for e in second.entries) == 0
     assert sum(e.replaced_tail_rows for e in second.entries) == 0
 
-    ts, _ = read_store_series(store_dir, "BTC", 1440)
+    ts, _ = read_store_series(store_dir, "BTC/EUR", 1440)
     assert len(ts) == N_CANON + 3  # unchanged by the second call
 
 
@@ -188,15 +220,15 @@ def test_seed_store_divergent_tail_replace_on_reseed(tmp_path):
     assert sum(e.replaced_tail_rows for e in report.entries) == len(report.entries) * 6
     assert sum(e.appended for e in report.entries) == len(report.entries) * 3
 
-    ts, closes = read_store_series(store_dir, "BTC", 1440)
+    ts, closes = read_store_series(store_dir, "BTC/EUR", 1440)
     assert closes[N_CANON - 6 : N_CANON] == [100.0 + i for i in range(N_CANON - 6, N_CANON)]  # repaired
     assert len(ts) == N_CANON + 3
 
 
 def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path):
     store_dir = tmp_path / "store"
-    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, 1)), _store_path(store_dir, "BTC", 1440))
-    write_parquet(to_frame(_rows_from(H4_START, timedelta(hours=4), 0, N_CANON)), _store_path(store_dir, "BTC", 240))
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, 1)), _store_path(store_dir, "BTC/EUR", 1440))
+    write_parquet(to_frame(_rows_from(H4_START, timedelta(hours=4), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 240))
 
     now = H4_START + timedelta(hours=4 * 13)  # == bar[13]'s stamp == bar[12]'s interval end
 
@@ -205,26 +237,26 @@ def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path
             return _rows_from(DAILY_START, timedelta(days=1), 0, 1)  # matches store exactly
         return _rows_from(H4_START, timedelta(hours=4), 7, 7)  # bars 7..13
 
-    report = refresh_store(store_dir, pairs={"BTC": "XXBTZEUR"}, fetch_fn=_fetch_fn, clock=lambda: now)
+    report = refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=_fetch_fn, clock=lambda: now)
 
     btc_240 = next(e for e in report.entries if e.interval == 240)
     assert btc_240.appended == 3  # bars 10, 11, 12 kept; bar 13 dropped (in-progress)
 
-    ts, _ = read_store_series(store_dir, "BTC", 240)
+    ts, _ = read_store_series(store_dir, "BTC/EUR", 240)
     assert ts[-1] == H4_START + timedelta(hours=4 * 12)  # boundary-exact bar 12 kept
     assert H4_START + timedelta(hours=4 * 13) not in ts  # bar 13 (interval end > now) dropped
 
 
 def test_refresh_store_overlap_mismatch_raises(tmp_path):
     store_dir = tmp_path / "store"
-    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC", 1440))
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
 
     mismatched = _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 3)
     for row in mismatched:
         row[4] = str(float(row[4]) + 500.0)
 
     with pytest.raises(EngineError) as exc:
-        refresh_store(store_dir, pairs={"BTC": "XXBTZEUR"}, fetch_fn=lambda pk, iv: mismatched, clock=lambda: FAR_FUTURE)
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: mismatched, clock=lambda: FAR_FUTURE)
 
     assert "mismatch" in str(exc.value)
     assert "zcrypto engine seed" in str(exc.value)
@@ -232,12 +264,12 @@ def test_refresh_store_overlap_mismatch_raises(tmp_path):
 
 def test_refresh_store_zero_overlap_is_distinct_error(tmp_path):
     store_dir = tmp_path / "store"
-    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC", 1440))
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
 
     disjoint_rows = _rows_from(DAILY_START, timedelta(days=1), 100, 5)
 
     with pytest.raises(EngineError) as exc:
-        refresh_store(store_dir, pairs={"BTC": "XXBTZEUR"}, fetch_fn=lambda pk, iv: disjoint_rows, clock=lambda: FAR_FUTURE)
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: disjoint_rows, clock=lambda: FAR_FUTURE)
 
     msg = str(exc.value)
     assert "catastrophically stale" in msg
