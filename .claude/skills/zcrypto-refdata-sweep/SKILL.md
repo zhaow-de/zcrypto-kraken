@@ -37,7 +37,7 @@ print(render_markdown(snap))
 
 The raw snapshot is gitignored on purpose — it is the evidence, not the artifact. **Keep it**: two archived snapshots are what let a later review compute an actual set difference instead of netting two totals.
 
-2. **Run the costmin drift guard** — `uv run pytest tests/test_costmin_drift.py`. This is `COSTMIN_EUR`'s (spec `00089` D5a) only guard, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored — so this sweep, right after Step 1 mints a fresh snapshot, is the only place the guard can actually fire. Red means Kraken moved a ratified leg's `costmin`; update the constant in `cli/engine/instruments.py` to match and record the change here alongside the rest of the sweep's findings.
+2. **Run the costmin drift guard** — `uv run pytest tests/test_costmin_drift.py`. This is `COSTMIN`'s only guard, and it skips wherever `data/snapshots/` is absent — which includes CI, since the data root is gitignored — so this sweep, right after Step 1 mints a fresh snapshot, is the only place the guard can actually fire. Red means Kraken moved a ratified leg's `costmin`; update the constant in `cli/engine/instruments.py` to match and record the change here alongside the rest of the sweep's findings. `COSTMIN` is symbol-keyed over all twelve legs and each entry is a `(value, quote_currency)` pair in the snapshot's own vocabulary (`"EUR"`/`"BTC"`, never the adapter aliases `ZEUR`/`XXBT`) — the two `/BTC` legs' floors are BTC-denominated, so never copy a EUR value across.
 
 3. **Diff the rendered tables** against the committed ones — the candidate basket, the fee/borrow/margin table, the alias ledger. Markdown separator styling differs harmlessly; compare cells.
 
