@@ -721,9 +721,12 @@ def test_plausibility_flags_non_finite_net_live():
 
 
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
-def test_instrument_self_check_reproduces_record_44():
+def test_instrument_self_check_reproduces_the_deployable_record():
     ok, msg = instrument_self_check(Path("data/ohlc-full"), Path("docs/reference/trial-registry.jsonl"))
-    assert ok is True, msg  # the frozen build must reproduce record 44's exact integer diagnostics
+    # The frozen build must reproduce the deployable's exact integer diagnostics. Record 47 succeeded
+    # 44 at the twelve-leg re-ratification and registered the SAME integers -- the /BTC legs carry
+    # structural zero, so widening the basket moved no number the builder produces.
+    assert ok is True, msg
 
 
 def test_instrument_self_check_skips_when_canonical_absent(tmp_path):

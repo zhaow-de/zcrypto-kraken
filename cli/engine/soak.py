@@ -851,10 +851,10 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
 
 
 def _instrument_expectations(registry_path: Path) -> dict[str, int]:
-    """{'governor_engaged_bars': ..., 'cap_breach_bars': ...} from record 44's metrics -- the
+    """{'governor_engaged_bars': ..., 'cap_breach_bars': ...} from record 47's metrics -- the
     ratified deployable-system trial (docs/reference/trial-registry.jsonl) the frozen engine build
     must reproduce exactly."""
-    metrics = _load_registry_record(registry_path, 44)["metrics"]
+    metrics = _load_registry_record(registry_path, 47)["metrics"]
     return {
         "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
         "cap_breach_bars": int(metrics["cap_breach_bars"]),
@@ -866,7 +866,7 @@ def instrument_self_check(
 ) -> tuple[bool | None, str]:
     """Rebuild the frozen strategy over the full canonical history (the same load `build_null`
     uses, via `_load_canonical`) and assert its `governor_engaged_bars`/`cap_breach_bars` EXACTLY
-    match record 44's registry values. Returns (None, 'canonical absent') without building
+    match record 47's registry values. Returns (None, 'canonical absent') without building
     anything when `canonical_dir` has no data (skip, not fail) -- this is expected on a host
     without `data/ohlc-full`."""
     if not _canonical_present(canonical_dir):
@@ -881,7 +881,7 @@ def instrument_self_check(
     ]
     if mismatches:
         return False, "instrument mismatch: " + "; ".join(mismatches)
-    return True, "instrument reproduces record 44"
+    return True, "instrument reproduces record 47"
 
 
 def identity_self_check(record, snapshot_reader, *, tol: float = 1e-6, path: str = "fast") -> tuple[bool, str]:
@@ -1133,7 +1133,7 @@ def self_tests(
     convention. `reconcile_ok = null.reconcile_ok and realized.chain_ok`: the backtest null's own
     internal bookkeeping and the realized series' forward-join integrity must both hold. `path`
     (spec 00061 D5) threads to `identity_self_check`'s own builder-path selection; `instrument_self_check`
-    is untouched (it always reproduces record 44 via the fast path).
+    is untouched (it always reproduces record 47 via the fast path).
     """
     messages: list[str] = []
 
@@ -1504,7 +1504,7 @@ def analyze_soak(
 
 
 BANNER = (
-    "Trial 44 has ZERO out-of-time holdout evidence — the one budgeted holdout look (budget now 0) tested the "
+    "Trial 47 has ZERO out-of-time holdout evidence — the one budgeted holdout look (budget now 0) tested the "
     "SUPERSEDED record 33 in a degenerate [0,0] window and discriminated nothing; paper trading is its only "
     "genuine OOS test."
 )

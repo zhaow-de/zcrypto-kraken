@@ -1,8 +1,9 @@
 """Every registered trial must name provenance that is actually committed (T0125).
 
-The defect this closes: registry record 44 is the deployable, and its verdict is ADOPT *vs incumbent
-trial 43* — but trial 43's construction was never committed, and its `run_ref` names scratchpad
-scripts that no longer exist. The criterion that selected the live system can never be re-examined.
+The defect this closes: registry record 44 was the deployable (record 47 now succeeds it), and its
+verdict is ADOPT *vs incumbent trial 43* — but trial 43's construction was never committed, and its
+`run_ref` names scratchpad scripts that no longer exist. The criterion that selected the live system
+can never be re-examined.
 
 Two layers guard against a repeat, deliberately split:
 
