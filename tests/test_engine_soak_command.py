@@ -536,3 +536,103 @@ def test_soak_check_rejects_invalid_path(tmp_path, monkeypatch):
         ],
     )
     assert result.exit_code == 1
+
+
+# --- the mixed-schema window through the CLI (spec 00094 D3) ---------------------------------------
+
+
+def _mk_straddling_journal_and_store(tmp_path: Path) -> tuple[Path, Path]:
+    """5 contiguous cycles from 2026-07-16 00:00 whose journaled records flip from schema 1
+    (base-keyed "BTC") to schema 2 (symbol-keyed, with the widened "ETH/BTC" leg at its structural
+    zero) at 08:00, plus a store carrying BOTH legs at their real `<base>/<quote>` paths. Mirrors
+    tests/test_engine_soak.py's `_mk_straddling_records_and_store`, but written to disk -- the
+    command reads the journal via `_journal_artifacts` + `from_json`."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    labels = [base + timedelta(hours=4 * k) for k in range(-1, 4)]
+    prices = {"BTC/EUR": [100.0 * 1.1**i for i in range(len(labels))], "ETH/BTC": [1.0 * 1.4**i for i in range(len(labels))]}
+
+    store_dir = tmp_path / "store"
+    for symbol, closes in prices.items():
+        b, q = symbol.split("/")
+        (store_dir / b / q).mkdir(parents=True, exist_ok=True)
+        write_parquet(to_frame([_row(t, c) for t, c in zip(labels, closes)]), store_dir / b / q / "240.parquet")
+
+    journal_dir = tmp_path / "journal"
+    for k in range(5):
+        cycle_ts = base + timedelta(hours=4 * k)
+        last_ts = cycle_ts - timedelta(hours=4)
+        upto = [i for i, t in enumerate(labels) if t <= last_ts]
+        sub_ts = [labels[i] for i in upto]
+        schema = 1 if k < 2 else 2
+        snaps = tuple(
+            SnapshotEntry(
+                pair=pair,
+                grid="240",
+                n_bars=len(sub_ts),
+                first_ts=sub_ts[0],
+                last_ts=last_ts,
+                content_hash=snapshot_content_hash(sub_ts, [prices["BTC/EUR"][i] for i in upto]),
+                path=f"p240-{pair.replace('/', '-')}",
+            )
+            for pair in (("BTC",) if schema == 1 else ("BTC/EUR", "ETH/BTC"))
+        )
+        record = CycleRecord(
+            schema_version=schema,
+            cycle_ts=cycle_ts,
+            snapshots=snaps,
+            final_targets={"BTC": 0.4} if schema == 1 else {"BTC/EUR": 0.4, "ETH/BTC": 0.0},
+            started_at=cycle_ts,
+            completed_at=cycle_ts + timedelta(minutes=1),
+            code_version="test",
+            builder_path="fast",
+        )
+        day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+        day_dir.mkdir(parents=True, exist_ok=True)
+        (day_dir / f"cycle-{cycle_ts:%H}.json").write_text(to_json(record) + "\n")
+
+    return journal_dir, store_dir
+
+
+def test_soak_check_spans_the_schema_boundary(tmp_path, monkeypatch):
+    """A soak report over a window that straddles the deploy runs to a rendered report instead of
+    aborting.
+
+    SCOPE, stated precisely because a scope note that overstates coverage is worse than none: the
+    canonical is absent here, so this exercises the journal read and `realized_series` -- the two
+    things that previously raised, `SoakError` on the changing asset set and the store path's
+    `ValueError` on a base key -- and NOTHING ELSE. The null build and the internals rebuild are
+    never reached on this path, and the canonical-gated tests in tests/test_engine_soak.py do not
+    cover their schema-2 behaviour either (they journal v1 records). That coverage is
+    `test_assemble_latest_grids_contracts_a_schema_2_record_to_the_model`,
+    `test_realized_internals_spans_the_schema_boundary_with_a_v2_latest`, and
+    `test_build_null_casts_its_book_onto_the_live_symbol_space`, all in tests/test_engine_soak.py."""
+    _patch_config(monkeypatch, tmp_path)
+    journal_dir, store_dir = _mk_straddling_journal_and_store(tmp_path)
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(tmp_path / "no-canonical"),
+            "--json",
+            str(json_out),
+        ],
+    )
+
+    out = result.output
+    assert result.exit_code == 0, out
+    assert "ZERO out-of-time holdout" in out
+
+    payload = json.loads(json_out.read_text())
+    # 4 of the 5 clean cycles scored (the last has no successor) -- the window was not truncated at
+    # the schema flip, and no reason mentions the realized series failing to build.
+    assert payload["provenance"]["L"] == 4
+    assert not any("realized series" in r for r in payload["void_reasons"]), payload["void_reasons"]
+    assert any("canonical absent" in r for r in payload["void_reasons"])

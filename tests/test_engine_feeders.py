@@ -9,11 +9,13 @@ from typer.testing import CliRunner
 import cli.engine.command as command
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
+from cli.engine.cycle import _expand_to_basket
 from cli.engine.feeders import (
     CycleStages,
     _render_accumulation,
     _render_decompose,
     accumulation_payload,
+    accumulation_report,
     cancellation_ratio,
     decompose_payload,
     decompose_report,
@@ -22,6 +24,9 @@ from cli.engine.feeders import (
     stage_grosses,
 )
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
+from cli.engine.store import BASKET
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
+from tests import basket_fixture
 
 
 def test_stage_grosses_sums_absolute_positions():
@@ -796,3 +801,64 @@ def test_accum_replay_defaults_to_the_newest_venue_snapshot(tmp_path, monkeypatc
     out = result.output
     assert "2026-07-07" in out, out
     assert "2026-06-01" not in out, out
+
+
+# --- schema 2: the twelve-symbol journal, through the REAL builder ---------------------------------
+#
+# Every other CycleRecord in this file is schema_version=1 with a stubbed builder -- which is exactly
+# why the widening's PortfolioError went unnoticed here. That raise is NOT an EngineError (its MRO is
+# PortfolioError -> Exception), so `decompose_report`'s per-record `except EngineError` and the
+# command's own catch would BOTH have missed it: the first schema-2 record killed the whole command
+# with an unhandled traceback instead of being counted as one named failed cycle. The builder must be
+# real here -- a stub keyed by whatever it is handed accepts the twelve-symbol panel the real one
+# refuses, so it cannot see the defect at all.
+
+
+def _v2_record_and_reader() -> tuple[CycleRecord, object, dict[str, float]]:
+    """A genuine schema-2 record: twelve symbol-keyed snapshots on one calendar per grid, and
+    final_targets from a REAL ten-asset build expanded onto the basket -- exactly the shape
+    `run_cycle` journals. Returns (record, reader, model_targets)."""
+    grids = basket_fixture.grids()
+    result = basket_fixture.build(grids)
+    record = basket_fixture.record(grids, schema_version=2, result=result)
+    return record, basket_fixture.reader(grids), basket_fixture.targets_at(result, result.n_periods, 1)
+
+
+def test_replay_stages_rebuilds_a_schema_2_record_and_stays_base_keyed():
+    """The v2 round trip. `replay_stages` contracts the journaled twelve to the model's ten, and its
+    JOURNAL identity is met in the record's own key space via `_expand_to_basket` -- while the
+    returned `CycleStages` stays BASE-keyed, which is what both consumers need: `accumulation_payload`
+    looks its floors up in `load_minimums`' output, and the refdata snapshot keys that by base."""
+    record, reader, model_targets = _v2_record_and_reader()
+
+    stages = replay_stages(record, reader)
+
+    assets = set(CrossfreqSystemConfig().assets)
+    assert set(stages.final) == assets  # base-keyed ten, not the journaled twelve
+    assert set(stages.closes) == assets and set(stages.combined) == assets
+    # The identity the function itself enforces, restated here so the test fails loudly rather than
+    # relying on an internal raise: the rebuild expanded IS what the record journals.
+    assert _expand_to_basket(stages.final) == record.final_targets
+    assert stages.final == pytest.approx(model_targets)
+    # Discriminating: the ten are non-zero and pairwise distinct, so none is confusable with the
+    # structural zero `_expand_to_basket` writes for the two /BTC legs.
+    assert 0.0 not in set(stages.final.values()) and len(set(stages.final.values())) == 10
+    assert all(record.final_targets[leg] == 0.0 for leg in BASKET if not leg.endswith("/EUR"))
+
+
+def test_decompose_and_accum_replay_survive_a_schema_2_record():
+    """Both feeder reports, end to end on a v2 record. Before the contraction landed, the builder
+    raised PortfolioError here -- and because that is not an EngineError, `n_failed` would never
+    have reached 1: the report call itself died."""
+    record, reader, _ = _v2_record_and_reader()
+
+    _, decompose = decompose_report([record], reader)
+    assert decompose["n_failed"] == 0 and decompose["failures"] == []
+    assert decompose["n_cycles"] == 1
+    assert decompose["cycles"][0]["final_gross"] > 0.0  # a real book, not an all-zero rebuild
+
+    minimums = {a: (1e-9, 0.0) for a in CrossfreqSystemConfig().assets}
+    _, accum = accumulation_report([record], reader, minimums, [100_000.0], fetched_at="2026-07-10T00:00:00Z")
+    assert accum["n_failed"] == 0 and accum["failures"] == []
+    assert accum["n_cycles"] == 1
+    assert accum["by_nav"][100_000.0]["cycles"][0]["placed"] is True

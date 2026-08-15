@@ -14,16 +14,17 @@ def _state():
     return VenueState(
         snapshot_at=CYCLE_TS,
         instruments={
-            "BTC": InstrumentConstraints(
-                base="BTC",
-                instrument_id="XBTEUR.KRAKEN",
+            "BTC/EUR": InstrumentConstraints(
+                symbol="BTC/EUR",
+                instrument_id="BTC/EUR.KRAKEN",
                 ordermin=0.0001,
                 costmin=0.5,
+                costmin_quote="EUR",
                 lot_step=0.00000001,
                 tick_size=0.1,
             )
         },
-        positions={"BTC": 0.0},
+        positions={"BTC/EUR": 0.0},
         balances={"EUR": 1000.0},
     )
 

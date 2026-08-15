@@ -10,6 +10,10 @@ read data against the entry's own declared metadata (len/first/last, EngineJourn
 disagreement -- validate_record only ever inspects the metadata, so this closes the no-peek hole
 for both grids at once), and locates the newest-row targets by an independently re-derived
 cycle_ts boundary rather than by raw last-index.
+
+Both journal schemas replay here, each in its OWN key space (spec 00094 D3): base-keyed v1 through
+the ten-asset path, symbol-keyed v2 through the cycle's own contraction/expansion pair. Nothing is
+normalized across the two -- see replay_cycle.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Callable
 
+from cli.engine.cycle import _expand_to_basket, select_model_inputs
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, validate_record
 from cli.portfolio import build_crossfreq_system, build_crossfreq_system_fast
@@ -107,6 +112,20 @@ def replay_cycle(
     metadata-reconciled -- not trusted from the journal's SnapshotEntry metadata) or this raises
     EngineJournalError -- only then is final_targets[asset][n_periods] (the builder's own
     forming-row index) read and returned.
+
+    EACH SCHEMA REPLAYS AND COMPARES IN ITS OWN NATIVE KEY SPACE (spec 00094 D3). A schema-1
+    record's journaled pairs ARE the ten-asset model's base keys, so its assembled grids go to the
+    builder untouched and the base-keyed forming row comes straight back. A schema-2 record's pairs
+    are the twelve full symbols, so `select_model_inputs` contracts them to the ten `/EUR` legs on
+    the model's own calendar and `_expand_to_basket` maps the result back onto the twelve -- both
+    imported from `cli.engine.cycle`, the one implementation the cycle itself runs, so a replay can
+    never diverge from the build it is checking.
+
+    What this deliberately does NOT do is normalize one schema's output into the other's key space:
+    the gate compares a record against ITS OWN replay, never against another record, and a v1
+    replay lifted to symbol keys would be a structural mismatch against the base-keyed record that
+    produced it -- every pre-deploy cycle would fail and the ratified streak would zero at exactly
+    the moment the schema turned over. `compare_targets` stays key-agnostic for the same reason.
     """
     validate_record(record)
 
@@ -144,14 +163,22 @@ def replay_cycle(
             f"cycle_ts - 4h ({expected_h4_last!r})"
         )
 
+    if record.schema_version == 1:
+        model_daily_ts, model_daily = daily_ts, daily_prices
+        model_h4_ts, model_h4 = h4_ts, h4_prices
+    else:
+        model_daily_ts, model_daily = select_model_inputs(by_grid["1440"])
+        model_h4_ts, model_h4 = select_model_inputs(by_grid["240"])
+
     if path == "fast":
-        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
+        result = build_crossfreq_system_fast(model_daily, model_daily_ts, model_h4, model_h4_ts)
     elif path == "verified":
-        result = build_crossfreq_system(daily_prices, daily_ts, h4_prices, h4_ts)
+        result = build_crossfreq_system(model_daily, model_daily_ts, model_h4, model_h4_ts)
     else:
         raise EngineError(f"path must be 'fast' or 'verified', got {path!r}")
 
-    return {asset: series[result.n_periods] for asset, series in result.final_targets.items()}
+    model_targets = {asset: series[result.n_periods] for asset, series in result.final_targets.items()}
+    return model_targets if record.schema_version == 1 else _expand_to_basket(model_targets)
 
 
 def compare_targets(a: dict[str, float], b: dict[str, float], *, tol: float = 1e-6) -> CompareResult:

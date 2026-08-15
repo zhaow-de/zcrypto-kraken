@@ -25,20 +25,26 @@ from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
 from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, to_json, validate_record
-from cli.engine.store import GRID_INTERVALS, PAIR_KEYS
+from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS
 from cli.obs.metrics import METRICS_PORT_ENV_VAR
 from cli.ohlc.dataset import to_frame, write_parquet
 
 runner = CliRunner()
 
 UTC = timezone.utc
-ASSETS = tuple(sorted(PAIR_KEYS))
+ASSETS = tuple(sorted(PAIR_KEYS))  # the twelve full symbols
+EUR_SYMBOLS = tuple(s for s in BASKET if s.endswith("/EUR"))
+BTC_SYMBOLS = tuple(s for s in BASKET if s.endswith("/BTC"))
+MODEL_BASES = tuple(s.split("/")[0] for s in EUR_SYMBOLS)
 KEY_TO_ASSET = {v: k for k, v in PAIR_KEYS.items()}
 CYCLE_TS = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
 H4_LAST = CYCLE_TS - timedelta(hours=4)
 DAILY_LAST = datetime(2026, 7, 9, tzinfo=UTC)
 N_H4, N_DAILY = 6, 4
-TARGETS = {asset: round(0.1 * (i + 1), 3) for i, asset in enumerate(ASSETS)}
+# Base-keyed going in (the key space select_model_inputs hands the model), symbol-keyed coming out
+# with the two /BTC legs at the structural zero (spec 00094 D1) -- the shape run_cycle journals.
+MODEL_TARGETS = {base: round(0.1 * (i + 1), 3) for i, base in enumerate(MODEL_BASES)}
+TARGETS = {f"{base}/EUR": value for base, value in MODEL_TARGETS.items()} | dict.fromkeys(BTC_SYMBOLS, 0.0)
 NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 
 # `_reset_metrics_sink` (cycle._metrics_sink reset after every test) now lives in tests/conftest.py
@@ -70,8 +76,9 @@ def _store_rows(overrides: dict | None = None) -> dict:
 
 
 def _write_store(store_dir: Path, rows_by: dict) -> None:
-    for (asset, interval), rows in rows_by.items():
-        write_parquet(to_frame(rows), store_dir / asset / "EUR" / f"{interval}.parquet")
+    for (symbol, interval), rows in rows_by.items():
+        base, quote = symbol.split("/")
+        write_parquet(to_frame(rows), store_dir / base / quote / f"{interval}.parquet")
 
 
 def _tail_fetch(rows_by: dict):
@@ -104,10 +111,11 @@ def _clock(step: timedelta = timedelta(seconds=10)) -> _SteppingClock:
 #   - the abs(): two sleeves carry a NEGATIVE leg, so an extraction that summed raw positions would
 #     read A1 as -0.5 and A2 as 0.125 rather than 0.5 and 0.375.
 # B is flat, mirroring the measured dormant state; A1/A2 carry the book.
+# Base-keyed: sleeve books come back from the builder in the model's own key space.
 SLEEVE_FORMING = {
-    "B": dict.fromkeys(ASSETS, 0.0),
-    "A1": {**dict.fromkeys(ASSETS, 0.0), ASSETS[0]: -0.5},
-    "A2": {**dict.fromkeys(ASSETS, 0.0), ASSETS[0]: 0.25, ASSETS[1]: -0.125},
+    "B": dict.fromkeys(MODEL_BASES, 0.0),
+    "A1": {**dict.fromkeys(MODEL_BASES, 0.0), MODEL_BASES[0]: -0.5},
+    "A2": {**dict.fromkeys(MODEL_BASES, 0.0), MODEL_BASES[0]: 0.25, MODEL_BASES[1]: -0.125},
 }
 SLEEVE_GROSS_EXPECTED = {"B": 0.0, "A1": 0.5, "A2": 0.375}
 
@@ -129,7 +137,7 @@ def _env(tmp_path, monkeypatch, *, rows_by: dict | None = None) -> EngineConfig:
     _write_store(store_dir, rows_by)
     config = EngineConfig(store_dir=store_dir, journal_dir=tmp_path / "journal", shadow_nav_eur=1000.0)
     monkeypatch.setattr(cycle, "_sleep", lambda seconds: None)
-    monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(cycle, "build_crossfreq_system_fast", _fake_builder(MODEL_TARGETS))
     return config
 
 
@@ -188,7 +196,7 @@ def test_run_cycle_extracts_each_sleeves_forming_row_gross(tmp_path, monkeypatch
 def test_run_cycle_leaves_sleeve_gross_none_on_a_failed_cycle(tmp_path, monkeypatch):
     # The other half of the contract the gauges depend on: a cycle that never reached the build has
     # no composition, so the gauges must hold their previous values rather than read as "all flat".
-    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
     config = _env(tmp_path, monkeypatch, rows_by=store_rows)
 
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(store_rows), clock=_clock(step=timedelta(minutes=5)))
@@ -198,7 +206,7 @@ def test_run_cycle_leaves_sleeve_gross_none_on_a_failed_cycle(tmp_path, monkeypa
 
 
 def test_sink_called_on_a_failed_cycle_with_the_sidecars_own_timing(tmp_path, monkeypatch):
-    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
     config = _env(tmp_path, monkeypatch, rows_by=store_rows)
     calls = []
     cycle.set_metrics_sink(lambda result, completed_at, duration_seconds: calls.append((result, completed_at, duration_seconds)))
@@ -236,7 +244,7 @@ def test_a_raising_sink_leaves_the_cycle_result_and_journal_artifact_intact(tmp_
 
 
 def test_a_raising_sink_leaves_a_failed_cycles_sidecar_intact(tmp_path, monkeypatch):
-    store_rows = _store_rows({("ETH", 240): _series_rows("ETH", 240, drop_last=1)})
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
     config = _env(tmp_path, monkeypatch, rows_by=store_rows)
     cycle.set_metrics_sink(lambda *a: (_ for _ in ()).throw(RuntimeError("sink boom")))
 
@@ -607,9 +615,12 @@ def _write_venue_record(
     failures: int = 0,
     snapshot_at: datetime | None = None,
 ) -> None:
-    """A raw venue-<HH>.json matching `venueledger.write_venue_record`'s schema, written directly
-    (rather than through `VenueState`/`write_venue_record`) so this file never has to import
-    `cli.engine.venuestate` -> nautilus_trader."""
+    """A raw **schema-1** venue-<HH>.json, written directly (rather than through
+    `VenueState`/`write_venue_record`) so this file never has to import `cli.engine.venuestate` ->
+    nautilus_trader. The pinned `schema_version: 1` is deliberate v1-reader coverage, not drift
+    against the current `VENUE_SCHEMA_VERSION`: every record written before the widening is v1 and
+    the startup seed must keep reading them, so a v1 record is exactly what these gauges must
+    survive at the deploy boundary."""
     day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
     day_dir.mkdir(parents=True, exist_ok=True)
     doc = {"schema_version": 1, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
@@ -799,8 +810,8 @@ def test_venue_gauges_exist_after_seeding():
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == 0.0
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 0.0
     # DERIVED from len(INSTRUMENT_IDS), never a literal -- a future basket re-ratification moves one
-    # committed place; this pins the CURRENT basket size at 10.
-    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 10
+    # committed place; this pins the CURRENT basket size at 12.
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == len(INSTRUMENT_IDS) == 12
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 0.0
 
 
@@ -808,13 +819,16 @@ def test_venue_gauges_update_moves_all_four_from_a_cycle_results_venue_summary()
     reg = CollectorRegistry()
     gauges = _VenueGauges(reg)
     snapshot_at = CYCLE_TS + timedelta(minutes=1)
-    result = _venue_result({"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": snapshot_at.isoformat()})
+    # 11, not 12: the eager constructor seed (`command.py:623`) also sets this gauge to
+    # len(INSTRUMENT_IDS) == 12, so a value equal to the seed can't tell "update() moved it" from
+    # "the seed was never touched" -- 11 is a value the seed cannot produce.
+    result = _venue_result({"loaded": 9, "expected": 11, "failures": 1, "snapshot_at": snapshot_at.isoformat()})
 
     gauges.update(result.venue)
 
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == pytest.approx(snapshot_at.timestamp())
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 9.0
-    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 10.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 11.0
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 1.0
 
 
@@ -824,13 +838,14 @@ def test_venue_gauges_update_with_a_venueless_cycle_result_moves_nothing():
     reg = CollectorRegistry()
     gauges = _VenueGauges(reg)
     snapshot_at = CYCLE_TS + timedelta(minutes=1)
-    gauges.update(_venue_result({"loaded": 9, "expected": 10, "failures": 1, "snapshot_at": snapshot_at.isoformat()}).venue)
+    # 11, not 12 -- same reason as the update-moves-all-four test above.
+    gauges.update(_venue_result({"loaded": 9, "expected": 11, "failures": 1, "snapshot_at": snapshot_at.isoformat()}).venue)
 
     gauges.update(_venue_result(None).venue)
 
     assert reg.get_sample_value("zcrypto_venue_snapshot_timestamp_seconds") == pytest.approx(snapshot_at.timestamp())
     assert reg.get_sample_value("zcrypto_venue_instruments_loaded") == 9.0
-    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 10.0
+    assert reg.get_sample_value("zcrypto_venue_instruments_expected") == 11.0
     assert reg.get_sample_value("zcrypto_venue_concordance_failures") == 1.0
 
 
@@ -900,8 +915,11 @@ class _StubGate:
 
 def _run_env(monkeypatch, tmp_path):
     engine_cfg = _patch_engine_config(monkeypatch, tmp_path)
-    (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)
-    (engine_cfg.store_dir / "BTC" / "EUR" / "240.parquet").write_bytes(b"")  # never read; the node is stubbed
+    for symbol in BASKET:  # run()'s guard wants every basket leg on both grids; never read (the node is stubbed)
+        for interval in GRID_INTERVALS:
+            base, quote = symbol.split("/")
+            (engine_cfg.store_dir / base / quote).mkdir(parents=True, exist_ok=True)
+            (engine_cfg.store_dir / base / quote / f"{interval}.parquet").write_bytes(b"")
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
     _StubGate.instances.clear()

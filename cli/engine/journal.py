@@ -20,7 +20,13 @@ from datetime import datetime, timedelta, timezone
 
 from cli.engine.errors import EngineJournalError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# The registry's own pattern (cli/registry/record.py): both schema_version 1 (base-keyed
+# final_targets/snapshot pairs, e.g. "BTC") and 2 (full-symbol keys, e.g. "BTC/EUR", spec 00094)
+# load. A v1 record's keys are never rewritten on load -- each schema replays and compares in its
+# own native key space (cli.engine.concordance); normalizing v1 to symbol keys here would turn
+# every v1 record into a structural mismatch at the gate.
+_LOADABLE_SCHEMA_VERSIONS = frozenset({1, 2})
 _VALID_GRIDS = frozenset({"1440", "240"})
 _VALID_BUILDER_PATHS = frozenset({"fast", "verified"})
 
@@ -79,13 +85,26 @@ def snapshot_content_hash(ts: list[datetime], closes: list[float | None]) -> str
     return hashlib.sha256(ts_block + close_block).hexdigest()
 
 
+def _is_symbol_key(key: str) -> bool:
+    """True for a full-symbol key ("BTC/EUR"), false for a bare base key ("BTC") -- the '/'
+    separator cli.engine.store.PAIR_KEYS and every full-symbol consumer already use."""
+    return "/" in key
+
+
 def validate_record(record: CycleRecord) -> None:
     """Raise EngineJournalError on any schema violation or on the snapshot-boundary (no-peek)
     invariant: per pair, the last "240" (4h) stamp must equal cycle_ts - 4h (the bar closing
     exactly at cycle_ts), and the last "1440" (daily) stamp must equal (the last midnight <=
-    cycle_ts) - 1 day -- the node must drop Kraken REST's trailing in-progress candle."""
-    if record.schema_version != SCHEMA_VERSION:
-        raise EngineJournalError(f"unsupported schema_version {record.schema_version!r} (expected {SCHEMA_VERSION})")
+    cycle_ts) - 1 day -- the node must drop Kraken REST's trailing in-progress candle.
+
+    Schema-aware over final_targets AND the snapshot pair fields: a schema_version 1 record must
+    key both by base ("BTC"); a schema_version 2 record must key both by full symbol ("BTC/EUR").
+    Wrong keying is refused, never silently normalized -- a v2 record was written by code that
+    could only have produced symbol keys, and vice versa for v1."""
+    if record.schema_version not in _LOADABLE_SCHEMA_VERSIONS:
+        raise EngineJournalError(
+            f"unsupported schema_version {record.schema_version!r} (loadable: {sorted(_LOADABLE_SCHEMA_VERSIONS)})"
+        )
     if not isinstance(record.cycle_ts, datetime):
         raise EngineJournalError(f"cycle_ts must be a datetime, got {record.cycle_ts!r}")
     if not isinstance(record.snapshots, tuple) or not record.snapshots:
@@ -97,6 +116,10 @@ def validate_record(record: CycleRecord) -> None:
             raise EngineJournalError(f"snapshots must contain SnapshotEntry instances, got {entry!r}")
         if not isinstance(entry.pair, str) or not entry.pair:
             raise EngineJournalError(f"snapshot pair must be a non-empty str, got {entry.pair!r}")
+        if record.schema_version == 1 and _is_symbol_key(entry.pair):
+            raise EngineJournalError(f"schema_version 1 snapshot pair must be a base key (no '/'), got {entry.pair!r}")
+        if record.schema_version == 2 and not _is_symbol_key(entry.pair):
+            raise EngineJournalError(f"schema_version 2 snapshot pair must be a full symbol key (BASE/QUOTE), got {entry.pair!r}")
         if entry.grid not in _VALID_GRIDS:
             raise EngineJournalError(f"snapshot grid must be one of {sorted(_VALID_GRIDS)}, got {entry.grid!r}")
         if not isinstance(entry.n_bars, int) or isinstance(entry.n_bars, bool) or entry.n_bars < 1:
@@ -124,6 +147,10 @@ def validate_record(record: CycleRecord) -> None:
     for asset, value in record.final_targets.items():
         if not isinstance(asset, str) or not asset:
             raise EngineJournalError(f"final_targets key must be a non-empty str, got {asset!r}")
+        if record.schema_version == 1 and _is_symbol_key(asset):
+            raise EngineJournalError(f"schema_version 1 final_targets key must be a base key (no '/'), got {asset!r}")
+        if record.schema_version == 2 and not _is_symbol_key(asset):
+            raise EngineJournalError(f"schema_version 2 final_targets key must be a full symbol key (BASE/QUOTE), got {asset!r}")
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise EngineJournalError(f"final_targets[{asset!r}] must be a finite number, got {value!r}")
 

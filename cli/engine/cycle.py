@@ -2,9 +2,16 @@
 end-to-end -- the settle-verify store refresh (bounded by the 25-min reserve inside the ratified
 30-min gate window), the raw-series staleness check, per-grid union alignment, snapshot journaling
 with journal-relative paths, the record-44 fast build, intended orders against the shadow NAV, and
-either the validated schema-v1 success record or the failed-cycle sidecar. Aware-UTC everywhere:
-naive datetimes are rejected at the boundary (a naive/aware mix makes `validate_record`'s `!=`
-checks silently always-true).
+either the validated success record (the current `SCHEMA_VERSION`) or the failed-cycle sidecar.
+Aware-UTC everywhere: naive datetimes are rejected at the boundary (a naive/aware mix makes
+`validate_record`'s `!=` checks silently always-true).
+
+Twelve legs, ten of them modelled (spec 00094 D1/D2). The store, the journaled snapshots, the
+targets and the orders all key by full symbol; the MODEL does not widen. `select_model_inputs`
+contracts the twelve-symbol store down to the ten `/EUR` legs on their own calendar before the
+builder runs, and `_expand_to_basket` maps the ten base-keyed outputs back onto the twelve-symbol
+basket with `ETH/BTC` and `SOL/BTC` at exactly `0.0`. Both functions are shared, not copied: the
+gate replay and the soak's loaders import them from here.
 """
 
 from __future__ import annotations
@@ -33,7 +40,7 @@ from cli.engine.journal import (
     to_json,
     validate_record,
 )
-from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series, refresh_store
+from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, read_store_series, refresh_store
 from cli.logging import get_logger
 from cli.ohlc.dataset import write_parquet
 from cli.ohlc.errors import OHLCError
@@ -58,6 +65,11 @@ _BACKOFF_MAX_SECS = 60.0
 
 _sleep = time.sleep  # module-level so tests can stub the backoff wait
 _hc_opener = urllib.request.urlopen  # module-level so tests can stub the dead-man's-switch ping
+
+# The model's universe: the ten `/EUR` members of the ratified basket, derived from BASKET so a
+# basket change moves exactly one place. The two `/BTC` legs are deliberately absent -- no sleeve
+# ever sees them (spec 00094 D1).
+_MODEL_SYMBOLS: tuple[str, ...] = tuple(symbol for symbol in BASKET if symbol.endswith("/EUR"))
 
 # The engine's per-cycle hook (spec 00069 D5/T4): `run()` installs this UNCONDITIONALLY -- it no
 # longer depends on ZCRYPTO_METRICS_PORT, because the sink now also writes the execution ledger,
@@ -189,11 +201,11 @@ def _settle_pending(store_dir: Path, cycle_ts: datetime) -> dict[str, str]:
     (the iter-083 task review's catch)."""
     expected = _expected_tails(cycle_ts)
     pending = {}
-    for asset, pair_key in PAIR_KEYS.items():
+    for symbol, pair_key in PAIR_KEYS.items():
         for interval, want in expected.items():
-            ts, _ = read_store_series(store_dir, asset, interval)
+            ts, _ = read_store_series(store_dir, symbol, interval)
             if not ts or ts[-1] != want:
-                pending[asset] = pair_key
+                pending[symbol] = pair_key
                 break
     return pending
 
@@ -233,20 +245,99 @@ def _stale_pairs(raw_series: dict, cycle_ts: datetime) -> tuple[str, ...]:
     """Staleness on each pair's RAW series (own last stamp vs the boundary invariant): the last 4h
     stamp must equal cycle_ts - 4h and the last daily stamp (the last midnight <= cycle_ts) - 1d."""
     expected = _expected_tails(cycle_ts)
-    stale = {asset for (asset, interval), (ts, _) in raw_series.items() if not ts or ts[-1] != expected[interval]}
+    stale = {symbol for (symbol, interval), (ts, _) in raw_series.items() if not ts or ts[-1] != expected[interval]}
     return tuple(sorted(stale))
 
 
 def _union_align(raw_series: dict, interval: int) -> tuple[list[datetime], dict[str, list[float | None]]]:
-    """One shared calendar per grid -- the union of the pairs' stamps, None closes at absences --
-    exactly the shape build_crossfreq_system_fast and replay_cycle require."""
+    """One shared calendar per grid over ALL TWELVE symbols -- the union of their stamps, None
+    closes at absences. This is the JOURNALED evidence shape (and what replay_cycle's assembly
+    requires); the builder's own inputs are the narrower `select_model_inputs` contraction."""
     union_ts = sorted({t for (_, iv), (ts, _) in raw_series.items() if iv == interval for t in ts})
     prices = {}
-    for asset in PAIR_KEYS:
-        ts, closes = raw_series[(asset, interval)]
+    for symbol in PAIR_KEYS:
+        ts, closes = raw_series[(symbol, interval)]
         by_ts = dict(zip(ts, closes))
-        prices[asset] = [by_ts.get(t) for t in union_ts]
+        prices[symbol] = [by_ts.get(t) for t in union_ts]
     return union_ts, prices
+
+
+def select_model_inputs(
+    series: dict[str, tuple[list[datetime], list[float | None]]],
+) -> tuple[list[datetime], dict[str, list[float | None]]]:
+    """The builder-input contraction (spec 00094 D2) -- ONE implementation, three consumers: this
+    cycle, the gate replay, and the soak's parallel loaders. Never copied.
+
+    `series` is ONE grid's `{symbol: (ts, closes)}`. Returns `(union_ts, {base: closes})` covering
+    the ten `/EUR` legs only, re-keyed by base for `CrossfreqSystemConfig`.
+
+    The calendar is unioned over THE TEN EUR PAIRS ONLY: a stamp enters it iff at least one EUR leg
+    carries a non-None close there. A `/BTC` stamp the EUR legs lack must never shift an EUR
+    SMA/stdev window -- today the `/BTC` stamps happen to be subsets of the EUR union, but nothing
+    constructs that, so this does.
+
+    Defining the calendar by "some EUR leg has data" rather than by the input's raw stamp lists is
+    also what makes it idempotent over union alignment: raw store series and the SAME series already
+    aligned onto the twelve-symbol union (where every EUR leg carries None at a `/BTC`-only stamp)
+    produce identical output. The cycle reads the store and the replay reads the journal -- they
+    must reach the builder with the same grid or every replay is a mismatch.
+    """
+    missing = [symbol for symbol in _MODEL_SYMBOLS if symbol not in series]
+    if missing:
+        raise EngineError(f"select_model_inputs: the model's EUR leg(s) {missing} are absent from the series map")
+    present = {symbol: series[symbol] for symbol in _MODEL_SYMBOLS}
+    union_ts = sorted({t for ts, closes in present.values() for t, close in zip(ts, closes) if close is not None})
+    prices = {}
+    for symbol, (ts, closes) in present.items():
+        by_ts = dict(zip(ts, closes))
+        prices[symbol.split("/")[0]] = [by_ts.get(t) for t in union_ts]
+    # The base re-key above is lossy by construction: only `_MODEL_SYMBOLS`' `/EUR` filter keeps two
+    # quotes of one base apart. Were it ever widened to admit `ETH/BTC`, `prices["ETH"]` would be
+    # overwritten silently and the survivor's ten keys would still satisfy `_validate_grid` -- a
+    # wrong grid the builder cannot refuse. Three consumers share this seam; one line closes it.
+    assert len(prices) == len(_MODEL_SYMBOLS), f"select_model_inputs: two model symbols share a base -- {sorted(present)}"
+    return union_ts, prices
+
+
+def _expand_to_basket(model_targets: dict[str, float]) -> dict[str, float]:
+    """Base-keyed ten in, symbol-keyed twelve out (spec 00094 D1): each model base carries its value
+    onto `<base>/EUR`, and every BASKET member the model produced nothing for -- `ETH/BTC`,
+    `SOL/BTC` -- emits exactly `0.0`.
+
+    The widening is STRUCTURAL and strictly downstream of the model: no sleeve computes a `/BTC`
+    weight, so a traded basket of twelve carries no strategy change. A model base with no
+    `<base>/EUR` in BASKET raises rather than being dropped -- a silently discarded target is a
+    position the engine believes it holds and never trades.
+    """
+    expanded = dict.fromkeys(BASKET, 0.0)
+    for base, value in model_targets.items():
+        symbol = f"{base}/EUR"
+        if symbol not in expanded:
+            raise EngineError(f"_expand_to_basket: model asset {base!r} has no {symbol!r} leg in the ratified basket")
+        expanded[symbol] = value
+    return expanded
+
+
+def symbol_keyed_targets(record: CycleRecord) -> dict[str, float]:
+    """A journaled record's `final_targets` in the CURRENT symbol key space: schema 2 as-is, schema 1
+    (base-keyed, `"BTC"`) mapped `base -> base/EUR`. THE cross-schema normalizer -- the cycle's
+    previous-targets read and the soak's record loaders share this one.
+
+    Without it the first schema-2 cycle after the deploy reads a base-keyed predecessor, every
+    `.get(symbol, 0.0)` misses, and the engine writes a full from-flat rebalance into orders.jsonl
+    and the exec ledger -- silently, because the gate never reads orders.
+
+    The GATE deliberately does not use this (spec 00094 D3): each record replays and compares in its
+    own native key space, and normalizing v1 replay output against a base-keyed record would turn
+    every v1 record into a structural mismatch.
+
+    No BASKET-membership check: this reads a PREDECESSOR, not the current basket, so a v1 record
+    naming an asset since dropped must stay readable. Callers iterate the current basket, which
+    leaves such a key simply unconsulted -- exactly the pre-re-key behaviour.
+    """
+    if record.schema_version == 1:
+        return {f"{asset}/EUR": value for asset, value in record.final_targets.items()}
+    return dict(record.final_targets)
 
 
 def _journal_snapshots(journal_dir: Path, cycle_ts: datetime, aligned: dict) -> tuple[SnapshotEntry, ...]:
@@ -254,14 +345,18 @@ def _journal_snapshots(journal_dir: Path, cycle_ts: datetime, aligned: dict) -> 
     entries = []
     for interval in GRID_INTERVALS:
         union_ts, prices = aligned[interval]
-        for asset in PAIR_KEYS:
-            closes = prices[asset]
-            rel_path = rel_dir / f"{asset}-{interval}.parquet"
+        for symbol in PAIR_KEYS:
+            closes = prices[symbol]
+            # The '/' is replaced, never kept: it would turn each symbol into a subdirectory and the
+            # day's snapshots/ must stay flat. Nothing parses these names -- the NAS journal pull is
+            # `rsync -a` (cli/archive/command.py::_run_rsync) and every reader follows the record's
+            # own `entry.path` string.
+            rel_path = rel_dir / f"{symbol.replace('/', '-')}-{interval}.parquet"
             frame = pl.DataFrame({"ts": union_ts, "close": closes}, schema={"ts": pl.Datetime("us", "UTC"), "close": pl.Float64})
             write_parquet(frame, journal_dir / rel_path)
             entries.append(
                 SnapshotEntry(
-                    pair=asset,
+                    pair=symbol,
                     grid=str(interval),
                     n_bars=len(union_ts),
                     first_ts=union_ts[0],
@@ -275,7 +370,8 @@ def _journal_snapshots(journal_dir: Path, cycle_ts: datetime, aligned: dict) -> 
 
 def _previous_success(journal_dir: Path, cycle_ts: datetime) -> tuple[datetime | None, dict[str, float] | None]:
     """The most recent successfully journaled cycle before cycle_ts -- searching back across failed
-    and missing boundaries (sidecars are named failed-cycle-<HH>.json, so the glob never sees them)."""
+    and missing boundaries (sidecars are named failed-cycle-<HH>.json, so the glob never sees them).
+    Its targets come back symbol-keyed whatever schema wrote them."""
     best = None
     for path in journal_dir.glob("*/cycle-*.json"):
         try:
@@ -287,7 +383,9 @@ def _previous_success(journal_dir: Path, cycle_ts: datetime) -> tuple[datetime |
             best = (boundary, path)
     if best is None:
         return None, None
-    return best[0], dict(from_json(best[1].read_text()).final_targets)
+    # Normalized to the current symbol key space: a schema-1 predecessor is base-keyed, and an
+    # un-normalized read makes every delta below a from-flat rebalance (symbol_keyed_targets).
+    return best[0], symbol_keyed_targets(from_json(best[1].read_text()))
 
 
 def _append_orders(
@@ -301,7 +399,13 @@ def _append_orders(
     0 only when none exists), notional = delta * shadow_nav_eur, quantity = notional / the 4h close
     of the bar stamped cycle_ts - 4h. `side` carries delta's sign; quantity and notional_eur are
     magnitudes. Appended to the day's human-readable orders.jsonl under a header line disclosing
-    where the previous targets came from (first-cycle flat start, or a crossed gap)."""
+    where the previous targets came from (first-cycle flat start, or a crossed gap).
+
+    Emission is delta-driven, which is what keeps the two `/BTC` legs structurally silent: their
+    target is `0.0` by construction and their previous target is `0.0` too, so no row is ever
+    written for them. `h4_close` is each symbol's own quote-currency close, so `notional_eur` is
+    EUR-true only for the ten `/EUR` legs -- whoever first sizes a real `/BTC` order owns the
+    conversion (`cli.engine.instruments.fx_eur_notional`, spec 00094 D4/D5)."""
     prev_boundary, prev_targets = _previous_success(config.journal_dir, cycle_ts)
     if prev_targets is None:
         note = "first cycle -- no previously journaled targets, the shadow book starts flat"
@@ -310,15 +414,15 @@ def _append_orders(
     else:
         note = f"previous targets from {prev_boundary.isoformat()}"
     orders = []
-    for asset in sorted(targets):
-        delta = targets[asset] - (prev_targets or {}).get(asset, 0.0)
+    for symbol in sorted(targets):
+        delta = targets[symbol] - (prev_targets or {}).get(symbol, 0.0)
         if delta == 0.0:
             continue
-        price = h4_close[asset]
+        price = h4_close[symbol]
         notional = delta * config.shadow_nav_eur
         orders.append(
             {
-                "asset": asset,
+                "asset": symbol,
                 "side": "buy" if delta > 0 else "sell",
                 "quantity": abs(notional) / price,
                 "notional_eur": abs(notional),
@@ -441,12 +545,15 @@ def run_cycle(
     retries bounded by cycle_ts + 25 min; exhausting the reserve writes a failed-cycle sidecar
     (reason "refresh_deadline"). 2. Staleness on each pair's raw series vs the boundary invariant; a
     stale pair writes a sidecar (reason "stale_pair") and skips the build; the fresh series are then
-    union-aligned per grid. 3. Snapshot parquets journaled under <YYYY-MM-DD>/snapshots/cycle-<HH>/,
-    manifest paths relative to journal_dir, hashes via the one shared snapshot_content_hash.
-    4. build_crossfreq_system_fast (default config) -> the newest-row final_targets. 5. Intended
-    orders vs the most recent successful record's targets, appended to the day's orders.jsonl.
-    6. The schema-v1 CycleRecord, validated before write, at <YYYY-MM-DD>/cycle-<HH>.json -- carries
-    NO venue field; the full snapshot lives only in venue-<HH>.json.
+    union-aligned per grid over all twelve symbols. 3. Snapshot parquets journaled under
+    <YYYY-MM-DD>/snapshots/cycle-<HH>/, manifest paths relative to journal_dir, hashes via the one
+    shared snapshot_content_hash. 4. select_model_inputs contracts to the ten EUR legs on their own
+    calendar -> build_crossfreq_system_fast (default config) -> the newest-row targets ->
+    _expand_to_basket back onto the twelve symbols, the two /BTC legs at exactly 0.0. 5. Intended
+    orders vs the most recent successful record's targets (symbol-normalized whatever schema wrote
+    them), appended to the day's orders.jsonl. 6. The CycleRecord at the current SCHEMA_VERSION,
+    validated before write, at <YYYY-MM-DD>/cycle-<HH>.json -- carries NO venue field; the full
+    snapshot lives only in venue-<HH>.json.
 
     cycle_ts must be aware and on the 4h UTC grid (normalized to UTC; naive raises EngineError), and
     the injected clock must return aware datetimes. A store data-integrity failure (refresh_store's
@@ -467,7 +574,7 @@ def run_cycle(
         return _failed(day_dir, cycle_ts, started_at, read_clock, "refresh_deadline", offending, venue)
 
     # 2. Staleness on the RAW series first, then union-align per grid.
-    raw_series = {(a, iv): read_store_series(config.store_dir, a, iv) for a in PAIR_KEYS for iv in GRID_INTERVALS}
+    raw_series = {(s, iv): read_store_series(config.store_dir, s, iv) for s in PAIR_KEYS for iv in GRID_INTERVALS}
     stale = _stale_pairs(raw_series, cycle_ts)
     if stale:
         return _failed(day_dir, cycle_ts, started_at, read_clock, "stale_pair", stale, venue)
@@ -476,11 +583,14 @@ def run_cycle(
     # 3. Journal the union-aligned snapshots.
     entries = _journal_snapshots(config.journal_dir, cycle_ts, aligned)
 
-    # 4. Build (default config) -> the newest-row targets.
-    daily_ts, daily_prices = aligned[1440]
-    h4_ts, h4_prices = aligned[240]
-    result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
-    targets = {asset: series[result.n_periods] for asset, series in result.final_targets.items()}
+    # 4. Build (default config) over the TEN EUR legs on their own calendar, then expand the ten
+    #    base-keyed outputs onto the twelve-symbol basket (spec 00094 D1/D2). The contraction is fed
+    #    the raw store reads; `select_model_inputs` is idempotent over the twelve-symbol alignment
+    #    above, so the replay reading the journaled snapshots reaches the builder with this grid.
+    model_daily_ts, model_daily = select_model_inputs({s: raw_series[(s, 1440)] for s in PAIR_KEYS})
+    model_h4_ts, model_h4 = select_model_inputs({s: raw_series[(s, 240)] for s in PAIR_KEYS})
+    result = build_crossfreq_system_fast(model_daily, model_daily_ts, model_h4, model_h4_ts)
+    targets = _expand_to_basket({base: series[result.n_periods] for base, series in result.final_targets.items()})
     # The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
     # is actually carrying exposure. Two have been flat for months, so a re-arming roughly triples
     # gross -- the occupancy gauges exist so that is announced rather than discovered.
@@ -489,7 +599,10 @@ def run_cycle(
     }
 
     # 5. Intended orders vs the most recent successfully journaled targets.
-    orders = _append_orders(config, day_dir, cycle_ts, targets, {a: h4_prices[a][-1] for a in h4_prices})
+    # Prices come from the TWELVE-symbol alignment, not the model's contraction: every basket leg
+    # needs a close, and its last stamp is cycle_ts - 4h for all twelve (the staleness check above).
+    _, h4_closes = aligned[240]
+    orders = _append_orders(config, day_dir, cycle_ts, targets, {s: h4_closes[s][-1] for s in PAIR_KEYS})
 
     # 6. The validated success record.
     completed_at = read_clock()

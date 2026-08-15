@@ -1,19 +1,44 @@
-from cli.engine.instruments import COSTMIN_EUR, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+import pytest
+
+from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS, BelowMinimum, SizedOrder, fx_eur_notional, size_order
 
 
-def test_instrument_ids_cover_exactly_the_ratified_basket():
-    from cli.engine.store import PAIR_KEYS
+def test_instrument_ids_cover_exactly_the_ratified_twelve_symbol_basket():
+    from cli.engine.store import BASKET
 
-    assert set(INSTRUMENT_IDS) == set(PAIR_KEYS)
-    assert INSTRUMENT_IDS["BTC"] == "BTC/EUR.KRAKEN"
-    assert all(v == f"{base}/EUR.KRAKEN" for base, v in INSTRUMENT_IDS.items())
+    assert set(INSTRUMENT_IDS) == set(BASKET)
+    assert INSTRUMENT_IDS["BTC/EUR"] == "BTC/EUR.KRAKEN"
+    # The Kraken adapter strips venue aliases when building an InstrumentId (module docstring) --
+    # ETH/BTC's id is the plain symbol, never the XBT-suffixed wire form (XETHXXBT).
+    assert INSTRUMENT_IDS["ETH/BTC"] == "ETH/BTC.KRAKEN"
+    assert INSTRUMENT_IDS["SOL/BTC"] == "SOL/BTC.KRAKEN"
+    assert all(v == f"{symbol}.KRAKEN" for symbol, v in INSTRUMENT_IDS.items())
 
 
-def test_costmin_eur_covers_exactly_the_ratified_basket():
-    # venue_state_from_cache does COSTMIN_EUR[base] for every INSTRUMENT_IDS base -- a missing
+def test_costmin_covers_exactly_the_ratified_basket_with_explicit_quotes():
+    # venue_state_from_cache does COSTMIN[symbol][0] for every INSTRUMENT_IDS symbol -- a missing
     # entry would KeyError at read time rather than degrade gracefully. The values themselves are
     # pinned against the venue's own published data by tests/test_costmin_drift.py.
-    assert set(COSTMIN_EUR) == set(INSTRUMENT_IDS)
+    assert set(COSTMIN) == set(INSTRUMENT_IDS)
+    assert COSTMIN["ETH/BTC"] == (2e-05, "BTC")
+    assert COSTMIN["SOL/BTC"] == (2e-05, "BTC")
+    eur_legs = {symbol: v for symbol, v in COSTMIN.items() if symbol not in ("ETH/BTC", "SOL/BTC")}
+    assert len(eur_legs) == 10
+    assert all(v == (0.45, "EUR") for v in eur_legs.values())
+
+
+def test_fx_eur_notional_eur_quoted_leg_needs_no_conversion():
+    assert fx_eur_notional("ETH/EUR", 2.0, 100.0, 30000.0) == 200.0
+
+
+def test_fx_eur_notional_btc_quoted_leg_converts_through_the_close():
+    assert fx_eur_notional("ETH/BTC", 2.0, 0.05, 30000.0) == 3000.0
+
+
+@pytest.mark.parametrize("btc_eur_close", [0.0, -30000.0])
+def test_fx_eur_notional_raises_on_a_non_positive_fx_close(btc_eur_close):
+    with pytest.raises(ValueError, match="btc_eur_close"):
+        fx_eur_notional("ETH/BTC", 2.0, 0.05, btc_eur_close)
 
 
 def test_sizing_floors_qty_to_the_lot_step_and_price_to_the_tick():

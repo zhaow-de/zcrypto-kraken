@@ -40,9 +40,11 @@ from cli.engine.soak import (
     summarize_panel,
     windowed_null,
 )
+from cli.engine.store import BASKET
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
-from cli.portfolio.crossfreq_system import apply_whole_book_limits
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
+from tests import basket_fixture
 
 
 def test_structural_metrics_basic():
@@ -719,9 +721,12 @@ def test_plausibility_flags_non_finite_net_live():
 
 
 @pytest.mark.skipif(not Path("data/ohlc-full/BTC/EUR/240.parquet").exists(), reason="canonical data/ohlc-full absent")
-def test_instrument_self_check_reproduces_record_44():
+def test_instrument_self_check_reproduces_the_deployable_record():
     ok, msg = instrument_self_check(Path("data/ohlc-full"), Path("docs/reference/trial-registry.jsonl"))
-    assert ok is True, msg  # the frozen build must reproduce record 44's exact integer diagnostics
+    # The frozen build must reproduce the deployable's exact integer diagnostics. Record 47 succeeded
+    # 44 at the twelve-leg re-ratification and registered the SAME integers -- the /BTC legs carry
+    # structural zero, so widening the basket moved no number the builder produces.
+    assert ok is True, msg
 
 
 def test_instrument_self_check_skips_when_canonical_absent(tmp_path):
@@ -2289,9 +2294,9 @@ def _mk_h4_snapshot_record(cycle_ts, h4_ts, closes):
     return record, reader
 
 
-def _mk_scored_record(cycle_ts, final_targets):
+def _mk_scored_record(cycle_ts, final_targets, *, schema_version: int = 1):
     return CycleRecord(
-        schema_version=1,
+        schema_version=schema_version,
         cycle_ts=cycle_ts,
         snapshots=(),
         final_targets=final_targets,
@@ -2474,3 +2479,219 @@ def test_realized_internals_on_real_journal():
     for rec in scored:
         assert rec.cycle_ts in ri.mult_by_cycle
         assert 0.0 <= ri.mult_by_cycle[rec.cycle_ts] <= 1.0
+
+
+# --- the mixed-schema window (spec 00094 D3) -------------------------------------------------------
+
+
+def _mk_straddling_records_and_store(tmp_path, *, flip_at: int = 2, n_cycles: int = 5):
+    """A clean segment whose records flip from schema 1 (base-keyed "BTC") to schema 2 (symbol-keyed
+    "BTC/EUR" plus the widened "ETH/BTC" leg) at cycle index `flip_at`, over ONE store carrying both
+    legs at their real `<base>/<quote>` paths.
+
+    BTC/EUR steps +10% a bar and carries all the weight; ETH/BTC steps +40% and carries exactly none
+    -- the widened leg's structural zero (D1). That +40% is the fixture's discriminator: the v1
+    records predate ETH/BTC entirely, so every scored bar's weight for it is FILLED, and a fill of
+    anything but 0.0 would move gross by an amount no assertion below could miss."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    labels = [base + timedelta(hours=4 * k) for k in range(-1, n_cycles - 1)]
+    prices = {"BTC/EUR": [100.0 * 1.1**i for i in range(len(labels))], "ETH/BTC": [1.0 * 1.4**i for i in range(len(labels))]}
+
+    store_dir = tmp_path / "store"
+    for symbol, closes in prices.items():
+        b, q = symbol.split("/")
+        (store_dir / b / q).mkdir(parents=True, exist_ok=True)
+        write_parquet(to_frame([_row(t, c) for t, c in zip(labels, closes)]), store_dir / b / q / "240.parquet")
+
+    records = []
+    for k in range(n_cycles):
+        cycle_ts = base + timedelta(hours=4 * k)
+        last_ts = cycle_ts - timedelta(hours=4)
+        upto = [i for i, t in enumerate(labels) if t <= last_ts]
+        sub_ts = [labels[i] for i in upto]
+        schema = 1 if k < flip_at else 2
+        pairs = ("BTC",) if schema == 1 else ("BTC/EUR", "ETH/BTC")
+        snaps = tuple(
+            SnapshotEntry(
+                pair=pair,
+                grid="240",
+                n_bars=len(sub_ts),
+                first_ts=sub_ts[0],
+                last_ts=last_ts,
+                content_hash=snapshot_content_hash(sub_ts, [prices["BTC/EUR"][i] for i in upto]),
+                path=f"p240-{pair.replace('/', '-')}",
+            )
+            for pair in pairs
+        )
+        records.append(
+            CycleRecord(
+                schema_version=schema,
+                cycle_ts=cycle_ts,
+                snapshots=snaps,
+                final_targets={"BTC": 0.4} if schema == 1 else {"BTC/EUR": 0.4, "ETH/BTC": 0.0},
+                started_at=cycle_ts,
+                completed_at=cycle_ts + timedelta(minutes=1),
+                code_version="test",
+                builder_path="fast",
+            )
+        )
+    now = records[-1].cycle_ts + timedelta(hours=16)
+    return records, store_dir, now
+
+
+def test_realized_series_spans_the_schema_boundary(tmp_path):
+    """A window straddling the deploy must NEITHER abort on the asset set changing NOR mis-path a
+    base key into the store. Before the re-key this raised twice over: `SoakError` on the v1/v2
+    asset-set disagreement, and `ValueError: not enough values to unpack` the moment "BTC" reached
+    the store's `<base>/<quote>` split."""
+    records, store_dir, now = _mk_straddling_records_and_store(tmp_path)
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    assert rs.assets == ("BTC/EUR", "ETH/BTC")  # the union, in the store's own key space
+    assert len(rs.cycle_ts) == 4 and rs.dropped_tail == 1  # only the successor-less last cycle drops
+    assert all(set(w) == {"BTC/EUR", "ETH/BTC"} for w in rs.weights)  # uniform bars across the flip
+    assert all(w["ETH/BTC"] == 0.0 for w in rs.weights)  # the widened leg's structural zero, filled
+    # gross is BTC/EUR's +10% at weight 0.4 on EVERY bar, both sides of the flip. ETH/BTC's +40%
+    # path is in the store and would show here at any weight but the 0.0 the v1 bars are filled with.
+    assert all(math.isclose(g, 0.4 * 0.10, rel_tol=1e-9) for g in rs.gross)
+    assert math.isclose(rs.turnover[0], 0.4, rel_tol=1e-9)  # from flat
+    assert all(math.isclose(t, 0.0, abs_tol=1e-12) for t in rs.turnover[1:])  # no delta across the flip
+    assert rs.chain_ok is True and rs.implausible is False
+    assert {r.schema_version for r in records} == {1, 2}  # the fixture really did straddle
+
+
+def test_realized_series_widened_leg_is_in_the_realizability_gate(tmp_path):
+    """The widened leg is genuinely READ from its own store path on both sides of the flip, not
+    merely key-filled: nulling ETH/BTC's close at one stamp skips exactly the two cycles that stamp
+    bounds -- one schema-1, one schema-2."""
+    records, store_dir, now = _mk_straddling_records_and_store(tmp_path)
+    hole = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)  # end stamp of cycle 04:00, start stamp of 08:00
+    p = store_dir / "ETH" / "BTC" / "240.parquet"
+    write_parquet(
+        read_parquet(p).with_columns(pl.when(pl.col("ts") == pl.lit(hole)).then(None).otherwise(pl.col("close")).alias("close")),
+        p,
+    )
+
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    assert hole not in rs.cycle_ts  # the schema-1 cycle at 04:00
+    assert hole + timedelta(hours=4) not in rs.cycle_ts  # the schema-2 cycle at 08:00
+    assert datetime(2026, 7, 16, 0, 0, tzinfo=UTC) in rs.cycle_ts  # and only those two
+    assert datetime(2026, 7, 16, 12, 0, tzinfo=UTC) in rs.cycle_ts
+
+
+def test_build_null_casts_its_book_onto_the_live_symbol_space(monkeypatch):
+    """The null and the realized series are judged metric against metric, and `structural_metrics`
+    computes active_frac as n_active/len(weights) -- so the two must count the SAME universe. The
+    null's base-keyed model outputs are expanded onto the twelve-symbol basket by the cycle's own
+    `_expand_to_basket`: gross/net/turnover/hhi are untouched by legs that are exactly zero,
+    active_frac is not, and a ten-wide null against a twelve-wide realized series would have biased
+    every active_frac verdict by 12/10 in one direction with nothing on the page to say so."""
+    n = 3
+    B = A1 = A2 = [0.09, 0.12, 0.06, 0.0]
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "_load_canonical", lambda canonical_dir: ({}, [], {}, []))
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+
+    ns = soak.build_null(Path("unused-canonical"))
+
+    assert set(ns.assets) == set(BASKET)
+    assert all(set(w) == set(BASKET) for w in ns.weights)
+    # The model's own values are CARRIED onto their /EUR legs (non-zero and distinct, so none of
+    # them is confusable with the structural zero the two /BTC legs get).
+    assert [w["BTC/EUR"] for w in ns.weights] == fake.final_targets["BTC"][:n]
+    assert all(w[leg] == 0.0 for w in ns.weights for leg in BASKET if not leg.endswith("/EUR"))
+    assert structural_metrics(ns.weights)["active_frac"] == [1 / len(BASKET)] * n
+
+
+# --- the internals rebuild across the schema boundary (spec 00094 D3) ------------------------------
+#
+# Every other realized_internals test here stubs the builder, and a stub keyed by whatever it is
+# handed ACCEPTS the twelve-symbol panel the real builder refuses -- so none of them can see whether
+# `_assemble_latest_grids` contracts a schema-2 record at all. These two run the real builder.
+
+
+def _v2_internals_fixture():
+    """A schema-2 latest record over the shared twelve-symbol fixture, plus the same REAL build the
+    rebuild inside `realized_internals` will independently redo."""
+    grids = basket_fixture.grids()
+    result = basket_fixture.build(grids)
+    latest = basket_fixture.record(grids, schema_version=2, result=result)
+    return grids, result, latest, basket_fixture.reader(grids)
+
+
+def test_assemble_latest_grids_contracts_a_schema_2_record_to_the_model():
+    """The loader's half, pinned directly: a schema-2 record's TWELVE journaled symbols must reach
+    the builder as the model's TEN base keys. Handing the twelve straight through is a hard
+    PortfolioError that `realized_internals` swallows into `available=False` -- a permanent silent
+    degrade of governor_engagement and cap_breach the moment the latest record turns over."""
+    grids, _, latest, reader = _v2_internals_fixture()
+
+    daily_ts, daily_prices, h4_ts, h4_prices = soak._assemble_latest_grids(latest, reader)
+
+    model_assets = set(CrossfreqSystemConfig().assets)
+    assert set(daily_prices) == model_assets and set(h4_prices) == model_assets
+    assert {e.pair for e in latest.snapshots} == set(BASKET)  # the record really did carry twelve
+    # And it is the MODEL's calendar, not the twelve-symbol union: `select_model_inputs` unions over
+    # the EUR legs only. Here the two coincide, so pin the length against the fixture's own grid.
+    assert len(h4_ts) == len(grids[240][0]) and len(daily_ts) == len(grids[1440][0])
+
+
+def test_realized_internals_spans_the_schema_boundary_with_a_v2_latest():
+    """Step 3's mixed window at the internals layer: a schema-2 latest record, scored cycles on BOTH
+    sides of the flip, and the identity proof holding for each in its OWN key space."""
+    _, result, latest, reader = _v2_internals_fixture()
+    h4_ts = [e for e in latest.snapshots if e.grid == "240"]
+    n_rows = h4_ts[0].n_bars
+    grid_ts, _ = basket_fixture.grids()[240]
+
+    # Cycle T resolves to row k where h4_ts[k] == T - 4h. Two v1 rows, then two v2 rows.
+    plan = ((n_rows - 40, 1), (n_rows - 25, 1), (n_rows - 12, 2), (n_rows - 3, 2))
+    scored = [
+        _mk_scored_record(grid_ts[k] + timedelta(hours=4), basket_fixture.targets_at(result, k, schema), schema_version=schema)
+        for k, schema in plan
+    ]
+
+    # The fixture's honesty check, before the assertions that rest on it: each scored row's ten model
+    # values are non-zero and pairwise distinct, so `identity_ok` cannot be true by everything being
+    # zero, and the two schemas really are in different key spaces.
+    for rec in scored:
+        eur = [v for a, v in rec.final_targets.items() if "/" not in a or a.endswith("/EUR")]
+        assert len(eur) == 10 and 0.0 not in eur and len(set(eur)) == 10
+    assert {r.schema_version for r in scored} == {1, 2}
+    assert all("/" not in a for r in scored if r.schema_version == 1 for a in r.final_targets)
+    assert all(set(r.final_targets) == set(BASKET) for r in scored if r.schema_version == 2)
+
+    ri = realized_internals(scored, latest, reader)
+
+    assert ri.available is True, ri.reason  # a PortfolioError here would degrade, not raise
+    assert ri.identity_ok is True, ri.identity_detail
+    assert ri.cap_consistent is True, ri.cap_detail
+    assert set(ri.mult_by_cycle) == {r.cycle_ts for r in scored}
+    assert set(ri.breach_by_cycle) == {r.cycle_ts for r in scored}
+    # The LAST comparison the loop makes is the last v2 record's last key, so the detail line proves
+    # the symbol-space comparison genuinely ran rather than being skipped.
+    assert f"asset={sorted(scored[-1].final_targets)[-1]!r}" in ri.identity_detail
+
+
+def test_load_canonical_reads_only_the_ten_legs_the_model_uses(tmp_path):
+    """`_canonical_present` probes BTC/EUR alone, so a canonical tree carrying the ten EUR legs and
+    no `/BTC` legs reads "present". If `_load_canonical` then READ all twelve, the run would abort on
+    a FileNotFoundError out of `read_store_series` -- not a SoakError, so nothing degrades it into a
+    refusal. The two extra reads could never contribute anyway: the contraction discards them."""
+    canonical = tmp_path / "canonical"
+    ts = {1440: [datetime(2026, 7, 1, tzinfo=UTC) + timedelta(days=i) for i in range(4)]}
+    ts[240] = [datetime(2026, 7, 1, tzinfo=UTC) + timedelta(hours=4 * i) for i in range(4)]
+    for symbol in (s for s in BASKET if s.endswith("/EUR")):
+        b, q = symbol.split("/")
+        for interval, stamps in ts.items():
+            write_parquet(to_frame([_row(t, 100.0 + i) for i, t in enumerate(stamps)]), canonical / b / q / f"{interval}.parquet")
+
+    assert not (canonical / "ETH" / "BTC").exists() and not (canonical / "SOL" / "BTC").exists()
+    assert soak._canonical_present(canonical) is True  # the premise: this tree reads as present
+
+    daily_prices, daily_ts, h4_prices, h4_ts = soak._load_canonical(canonical)
+
+    assert set(daily_prices) == set(CrossfreqSystemConfig().assets)
+    assert set(h4_prices) == set(CrossfreqSystemConfig().assets)
+    assert daily_ts == ts[1440] and h4_ts == ts[240]

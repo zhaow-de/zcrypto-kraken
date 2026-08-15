@@ -51,10 +51,10 @@ from pathlib import Path
 import numpy as np
 
 from cli.engine.concordance import HashMismatchError, replay_cycle
-from cli.engine.cycle import _union_align
+from cli.engine.cycle import _MODEL_SYMBOLS, _expand_to_basket, select_model_inputs, symbol_keyed_targets
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
-from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
+from cli.engine.store import BASKET, GRID_INTERVALS, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
 from cli.portfolio.crossfreq_system import apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
@@ -244,6 +244,13 @@ def realized_series(
     counted in `dropped_tail`. `chain_ok` cross-checks the forward join wasn't shifted by a bar --
     see `_chain_consistent`.
 
+    MIXED-SCHEMA WINDOWS (spec 00094 D3). Unlike the gate -- which replays and compares each record
+    in its own native key space -- this joins records against the price STORE, whose paths are
+    `<base>/<quote>`, so every record's targets are read through `symbol_keyed_targets` first and
+    `assets` is the union over the window. A window straddling the deploy therefore neither aborts
+    on the asset set changing nor mis-paths a base key, and the legs a schema-1 record predates
+    score at 0.0 -- the position the engine actually held before the widening.
+
     WHAT BOUNDED THE WINDOW (`window_bound`). The rule is STRUCTURAL, not a count threshold: look
     only at the CANDIDATE cycles that fall AFTER the last scored one (candidates being every clean
     cycle but the last, which can never score), and take the reason they were skipped. Any of them
@@ -261,10 +268,21 @@ def realized_series(
     clean = select_clean_segment(records)
     if not clean:
         raise SoakError("no contiguous clean cycle segment in the journal")
-    assets = tuple(sorted(clean[0].final_targets))
+    # Every record's targets are read in the CURRENT symbol key space (`symbol_keyed_targets`, the
+    # one normalizer the cycle's own previous-targets read shares): the store is keyed
+    # `<base>/<quote>`, so a schema-1 record's bare "BTC" would not even resolve to a path.
+    targets = {rec.cycle_ts: symbol_keyed_targets(rec) for rec in clean}
+    assets = tuple(sorted(set().union(*targets.values())))
     for rec in clean:
-        if tuple(sorted(rec.final_targets)) != assets:
-            raise SoakError(f"cycle {rec.cycle_ts!r} final_targets asset set {sorted(rec.final_targets)} != {list(assets)}")
+        missing = set(assets) - set(targets[rec.cycle_ts])
+        if rec.schema_version == 1:
+            # A v1 record is base-keyed, so it normalizes to `/EUR` symbols and STRUCTURALLY cannot
+            # carry a `/BTC` leg -- that absence is the schema boundary the window is allowed to
+            # straddle (spec 00094 D3), filled 0.0 below, which is the position the engine actually
+            # held. Any OTHER absence is still a genuinely inconsistent segment.
+            missing = {a for a in missing if a.endswith("/EUR")}
+        if missing:
+            raise SoakError(f"cycle {rec.cycle_ts!r} final_targets asset set {sorted(targets[rec.cycle_ts])} != {list(assets)}")
 
     closes: dict[str, dict[datetime, float]] = {a: dict(zip(*read_store_series(store_dir, a, 240))) for a in assets}
 
@@ -310,7 +328,9 @@ def realized_series(
         if any(abs(v) > 0.5 for v in r_fwd.values()):
             implausible = True
 
-        q = rec.final_targets
+        # Materialized over the whole window's asset union, so every bar's weight dict has the same
+        # keys whichever schema wrote it -- `structural_metrics`' active_frac divides by len(bar).
+        q = {a: targets[t].get(a, 0.0) for a in assets}
         bar_gross = sum(q[a] * r_fwd[a] for a in assets)
         bar_turnover = sum(abs(q[a] - prev_weights[a]) for a in assets)
 
@@ -426,10 +446,22 @@ def _load_canonical(
     canonical_dir: Path,
 ) -> tuple[dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], list[datetime]]:
     """Load the frozen canonical dataset's daily and 4h price panels, shared by `build_null` and
-    `instrument_self_check` so the two never drift apart on how the canonical is read."""
-    raw = {(a, iv): read_store_series(canonical_dir, a, iv) for a in PAIR_KEYS for iv in GRID_INTERVALS}
-    daily_ts, daily_prices = _union_align(raw, 1440)
-    h4_ts, h4_prices = _union_align(raw, 240)
+    `instrument_self_check` so the two never drift apart on how the canonical is read.
+
+    The panels are the MODEL's, not the store's: `select_model_inputs` (imported from the cycle, the
+    one implementation all three consumers run) contracts to the ten `/EUR` legs, base-keyed, on
+    their own calendar -- spec 00094 D2. Handing the builder the twelve is a hard PortfolioError, and
+    handing it a calendar unioned over the twelve would let a `/BTC`-only stamp shift an EUR window,
+    so the null would no longer be rebuilt on the grid the live engine builds on.
+
+    Only the ten are READ. Reading all twelve and letting the contraction discard the `/BTC` legs
+    would be two files that can never contribute and can only fail: `_canonical_present` probes
+    `BTC/EUR` alone, so a canonical tree carrying the ten EUR legs and no `/BTC` legs would read
+    "present" and then abort the whole run on a FileNotFoundError out of `read_store_series` --
+    which is not a SoakError, so nothing degrades it into a refusal."""
+    raw = {(a, iv): read_store_series(canonical_dir, a, iv) for a in _MODEL_SYMBOLS for iv in GRID_INTERVALS}
+    daily_ts, daily_prices = select_model_inputs({a: raw[(a, 1440)] for a in _MODEL_SYMBOLS})
+    h4_ts, h4_prices = select_model_inputs({a: raw[(a, 240)] for a in _MODEL_SYMBOLS})
     return daily_prices, daily_ts, h4_prices, h4_ts
 
 
@@ -449,9 +481,15 @@ def build_null(
         raise SoakError(f"path must be 'fast' or 'verified', got {path!r}")
 
     net_live, reconcile_ok, cap_breach = _net_live_from_result(result, fee_builder=config.cost_per_side, fee=fee)
-    assets = tuple(result.final_targets)
     n = result.n_periods
-    weights = [{a: result.final_targets[a][k] for a in assets} for k in range(n)]
+    # The null's book is cast onto the LIVE key space (spec 00094 D1): the model's ten base-keyed
+    # outputs expanded onto the twelve-symbol basket by the cycle's own `_expand_to_basket`, the two
+    # `/BTC` legs at exactly 0.0. Legs that are exactly zero leave gross/net/turnover/hhi untouched
+    # -- but `structural_metrics` computes active_frac as n_active/len(weights), so leaving the null
+    # ten-wide while the realized series reads twelve-wide would bias every active_frac comparison
+    # by the ratio of the two universes, silently and in one direction.
+    weights = [_expand_to_basket({a: series[k] for a, series in result.final_targets.items()}) for k in range(n)]
+    assets = tuple(BASKET)
 
     return NullSystem(
         weights=weights,
@@ -813,10 +851,10 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
 
 
 def _instrument_expectations(registry_path: Path) -> dict[str, int]:
-    """{'governor_engaged_bars': ..., 'cap_breach_bars': ...} from record 44's metrics -- the
+    """{'governor_engaged_bars': ..., 'cap_breach_bars': ...} from record 47's metrics -- the
     ratified deployable-system trial (docs/reference/trial-registry.jsonl) the frozen engine build
     must reproduce exactly."""
-    metrics = _load_registry_record(registry_path, 44)["metrics"]
+    metrics = _load_registry_record(registry_path, 47)["metrics"]
     return {
         "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
         "cap_breach_bars": int(metrics["cap_breach_bars"]),
@@ -828,7 +866,7 @@ def instrument_self_check(
 ) -> tuple[bool | None, str]:
     """Rebuild the frozen strategy over the full canonical history (the same load `build_null`
     uses, via `_load_canonical`) and assert its `governor_engaged_bars`/`cap_breach_bars` EXACTLY
-    match record 44's registry values. Returns (None, 'canonical absent') without building
+    match record 47's registry values. Returns (None, 'canonical absent') without building
     anything when `canonical_dir` has no data (skip, not fail) -- this is expected on a host
     without `data/ohlc-full`."""
     if not _canonical_present(canonical_dir):
@@ -843,7 +881,7 @@ def instrument_self_check(
     ]
     if mismatches:
         return False, "instrument mismatch: " + "; ".join(mismatches)
-    return True, "instrument reproduces record 44"
+    return True, "instrument reproduces record 47"
 
 
 def identity_self_check(record, snapshot_reader, *, tol: float = 1e-6, path: str = "fast") -> tuple[bool, str]:
@@ -895,7 +933,12 @@ def _assemble_latest_grids(
     entry's own len/first_ts/last_ts metadata (EngineJournalError on disagreement), then group by
     grid ("1440"/"240") and assert every pair on a grid shares one calendar (EngineJournalError on
     disagreement). A parallel implementation, not a shared import -- `replay_cycle` itself is
-    untouched and unaffected. Returns (daily_ts, daily_prices, h4_ts, h4_prices)."""
+    untouched and unaffected. Returns (daily_ts, daily_prices, h4_ts, h4_prices).
+
+    The grids returned are the MODEL's, whatever schema wrote the record: a schema-1 record's
+    journaled pairs already ARE the ten-asset model's base keys, and a schema-2 record's twelve
+    symbols are contracted by `select_model_inputs` -- the cycle's own contraction, imported, so the
+    rebuild lands on the grid the cycle built on rather than on a PortfolioError."""
     by_grid: dict[str, dict[str, tuple[list[datetime], list[float | None]]]] = {"1440": {}, "240": {}}
     for entry in record.snapshots:
         ts, closes = snapshot_reader(entry)
@@ -922,6 +965,9 @@ def _assemble_latest_grids(
 
     daily_ts, daily_prices = _assemble("1440")
     h4_ts, h4_prices = _assemble("240")
+    if record.schema_version != 1:
+        daily_ts, daily_prices = select_model_inputs(by_grid["1440"])
+        h4_ts, h4_prices = select_model_inputs(by_grid["240"])
     return daily_ts, daily_prices, h4_ts, h4_prices
 
 
@@ -1011,10 +1057,17 @@ def realized_internals(
             raise SoakError(f"cycle {t!r}: T - 4h not found in the rebuilt h4 grid")
         mult_by_cycle[t] = result.multipliers[k]
         breach_by_cycle[t] = breach[k]
+        # Row k in the scored record's OWN key space (spec 00094 D3), exactly as the gate compares:
+        # a schema-1 record against the base-keyed model row it was written from, a schema-2 record
+        # against that row expanded onto the twelve-symbol basket. The rebuild is one build either
+        # way; only the key space of the comparison follows the record.
+        row = {a: series[k] for a, series in result.final_targets.items()}
+        if rec.schema_version != 1:
+            row = _expand_to_basket(row)
         for a, value in rec.final_targets.items():
-            if a not in result.final_targets:
-                raise SoakError(f"cycle {t!r}: asset {a!r} not in the rebuilt universe {sorted(result.final_targets)}")
-            diff = abs(result.final_targets[a][k] - value)
+            if a not in row:
+                raise SoakError(f"cycle {t!r}: asset {a!r} not in the rebuilt universe {sorted(row)}")
+            diff = abs(row[a] - value)
             if diff >= worst_diff:
                 worst_diff = diff
                 worst_detail = f"cycle={t!r} asset={a!r}"
@@ -1080,7 +1133,7 @@ def self_tests(
     convention. `reconcile_ok = null.reconcile_ok and realized.chain_ok`: the backtest null's own
     internal bookkeeping and the realized series' forward-join integrity must both hold. `path`
     (spec 00061 D5) threads to `identity_self_check`'s own builder-path selection; `instrument_self_check`
-    is untouched (it always reproduces record 44 via the fast path).
+    is untouched (it always reproduces record 47 via the fast path).
     """
     messages: list[str] = []
 
@@ -1451,7 +1504,7 @@ def analyze_soak(
 
 
 BANNER = (
-    "Trial 44 has ZERO out-of-time holdout evidence — the one budgeted holdout look (budget now 0) tested the "
+    "Trial 47 has ZERO out-of-time holdout evidence — the one budgeted holdout look (budget now 0) tested the "
     "SUPERSEDED record 33 in a degenerate [0,0] window and discriminated nothing; paper trading is its only "
     "genuine OOS test."
 )

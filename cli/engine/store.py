@@ -24,11 +24,28 @@ from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
 
 logger = get_logger("engine.store")
 
-# The engine trades EUR legs only. Derived from the one source of truth rather than duplicated,
-# and keyed by BASE because the store path is root/<base>/EUR/<interval>.parquet. Without this the
-# symbol re-key would silently widen the engine basket from 10 to 12 and produce paths like
-# root/ETH/BTC/EUR/1440.parquet.
-PAIR_KEYS: dict[str, str] = {symbol.split("/")[0]: key for symbol, key in _FETCH_PAIR_KEYS.items() if symbol.endswith("/EUR")}
+# The single committed source of truth for the engine's basket (spec 00094): twelve symbols,
+# sorted, both /BTC legs alongside the ten /EUR pairs. DOT/EUR is deliberately kept despite the
+# universe regeneration deselecting it -- an owner ruling (T0137), not an oversight; see
+# tests/test_basket_concordance.py.
+BASKET: tuple[str, ...] = (
+    "ADA/EUR",
+    "AVAX/EUR",
+    "BTC/EUR",
+    "DOGE/EUR",
+    "DOT/EUR",
+    "ETH/BTC",
+    "ETH/EUR",
+    "LINK/EUR",
+    "LTC/EUR",
+    "SOL/BTC",
+    "SOL/EUR",
+    "XRP/EUR",
+)
+
+# Symbol -> venue key, derived from the one source of truth rather than duplicated. A BASKET
+# member absent from the fetch map raises KeyError here, at import -- fail loud, never narrow.
+PAIR_KEYS: dict[str, str] = {s: _FETCH_PAIR_KEYS[s] for s in BASKET}
 
 GRID_INTERVALS = (1440, 240)
 
@@ -70,8 +87,9 @@ class RefreshReport:
     entries: tuple[RefreshEntry, ...]
 
 
-def _store_path(root: Path, asset: str, interval: int) -> Path:
-    return root / asset / "EUR" / f"{interval}.parquet"
+def _store_path(root: Path, symbol: str, interval: int) -> Path:
+    base, quote = symbol.split("/")
+    return root / base / quote / f"{interval}.parquet"
 
 
 def _reconcile(
@@ -222,7 +240,7 @@ def refresh_store(
     return RefreshReport(entries=tuple(entries))
 
 
-def read_store_series(store_dir: Path, asset: str, interval: int) -> tuple[list[datetime], list[float | None]]:
-    """Read `asset`'s full-history `(ts, close)` series for `interval` from the store."""
-    frame = read_parquet(_store_path(store_dir, asset, interval))
+def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
+    """Read `symbol`'s full-history `(ts, close)` series for `interval` from the store."""
+    frame = read_parquet(_store_path(store_dir, symbol, interval))
     return frame["ts"].to_list(), frame["close"].to_list()

@@ -25,7 +25,7 @@ from cli.engine.errors import EngineError
 from cli.engine.execgate import GateLevel, GateVerdict
 from cli.engine.execledger import write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
-from cli.engine.store import SeedEntry, SeedReport
+from cli.engine.store import BASKET, GRID_INTERVALS, SeedEntry, SeedReport, _store_path
 from cli.engine.venue import VenueStatus
 from cli.ohlc.dataset import write_parquet
 
@@ -395,7 +395,10 @@ def test_replay_classifies_a_validation_failure(tmp_path, monkeypatch):
     journal = engine_cfg.journal_dir
     record_path = _write_success_record(journal, CYCLE_TS)
     payload = json.loads(record_path.read_text())
-    payload["schema_version"] = 2  # from_json still parses; replay_cycle's validate_record rejects
+    # from_json still parses; replay_cycle's validate_record rejects. 99 is unsupported at ANY
+    # schema -- never 2, which 00094 made loadable, so the tamper would be a no-op once the
+    # writer emits v2 and this test would stop exercising the rejection path at all.
+    payload["schema_version"] = 99
     record_path.write_text(json.dumps(payload))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
 
@@ -679,12 +682,21 @@ def _fake_node(is_running: bool):
     )
 
 
-def _run_env(monkeypatch, tmp_path, *, is_running: bool) -> list[int]:
+def _write_basket_store(store_dir: Path, symbols=BASKET) -> None:
+    """Placeholder store files for `symbols` on both grids -- never read (the node is stubbed), they
+    exist only to satisfy `run()`'s store-presence guard."""
+    for symbol in symbols:
+        for interval in GRID_INTERVALS:
+            path = _store_path(store_dir, symbol, interval)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"")
+
+
+def _run_env(monkeypatch, tmp_path, *, is_running: bool, symbols=BASKET) -> list[int]:
     """A passable `engine run` environment: valid store, stub node builder, synchronous timer, and
     a recording os._exit. Returns the list force-exit codes are recorded into."""
     engine_cfg = _patch_config(monkeypatch, tmp_path)
-    (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)
-    (engine_cfg.store_dir / "BTC" / "EUR" / "240.parquet").write_bytes(b"")  # never read; the node is stubbed
+    _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(is_running))
     monkeypatch.setattr(command.threading, "Timer", FakeTimer)
@@ -709,13 +721,44 @@ def test_run_require_config_aborts_without_zcrypto_toml(tmp_path, monkeypatch):
 def test_run_aborts_on_a_missing_or_empty_store(tmp_path, monkeypatch, store_state):
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     if store_state == "empty":
-        (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)  # dirs but no */EUR/*.parquet series
+        (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)  # dirs but no series file in them
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
 
     result = runner.invoke(app, ["engine", "run"])
 
     assert result.exit_code == 1
     assert str(engine_cfg.store_dir) in _output(result)
+
+
+def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_path, monkeypatch):
+    """The converge's real failure shape: the ten `/EUR` series are already on the host from the
+    pre-widening build and the two `/BTC` parquets were never staged. A `*/EUR/*.parquet` glob
+    passes on exactly this store, so the node starts and looks healthy; the first boundary's
+    `refresh_store` then dies on a missing `ETH/BTC/240.parquet`, and the failed-cycle sidecar makes
+    that boundary unretryable at any time (capture-deploys.md), costing the ratified gate streak."""
+    _run_env(monkeypatch, tmp_path, is_running=True, symbols=[s for s in BASKET if s.endswith("/EUR")])
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 1, out
+    assert "ETH/BTC@240" in out and "ETH/BTC@1440" in out
+    assert "SOL/BTC@240" in out and "SOL/BTC@1440" in out
+    assert "ADA/EUR" not in out  # only the absent legs are named -- the present ones are not noise
+    assert str(tmp_path / "store") in out
+
+
+def test_run_starts_on_a_complete_twelve_leg_store(tmp_path, monkeypatch):
+    """The guard's healthy path: every basket leg present on both grids and `run()` proceeds -- a
+    guard that also trips here would abort every correct deploy."""
+    exits = _run_env(monkeypatch, tmp_path, is_running=True)
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "basket series" not in out
+    assert exits == []
 
 
 def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
