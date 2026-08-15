@@ -96,7 +96,21 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # recreates it empty. What must NOT change across the transition is the gate itself —
 # zcrypto_gate_status / streak_days / mismatch_total identical before and after.
 # Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:620114511f197c306d6b1c2260b0a12793bb679663517a0626841d0018049a28
+#
+# Re-pinned 2026-08-15 to the twelve-leg build (spec 00094, iter-139, PR #297; revision e0757909,
+# runtime=compat). STAGED, NOT YET CONVERGED when this line landed -- unlike every block above it,
+# which describes a pin that was already applied. Verify by outcome off the container, never off
+# this file: the .env template task is no_log/diff:false, so --check --diff reports .env changed
+# with the digest INVISIBLE in the preview.
+# The compat runtime was verified on the Atom by RUNNING polars in the pulled image, per T0029. The NAS
+# converges FIRST and the order is load-bearing: gate-export scores the streak here, so old code
+# meeting the engine's first schema-2 record would raise `unsupported schema_version 2`, classify
+# the day unclean, and ZERO the ratified streak with the engine deploy fully correct. Converging
+# ahead is safe because every existing record is v1 and this image loads {1, 2} -- verified by
+# execution in the pulled image, not inferred from the tag.
+# Previous pin: 620114511f19 -- verified RESIDENT on the NAS at the re-pin, and verified as the
+# actually-running digest (the row that recorded it said "running digest unverified"; it is now).
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest — the same
 # trap class the committed pin kills.
 # Alloy v1.18.0, published 2026-07-20. Previous pin: 4f6ddc56ffdc (v1.17.1).
