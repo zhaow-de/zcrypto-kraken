@@ -43,7 +43,7 @@ from cli.engine.gate_cache import (
 from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.soak import soak_report
-from cli.engine.store import seed_store
+from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, seed_store
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
@@ -724,10 +724,20 @@ def run() -> None:
     # Every start latches reduce-only. Deliberately unconditional: an engine that has just come
     # up must not be able to widen its own permission.
     write_restart_hold(config.journal_dir.parent, _utc_now())
-    if not any(config.store_dir.glob("*/EUR/*.parquet")):
+    # Membership, not a glob: `refresh_store` reads every BASKET leg on both grids at each boundary,
+    # so a glob over one quote directory passes on a store missing exactly the legs a basket widening
+    # added (spec 00094's two /BTC legs) and the first cycle dies on the absent file instead.
+    missing = [
+        f"{symbol}@{interval}"
+        for symbol in BASKET
+        for interval in GRID_INTERVALS
+        if not _store_path(config.store_dir, symbol, interval).exists()
+    ]
+    if missing:
         raise _abort(
-            f"store_dir {config.store_dir} is missing or holds no */EUR/*.parquet series -- a node without a store is "
-            "always misconfigured; fix the bind-mount or run `zcrypto engine seed`"
+            f"store_dir {config.store_dir} is missing {len(missing)} of the {len(BASKET) * len(GRID_INTERVALS)} "
+            f"basket series a cycle reads: {', '.join(missing)} -- a node without a complete store is always "
+            "misconfigured; fix the bind-mount or run `zcrypto engine seed`"
         )
     logger.info(
         "engine run: exec_enabled=%s, store_dir=%s, journal_dir=%s", config.exec_enabled, config.store_dir, config.journal_dir

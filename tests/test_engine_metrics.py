@@ -615,9 +615,12 @@ def _write_venue_record(
     failures: int = 0,
     snapshot_at: datetime | None = None,
 ) -> None:
-    """A raw venue-<HH>.json matching `venueledger.write_venue_record`'s schema, written directly
-    (rather than through `VenueState`/`write_venue_record`) so this file never has to import
-    `cli.engine.venuestate` -> nautilus_trader."""
+    """A raw **schema-1** venue-<HH>.json, written directly (rather than through
+    `VenueState`/`write_venue_record`) so this file never has to import `cli.engine.venuestate` ->
+    nautilus_trader. The pinned `schema_version: 1` is deliberate v1-reader coverage, not drift
+    against the current `VENUE_SCHEMA_VERSION`: every record written before the widening is v1 and
+    the startup seed must keep reading them, so a v1 record is exactly what these gauges must
+    survive at the deploy boundary."""
     day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
     day_dir.mkdir(parents=True, exist_ok=True)
     doc = {"schema_version": 1, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
@@ -912,8 +915,11 @@ class _StubGate:
 
 def _run_env(monkeypatch, tmp_path):
     engine_cfg = _patch_engine_config(monkeypatch, tmp_path)
-    (engine_cfg.store_dir / "BTC" / "EUR").mkdir(parents=True)
-    (engine_cfg.store_dir / "BTC" / "EUR" / "240.parquet").write_bytes(b"")  # never read; the node is stubbed
+    for symbol in BASKET:  # run()'s guard wants every basket leg on both grids; never read (the node is stubbed)
+        for interval in GRID_INTERVALS:
+            base, quote = symbol.split("/")
+            (engine_cfg.store_dir / base / quote).mkdir(parents=True, exist_ok=True)
+            (engine_cfg.store_dir / base / quote / f"{interval}.parquet").write_bytes(b"")
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node())
     _StubGate.instances.clear()
