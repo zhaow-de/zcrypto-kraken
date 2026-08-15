@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 ---
 
 # The deployable's basket has diverged from the refreshed universe — re-ratify or hold
@@ -39,7 +39,12 @@ Evidence base: the installed nautilus-trader 1.230.0 (`.venv` sources incl. `exe
 - **The coupling's accepted risk, articulated (restored 2026-08-14 — a later edit had collapsed the bullet that carried it):** landing the re-plumb and the re-ratification in one iteration couples a live-trade-path code change to a strategy-record change; if either half needs rollback, both go. The owner accepted this over the capability-first alternative so the basket never sits half-widened.
 - The inputs that ruling depends on are already in hand: `ohlc-reach-20260813` carries both legs `continuous` to 2026-08-12 (3,813 and 1,883 daily rows), and capture covers them since [[T0092]] resolved — so neither data leg blocks the work.
 
-## Suggested next steps
+## Resolution
 
-- **(owned by spec `00094`, sequenced next)** The engine re-plumb, the re-ratification with the owner's adopt verdict, and the concordance-baseline update — per that spec's D1–D8. Both of this topic's decision halves are ruled; what remains is the work itself.
-- **At `00094`'s closeout: resolve and archive this topic**, both halves cited — the /BTC ruling (6b, coupled re-plumb + re-ratification) and the DOT ruling (keep-traded, test-triggered revisit).
+**Resolved 2026-08-15 at spec `00094`'s closeout (iter-139), both halves delivered.** The decision this topic held open — whether the traded basket ever changes — is now made *and built*, not merely ruled.
+
+- **The `/BTC` half is delivered.** Spec `00094` (design) and `docs/plans/00094-btc-widening.md` (nine tasks) re-keyed the engine's pipeline from base keys to full symbols and widened the traded basket from ten legs to twelve: `cli/engine/store.py::BASKET` as the single committed source of truth with `PAIR_KEYS` derived from it, quote-aware store paths (`root/<base>/<quote>/<interval>.parquet`), symbol-keyed `INSTRUMENT_IDS`, per-symbol `COSTMIN` carrying an explicit `(value, quote_currency)` pair, the pure `fx_eur_notional` EUR→BTC term, symbol-keyed `VenueState`/`InstrumentConstraints` with `costmin_quote`, journal `SCHEMA_VERSION` 1 → 2 with `{1, 2}` loadable, and a schema-aware gate replay in which each schema replays and compares in its own native key space. Commits `f4824796` (store + BASKET) through `f8bd0f64` (the concordance baseline). `ETH/BTC` and `SOL/BTC` are now addressable *and* tradeable — held at structurally-zero targets by `_expand_to_basket`, because the model did not change: `CrossfreqSystemConfig.assets` stays the ten EUR bases and `cli/portfolio/` is byte-identical across the whole branch.
+- **The DOT half is delivered as the ruling it became.** `tests/test_basket_concordance.py`'s `RULED_TRADED_BUT_DESELECTED` stays `{"DOT/EUR"}` and its comment now cites the owner's 2026-08-14 keep-traded ruling rather than an open question; record 47's own notes carry the same reasoning. No revisit deferral dangles, because the test *is* the revisit trigger — any refresh that changes selection, DOT's re-entry included, turns it red.
+- **The deployable is re-ratified.** Registry record **47** (`trial_id: 47`, `verdict: "adopt"`, appended on the owner's attended adopt 2026-08-15) supersedes record 44 as the deployable, naming the twelve-leg basket; spec `docs/specs/00095-twelve-leg-deployable-design.md` is its construction doc, pinned by `spec_hash ea73740d…` and immutable from that moment. The identity criterion was **measured, not asserted**: 0 differing bars of 27,337 on `governed_net` and `ungoverned_net`, 0 differing rows of 273,380 on `final_targets`, max absolute difference exactly `0.0`. The engine self-test's pin moves 44 → 47 in `cli/engine/soak.py`.
+- **The `selected-but-unreachable` exception this topic owned is retired**, per `00094` D7 — kept as a *named empty set* rather than deleted, so the retirement citation keeps its anchor and a future genuine divergence has a landing place.
+- **Not carried into the archive as a live deferral**: `00094` D4 makes each cost floor's denomination knowable but not checked, and that guard belongs at `00090`'s sizing call site — split out as [[T0138]] rather than left inside this file. Full account of the iteration: `docs/iterations-history-phase6.md`'s 2026-08-15 entry; decisions: `docs/research/14.phase6-decisions.md`'s `[iter-139]` entries. **The code has landed and is green; it is not yet deployed** — the three-surface deploy order and its by-value checks are in that entry.
