@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a production (non-test) consumer of `InstrumentConstraints.costmin` exists — grep `cli/` for a read of `.costmin` outside `cli/engine/venuestate.py`
+ripe_when: a production (non-test) consumer of `InstrumentConstraints.costmin` exists — grep `cli/` for a read of `.costmin`
 ---
 
 # Costmin denomination guard at the sizing call site
