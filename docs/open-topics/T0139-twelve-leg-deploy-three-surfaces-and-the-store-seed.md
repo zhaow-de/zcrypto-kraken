@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: spec `00094`'s twelve-leg code is on `develop` (`cli/engine/store.py::BASKET` holds twelve symbols there) while the fleet's newest journaled `cycle-<HH>.json` still reads `"schema_version": 1` — both readable, no date
+status: partial
+ripe_when: the engine's first schema-2 record exists — `cycle-<HH>.json` on the engine host reading `"schema_version": 2` — and its by-value checks are unread
 ---
 
 # The twelve-leg deploy: three surfaces, one order, and the store seed
@@ -22,12 +22,20 @@ The preparation steps fail in the other direction. The engine host mounts no dat
 - **The soak back-seeding has no other home.** A mixed-schema soak window needs the widened legs' store history seeded back before the schema flip, or every pre-boundary cycle in that window reads `store`-bound.
 - **Two post-deploy readings are cosmetic but will be triaged as faults** (measured during iter-139, not predicted): at engine start the startup seed reads the last **pre**-deploy v1 venue record and publishes `zcrypto_venue_instruments_loaded 10` against `_expected 12` until the first post-deploy cycle, up to 4 h — no page, since spec `00089` D6 excludes both from alerting. And the `target_weight` gauge's `asset` label re-keys from `"BTC"` to `"BTC/EUR"`, so every series legend on the Engine board changes at the deploy; no Grafana query breaks, `engine-dashboard.json` filtering only on host.
 
+## Done so far
+
+**All four surfaces converged 2026-08-15/16** (PR #297 payload, digest `419feafc304f`; NAS `-compat` `5f890c26237a` via PR #298). Order held: NAS → ops → secondary capture → primary Alloy → engine. `fleet-pins.md` carries each row's evidence.
+
+**Three things this topic told the deployer that turned out to be WRONG, corrected here rather than left to mislead:**
+
+- **`zcrypto engine seed` cannot be run on the engine host.** It is workstation-only — the image carries no canonical dataset. The engine store is *delivered by Ansible* from the workstation's `data/engine-store/`.
+- **That delivery would not have happened.** The task is `only when absent`, guarded on `store/BTC` — which exists — so a normal converge SKIPS it, delivers nothing, and the new start guard then refuses to start the engine. The `/BTC` legs had to be staged by hand.
+- **The canonical cannot seed the 4h grid.** `data/ohlc-full` is frozen at 2026-03-31 while Kraken's REST 4h window reaches back only to 2026-04-17 — a ~17-day hole the quarterly OHLCVT dump would fill, which [[T0065]] records as unpublished. The daily grid was fine (REST reaches 2024-08-25). The `/BTC` 4h legs were therefore seeded **REST-only, 720 bars from 2026-04-17**, on the owner's ruling. Harmless: `select_model_inputs` contracts to the ten `/EUR` legs, so no `/BTC` datum reaches the model; the legs exist so the store is complete and `00090` inherits prices. All 24 store files verified readable as uid 997:988, the engine's own identity.
+
+**A fourth finding the deploy surfaced, unrelated to the store:** spec `00089`'s `zcrypto_venue_*` Alloy admission had never reached EITHER capture host since 2026-08-13. The keep-regex is a `keep` action, so those four gauges were being dropped at the Alloy layer while 00089's alert rules evaluated against series that never arrived. Nothing surfaced it — a drift assert refusing a converge did. Shipped config-only to both hosts; verified end to end (`zcrypto_venue_instruments_expected` = 12 in Grafana Cloud, where the same query returned `(no series)` an hour earlier).
+
 ## Suggested next steps
 
-- **Converge the NAS and ops images first**, before any engine change, under their own rules in `capture-deploys.md` (ops needs `--limit zcrypto-ops`; record the running digest in `docs/reference/fleet-pins.md` first). Confirm both surfaces are on the widened code while every journaled record is still v1 — that combination is the safe state to sit in, for as long as needed.
-- **Inside the engine converge window, before the first boundary**: stage `ETH/BTC` and `SOL/BTC`'s canonical parquets (both grids, 1440 and 240) to the engine host, then run `zcrypto engine seed`. Verify in two steps, because they prove different things: an incomplete store now aborts the start naming the absent `<symbol>@<interval>` series, so a clean start confirms every series is **present** — but the guard tests existence only, and a zero-byte or hand-copied canonical file passes it. `zcrypto engine seed`'s own report is what confirms the tails reach the REST seam; without it a frozen canonical tail raises `the store is catastrophically stale` at the first boundary, which is the unretryable failed-cycle sidecar this whole precaution exists to avoid.
-- **Seed the widened legs' store history back far enough to cover the soak window that straddles the flip**, before the flip — not forward from it. Confirm no pre-boundary cycle in that window reports `store`-bound.
-- **Then converge the engine last**, standard discipline: canary gate via the secondary's capture bake, the 4-hourly inter-cycle gap, `fleet-pins.md` recorded first, attended.
-- **Verify by value, not by presence, at the first post-deploy cycle**: the first schema-2 `cycle-<HH>.json` carries **twelve** symbol-keyed targets with `ETH/BTC` and `SOL/BTC` at exactly `0.0`; `orders.jsonl` shows **no phantom rebalance** — a full-book order set there is the cross-schema `_previous_success` failure mode and **rolls back**; `venue-<HH>.json` reads twelve instruments; on the NAS and ops replay surfaces `validation_failures` and `mismatches` are **unchanged** with `replayed_ok` advancing.
-- **Read the streak only at the deploy day's 20:30 UTC evaluation** — it counts complete days, so expecting +1 immediately after the first cycle is wrong arithmetic and would false-alarm. At 20:30 it reads pre-deploy + 1, or the deploy rolls back.
-- **Close this topic only once the deploy has run and every check above has been read by value**, recording the measured values in the `## Resolution`.
+- Read the first schema-2 cycle **by value**, not by presence: `schema_version` 2; `final_targets` twelve symbol-keyed entries with `ETH/BTC` and `SOL/BTC` at **exactly** `0.0`; `venue-<HH>.json` twelve instruments and `zcrypto_venue_instruments_loaded` moving 0 → 12; `completed_at` inside `[B, B+30]`; no `failed-cycle-<HH>.json` (a sidecar makes that boundary unretryable at any time).
+- **`orders.jsonl` must show no phantom rebalance — this is the rollback trigger.** The predecessor record is v1/base-keyed; if `_previous_success`'s normalization failed, every `.get(symbol, 0.0)` misses, the engine reads the whole book as flat and writes a from-flat rebalance, silently, because the gate never reads orders. Order rows only for genuine deltas. A full-book set rolls back to `6c5151d9f3af`.
+- Read the gate streak at the deploy day's **20:30 UTC** evaluation, not after the first cycle — it counts COMPLETE days, so expecting +1 immediately is wrong arithmetic. Pre-deploy baseline: status 1, streak 35, mismatch 0.
