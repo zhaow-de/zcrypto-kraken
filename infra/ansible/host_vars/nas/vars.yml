@@ -93,15 +93,21 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # fingerprint therefore CHANGES with this pin, which invalidates the whole cache; that costs one
 # cold `gate-export` (~627 s vs ~55 s warm) on the first pull. Expected, and not specific to this
 # pin: the cache lives at /tmp/gate-cache.json inside the container (00062 D9), so ANY re-pin
+# MEASURED 2026-08-15 on the twelve-leg re-pin: the cold export took 2490 s (41.5 min), 4x the
+# ~627 s quoted just below. That figure was taken on a smaller journal and is the WRONG
+# reference class for a fingerprint-INVALIDATING pin: gate_cache.py digests the source bytes of
+# the transitive cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed
+# rather than the incremental few. Size a maintenance window against 2490 s, not 627 s.
 # recreates it empty. What must NOT change across the transition is the gate itself —
 # zcrypto_gate_status / streak_days / mismatch_total identical before and after.
 # Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
 #
 # Re-pinned 2026-08-15 to the twelve-leg build (spec 00094, iter-139, PR #297; revision e0757909,
-# runtime=compat). STAGED, NOT YET CONVERGED when this line landed -- unlike every block above it,
-# which describes a pin that was already applied. Verify by outcome off the container, never off
-# this file: the .env template task is no_log/diff:false, so --check --diff reports .env changed
-# with the digest INVISIBLE in the preview.
+# runtime=compat) and CONVERGED 2026-08-15 13:40:38Z -- the tree and the fleet agree again.
+# Verify by outcome off the container, never off this file: the .env template task is
+# no_log/diff:false, so --check --diff reports .env changed with the digest INVISIBLE in the
+# preview. The converge's acceptance test was BY VALUE and it passed: zcrypto_gate_status 1,
+# streak_days 35, mismatch_total 0 -- all three identical across the re-pin.
 # The compat runtime was verified on the Atom by RUNNING polars in the pulled image, per T0029. The NAS
 # converges FIRST and the order is load-bearing: gate-export scores the streak here, so old code
 # meeting the engine's first schema-2 record would raise `unsupported schema_version 2`, classify
