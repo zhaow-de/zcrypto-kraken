@@ -93,13 +93,13 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # fingerprint therefore CHANGES with this pin, which invalidates the whole cache; that costs one
 # cold `gate-export` (~627 s vs ~55 s warm) on the first pull. Expected, and not specific to this
 # pin: the cache lives at /tmp/gate-cache.json inside the container (00062 D9), so ANY re-pin
-# MEASURED 2026-08-15 on the twelve-leg re-pin: the cold export took 2490 s (41.5 min), 4x the
-# ~627 s quoted just below. That figure was taken on a smaller journal and is the WRONG
-# reference class for a fingerprint-INVALIDATING pin: gate_cache.py digests the source bytes of
-# the transitive cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed
-# rather than the incremental few. Size a maintenance window against 2490 s, not 627 s.
 # recreates it empty. What must NOT change across the transition is the gate itself —
 # zcrypto_gate_status / streak_days / mismatch_total identical before and after.
+# MEASURED 2026-08-15 on the twelve-leg re-pin: the cold export took 2490 s (41.5 min), 4x the
+# ~627 s quoted above. That figure was taken on a smaller journal and is the WRONG reference class
+# for a fingerprint-INVALIDATING pin: gate_cache.py digests the source bytes of the transitive
+# cli.* closure, journal.py moved, so all 214 cycles across 36 day-dirs replayed rather than the
+# incremental few. Size a maintenance window against 2490 s, not 627 s.
 # Previous pin: dfb80f48… (built from a731e54b, PR #165), which enabled `gate-export --cache`.
 #
 # Re-pinned 2026-08-15 to the twelve-leg build (spec 00094, iter-139, PR #297; revision e0757909,
