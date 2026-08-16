@@ -57,7 +57,7 @@ Read the journal the way it was read, because a wrong path returns a plausible z
 | Spec | Subject | Blast radius | State |
 | --- | --- | --- | --- |
 | `00088` | the execution safety envelope — two-key arming, kill-switch, venue gate, reduce-only-on-restart | none (shadow, submits nothing) | landed (iter-135) |
-| `00089` | venue truth — instrument map, venue-constraint sizing, the `held` read, realized-state artifact | none (read-only) | landed (iter-138) |
+| `00089` | venue truth — instrument map, venue-constraint sizing, the `held` read, realized-state artifact | none (read-only) | landed (iter-138), **deployed 2026-08-16** — its owed converge rode `00094`'s |
 | `00094` | the /BTC widening — symbol-keyed PAIR_KEYS/INSTRUMENT_IDS/VenueState, EUR→BTC FX sizing, XBT costmin, AND the deployable re-ratification on the twelve-leg basket | none directly (no order path), but it **re-ratifies what is traded** | landed (iter-139), **deployed 2026-08-16** |
 | `00090` | the rung-1 order path — maker-first state machine, submission, fill/fee ingestion | **real money, ~€10–30** | not started |
 | `00091` | the weekly tracking-error report and cost recalibration from real fills | none (read-only) | not started |
@@ -96,4 +96,4 @@ The items below are the build's content, distributed across those five specs; ev
 - **(decision + money — D3(ii) second half)** Tiny-live sleeve funding.
 - **(decision — D3(iii))** Schedule the T2 tax-probe set **within the first two 6b weeks**: ≥1 margin long + ≥1 margin short, each held across ≥2 rollover events, one closed and one settled — so the tax verification (T2 pass, or T3 fallback) closes **before any ramp past 25 %**. [[T0005]]'s Blockpit T1 check rides alongside.
 
-**Entering state, not to be re-derived:** the governor enters live at its true carried state (×0.5); the build targets registry **record 44** via the committed builder (constraint 1). ~~The 6a exit review also decides retiring the workstation soak~~ *(already retired — iter-103, spec `00056` D6)*.
+**Entering state, not to be re-derived:** the governor enters live at its true carried state (×0.5); the build targets registry **record 44** via the committed builder (constraint 1) — **superseded 2026-08-16 by record 47**, which re-ratifies the same model on the twelve-leg basket at measured-identical metrics (max abs diff `0.0`); the entering state is unchanged in value, only its record id moved. ~~The 6a exit review also decides retiring the workstation soak~~ *(already retired — iter-103, spec `00056` D6)*.
