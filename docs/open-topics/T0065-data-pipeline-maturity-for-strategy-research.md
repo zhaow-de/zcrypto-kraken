@@ -19,7 +19,7 @@ The pipeline is in good shape for the strategy already researched (1d/4h) but ha
 
 **Data-model taxonomy (clarified this session).** Frozen research canonicals (`ohlc-full` / `ohlc-15m` / `ohlc-holdout-*` — immutable; a re-freeze *mints a new sibling*, never mutates); refreshable substrates (`derivatives-funding` / `snapshots` / `universe`); dead v0 (`ohlc` — no consumer, deletion candidate); per-host never-synced (`engine-store` / `engine-journal`); accruing operational (L2 panel / canonical trades / liquidations — ops-primary + NAS replica, unbackfillable + short + growing). No live-WS OHLC — OHLC is batch (dumps/REST); the live WS streams are `book` (→ panel) and `trade`.
 
-**Strategy provenance.** The deployable = registry **record 44** (P1 cross-frequency, fixed 1/3 weights), on `ohlc-full` daily (1440) + 4h (240), span 2013-09-10 → 2026-03-31, 10 EUR pairs, `dataset_hash 45275ebe`. The live engine consumes the identical cadences/pairs (`engine-store` `GRID_INTERVALS=(1440,240)`). No 1h/15m in the deployed system (15m was the exploratory B1 sideline).
+**Strategy provenance.** The deployable = registry **record 47** (record 44 until 2026-08-16 — the re-ratification moved the traded basket to twelve legs and the record id, not the model; metrics measured identical, max abs diff `0.0`). The MODEL still consumes the ten EUR pairs on the same cadences; the live engine now carries twelve, the two `/BTC` legs at structurally-zero targets and contracted out before the builder sees them.
 
 **Three gaps, ranked by how much they bite.**
 
@@ -39,7 +39,7 @@ The pipeline is in good shape for the strategy already researched (1d/4h) but ha
 
   **Verified against an independent witness, while one still exists.** The tape starts 2026-07-08 and `ohlc-full` ends 2026-03-31, so they do not overlap and there is no canonical to check against. Kraken REST at 15m does overlap — for ~7.5 days — and the control passed on real tape (BTC/EUR 2026-08-09, 96 bars, OHLC and trade count exact, volume to 6.6e-16). It also surfaced a durable fact about the venue: **Kraken publishes `vwap` truncated to the pair's price precision** (96/96 bars match under ROUND_DOWN to 0.1; 53/96 under round-half-even), so the assertion is the exact half-open tick identity rather than a widened tolerance. The control expires as the window recedes and skips honestly when it does — and skips distinctly on a network failure, so downtime never indicts the data.
 
-  All eleven mutation probes killed their named guard. **Not yet deployed**: the ops converge is attended and owed, so the timer, its gauges and the two alert rules are committed but not live.
+  All eleven mutation probes killed their named guard. **Deployed 2026-08-10 14:49:08Z**: the attended ops converge landed, so the timer, its gauges and the two alert rules are live — `zcrypto_tapebars_exit_code` 0, `zcrypto_tapebars_days_gap` 0, last publish 2026-08-16T02:52:10Z.
 
 - **EXECUTION-REPRODUCIBILITY is done in full (2026-08-09, spec `00086`) — recipe, command and ruling together, which is why this round leaves nothing parked.**
 
