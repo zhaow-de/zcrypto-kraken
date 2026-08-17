@@ -7,7 +7,7 @@ ripe_when: a post-deploy alpha family reaches an ADOPT verdict in the trial regi
 
 ## Context — what
 
-The deployable is registry record 44: three fixed ⅓-weight sleeves built by a committed builder against a pinned contract, gated through Stage 6a's shadow concordance. Research continues after go-live (new Phase-4 sprints under the same registry, per §12's Ongoing regime) — but no document says what happens when a new family reaches ADOPT: a new record supersedes 44, the builder contract changes, sleeve weights are re-derived (Phase-5 assembly), and presumably the changed book must re-earn some concordance evidence before live capital runs on it. Undefined, that path either blocks research from ever reaching production or, worse, gets improvised around live capital.
+The deployable is registry record **47** (record 44 until 2026-08-16, re-ratified onto the twelve-leg basket at measured-identical metrics — the model is unchanged, only the traded basket and the record id moved): three fixed ⅓-weight sleeves built by a committed builder against a pinned contract, gated through Stage 6a's shadow concordance. Research continues after go-live (new Phase-4 sprints under the same registry, per §12's Ongoing regime) — but no document says what happens when a new family reaches ADOPT: a new record supersedes 44, the builder contract changes, sleeve weights are re-derived (Phase-5 assembly), and presumably the changed book must re-earn some concordance evidence before live capital runs on it. Undefined, that path either blocks research from ever reaching production or, worse, gets improvised around live capital.
 
 ## Why this matters
 
