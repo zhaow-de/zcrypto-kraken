@@ -422,6 +422,21 @@ def test_ledger_scans_include_yesterday_and_exclude_the_day_before(tmp_path):
     assert open_coids == {"coid-today", "coid-yesterday"}
 
 
+def test_the_re_attach_set_is_every_state_a_possibly_live_order_can_wear(tmp_path):
+    """`open_submitted_rows` is D10's re-attach input, so the invariant is: it returns every state a
+    possibly-live order can wear, and nothing else. `ambiguous` is one of them -- it is the honest
+    state for a submission whose venue outcome is unknown, and the order may be resting right now.
+    Asserted as an exact partition: an omission and an over-inclusion both fail here."""
+    states = ("submitting", "accepted", "ambiguous", "filled", "canceled", "venue_canceled", "rejected")
+    for state in states:
+        append_submitted_row(
+            tmp_path, CYCLE_TS, _row(client_order_id=f"coid-{state}", state=state), verdict=_verdict(), evaluated_at=CYCLE_TS
+        )
+
+    open_coids = {row["client_order_id"] for _, row in open_submitted_rows(tmp_path, CYCLE_TS)}
+    assert open_coids == {"coid-submitting", "coid-accepted", "coid-ambiguous"}
+
+
 def test_a_corrupt_exec_record_makes_the_ledger_scan_raise(tmp_path):
     day = tmp_path / f"{CYCLE_TS:%Y-%m-%d}"
     day.mkdir(parents=True)

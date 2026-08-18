@@ -27,9 +27,12 @@ _ROW_KEYS = frozenset({"plan_id", "intent_index", "client_order_id", "intent", "
 _PLAN_ENTRY_KEYS = frozenset({"plan_id", "received_at", "disposition", "reasons", "plan", "intents"})
 
 _ROW_STATES = frozenset({"submitting", "accepted", "rejected", "venue_canceled", "canceled", "filled", "ambiguous"})
-# A resting order that could still change state on its own (venue fill/cancel) or that this
-# process could still act on -- the re-attach input for D10's reconciliation-on-restart.
-_OPEN_ORDER_STATES = frozenset({"submitting", "accepted"})
+# The re-attach input for D10's reconciliation-on-restart, and the invariant it must satisfy: this
+# set contains EVERY state a possibly-live order can wear. `submitting`/`accepted` are the order
+# resting or on its way; `ambiguous` is a submission or a cancel whose venue outcome this process
+# could not establish -- the order may be resting right now, which is precisely why the state
+# exists, so omitting it would hide the one row a human most needs to see.
+_OPEN_ORDER_STATES = frozenset({"submitting", "accepted", "ambiguous"})
 
 
 def exec_record_path(journal_dir: Path, cycle_ts: datetime) -> Path:

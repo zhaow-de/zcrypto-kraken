@@ -11,9 +11,10 @@ that builds what they carry. Two properties are structural rather than conventio
 
 Refusal by default: every error, ambiguity or absent input on this path ends in "no order". A raise
 becomes a journaled refusal here and never propagates out of a submission site, where an unhandled
-exception has no safe direction. The one thing that is NOT a refusal is a transport failure after
-the write-ahead row landed -- that is `ambiguous`, and saying "refused" there would be a claim this
-process cannot make.
+exception has no safe direction. The one thing that is NOT a refusal is an outcome the venue never
+established -- that is `ambiguous`, and saying "refused" there would be a claim this process cannot
+make. An ambiguous intent's ROW says `ambiguous` too, which is one of
+`execledger._OPEN_ORDER_STATES`: the record has to keep pointing at a possibly-live order.
 
 Every ledger scanner call site is handed an aware-UTC `now` (`_aware_utc`): `execledger._day_dirs`
 takes its two-day window from `now.date()`, so a caller-tz `now` would slide the dedup window off
@@ -57,6 +58,12 @@ _QUOTE_WAIT = timedelta(seconds=30)
 # two marker tuples classify the venue's own error text on an order event.
 _QUOTE_SILENCE = timedelta(seconds=30)
 _TIME_BOX = timedelta(minutes=15)
+# A liveness bound on this process's OWN bookkeeping, not a trading behaviour: how long a cancel or
+# an IOC may sit without the venue answering either way. Past it the intent is ambiguous, because an
+# unanswered order is exactly an unknown venue outcome -- and without the bound the intent parks
+# forever, which leaves `self._plan` non-None and makes the executor ignore every later plan file
+# until a restart: a dead engine that looks alive.
+_ACK_WAIT = timedelta(seconds=30)
 _MAX_REPRICES = 5
 _MAX_IOC_ATTEMPTS = 3
 _REST_CANCEL_OFFSET = 0.05
@@ -196,6 +203,9 @@ class _ActiveIntent:
     cancel_requested: bool = False
     falling_back: bool = False
     revoke_reasons: tuple[str, ...] = ()
+    # When the venue owes an answer by, for the phases that are waiting on one (`cancelling`,
+    # `ioc`). None in the phases where nothing is outstanding.
+    phase_deadline: datetime | None = None
 
 
 class ProbeExecutor:
@@ -248,7 +258,10 @@ class ProbeExecutor:
         """
         verdict = self._evaluate(self._now())
         if not _level_permits(verdict.level, ctx.intent):
-            self._journal_intent(ctx.index, "refused", verdict.reasons)
+            # `ctx.filled` on every journal call here, not 0.0: `update_plan_intent` SETS the field
+            # rather than accumulating, and a resubmission refused after earlier orders already
+            # filled would otherwise erase what was really bought from the operator's summary.
+            self._journal_intent(ctx.index, "refused", verdict.reasons, ctx.filled)
             _inc_order("refused")
             return "refused"
 
@@ -267,7 +280,7 @@ class ProbeExecutor:
             append_submitted_row(self._journal_dir, self._plan_cycle_ts, row, verdict=verdict, evaluated_at=self._now())
         except Exception:
             logger.critical("write-ahead row for %s could not be stored -- refusing to submit", client_order_id, exc_info=True)
-            if not self._journal_intent(ctx.index, "refused", ("exec ledger write failed",)):
+            if not self._journal_intent(ctx.index, "refused", ("exec ledger write failed",), ctx.filled):
                 # Not even the refusal could be recorded: the ledger is down, so nothing may trade.
                 logger.critical("the exec ledger is unavailable -- no order may be submitted while it stays down")
             _inc_order("refused")
@@ -277,13 +290,14 @@ class ProbeExecutor:
         try:
             self._client.submit_order(order, params=params)
         except Exception:
-            # Exactly one attempt: no retry. The row is already on disk saying `submitting`, which
-            # is the honest state -- this process cannot tell whether the venue received the order,
-            # and `submitting` is an OPEN state, so re-attach still finds a possibly-live order
-            # (the `ambiguous` row state would hide it). Calling this "refused" would assert no
-            # order exists, which is precisely what is unknown.
+            # Exactly one attempt: no retry. The row is marked `ambiguous` -- the honest state, since
+            # this process cannot tell whether the venue received the order -- and `ambiguous` is one
+            # of `execledger._OPEN_ORDER_STATES`, so re-attach still finds a possibly-live order.
+            # Calling this "refused" would assert no order exists, which is precisely what is
+            # unknown.
             logger.critical("submit of %s raised -- outcome unknown, the write-ahead row stands", client_order_id, exc_info=True)
-            self._journal_intent(ctx.index, "ambiguous", ("submit raised -- venue outcome unknown",))
+            self._mark_ambiguous(ctx, "submit raised")
+            self._journal_intent(ctx.index, "ambiguous", ("submit raised -- venue outcome unknown",), ctx.filled)
             _inc_order("ambiguous")
             return "ambiguous"
         _inc_order("submitted")
@@ -402,6 +416,10 @@ class ProbeExecutor:
                 self._finish_active("refused", (f"no quote within {int(_QUOTE_WAIT.total_seconds())}s",))
             return
         if active.phase != "resting":
+            # `cancelling` and `ioc` are both waiting on the venue. An answer that never comes is an
+            # unknown outcome, and the intent takes the same ambiguity exit as any other.
+            if active.phase_deadline is not None and now > active.phase_deadline:
+                self._strand_ambiguous(active, f"no venue answer within {int(_ACK_WAIT.total_seconds())}s of the {active.phase}")
             return
 
         # The kill file, a disarm, the restart hold latching, and the venue leaving online all reach
@@ -418,7 +436,7 @@ class ProbeExecutor:
             # A rest-cancel drill must never execute: the time-box cancels it and stops there.
             active.falling_back = active.intent.mode != "rest-cancel"
             active.revoke_reasons = ("time box elapsed",)
-            active.phase = "cancelling"
+            self._enter(active, "cancelling")
             self._cancel(active)
 
     def _start_intent(self, now: datetime) -> None:
@@ -595,12 +613,19 @@ class ProbeExecutor:
             self._finish_active()
             return
         active.target_qty = active.order_qty
-        active.phase = "resting"
+        self._enter(active, "resting")
 
     def _reprice(self, active: _ActiveIntent) -> None:
         """Both crossing surfaces funnel here: the venue's synchronous post-only rejection and its
         accept-then-cancel. The counter counts RESUBMISSIONS -- the first submission was never a
         reprice -- so `_MAX_REPRICES` of them happen and the next one refuses."""
+        if active.cancel_requested:
+            # A cancel is already out. Whatever asked for it -- the kill file, the hold, a dead
+            # quote feed, the time-box -- said stop, and a reprice would put a brand-new order on
+            # exactly the book the revoke declared untradeable. Guarded HERE so both crossing
+            # surfaces are covered by one check rather than each remembering.
+            self._finish_revoked(active)
+            return
         active.reprices += 1
         if active.reprices > _MAX_REPRICES:
             self._finish_active("unfilled", ("reprice budget exhausted",), active.filled)
@@ -645,7 +670,22 @@ class ProbeExecutor:
         if result == "refused":
             self._finish_active(None, (), active.filled)
             return
-        active.phase = next_phase
+        self._enter(active, next_phase)
+
+    def _enter(self, active: _ActiveIntent, phase: str) -> None:
+        """Move to `phase`, arming the venue-answer deadline for the two phases that wait on one and
+        clearing it everywhere else -- a stale deadline would strand an intent that is not waiting."""
+        active.phase = phase
+        active.phase_deadline = self._now() + _ACK_WAIT if phase in ("cancelling", "ioc") else None
+
+    def _strand_ambiguous(self, active: _ActiveIntent, reason: str) -> None:
+        """The one exit for an outcome the venue never established: journal the intent ambiguous and
+        halt the plan. Nothing is submitted, and the executor is free to pick up a later plan --
+        parking the intent instead would leave `self._plan` set and silently ignore every one."""
+        logger.critical("intent %d of plan %s: %s -- the plan stops here", active.index, self._plan.plan_id, reason)
+        self._journal_intent(active.index, "ambiguous", (reason,), active.filled)
+        _inc_order("ambiguous")
+        self._drop_remainder_after_ambiguity(active)
 
     def _revoke(self, active: _ActiveIntent, reasons) -> None:
         """Pull the resting order and stop: NO fallback follows a revocation. Whatever revoked it --
@@ -655,7 +695,7 @@ class ProbeExecutor:
         active.cancel_requested = True
         active.falling_back = False
         active.revoke_reasons = tuple(reasons)
-        active.phase = "cancelling"
+        self._enter(active, "cancelling")
         self._cancel(active)
 
     def _cancel(self, active: _ActiveIntent) -> None:
@@ -690,13 +730,17 @@ class ProbeExecutor:
             payload["reason"] = str(reason)
 
         if name == "OrderAccepted":
+            # Deliberately does NOT set `phase = "resting"`. The submission paths already did, and
+            # the adapter acknowledges an IOC exactly like a GTC: forcing `resting` here would put
+            # a fallback attempt back in the reprice regime, so its unfilled remainder returning as
+            # an unrequested cancel would read as the crossing surface and submit a new post-only
+            # GTC after the time-box had already expired.
             self._update_row(active, state="accepted", event=payload)
             _inc_order("accepted")
-            active.phase = "resting"
             if active.intent.mode == "rest-cancel":
                 # The drill's whole shape: rest, be acknowledged, come straight back off the book.
                 active.cancel_requested = True
-                active.phase = "cancelling"
+                self._enter(active, "cancelling")
                 self._cancel(active)
             return
 
@@ -717,6 +761,21 @@ class ProbeExecutor:
 
         if name in ("OrderCanceled", "OrderExpired"):
             self._on_cancel_ack(active, payload)
+            return
+
+        if name == "OrderCancelRejected":
+            # The venue positively says the cancel did NOT take, so the order may still rest --
+            # while whatever asked for the cancel (a kill file, the time-box) says it must not.
+            # Nothing further may be submitted against a position this process can no longer
+            # describe. The row keeps its OPEN state; only the intent is journaled.
+            logger.critical(
+                "cancel of %s was REJECTED by the venue -- the order may still rest; the plan stops here",
+                active.client_order_id,
+            )
+            self._update_row(active, event=payload)
+            self._journal_intent(active.index, "ambiguous", (f"cancel rejected: {reason}",), active.filled)
+            _inc_order("ambiguous")
+            self._drop_remainder_after_ambiguity(active)
             return
 
         self._update_row(active, event=payload)  # recorded as evidence, no state claim
@@ -761,9 +820,7 @@ class ProbeExecutor:
             if active.intent.mode == "rest-cancel":
                 self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
                 return
-            index = active.index
-            self._finish_active("revoked", active.revoke_reasons, active.filled)
-            self._halt_plan(index, f"not run -- intent {index} was revoked mid-flight")
+            self._finish_revoked(active)
             return
 
         if active.phase == "ioc":
@@ -788,11 +845,19 @@ class ProbeExecutor:
             "liquidity": str(event.liquidity_side),
             "trade_id": str(event.trade_id),
         }
-        order_done = active.order_filled >= active.order_qty
+        # Both completion tests carry a one-lot-step tolerance, because both compare a SUM of
+        # per-fill floats against a single sized float: 0.1 + 0.7 == 0.7999999999999999, an ulp
+        # under the 0.8 that was ordered. Exact tests strand a fully-filled intent on a dead order
+        # -- the time-box then cancels it and the venue answers a cancel-rejection. A remainder
+        # below one lot step could never be ordered anyway, which is the same judgment the
+        # BelowMinimum path already makes; the tolerance is the venue's own granularity, not an
+        # invented epsilon.
+        lot_step = active.constraints.lot_step
+        order_done = active.order_qty - active.order_filled < lot_step
         self._update_row(active, state="filled" if order_done else "accepted", event=payload, add_filled_qty=qty)
         if order_done:
             _inc_order("filled")
-        if active.target_qty - active.filled <= 0:
+        if active.target_qty - active.filled < lot_step:
             self._finish_active("filled", (), active.filled)
         # A partial on a resting GTC keeps resting: the remainder is still working at the touch.
 
@@ -850,6 +915,15 @@ class ProbeExecutor:
             return False
         return True
 
+    def _mark_ambiguous(self, active: _ActiveIntent, what: str) -> None:
+        """Flip the row to the one OPEN state that says the venue outcome is unknown. Wrapped
+        because this is a SECOND ledger write and its failure must not cost the refusal journaling
+        that follows it."""
+        try:
+            self._update_row(active, state="ambiguous", event={"type": "ambiguous", "at": self._now().isoformat(), "what": what})
+        except Exception:
+            logger.critical("could not mark %s ambiguous -- its row stands as it was", active.client_order_id, exc_info=True)
+
     def _update_row(
         self, active: _ActiveIntent, *, state: str | None = None, event: dict | None = None, add_filled_qty: float = 0.0
     ) -> None:
@@ -875,9 +949,15 @@ class ProbeExecutor:
             self._journal_intent(active.index, outcome, reasons, filled_qty)
             if outcome == "refused":
                 _inc_order("refused")
-        active.phase = "done"
+        self._enter(active, "done")
         self._active = None
         self._index += 1
+
+    def _finish_revoked(self, active: _ActiveIntent) -> None:
+        """End a revoked intent and stop the plan -- whatever revoked this one applies to the rest."""
+        index = active.index
+        self._finish_active("revoked", active.revoke_reasons, active.filled)
+        self._halt_plan(index, f"not run -- intent {index} was revoked mid-flight")
 
     def _halt_plan(self, from_index: int, reason: str) -> None:
         """Stop the plan after `from_index`: journal every later intent as refused, naming why, and
@@ -890,7 +970,7 @@ class ProbeExecutor:
         self._index = 0
 
     def _drop_remainder_after_ambiguity(self, active: _ActiveIntent) -> None:
-        """An ambiguous submit ends the WHOLE plan, not just its intent (owner ruling).
+        """An ambiguous outcome ends the WHOLE plan, not just its intent (owner ruling).
 
         The order may be live at the venue, so the account's real position and free balance are
         unknown -- and the notional cap and margin floor that authorized every LATER intent in this
@@ -899,9 +979,10 @@ class ProbeExecutor:
         forbids. Rung-1 plans carry one or two intents and the operator is attended, so the cost of
         stopping is a re-drop after reading the venue.
 
-        The ambiguous intent itself is already journaled when this is reached -- by `_submit` for a
-        transport failure (leaving its row `submitting`, an OPEN state reconciliation must keep
-        seeing) or by `_on_rejected` for an unclassifiable rejection.
+        Four callers, one meaning -- "this process cannot say what reached the venue": a raising
+        submit, an unclassifiable rejection, a cancel the venue rejected, and a cancel or IOC it
+        never answered. Each has already journaled its own intent by the time it gets here, and each
+        leaves the row in one of `execledger._OPEN_ORDER_STATES` so re-attach still sees the order.
         """
         try:
             self._client.unsubscribe_quote_ticks(active.instrument_id)

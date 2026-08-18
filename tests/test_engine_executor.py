@@ -14,7 +14,7 @@ import cli.engine.executor as executor_module
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
-from cli.engine.execledger import append_plan_entry, exec_record_path, read_exec_record
+from cli.engine.execledger import append_plan_entry, exec_record_path, open_submitted_rows, read_exec_record
 from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder
 from cli.engine.probeplan import PLAN_FILENAME
@@ -345,14 +345,19 @@ def _advance_ticks(ex, *, minutes):
         ex.on_timer(NOW + timedelta(seconds=5 * step))
 
 
-def _advance_with_quotes(ex, clock, *, minutes, bid=30000.0, ask=30001.0):
+def _advance_with_quotes(ex, client, clock, *, minutes, bid=30000.0, ask=30001.0):
     """Ticks carrying a live quote on every one. The time-box (15 min) can only be reached this way:
-    quote silence (30 s) would otherwise revoke the resting order first."""
+    quote silence (30 s) would otherwise revoke the resting order first.
+
+    Stops the moment a cancel goes out, so each test delivers the venue's answer itself -- ticking
+    on past an unanswered cancel is the ack watchdog's subject, not this helper's."""
     end = clock.now + timedelta(minutes=minutes)
     while clock.now < end:
         clock.now += timedelta(seconds=10)
         ex.on_quote(_quote(bid=bid, ask=ask))
         ex.on_timer(clock.now)
+        if client.canceled:
+            return
 
 
 @pytest.fixture(autouse=True)
@@ -579,10 +584,11 @@ def test_a_failing_ledger_write_refuses_the_submission_and_the_client_is_never_c
     assert metrics.orders == ["refused"]
 
 
-def test_a_raising_submit_leaves_the_write_ahead_row_and_journals_the_intent_ambiguous(tmp_path):
+def test_a_raising_submit_marks_the_row_ambiguous_and_leaves_it_in_the_re_attach_set(tmp_path):
     """The transport failing AFTER the write-ahead row is the case the row exists for: the process
-    cannot know whether the venue got it, so the row stays `submitting` and the intent is journaled
-    ambiguous -- never refused (which would claim no order exists) and never propagated."""
+    cannot know whether the venue got it, so the row says `ambiguous` -- the honest state, and an
+    OPEN one, so re-attach still finds a possibly-live order. Never `refused`, which would claim no
+    order exists, and never propagated."""
     client = StubClient(submit_raises=RuntimeError("connection reset"))
     ex = _executor(tmp_path, client=client)
     _drop_plan(tmp_path, _plan_dict())
@@ -592,7 +598,8 @@ def test_a_raising_submit_leaves_the_write_ahead_row_and_journals_the_intent_amb
 
     assert len(client.submitted) == 1  # exactly one -- a retry wrapped around submit_order is banned
     row = _record(tmp_path)["submitted"][0]
-    assert row["state"] == "submitting"
+    assert row["state"] == "ambiguous"
+    assert [r["client_order_id"] for _, r in open_submitted_rows(tmp_path / "journal", NOW)] == ["O-1"]
     assert _intent_entry(tmp_path, 0)["outcome"] == "ambiguous"
 
 
@@ -616,8 +623,9 @@ def test_an_ambiguous_submit_drops_the_rest_of_the_plan(tmp_path):
     second = _intent_entry(tmp_path, 1)
     assert second["outcome"] == "refused"
     assert any("ambiguous" in r for r in second["reasons"])
-    # The ambiguous intent's row stays open, so re-attach still sees a possibly-live order.
-    assert _record(tmp_path)["submitted"][0]["state"] == "submitting"
+    # The ambiguous intent's row says so, and `ambiguous` is an OPEN state -- re-attach still sees
+    # a possibly-live order.
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"
 
 
 def test_a_failing_plan_journal_leaves_the_file_and_runs_nothing(tmp_path, monkeypatch):
@@ -1036,7 +1044,7 @@ def test_the_time_box_cancels_then_fires_an_ioc_at_the_opposite_touch(tmp_path):
     ex.on_order_event(OrderAccepted(client.last_order_id))
     resting_order = client.submitted[0][0]
 
-    _advance_with_quotes(ex, clock, minutes=16)
+    _advance_with_quotes(ex, client, clock, minutes=16)
     assert client.canceled == [resting_order]
     assert len(client.submitted) == 1  # the cancel is not a submission -- the ack is what fires the IOC
 
@@ -1061,7 +1069,7 @@ def test_a_partial_fill_then_the_time_box_sizes_the_ioc_to_the_remainder(tmp_pat
     ex.on_order_event(_fill(client.last_order_id, 0.4, px=30.0))
     assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.4
 
-    _advance_with_quotes(ex, clock, minutes=16, bid=30.0, ask=30.05)
+    _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
 
     assert len(client.submitted) == 2
@@ -1071,7 +1079,7 @@ def test_a_partial_fill_then_the_time_box_sizes_the_ioc_to_the_remainder(tmp_pat
 def test_three_unfilled_iocs_end_the_intent_unfilled_after_exactly_four_submissions(tmp_path):
     ex, client, clock = _resting_executor(tmp_path)
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    _advance_with_quotes(ex, clock, minutes=16)
+    _advance_with_quotes(ex, client, clock, minutes=16)
 
     for _ in range(3):  # the time-box cancel ack, then each IOC's unfilled remainder coming back
         ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
@@ -1088,7 +1096,7 @@ def test_a_remainder_below_ordermin_ends_the_intent_partial_with_no_further_orde
     ex.on_order_event(OrderAccepted(client.last_order_id))
     ex.on_order_event(_fill(client.last_order_id, 0.00095))  # of a 0.001 target: 5e-05 left, ordermin is 1e-04
 
-    _advance_with_quotes(ex, clock, minutes=16)
+    _advance_with_quotes(ex, client, clock, minutes=16)
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
 
     assert len(client.submitted) == 1
@@ -1122,7 +1130,9 @@ def test_a_kill_file_mid_rest_cancels_with_no_fallback_and_halts_the_plan(tmp_pa
 
 
 def test_quote_silence_past_the_window_cancels_and_halts_the_plan(tmp_path):
-    ex, client, clock = _resting_executor(tmp_path)
+    """The second intent is what makes the halt half of this name testable: on a single-intent plan
+    there is no later intent for a missing halt to wrongly run."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
     ex.on_order_event(OrderAccepted(client.last_order_id))
 
     clock.now = NOW + timedelta(seconds=31)
@@ -1134,6 +1144,11 @@ def test_quote_silence_past_the_window_cancels_and_halts_the_plan(tmp_path):
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "revoked"
     assert intent["reasons"] == ["quote_silence"]
+
+    clock.now = NOW + timedelta(seconds=36)
+    ex.on_timer(clock.now)
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]  # the plan halted: intent 1 never subscribed
+    assert _intent_outcome(tmp_path, 1) == "refused"
 
 
 def test_rest_cancel_mode_rests_five_percent_passive_and_never_executes(tmp_path):
@@ -1160,7 +1175,7 @@ def test_a_rest_cancel_drill_that_reaches_the_time_box_still_never_falls_back(tm
     a marketable IOC -- from an intent whose entire point is that it must not execute."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-cancel")])
 
-    _advance_with_quotes(ex, clock, minutes=16)
+    _advance_with_quotes(ex, client, clock, minutes=16)
     assert client.canceled == [client.submitted[0][0]]
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
 
@@ -1190,10 +1205,198 @@ def test_a_kraken_coded_rejection_is_terminal_with_no_retry(tmp_path):
     """A positive venue verdict -- the order does not exist and never will. No reprice, no IOC."""
     ex, client, clock = _resting_executor(tmp_path)
     ex.on_order_event(_named("OrderRejected", client_order_id=client.last_order_id, reason="EOrder:Insufficient funds"))
-    _advance_with_quotes(ex, clock, minutes=16)
+    _advance_with_quotes(ex, client, clock, minutes=16)
 
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
     assert intent["outcome"] == "rejected"
     assert intent["reasons"] == ["EOrder:Insufficient funds"]
     assert _record(tmp_path)["submitted"][0]["state"] == "rejected"
+
+
+# --- the ladder's fix round -----------------------------------------------------------------------
+
+
+def test_an_accepted_ioc_coming_back_fires_the_next_ioc_never_a_new_gtc(tmp_path):
+    """The adapter acknowledges an IOC like any other order. If that acknowledgment put the intent
+    back in the resting regime, the IOC's unfilled remainder would read as the venue-cancel crossing
+    surface: a reprice burned and a post-only GTC submitted after the time-box already expired --
+    up to 7 orders where the design allows 4."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert client.submitted[1][0].time_in_force == TimeInForce.IOC
+
+    ex.on_order_event(OrderAccepted(client.last_order_id))  # the venue acknowledges the IOC
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+
+    assert len(client.submitted) == 3
+    third, _ = client.submitted[2]
+    assert third.time_in_force == TimeInForce.IOC and third.post_only is False
+
+
+def test_a_fill_pair_that_sums_an_ulp_short_still_terminates_the_intent(tmp_path):
+    """0.1 + 0.7 == 0.7999999999999999 -- an ulp under the 0.8 that was ordered. An exact
+    `filled >= qty` test strands a fully-filled intent on a dead order forever: the time-box then
+    cancels it and the venue answers a cancel-rejection. A remainder below one lot step can never be
+    ordered anyway, which is the judgment the BelowMinimum path already makes."""
+    assert 0.1 + 0.7 < 0.8  # the defect this pins, spelled out
+    ex, client, clock = _resting_executor(tmp_path, bid=37.5, ask=37.6)
+    assert client.submitted[0][0].quantity == 0.8  # 30 EUR / 37.50
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    ex.on_order_event(_fill(client.last_order_id, 0.1, px=37.5))
+    ex.on_order_event(_fill(client.last_order_id, 0.7, px=37.5))
+
+    assert _record(tmp_path)["submitted"][0]["state"] == "filled"
+    assert _intent_outcome(tmp_path) == "filled"
+
+
+def test_a_cancel_rejection_parks_the_intent_ambiguous_and_halts_the_plan(tmp_path):
+    """The venue positively says the cancel failed, so the order may still rest. Nothing may be
+    submitted against a position this process can no longer describe."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled
+
+    ex.on_order_event(_named("OrderCancelRejected", client_order_id=client.last_order_id, reason="EOrder:Unknown order"))
+
+    assert len(client.submitted) == 1
+    assert _intent_outcome(tmp_path) == "ambiguous"
+    # The order may still rest, so the row stays OPEN for re-attach -- never a terminal state.
+    assert _record(tmp_path)["submitted"][0]["state"] == "accepted"
+    assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_a_cancel_the_venue_never_answers_ends_ambiguous_and_frees_the_engine(tmp_path):
+    """Without a bound on our own bookkeeping the intent parks forever -- and the plan pointer stays
+    non-None, so the executor silently ignores EVERY later plan file until a process restart: a dead
+    engine that looks alive. The second half of this test is that claim, constructed."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence revokes -- and the venue never answers the cancel
+    assert client.canceled
+
+    clock.now = NOW + timedelta(seconds=62)
+    ex.on_timer(clock.now)
+
+    assert len(client.submitted) == 1
+    assert _intent_outcome(tmp_path) == "ambiguous"
+
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=clock.now - timedelta(minutes=1)))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert _record(tmp_path, clock.now)["plans"][-1]["plan_id"] == "p-2"
+
+
+def test_an_ioc_the_venue_never_answers_ends_ambiguous_rather_than_parking_the_plan(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 2  # the IOC is out at the venue
+
+    clock.now += timedelta(seconds=31)
+    ex.on_timer(clock.now)
+
+    assert len(client.submitted) == 2
+    assert _intent_outcome(tmp_path) == "ambiguous"
+
+
+def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_path):
+    """`update_plan_intent` SETS filled_qty rather than accumulating, so a resubmission refused at
+    the gate would otherwise overwrite the intent's summary with 0.0 -- the operator's summary
+    surface saying nothing was bought when 0.4 was."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_fill(client.last_order_id, 0.4, px=30.0))
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))  # the venue's own cancel
+
+    assert len(client.submitted) == 1  # the gate refused the reprice
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert intent["filled_qty"] == 0.4
+
+
+def test_a_rejection_arriving_during_a_revoke_terminates_rather_than_repricing(tmp_path):
+    """The revoke declared this book untradeable; a post-only rejection is the reprice trigger, so
+    repricing here would put a brand-new order on exactly that book."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_quote(_quote())
+    ex.on_timer(clock.now)
+    assert client.canceled
+
+    ex.on_order_event(
+        _named("OrderRejected", client_order_id=client.last_order_id, reason="POST_ONLY_REJECTED: would cross", due_post_only=True)
+    )
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "revoked"
+    assert "kill_switch" in intent["reasons"]
+    assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_a_disposal_under_the_cap_alone_is_refused_once_the_plans_declared_notional_is_added(tmp_path):
+    """Cumulation, not the single-intent breach: 60.00 EUR declared plus 0.0015 BTC at the 30001 ask
+    (45.00 EUR) is 105.00 against the 100 EUR cap, and neither half breaches it alone."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(
+        tmp_path,
+        _plan_dict(
+            intents=[
+                _intent(notional_eur=60.0),
+                _intent(symbol="ETH/EUR", side="sell", action="close", notional_eur=None, qty=0.0015),
+            ]
+        ),
+    )
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_fill(client.last_order_id, client.submitted[0][0].quantity))
+    assert _intent_outcome(tmp_path, 0) == "filled"
+
+    ex.on_timer(NOW + timedelta(seconds=5))
+    ex.on_quote(_quote(instrument_id="ETH/EUR.KRAKEN"))
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 1)
+    assert intent["outcome"] == "refused"
+    assert any("exceeds the cap" in r for r in intent["reasons"])
+
+
+def test_a_second_disposal_cumulates_against_the_first_ones_resolved_notional(tmp_path):
+    """Two disposals the plan wall had to count as 0.00 EUR each: 0.002 at the fixture ask is 60.00
+    EUR apiece, 120.00 together. The first is under the cap and submits; the second may not."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    disposal = dict(side="sell", action="close", notional_eur=None, qty=0.002)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(**disposal), _intent(symbol="ETH/EUR", **disposal)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    assert len(client.submitted) == 1  # 60.00 EUR alone clears the cap
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_fill(client.last_order_id, 0.002))
+
+    ex.on_timer(NOW + timedelta(seconds=5))
+    ex.on_quote(_quote(instrument_id="ETH/EUR.KRAKEN"))
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 1)
+    assert intent["outcome"] == "refused"
+    assert any("exceeds the cap" in r for r in intent["reasons"])
