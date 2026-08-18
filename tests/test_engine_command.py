@@ -1006,16 +1006,30 @@ def test_probe_plan_check_refuses_a_notional_below_costmin(tmp_path, monkeypatch
     assert "costmin" in _output(result)
 
 
-def test_probe_plan_check_refuses_a_qty_below_ordermin_and_off_the_lot_step(tmp_path, monkeypatch):
+def test_probe_plan_check_refuses_a_qty_below_ordermin(tmp_path, monkeypatch):
     _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR", ordermin=0.5, lot_step=0.1)})
-    plan = _write_plan(tmp_path, [_intent(action="close", side="sell", notional_eur=None, qty=0.25)])
+    plan = _write_plan(tmp_path, [_intent(action="close", side="sell", notional_eur=None, qty=0.2)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 1
+    assert "is below ordermin" in _output(result)
+
+
+def test_probe_plan_check_refuses_a_qty_off_the_lot_step(tmp_path, monkeypatch):
+    # Deliberately ABOVE ordermin, so only the alignment check can produce the refusal -- with a qty
+    # that fails both, the exit code and the printed "lot step <n>" floor line are identical whether
+    # the alignment check runs or not, and the test proves nothing (measured: that shape survived a
+    # mutation disabling the check entirely).
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR", ordermin=0.5, lot_step=0.1)})
+    plan = _write_plan(tmp_path, [_intent(action="close", side="sell", notional_eur=None, qty=0.65)])
 
     result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
 
     out = _output(result)
     assert result.exit_code == 1
-    assert "ordermin" in out
-    assert "lot step" in out
+    assert "is not a multiple of the 0.1 lot step" in out
+    assert "below ordermin" not in out
 
 
 def test_probe_plan_check_accepts_a_lot_aligned_qty_disposal(tmp_path, monkeypatch):
