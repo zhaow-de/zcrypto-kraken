@@ -211,19 +211,22 @@ class ProbeExecutor:
 
     # --- the chokepoint ------------------------------------------------------------------------
 
-    def _submit(self, ctx: _ActiveIntent, order, params) -> bool:
+    def _submit(self, ctx: _ActiveIntent, order, params) -> str:
         """THE chokepoint: the only path from this repository to a live order.
 
         Takes no verdict and reads no stored one -- it evaluates the gate itself, first, so there is
         no holdable token to go stale between a caller's decision and the venue call. Then it writes
-        the forensic row and only then submits. Returns True iff `submit_order` was reached; every
-        False path has already journaled its own outcome and counted it.
+        the forensic row and only then submits, exactly once -- there is no retry on this path.
+
+        Returns the intent's outcome: `"submitted"`, `"refused"` (no order exists) or `"ambiguous"`
+        (the venue may hold one). Both non-submitted paths have already journaled and counted
+        themselves; the caller decides what happens to the rest of the plan.
         """
         verdict = self._evaluate(self._now())
         if not _level_permits(verdict.level, ctx.intent):
             self._journal_intent(ctx.index, "refused", verdict.reasons)
             _inc_order("refused")
-            return False
+            return "refused"
 
         client_order_id = str(order.client_order_id)
         row = {
@@ -244,20 +247,23 @@ class ProbeExecutor:
                 # Not even the refusal could be recorded: the ledger is down, so nothing may trade.
                 logger.critical("the exec ledger is unavailable -- no order may be submitted while it stays down")
             _inc_order("refused")
-            return False
+            return "refused"
 
         ctx.client_order_id = client_order_id
         try:
             self._client.submit_order(order, params=params)
         except Exception:
-            # The row is already on disk saying `submitting`, which is the honest state: this
-            # process cannot tell whether the venue received the order. Reconciliation owns it from
-            # here; calling it "refused" would assert no order exists.
+            # Exactly one attempt: no retry. The row is already on disk saying `submitting`, which
+            # is the honest state -- this process cannot tell whether the venue received the order,
+            # and `submitting` is an OPEN state, so re-attach still finds a possibly-live order
+            # (the `ambiguous` row state would hide it). Calling this "refused" would assert no
+            # order exists, which is precisely what is unknown.
             logger.critical("submit of %s raised -- outcome unknown, the write-ahead row stands", client_order_id, exc_info=True)
             self._journal_intent(ctx.index, "ambiguous", ("submit raised -- venue outcome unknown",))
-            return False
+            _inc_order("ambiguous")
+            return "ambiguous"
         _inc_order("submitted")
-        return True
+        return "submitted"
 
     # --- the timer -----------------------------------------------------------------------------
 
@@ -469,7 +475,11 @@ class ProbeExecutor:
             "leverage": intent.leverage,
         }
         params = {"leverage": intent.leverage} if intent.leverage is not None else None
-        if not self._submit(active, order, params):
+        outcome = self._submit(active, order, params)
+        if outcome == "ambiguous":
+            self._drop_remainder_after_ambiguity(active)
+            return
+        if outcome == "refused":
             self._finish_active()
             return
         active.phase = "resting"
@@ -599,6 +609,37 @@ class ProbeExecutor:
                 _inc_order("refused")
         self._active = None
         self._index += 1
+
+    def _drop_remainder_after_ambiguity(self, active: _ActiveIntent) -> None:
+        """An ambiguous submit ends the WHOLE plan, not just its intent (owner ruling).
+
+        The order may be live at the venue, so the account's real position and free balance are
+        unknown -- and the notional cap and margin floor that authorized every LATER intent in this
+        plan were computed against a venue state that may no longer hold. Submitting the next one
+        would be authorizing an order on unknown state, which is exactly what refusal by default
+        forbids. Rung-1 plans carry one or two intents and the operator is attended, so the cost of
+        stopping is a re-drop after reading the venue.
+
+        `_submit` has already journaled the ambiguous intent and left its row `submitting`, which is
+        an OPEN state -- reconciliation must keep seeing a possibly-live order.
+        """
+        try:
+            self._client.unsubscribe_quote_ticks(active.instrument_id)
+        except Exception:
+            logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
+        reason = f"not run -- intent {active.index} ended ambiguous, so the venue state this plan was authorized against is unknown"
+        for index in range(active.index + 1, len(self._plan.intents)):
+            self._journal_intent(index, "refused", (reason,))
+            _inc_order("refused")
+        logger.critical(
+            "plan %s dropped after intent %d ended ambiguous -- %d later intent(s) will not run",
+            self._plan.plan_id,
+            active.index,
+            len(self._plan.intents) - active.index - 1,
+        )
+        self._active = None
+        self._plan = None
+        self._index = 0
 
     def _delete(self, path: Path) -> None:
         try:

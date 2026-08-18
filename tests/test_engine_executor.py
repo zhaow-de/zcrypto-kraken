@@ -301,15 +301,37 @@ def _reset_executor_hooks():
 
 
 @pytest.fixture(autouse=True)
-def _the_tick_backstop_never_fires(caplog):
+def _the_tick_backstop_never_fires():
     """`on_timer`'s catch-all is a backstop for the unforeseen, not a mechanism any test may lean
     on: every refusal below has its own named path. It masked a missing method during development
     -- twenty-six tests stayed green while an intent silently never refused -- so a test that goes
-    green WHILE the backstop fires now fails instead."""
-    caplog.set_level(logging.ERROR, logger="zcrypto.engine.executor")
-    yield
-    swallowed = [r.getMessage() for r in caplog.records if "dropping the running plan" in r.getMessage()]
-    assert swallowed == []
+    green WHILE the backstop fires fails instead.
+
+    Deliberately NOT `caplog`, which is blind here for two independent reasons. Its handler sits on
+    the ROOT logger, and `cli.logging.config.configure` sets `zcrypto.propagate = False` -- so every
+    record stops arriving as soon as any CliRunner test has run earlier in the session (and
+    `tests/test_engine_command.py` sorts ahead of this file). And `caplog.records` is PHASE-scoped:
+    pytest calls `caplog_handler.reset()` entering each phase, so a teardown-time read returns a
+    list emptied moments earlier -- vacuous even when this file runs alone. An own handler on the
+    executor's own logger, with the logger's level forced for the duration, dodges both.
+    """
+    records: list[logging.LogRecord] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    log = logging.getLogger("zcrypto.engine.executor")
+    handler = _Collect(level=logging.ERROR)
+    previous_level = log.level
+    log.setLevel(logging.DEBUG)  # a logger's own level wins over any ancestor a CLI test configured
+    log.addHandler(handler)
+    try:
+        yield
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(previous_level)
+    assert [r.getMessage() for r in records if "dropping the running plan" in r.getMessage()] == []
 
 
 class RecordingMetrics:
@@ -502,9 +524,52 @@ def test_a_raising_submit_leaves_the_write_ahead_row_and_journals_the_intent_amb
     ex.on_timer(NOW)
     ex.on_quote(_quote())
 
+    assert len(client.submitted) == 1  # exactly one -- a retry wrapped around submit_order is banned
     row = _record(tmp_path)["submitted"][0]
     assert row["state"] == "submitting"
     assert _intent_entry(tmp_path, 0)["outcome"] == "ambiguous"
+
+
+def test_an_ambiguous_submit_drops_the_rest_of_the_plan(tmp_path):
+    """Owner ruling: an ambiguous outcome stops the plan. The order may be live, so the position and
+    free balance the notional cap and margin floor authorized every LATER intent against are
+    unknown -- and authorizing an order on unknown state is what refusal by default forbids. The
+    remaining intents are journaled naming the ambiguous predecessor, so the ledger says why they
+    never ran."""
+    client = StubClient(submit_raises=RuntimeError("connection reset"))
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    ex.on_timer(NOW + timedelta(seconds=5))  # the tick that would otherwise start intent 1
+
+    assert len(client.submitted) == 1
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]  # intent 1 never even subscribed
+    assert _intent_entry(tmp_path, 0)["outcome"] == "ambiguous"
+    second = _intent_entry(tmp_path, 1)
+    assert second["outcome"] == "refused"
+    assert any("ambiguous" in r for r in second["reasons"])
+    # The ambiguous intent's row stays open, so re-attach still sees a possibly-live order.
+    assert _record(tmp_path)["submitted"][0]["state"] == "submitting"
+
+
+def test_a_failing_plan_journal_leaves_the_file_and_runs_nothing(tmp_path, monkeypatch):
+    """Journal first, delete second, run third. A plan that cannot be journaled is neither deleted
+    nor run -- the next tick re-picks the file, and only a working ledger ever lets it through."""
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    path = _drop_plan(tmp_path, _plan_dict())
+    monkeypatch.setattr(executor_module, "append_plan_entry", _raise)
+
+    ex.on_timer(NOW)
+
+    assert path.exists()
+    assert client.subscribed == [] and client.submitted == []
 
 
 # --- venue truth --------------------------------------------------------------------------------
