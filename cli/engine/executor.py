@@ -34,7 +34,7 @@ from nautilus_trader.model.identifiers import InstrumentId, Venue
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
-from cli.engine.execgate import ExecutionGate, GateLevel, GateVerdict, exec_dir
+from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
@@ -69,6 +69,11 @@ _ACK_WAIT = timedelta(seconds=30)
 _MAX_REPRICES = 5
 _MAX_IOC_ATTEMPTS = 3
 _REST_CANCEL_OFFSET = 0.05
+# The overfill trips compare a SUM of per-fill floats against a single sized float, so an exactly
+# complete order routinely lands an ulp over what it asked for. One ulp is not an overfill. Nothing
+# tradeable hides under this either -- the smallest quantity any leg can express is its lot step,
+# orders of magnitude above it.
+_OVERFILL_TOLERANCE = 1e-12
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 
@@ -185,6 +190,18 @@ def _spot_balance(balances: dict, base: str) -> float:
     return 0.0
 
 
+def _ordered_qty(row: dict) -> float:
+    """What the ledger says an order was submitted for -- the only figure the per-order overfill
+    trip may trust, because an order a PREVIOUS process placed is knowable no other way. A row
+    carrying no readable qty reads 0.0, so any fill on it trips: a fill this process cannot bound is
+    exactly the divergence the trip exists for, and a row shaped like that is not one to reason
+    from."""
+    try:
+        return float(row.get("order", {}).get("qty"))
+    except AttributeError, TypeError, ValueError:
+        return 0.0
+
+
 def _newest_venue_balances(journal_dir: Path) -> dict:
     """`state.balances` from the newest `ok`, schema-2 `venue-<HH>.json`, or `{}` when the journal
     holds none. Mirrors `command._seed_exec_positions`: every record is `validate_venue_record`-
@@ -287,6 +304,10 @@ class _ActiveIntent:
     # reduce-only flag.
     close_qty: float | None = None
     reduce_only: bool = False
+    # What the Cache said was held in this symbol when the intent started, off the SAME frozen venue
+    # truth the intent was authorized against. The post-terminal reconciliation subtracts against it,
+    # so the two ends of that comparison cannot disagree about anything except real movement.
+    position_before: float = 0.0
     order: object | None = None
     order_payload: dict | None = None
     client_order_id: str | None = None
@@ -333,6 +354,10 @@ class ProbeExecutor:
         self._attached: dict[str, tuple[datetime, dict]] = {}
         # The startup pass runs on the first tick, once, whatever it finds.
         self._adopted = False
+        # Set by the first trip and never cleared. NOT a substitute for the kill file -- the file is
+        # the latch, this only stops a second divergence from rewriting the first one's reason and
+        # re-halting a plan that is already gone.
+        self._kill_tripped = False
 
     # --- the gate ------------------------------------------------------------------------------
 
@@ -664,6 +689,7 @@ class ProbeExecutor:
             timebox_at=now + _TIME_BOX,
             close_qty=decision.qty if intent.action == "close" else None,
             reduce_only=decision.reduce_only,
+            position_before=state.positions.get(intent.symbol, 0.0),
         )
 
     def _classify_close(self, intent: ProbeIntent, state, level: str) -> _CloseDecision:
@@ -926,6 +952,194 @@ class ProbeExecutor:
             # `cancelling` -- an open ledger row for reconciliation, and no further order.
             logger.critical("cancel of %s raised -- the order may still rest at the venue", active.client_order_id, exc_info=True)
 
+    # --- the kill switch -----------------------------------------------------------------------
+
+    def _trip_kill(self, reason: str) -> None:
+        """Latch the execution kill switch: create the kill file, pull everything that may still be
+        working at the venue, and stop the plan.
+
+        The file's semantics are `00088`'s, untouched -- presence is the whole protocol, the contents
+        are for the human who finds it, and NO code path anywhere clears it. That is what makes this
+        the LAST thing this process decides about trading: from here every gate evaluation reads
+        `none`, so every further intent refuses, across restarts, until a person says otherwise.
+
+        Idempotent through a process-local flag, which is not a clear: a second divergence must not
+        overwrite the first one's reason -- the first is the one that explains the state -- nor
+        re-halt a plan that is already gone.
+        """
+        if self._kill_tripped:
+            return
+        self._kill_tripped = True
+        logger.critical("execution kill switch tripped -- %s; cancelling resting orders and stopping the plan", reason)
+        self._write_kill_file(reason)
+        active = self._active
+        self._cancel_resting(active)
+        if active is not None:
+            try:
+                self._client.unsubscribe_quote_ticks(active.instrument_id)
+            except Exception:
+                logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
+            # The intent was mid-flight, so nothing else will ever journal it: without this its line
+            # in the operator's summary stays `pending` forever, next to a plan that plainly stopped.
+            self._journal_intent(active.index, "revoked", (f"kill switch tripped -- {reason}",), active.filled)
+        if self._plan is not None:
+            self._halt_plan(
+                active.index if active is not None else self._index - 1,
+                f"not run -- the kill switch tripped: {reason}",
+            )
+        self._active = None
+        self._plan = None
+        self._index = 0
+        # Publish now rather than waiting for a tick that may never evaluate again: with no plan
+        # running, `on_timer` takes the idle path and reads no gate at all, so the trip gauge would
+        # otherwise sit at its pre-trip value until the next cycle happens to publish one.
+        self._evaluate(self._now())
+
+    def _write_kill_file(self, reason: str) -> None:
+        """Presence is load-bearing, the text is not -- so the text is written for whoever finds it
+        mid-incident: what diverged, on which order or intent, and when."""
+        path = exec_dir(self._state_dir) / KILL_FILE
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{self._now().isoformat()} {reason}\n")
+        except OSError:
+            logger.critical(
+                "the kill file %s could not be written -- this process has stopped trading, but nothing on disk "
+                "will stop the next one: stop the engine by hand",
+                path,
+                exc_info=True,
+            )
+
+    def _cancel_resting(self, active: _ActiveIntent | None) -> None:
+        """A trip must leave NOTHING working at the venue: the in-flight order AND everything else
+        the Cache reports open, which after a restart includes orders the startup pass deliberately
+        left resting. That pass makes the same call when it starts up onto a latched kill -- a
+        tripped switch has no order it is willing to leave working, however well justified.
+
+        Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
+        outcome, the rows keep their open states, and a fill racing a cancel still lands through the
+        attachment map.
+        """
+        requested: set[str] = set()
+        if active is not None and active.order is not None:
+            active.cancel_requested = True
+            active.falling_back = False
+            requested.add(str(active.client_order_id))
+            self._cancel(active)
+        try:
+            resting = list(self._client.cache.orders_open(venue=_VENUE))
+        except Exception:
+            logger.critical("open orders could not be read while tripping -- others may still rest at the venue", exc_info=True)
+            return
+        for order in resting:
+            client_order_id = str(getattr(order, "client_order_id", ""))
+            if client_order_id in requested:
+                continue
+            try:
+                self._client.cancel_order(order)
+            except Exception:
+                logger.critical(
+                    "cancel of %s raised while tripping -- it may still rest at the venue", client_order_id, exc_info=True
+                )
+
+    def _trip_on_fill(self, event) -> bool:
+        """The three fill-time divergences, checked in this order and BEFORE the fill is dispatched
+        anywhere. Returns True when one fired, and the caller then drops the event: the plan is gone
+        and nothing further may be decided from a fill that should not exist.
+
+        The unknown-order trip is STRATEGY-SCOPED, and that scoping is what makes it safe to have at
+        all: only this engine's own strategy's order events arrive here, so a sanctioned
+        account-external fill -- the owner settling a position by hand in the venue's UI, mid-probe
+        -- structurally never reaches this check and stays what it is, venue truth for reconciliation
+        to read. An account-wide listener would latch the kill switch on the probe's own final act.
+
+        Per-order before per-intent, because when both are true the per-order one is the more
+        specific fact: it names the one order that did it, where the cross-order sum would send an
+        operator to the ladder's remainder arithmetic instead.
+        """
+        client_order_id = str(getattr(event, "client_order_id", ""))
+        attached = self._attached.get(client_order_id)
+        if attached is None:
+            self._trip_kill(f"a fill arrived for order {client_order_id}, which this engine has no record of submitting")
+            return True
+        boundary, row = attached
+        qty = float(event.last_qty)
+        ordered = _ordered_qty(row)
+        if row["filled_qty"] + qty > ordered + _OVERFILL_TOLERANCE:
+            self._record_trip_fill(boundary, client_order_id, row, event, qty)
+            self._trip_kill(
+                f"order {client_order_id} has now filled {row['filled_qty']:.10g} of the {ordered:.10g} it was submitted for"
+            )
+            return True
+        active = self._active
+        if active is not None and self._claims(row, active) and active.filled + qty > active.target_qty + _OVERFILL_TOLERANCE:
+            self._record_trip_fill(boundary, client_order_id, row, event, qty)
+            self._trip_kill(
+                f"intent {active.index} has now filled {active.filled:.10g} across its orders, "
+                f"more than the {active.target_qty:.10g} it asked for"
+            )
+            return True
+        return False
+
+    def _record_trip_fill(self, boundary: datetime, client_order_id: str, row: dict, event, qty: float) -> None:
+        """The fill that is about to trip the switch still gets its forensic row. It HAPPENED at the
+        venue, and the no-fill-without-a-record invariant has no divergence exemption -- the operator
+        reading the kill reason needs the fill itself sitting next to it. Wrapped, because a ledger
+        failure may never cost the trip; the in-process quantities are credited either way, since
+        they track what filled rather than what could be written down.
+        """
+        try:
+            update_submitted_row(self._journal_dir, boundary, client_order_id, event=self._fill_payload(event), add_filled_qty=qty)
+        except Exception:
+            logger.critical("the fill that tripped the kill switch could not be journaled for %s", client_order_id, exc_info=True)
+        row["filled_qty"] = row["filled_qty"] + qty
+        active = self._active
+        if active is not None and self._claims(row, active):
+            active.filled += qty
+
+    def _claims(self, row: dict, active: _ActiveIntent) -> bool:
+        """Whether `row`'s order belongs to the intent running right now -- same plan, same index.
+        That, and never the order id, is what makes another order's fill part of THIS intent's
+        cumulative quantity."""
+        return self._plan is not None and row.get("plan_id") == self._plan.plan_id and row.get("intent_index") == active.index
+
+    def _mirror_row_fill(self, client_order_id: str, qty: float) -> None:
+        """`update_submitted_row` mutates the STORED document, never the row dict this process holds
+        in `_attached`. Without this mirror the per-order overfill trip would compare every fill
+        after the first against a `filled_qty` frozen at write-ahead time, and an order could double
+        its quantity unnoticed."""
+        attached = self._attached.get(client_order_id)
+        if attached is not None:
+            attached[1]["filled_qty"] = attached[1]["filled_qty"] + qty
+
+    def _reconcile_terminal(self, active: _ActiveIntent) -> None:
+        """The post-terminal reconciliation: what this intent's fills say the position should now be,
+        against what the Cache says it is.
+
+        The tolerance is the instrument's own lot step -- the smallest quantity the venue can even
+        express, so nothing tradeable hides under it. Anything larger is either a fill this engine
+        never saw or one it saw and mis-accounted, and both are reasons to stop rather than to place
+        the next order against a position it cannot describe.
+        """
+        expected = active.position_before + (active.filled if active.intent.side == "buy" else -active.filled)
+        try:
+            actual = sum(float(p.signed_qty) for p in self._client.cache.positions_open(instrument_id=active.instrument_id))
+        except Exception:
+            # The venue-truth read at intent start proved this same Cache readable minutes ago, so a
+            # raise here is an anomaly rather than routine -- and an unverifiable position after a
+            # fill is not something to trade on.
+            logger.critical("the %s position could not be read after intent %d", active.intent.symbol, active.index, exc_info=True)
+            self._trip_kill(
+                f"the {active.intent.symbol} position could not be read after intent {active.index}, so nothing can "
+                "confirm what this engine's orders did to it"
+            )
+            return
+        if abs(actual - expected) > active.constraints.lot_step:
+            self._trip_kill(
+                f"{active.intent.symbol} holds {actual:.10g} after intent {active.index}, not the {expected:.10g} "
+                "this engine's own fills account for"
+            )
+
     # --- order events --------------------------------------------------------------------------
 
     def on_order_event(self, event) -> None:
@@ -937,6 +1151,11 @@ class ProbeExecutor:
             logger.exception("executor order-event handling raised -- continuing")
 
     def _on_order_event(self, event) -> None:
+        # D11's fill-time trips run FIRST, before any row update and before the in-flight/detached
+        # split: an unknown order has no row to update, and an overfill must not be credited to a
+        # ladder that would then size its next order against it.
+        if type(event).__name__ == "OrderFilled" and self._trip_on_fill(event):
+            return
         active = self._active
         client_order_id = str(getattr(event, "client_order_id", ""))
         if active is None or active.client_order_id is None or client_order_id != active.client_order_id:
@@ -1087,9 +1306,10 @@ class ProbeExecutor:
         payload = self._fill_payload(event) if is_fill else {"type": type(event).__name__, "at": self._now().isoformat()}
         qty = float(event.last_qty) if is_fill else 0.0
         update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload, add_filled_qty=qty)
-        active = self._active
-        if qty and active is not None and self._plan is not None:
-            if row.get("plan_id") == self._plan.plan_id and row.get("intent_index") == active.index:
+        if qty:
+            self._mirror_row_fill(client_order_id, qty)
+            active = self._active
+            if active is not None and self._claims(row, active):
                 active.filled += qty
 
     def _on_fill(self, active: _ActiveIntent, event) -> None:
@@ -1107,6 +1327,7 @@ class ProbeExecutor:
         lot_step = active.constraints.lot_step
         order_done = active.order_qty - active.order_filled < lot_step
         self._update_row(active, state="filled" if order_done else "accepted", event=payload, add_filled_qty=qty)
+        self._mirror_row_fill(active.client_order_id, qty)
         if order_done:
             _inc_order("filled")
         if active.target_qty - active.filled < lot_step:
@@ -1204,6 +1425,10 @@ class ProbeExecutor:
         self._enter(active, "done")
         self._active = None
         self._index += 1
+        # Reconciled AFTER the teardown, so a trip cannot re-enter this method through the very
+        # intent it is ending -- by here `self._active` is None, and the plan pointer is all
+        # `_trip_kill` still needs to refuse the rest.
+        self._reconcile_terminal(active)
 
     def _finish_revoked(self, active: _ActiveIntent) -> None:
         """End a revoked intent and stop the plan -- whatever revoked this one applies to the rest."""
@@ -1214,6 +1439,8 @@ class ProbeExecutor:
     def _halt_plan(self, from_index: int, reason: str) -> None:
         """Stop the plan after `from_index`: journal every later intent as refused, naming why, and
         drop the running plan. The ledger, not this process's memory, is what says they never ran."""
+        if self._plan is None:
+            return  # a trip inside the terminal that led here already dropped it -- nothing left to stop
         for index in range(from_index + 1, len(self._plan.intents)):
             self._journal_intent(index, "refused", (reason,))
             _inc_order("refused")

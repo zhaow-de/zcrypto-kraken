@@ -157,6 +157,15 @@ class StubCache:
     def positions_open(self, *, instrument_id=None, **kwargs):
         return self._positions.get(str(instrument_id), [])
 
+    def set_position(self, symbol, signed_qty):
+        """What the Cache says is held, in the shape `_held()` builds -- the one accessor a test
+        needs to make the venue disagree with the ledger, or to land a holding the engine never
+        ordered (the manual settle)."""
+        self._positions[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty)]
+
+    def move_position(self, symbol, delta):
+        self.set_position(symbol, sum(float(p.signed_qty) for p in self._positions.get(INSTRUMENT_IDS[symbol], [])) + delta)
+
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
 
@@ -469,6 +478,46 @@ def _the_tick_backstop_never_fires():
         log.removeHandler(handler)
         log.setLevel(previous_level)
     assert [r.getMessage() for r in records if "dropping the running plan" in r.getMessage()] == []
+
+
+@pytest.fixture
+def kill_trip_expected():
+    """Requested by the tests that CONSTRUCT a kill trip. Requesting it is also what disarms the
+    guard below, so a test that trips the switch without saying so fails."""
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _no_unannounced_kill_trip(request):
+    """A trip creates a latching file no code may clear and stops this engine for good. Every OTHER
+    test in this file is a healthy neighbour that must not cause one -- so the quiet direction is
+    proven once, here, against all of them, rather than only against the single external-fill
+    construction D11 names. Runs both ways: an announcing test that does NOT trip fails too.
+
+    Watches the executor's own logger for the two reasons `_the_tick_backstop_never_fires` documents
+    -- caplog's handler sits on a root the CLI tests have detached, and its records are phase-scoped
+    so a teardown read comes back empty."""
+    records: list[logging.LogRecord] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    log = logging.getLogger("zcrypto.engine.executor")
+    handler = _Collect(level=logging.CRITICAL)
+    previous_level = log.level
+    log.setLevel(logging.DEBUG)
+    log.addHandler(handler)
+    try:
+        yield
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(previous_level)
+    tripped = [r.getMessage() for r in records if "kill switch tripped" in r.getMessage()]
+    if "kill_trip_expected" in request.fixturenames:
+        assert tripped, "this construction was supposed to trip the kill switch and did not"
+    else:
+        assert tripped == []
 
 
 class RecordingMetrics:
@@ -996,6 +1045,17 @@ def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR"):
     )
 
 
+def _deliver_fill(ex, client, client_order_id, qty, *, symbol="BTC/EUR", side="buy", px=30000.0, **kwargs):
+    """Deliver a fill the way the venue does: the Cache position moves FIRST, then the strategy sees
+    the event. Read out of the installed nautilus-trader (`execution/engine.pyx`): `_handle_event`
+    calls `_handle_order_fill` -- which adds or updates the Position in the Cache -- and only then
+    publishes the event to the strategy's own topic. A harness that left the Cache untouched would
+    model a divergence that never happens, and D11's post-terminal reconciliation would trip on every
+    healthy fill."""
+    client.cache.move_position(symbol, qty if side == "buy" else -qty)
+    ex.on_order_event(_fill(client_order_id, qty, px=px, **kwargs))
+
+
 def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_starts(tmp_path):
     client = StubClient()
     ex = _executor(tmp_path, client=client)
@@ -1006,7 +1066,7 @@ def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_start
     ex.on_order_event(OrderAccepted("O-1"))
     assert _record(tmp_path)["submitted"][0]["state"] == "accepted"
 
-    ex.on_order_event(_fill("O-1", 0.001))
+    _deliver_fill(ex, client, "O-1", 0.001)
     row = _record(tmp_path)["submitted"][0]
     assert row["state"] == "filled" and row["filled_qty"] == 0.001
     assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
@@ -1138,7 +1198,7 @@ def test_a_partial_fill_then_the_time_box_sizes_the_ioc_to_the_remainder(tmp_pat
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     assert client.submitted[0][0].quantity == 1.0
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    ex.on_order_event(_fill(client.last_order_id, 0.4, px=30.0))
+    _deliver_fill(ex, client, client.last_order_id, 0.4, px=30.0)
     assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.4
 
     _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
@@ -1166,7 +1226,7 @@ def test_a_remainder_below_ordermin_ends_the_intent_partial_with_no_further_orde
     """A terminal partial is a legitimate end state -- never an unfillable order the venue rejects."""
     ex, client, clock = _resting_executor(tmp_path)
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    ex.on_order_event(_fill(client.last_order_id, 0.00095))  # of a 0.001 target: 5e-05 left, ordermin is 1e-04
+    _deliver_fill(ex, client, client.last_order_id, 0.00095)  # of a 0.001 target: 5e-05 left, ordermin is 1e-04
 
     _advance_with_quotes(ex, client, clock, minutes=16)
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
@@ -1318,8 +1378,8 @@ def test_a_fill_pair_that_sums_an_ulp_short_still_terminates_the_intent(tmp_path
     assert client.submitted[0][0].quantity == 0.8  # 30 EUR / 37.50
     ex.on_order_event(OrderAccepted(client.last_order_id))
 
-    ex.on_order_event(_fill(client.last_order_id, 0.1, px=37.5))
-    ex.on_order_event(_fill(client.last_order_id, 0.7, px=37.5))
+    _deliver_fill(ex, client, client.last_order_id, 0.1, px=37.5)
+    _deliver_fill(ex, client, client.last_order_id, 0.7, px=37.5)
 
     assert _record(tmp_path)["submitted"][0]["state"] == "filled"
     assert _intent_outcome(tmp_path) == "filled"
@@ -1388,7 +1448,7 @@ def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_pat
     surface saying nothing was bought when 0.4 was."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    ex.on_order_event(_fill(client.last_order_id, 0.4, px=30.0))
+    _deliver_fill(ex, client, client.last_order_id, 0.4, px=30.0)
 
     (exec_dir(tmp_path) / KILL_FILE).touch()
     ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))  # the venue's own cancel
@@ -1462,7 +1522,7 @@ def test_a_disposal_under_the_cap_alone_is_refused_once_the_plans_declared_notio
     ex.on_timer(NOW)
     ex.on_quote(_quote())
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    ex.on_order_event(_fill(client.last_order_id, client.submitted[0][0].quantity))
+    _deliver_fill(ex, client, client.last_order_id, client.submitted[0][0].quantity)
     assert _intent_outcome(tmp_path, 0) == "filled"
 
     ex.on_timer(NOW + timedelta(seconds=5))
@@ -1486,7 +1546,7 @@ def test_a_second_disposal_cumulates_against_the_first_ones_resolved_notional(tm
     ex.on_quote(_quote())
     assert len(client.submitted) == 1  # 60.00 EUR alone clears the cap
     ex.on_order_event(OrderAccepted(client.last_order_id))
-    ex.on_order_event(_fill(client.last_order_id, 0.002))
+    _deliver_fill(ex, client, client.last_order_id, 0.002, side="sell")
 
     ex.on_timer(NOW + timedelta(seconds=5))
     ex.on_quote(_quote(instrument_id="ETH/EUR.KRAKEN"))
@@ -1762,13 +1822,13 @@ def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_pat
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     assert client.submitted[0][0].quantity == 1.0
     ex.on_order_event(OrderAccepted("O-1"))
-    ex.on_order_event(_fill("O-1", 0.4, px=30.0))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
 
     _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
     ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))
     assert client.submitted[1][0].quantity == 0.6  # the IOC, sized against the 0.4 already in
 
-    ex.on_order_event(_fill("O-1", 0.1, px=30.0))  # the late fill, for the order already superseded
+    _deliver_fill(ex, client, "O-1", 0.1, px=30.0)  # the late fill, for the order already superseded
     ex.on_order_event(_named("OrderCanceled", client_order_id="O-2"))  # the IOC comes back unfilled
 
     assert len(client.submitted) == 3
@@ -1851,3 +1911,183 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
     # Attached either way (cancel is a request, not an outcome), so the ack lands in the row.
     ex.on_order_event(_named("OrderCanceled", client_order_id="O-attached"))
     assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]
+
+
+# --- D11: the first automatic kill trips ----------------------------------------------------------
+
+
+def _kill_file(tmp_path: Path) -> Path:
+    return exec_dir(tmp_path) / KILL_FILE
+
+
+def _idle_executor(tmp_path):
+    """An armed executor with no plan running -- the state the probe sits in between plans, and the
+    state the owner's manual settle happens in. Returns the state dir the kill file would appear
+    under (`journal_dir.parent`, the 00088 convention `_config` follows)."""
+    client = StubClient()
+    return _executor(tmp_path, client=client), client, tmp_path
+
+
+def test_an_external_fill_with_no_strategy_claim_does_not_trip(tmp_path):
+    """The settle's healthy path, proven quiet: the Cache position moves with NO order event
+    reaching the executor (an external fill routes through reconciliation, never on_order_event).
+    Ticks pass, no intent is active -- the kill file must NOT appear."""
+    ex, client, state_dir = _idle_executor(tmp_path)
+    client.cache.set_position("BTC/EUR", 0.0004)  # the settle landed as a holding
+    _advance_ticks(ex, minutes=2)
+    assert not (exec_dir(state_dir) / KILL_FILE).exists()
+    assert client.canceled == []  # and nothing was pulled off the venue for it either
+
+
+def test_a_fill_for_an_order_this_engine_never_submitted_trips_the_kill_switch(tmp_path, kill_trip_expected):
+    """The unknown own-strategy order. The same event SHAPE as the settle above and the opposite
+    verdict: what separates them is that this one names an order id, on this engine's own strategy,
+    that the ledger has no row for -- so a fill exists that nothing here can account for."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    resting = client.submitted[0][0]
+
+    ex.on_order_event(_fill("O-unknown", 0.001))
+
+    text = _kill_file(tmp_path).read_text()
+    assert "no record of submitting" in text and "O-unknown" in text  # WHICH condition fired
+    assert client.canceled == [resting]
+    assert _intent_outcome(tmp_path, 0) == "revoked"
+    assert _intent_outcome(tmp_path, 1) == "refused"
+    assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.0  # nothing was credited to OUR order
+
+
+def test_an_order_filling_past_the_quantity_it_was_submitted_for_trips(tmp_path, kill_trip_expected):
+    """Per-order overfill: 0.0006 twice against the 0.001 that order carried. Both this condition
+    and the per-intent one are true here, and the reason must name THIS one -- an operator sent to
+    the ladder's remainder arithmetic would be looking at the wrong thing."""
+    ex, client, clock = _resting_executor(tmp_path)
+    resting = client.submitted[0][0]
+    assert resting.quantity == 0.001
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    _deliver_fill(ex, client, client.last_order_id, 0.0006)
+    assert not _kill_file(tmp_path).exists()  # 0.0006 of 0.001 is a partial, not a divergence
+    _deliver_fill(ex, client, client.last_order_id, 0.0006)
+
+    assert "of the 0.001 it was submitted for" in _kill_file(tmp_path).read_text()
+    assert client.canceled == [resting]
+    # The overfilling fill is journaled anyway: it happened at the venue, and the row is where the
+    # operator reads what the kill reason is talking about.
+    assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.0012
+
+
+def test_an_intents_orders_filling_past_its_target_between_them_trips(tmp_path, kill_trip_expected):
+    """D6's remainder sizing, backstopped. The first order is superseded with 0.4 in; the reprice
+    sizes the second to the 0.6 remainder; a LATE fill on the superseded order then lands, and the
+    second order fills its whole 0.6 -- 1.3 against a 1.0 target, with NEITHER order overfilled on
+    its own. Only the cross-order sum can see it, which is why it is checked separately."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    assert client.submitted[0][0].quantity == 1.0
+    ex.on_order_event(OrderAccepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))  # the venue's own cancel -> reprice
+    resting = client.submitted[1][0]
+    assert resting.quantity == 0.6
+
+    _deliver_fill(ex, client, "O-1", 0.3, px=30.0)  # the late fill on the superseded order
+    assert not _kill_file(tmp_path).exists()  # 0.7 of a 1.0 target, 0.7 of O-1's own 1.0: healthy
+    _deliver_fill(ex, client, "O-2", 0.6, px=30.0)
+
+    assert "across its orders" in _kill_file(tmp_path).read_text()
+    assert client.canceled == [resting]
+    assert _intent_outcome(tmp_path) == "revoked"
+
+
+def test_a_position_that_contradicts_the_intents_fills_trips_at_the_terminal(tmp_path, kill_trip_expected):
+    """Post-terminal reconciliation: the intent's own fills say 0.001 was bought, the Cache says
+    0.0005 is held. The adopted reducer the startup pass deliberately left resting is what proves a
+    trip cancels resting orders it did not itself place -- a latched kill leaves NOTHING working at
+    the venue, which is the same judgment that pass already makes when it starts up onto one."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
+    cache = StubCache(open_orders=[_open_order("O-attached")])
+    ex, client, clock = _resting_executor(
+        tmp_path, client=StubClient(cache), intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]
+    )
+    assert client.canceled == []  # the startup pass kept the ledgered reducer
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    cache.set_position("BTC/EUR", 0.0005)  # the venue moved by half of what the fill claims
+    ex.on_order_event(_fill(client.last_order_id, 0.001))
+
+    assert "not the 0.001" in _kill_file(tmp_path).read_text()
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached"]
+    assert _intent_outcome(tmp_path, 0) == "filled"  # it DID fill -- the divergence is what follows
+    assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_a_terminal_whose_position_matches_its_fills_does_not_trip(tmp_path):
+    """The reconciliation's other direction, on the identical construction one number apart: the
+    Cache agrees with the fills, so the intent ends and the NEXT one starts. Without this a check
+    that tripped on every terminal would pass the test above."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    _deliver_fill(ex, client, client.last_order_id, 0.001)
+
+    assert not _kill_file(tmp_path).exists()
+    assert _intent_outcome(tmp_path, 0) == "filled"
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert client.subscribed == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
+
+
+def test_a_tripped_kill_switch_refuses_every_later_plan(tmp_path, kill_trip_expected):
+    """The trip's durable half: the file it wrote is the gate's own input, so the refusal outlives
+    the plan that tripped it and survives into the next one. Nothing in this process cleared it --
+    nothing in this process can."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_fill("O-unknown", 0.001))
+    assert _kill_file(tmp_path).exists()
+
+    clock.now = NOW + timedelta(seconds=5)
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=clock.now - timedelta(minutes=1)))
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote())
+
+    assert len(client.submitted) == 1  # nothing new reached the venue
+    entry = _record(tmp_path)["plans"][-1]
+    assert entry["plan_id"] == "p-2"
+    assert entry["intents"][0]["outcome"] == "refused"
+    assert "kill_switch" in entry["intents"][0]["reasons"]
+
+
+def test_a_superseded_orders_late_fills_are_summed_against_that_orders_own_quantity(tmp_path, kill_trip_expected):
+    """Per-order accounting has to survive the order ceasing to be the one in flight: 0.4 while it
+    rested plus 0.7 in late fills afterwards is 1.1 of the 1.0 that order carried. Both overfill
+    conditions are true by then, and the reason still names the ORDER -- which it can only do if the
+    detached path kept that order's own running total."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(OrderAccepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))  # superseded by the reprice
+
+    _deliver_fill(ex, client, "O-1", 0.3, px=30.0)
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+
+    assert "order O-1 has now filled" in _kill_file(tmp_path).read_text()  # not the cross-order sum
+    assert "it was submitted for" in _kill_file(tmp_path).read_text()
+
+
+def test_a_closer_that_flattens_its_position_reconciles_against_what_it_started_holding(tmp_path):
+    """The reconciliation's other operand, and the only construction that can see it: an intent that
+    starts holding 0.001 and sells exactly that ends FLAT, not short. Read `position_before` as zero
+    -- or drop the term -- and this healthy close trips instead."""
+    client = StubClient(StubCache(positions=_held(**{"BTC/EUR": 0.001})))
+    ex, client, clock = _resting_executor(
+        tmp_path, client=client, intents=[_intent(side="sell", action="close", notional_eur=90.0, leverage=2)]
+    )
+    assert client.submitted[0][0].quantity == 0.001
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    _deliver_fill(ex, client, client.last_order_id, 0.001, side="sell", px=30001.0)
+
+    assert not _kill_file(tmp_path).exists()
+    assert _intent_outcome(tmp_path) == "filled"
