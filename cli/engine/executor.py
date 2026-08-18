@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.enums import OrderSide, TimeInForce, liquidity_side_to_str
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 
 from cli.config import EngineConfig
@@ -129,6 +129,27 @@ def _inc_order(outcome: str) -> None:
         _metrics.inc_order(outcome)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
+
+
+def _liquidity(side) -> str:
+    """The venue's own NAME for a fill's liquidity side ("MAKER"/"TAKER"/"NO_LIQUIDITY_SIDE").
+
+    Never `str(side)`: in the installed nautilus-trader `LiquiditySide` is an `IntFlag` over
+    `ReprEnum`, so `str(LiquiditySide.MAKER)` is `'1'` and TAKER's is `'2'`. That number would go
+    into the forensic row that outlives the probe, and would mint a `liquidity="1"` metric child
+    while the pre-registered maker/taker series read zero for a whole window -- a board reporting
+    that nothing traded while money moves, and the maker-vs-taker blend is the measurement the
+    maker-first ladder exists to produce.
+
+    Falls back to `str(side)`, logged, for anything the enum cannot name. This sits on the
+    write-ahead path where a raise costs the fill its row, and `liquidity_side_to_str` is not
+    total: it raises `TypeError` on a non-int and, on an out-of-range int, decodes garbage memory
+    into a `UnicodeDecodeError`. An unnameable side is recorded verbatim, never dropped."""
+    try:
+        return liquidity_side_to_str(side)
+    except Exception:
+        logger.warning("fill carries an unrecognisable liquidity side %r -- recording it verbatim", side)
+        return str(side)
 
 
 def _fee_eur(commission) -> float | None:
@@ -1337,10 +1358,17 @@ class ProbeExecutor:
     def _publish_fill(self, event) -> None:
         """The live view of the fill that just went into the ledger row -- same event, same numbers.
 
-        Called from EVERY path that records a fill (in-flight, detached, and the one that trips the
-        kill switch), because each of those fills cost real money: publishing only the in-flight
+        Called from every path that WRITES A ROW for the fill -- in-flight, detached, and the
+        overfill trips -- because each of those fills cost real money: publishing only the in-flight
         ones would under-report the fees actually paid with every test still green. Those paths are
         mutually exclusive by construction, so nothing is counted twice.
+
+        ONE fill is deliberately not published: the unknown-order trip, where `_trip_on_fill` finds
+        no attachment and so has no row to append to either. The metric is the live view of the
+        ledger row, and a fills/fees increment with no row behind it would make the counter and the
+        forensic record disagree -- with the record, which is the authority, on the losing side. That
+        fill is not unreported: it latches the kill switch, `zcrypto_exec_kill_tripped` goes to 1,
+        and the kill file names the order id an operator then reads the venue for.
 
         The position comes from the CACHE, never from this process's own running total: what the
         engine thinks it holds is exactly the quantity `_reconcile_terminal` exists to doubt.
@@ -1352,7 +1380,7 @@ class ProbeExecutor:
         if _metrics is None:
             return
         try:
-            _metrics.inc_fill(str(event.liquidity_side).lower(), _fee_eur(event.commission))
+            _metrics.inc_fill(_liquidity(event.liquidity_side).lower(), _fee_eur(event.commission))
             instrument_id = str(event.instrument_id)
             self._traded.add(instrument_id)
             held = self._client.cache.positions_open(instrument_id=instrument_id)
@@ -1399,7 +1427,7 @@ class ProbeExecutor:
             "px": float(event.last_px),
             "fee": float(event.commission),
             "fee_currency": event.commission.currency.code,
-            "liquidity": str(event.liquidity_side),
+            "liquidity": _liquidity(event.liquidity_side),
             "trade_id": str(event.trade_id),
         }
 

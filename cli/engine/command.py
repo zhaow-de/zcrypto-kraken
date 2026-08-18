@@ -601,7 +601,13 @@ class _ExecGauges:
 # was never established that claim is unavailable -- the same lie a prior ruling removed from the
 # forensic ledger.
 _EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "canceled", "filled", "refused", "ambiguous")
-_EXEC_LIQUIDITY_SIDES = ("maker", "taker")
+# Every name the venue's own `LiquiditySide` can produce, lower-cased -- pinned against the real
+# enum by tests/test_engine_metrics.py rather than derived here, because importing nautilus-trader
+# at this module's top level would put ~1 s on `zcrypto --help`. `no_liquidity_side` is deliberate
+# and pre-registered like the other two: a fill the venue did not attribute is still a fill, and
+# neither silently counting it as taker nor letting a third label appear at runtime is acceptable
+# when the maker-vs-taker split is the number this ladder exists to measure.
+_EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
 
 
 class _ExecutionMetrics:

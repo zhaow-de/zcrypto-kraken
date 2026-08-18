@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from nautilus_trader.model.enums import OrderSide, TimeInForce
+from nautilus_trader.model.enums import LiquiditySide, OrderSide, TimeInForce
 
 import cli.engine.executor as executor_module
 from cli.config import EngineConfig
@@ -1059,10 +1059,15 @@ class _FakeMoney:
         return float(self._amount)
 
 
-def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", symbol="BTC/EUR", liquidity="MAKER"):
+def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", symbol="BTC/EUR", liquidity=LiquiditySide.MAKER):
     """An `OrderFilled` carrying every field the executor's fill row reads -- the real event always
     has them, so the stub must too, or the row would be pinned against a shape the venue never
-    sends."""
+    sends.
+
+    `liquidity_side` is the REAL `LiquiditySide` member, never the string it looks like: in the
+    installed nautilus-trader it is an int-backed enum whose `__str__` returns the NUMBER, so a
+    plain-string fake makes `str(event.liquidity_side)` look correct here while production writes
+    '1'/'2'. That gap hid a live defect in both the ledger row and the metric label."""
     return _named(
         "OrderFilled",
         client_order_id=client_order_id,
@@ -1121,11 +1126,61 @@ def test_a_fill_publishes_its_liquidity_side_fee_and_the_position_the_cache_now_
 
     ex.on_timer(NOW)
     ex.on_quote(_quote())
-    _deliver_fill(ex, client, "O-1", 0.001, fee=0.37, liquidity="TAKER")
+    _deliver_fill(ex, client, "O-1", 0.001, fee=0.37, liquidity=LiquiditySide.TAKER)
 
     assert metrics.fills == [("taker", 0.37)]
     assert metrics.positions == [("BTC/EUR", 0.001)]
     assert metrics.realized == [0.0]  # no realized leg on this position yet -- a None contributes zero
+
+
+@pytest.mark.parametrize(
+    ("side", "row_value", "label"),
+    [
+        (LiquiditySide.MAKER, "MAKER", "maker"),
+        (LiquiditySide.TAKER, "TAKER", "taker"),
+        (LiquiditySide.NO_LIQUIDITY_SIDE, "NO_LIQUIDITY_SIDE", "no_liquidity_side"),
+    ],
+    ids=["maker", "taker", "unattributed"],
+)
+def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_metric(tmp_path, side, row_value, label):
+    """`LiquiditySide` is an `IntFlag` over `ReprEnum` in the installed nautilus-trader, so
+    `str(LiquiditySide.MAKER)` is '1', not 'MAKER'. A `str()` here puts '1'/'2' in the forensic row
+    that outlives the probe AND mints a `liquidity="1"` metric child while the pre-registered
+    maker/taker series read zero for the whole window -- the board reporting nothing traded while
+    money moves, and the maker-vs-taker blend is the measurement this ladder exists to produce.
+
+    Driven with the REAL enum member: a plain-string fake makes the broken idiom look correct."""
+    client = StubClient()
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, liquidity=side)
+
+    fill_events = [e for e in _record(tmp_path)["submitted"][0]["events"] if e.get("event") == "fill"]
+    assert [e["liquidity"] for e in fill_events] == [row_value]
+    assert metrics.fills == [(label, pytest.approx(0.012))]
+
+
+def test_an_unrecognisable_liquidity_side_still_gets_its_forensic_row(tmp_path):
+    """The payload builder sits on the write-ahead path, where a raise costs the fill its row --
+    and `liquidity_side_to_str` raises on a non-int and reads garbage memory on an out-of-range
+    one. A value the enum cannot name is recorded verbatim and logged, never dropped."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, liquidity="WHO KNOWS")
+
+    row = _record(tmp_path)["submitted"][0]
+    assert row["filled_qty"] == 0.001
+    fill_events = [e for e in row["events"] if e.get("event") == "fill"]
+    assert [e["liquidity"] for e in fill_events] == ["WHO KNOWS"]
 
 
 def test_a_non_eur_commission_reaches_the_metric_as_no_fee_at_all(tmp_path):

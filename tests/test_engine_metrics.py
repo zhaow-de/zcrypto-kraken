@@ -1444,6 +1444,19 @@ def test_the_order_outcome_labels_cover_every_outcome_the_executor_can_emit():
     assert emitted == set(command._EXEC_ORDER_OUTCOMES)
 
 
+def test_the_liquidity_labels_are_the_venue_enums_own_names():
+    """DERIVED from the real `LiquiditySide`, because the bug this pins was invisible to every
+    string-based fake: the enum is an `IntFlag` over `ReprEnum`, so `str(LiquiditySide.MAKER)` is
+    `'1'`. The label set must be exactly what the venue can report, lower-cased -- a member this
+    tuple omits would spring into existence as an unadmitted series on the first live fill that
+    carried it, while the pre-registered children read zero for the whole probe window."""
+    from nautilus_trader.model.enums import LiquiditySide, liquidity_side_to_str
+
+    assert {liquidity_side_to_str(member).lower() for member in LiquiditySide} == set(command._EXEC_LIQUIDITY_SIDES)
+    # The trap itself, stated: were `str()` used at the emit site these would be the labels instead.
+    assert {str(member) for member in LiquiditySide} == {"0", "1", "2"}
+
+
 def test_every_outcome_and_liquidity_series_exists_before_anything_happens():
     """A Counter's zero is a measured fact ("nothing has been refused yet"), unlike a Gauge's, so
     every label child is registered up front: `rate()` over a series that springs into existence at
@@ -1455,7 +1468,7 @@ def test_every_outcome_and_liquidity_series_exists_before_anything_happens():
     outcomes = {s.labels["outcome"]: s.value for s in families["zcrypto_exec_orders_total"].samples}
     assert outcomes == dict.fromkeys(command._EXEC_ORDER_OUTCOMES, 0.0)
     liquidity = {s.labels["liquidity"]: s.value for s in families["zcrypto_exec_fills_total"].samples}
-    assert liquidity == {"maker": 0.0, "taker": 0.0}
+    assert liquidity == dict.fromkeys(command._EXEC_LIQUIDITY_SIDES, 0.0)
     assert registry.get_sample_value("zcrypto_exec_fees_eur_total") == 0.0
     # Labelled and unseeded: no symbol has been named yet, so the family carries no samples at all.
     position_family = next(f for f in registry.collect() if f.name == "zcrypto_exec_position")
