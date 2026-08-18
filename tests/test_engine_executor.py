@@ -414,6 +414,27 @@ def test_the_kill_file_refuses_the_submission_and_no_order_reaches_the_client(tm
     assert metrics.orders == ["refused"]
 
 
+def test_a_kill_file_landing_after_the_intent_started_still_refuses_at_the_submit(tmp_path):
+    """The taken-never-held property, constructed: the gate reads FULL when the intent starts and
+    subscribes, and the kill file lands in the window before the quote arrives. `_submit` evaluates
+    for itself, so the order is refused -- an executor carrying the start-time verdict forward, or
+    accepting one as a parameter, would submit here."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    ex.on_quote(_quote())
+
+    assert client.submitted == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert "kill_switch" in intent["reasons"]
+
+
 def test_reduce_only_refuses_an_open_intent(tmp_path):
     client = StubClient()
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
