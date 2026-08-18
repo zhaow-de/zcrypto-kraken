@@ -1438,7 +1438,7 @@
       "id": 52,
       "type": "stat",
       "title": "Order submission armed",
-      "description": "Whether BOTH arming keys are present: the `armed` config flag and the arm file on the engine host. Deliberately conflated into one gauge -- this tile can say THAT the engine is armed or disarmed, never WHICH of the two keys is set, so `zcrypto engine exec-status` on the host is the next step whenever this needs explaining. Pages after six continuous hours armed, because arming is expected only inside an attended probe window and is normally removed when the window ends -- an armed reading is not itself an incident, but it removes one of the two keys standing between a mistake and real money. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-armed-too-long. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "description": "Whether BOTH arming keys are present: the `armed` config flag and the arm file on the engine host. Deliberately conflated into one gauge -- this tile can say THAT the engine is armed or disarmed, never WHICH of the two keys is set, so `zcrypto engine exec-status` on the host is the next step whenever this needs explaining. Pages after six continuous hours armed, because arming is expected only inside an attended probe window and is normally removed when the window ends -- an armed reading is not itself an incident, but it removes one of the two keys standing between a mistake and real money. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-armed-too-long. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1512,7 +1512,7 @@
       "id": 53,
       "type": "stat",
       "title": "Execution kill switch",
-      "description": "Whether the kill-switch file is present on the engine host. TRIPPED means the engine refuses every order regardless of any other reading on this row. This is a deliberate control, not a fault by itself -- deleting the kill file on the engine host clears it immediately, with no deploy and no restart. The alert beside it pages after 5 minutes tripped, because the failure mode it guards against is forgetting to remove the file, not tripping it. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-kill-tripped. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "description": "Whether the kill-switch file is present on the engine host. TRIPPED means the engine refuses every order regardless of any other reading on this row. This is a deliberate control, not a fault by itself -- deleting the kill file on the engine host clears it immediately, with no deploy and no restart. The alert beside it pages after 5 minutes tripped, because the failure mode it guards against is forgetting to remove the file, not tripping it. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-kill-tripped. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1734,7 +1734,7 @@
       "id": 56,
       "type": "stat",
       "title": "Gate evaluation heartbeat",
-      "description": "How long since the execution gate was last evaluated -- the heartbeat that makes every other tile on this row trustworthy. The gate runs at process start and after every cycle, roughly four-hourly, so a healthy reading tracks the cycle-age reading at the top of this board. If this stops advancing, EVERY gauge on this row freezes at its last value: cycle telemetry can stay perfectly healthy while the safety envelope is silently no longer being read at all. Pages above 17100s (4h45m) after `for: 10m`, including on absence -- a gate that never published at all is this alert's worst case, not an exemption from it. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-not-evaluated. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
+      "description": "How long since the execution gate was last evaluated -- the heartbeat that makes every other tile on this row trustworthy. The gate runs at process start and after every cycle, roughly four-hourly, so a healthy reading tracks the cycle-age reading at the top of this board. If this stops advancing, EVERY gauge on this row freezes at its last value: cycle telemetry can stay perfectly healthy while the safety envelope is silently no longer being read at all. Pages above 17100s (4h45m) after `for: 10m`, including on absence -- a gate that never published at all is this alert's worst case, not an exemption from it. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-not-evaluated. Published only by the trading engine on the capture primary, and the expression carries that machine's own matcher because the alert does.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

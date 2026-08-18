@@ -471,7 +471,7 @@ def test_every_alerted_family_is_admitted_where_its_rule_selects():
 # A rule whose signal is genuinely not panel-shaped (a pure log-content rule) may name a runbook
 # section instead. `test_infra_alert_rules.py` already proves that every cited anchor resolves; this
 # only asks whether one is cited at all.
-_RUNBOOK_REFERENCE = re.compile(r"infra/runbooks/README\.md#[A-Za-z0-9._-]+")
+_RUNBOOK_REFERENCE = re.compile(r"infra/runbooks/[A-Za-z0-9._-]+\.md#[A-Za-z0-9._-]+")
 
 
 def _annotations(rule: dict) -> dict:

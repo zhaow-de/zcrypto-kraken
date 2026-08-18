@@ -330,7 +330,7 @@ rules:
         Portfolio gross moves materially with the number of active sleeves, so re-derive the drift band
         and re-read order placeability before the next go-live gate reads either of them. Read
         zcrypto_engine_sleeve_gross to see which sleeve moved.
-        Runbook: infra/runbooks/README.md#zcrypto-engine-sleeve-count-changed
+        Runbook: infra/runbooks/engine.md#zcrypto-engine-sleeve-count-changed
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "31"
       unit: "changes to the active sleeve count in the last 26 hours"
@@ -662,7 +662,7 @@ rules:
     execErrState: Alerting
     for: 15m
     annotations:
-      summary: "The engine has been armed to submit orders continuously for more than six hours. Arming is expected only inside an attended probe window and is normally removed when it ends, so this most likely means an arm was left on. Deleting the arm file on the engine host disarms it immediately, with no deploy and no restart. This is not itself an incident — several other conditions must also be permissive before anything could be submitted — but an engine left armed removes one of the two keys that are supposed to stand between a mistake and real money. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-armed-too-long"
+      summary: "The engine has been armed to submit orders continuously for more than six hours. Arming is expected only inside an attended probe window and is normally removed when it ends, so this most likely means an arm was left on. Deleting the arm file on the engine host disarms it immediately, with no deploy and no restart. This is not itself an incident — several other conditions must also be permissive before anything could be submitted — but an engine left armed removes one of the two keys that are supposed to stand between a mistake and real money. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-armed-too-long"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "52"
     labels:
@@ -702,7 +702,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The execution kill switch is engaged, so the engine will refuse to submit any order until it is removed. This is a deliberate state and firing does not mean anything is broken — the alert exists because the failure mode is forgetting, not tripping. If the switch was engaged deliberately and the reason still holds, silence this for the expected duration; otherwise remove the kill file on the engine host. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-kill-tripped"
+      summary: "The execution kill switch is engaged, so the engine will refuse to submit any order until it is removed. This is a deliberate state and firing does not mean anything is broken — the alert exists because the failure mode is forgetting, not tripping. If the switch was engaged deliberately and the reason still holds, silence this for the expected duration; otherwise remove the kill file on the engine host. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-kill-tripped"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "53"
     labels:
@@ -746,7 +746,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The engine has not evaluated its execution safety gate for more than four and three quarter hours, so every published value describing whether it may trade is frozen at whatever it last read. Nothing else reports this: the cycle metrics can look perfectly healthy while the safety gate is no longer consulted at all, and a stale reading of `disarmed` is indistinguishable from a live one. Check that cycles are still completing, then read the current state directly on the engine host with the exec-status command rather than trusting the dashboard. Runbook: infra/runbooks/README.md#zcrypto-engine-exec-not-evaluated"
+      summary: "The engine has not evaluated its execution safety gate for more than four and three quarter hours, so every published value describing whether it may trade is frozen at whatever it last read. Nothing else reports this: the cycle metrics can look perfectly healthy while the safety gate is no longer consulted at all, and a stale reading of `disarmed` is indistinguishable from a live one. Check that cycles are still completing, then read the current state directly on the engine host with the exec-status command rather than trusting the dashboard. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-not-evaluated"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "56"
     labels:
@@ -788,7 +788,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "A ratified instrument went missing or unparseable at the venue on the most recent cycle. Check the newest venue snapshot record on the engine host for which leg and why. Runbook: infra/runbooks/README.md#zcrypto-venue-concordance-failed"
+      summary: "A ratified instrument went missing or unparseable at the venue on the most recent cycle. Check the newest venue snapshot record on the engine host for which leg and why. Runbook: infra/runbooks/engine.md#zcrypto-venue-concordance-failed"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "73"
     labels:
@@ -830,7 +830,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "The venue snapshot writer has stopped producing -- no successful venue-truth snapshot in over five hours. Check the engine log and the newest venue snapshot record on the engine host. Runbook: infra/runbooks/README.md#zcrypto-venue-snapshot-stale"
+      summary: "The venue snapshot writer has stopped producing -- no successful venue-truth snapshot in over five hours. Check the engine log and the newest venue snapshot record on the engine host. Runbook: infra/runbooks/engine.md#zcrypto-venue-snapshot-stale"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "71"
     labels:
@@ -1633,7 +1633,7 @@ rules:
         sweep -- a known bad hour re-failing does not trigger this. Read the per-hour warnings in the
         run's journal to see which hours, triage them, and record the finding durably: this alert
         ages out after 25h and is not itself a record.
-        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-new-breakage
+        Runbook: infra/runbooks/ops.md#zcrypto-ops-verify-replay-new-breakage
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "304"
       unit: "newly failed hours in the last 25 hours"
@@ -1685,7 +1685,7 @@ rules:
         The last canonical archive replay sweep did not run to completion, so today's findings are
         unknown, not clean. Likely causes: the container crashed, or the read-only NAS mount
         returned an I/O error.
-        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-run-broken
+        Runbook: infra/runbooks/ops.md#zcrypto-ops-verify-replay-run-broken
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "301"
     labels:
@@ -1771,7 +1771,7 @@ rules:
         The nightly archive re-verification backlog is not shrinking. The sweep still runs, but hours
         queued for re-verification have not decreased across two nightly runs — the drain budget may
         be zero, the state directory lost, or the drain broken.
-        Runbook: infra/runbooks/README.md#zcrypto-ops-verify-replay-backlog-stuck
+        Runbook: infra/runbooks/ops.md#zcrypto-ops-verify-replay-backlog-stuck
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "304"
       unit: "hours still pending replay"
@@ -1821,7 +1821,7 @@ rules:
         A settled tape-bars day was never published and has now fallen outside the re-scan window --
         it is a permanent hole in the dataset, and no other signal reports it. Read the runner log for
         the day and pair, then decide whether the trade archive can still be healed for it.
-        Runbook: infra/runbooks/README.md#zcrypto-ops-tapebars-permanent-gap
+        Runbook: infra/runbooks/ops.md#zcrypto-ops-tapebars-permanent-gap
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "405"
       unit: "days permanently missing"
@@ -1869,7 +1869,7 @@ rules:
         tape-bars has published no new day for over 48 hours. The sweep may still be exiting 0 --
         an incomplete trade tape defers a day without failing -- so check the trade backfill and the
         archive before the materializer itself.
-        Runbook: infra/runbooks/README.md#zcrypto-ops-tapebars-not-advancing
+        Runbook: infra/runbooks/ops.md#zcrypto-ops-tapebars-not-advancing
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "402"
       unit: "seconds since the last published day"
@@ -3183,7 +3183,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online`.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      summary: "{{ if $labels.system }}Kraken reported the trading venue is in state `{{ $labels.system }}` rather than `online`.{{ else }}This fired with no venue state attached, so treat the state as UNKNOWN rather than observed: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before acting on anything below.{{ end }} The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "108"
     labels:
@@ -3250,7 +3250,7 @@ rules:
     execErrState: Alerting
     for: 5m
     annotations:
-      summary: "{{ if $labels.system }}Kraken reported the trading venue in state `{{ $labels.system }}` rather than `online` within the last 15 minutes -- a NEW sighting, not a standing latch.{{ else }}This fired with no venue state attached, so nothing was observed to recur: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before treating this as a recurrence at all.{{ end }} The sibling venue alert latches on the first sighting of each state and stays red until the capture daemon restarts, so it cannot tell you a degradation is recurring; this one clears itself once 15 minutes pass with no further sighting. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/README.md#zcrypto-capture-venue-not-online"
+      summary: "{{ if $labels.system }}Kraken reported the trading venue in state `{{ $labels.system }}` rather than `online` within the last 15 minutes -- a NEW sighting, not a standing latch.{{ else }}This fired with no venue state attached, so nothing was observed to recur: either the query could not be evaluated, or a non-`online` state arrived without its label. Read the capture log's `venue status` line before treating this as a recurrence at all.{{ end }} The sibling venue alert latches on the first sighting of each state and stays red until the capture daemon restarts, so it cannot tell you a degradation is recurring; this one clears itself once 15 minutes pass with no further sighting. The state decides the response: `maintenance` is planned and you wait, `cancel_only`/`post_only` mean the venue is degraded and trading is restricted. Capture may be unaffected either way: a venue in maintenance can still stream book updates, and loss would show on the reconciler's counters, not this one. Do not restart or converge on this signal alone. Runbook: infra/runbooks/capture.md#zcrypto-capture-venue-not-online"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "108"
     labels:
@@ -3866,7 +3866,7 @@ rules:
     # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
     for: 10m
     annotations:
-      summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the WireGuard tunnel handshake-age and edge TLS cert-expiry gauges alongside basic host metrics. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/README.md#zaccess-bridgehead-dark"
+      summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the WireGuard tunnel handshake-age and edge TLS cert-expiry gauges alongside basic host metrics. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/zaccess.md#zaccess-bridgehead-dark"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "101"
     labels:
@@ -3966,7 +3966,7 @@ rules:
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "The bridgehead's root filesystem is below 15% free. On a 25 GB VPS running only Alloy, Caddy, and WireGuard, this is most likely accumulated logs or an ACME/cert-renewal artifact rather than data growth. Runbook: infra/runbooks/README.md#zaccess-disk-high"
+      summary: "The bridgehead's root filesystem is below 15% free. On a 25 GB VPS running only Alloy, Caddy, and WireGuard, this is most likely accumulated logs or an ACME/cert-renewal artifact rather than data growth. Runbook: infra/runbooks/zaccess.md#zaccess-disk-high"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "301"
       unit: "of the bridgehead root filesystem still free (a fraction, not a percent)"
@@ -4014,7 +4014,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/README.md#zaccess-tunnel-stale"
+      summary: "The WireGuard tunnel's handshake age has been over 300s for 10+ minutes -- PersistentKeepalive=25 means a healthy tunnel handshakes well under that, so the link is down or degraded. This fires once per END rather than once for the tunnel, so the host this notification names is the end that lost the link. Runbook: infra/runbooks/zaccess.md#zaccess-tunnel-stale"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "701"
       unit: "seconds since the last WireGuard handshake"
@@ -4063,7 +4063,7 @@ rules:
     execErrState: Alerting
     for: 1h
     annotations:
-      summary: "{{ if $labels.target }}The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry.{{ else }}A tracked TLS certificate is under 14 days from expiry.{{ end }} Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/README.md#zaccess-cert-expiring"
+      summary: "{{ if $labels.target }}The TLS certificate for `{{ $labels.target }}` is under 14 days from expiry.{{ else }}A tracked TLS certificate is under 14 days from expiry.{{ end }} Each tracked endpoint (the tmux and nas edge vhosts, plus the NAS admin console) is its own alert instance, so this names the one certificate that needs renewing rather than only the soonest. Runbook: infra/runbooks/zaccess.md#zaccess-cert-expiring"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "702"
       unit: "seconds until that certificate expires"
