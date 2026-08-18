@@ -1361,12 +1361,14 @@ class ProbeExecutor:
             self._finish_revoked(active)
             return
 
-        if active.phase == "ioc":
-            self._update_row(active, state="venue_canceled", event=payload)
-            self._fallback(active)
-            return
+        # Both unrequested cases write the SAME row state, so both count it -- written once above
+        # the branch rather than in each arm, because the arms drifting apart is exactly how an
+        # unfilled fallback ladder came to advance `submitted` with no terminal outcome behind it.
         self._update_row(active, state="venue_canceled", event=payload)
         _inc_order("venue_canceled")
+        if active.phase == "ioc":
+            self._fallback(active)
+            return
         self._reprice(active)
 
     def _publish_fill(self, event) -> None:

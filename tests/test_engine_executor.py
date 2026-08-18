@@ -1449,6 +1449,46 @@ def test_three_unfilled_iocs_end_the_intent_unfilled_after_exactly_four_submissi
     assert _intent_outcome(tmp_path) == "unfilled"
 
 
+def test_every_returned_ioc_remainder_counts_its_outcome_so_the_board_still_balances(tmp_path):
+    """The operator surface, not the ledger: during an unfilled fallback ladder the board must not
+    show `submitted` advancing with nothing terminal behind it. Each IOC's unfilled remainder comes
+    back as an unrequested cancel, writes row state `venue_canceled`, and must count that outcome --
+    exactly as the resting-phase arm of the same ack already does. The label test derives its set
+    from the executor's `_inc_order` call sites, so it passes whether or not this arm counts; only
+    driving the ladder and reading the counter can tell."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=16)
+
+    for _ in range(4):  # the time-box cancel ack, then all three IOC remainders returning
+        ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+
+    assert _intent_outcome(tmp_path) == "unfilled"
+    assert [row["state"] for row in _record(tmp_path)["submitted"]] == [
+        "canceled",
+        "venue_canceled",
+        "venue_canceled",
+        "venue_canceled",
+    ]
+    # One terminal outcome per order, and the four submissions are fully accounted for.
+    assert metrics.orders == [
+        "submitted",
+        "accepted",
+        "canceled",
+        "submitted",
+        "venue_canceled",
+        "submitted",
+        "venue_canceled",
+        "submitted",
+        "venue_canceled",
+    ]
+    assert metrics.orders.count("venue_canceled") == 3
+    terminal = ("canceled", "venue_canceled", "filled", "rejected", "ambiguous")
+    assert sum(o in terminal for o in metrics.orders) == metrics.orders.count("submitted") == 4
+
+
 def test_a_remainder_below_ordermin_ends_the_intent_partial_with_no_further_order(tmp_path):
     """A terminal partial is a legitimate end state -- never an unfillable order the venue rejects."""
     ex, client, clock = _resting_executor(tmp_path)
