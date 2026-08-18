@@ -789,6 +789,8 @@ rules:
     for: 5m
     annotations:
       summary: "A ratified instrument went missing or unparseable at the venue on the most recent cycle. Check the newest venue snapshot record on the engine host for which leg and why. Runbook: infra/runbooks/README.md#zcrypto-venue-concordance-failed"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "73"
     labels:
       severity: warning
     notification_settings:
@@ -829,6 +831,8 @@ rules:
     for: 5m
     annotations:
       summary: "The venue snapshot writer has stopped producing -- no successful venue-truth snapshot in over five hours. Check the engine log and the newest venue snapshot record on the engine host. Runbook: infra/runbooks/README.md#zcrypto-venue-snapshot-stale"
+      __dashboardUid__: "zcrypto-engine"
+      __panelId__: "71"
     labels:
       severity: warning
     notification_settings:
