@@ -240,6 +240,20 @@ def test_the_success_result_carries_the_limit_bound_verdict(tmp_path, monkeypatc
     assert result.limit_bound is False
 
 
+def test_a_raising_limit_recomputation_never_costs_the_cycle(tmp_path, monkeypatch):
+    """Guard-proving: the limit stack VALIDATES its input and raises on anything non-finite, unlike
+    the sleeve-gross sum beside it. This is telemetry, so an unwrapped raise here would turn a cycle
+    that built and journalled fine into a dead one -- constructed, not assumed."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    monkeypatch.setattr(cycle, "_limits_bound", lambda result: 1 / 0)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    assert result.status == "success"
+    assert result.record_path.exists()
+    assert result.limit_bound is None  # no answer, never a False that would read as a quiet book
+
+
 def test_a_failed_cycle_carries_no_limit_verdict(tmp_path, monkeypatch):
     # No build ran, so "did a limit bind" has no answer: None, not the False that would read as a
     # measured quiet book.
