@@ -521,6 +521,9 @@ _ANCHOR_TAG = re.compile(r'<a name="([A-Za-z0-9._-]+)"></a>')
 # descriptions end the sentence right after the citation, which a dot-accepting class would swallow.
 # Fail-closed if that ever changes -- a truncated anchor resolves to nothing and the test says so.
 _RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
+# The index's own rows link SIDEWAYS -- `](capture.md#anchor)`, relative, no `infra/runbooks/`
+# prefix -- so `_RUNBOOK_LINK` structurally cannot see them. Matched separately for that reason.
+_INDEX_LINK = re.compile(r"\]\(([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)\)")
 
 
 def _runbook_anchors() -> dict[str, list[str]]:
@@ -570,6 +573,24 @@ def test_every_runbook_link_in_a_dashboard_description_resolves():
 
     assert cited, "no dashboard cites a runbook anchor -- the regex is broken, not the descriptions"
     assert not broken, f"a dashboard description points at a runbook anchor its named file does not define: {broken}"
+
+
+def test_the_index_routes_to_every_section_and_only_to_real_ones():
+    """The README is a pure index, so its rows ARE the entry point: a summary's path resolves to
+    that page, and the row is the responder's next tap. Its links are relative, which puts them
+    outside every other guard here -- a move that updates the summaries and the panels and forgets
+    the index misroutes exactly the page the responder lands on. Both directions are pinned: a row
+    pointing at a file that does not define the anchor, and a section no row routes to at all,
+    which is reachable only by someone who already knows which file to open."""
+    anchors = _runbook_anchors()
+    linked = _INDEX_LINK.findall((RUNBOOKS / "README.md").read_text())
+
+    assert linked, "the index has no anchor-bearing rows -- the regex is broken, not the index"
+    broken = [(f"{name}#{a}", anchors.get(a) or "no runbook file") for name, a in linked if name not in anchors.get(a, ())]
+    assert not broken, f"an index row links at a section the file it names does not define (row, actually defined in): {broken}"
+
+    unrouted = sorted(set(anchors) - {a for _, a in linked})
+    assert not unrouted, f"a runbook section no index row routes to -- unreachable from the entry point: {unrouted}"
 
 
 def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
