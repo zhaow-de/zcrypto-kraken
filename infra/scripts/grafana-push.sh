@@ -29,6 +29,15 @@
 #                              stderr is what makes a silent failure possible.
 #                              For a PromQL read-back do not use this at all: infra/scripts/grafana-query.py
 #                              encapsulates both footguns and never prints the token.
+#
+# PATH. This script calls bare `python3`, and the check below refuses one without PyYAML.
+# A plain shell in this repo has exactly that python3, so the script aborts before pushing
+# anything. PyYAML lives in the project venv (ansible, pre-commit and yamllint all pull it), so
+# run it with that venv first on
+# PATH -- `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root.
+# Do NOT `pip install pyyaml` into the system python to work around it: the venv is the
+# environment every other tool here already uses, and a second copy drifts unseen.
+#
 #   GRAFANA_URL                default https://zcrypto2026.grafana.net
 #   GRAFANA_PROM_DS_UID        default grafanacloud-prom   (NOT grafanacloud-usage / -alert-state-history)
 #   GRAFANA_LOKI_DS_UID        default grafanacloud-logs
@@ -75,7 +84,7 @@ echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_L
 
 command -v python3 >/dev/null 2>&1 || { echo "grafana-push: python3 is required" >&2; exit 1; }
 python3 -c "import yaml" >/dev/null 2>&1 \
-  || { echo "grafana-push: python3's PyYAML module is required (pip install pyyaml)" >&2; exit 1; }
+  || { echo "grafana-push: python3's PyYAML module is required -- rerun with the project venv first on PATH (see the PATH note in this script's header); do not pip-install into the system python" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "grafana-push: jq is required" >&2; exit 1; }
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
