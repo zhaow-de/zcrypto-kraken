@@ -63,6 +63,9 @@ def validate_venue_record(doc: dict) -> None:
     for key in ("cycle_ts", "code_version", "status"):
         if key not in doc:
             raise EngineJournalError(f"venue record missing required key {key!r}")
+    # Deliberately no exact-top-level-key-set check (unlike the sibling validate_exec_record): the
+    # brief enumerates presence/absence per field rather than one blanket top-level set, so a stray
+    # extra top-level key is tolerated here rather than refused.
     status = doc["status"]
     if status == "error":
         if "error" not in doc:

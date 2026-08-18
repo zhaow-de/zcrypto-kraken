@@ -22,6 +22,7 @@ from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
 from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at, _seed_exec_positions, _VenueGauges
 from cli.engine.cycle import CycleResult, run_cycle
+from cli.engine.errors import EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
 from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, to_json, validate_record
@@ -692,6 +693,42 @@ def _write_venue_record_v2(
     (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
 
 
+def _write_shape_invalid_venue_record(journal_dir: Path, cycle_ts: datetime) -> None:
+    """A v1-SHAPED body (base-keyed instruments/positions, the v1 instrument-entry key set) stamped
+    `schema_version: 2` -- refused by `validate_venue_record`'s key-DIRECTION check (schema 2
+    demands full-symbol keys), never by an accidental missing/extra key. Proves the D9
+    validate-before-status wiring inside `_seed_venue_state`/`_seed_exec_positions` is load-bearing
+    and not refactor-erasable: every other fixture in this file now writes schema-valid records (the
+    latent-bug fix to `_write_venue_record`), so without this one, deleting either
+    `validate_venue_record(doc)` call leaves the whole suite green."""
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "schema_version": 2,
+        "cycle_ts": cycle_ts.isoformat(),
+        "code_version": "test",
+        "status": "ok",
+        "state": {
+            "snapshot_at": cycle_ts.isoformat(),
+            "instruments": {
+                "BTC": {
+                    "base": "BTC",
+                    "instrument_id": "BTC/EUR.KRAKEN",
+                    "ordermin": 0.0001,
+                    "costmin": 0.5,
+                    "lot_step": 0.00000001,
+                    "tick_size": 0.1,
+                    "costmin_source": "snapshot-constant",
+                }
+            },
+            "positions": {"BTC": 0.0},
+            "balances": {"EUR": 1000.0},
+        },
+        "concordance": {"ok": True, "failures": []},
+    }
+    (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
 def test_seed_completed_at_falls_back_to_process_start_when_the_journal_is_empty(tmp_path, monkeypatch):
     fixed_now = datetime(2026, 7, 20, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(command, "_utc_now", lambda: fixed_now)
@@ -781,6 +818,17 @@ def test_seed_venue_state_an_error_record_never_overrides_the_last_ok_one(tmp_pa
     assert seed == {"loaded": 10, "expected": len(INSTRUMENT_IDS), "failures": 0, "snapshot_at": ok_at.isoformat()}
 
 
+def test_seed_venue_state_refuses_a_shape_invalid_record(tmp_path):
+    # D9: validate_venue_record is called on every record before status is even consulted -- a
+    # v1-shaped body stamped schema_version 2 must never be silently skipped as "not ok", it must
+    # raise, because the shape violation itself (not the status) is the thing being refused.
+    journal_dir = tmp_path / "journal"
+    _write_shape_invalid_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC))
+
+    with pytest.raises(EngineJournalError):
+        command._seed_venue_state(journal_dir)
+
+
 # --- command.py: _seed_exec_positions (T0140) -------------------------------------------------------
 
 
@@ -815,6 +863,15 @@ def test_seed_exec_positions_skips_a_schema_version_1_record(tmp_path):
     _write_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), loaded=1)
 
     assert _seed_exec_positions(journal_dir) is None
+
+
+def test_seed_exec_positions_refuses_a_shape_invalid_record(tmp_path):
+    # Same D9 guard, this function's own call site -- must be independently erasable-proof.
+    journal_dir = tmp_path / "journal"
+    _write_shape_invalid_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC))
+
+    with pytest.raises(EngineJournalError):
+        _seed_exec_positions(journal_dir)
 
 
 # --- command.py: _ExecGauges -------------------------------------------------------------------------
