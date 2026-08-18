@@ -620,11 +620,17 @@ class ProbeExecutor:
         accept-then-cancel. The counter counts RESUBMISSIONS -- the first submission was never a
         reprice -- so `_MAX_REPRICES` of them happen and the next one refuses."""
         if active.cancel_requested:
-            # A cancel is already out. Whatever asked for it -- the kill file, the hold, a dead
-            # quote feed, the time-box -- said stop, and a reprice would put a brand-new order on
-            # exactly the book the revoke declared untradeable. Guarded HERE so both crossing
-            # surfaces are covered by one check rather than each remembering.
-            self._finish_revoked(active)
+            # A cancel is already out, so this order is over either way -- but WHY it is out decides
+            # what happens next, and the two answers are opposites. A revoke (kill file, disarm,
+            # hold, venue offline, quote silence) declared the book untradeable: stop, and never
+            # reprice onto exactly that book. The time-box declared only the MAKER attempt over:
+            # cross now. Conflating them would silently drop the fallback, and the fallback is why
+            # maker-first is acceptable at all -- an unfilled leg strands the probe. Guarded HERE so
+            # both crossing surfaces get the distinction from one check.
+            if active.falling_back:
+                self._fallback(active)
+            else:
+                self._finish_revoked(active)
             return
         active.reprices += 1
         if active.reprices > _MAX_REPRICES:

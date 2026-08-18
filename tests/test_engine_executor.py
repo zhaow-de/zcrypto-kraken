@@ -1327,9 +1327,32 @@ def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_pat
     assert intent["filled_qty"] == 0.4
 
 
+def test_a_rejection_during_a_time_box_cancel_still_proceeds_to_the_fallback(tmp_path):
+    """The other side of the same branch. A time-box cancel declares the maker attempt over and says
+    CROSS NOW; a revoke declares the book untradeable and says STOP. Conflating the two silently
+    drops the fallback -- and the fallback existing at all is why maker-first was acceptable, since
+    an unfilled leg strands the probe. The safety envelope does not depend on this branch: the IOC
+    still goes through `_submit`, which evaluates the gate as its first act."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=16)
+    assert client.canceled  # the time-box cancel is out, and the venue answers with a rejection
+
+    ex.on_order_event(
+        _named("OrderRejected", client_order_id=client.last_order_id, reason="POST_ONLY_REJECTED: would cross", due_post_only=True)
+    )
+
+    assert len(client.submitted) == 2
+    ioc, _ = client.submitted[1]
+    assert ioc.time_in_force == TimeInForce.IOC and ioc.post_only is False
+    assert ioc.price == 30001.0  # the ask -- the fallback, not a reprice at the bid
+    assert _record(tmp_path)["submitted"][0]["state"] == "rejected"
+
+
 def test_a_rejection_arriving_during_a_revoke_terminates_rather_than_repricing(tmp_path):
     """The revoke declared this book untradeable; a post-only rejection is the reprice trigger, so
-    repricing here would put a brand-new order on exactly that book."""
+    repricing here would put a brand-new order on exactly that book. Paired with the time-box test
+    above: the branch is only proven with both directions constructed."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
     ex.on_order_event(OrderAccepted(client.last_order_id))
     (exec_dir(tmp_path) / KILL_FILE).touch()
