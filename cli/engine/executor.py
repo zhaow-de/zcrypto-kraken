@@ -74,6 +74,9 @@ _REST_CANCEL_OFFSET = 0.05
 # tradeable hides under this either -- the smallest quantity any leg can express is its lot step,
 # orders of magnitude above it.
 _OVERFILL_TOLERANCE = 1e-12
+# What the in-process backstop journals when it refuses. The kill FILE is the durable latch and the
+# gate's own input; this is what is left when the file could not be written, and it says so.
+_TRIPPED_REFUSAL = "the kill switch tripped in this process"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 
@@ -383,6 +386,14 @@ class ProbeExecutor:
         themselves; the caller decides what happens to the rest of the plan.
         """
         verdict = self._evaluate(self._now())
+        if self._kill_tripped:
+            # The backstop BEHIND the kill file, at the one place every order goes through. It reads
+            # process memory rather than the gate, which is the whole point: if the file could not be
+            # written, the gate reads permissive and this is the last thing that refuses. Tripping
+            # direction only -- it can refuse an order, never permit one, and never clear anything.
+            self._journal_intent(ctx.index, "refused", (_TRIPPED_REFUSAL,), ctx.filled)
+            _inc_order("refused")
+            return "refused"
         if not _level_permits(verdict.level, ctx.intent):
             # `ctx.filled` on every journal call here, not 0.0: `update_plan_intent` SETS the field
             # rather than accumulating, and a resubmission refused after earlier orders already
@@ -537,6 +548,18 @@ class ProbeExecutor:
             # is -- and still deleted, or the next tick re-reads the same broken file forever.
             if self._journal_plan(
                 cycle_ts, verdict, now, plan_id="unparseable", plan={}, disposition="refused", reasons=(str(exc),)
+            ):
+                self._delete(path)
+            return
+
+        if self._kill_tripped:
+            # A trip stops THIS plan through `_halt_plan`; without this it would stop nothing else,
+            # and a plan dropped afterwards would be picked up and run whenever the kill file could
+            # not be written. Journaled and deleted like any other refusal, or the next tick re-reads
+            # the same file forever.
+            logger.critical("probe plan %s refused: %s", plan.plan_id, _TRIPPED_REFUSAL)
+            if self._journal_plan(
+                cycle_ts, verdict, now, plan_id=plan.plan_id, plan=plan.raw, disposition="refused", reasons=(_TRIPPED_REFUSAL,)
             ):
                 self._delete(path)
             return
@@ -1004,8 +1027,8 @@ class ProbeExecutor:
             path.write_text(f"{self._now().isoformat()} {reason}\n")
         except OSError:
             logger.critical(
-                "the kill file %s could not be written -- this process has stopped trading, but nothing on disk "
-                "will stop the next one: stop the engine by hand",
+                "the kill file %s could not be written -- this process refuses every further plan and order from "
+                "here, but NOTHING ON DISK will stop the next one: stop the engine by hand",
                 path,
                 exc_info=True,
             )
@@ -1060,7 +1083,10 @@ class ProbeExecutor:
         client_order_id = str(getattr(event, "client_order_id", ""))
         attached = self._attached.get(client_order_id)
         if attached is None:
-            self._trip_kill(f"a fill arrived for order {client_order_id}, which this engine has no record of submitting")
+            # Says "no open record", not "never submitted": a terminal row, or one older than the
+            # ledger scan window, is not in the attachment map either, and firing is still right
+            # there -- a fill on an order this process already accounted for is its own divergence.
+            self._trip_kill(f"a fill arrived for order {client_order_id}, for which this engine holds no open order record")
             return True
         boundary, row = attached
         qty = float(event.last_qty)
@@ -1120,6 +1146,15 @@ class ProbeExecutor:
         express, so nothing tradeable hides under it. Anything larger is either a fill this engine
         never saw or one it saw and mis-accounted, and both are reasons to stop rather than to place
         the next order against a position it cannot describe.
+
+        DELIBERATELY NOT reached from the four ambiguous exits (a raising submit, an unclassifiable
+        rejection, a cancel the venue rejected, a cancel or IOC it never answered): each of those
+        means an order may still be live and may still legitimately fill, so `filled` is not an
+        expectation to hold the Cache to, and checking there would fire on a delayed venue answer
+        rather than on a divergence. The cost is real and accepted: a divergence born during an
+        ambiguous intent is not caught here, and the next intent's `position_before` baselines it
+        away. What covers it instead is that an ambiguous outcome already stops the whole plan and
+        leaves an open row for the attended operator, which is the state that path exists to produce.
         """
         expected = active.position_before + (active.filled if active.intent.side == "buy" else -active.filled)
         try:

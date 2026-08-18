@@ -1950,7 +1950,7 @@ def test_a_fill_for_an_order_this_engine_never_submitted_trips_the_kill_switch(t
     ex.on_order_event(_fill("O-unknown", 0.001))
 
     text = _kill_file(tmp_path).read_text()
-    assert "no record of submitting" in text and "O-unknown" in text  # WHICH condition fired
+    assert "no open order record" in text and "O-unknown" in text  # WHICH condition fired
     assert client.canceled == [resting]
     assert _intent_outcome(tmp_path, 0) == "revoked"
     assert _intent_outcome(tmp_path, 1) == "refused"
@@ -2039,20 +2039,23 @@ def test_a_terminal_whose_position_matches_its_fills_does_not_trip(tmp_path):
 
 
 def test_a_tripped_kill_switch_refuses_every_later_plan(tmp_path, kill_trip_expected):
-    """The trip's durable half: the file it wrote is the gate's own input, so the refusal outlives
-    the plan that tripped it and survives into the next one. Nothing in this process cleared it --
-    nothing in this process can."""
+    """The trip's DURABLE half, isolated the only way it can be: a restarted process carries no
+    memory of the trip, so what refuses its plan is the file itself -- the gate's own input. The
+    same-process refusal is a different mechanism, proven separately below; run here it would hide
+    this one. Nothing in either process cleared the file; nothing in either process can."""
     ex, client, clock = _resting_executor(tmp_path)
     ex.on_order_event(OrderAccepted(client.last_order_id))
     ex.on_order_event(_fill("O-unknown", 0.001))
     assert _kill_file(tmp_path).exists()
 
-    clock.now = NOW + timedelta(seconds=5)
-    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=clock.now - timedelta(minutes=1)))
-    ex.on_timer(clock.now)
-    ex.on_quote(_quote())
+    restarted_client = StubClient()
+    restarted = _executor(tmp_path, client=restarted_client, gate=_gate(tmp_path, GateLevel.NONE))
+    later = NOW + timedelta(seconds=5)
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=later - timedelta(minutes=1)))
+    restarted.on_timer(later)
+    restarted.on_quote(_quote())
 
-    assert len(client.submitted) == 1  # nothing new reached the venue
+    assert restarted_client.submitted == []  # nothing reached the venue after the restart either
     entry = _record(tmp_path)["plans"][-1]
     assert entry["plan_id"] == "p-2"
     assert entry["intents"][0]["outcome"] == "refused"
@@ -2091,3 +2094,103 @@ def test_a_closer_that_flattens_its_position_reconciles_against_what_it_started_
 
     assert not _kill_file(tmp_path).exists()
     assert _intent_outcome(tmp_path) == "filled"
+
+
+# --- D11 fix round: the in-process backstop, and the branches that only fire on failure ------------
+
+
+def test_a_kill_file_that_could_not_be_written_still_refuses_the_next_plan(tmp_path, kill_trip_expected):
+    """The kill FILE is the durable latch; when it cannot be written there is still one thing left,
+    and it must be a refusal. A directory sitting in the kill file's place stands in for any write
+    failure -- a read-only mount, a full disk, a permission error -- and it is removed afterwards so
+    the gate reads `full` again: from there the ONLY thing refusing is this process's own memory
+    that it tripped. Without that memory the next plan is picked up, submitted, and the published
+    gauge still reads zero, while the log claims the engine stopped."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    obstruction = exec_dir(tmp_path) / KILL_FILE
+    obstruction.mkdir()
+
+    ex.on_order_event(_fill("O-unknown", 0.001))
+
+    assert not obstruction.is_file()  # the latch never reached disk
+    obstruction.rmdir()
+    _gate(tmp_path)  # its trailing assert: nothing on disk refuses anything any more
+
+    clock.now = NOW + timedelta(seconds=5)
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=clock.now - timedelta(minutes=1)))
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote())
+
+    assert len(client.submitted) == 1  # nothing new reached the venue
+    entry = _record(tmp_path)["plans"][-1]
+    assert entry["plan_id"] == "p-2" and entry["disposition"] == "refused"
+    assert entry["reasons"] == ["the kill switch tripped in this process"]
+    assert not _plan_path(tmp_path).exists()  # journaled AND deleted, never re-read every tick
+
+
+def test_the_chokepoint_refuses_once_this_process_has_tripped(tmp_path):
+    """The backstop BEHIND the plan-pickup refusal, at the one place every order goes through. The
+    flag is set directly because after a real trip nothing can reach the chokepoint any more -- the
+    plan is gone -- which is exactly what makes this a belt behind a belt rather than the belt."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex._kill_tripped = True
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))  # would reprice
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert intent["reasons"] == ["the kill switch tripped in this process"]
+
+
+class _PositionReadFails(StubCache):
+    """`positions_open` answers until `broken` is set: the intent has to be able to START -- venue
+    truth reads the same accessor -- and only then lose the read."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.broken = False
+
+    def positions_open(self, *, instrument_id=None, **kwargs):
+        if self.broken:
+            raise RuntimeError("the position store is not readable")
+        return super().positions_open(instrument_id=instrument_id, **kwargs)
+
+
+def test_a_position_that_cannot_be_read_at_the_terminal_trips(tmp_path, kill_trip_expected):
+    """An unverifiable position after a fill is not something to place the next order against. The
+    venue-truth read at intent start proved this same Cache readable minutes earlier, so a raise
+    here is an anomaly rather than routine -- and the branch runs inside an exception handler inside
+    an event catch-all, which is where an untested one is only ever found in the field."""
+    cache = _PositionReadFails()
+    ex, client, clock = _resting_executor(tmp_path, client=StubClient(cache))
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    cache.broken = True
+    ex.on_order_event(_fill(client.last_order_id, 0.001))
+
+    text = _kill_file(tmp_path).read_text()
+    assert "could not be read" in text and "BTC/EUR" in text
+
+
+def test_a_ledger_row_with_no_readable_order_quantity_trips_on_any_fill(tmp_path, kill_trip_expected):
+    """A fill this process cannot BOUND is itself the divergence, so an order payload carrying no
+    quantity reads 0.0 rather than being waved through. The shape is one this engine never writes --
+    a write-ahead row always carries the sized order -- so it can only be a foreign or damaged
+    record, which is not one to reason from."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-shapeless", reduce_only=True, when=earlier)
+    path = exec_record_path(tmp_path / "journal", _boundary(earlier))
+    doc = read_exec_record(path)
+    doc["submitted"][0]["order"] = {}
+    path.write_text(json.dumps(doc))
+
+    client = StubClient(StubCache(open_orders=[_open_order("O-shapeless")]))
+    ex = _executor(tmp_path, client=client)
+    ex.on_timer(NOW)
+
+    ex.on_order_event(_fill("O-shapeless", 0.0004))
+
+    assert "of the 0 it was submitted for" in _kill_file(tmp_path).read_text()
