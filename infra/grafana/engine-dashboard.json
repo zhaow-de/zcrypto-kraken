@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and empty outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure."
+        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure."
       }
     },
     {
@@ -1813,7 +1813,7 @@
       "id": 61,
       "type": "timeseries",
       "title": "Orders by outcome",
-      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue-canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), or ambiguous (the venue outcome could not be established). No alert reads this panel directly. Published only by the trading engine on the capture primary.",
+      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue_canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), or ambiguous (the venue outcome could not be established). No alert reads this panel directly. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1837,10 +1837,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -1849,10 +1849,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -1899,10 +1895,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -1911,10 +1907,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -1961,10 +1953,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "currencyEUR",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -1973,10 +1965,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -2023,10 +2011,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -2035,10 +2023,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -2085,10 +2069,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "currencyEUR",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -2097,10 +2081,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -2147,10 +2127,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -2159,10 +2139,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -2237,7 +2213,7 @@
               },
               {
                 "color": "red",
-                "value": 16500
+                "value": 18000
               }
             ]
           }
@@ -2293,10 +2269,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -2305,10 +2281,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
@@ -2355,10 +2327,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "short",
           "custom": {
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "thresholds": {
@@ -2367,10 +2339,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 16500
               }
             ]
           }
