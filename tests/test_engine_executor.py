@@ -146,6 +146,7 @@ class StubCache:
         self._instruments = _all_instruments() if instruments is None else instruments
         self._balances = {"ZEUR": 1000.0} if balances is None else balances
         self._positions = positions or {}
+        self._closed: dict[str, list] = {}
         self._open_orders = open_orders or []
         self._raises = raises
 
@@ -157,14 +158,25 @@ class StubCache:
     def positions_open(self, *, instrument_id=None, **kwargs):
         return self._positions.get(str(instrument_id), [])
 
-    def set_position(self, symbol, signed_qty):
+    def positions_closed(self, *, instrument_id=None, **kwargs):
+        return self._closed.get(str(instrument_id), [])
+
+    def set_position(self, symbol, signed_qty, *, realized_pnl=None):
         """What the Cache says is held, in the shape `_held()` builds -- the one accessor a test
         needs to make the venue disagree with the ledger, or to land a holding the engine never
-        ordered (the manual settle)."""
-        self._positions[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty)]
+        ordered (the manual settle). `realized_pnl` is `Money | None` on a real Position, and the
+        None is the ordinary case for a leg with no closed round trip yet."""
+        self._positions[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=realized_pnl)]
+
+    def close_position(self, symbol, realized_pnl):
+        """A CLOSED position carrying realized PnL -- what `positions_closed` serves once a round
+        trip is done, and the half a sum over open positions alone would silently lose."""
+        self._closed.setdefault(INSTRUMENT_IDS[symbol], []).append(SimpleNamespace(signed_qty=0.0, realized_pnl=realized_pnl))
 
     def move_position(self, symbol, delta):
-        self.set_position(symbol, sum(float(p.signed_qty) for p in self._positions.get(INSTRUMENT_IDS[symbol], [])) + delta)
+        held = self._positions.get(INSTRUMENT_IDS[symbol], [])
+        realized = held[0].realized_pnl if held else None
+        self.set_position(symbol, sum(float(p.signed_qty) for p in held) + delta, realized_pnl=realized)
 
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
@@ -317,9 +329,10 @@ def _intent_entry(tmp_path: Path, index: int, when: datetime = NOW) -> dict:
 
 
 def _held(**by_symbol):
-    """`StubCache(positions=...)`: constructed `signed_qty` namespaces keyed by instrument id --
-    exactly the shape `Cache.positions_open(instrument_id=...)` returns (negative = SHORT)."""
-    return {INSTRUMENT_IDS[symbol]: [SimpleNamespace(signed_qty=qty)] for symbol, qty in by_symbol.items()}
+    """`StubCache(positions=...)`: constructed `signed_qty`/`realized_pnl` namespaces keyed by
+    instrument id -- exactly the shape `Cache.positions_open(instrument_id=...)` returns (negative =
+    SHORT). `realized_pnl` is `Money | None` on a real Position and None is the ordinary case."""
+    return {INSTRUMENT_IDS[symbol]: [SimpleNamespace(signed_qty=qty, realized_pnl=None)] for symbol, qty in by_symbol.items()}
 
 
 def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = NOW) -> Path:
@@ -521,11 +534,27 @@ def _no_unannounced_kill_trip(request):
 
 
 class RecordingMetrics:
+    """`_ExecutionMetrics`' surface, recorded. Every method is on it because the executor's hooks
+    are wrapped and log-and-continue: a stub missing one would turn a wiring regression into a log
+    line no test reads."""
+
     def __init__(self):
         self.orders = []
+        self.fills = []
+        self.positions = []
+        self.realized = []
 
     def inc_order(self, outcome):
         self.orders.append(outcome)
+
+    def inc_fill(self, liquidity, fee_eur):
+        self.fills.append((liquidity, fee_eur))
+
+    def set_position(self, symbol, qty):
+        self.positions.append((symbol, qty))
+
+    def set_realized(self, value):
+        self.realized.append(value)
 
 
 # --- the happy path -----------------------------------------------------------------------------
@@ -1030,17 +1059,18 @@ class _FakeMoney:
         return float(self._amount)
 
 
-def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR"):
+def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", symbol="BTC/EUR", liquidity="MAKER"):
     """An `OrderFilled` carrying every field the executor's fill row reads -- the real event always
     has them, so the stub must too, or the row would be pinned against a shape the venue never
     sends."""
     return _named(
         "OrderFilled",
         client_order_id=client_order_id,
+        instrument_id=INSTRUMENT_IDS[symbol],
         last_qty=last_qty,
         last_px=px,
         commission=_FakeMoney(fee, fee_code),
-        liquidity_side="MAKER",
+        liquidity_side=liquidity,
         trade_id="T-1",
     )
 
@@ -1053,7 +1083,7 @@ def _deliver_fill(ex, client, client_order_id, qty, *, symbol="BTC/EUR", side="b
     model a divergence that never happens, and D11's post-terminal reconciliation would trip on every
     healthy fill."""
     client.cache.move_position(symbol, qty if side == "buy" else -qty)
-    ex.on_order_event(_fill(client_order_id, qty, px=px, **kwargs))
+    ex.on_order_event(_fill(client_order_id, qty, px=px, symbol=symbol, **kwargs))
 
 
 def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_starts(tmp_path):
@@ -1073,6 +1103,113 @@ def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_start
 
     ex.on_timer(NOW + timedelta(seconds=5))
     assert client.subscribed == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
+
+
+# --- the fill metrics -----------------------------------------------------------------------------
+
+
+def test_a_fill_publishes_its_liquidity_side_fee_and_the_position_the_cache_now_holds(tmp_path):
+    """The live view of the row the fill just wrote: same event, same numbers. The Cache read is the
+    point of the position half -- publishing the executor's own running total instead would report
+    what this process THINKS it holds, which is exactly the quantity the reconciliation exists to
+    doubt."""
+    client = StubClient()
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, fee=0.37, liquidity="TAKER")
+
+    assert metrics.fills == [("taker", 0.37)]
+    assert metrics.positions == [("BTC/EUR", 0.001)]
+    assert metrics.realized == [0.0]  # no realized leg on this position yet -- a None contributes zero
+
+
+def test_a_non_eur_commission_reaches_the_metric_as_no_fee_at_all(tmp_path):
+    """A BTC-denominated commission may never be added to a EUR total. The FILL still counts."""
+    client = StubClient()
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, fee=0.00002, fee_code="XXBT")
+
+    assert metrics.fills == [("maker", None)]
+
+
+def test_realized_pnl_sums_open_and_closed_positions_and_skips_a_non_eur_one(tmp_path):
+    """`Position.realized_pnl` is `Money | None`. The None is skipped rather than `float()`-ed, the
+    CLOSED positions are summed too (a round trip's PnL lives nowhere else), and a non-EUR position
+    is left out rather than added to a EUR total."""
+    client = StubClient()
+    client.cache.close_position("BTC/EUR", _FakeMoney(-4.5, "ZEUR"))
+    client.cache.close_position("BTC/EUR", _FakeMoney(1.25, "EUR"))
+    client.cache.close_position("BTC/EUR", _FakeMoney(9999.0, "XXBT"))  # never summed into a EUR total
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001)
+
+    assert metrics.realized == [pytest.approx(-3.25)]
+
+
+def test_a_raising_fill_metrics_hook_never_costs_the_fill_its_row(tmp_path):
+    """Guard-proving: the hook object raises on every call, which is the failure the wrap exists to
+    isolate. The ledger row, the intent outcome and the ladder must be untouched -- metrics are
+    observation, and observation may never change what this engine does with real money."""
+
+    class _RaisingMetrics:
+        def inc_order(self, outcome):
+            raise RuntimeError("registry is gone")
+
+        def inc_fill(self, liquidity, fee_eur):
+            raise RuntimeError("registry is gone")
+
+        def set_position(self, symbol, qty):
+            raise RuntimeError("registry is gone")
+
+        def set_realized(self, value):
+            raise RuntimeError("registry is gone")
+
+    client = StubClient()
+    set_executor_hooks(metrics=_RaisingMetrics())
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "filled" and row["filled_qty"] == 0.001
+    assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
+
+
+def test_a_late_fill_on_a_superseded_order_is_published_too(tmp_path):
+    """The detached path. Its own ledger row is written in exactly the same terms as an in-flight
+    one, and its fee is just as real -- counting only in-flight fills would under-report the money
+    actually paid while every test stayed green."""
+    ex, client, _ = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(OrderAccepted("O-1"))
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))  # the venue's own cancel -> reprice
+    assert len(client.submitted) == 2
+
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    _deliver_fill(ex, client, "O-1", 0.0004, fee=0.05)  # the superseded order fills late
+
+    assert metrics.fills == [("maker", 0.05)]
+    assert metrics.positions == [("BTC/EUR", 0.0004)]
 
 
 def test_a_rejection_closes_the_intent_as_rejected(tmp_path):

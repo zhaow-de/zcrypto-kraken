@@ -203,6 +203,55 @@ def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):
         assert (config.journal_dir / entry.path).exists()
 
 
+# --- the limit-bound verdict ---------------------------------------------------------------------
+
+
+def _sleeve_result(position: float):
+    """The builder-result shape `_limits_bound` reads: one forming row (`n_periods=0`) with all three
+    fixed-1/3 sleeves holding `position` in every model asset, so the combined book is `position`."""
+    c = CrossfreqSystemConfig()
+    return types.SimpleNamespace(
+        n_periods=0,
+        sleeve_positions={name: {a: [position] for a in c.assets} for name in ("B", "A1", "A2")},
+    )
+
+
+def test_limits_bound_is_true_when_a_wired_limit_moves_the_book():
+    # 0.9 per leg: the 0.20 long cap alone clips every asset, so the limited book differs from the
+    # combined one. Without this the False case below would pass against a function hardwired to
+    # False -- the failure mode that makes a counter that never increments look like a quiet book.
+    assert cycle._limits_bound(_sleeve_result(0.9)) is True
+
+
+def test_limits_bound_is_false_on_a_book_that_breaches_nothing():
+    # 0.01 per leg: 0.1 gross over ten assets -- inside the per-asset caps, the 1.5x gross ceiling,
+    # the [-0.5, +1.0] net band and the 2.5 margin floor. Every limit copies its input and only
+    # touches the bars it scales, so an unbreached book must come back bit-identical.
+    assert cycle._limits_bound(_sleeve_result(0.01)) is False
+
+
+def test_the_success_result_carries_the_limit_bound_verdict(tmp_path, monkeypatch):
+    # The fixture's targets peak at BTC 0.2 -- exactly the long cap, which is inclusive -- and sum to
+    # 0.55 gross, so nothing binds and the verdict is a measured False, never an absent None.
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    assert result.limit_bound is False
+
+
+def test_a_failed_cycle_carries_no_limit_verdict(tmp_path, monkeypatch):
+    # No build ran, so "did a limit bind" has no answer: None, not the False that would read as a
+    # measured quiet book.
+    store_rows = _store_rows({("ETH/EUR", 240): _series_rows("ETH/EUR", 240, drop_last=1)})
+    config, _, _ = _env(tmp_path, monkeypatch, rows_by=store_rows)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(store_rows), clock=_clock(step=timedelta(minutes=5)))
+
+    assert result.status == "failed"
+    assert result.limit_bound is None
+
+
 def test_happy_path_round_trips_through_replay_cycle_under_a_stub_builder(tmp_path, monkeypatch):
     """SCOPE, because the name alone once promised more than the test delivered: the builder is
     STUBBED on both sides here, so this pins the plumbing -- journaling, the snapshot manifest, the

@@ -46,6 +46,8 @@ from cli.ohlc.dataset import write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.fetch import fetch_ohlc
 from cli.portfolio import build_crossfreq_system_fast
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, apply_whole_book_limits
+from cli.risk import apply_position_caps
 
 if TYPE_CHECKING:
     # Typing only: cli.engine.venuestate imports nautilus_trader at module level (~1s), and this
@@ -162,6 +164,26 @@ class CycleResult:
     # -- like sleeve_gross, deliberately NOT part of the journal record; the full snapshot lives in
     # venue-<HH>.json. Defaults to None so call sites built before this field existed keep working.
     venue: dict | None = None
+    # Whether any wired whole-book limit moved this boundary's intended book (T0121). None means
+    # "no answer": a failed cycle ran no build, and a False there would read as a measured quiet
+    # book. In-memory only, like sleeve_gross. Defaults to None so call sites built before this
+    # field existed keep working.
+    limit_bound: bool | None = None
+
+
+def _limits_bound(result) -> bool:
+    """True iff the wired limit stack (caps -> gross -> net band -> margin floor; the governor is a
+    returns overlay, deliberately outside) moved the combined book at the forming row. Mirrors
+    cli/engine/feeders.py::replay_stages' recomputation exactly -- chained adds, one-element series."""
+    c = CrossfreqSystemConfig()
+    n = result.n_periods
+    third = 1 / 3
+    sleeves = {name: {a: result.sleeve_positions[name][a][n] for a in c.assets} for name in ("B", "A1", "A2")}
+    combined = {a: third * sleeves["B"][a] + third * sleeves["A1"][a] + third * sleeves["A2"][a] for a in c.assets}
+    limited = apply_whole_book_limits(
+        apply_position_caps({a: [combined[a]] for a in c.assets}, long_cap=c.long_cap, short_cap=c.short_cap)
+    )
+    return any(limited[a][0] != combined[a] for a in c.assets)
 
 
 def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
@@ -597,6 +619,16 @@ def run_cycle(
     sleeve_gross = {
         name: sum(abs(book[asset][result.n_periods]) for asset in book) for name, book in result.sleeve_positions.items()
     }
+    # Did any §10 whole-book limit actually move that book (T0121). Wrapped because it is telemetry
+    # and telemetry may never cost a cycle (spec 00069 D5's isolation invariant): unlike the gross
+    # sum above, the limit stack VALIDATES its input and raises on anything non-finite, so an
+    # unwrapped call here would turn a journalled-and-fine cycle into a dead one. `None` is the
+    # value that already means "no answer".
+    try:
+        limit_bound = _limits_bound(result)
+    except Exception:
+        logger.exception("run_cycle: the limit recomputation raised for %s -- reporting no answer", cycle_ts.isoformat())
+        limit_bound = None
 
     # 5. Intended orders vs the most recent successfully journaled targets.
     # Prices come from the TWELVE-symbol alignment, not the model's contraction: every basket leg
@@ -632,6 +664,7 @@ def run_cycle(
         offending_pairs=None,
         sleeve_gross=sleeve_gross,
         venue=venue,
+        limit_bound=limit_bound,
     )
     _update_metrics(cycle_result, completed_at, (completed_at - started_at).total_seconds())
     return cycle_result

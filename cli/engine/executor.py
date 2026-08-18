@@ -83,6 +83,14 @@ _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 _H4 = 4
 
 _VENUE = Venue("KRAKEN")
+# Kraken spells the euro both ways across its surfaces (the adapter's Money carries `EUR`, the
+# balance/asset surfaces the classic `ZEUR`); anything else is a different currency and is never
+# summed into a EUR total.
+_EUR_CODES = ("EUR", "ZEUR")
+# The instrument-id -> symbol direction, for labelling a fill's metric. Inverted from the ratified
+# map rather than string-split off the id, so an id this engine never ratified raises instead of
+# inventing a label.
+_SYMBOL_BY_INSTRUMENT_ID = {instrument_id: symbol for symbol, instrument_id in INSTRUMENT_IDS.items()}
 # Kraken spells one asset three ways across its surfaces; the balance read tries them in order.
 # Every other base gets the plain code plus its `X`-prefixed classic spelling.
 _BTC_BALANCE_ALIASES = ("BTC", "XBT", "XXBT")
@@ -97,7 +105,9 @@ _metrics = None
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
     called `(verdict, evaluated_at=...)` after EVERY gate evaluation, `metrics` is an object with
-    `inc_order(outcome)`. Neither can affect an order -- both are wrapped."""
+    `inc_order(outcome)`, `inc_fill(liquidity, fee_eur)`, `set_position(symbol, qty)` and
+    `set_realized(value)` (`command._ExecutionMetrics`). Neither can affect an order -- both are
+    wrapped."""
     global _publish_verdict, _metrics
     _publish_verdict = publish_verdict
     _metrics = metrics
@@ -119,6 +129,20 @@ def _inc_order(outcome: str) -> None:
         _metrics.inc_order(outcome)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
+
+
+def _fee_eur(commission) -> float | None:
+    """One fill's commission in EUR, or `None` when it is denominated in anything else.
+
+    A fee is NEVER summed across currencies: the counter this feeds is EUR by name, and a `/BTC`
+    leg's BTC-denominated commission added to it would be a number with no unit. Converting one
+    needs the BTC/EUR close (`cli.engine.instruments.fx_eur_notional`, the one proven conversion),
+    which no fill event carries -- so the honest answer here is "not a EUR fee", logged."""
+    code = getattr(getattr(commission, "currency", None), "code", None)
+    if code not in _EUR_CODES:
+        logger.warning("fill commission is denominated in %s, not EUR -- it is left out of the EUR fee total", code)
+        return None
+    return float(commission)
 
 
 def _utc_now() -> datetime:
@@ -355,6 +379,10 @@ class ProbeExecutor:
         # adopted order is dropped by the client-order-id filter, which costs the row (D5) and
         # understates the remainder the next resubmission is sized against.
         self._attached: dict[str, tuple[datetime, dict]] = {}
+        # Instrument ids this process has actually filled in, for the realized-PnL sum. Scoped to
+        # them rather than to the whole basket so a leg this process never touched cannot drag a
+        # previous run's closed positions into a number presented as this window's.
+        self._traded: set[str] = set()
         # The startup pass runs on the first tick, once, whatever it finds.
         self._adopted = False
         # Set by the first trip and never cleared. NOT a substitute for the kill file -- the file is
@@ -1122,6 +1150,7 @@ class ProbeExecutor:
         active = self._active
         if active is not None and self._claims(row, active):
             active.filled += qty
+        self._publish_fill(event)
 
     def _claims(self, row: dict, active: _ActiveIntent) -> bool:
         """Whether `row`'s order belongs to the intent running right now -- same plan, same index.
@@ -1305,6 +1334,61 @@ class ProbeExecutor:
         _inc_order("venue_canceled")
         self._reprice(active)
 
+    def _publish_fill(self, event) -> None:
+        """The live view of the fill that just went into the ledger row -- same event, same numbers.
+
+        Called from EVERY path that records a fill (in-flight, detached, and the one that trips the
+        kill switch), because each of those fills cost real money: publishing only the in-flight
+        ones would under-report the fees actually paid with every test still green. Those paths are
+        mutually exclusive by construction, so nothing is counted twice.
+
+        The position comes from the CACHE, never from this process's own running total: what the
+        engine thinks it holds is exactly the quantity `_reconcile_terminal` exists to doubt.
+
+        Wrapped whole, `_inc_order`'s contract: the Cache reads here are telemetry and a metrics
+        failure may never alter what this engine does with a fill. `inc_fill` runs first, so a
+        Cache that cannot be read still costs only the position/PnL half.
+        """
+        if _metrics is None:
+            return
+        try:
+            _metrics.inc_fill(str(event.liquidity_side).lower(), _fee_eur(event.commission))
+            instrument_id = str(event.instrument_id)
+            self._traded.add(instrument_id)
+            held = self._client.cache.positions_open(instrument_id=instrument_id)
+            _metrics.set_position(_SYMBOL_BY_INSTRUMENT_ID[instrument_id], sum(float(p.signed_qty) for p in held))
+            _metrics.set_realized(self._realized_eur())
+        except Exception:
+            logger.exception("executor fill metrics hook raised -- continuing")
+
+    def _realized_eur(self) -> float:
+        """Realized PnL over every instrument this process has traded, EUR only.
+
+        Both halves are needed: an OPEN position accrues realized PnL as it is partly closed, and a
+        round trip's final PnL lives only on the CLOSED one. `Position.realized_pnl` is
+        `Money | None` -- a `None` contributes zero and is never `float()`-ed -- and a position
+        denominated in anything but EUR is logged and skipped rather than added to a EUR total."""
+        cache = self._client.cache
+        total = 0.0
+        for instrument_id in self._traded:
+            positions = list(cache.positions_open(instrument_id=instrument_id)) + list(
+                cache.positions_closed(instrument_id=instrument_id)
+            )
+            for position in positions:
+                pnl = position.realized_pnl
+                if pnl is None:
+                    continue
+                code = getattr(getattr(pnl, "currency", None), "code", None)
+                if code not in _EUR_CODES:
+                    logger.warning(
+                        "realized pnl on %s is denominated in %s, not EUR -- it is left out of the EUR total",
+                        instrument_id,
+                        code,
+                    )
+                    continue
+                total += float(pnl)
+        return total
+
     def _fill_payload(self, event) -> dict:
         """The forensic shape of one fill. Shared by the in-flight path and the detached one so an
         adopted order's fill is recorded in exactly the same terms as an order this process placed."""
@@ -1346,6 +1430,8 @@ class ProbeExecutor:
             active = self._active
             if active is not None and self._claims(row, active):
                 active.filled += qty
+        if is_fill:
+            self._publish_fill(event)
 
     def _on_fill(self, active: _ActiveIntent, event) -> None:
         qty = float(event.last_qty)
@@ -1363,6 +1449,7 @@ class ProbeExecutor:
         order_done = active.order_qty - active.order_filled < lot_step
         self._update_row(active, state="filled" if order_done else "accepted", event=payload, add_filled_qty=qty)
         self._mirror_row_fill(active.client_order_id, qty)
+        self._publish_fill(event)
         if order_done:
             _inc_order("filled")
         if active.target_qty - active.filled < lot_step:

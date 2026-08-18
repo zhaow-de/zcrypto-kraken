@@ -441,6 +441,11 @@ class _CycleGauges:
         self.orders_total = Counter(
             "zcrypto_engine_orders_total", "Intended orders emitted, across every cycle.", registry=registry
         )
+        # Intent-prefixed on purpose (T0121): the §10 whole-book limits bind on the INTENT book, the
+        # one this cycle just built, not on anything the executor did with it.
+        self.limit_bound = Counter(
+            "zcrypto_engine_limit_bound_total", "Cycles where a book-level limit changed the intended book.", registry=registry
+        )
         # A Gauge, not a Counter: the pinned name (spec 00069 D5, "names verbatim") carries no
         # `_total` suffix, and `Counter` would silently ADD one to the exposed series name --
         # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative. Caveat:
@@ -515,6 +520,10 @@ class _CycleGauges:
         if result.orders is not None:
             self.orders_total.inc(len(result.orders))
             self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
+        # Truthiness, so `None` -- a failed cycle, which ran no build and therefore has no answer --
+        # counts as no bind rather than as one.
+        if result.limit_bound:
+            self.limit_bound.inc()
         if result.sleeve_gross is not None:  # None on a failed cycle: no build ran, so leave both as they were
             for sleeve, gross in result.sleeve_gross.items():
                 self.sleeve_gross.labels(sleeve=sleeve).set(gross)
@@ -584,6 +593,64 @@ class _ExecGauges:
                 registry=self._registry,
             )
         self.last_evaluation.set(evaluated_at.timestamp())
+
+
+# Every outcome `cli/engine/executor.py`'s `_inc_order` can emit, pinned against that module's own
+# call sites by tests/test_engine_metrics.py. `ambiguous` is load-bearing and must never be folded
+# into `refused`: "refused" asserts that no order exists, and after a submission whose venue outcome
+# was never established that claim is unavailable -- the same lie a prior ruling removed from the
+# forensic ledger.
+_EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "canceled", "filled", "refused", "ambiguous")
+_EXEC_LIQUIDITY_SIDES = ("maker", "taker")
+
+
+class _ExecutionMetrics:
+    """What the executor did, as opposed to `_ExecGauges`' what it was ALLOWED to do. Built on the
+    SAME registry as `_CycleGauges`/`_ExecGauges` and installed on the executor's telemetry hooks,
+    which are wrapped at every call site there -- nothing here can alter or stop a submission.
+
+    Every counter's label children are registered up front, unlike the gauges above whose absent
+    series are the honest state: a Counter's zero is a MEASURED fact ("nothing has been refused
+    yet"), where a Gauge's would be an unmeasured claim, and a `rejected` series that springs into
+    existence at the first rejection gives `rate()` no baseline and reads exactly like a scrape gap
+    until then. `position` is the exception -- symbol-labelled, so it publishes only the symbols
+    `run()`'s seed or a fill has actually named.
+
+    `realized_pnl` is a Gauge because realized PnL falls; it is registered eagerly at 0, which is
+    true of a fresh process before its first trade. It is NOT seeded from disk, so a process
+    restarted mid-probe reads 0 until its next fill -- accepted here because the probe windows are
+    attended and the engine is converged only in the inter-cycle gap.
+    """
+
+    def __init__(self, registry) -> None:
+        self.orders = Counter("zcrypto_exec_orders_total", "Executor orders by outcome.", ["outcome"], registry=registry)
+        self.fills = Counter("zcrypto_exec_fills_total", "Order fills by liquidity side.", ["liquidity"], registry=registry)
+        self.fees = Counter("zcrypto_exec_fees_eur_total", "Trading fees paid, in EUR.", registry=registry)
+        self.position = Gauge(
+            "zcrypto_exec_position", "Net position quantity by symbol, in base units.", ["symbol"], registry=registry
+        )
+        self.realized_pnl = Gauge("zcrypto_exec_realized_pnl_eur", "Realized profit and loss, in EUR.", registry=registry)
+        for outcome in _EXEC_ORDER_OUTCOMES:
+            self.orders.labels(outcome=outcome)
+        for liquidity in _EXEC_LIQUIDITY_SIDES:
+            self.fills.labels(liquidity=liquidity)
+
+    def inc_order(self, outcome: str) -> None:
+        self.orders.labels(outcome=outcome).inc()
+
+    def inc_fill(self, liquidity: str, fee_eur: float | None) -> None:
+        """`fee_eur is None` means the caller could not denominate the commission in EUR. The fill
+        still counts -- it happened -- and the fee does not: this total is EUR by name, and adding a
+        differently-denominated commission to it would produce a number with no unit."""
+        self.fills.labels(liquidity=liquidity).inc()
+        if fee_eur is not None:
+            self.fees.inc(fee_eur)
+
+    def set_position(self, symbol: str, qty: float) -> None:
+        self.position.labels(symbol=symbol).set(qty)
+
+    def set_realized(self, value: float) -> None:
+        self.realized_pnl.set(value)
 
 
 class _VenueGauges:
@@ -738,6 +805,27 @@ def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
     return dict(newest[1]["state"]["positions"])
 
 
+def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_gauges):
+    """`run()`'s per-cycle metrics sink, at module level rather than inline so the ORDER inside it
+    can be driven by a test: the ledger write comes first, and a test that cannot reach this closure
+    cannot prove that a failing writer starves the heartbeat rather than being papered over by a
+    gauge that keeps ticking."""
+
+    def _sink(result, completed_at, duration_seconds):
+        # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
+        # either gauge group is touched, so a raising gauge update can never cost this cycle's record.
+        verdict = gate.evaluate(completed_at)
+        write_exec_record(journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
+        if cycle_gauges is not None:
+            cycle_gauges.update(result, completed_at, duration_seconds)
+        if exec_gauges is not None:
+            exec_gauges.update(verdict, evaluated_at=completed_at)
+        if venue_gauges is not None:
+            venue_gauges.update(result.venue)
+
+    return _sink
+
+
 @engine_app.command()
 def run() -> None:
     """Run the shadow TradingNode in the foreground (the soak's systemd user service runs this).
@@ -814,19 +902,32 @@ def run() -> None:
     gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
     exec_gauges = _ExecGauges(registry) if registry is not None else None
 
-    def _sink(result, completed_at, duration_seconds):
-        # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
-        # either gauge group is touched, so a raising gauge update can never cost this cycle's record.
-        verdict = gate.evaluate(completed_at)
-        write_exec_record(config.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
-        if cycle_gauges is not None:
-            cycle_gauges.update(result, completed_at, duration_seconds)
-        if exec_gauges is not None:
-            exec_gauges.update(verdict, evaluated_at=completed_at)
-        if venue_gauges is not None:
-            venue_gauges.update(result.venue)
+    exec_metrics = None
+    if registry is not None:
+        # Its own isolation guard, the `_VenueGauges` pattern: `_seed_exec_positions` reads arbitrary
+        # on-disk journal artifacts and raises by contract on a malformed one, and telemetry may
+        # never kill the engine daemon. The families are registered BEFORE the seed, so a failed
+        # seed costs the starting values, never the series.
+        try:
+            exec_metrics = _ExecutionMetrics(registry)
+            positions = _seed_exec_positions(config.journal_dir)
+            if positions is not None:  # None => no readable v2 "ok" record yet -- publish no symbol
+                for symbol, qty in positions.items():
+                    exec_metrics.position.labels(symbol=symbol).set(qty)
+        except Exception:
+            logger.exception("execution metrics setup failed -- continuing without them")
 
-    set_metrics_sink(_sink)
+    set_metrics_sink(_make_exec_sink(gate, config.journal_dir, cycle_gauges, exec_gauges, venue_gauges))
+
+    # Lazy: cli.engine.executor imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
+    from cli.engine import executor
+
+    # Installed whether or not the exporter is on -- with both hooks None when it is off, which is
+    # exactly what the executor's own None-safe wrappers expect.
+    executor.set_executor_hooks(
+        publish_verdict=(exec_gauges.update if exec_gauges is not None else None),
+        metrics=exec_metrics,
+    )
 
     # One evaluation at startup so no latch gauge sits at its seeded default. Inside the same
     # isolation the sink enjoys: telemetry must never be able to stop the engine from starting.

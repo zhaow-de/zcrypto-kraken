@@ -197,6 +197,23 @@ NOT_A_FAULT_SIGNAL = {
     # because before the first order-submission call site exists "the engine cannot trade" has no
     # operational meaning yet.
     "zcrypto_exec_venue_ok",
+    # The execution instruments (spec 00090 D12). Attended-window instruments: arming is episodic
+    # through the tracking-error report's own spec, so between windows every one of these is
+    # legitimately flat and nothing here can fire unattended without being pure alarm fatigue. The
+    # two states that OUTLIVE a window already page -- zcrypto-engine-exec-kill-tripped and
+    # zcrypto-engine-exec-armed-too-long -- and during a window an operator is watching the board,
+    # which is what these are for. `orders_total` by outcome, the fills, the fees paid, the per-leg
+    # position and the realized PnL are all legitimate at any value: a rejection is normal venue
+    # behaviour, a fee is the cost of trading, and PnL falls.
+    "zcrypto_exec_orders_total",
+    "zcrypto_exec_fills_total",
+    "zcrypto_exec_fees_eur_total",
+    "zcrypto_exec_position",
+    "zcrypto_exec_realized_pnl_eur",
+    # A level-shift detail read on the board: the §10 whole-book limits binding is the limits doing
+    # their job, not a fault. What would be a fault -- the book they shape going somewhere it should
+    # not -- is the intent-side gauges' business, not this counter's.
+    "zcrypto_engine_limit_bound_total",
     # Venue-truth LEVELS (spec 00089 D6): loaded vs expected are the detail read once
     # zcrypto-venue-concordance-failed has already paged, not fault signals of their own -- the
     # failures count already reduces both into the one number that matters, and a threshold on
