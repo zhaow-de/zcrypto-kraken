@@ -1154,6 +1154,20 @@ def test_rest_cancel_mode_rests_five_percent_passive_and_never_executes(tmp_path
     assert _intent_outcome(tmp_path) == "rest_cancel_ok"
 
 
+def test_a_rest_cancel_drill_that_reaches_the_time_box_still_never_falls_back(tmp_path):
+    """The drill's order is never acknowledged, so the cancel-on-ack never fires and the time-box
+    is what ends it. A drill that fell back would emit the most aggressive order on this path --
+    a marketable IOC -- from an intent whose entire point is that it must not execute."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-cancel")])
+
+    _advance_with_quotes(ex, clock, minutes=16)
+    assert client.canceled == [client.submitted[0][0]]
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+
+    assert len(client.submitted) == 1
+    assert _intent_outcome(tmp_path) == "rest_cancel_ok"
+
+
 def test_a_disposal_intent_over_the_plan_cap_is_refused_naming_the_cap(tmp_path):
     """D8's sizing-time half: a `qty` intent's EUR notional exists only here (`qty x the chosen
     limit price`), so `plan_refusals` counted it as 0.00 at the plan wall. 0.01 BTC at 30001 is
