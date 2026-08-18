@@ -33,4 +33,4 @@ The refusal reaches the operator surface too: `zcrypto engine probe-plan --check
 
 `fx_eur_notional` stays pure and uncalled — the rung-1 probe's notionals are all EUR and all its legs EUR-quoted, so the live path is the matched case; the guard is what forces a future `/BTC`-leg notional through that conversion instead of a second one written beside real money.
 
-Commits: `da9a2c71` (the sizing seam and the guard), `0a1ed02d` (the fail-open-direction proof), `5c5485c3` (the CLI validator's matching refusal). **The code has landed and is green; nothing is deployed and no order has ever been submitted** — the guard's live exercise is the probe window, which the `engine-probe-window` runbook section gates.
+Commits: `3112507c` (the sizing seam and the guard), `8d390692` (the fail-open-direction proof), `e3e475c0` (the CLI validator's matching refusal). **The code has landed and is green; nothing is deployed and no order has ever been submitted** — the guard's live exercise is the probe window, which the `engine-probe-window` runbook section gates.

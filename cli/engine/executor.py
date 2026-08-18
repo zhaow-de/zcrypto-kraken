@@ -534,9 +534,15 @@ class ProbeExecutor:
         Kraken's OpenOrders echo survives adoption with a truthful `is_reduce_only` is unverifiable
         in the installed source (the population happens in the opaque Rust layer), so the
         write-ahead row is the only trusted witness. An order matching a non-terminal row whose
-        LEDGERED order was reduce-only is left resting and re-attached, so its later fills append to
-        that row rather than beside it. Everything else is canceled: a resting opener is a pending
-        widening the hold exists to forbid, and an order with no row would fill with no appender.
+        LEDGERED order was reduce-only is left resting, and its row is preserved. What that does NOT
+        buy is its later fills: the live engine reconciles a venue-resting order under the EXTERNAL
+        strategy id unless the instrument is claimed, and order events publish on
+        `events.order.<strategy_id>` -- a topic this strategy is not subscribed to -- so a fill that
+        lands after the restart never reaches this handler and is reconciled only as venue truth.
+        Claiming the instrument would deliver those fills, and would also route every genuinely
+        external order into this executor and un-scope the unknown-order trip; that trade is not
+        made here (T0142). Everything else is canceled: a resting opener is a pending widening the
+        hold exists to forbid, and an order with no row would fill with no appender.
         Cancelling is always available to this pass; keeping is not -- an unreadable ledger
         justifies nothing, so it cancels everything rather than keeping what it cannot vouch for.
         A canceled close leg is re-dropped as a new signed-off plan.
