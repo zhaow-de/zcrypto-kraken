@@ -517,7 +517,10 @@ _ANCHOR_TAG = re.compile(r'<a name="([A-Za-z0-9._-]+)"></a>')
 # README is only the index, so a citation names whichever file holds the section. BOTH halves are
 # captured, because a link resolves against the file it names -- an anchor that lives in a SIBLING
 # file scrolls nowhere, which is exactly what a section moved without its citations looks like.
-_RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9._-]+)")
+# The anchor half excludes `.` (the file half needs it): no anchor carries one, and the dashboard
+# descriptions end the sentence right after the citation, which a dot-accepting class would swallow.
+# Fail-closed if that ever changes -- a truncated anchor resolves to nothing and the test says so.
+_RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 
 
 def _runbook_anchors() -> dict[str, list[str]]:
@@ -551,6 +554,22 @@ def test_every_runbook_link_in_an_alert_summary_resolves():
         f"an alert summary points at a runbook anchor the file it names does not define -- the "
         f"responder gets a fragment and no next step (uid, cited, actually defined in): {broken}"
     )
+
+
+def test_every_runbook_link_in_a_dashboard_description_resolves():
+    """The panel descriptions cite sections the same way the summaries do, and they are read at the
+    same moment -- a responder who followed the notification's panel link is already on the board.
+    Held to the same bar rather than left to the summaries' test, which reads `alerts.yaml` only."""
+    anchors = _runbook_anchors()
+    cited, broken = [], []
+    for path in sorted((REPO / "infra/grafana").glob("*.json")):
+        for filename, anchor in _RUNBOOK_LINK.findall(path.read_text()):
+            cited.append(f"{filename}#{anchor}")
+            if filename not in anchors.get(anchor, ()):
+                broken.append((path.name, f"{filename}#{anchor}", anchors.get(anchor) or "no runbook file"))
+
+    assert cited, "no dashboard cites a runbook anchor -- the regex is broken, not the descriptions"
+    assert not broken, f"a dashboard description points at a runbook anchor its named file does not define: {broken}"
 
 
 def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
