@@ -23,6 +23,13 @@ _ACTIONS = frozenset({"open", "close"})
 _MODES = frozenset({"execute", "rest-cancel"})
 _MIN_LEVERAGE = 2
 _MAX_LEVERAGE = 10
+# Exact legal key sets, checked before any field-specific validation (cli/config.py's own
+# unknown-key convention) -- every field below is typo-safe via its own missing/mistyped check
+# EXCEPT an optional key like `leverage`: a typo'd `"levarage": 3` has no required counterpart to
+# catch it, so it would otherwise parse cleanly as a spot intent with the operator's intended
+# leverage silently dropped. Owner ruling: refuse the whole plan on any unrecognized key instead.
+_PLAN_KEYS = frozenset({"plan_id", "created_at", "intents"})
+_INTENT_KEYS = frozenset({"symbol", "side", "action", "mode", "notional_eur", "qty", "leverage"})
 # Sec 10's 250% floor at rung scale: required margin (notional / leverage, summed over margin
 # intents) times this multiplier must fit under the account's free collateral.
 _MARGIN_FLOOR_MULTIPLIER = 2.5
@@ -66,6 +73,9 @@ def _parse_positive_number(value: object, name: str) -> float:
 def _parse_intent(raw: object) -> ProbeIntent:
     if not isinstance(raw, dict):
         raise ProbePlanError(f"probe plan intent must be an object, got {raw!r}")
+    unknown = sorted(set(raw) - _INTENT_KEYS)
+    if unknown:
+        raise ProbePlanError(f"probe plan intent has unknown key(s): {', '.join(unknown)}")
 
     symbol = raw.get("symbol")
     if symbol not in BASKET:
@@ -119,6 +129,9 @@ def parse_plan(text: str) -> ProbePlan:
         raise ProbePlanError(f"probe plan is not valid JSON: {exc}") from exc
     if not isinstance(doc, dict):
         raise ProbePlanError(f"probe plan must be a JSON object, got {type(doc).__name__}")
+    unknown = sorted(set(doc) - _PLAN_KEYS)
+    if unknown:
+        raise ProbePlanError(f"probe plan has unknown key(s): {', '.join(unknown)}")
 
     plan_id = doc.get("plan_id")
     if not isinstance(plan_id, str) or not plan_id.strip():
@@ -165,6 +178,13 @@ def plan_refusals(
     `free_zeur`. A `qty` disposal intent is excluded from this sum -- `parse_plan` already refuses
     qty combined with leverage, so a qty intent can only be a spot close, and a spot sell extends
     no margin.
+
+    `max_plan_notional_eur` and `free_zeur` are each validated for finiteness HERE, at the point of
+    use, not just wherever they were sourced: `x > nan` is always False, so a NaN cap or a NaN
+    free-balance would otherwise fail the corresponding comparison OPEN, and an infinite cap
+    disables the blast-radius bound entirely (nothing ever compares as "exceeding" it). `free_zeur`
+    in particular comes from a live venue balance read by the executor, not from config, so it
+    cannot rely on `cli/config.py`'s own finiteness check.
     """
     reasons: list[str] = []
 
@@ -177,11 +197,15 @@ def plan_refusals(
         reasons.append("plan_id already ledgered")
 
     total_notional = sum(i.notional_eur or 0.0 for i in plan.intents)
-    if total_notional > max_plan_notional_eur:
+    if not math.isfinite(max_plan_notional_eur):
+        reasons.append(f"max_plan_notional_eur is not finite: {max_plan_notional_eur!r}")
+    elif total_notional > max_plan_notional_eur:
         reasons.append(f"plan notional {total_notional:.2f} EUR exceeds the cap {max_plan_notional_eur:.2f} EUR")
 
     margin_required = sum(i.notional_eur / i.leverage for i in plan.intents if i.leverage is not None) * _MARGIN_FLOOR_MULTIPLIER
-    if margin_required > free_zeur:
+    if not math.isfinite(free_zeur):
+        reasons.append(f"free_zeur is not finite: {free_zeur!r}")
+    elif margin_required > free_zeur:
         reasons.append(f"margin floor: {margin_required:.2f} EUR required exceeds free_zeur {free_zeur:.2f} EUR")
 
     return tuple(reasons)

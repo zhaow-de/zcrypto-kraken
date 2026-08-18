@@ -47,6 +47,13 @@ def test_parse_plan_rejects_a_non_object_top_level():
         parse_plan("[]")
 
 
+def test_parse_plan_rejects_an_unknown_top_level_key():
+    doc = _doc()
+    doc["extra"] = "nope"
+    with pytest.raises(ProbePlanError, match="unknown key"):
+        parse_plan(json.dumps(doc))
+
+
 def test_parse_plan_rejects_missing_plan_id():
     doc = _doc()
     del doc["plan_id"]
@@ -57,6 +64,11 @@ def test_parse_plan_rejects_missing_plan_id():
 def test_parse_plan_rejects_non_string_plan_id():
     with pytest.raises(ProbePlanError, match="plan_id must be a non-empty string"):
         parse_plan(_text(plan_id=123))
+
+
+def test_parse_plan_rejects_a_whitespace_plan_id():
+    with pytest.raises(ProbePlanError, match="plan_id must be a non-empty string"):
+        parse_plan(_text(plan_id="   "))
 
 
 def test_parse_plan_rejects_missing_created_at():
@@ -96,6 +108,20 @@ def test_parse_plan_rejects_empty_intents():
 def test_parse_plan_rejects_non_list_intents():
     with pytest.raises(ProbePlanError, match="intents must be a non-empty list"):
         parse_plan(_text(intents="oops"))
+
+
+def test_parse_plan_rejects_a_non_object_intent():
+    with pytest.raises(ProbePlanError, match="must be an object"):
+        parse_plan(_text(intents=[42]))
+
+
+def test_parse_plan_rejects_an_unknown_intent_key():
+    # The exact typo a reviewer named: "levarage" would otherwise parse cleanly as a SPOT intent,
+    # silently dropping the operator's intended leverage instead of refusing.
+    intent = _intent()
+    intent["levarage"] = 3
+    with pytest.raises(ProbePlanError, match="unknown key"):
+        parse_plan(_text(intents=[intent]))
 
 
 def test_parse_plan_rejects_symbol_not_in_basket():
@@ -209,6 +235,14 @@ def test_plan_refusals_an_expired_plan_refuses():
     assert reasons == (f"plan expired: created_at {created_at.isoformat()} is over 60 minutes old",)
 
 
+def test_plan_refusals_age_exactly_at_the_ttl_passes():
+    # Strict '>' -- age == PLAN_TTL exactly must NOT refuse.
+    created_at = NOW - PLAN_TTL
+    plan = _plan(created_at=created_at.isoformat())
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    assert reasons == ()
+
+
 def test_plan_refusals_a_future_created_at_refuses():
     created_at = NOW + timedelta(minutes=5)
     plan = _plan(created_at=created_at.isoformat())
@@ -228,6 +262,28 @@ def test_plan_refusals_over_cap_notional_refuses():
     assert reasons == ("plan notional 120.00 EUR exceeds the cap 100.00 EUR",)
 
 
+def test_plan_refusals_notional_exactly_at_the_cap_passes():
+    # Strict '>' -- the boundary itself must NOT refuse, or a future '>' -> '>=' regression is
+    # invisible.
+    plan = _plan(intents=[_intent(notional_eur=100.0)])
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=1000.0)
+    assert reasons == ()
+
+
+def test_plan_refusals_a_nan_cap_refuses():
+    # nan defeats "total > nan" (always False) -- must be refused explicitly, not silently pass.
+    plan = _plan()
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=float("nan"), free_zeur=1000.0)
+    assert reasons == ("max_plan_notional_eur is not finite: nan",)
+
+
+def test_plan_refusals_an_inf_cap_refuses():
+    # inf defeats "total > inf" (always False) -- disables the blast-radius bound entirely.
+    plan = _plan()
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=float("inf"), free_zeur=1000.0)
+    assert reasons == ("max_plan_notional_eur is not finite: inf",)
+
+
 def _margin_plan():
     intents = [_intent(notional_eur=30.0, leverage=2), _intent(notional_eur=30.0, leverage=2)]
     return _plan(intents=intents)
@@ -245,6 +301,27 @@ def test_plan_refusals_margin_floor_refuses_at_free_zeur_50():
     plan = _margin_plan()
     reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=50.0)
     assert reasons == ("margin floor: 75.00 EUR required exceeds free_zeur 50.00 EUR",)
+
+
+def test_plan_refusals_margin_required_exactly_at_free_zeur_passes():
+    # Same plan as above (margin_required == 75.0 exactly); the boundary itself must NOT refuse.
+    plan = _margin_plan()
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=75.0)
+    assert reasons == ()
+
+
+def test_plan_refusals_a_nan_free_zeur_refuses():
+    # The executor passes free_zeur from a live venue balance -- validate at the point of use, not
+    # only at config-parse time. nan defeats "required > nan" (always False).
+    plan = _plan()
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=float("nan"))
+    assert reasons == ("free_zeur is not finite: nan",)
+
+
+def test_plan_refusals_an_inf_free_zeur_refuses():
+    plan = _plan()
+    reasons = plan_refusals(plan, now=NOW, ledgered=frozenset(), max_plan_notional_eur=100.0, free_zeur=float("inf"))
+    assert reasons == ("free_zeur is not finite: inf",)
 
 
 def test_plan_refusals_a_valid_plan_returns_empty():

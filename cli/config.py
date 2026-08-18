@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -128,8 +129,11 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
 
     if "exec_max_plan_notional_eur" in raw:
         value = raw["exec_max_plan_notional_eur"]
-        # bool is a subclass of int — reject it explicitly.
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        # bool is a subclass of int — reject it explicitly. TOML admits `nan`/`inf` as real float
+        # literals: nan defeats every "<= 0" comparison (always False) and inf disables the
+        # blast-radius bound entirely (nothing ever compares as "exceeding" it) — both must be
+        # refused explicitly via math.isfinite, not admitted as "positive".
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_max_plan_notional_eur in {config_path} must be a positive number")
         overrides["exec_max_plan_notional_eur"] = float(value)
 

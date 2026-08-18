@@ -209,7 +209,10 @@ def test_exec_max_plan_notional_eur_reads_a_set_value(tmp_path):
 
 def test_exec_max_plan_notional_eur_rejects_a_non_number_non_positive_or_bool(tmp_path):
     cfg_path = tmp_path / "zcrypto.toml"
-    for bad in ('"nope"', "0", "true"):
+    # nan/inf are real TOML float literals; nan defeats every "<= 0" comparison (always False) and
+    # inf disables the blast-radius bound entirely (nothing compares as "exceeding" it) -- both
+    # must be refused explicitly, not admitted as "positive".
+    for bad in ('"nope"', "0", "true", "nan", "inf"):
         cfg_path.write_text(f"[zcrypto.engine]\nexec_max_plan_notional_eur = {bad}\n")
         with pytest.raises(ConfigError, match="must be a positive number"):
             load_config(cfg_path)
