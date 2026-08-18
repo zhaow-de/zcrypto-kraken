@@ -312,7 +312,7 @@ Arming is expected only inside an attended probe window, and is normally removed
 1. **Read the full picture on the engine host**: `zcrypto engine exec-status`. This is the only place `reasons` and the two arming keys are visible separately — the dashboard and this page can show only that the engine is armed, never which key put it there.
 2. **If the probe window is over, remove the arm file.** Deleting it disarms the engine immediately — no deploy, no restart, no engine downtime. `zcrypto_exec_armed` reads 0 on the engine's next evaluation (at most one cycle, roughly four hours), and because the rule reads `min_over_time` over the window, a single 0 sample is enough to drop it — the alert clears at the very next rule evaluation after that disarmed reading lands, not after six more hours have to pass.
 3. **If the probe window is still legitimately open, leave it and let the alert ride.** It re-fires on the same condition every time `for: 15m` re-qualifies, so expect it to keep paging for the length of a long window; that repetition is intentional, not a bug.
-4. **If you did not expect the engine to be armed at all**, treat this as a live safety-envelope breach: read the engine log and the `exec-status` output together, remove the arm file, and confirm nothing was submitted through the same window — there is no order-submission telemetry on this board yet, so check the engine journal and process log directly.
+4. **If you did not expect the engine to be armed at all**, treat this as a live safety-envelope breach: read the engine log and the `exec-status` output together, remove the arm file, and confirm nothing was submitted through the same window. Two places say so: the Engine board's **Execution — what actually happened at the venue** row, where `zcrypto_exec_orders_total{outcome="submitted"}` flat across the window is the answer you want, and the exec ledger's own `submitted` rows for the boundaries the window spans (the ledger read in the probe-window procedure below prints them by value). The ledger is the authority; the board is the fast read.
 
 ### Retire when
 
@@ -507,3 +507,252 @@ Out of scope here: MiCA status, tax rules and market-data pricing have no endpoi
 ### Retire when
 
 `docs/reference/kraken-snapshot-register.md` is absent from the repo — the artifact this routine maintains. Until then the cadence outlives any individual reminder, which is why step 4 exists.
+
+______________________________________________________________________
+
+<a name="engine-probe-window"></a>
+
+## engine-probe-window — PROCEDURE
+
+### What you are seeing
+
+You are about to run — or are in the middle of — an attended live-order probe window on the engine. **Nothing has fired**: no alert sent you here and no guard tripped. You opened this because a probe window is being planned or is under way, and this is the only sanctioned way to run one.
+
+Real money moves — roughly €10–30 per leg — on the host that holds the live trade key.
+
+### What it means
+
+The engine's order path submits **only operator-authored probe plans**, and only inside an attended window bounded by two arming keys: the `exec_armed` value baked into the deployed config, and an `armed` file placed on the engine host. Both must be present for anything to be submitted; removing either one disarms it. Every step below exists because its omission has a named failure, and where a step's *position* in the sequence matters, the step says what happens if you take it early — that ordering is load-bearing, not ceremonial.
+
+Where everything lives — never guess these:
+
+- **Engine host** `zcrypto` (`ssh zcrypto`); the container is `zcrypto-engine`; the CLI and the rendered config live inside it.
+- **Control files**: `/var/lib/zcrypto-engine/exec/` — `armed`, `kill`, `restart-hold`, and the plan file `probe-plan.json`. Presence is the whole protocol; contents are informational.
+- **Journal**: `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/` — `cycle-<HH>.json`, `exec-<HH>.json`, `venue-<HH>.json`.
+- **`<HH>` is the 4-hourly cycle boundary** (00/04/08/12/16/20 UTC), never the wall-clock hour. A record written at 09:14 UTC is `…-08.json`.
+- **Rendered config**: `/opt/zcrypto-engine/zcrypto.toml`, rendered by the deploy from `infra/ansible/roles/engine/templates/zcrypto.toml.j2`. Never hand-edit it on the host; the next converge overwrites it.
+
+Three reads you will use repeatedly. **Scope every `docker inspect` to one field with `--format`** — this container carries the live trade key in its environment, and an unscoped inspect prints it.
+
+**The gate read** — run it in the container, which is where the CLI and the config are:
+
+```
+sudo docker exec zcrypto-engine zcrypto engine exec-status
+```
+
+It prints `level=<none|reduce_only|full>`, then a `reasons=` line carrying every condition that restricted the level, comma-separated — a single `-` means none — then every gate input on its own line. It re-evaluates the gate on the spot, and it is the only **live** view of the reasons — they never reach Grafana, and `zcrypto_exec_armed` conflates the two arming keys into one gauge, so no dashboard can tell you which key is missing. The reasons of *past* evaluations are journaled into the execution record, which the ledger read below prints; what you cannot get anywhere but here is the reading for right now.
+
+**The ledger read** — always by value, never by presence, and over **every** record the window spans. There is one execution record per 4-hourly boundary, so a window that crosses a boundary keeps writing into a new file: reading only the newest one goes blind to everything before the crossing, and a terminal-state check run against it would pass on rows it never looked at. `HOURS` is the knob — set it to cover the whole window, and widen it rather than trust an empty result.
+
+```
+sudo python3 - <<'PY'
+import json, pathlib, time
+root = pathlib.Path("/var/lib/zcrypto-engine/journal")
+HOURS = 24
+cutoff = time.time() - HOURS * 3600
+paths = sorted(q for q in root.glob("*/exec-*.json") if q.stat().st_mtime >= cutoff)
+print(f"{len(paths)} execution record(s) in the last {HOURS}h")
+if not paths:
+    print("  NOTHING MATCHED -- widen HOURS; an empty read is not a clean window")
+for p in paths:
+    d = json.loads(p.read_text())
+    print(p, "level=", d["level"], "reasons=", d["reasons"])
+    for e in d.get("plans", []):
+        print(" plan", e["plan_id"], e["disposition"], e["reasons"])
+        for i in e["intents"]:
+            print("   intent", i["index"], i["outcome"], i["reasons"], "filled_qty", i["filled_qty"])
+    for r in d["submitted"]:
+        print(" order", r["client_order_id"], r["state"], "filled_qty", r["filled_qty"])
+        for ev in r["events"]:
+            if ev.get("event") == "fill":
+                print("     fill", ev["qty"], "@", ev["px"], "fee", ev["fee"], ev["fee_currency"], ev["liquidity"], ev["trade_id"])
+PY
+```
+
+**The venue-truth read** — positions, balances and the instrument constraints the engine last saw:
+
+```
+sudo python3 - <<'PY'
+import json, pathlib
+root = pathlib.Path("/var/lib/zcrypto-engine/journal")
+p = max(root.glob("*/venue-*.json"), key=lambda q: q.stat().st_mtime)
+d = json.loads(p.read_text())
+print(p, "status", d["status"])
+if d["status"] != "ok":
+    print("  error:", d.get("error"))
+else:
+    print("  snapshot_at:", d["state"]["snapshot_at"])
+    print("  positions:", d["state"]["positions"])
+    print("  balances:", d["state"]["balances"])
+PY
+```
+
+### What to do
+
+#### 1. Pre-probe — before anything touches the host
+
+1. **Sweep for blockers, and present the result together with the arming request.** Read `### Open` and `### Partially done` in `docs/open-topics/README.md`, and grep `docs/memo.local.md` for anything in flight against the engine. "Ready" without the sweep is not ready.
+2. **Confirm the deployed code is the code you tested.** The engine row in `docs/reference/fleet-pins.md` records the digest running on `zcrypto` and the revision it was built from. Confirm the running digest matches — `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine` — and that your working tree is at that revision. Then run the two guards that catch a drift between the committed cost floors / ratified basket and what the venue reports: `uv run pytest tests/test_costmin_drift.py tests/test_basket_concordance.py` → expect `2 passed`. A failure means the floors or the basket have moved since that image was built; stop, do not arm.
+3. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
+4. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
+
+#### 2. Arm — two keys, in this order
+
+1. **Read the digest the engine is running**: `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine`. This converge changes no image — you pass that same digest straight back, so nothing is re-pinned, no secondary bake is owed, and the pins check passes against the row already in `fleet-pins.md`.
+
+2. **Edit one line** in `infra/ansible/roles/engine/templates/zcrypto.toml.j2`: `exec_armed = false` → `exec_armed = true`. There is deliberately **no** `-e` override for this value — arming is a reviewed one-line diff in the repo, not a flag anyone can type on a command line.
+
+3. **Converge, inside the 4-hourly inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC — the play refuses outside it):
+
+   ```
+   infra/ansible/scripts/converge.sh site.yml --limit zcrypto --tags engine \
+     -e converge_primary=true \
+     -e engine_image_digest=sha256:<the digest from step 1>
+   ```
+
+   `converge.sh` runs the `--check --diff` preview first and then takes a typed confirm of the literal string `zcrypto`. **Read the preview**: exactly one line of `/opt/zcrypto-engine/zcrypto.toml` changes, `exec_armed = false` → `exec_armed = true`. Anything else in that diff means your tree does not match the fleet — abort and reconcile the tree first.
+
+4. **The restart latches the reduce-only hold — verify reconciliation before you clear it.** The gate read prints `level=none` and `reasons=arm_file_absent,restart_hold` — those two, in that order. If `config_not_armed` is still in the list the converge did not land the new value; fix that before going on. A third reason `venue_not_online` alongside them is not a fault of this step and not something to fix here: Kraken itself is not `online`, nothing can be submitted until it is, so wait it out and re-read. Then run the venue-truth read and confirm the positions and balances you are starting from — no open positions, EUR only.
+
+   **If the restart left an order resting at the venue, its ledger row is preserved but its fills are no longer observable to the engine.** The startup pass keeps a resting order only when the ledger carries it as a reduce-only row; that row survives and is re-attached, so nothing already recorded is lost. What does not survive is the live feed: after a restart the venue's resting order is reconciled under an external identity whose events never reach this executor, so a fill landing on it appends **nothing** to that row and moves no execution counter. Read such an order from venue truth instead — Kraken's own open-orders and trades views, and the next `venue-<HH>.json` — and treat the row as a record of what happened *before* the restart, never as the current state.
+
+5. **The owner clears the hold**: `sudo rm /var/lib/zcrypto-engine/exec/restart-hold`. Gate read → `level=none`, `reasons=arm_file_absent`.
+
+6. **The owner creates the arm file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=full`, `reasons=-`. If `venue_not_online` shows up instead, Kraken itself is not `online` — wait it out, since nothing can be submitted until it is. The engine is now armed, and the `zcrypto-engine-exec-armed-too-long` alert above will page if the window outlives six hours — that is the rule working, not a fault.
+
+#### 3. Drill before money — both drills green before any funded plan
+
+Three plan-file mechanics that apply to **every** plan from here on:
+
+- **A plan expires 60 minutes after its own `created_at`**, which must be a timezone-aware ISO timestamp. Author, check and place inside that hour, or the engine refuses it and journals the refusal.
+- **Place a plan by renaming it into position — never by writing it in place.** The executor stats the plan path every 5 seconds and reads whatever is there; a file still being written parses as garbage, is journaled as a refusal, and is **deleted**. A `mv` inside the same directory is atomic, so the executor sees either the whole file or no file.
+- **A `plan_id` already in the execution ledger for today or yesterday is refused.** Every plan gets a fresh id.
+
+**Drill A — the rest-cancel drill: the whole machine, zero fills, zero fees.**
+
+1. Author the plan on the workstation. `mode: rest-cancel` prices its order well away from the touch and cancels it the moment the venue acknowledges — a resting, untouched order costs nothing.
+   ```json
+   {
+     "plan_id": "drill-a-2026-08-18",
+     "created_at": "2026-08-18T09:05:00+00:00",
+     "intents": [
+       {"symbol": "BTC/EUR", "side": "buy", "action": "open", "mode": "rest-cancel", "notional_eur": 20.0, "leverage": 2}
+     ]
+   }
+   ```
+2. Copy it to the engine host, into the state directory the container also sees, under a **staging** name:
+   ```
+   scp plan.json zcrypto:/tmp/probe-plan.json
+   ssh zcrypto
+   sudo install -o zcrypto-engine -g zcrypto-engine -m 0640 /tmp/probe-plan.json /var/lib/zcrypto-engine/exec/probe-plan.staging.json
+   rm /tmp/probe-plan.json
+   ```
+3. Validate it offline — read-only, mutates nothing:
+   ```
+   sudo docker exec zcrypto-engine zcrypto engine probe-plan /var/lib/zcrypto-engine/exec/probe-plan.staging.json --check
+   ```
+   Expect the gate verdict, a `venue snapshot: <timestamp>` line, then one line per intent — indented two spaces, `  [0] BTC/EUR buy open rest-cancel: notional 20.00 EUR, costmin <X> EUR` — and a last line `plan ok: 1 intent(s), total notional 20.00 EUR`. Any refusal exits non-zero as `plan refused: <every reason, semicolon-separated>` — fix the plan; do not place it. The check is **advisory**: the engine re-validates every plan live before any order, so a clean check is not a permission.
+4. Place it atomically: `sudo mv /var/lib/zcrypto-engine/exec/probe-plan.staging.json /var/lib/zcrypto-engine/exec/probe-plan.json`.
+5. Within about five seconds the executor journals the plan and **deletes the file**. Confirm: `sudo ls -l /var/lib/zcrypto-engine/exec/` shows no `probe-plan.json`.
+6. Read the ledger by value. Expect the plan entry `accepted` with empty reasons; its intent `outcome rest_cancel_ok` with `filled_qty 0.0`; one order row ending `state canceled` with `filled_qty 0.0` and **no** `fill` lines at all.
+7. Read the counters by value from the workstation, allowing a minute for the scrape and remote write:
+   ```
+   uv run python infra/scripts/grafana-query.py 'zcrypto_exec_orders_total{host="zcrypto"}' 'zcrypto_exec_fills_total{host="zcrypto"}' 'zcrypto_exec_fees_eur_total{host="zcrypto"}'
+   ```
+   Expect the `submitted`, `accepted` and `canceled` outcomes to have advanced, **every** `zcrypto_exec_fills_total` series still `0`, and `zcrypto_exec_fees_eur_total` still `0`. A number, never `(no series)`.
+
+**Drill B — the disarmed refusal: prove the key actually refuses.**
+
+1. `sudo rm /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=none`, `reasons=arm_file_absent`.
+2. Place a second `rest-cancel` plan with a **new** `plan_id`, exactly as in drill A steps 1–5.
+3. Expect the plan entry to still read `accepted` — the plan-level checks do not read the gate — and **every intent** to read `outcome refused` with `reasons ['arm_file_absent']`. No order row is created for it, nothing reached the venue, and `zcrypto_exec_orders_total{outcome="refused"}` advances.
+4. Re-create the arm file (`sudo touch /var/lib/zcrypto-engine/exec/armed`) and confirm `level=full` before going on.
+
+#### 4. Execute — the funded plans
+
+**Three rules hold for every funded plan below, without exception.**
+
+- **Never drop a funded plan inside the final 60 minutes before a 4-hourly boundary** (00/04/08/12/16/20 UTC). Run `date -u` immediately before placing; if the next boundary is under 60 minutes away, wait for it to pass. The 4-hourly cycle runs synchronously on the node's single event-loop thread and can hold that thread for up to about 25 minutes when a refresh degrades. While it is held no 5-second tick fires, so **none** of the mid-flight revocations — the kill file, a disarm, quote staleness, the intent's own time-box — can act on a resting order. This rule is the only thing keeping a funded order from resting through that window.
+- **Every plan is signed off on its own**: the owner reads the `--check` output and personally places the file. Drill plans included.
+- **Nothing retries itself.** An intent ending `unfilled`, `refused`, `rejected`, `partial` or `ambiguous` stops there. **`ambiguous` means the order may be live at the venue** — read Kraken's open orders in the web UI and establish what actually reached it before placing anything else on that symbol.
+
+**Step 1 — the open plan, both positions in one plan.** A BTC/EUR margin long and an ETH/EUR margin short, leverage 2, €10–30 each:
+
+```json
+{
+  "plan_id": "open-2026-08-18",
+  "created_at": "2026-08-18T09:35:00+00:00",
+  "intents": [
+    {"symbol": "BTC/EUR", "side": "buy",  "action": "open", "mode": "execute", "notional_eur": 20.0, "leverage": 2},
+    {"symbol": "ETH/EUR", "side": "sell", "action": "open", "mode": "execute", "notional_eur": 20.0, "leverage": 2}
+  ]
+}
+```
+
+The short is on ETH and not on BTC on purpose: an opposing leveraged order on a pair that already holds a margin position **closes** that position instead of opening a second one, so a BTC/EUR short beside the BTC/EUR long would leave you with one position and one rollover stream instead of two.
+
+Monitor with the ledger read (each fill carries `qty`, `px`, `fee`, `fee_currency`, `liquidity`, `trade_id`) and the Engine board's **Execution — what actually happened at the venue** row.
+
+**Step 2 — hold at least about 9 hours.** Rollover recurs every 4 hours a position is open, so ~9 h of wall clock buys two rollover events per position. Confirm both are visible in the Kraken ledger export (Kraken → History → Export → Ledgers) before closing anything.
+
+**Step 3 — the close plan: the ETH/EUR short only, closed by the engine.** One intent, wrapped in the same plan envelope as above (a fresh `plan_id`, a fresh `created_at`, an `intents` list):
+
+```json
+{"symbol": "ETH/EUR", "side": "buy", "action": "close", "mode": "execute", "notional_eur": 20.0, "leverage": 2}
+```
+
+`notional_eur` on a margin closer is **advisory** — the engine sizes the close from the live position and submits it reduce-only, so the same bound is enforced at both ends. This is the first live use of reduce-only anywhere in this system: a venue rejection halts the intent and surfaces to you, with no retry.
+
+**Step 4 — the settle act: the owner settles the BTC/EUR long by hand in the Kraken web UI, and only when no intent is in flight.**
+
+The engine cannot do this — its adapter has no settle-position order type at all — so this half is yours. Settling in kind repays the borrowed EUR from wallet balance and converts the position into a spot BTC holding; Kraken charges no trade fee on settling in kind.
+
+**Preconditions, and their order is not optional.** Settle only after (a) two rollover events are visible in the ledger export for both positions, and (b) the close intent has reached a **terminal** state in the ledger and no intent is in flight.
+
+**The consequence of settling early — which is why those are preconditions and not advice.** One of the engine's automatic kill trips is deliberately **not** scoped to the engine's own orders: after an intent reaches a terminal state, the executor compares the venue's position in **that intent's instrument** against what its own fills account for, and trips on any difference larger than one lot step. A hand settle is, by construction, position movement the engine's fills do not account for — so a settle landing while an intent on the same symbol is running **can** trip it. It is not a certainty: the comparison is per-instrument, so a settle beside a *different* symbol's intent reaches it not at all, and whether a hand-placed settle propagates into the engine's position view in the first place is itself unproven on the installed adapter. That unpredictability is the point — you cannot reason your way to which side you will land on mid-window. And a trip is not recoverable inside one: the kill file latches, resting orders are canceled, every further intent is refused, the `zcrypto-engine-exec-kill-tripped` alert pages, and nothing continues until a human reads and deletes `/var/lib/zcrypto-engine/exec/kill`. Waiting for the close intent to be terminal with nothing in flight is what removes the question entirely — the preconditions are the protection here, not the trip.
+
+**Step 5 — read the disposal quantity out of the ledger export.** Export the ledger again after the settle and read the BTC amount the settle credited. That figure — not a balance the engine reports, not an estimate — is the disposal plan's `qty`: whether a hand-placed settle propagates live into the engine's balance view is unproven, and a plan-carried quantity removes the dependency entirely. Floor it to the leg's lot step, which `probe-plan --check` prints; the check refuses a `qty` that is not a multiple of that step, and rounding **up** would put the sell over the balance.
+
+**Step 6 — the disposal plan: the engine sells the residual spot BTC, so the probe ends flat.** Again one intent in its own plan envelope:
+
+```json
+{"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "qty": 0.00021}
+```
+
+No `leverage` key — its absence is what makes this a spot order — and a spot close carries `qty` instead of `notional_eur`. Same sign-off and the same 60-minute boundary rule as every other funded plan. An over-quantity sell is rejected by the venue and halts attended; a remainder below the leg's `ordermin` is accepted as terminal dust.
+
+**Step 7 — re-sync the tax depot and record the verdict.** After all three terminal acts — the close, the settle, the disposal — re-sync the Kraken depot in Blockpit and record pass/fail in `docs/research/14.phase6-decisions.md` with the evidence: bucket assignment (derivatives PnL vs spot disposal), rollover fees attached as costs, FIFO lots intact, no phantom balances, and the disposal's gain/loss computed off the basis the settle carried.
+
+**On a FAIL, registering the fallback build item is a step of THIS checklist, executed in the same session as the verdict — never a remembered promise.** Open a topic file under `docs/open-topics/` (convention: `.claude/rules/open-topics.md`; file mechanics: the `topic-ops` skill) for the deterministic pre-transform that maps Kraken's ledger and trades exports into Blockpit's manual-import CSV with explicit margin-PnL rows, and queue it in the memo in the same pass — a topic registered but not queued is invisible when work is picked up.
+
+#### 5. Disarm — both keys down, the second one the same day
+
+1. **The owner deletes the arm file**: `sudo rm /var/lib/zcrypto-engine/exec/armed`. This disarms immediately — no deploy, no restart, no engine downtime. Gate read → `level=none`, `reasons=arm_file_absent`.
+2. **Converge `exec_armed` back to `false` the same day — not "eventually".** Between deleting the arm file and that converge the deployed config still says armed, so arming is effectively **one** key rather than two: anything that recreates a file at `/var/lib/zcrypto-engine/exec/armed` re-arms the engine with no review and no deploy. Revert the one line in `infra/ansible/roles/engine/templates/zcrypto.toml.j2` and converge with the same command as the arm step (same running digest, same inter-cycle gap). Read the preview: exactly one line changes back.
+3. **Confirm both keys are down.** Gate read → `level=none` with `reasons=config_not_armed,arm_file_absent,restart_hold` — three reasons; the restart hold is back because the converge restarted the engine, and that is the correct resting state, so leave it. From the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_armed{host="zcrypto"}'` reads `0`.
+4. **Treat any restore of the engine state directory as re-arming until proven otherwise.** The arm file and the plan file both live in `/var/lib/zcrypto-engine/exec/`, which sits inside the directory that is also the backup unit — a restore can bring either one back. After **any** restore of `/var/lib/zcrypto-engine`, and **before the engine starts**, list the directory: `sudo ls -la /var/lib/zcrypto-engine/exec/`. Then act **per file, by name** — a restored control file is not automatically debris, and three of them mean three different things:
+   - **`armed` and `probe-plan.json` — delete these two if present, and only these two.** They are what a restore re-arms you with. The plan's own 60-minute expiry and the ledger's plan-id dedup are the designed backstops behind this check, not a substitute for running it.
+   - **`kill` — this is a FINDING, never something to sweep away.** No code path anywhere clears the kill file; it is a latch a human engaged, and a restore that brings it back is telling you the backup was taken after a trip. `sudo cat /var/lib/zcrypto-engine/exec/kill` prints a timestamp and the reason that tripped it. Read that reason, work the `zcrypto-engine-exec-kill-tripped` section above, and remove the file only once the reason no longer holds. Deleting it along with the rest destroys the one record of why the system stopped, at the moment it is trying to tell you.
+   - **`restart-hold` — leave it.** The engine writes one unconditionally at every start anyway, and holding at reduce-only until a human clears it is the correct resting state.
+
+#### 6. Verify by outcome — the window is not closed until every line here reads true
+
+1. **Every intent has a terminal outcome and every order has a terminal state**, from the ledger read: each plan entry `accepted` with empty reasons, each intent carrying an outcome, each order row a terminal `state`.
+2. **Every fill carries its fee and its liquidity side**: each `fill` line shows `fee` with a `fee_currency`, and `liquidity` reading the word `maker` or `taker` — never a number.
+3. **Two rollover rows per position** in the Kraken ledger export.
+4. **The settle and then the disposal are visible in venue truth, read from the venue record written after the disarm converge's restart** — that restart is what forces the fresh account read, and it is the verified path. Take the restart time from `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine`, wait for the next 4-hourly boundary to write its record, then run the venue-truth read and confirm `snapshot_at` is later than that restart time. A record written before the restart is corroboration, never the gate.
+5. **The probe ends flat**: that record's `positions` carries **twelve** entries — one per basket leg, always, flat or not — and every one of them reads `0.0`. Count the keys and read the values: an absent key is not the flat state (a leg missing from the map means the snapshot never measured it, which is a fault to chase), and a non-zero value is not flat however small it looks. Its `balances` are EUR only, with any BTC remainder below the leg's `ordermin` (terminal dust, not a position).
+6. **The execution families are live in Grafana Cloud, read by value** from the workstation — a number in every case, never `(no series)`:
+   ```
+   uv run python infra/scripts/grafana-query.py \
+     'zcrypto_exec_orders_total{host="zcrypto"}' \
+     'zcrypto_exec_fills_total{host="zcrypto"}' \
+     'zcrypto_exec_fees_eur_total{host="zcrypto"}' \
+     'zcrypto_exec_position{host="zcrypto"}' \
+     'zcrypto_exec_realized_pnl_eur{host="zcrypto"}'
+   ```
+7. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
+
+### Retire when
+
+`cli/engine/executor.py` no longer picks a plan file up out of the state directory's `exec/` — check with `grep -n PLAN_FILENAME cli/engine/executor.py`, and a run that finds nothing is the signal. At that point the continuous loop that replaces attended probe windows has landed, and this procedure with it.

@@ -44,3 +44,4 @@ engine_journal_retention_days: 60
 # [zcrypto.engine] knobs rendered into /opt/zcrypto-engine/zcrypto.toml.
 engine_shadow_nav_eur: 1000.0
 engine_settle_delay_secs: 90
+engine_exec_max_plan_notional_eur: 100.0

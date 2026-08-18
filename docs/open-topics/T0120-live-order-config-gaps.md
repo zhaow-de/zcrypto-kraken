@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the 6b executor iteration defines the node's REST call pattern — the remaining sub-item is the discrepancy-polling intervals, whose values are a share of a request budget that only that call pattern fixes
+ripe_when: spec `00092` builds the CONTINUOUS order loop — `00090`'s executor did not fire this trigger and the re-defer is deliberate (its reconciliation is post-terminal and startup-time, so it defines no standing call rate to budget against); the remaining sub-item is the discrepancy-polling intervals, whose values are a share of a request budget only a continuous call pattern fixes
 ---
 
 # Engine config gaps that only bite when orders flow
@@ -26,4 +26,5 @@ The go/no-go gate's "zero unreconciled order/position states" almost certainly n
 
 ## Suggested next steps
 
-- **(autonomous — rides [[T0018]]'s executor iteration)** Set `open_check_interval_secs` / `position_check_interval_secs` once the executor's own REST call pattern exists, since the intervals are a share of a request budget that pattern defines ([[T0053]]'s measured pacing floor is the reference for what the budget tolerates). Deliberately not guessed now: the go/no-go's "zero unreconciled order/position states" leans on this poll, so a number invented against an unmeasured budget would make the gate read clean by not looking.
+- **(autonomous — owner `00092`, re-deferred there 2026-08-18)** Set `open_check_interval_secs` / `position_check_interval_secs` once a **continuous** order loop's REST call pattern exists, since the intervals are a share of a request budget that pattern defines ([[T0053]]'s measured pacing floor is the reference for what the budget tolerates). Deliberately not guessed now: the go/no-go's "zero unreconciled order/position states" leans on this poll, so a number invented against an unmeasured budget would make the gate read clean by not looking.
+  **Why `00090` did not discharge it, stated so the deferral reads as chosen rather than missed.** The old trigger ("the 6b executor iteration defines the node's REST call pattern") arguably fired at `00090` — an executor landed, and it does read venue state. But `00090`'s reconciliation is **post-terminal and startup-time, not a standing poll loop**: it reads at each intent's terminal and once at startup, inside attended probe windows measured in hours, and nothing in it runs between windows at all. That produces no standing request rate to divide a budget against, so an interval set here would be a number chosen against an absent denominator — precisely the invented-against-an-unmeasured-budget failure this sub-item was registered to avoid. `00092`'s cycle-driven loop is the first thing that creates a continuous call pattern, so it is the first place the intervals are computable rather than guessed. `00090` states the same bound in its own words (its `## What this does NOT do` and `## Out of scope`, both naming this topic).

@@ -15,7 +15,7 @@
     {
       "id": 1,
       "type": "text",
-      "title": "Intent only — realized state lives in the engine journal",
+      "title": "Intent vs execution — read the right row",
       "gridPos": {
         "h": 3,
         "w": 24,
@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Every number on this board is an INTENDED action, not an executed one.** There is no position, no fill, no reject, no open-order, no cash and no realized-profit series anywhere in this fleet's telemetry today — an order counter here means the engine *decided* to move, and says nothing about whether anything moved.\n\n**`data/engine-journal` on the capture primary is the sole source of truth for realized state.** Execution panels join this board when the executor that emits those families exists."
+        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure."
       }
     },
     {
@@ -1794,6 +1794,567 @@
         "colorMode": "background",
         "orientation": "auto",
         "graphMode": "none"
+      }
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Execution — what actually happened at the venue",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      }
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "Orders by outcome",
+      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue_canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), or ambiguous (the venue outcome could not be established). No alert reads this panel directly. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_orders_total{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 62,
+      "type": "timeseries",
+      "title": "Fills by liquidity side — the realized maker/taker blend",
+      "description": "Executed fills split by liquidity side — maker, taker, or no_liquidity_side when the venue did not attribute one. This is the realized maker/taker mix at the venue, not a target. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_fills_total{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{liquidity}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "Fees paid (EUR)",
+      "description": "Cumulative trading fees paid, in EUR. A fill whose commission could not be denominated in EUR still counts as a fill on the panel beside this one, but does not add to this total. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 67
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_fees_eur_total{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · fees paid (EUR)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 64,
+      "type": "timeseries",
+      "title": "Position by symbol (base units)",
+      "description": "Net position held per symbol, in base units. Seeded from the engine journal at startup, so a routine engine restart does not reset it to zero. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 67
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_position{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{symbol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 65,
+      "type": "timeseries",
+      "title": "Realized PnL (EUR)",
+      "description": "Cumulative realized profit and loss, in EUR. Unlike the position panel above, this is NOT seeded across an engine restart — it reads zero from process start until the next fill, so a flat line at zero right after a restart is a gap in the record, not a claim that nothing has been made or lost. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 73
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_realized_pnl_eur{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · realized PnL (EUR)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 66,
+      "type": "timeseries",
+      "title": "Cycles where a book-level limit bound the intended book",
+      "description": "Cycles where a whole-book limit changed the intended order book before the executor ever saw it — an intent-side signal, not a venue outcome, kept beside the execution panels because it explains apparent gaps between the intended and executed books. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 73
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_engine_limit_bound_total{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · limit-bound cycles"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 70,
+      "type": "row",
+      "title": "Venue truth — what the exchange said",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      }
+    },
+    {
+      "id": 71,
+      "type": "timeseries",
+      "title": "Venue snapshot age",
+      "description": "How long since the last successful venue-truth snapshot. Pages above five hours (one 4h cycle plus an hour of slack) after `for: 5m` — the line this alert's own threshold sits on. Seeded at startup from the newest on-disk snapshot record, so a routine engine restart does not itself age this reading. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 80
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - zcrypto_venue_snapshot_timestamp_seconds{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · venue snapshot age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 18000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 72,
+      "type": "timeseries",
+      "title": "Instruments loaded vs expected",
+      "description": "Ratified instruments successfully loaded from the venue in the last snapshot, against how many the fleet's basket expects. A loaded count below expected does not itself page — the concordance-failures panel beside it is what pages. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 80
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_venue_instruments_loaded{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · instruments loaded"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_venue_instruments_expected{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} · instruments expected"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 73,
+      "type": "timeseries",
+      "title": "Venue concordance failures",
+      "description": "Ratified instruments that failed runtime concordance in the last snapshot — the venue's own description of an instrument no longer matches what the engine has pinned. Pages above zero after `for: 5m`. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 80
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_venue_concordance_failures{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} · concordance failures"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
       }
     }
   ],

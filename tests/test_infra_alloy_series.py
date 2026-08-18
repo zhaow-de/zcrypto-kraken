@@ -98,6 +98,17 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_venue_ok",
     "zcrypto_exec_last_evaluation_timestamp_seconds",
     "zcrypto_exec_restart_hold",
+    # The attended-window execution instruments (cli/engine/command.py's `_ExecutionMetrics`), plus
+    # the intent-side limit counter. None is alert-bearing by design, which is exactly why they are
+    # pinned HERE: nothing else would notice them being dropped from the keep-regex, and an
+    # execution board reading NoData through a live probe window is the failure this list exists to
+    # stop -- the T0051 trap in the direction a rule-shaped guard cannot see.
+    "zcrypto_exec_orders_total",
+    "zcrypto_exec_fills_total",
+    "zcrypto_exec_fees_eur_total",
+    "zcrypto_exec_position",
+    "zcrypto_exec_realized_pnl_eur",
+    "zcrypto_engine_limit_bound_total",
     # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
     # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,
     # zcrypto-venue-snapshot-stale); dropping any of the four from the keep-regex leaves the alerted

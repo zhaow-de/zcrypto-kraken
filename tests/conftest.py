@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 import cli.engine.cycle as cycle
@@ -16,3 +18,16 @@ def _reset_metrics_sink():
     """
     yield
     cycle.set_metrics_sink(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_executor_hooks():
+    """The same hazard one module over: `run()` now installs `cli.engine.executor`'s telemetry hooks
+    too, which are module-level globals, so a `run()` test anywhere leaves a live `_ExecutionMetrics`
+    (and an `_ExecGauges.update` bound to a dead registry) firing inside every later test in the same
+    process -- measured, not hypothetical. Reached through `sys.modules` rather than an import so a
+    run that never touches the executor does not pay nautilus-trader's ~1 s import at collection."""
+    yield
+    module = sys.modules.get("cli.engine.executor")
+    if module is not None:
+        module.set_executor_hooks()

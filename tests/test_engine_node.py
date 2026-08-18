@@ -256,13 +256,18 @@ def test_on_start_logic_contains_startup_run_cycle_exception(tmp_path):
 
 
 class FakeClock:
-    """Captures set_time_alert calls -- the strategy's only clock interaction."""
+    """Captures the strategy's two clock interactions: the per-boundary alert and the repeating
+    executor tick."""
 
     def __init__(self):
         self.alerts: list[tuple[str, datetime, object]] = []
+        self.timers: list[tuple[str, timedelta, object]] = []
 
     def set_time_alert(self, name, alert_time, callback):
         self.alerts.append((name, alert_time, callback))
+
+    def set_timer(self, name, interval, callback=None):
+        self.timers.append((name, interval, callback))
 
 
 def test_shadow_strategy_bare_construction_defaults(tmp_path):
@@ -353,6 +358,204 @@ def test_snapshot_venue_state_logs_and_returns_none_on_any_exception(tmp_path, m
     assert any(r.levelno == logging.ERROR for r in caplog.records)
 
 
+# --- the probe-executor wiring (spec 00090 Task 9) ----------------------------------------------
+
+
+class RecordingExecutor:
+    """Stands in for ProbeExecutor at the wiring seam: records what each forwarder handed it."""
+
+    def __init__(self):
+        self.timers: list[datetime] = []
+        self.quotes: list[object] = []
+        self.events: list[object] = []
+
+    def on_timer(self, now):
+        self.timers.append(now)
+
+    def on_quote(self, tick):
+        self.quotes.append(tick)
+
+    def on_order_event(self, event):
+        self.events.append(event)
+
+
+def _exec_stub(config, clock, *, executor_factory=None, executor=None):
+    """A ShadowStrategy stand-in driven through the unbound methods (the house pattern of
+    test_schedule_alert_sets_state_and_timer): a real instance's `clock` is readonly until the
+    nautilus registration this suite never performs."""
+    stub = types.SimpleNamespace(
+        clock=clock,
+        _engine_config=config,
+        _now=lambda: B08 + timedelta(minutes=5),
+        _run_cycle_fn=lambda cycle_ts, *, config, venue_state=None: None,
+        _snapshot_venue_state=lambda: None,
+        _next_cycle_ts=None,
+        _executor_factory=executor_factory,
+        _executor=executor,
+    )
+    stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
+    stub._on_cycle_alert = functools.partial(ShadowStrategy._on_cycle_alert, stub)
+    stub._on_exec_tick = functools.partial(ShadowStrategy._on_exec_tick, stub)
+    return stub
+
+
+def test_bare_construction_wires_no_executor_and_the_forwarders_no_op(tmp_path):
+    # The default executor_factory=None leaves every existing construction (and every existing
+    # test) untouched: no executor, and the two event forwarders are inert rather than raising.
+    strategy = ShadowStrategy(_config(tmp_path))
+    assert strategy._executor_factory is None
+    assert strategy._executor is None
+    strategy.on_quote_tick(object())
+    strategy.on_order_event(object())
+
+
+def test_on_start_builds_the_executor_and_registers_the_exec_tick(tmp_path):
+    config = _config(tmp_path)
+    built: list[object] = []
+    executor = RecordingExecutor()
+
+    def factory(strategy):
+        built.append(strategy)
+        return executor
+
+    clock = FakeClock()
+    stub = _exec_stub(config, clock, executor_factory=factory)
+    ShadowStrategy.on_start(stub)
+
+    # The factory is handed the strategy itself -- ProbeExecutor's `client` IS the strategy handle.
+    assert built == [stub]
+    assert stub._executor is executor
+    # The alert chain is untouched by the wiring; the executor tick is a SECOND, repeating timer.
+    assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+    assert clock.timers == [("exec-probe-tick", timedelta(seconds=5), stub._on_exec_tick)]
+    # The tick cadence the executor's own deadlines are written against -- pinned equal rather than
+    # restated on faith, since node.py cannot import the constant at module scope.
+    from cli.engine.executor import _TICK_SECONDS
+
+    assert node._TICK_SECONDS == _TICK_SECONDS
+
+
+def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
+    clock = FakeClock()
+    stub = _exec_stub(_config(tmp_path), clock)
+    ShadowStrategy.on_start(stub)
+    assert clock.timers == []
+    assert stub._executor is None
+
+
+def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
+    executor = RecordingExecutor()
+    stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
+    stub._on_exec_tick(None)
+    # The strategy's injected clock, never a wall-clock read inside the forwarder.
+    assert executor.timers == [B08 + timedelta(minutes=5)]
+
+
+def test_quote_and_order_event_forwarders_pass_the_object_through(tmp_path):
+    executor = RecordingExecutor()
+    strategy = ShadowStrategy(_config(tmp_path))
+    strategy._executor = executor
+    tick, event = object(), object()
+    strategy.on_quote_tick(tick)
+    strategy.on_order_event(event)
+    assert executor.quotes == [tick]
+    assert executor.events == [event]
+
+
+def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_path):
+    # The forwarder is instrument-blind by design -- the discrimination is the executor's, and this
+    # drives the WHOLE path (strategy.on_quote_tick -> the real factory's ProbeExecutor.on_quote)
+    # so a wiring that handed the tick to the wrong place would show up here.
+    from nautilus_trader.model.identifiers import InstrumentId
+
+    from cli.engine.executor import _ActiveIntent
+    from cli.engine.probeplan import ProbeIntent
+    from cli.engine.venuestate import InstrumentConstraints
+
+    config = _config(tmp_path)
+    strategy = ShadowStrategy(config)
+    strategy._executor = node._probe_executor_factory(config)(strategy)
+    now = B08 + timedelta(minutes=5)
+    active = _ActiveIntent(
+        index=0,
+        intent=ProbeIntent(symbol="BTC/EUR", side="buy", action="open", mode="execute", notional_eur=20.0, qty=None, leverage=None),
+        raw_intent={},
+        instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"),
+        constraints=InstrumentConstraints(
+            symbol="BTC/EUR",
+            instrument_id="BTC/EUR.KRAKEN",
+            ordermin=0.0001,
+            costmin=0.45,
+            costmin_quote="EUR",
+            lot_step=1e-08,
+            tick_size=0.1,
+        ),
+        phase="resting",
+        started_at=now,
+        quote_deadline=now + timedelta(seconds=30),
+        timebox_at=now + timedelta(minutes=15),
+    )
+    strategy._executor._active = active
+
+    strategy.on_quote_tick(
+        types.SimpleNamespace(instrument_id=InstrumentId.from_str("ETH/EUR.KRAKEN"), bid_price=1.0, ask_price=2.0)
+    )
+    assert (active.bid, active.ask, active.last_quote_at) == (None, None, None)
+
+    strategy.on_quote_tick(
+        types.SimpleNamespace(instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"), bid_price=100.0, ask_price=101.0)
+    )
+    assert (active.bid, active.ask) == (100.0, 101.0)
+    assert active.last_quote_at is not None
+
+
+def test_probe_executor_factory_shape(tmp_path):
+    # Constructed, never run -- the way _node_config is pinned. The gate this executor evaluates has
+    # to be the one reading the deployed control-file tree, or every submission would consult a gate
+    # pointed somewhere else.
+    from cli.engine.execgate import exec_dir
+    from cli.engine.executor import ProbeExecutor
+    from cli.engine.venue import read_system_status
+
+    config = _config(tmp_path, exec_armed=True)
+    client = object()
+    executor = node._probe_executor_factory(config)(client)
+    assert isinstance(executor, ProbeExecutor)
+    assert executor._client is client
+    assert executor._config is config
+    assert executor._gate._armed_in_config is True
+    assert executor._gate._dir == exec_dir(config.journal_dir.parent)
+    assert executor._gate._venue_reader is read_system_status
+
+
+# --- the own-strategy order stream (the unknown-order kill trip's scoping) -----------------------
+
+
+def test_the_strategy_claims_no_external_orders(tmp_path):
+    """The precondition the executor's unknown-order kill trip rests on: this strategy is
+    subscribed to `events.order.<its own id>` and claims NOTHING beyond it. An `external_order_claims`
+    entry would make the venue's reconciliation route the account owner's own hand-placed settling
+    fills into on_order_event -- and the trip would latch the kill switch on the probe's sanctioned
+    final act."""
+    for strategy in (ShadowStrategy(_config(tmp_path)), ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None)):
+        assert strategy.external_order_claims == []
+        assert strategy.config.external_order_claims is None
+
+
+_ORDER_STREAM_WIDENERS = ("external_order_claims", "msgbus")
+
+
+def test_no_module_widens_the_engines_order_event_stream():
+    """The structural half of the same property, as a text walk (the D4 pin's shape): nothing under
+    cli/ may claim external orders or reach past the strategy's own subscription onto the raw message
+    bus. Text, not imports -- a reference in a comment is one a refactor can activate."""
+    offenders = []
+    for path in sorted(Path("cli").rglob("*.py")):
+        text = path.read_text()
+        offenders.extend(f"{path.as_posix()}: {name}" for name in _ORDER_STREAM_WIDENERS if name in text)
+    assert offenders == []
+
+
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------
 
 
@@ -409,6 +612,8 @@ node = build_shadow_node(
             "data_clients": [str(c) for c in node.kernel.data_engine.registered_clients],
             "exec_clients": [str(c) for c in node.kernel.exec_engine.registered_clients],
             "strategies": [type(s).__name__ for s in node.trader.strategies()],
+            "executor_wired": [s._executor_factory is not None for s in node.trader.strategies()],
+            "external_order_claims": [list(s.external_order_claims) for s in node.trader.strategies()],
         }
     )
 )
@@ -442,6 +647,11 @@ def test_build_shadow_node_without_exec_client(tmp_path):
     assert facts["data_clients"] == ["KRAKEN"]
     assert facts["exec_clients"] == []
     assert facts["strategies"] == ["ShadowStrategy"]
+    # The assembled node's strategy really carries the executor factory -- the only place the whole
+    # tick/quote/order-event chain is proven to be armed in production rather than only in a stub.
+    assert facts["executor_wired"] == [True]
+    # And it claims no external orders once the trader has registered it with the execution engine.
+    assert facts["external_order_claims"] == [[]]
 
 
 def test_build_shadow_node_with_exec_client_when_enabled(tmp_path):

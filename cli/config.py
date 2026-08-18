@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -38,6 +39,8 @@ class EngineConfig:
     # connected) and, on its own, insufficient: arming also requires the arm file on the host, so
     # no single change can arm the live trade path.
     exec_armed: bool = False
+    # The total-notional cap a probe plan may carry — the blast-radius bound.
+    exec_max_plan_notional_eur: float = 100.0
     settle_delay_secs: int = 90
 
 
@@ -123,6 +126,16 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
         if not isinstance(value, bool):
             raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_armed in {config_path} must be a boolean")
         overrides["exec_armed"] = value
+
+    if "exec_max_plan_notional_eur" in raw:
+        value = raw["exec_max_plan_notional_eur"]
+        # bool is a subclass of int — reject it explicitly. TOML admits `nan`/`inf` as real float
+        # literals: nan defeats every "<= 0" comparison (always False) and inf disables the
+        # blast-radius bound entirely (nothing ever compares as "exceeding" it) — both must be
+        # refused explicitly via math.isfinite, not admitted as "positive".
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_max_plan_notional_eur in {config_path} must be a positive number")
+        overrides["exec_max_plan_notional_eur"] = float(value)
 
     if "settle_delay_secs" in raw:
         value = raw["settle_delay_secs"]

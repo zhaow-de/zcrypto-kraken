@@ -34,6 +34,11 @@ logger = get_logger("engine.node")
 
 _H4 = timedelta(hours=4)
 _TRADER_ID = "SHADOW-001"
+# The probe executor's tick cadence. Restated here rather than imported because
+# `cli.engine.executor` is imported lazily (inside `_probe_executor_factory`) while this is needed
+# at on_start time; tests/test_engine_node.py pins the two equal.
+_TICK_SECONDS = 5.0
+_EXEC_TIMER_NAME = "exec-probe-tick"
 
 
 def _utc_now() -> datetime:
@@ -129,17 +134,39 @@ def on_alert_logic(
 
 
 class ShadowStrategy(Strategy):
-    """The thin strategy owning ONLY timer arithmetic: on_start applies the startup rule and seeds
-    the alert chain; each alert schedules its successor before invoking the cycle core. The logic
-    lives in the pure module functions (on_start_logic / on_alert_logic); run_cycle_fn and clock
-    are injectable for tests."""
+    """The thin strategy owning ONLY timer arithmetic and the probe executor's wiring: on_start
+    applies the startup rule and seeds the alert chain; each alert schedules its successor before
+    invoking the cycle core. The logic lives in the pure module functions (on_start_logic /
+    on_alert_logic); run_cycle_fn and clock are injectable for tests.
 
-    def __init__(self, config: EngineConfig, *, run_cycle_fn: Callable = run_cycle, clock: Callable = _utc_now) -> None:
+    The three executor forwarders below are the ONLY inputs the order path has, and each carries
+    exactly what nautilus routes to this strategy. `on_order_event` in particular is the
+    `events.order.<this strategy's id>` subscription `Strategy.register` installs, and this class
+    passes no `StrategyConfig`, so the strategy's external-order claim list stays empty: an order
+    the engine did not submit -- the account owner settling a position by hand mid-probe -- keeps
+    nautilus's `EXTERNAL` strategy id and structurally never arrives here. That scoping is the
+    precondition the executor's unknown-order kill trip rests on; widening it would latch the kill
+    switch on a sanctioned act. tests/test_engine_node.py pins both halves.
+    """
+
+    def __init__(
+        self,
+        config: EngineConfig,
+        *,
+        run_cycle_fn: Callable = run_cycle,
+        clock: Callable = _utc_now,
+        executor_factory: Callable | None = None,
+    ) -> None:
         super().__init__()
         self._engine_config = config
         self._run_cycle_fn = run_cycle_fn
         self._now = clock
         self._next_cycle_ts: datetime | None = None
+        # None (the default) wires nothing at all: no executor, no tick, every forwarder inert.
+        # build_shadow_node passes the real factory; every other construction stays a pure
+        # timer-arithmetic strategy.
+        self._executor_factory = executor_factory
+        self._executor = None
 
     def _schedule_alert(self, boundary: datetime, alert_time: datetime) -> None:
         self._next_cycle_ts = boundary
@@ -162,6 +189,11 @@ class ShadowStrategy(Strategy):
             run_cycle_fn=self._run_cycle_fn,
             snapshot_fn=self._snapshot_venue_state,
         )
+        if self._executor_factory is not None:
+            # After the cycle wiring, deliberately: the alert chain is the engine's research
+            # obligation and must be seeded even if the executor's construction were to raise.
+            self._executor = self._executor_factory(self)
+            self.clock.set_timer(_EXEC_TIMER_NAME, timedelta(seconds=_TICK_SECONDS), callback=self._on_exec_tick)
 
     def _on_cycle_alert(self, event) -> None:
         on_alert_logic(
@@ -171,6 +203,20 @@ class ShadowStrategy(Strategy):
             run_cycle_fn=self._run_cycle_fn,
             snapshot_fn=self._snapshot_venue_state,
         )
+
+    # --- the probe executor's three inputs -----------------------------------------------------
+
+    def _on_exec_tick(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_timer(self._now())
+
+    def on_quote_tick(self, tick) -> None:
+        if self._executor is not None:
+            self._executor.on_quote(tick)
+
+    def on_order_event(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_order_event(event)
 
 
 def _node_config(config: EngineConfig) -> TradingNodeConfig:
@@ -222,13 +268,37 @@ def _node_config(config: EngineConfig) -> TradingNodeConfig:
     )
 
 
+def _probe_executor_factory(config: EngineConfig) -> Callable:
+    """The production executor factory: `factory(strategy) -> ProbeExecutor`, with the strategy
+    itself as the client handle and a gate reading the deployed control-file tree beside the
+    journal. `venue_reader` is passed explicitly (rather than relying on the class default) so a
+    test can substitute it, mirroring `command.run`'s own gate construction.
+
+    Local import: `cli.engine.executor` reaches `cli.engine.venuestate`, and keeping it here means
+    nothing pays it until a node is actually assembled."""
+    from cli.engine.execgate import ExecutionGate
+    from cli.engine.executor import ProbeExecutor
+    from cli.engine.venue import read_system_status
+
+    return lambda strategy: ProbeExecutor(
+        client=strategy,
+        gate=ExecutionGate(
+            armed_in_config=config.exec_armed,
+            state_dir=config.journal_dir.parent,
+            venue_reader=read_system_status,
+        ),
+        config=config,
+    )
+
+
 def build_shadow_node(config: EngineConfig) -> TradingNode:
     """Assemble (never run here) the production-shape shadow TradingNode: both Kraken factories
-    registered, the ShadowStrategy attached, clients built. node.build() only constructs clients
-    -- no credentials required and no network until node.run()."""
+    registered, the ShadowStrategy attached (with the probe executor wired), clients built.
+    node.build() only constructs clients -- no credentials required and no network until
+    node.run()."""
     node = TradingNode(config=_node_config(config))
     node.add_data_client_factory(KRAKEN, KrakenLiveDataClientFactory)
     node.add_exec_client_factory(KRAKEN, KrakenLiveExecClientFactory)
-    node.trader.add_strategy(ShadowStrategy(config))
+    node.trader.add_strategy(ShadowStrategy(config, executor_factory=_probe_executor_factory(config)))
     node.build()
     return node

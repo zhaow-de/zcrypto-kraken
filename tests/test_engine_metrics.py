@@ -3,6 +3,7 @@ command.py's gauge holder + startup seeding + `run()` wiring."""
 
 import json
 import logging
+import re
 import socket
 import types
 import urllib.request
@@ -12,20 +13,24 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from prometheus_client import CollectorRegistry
+import yaml
+from prometheus_client import CollectorRegistry, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 from typer.testing import CliRunner
 
 import cli.engine.command as command
 import cli.engine.cycle as cycle
+import cli.engine.executor as executor_module
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
-from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at, _VenueGauges
+from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at, _seed_exec_positions, _VenueGauges
 from cli.engine.cycle import CycleResult, run_cycle
-from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
+from cli.engine.errors import EngineJournalError
+from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateLevel, GateVerdict
 from cli.engine.instruments import INSTRUMENT_IDS
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS
+from cli.engine.venue import VenueStatus
 from cli.obs.metrics import METRICS_PORT_ENV_VAR
 from cli.ohlc.dataset import to_frame, write_parquet
 
@@ -349,6 +354,34 @@ def test_cycle_gauges_update_on_failure_sets_success_zero_and_skips_targets_and_
     assert target_weight_family.samples == []
 
 
+@pytest.mark.parametrize(
+    ("limit_bound", "expected"),
+    [(True, 1.0), (False, 0.0), (None, 0.0)],
+    ids=["bound", "clear", "no-answer"],
+)
+def test_the_limit_bound_counter_moves_only_when_a_limit_actually_bound(limit_bound, expected):
+    """T0121's counter. `None` (a failed cycle: no build ran) must be indistinguishable from a clear
+    book HERE -- an increment on it would report a limit binding on a boundary that never built one."""
+    registry = CollectorRegistry()
+    gauges = _CycleGauges(registry)
+    result = CycleResult(
+        status="success",
+        cycle_ts=CYCLE_TS,
+        record_path=Path("cycle-08.json"),
+        sidecar_path=None,
+        targets=dict(TARGETS),
+        orders=[],
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross={"B": 0.0, "A1": 0.0, "A2": 0.32},
+        limit_bound=limit_bound,
+    )
+
+    gauges.update(result, CYCLE_TS, 1.0)
+
+    assert registry.get_sample_value("zcrypto_engine_limit_bound_total") == expected
+
+
 # --- command.py: cycle_duration lazy registration + target_weight retirement (spec 00084 D4) -------
 
 
@@ -620,18 +653,111 @@ def _write_venue_record(
     nautilus_trader. The pinned `schema_version: 1` is deliberate v1-reader coverage, not drift
     against the current `VENUE_SCHEMA_VERSION`: every record written before the widening is v1 and
     the startup seed must keep reading them, so a v1 record is exactly what these gauges must
-    survive at the deploy boundary."""
+    survive at the deploy boundary. Base-keyed throughout (`ASSET{i}`, no "/"), each instrument
+    entry carrying the full v1 key set (base/instrument_id/ordermin/costmin/lot_step/tick_size/
+    costmin_source, no `costmin_quote`) -- `_seed_venue_state` now `validate_venue_record`-checks
+    every record it reads (T0140 D9), so this fixture's output must itself validate."""
     day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
     day_dir.mkdir(parents=True, exist_ok=True)
     doc = {"schema_version": 1, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
     if status == "ok":
         doc["state"] = {
             "snapshot_at": (snapshot_at or cycle_ts).isoformat(),
-            "instruments": {f"ASSET{i}": {} for i in range(loaded)},
+            "instruments": {
+                f"ASSET{i}": {
+                    "base": f"ASSET{i}",
+                    "instrument_id": f"ASSET{i}/EUR.KRAKEN",
+                    "ordermin": 0.0001,
+                    "costmin": 0.5,
+                    "lot_step": 0.00000001,
+                    "tick_size": 0.1,
+                    "costmin_source": "snapshot-constant",
+                }
+                for i in range(loaded)
+            },
+            "positions": {f"ASSET{i}": 0.0 for i in range(loaded)},
+            "balances": {"EUR": 1000.0},
         }
         doc["concordance"] = {"ok": failures == 0, "failures": [f"F{i}" for i in range(failures)]}
     else:
         doc["error"] = "no venue snapshot available for this cycle"
+    (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
+def _write_venue_record_v2(
+    journal_dir: Path,
+    cycle_ts: datetime,
+    *,
+    status: str = "ok",
+    positions: dict[str, float] | None = None,
+) -> None:
+    """A raw **schema-2** venue-<HH>.json, written directly for the same avoid-nautilus reason
+    `_write_venue_record` documents above -- symbol-keyed instruments/positions (the shape
+    `validate_venue_record` requires for schema_version 2). Used by the `_seed_exec_positions`
+    tests: only a schema_version 2 "ok" record can seed the symbol-labelled positions gauge, so
+    these tests need genuine v2 fixtures rather than `_write_venue_record`'s v1 ones."""
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    doc = {"schema_version": 2, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
+    if status == "ok":
+        pos = positions if positions is not None else {"BTC/EUR": 0.0}
+        doc["state"] = {
+            "snapshot_at": cycle_ts.isoformat(),
+            "instruments": {
+                symbol: {
+                    "symbol": symbol,
+                    "instrument_id": f"{symbol}.KRAKEN",
+                    "ordermin": 0.0001,
+                    "costmin": 0.5,
+                    "costmin_quote": symbol.split("/")[1],
+                    "lot_step": 0.00000001,
+                    "tick_size": 0.1,
+                    "costmin_source": "snapshot-constant",
+                }
+                for symbol in pos
+            },
+            "positions": pos,
+            "balances": {"EUR": 1000.0},
+        }
+        doc["concordance"] = {"ok": True, "failures": []}
+    else:
+        doc["error"] = "no venue snapshot available for this cycle"
+    (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
+def _write_shape_invalid_venue_record(journal_dir: Path, cycle_ts: datetime) -> None:
+    """A v1-SHAPED body (base-keyed instruments/positions, the v1 instrument-entry key set) stamped
+    `schema_version: 2` -- refused by `validate_venue_record`'s key-DIRECTION check (schema 2
+    demands full-symbol keys), never by an accidental missing/extra key. Proves the D9
+    validate-before-status wiring inside `_seed_venue_state`/`_seed_exec_positions` is load-bearing
+    and not refactor-erasable: every other fixture in this file now writes schema-valid records (the
+    latent-bug fix to `_write_venue_record`), so without this one, deleting either
+    `validate_venue_record(doc)` call leaves the whole suite green."""
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "schema_version": 2,
+        "cycle_ts": cycle_ts.isoformat(),
+        "code_version": "test",
+        "status": "ok",
+        "state": {
+            "snapshot_at": cycle_ts.isoformat(),
+            "instruments": {
+                "BTC": {
+                    "base": "BTC",
+                    "instrument_id": "BTC/EUR.KRAKEN",
+                    "ordermin": 0.0001,
+                    "costmin": 0.5,
+                    "lot_step": 0.00000001,
+                    "tick_size": 0.1,
+                    "costmin_source": "snapshot-constant",
+                }
+            },
+            "positions": {"BTC": 0.0},
+            "balances": {"EUR": 1000.0},
+        },
+        "concordance": {"ok": True, "failures": []},
+    }
     (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
 
 
@@ -722,6 +848,62 @@ def test_seed_venue_state_an_error_record_never_overrides_the_last_ok_one(tmp_pa
     seed = command._seed_venue_state(journal_dir)
 
     assert seed == {"loaded": 10, "expected": len(INSTRUMENT_IDS), "failures": 0, "snapshot_at": ok_at.isoformat()}
+
+
+def test_seed_venue_state_refuses_a_shape_invalid_record(tmp_path):
+    # D9: validate_venue_record is called on every record before status is even consulted -- a
+    # v1-shaped body stamped schema_version 2 must never be silently skipped as "not ok", it must
+    # raise, because the shape violation itself (not the status) is the thing being refused.
+    journal_dir = tmp_path / "journal"
+    _write_shape_invalid_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC))
+
+    with pytest.raises(EngineJournalError):
+        command._seed_venue_state(journal_dir)
+
+
+# --- command.py: _seed_exec_positions (T0140) -------------------------------------------------------
+
+
+def test_seed_exec_positions_returns_none_when_the_journal_is_empty(tmp_path):
+    assert _seed_exec_positions(tmp_path / "journal") is None
+
+
+def test_seed_exec_positions_reads_the_newest_ok_records_positions(tmp_path):
+    journal_dir = tmp_path / "journal"
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), positions={"BTC/EUR": 1.0})
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), positions={"BTC/EUR": 2.5, "ETH/EUR": -1.0})
+
+    seed = _seed_exec_positions(journal_dir)
+
+    assert seed == {"BTC/EUR": 2.5, "ETH/EUR": -1.0}
+
+
+def test_seed_exec_positions_skips_an_error_record_even_when_newer(tmp_path):
+    journal_dir = tmp_path / "journal"
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), positions={"BTC/EUR": 1.0})
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), status="error")
+
+    seed = _seed_exec_positions(journal_dir)
+
+    assert seed == {"BTC/EUR": 1.0}
+
+
+def test_seed_exec_positions_skips_a_schema_version_1_record(tmp_path):
+    # A base-keyed v1 "ok" record cannot honestly seed the symbol-labelled positions gauge -- it
+    # must be skipped even though "ok" is otherwise the qualifying status.
+    journal_dir = tmp_path / "journal"
+    _write_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), loaded=1)
+
+    assert _seed_exec_positions(journal_dir) is None
+
+
+def test_seed_exec_positions_refuses_a_shape_invalid_record(tmp_path):
+    # Same D9 guard, this function's own call site -- must be independently erasable-proof.
+    journal_dir = tmp_path / "journal"
+    _write_shape_invalid_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC))
+
+    with pytest.raises(EngineJournalError):
+        _seed_exec_positions(journal_dir)
 
 
 # --- command.py: _ExecGauges -------------------------------------------------------------------------
@@ -1245,3 +1427,242 @@ def test_the_exec_ledger_writes_even_when_the_metrics_port_is_unset(tmp_path, mo
     assert list((engine_cfg.journal_dir / f"{CYCLE_TS:%Y-%m-%d}").glob("exec-*.json")), (
         "the ledger must not be a side effect of telemetry being switched on"
     )
+
+
+# --- command.py: _ExecutionMetrics (the execution families) -------------------------------------
+
+
+def test_the_order_outcome_labels_cover_every_outcome_the_executor_can_emit():
+    """DERIVED from the executor's own call sites, never hand-listed: an outcome the executor emits
+    and this label set omits still publishes -- as an unadmitted, unpanelled series nobody watches.
+    `ambiguous` is the one that matters. Folding it into `refused` would put back exactly the lie a
+    prior ruling removed from the forensic ledger: "refused" asserts no order exists, and after a
+    submission whose venue outcome is unknown that claim is unavailable."""
+    emitted = set(re.findall(r'_inc_order\("([a-z_]+)"\)', Path(executor_module.__file__).read_text()))
+    assert len(emitted) >= 7, f"the call-site scan found only {sorted(emitted)} -- this guard would pass vacuously"
+    assert "ambiguous" in emitted, "the executor no longer emits `ambiguous` -- read WHY before touching the label set"
+    assert emitted == set(command._EXEC_ORDER_OUTCOMES)
+
+
+def test_the_liquidity_labels_are_the_venue_enums_own_names():
+    """DERIVED from the real `LiquiditySide`, because the bug this pins was invisible to every
+    string-based fake: the enum is an `IntFlag` over `ReprEnum`, so `str(LiquiditySide.MAKER)` is
+    `'1'`. The label set must be exactly what the venue can report, lower-cased -- a member this
+    tuple omits would spring into existence as an unadmitted series on the first live fill that
+    carried it, while the pre-registered children read zero for the whole probe window."""
+    from nautilus_trader.model.enums import LiquiditySide, liquidity_side_to_str
+
+    assert {liquidity_side_to_str(member).lower() for member in LiquiditySide} == set(command._EXEC_LIQUIDITY_SIDES)
+    # The trap itself, stated: were `str()` used at the emit site these would be the labels instead.
+    assert {str(member) for member in LiquiditySide} == {"0", "1", "2"}
+
+
+def test_every_outcome_and_liquidity_series_exists_before_anything_happens():
+    """A Counter's zero is a measured fact ("nothing has been refused yet"), unlike a Gauge's, so
+    every label child is registered up front: `rate()` over a series that springs into existence at
+    its first event has no baseline, and an absent `rejected` reads identically to a scrape gap."""
+    registry = CollectorRegistry()
+    command._ExecutionMetrics(registry)
+
+    families = _families(registry)
+    outcomes = {s.labels["outcome"]: s.value for s in families["zcrypto_exec_orders_total"].samples}
+    assert outcomes == dict.fromkeys(command._EXEC_ORDER_OUTCOMES, 0.0)
+    liquidity = {s.labels["liquidity"]: s.value for s in families["zcrypto_exec_fills_total"].samples}
+    assert liquidity == dict.fromkeys(command._EXEC_LIQUIDITY_SIDES, 0.0)
+    assert registry.get_sample_value("zcrypto_exec_fees_eur_total") == 0.0
+    # Labelled and unseeded: no symbol has been named yet, so the family carries no samples at all.
+    position_family = next(f for f in registry.collect() if f.name == "zcrypto_exec_position")
+    assert position_family.samples == []
+
+
+def test_the_execution_families_carry_the_names_and_labels_the_keep_regex_admits():
+    """Parsed out of the exposition text, not off the objects: the keep-regex and every panel match
+    the EXPOSED series name, which for a Counter is not the family name."""
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    metrics.inc_order("submitted")
+    metrics.inc_fill("maker", 0.42)
+    metrics.set_position("BTC/EUR", -1.5)
+    metrics.set_realized(-12.25)
+
+    exposed = {
+        (sample.name, tuple(sorted(sample.labels.items()))): sample.value
+        for family in text_string_to_metric_families(generate_latest(registry).decode())
+        for sample in family.samples
+    }
+    assert exposed[("zcrypto_exec_orders_total", (("outcome", "submitted"),))] == 1.0
+    assert exposed[("zcrypto_exec_fills_total", (("liquidity", "maker"),))] == 1.0
+    assert exposed[("zcrypto_exec_fees_eur_total", ())] == pytest.approx(0.42)
+    assert exposed[("zcrypto_exec_position", (("symbol", "BTC/EUR"),))] == -1.5
+    # A Gauge, never a Counter: realized PnL falls.
+    assert exposed[("zcrypto_exec_realized_pnl_eur", ())] == -12.25
+    metrics.set_realized(-30.0)
+    assert registry.get_sample_value("zcrypto_exec_realized_pnl_eur") == -30.0
+
+
+def test_a_fee_the_caller_could_not_denominate_in_eur_counts_the_fill_but_not_the_money():
+    """`zcrypto_exec_fees_eur_total` is EUR by name. A `/BTC` leg's BTC-denominated commission added
+    to it would be a number with no unit -- so the fill still counts (it happened) and the fee does
+    not. The executor is what decides EUR-or-None; this pins that a None can never reach the total."""
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    metrics.inc_fill("taker", None)
+
+    assert registry.get_sample_value("zcrypto_exec_fills_total", {"liquidity": "taker"}) == 1.0
+    assert registry.get_sample_value("zcrypto_exec_fees_eur_total") == 0.0
+
+
+# --- the D5 ordering: a failing ledger writer starves the heartbeat -----------------------------
+
+ALERTS_YAML = Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml"
+
+
+def _staleness_threshold_seconds() -> float:
+    """The DEPLOYED evaluator threshold for `zcrypto-engine-exec-not-evaluated`, read out of the
+    rule rather than remembered: a test carrying a copy of the number proves nothing about the rule
+    that actually fires, and would keep passing after the rule was retuned."""
+    rule = next(r for r in yaml.safe_load(ALERTS_YAML.read_text())["rules"] if r["uid"] == "zcrypto-engine-exec-not-evaluated")
+    (expr_node,) = [d for d in rule["data"] if "expr" in d["model"]]
+    assert "zcrypto_exec_last_evaluation_timestamp_seconds" in expr_node["model"]["expr"]
+    (condition,) = [d for d in rule["data"] if d["refId"] == rule["condition"]][0]["model"]["conditions"]
+    assert condition["evaluator"]["type"] == "gt"
+    (threshold,) = condition["evaluator"]["params"]
+    return float(threshold)
+
+
+def _raise(*args, **kwargs):
+    raise OSError("read-only file system")
+
+
+def _sink_result(cycle_ts: datetime) -> CycleResult:
+    return CycleResult(
+        status="success",
+        cycle_ts=cycle_ts,
+        record_path=Path("cycle.json"),
+        sidecar_path=None,
+        targets=None,
+        orders=None,
+        reason=None,
+        offending_pairs=None,
+        sleeve_gross=None,
+    )
+
+
+def test_a_raising_ledger_writer_freezes_the_heartbeat_and_the_staleness_condition_goes_true(tmp_path, monkeypatch):
+    """The monitoring-gap discharge, read by VALUE: the sink writes the ledger BEFORE any gauge, so
+    a persistently failing `write_exec_record` starves
+    `zcrypto_exec_last_evaluation_timestamp_seconds` and the deployed staleness rule's condition
+    goes true. That ordering is the whole reason the gap is monitored rather than merely documented
+    -- reverse it and the ledger could fail silently for days behind a heartbeat that keeps ticking."""
+    registry = CollectorRegistry()
+    gate = ExecutionGate(
+        armed_in_config=False,
+        state_dir=tmp_path,
+        venue_reader=lambda *, now, opener=None: VenueStatus(status="online", ok=True, observed_at=now),
+    )
+    exec_gauges = _ExecGauges(registry)
+    t0 = datetime(2026, 8, 11, 8, 0, tzinfo=UTC)
+    sink = command._make_exec_sink(gate, tmp_path / "journal", None, exec_gauges, None)
+
+    sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
+    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t0.timestamp()
+
+    monkeypatch.setattr(command, "write_exec_record", _raise)
+    t1 = t0 + timedelta(hours=8)
+    try:
+        sink(_sink_result(t1), t1, 1.0)
+    except OSError:
+        pass  # in production cycle.py's _update_metrics swallows exactly this raise -- same effect
+
+    frozen = registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds")
+    assert frozen == t0.timestamp(), "the heartbeat moved past a cycle whose ledger record was never written"
+    assert t1.timestamp() - frozen > _staleness_threshold_seconds()
+
+
+def test_the_sink_moves_the_heartbeat_when_the_ledger_write_succeeds():
+    """The control for the freeze above: without it, a sink that never touched the gauge at all
+    would pass that test for the wrong reason."""
+    registry = CollectorRegistry()
+    exec_gauges = _ExecGauges(registry)
+    t0 = datetime(2026, 8, 11, 8, 0, tzinfo=UTC)
+    t1 = t0 + timedelta(hours=8)
+    gate = ExecutionGate(
+        armed_in_config=False,
+        state_dir=Path("/nonexistent"),
+        venue_reader=lambda *, now, opener=None: VenueStatus(status="online", ok=True, observed_at=now),
+    )
+    with pytest.MonkeyPatch.context() as mp:
+        writes = []
+        mp.setattr(command, "write_exec_record", lambda *a, **k: writes.append(a))
+        sink = command._make_exec_sink(gate, Path("/nonexistent"), None, exec_gauges, None)
+        sink(_sink_result(t0), t0, 1.0)
+        sink(_sink_result(t1), t1, 1.0)
+
+    assert len(writes) == 2
+    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t1.timestamp()
+
+
+# --- run(): the execution metrics, their seed, and the executor hooks ---------------------------
+
+
+def test_run_builds_the_execution_metrics_seeds_positions_and_installs_the_executor_hooks(tmp_path, monkeypatch):
+    """The composition nothing else drives. A dropped `set_executor_hooks` call is silent in
+    production -- the executor's own hooks are None-safe by design, so every order would be placed
+    exactly as before while `zcrypto_exec_orders_total` sat at zero and read as "nothing traded"."""
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    engine_cfg = _run_env(monkeypatch, tmp_path)
+    _write_venue_record_v2(engine_cfg.journal_dir, CYCLE_TS, positions={"BTC/EUR": 2.5, "ETH/EUR": -1.0})
+    installed = {}
+    monkeypatch.setattr(executor_module, "set_executor_hooks", lambda **kwargs: installed.update(kwargs))
+
+    cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert registry.get_sample_value("zcrypto_exec_position", {"symbol": "BTC/EUR"}) == 2.5
+    assert registry.get_sample_value("zcrypto_exec_position", {"symbol": "ETH/EUR"}) == -1.0
+    assert isinstance(installed["metrics"], command._ExecutionMetrics)
+    # The verdict hook is _ExecGauges.update -- the executor evaluates the gate before every
+    # submission, and those evaluations are the only thing that keeps the heartbeat fresh between
+    # cycles.
+    assert installed["publish_verdict"] is not None
+    # The metrics object the hooks got is the one on the served registry, not a second copy.
+    installed["metrics"].inc_order("submitted")
+    assert registry.get_sample_value("zcrypto_exec_orders_total", {"outcome": "submitted"}) == 1.0
+
+
+def test_run_installs_the_hooks_with_no_metrics_when_the_exporter_is_off(tmp_path, monkeypatch):
+    """The ledger runs with the exporter off, so the executor must too -- with both hooks None
+    rather than an unbuilt registry's gauges."""
+    monkeypatch.delenv(METRICS_PORT_ENV_VAR, raising=False)
+    _run_env(monkeypatch, tmp_path)
+    installed = {}
+    monkeypatch.setattr(executor_module, "set_executor_hooks", lambda **kwargs: installed.update(kwargs))
+
+    cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert installed == {"publish_verdict": None, "metrics": None}
+
+
+def test_a_raising_execution_metrics_seed_never_prevents_the_engine_from_starting(tmp_path, monkeypatch, caplog):
+    """The isolation guard, constructed: `_seed_exec_positions` reads arbitrary on-disk journal
+    artifacts and raises by contract on a malformed one. Telemetry may never kill the engine daemon."""
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    _run_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(command, "_seed_exec_positions", _raise)
+
+    with _zcrypto_caplog_attached(caplog), caplog.at_level("ERROR"):
+        cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
+    # The families still exist -- the seed failed, not the registration.
+    assert registry.get_sample_value("zcrypto_exec_orders_total", {"outcome": "refused"}) == 0.0

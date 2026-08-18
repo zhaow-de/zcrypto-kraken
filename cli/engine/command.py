@@ -29,7 +29,7 @@ from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, 
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
-from cli.engine.execledger import write_exec_record
+from cli.engine.execledger import ledgered_plan_ids, write_exec_record
 from cli.engine.feeders import accumulation_report, decompose_report, load_minimums
 from cli.engine.gate_cache import (
     GateCache,
@@ -40,8 +40,9 @@ from cli.engine.gate_cache import (
     replay_fingerprint,
     save_cache,
 )
-from cli.engine.instruments import INSTRUMENT_IDS
+from cli.engine.instruments import INSTRUMENT_IDS, _floor_to_step
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
+from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, seed_store
 from cli.engine.venue import read_system_status
@@ -440,6 +441,11 @@ class _CycleGauges:
         self.orders_total = Counter(
             "zcrypto_engine_orders_total", "Intended orders emitted, across every cycle.", registry=registry
         )
+        # Intent-prefixed on purpose (T0121): the §10 whole-book limits bind on the INTENT book, the
+        # one this cycle just built, not on anything the executor did with it.
+        self.limit_bound = Counter(
+            "zcrypto_engine_limit_bound_total", "Cycles where a book-level limit changed the intended book.", registry=registry
+        )
         # A Gauge, not a Counter: the pinned name (spec 00069 D5, "names verbatim") carries no
         # `_total` suffix, and `Counter` would silently ADD one to the exposed series name --
         # `Gauge` exposes exactly the name given while `.inc()` still makes it cumulative. Caveat:
@@ -514,6 +520,10 @@ class _CycleGauges:
         if result.orders is not None:
             self.orders_total.inc(len(result.orders))
             self.order_notional_eur.inc(sum(order["notional_eur"] for order in result.orders))
+        # Truthiness, so `None` -- a failed cycle, which ran no build and therefore has no answer --
+        # counts as no bind rather than as one.
+        if result.limit_bound:
+            self.limit_bound.inc()
         if result.sleeve_gross is not None:  # None on a failed cycle: no build ran, so leave both as they were
             for sleeve, gross in result.sleeve_gross.items():
                 self.sleeve_gross.labels(sleeve=sleeve).set(gross)
@@ -583,6 +593,70 @@ class _ExecGauges:
                 registry=self._registry,
             )
         self.last_evaluation.set(evaluated_at.timestamp())
+
+
+# Every outcome `cli/engine/executor.py`'s `_inc_order` can emit, pinned against that module's own
+# call sites by tests/test_engine_metrics.py. `ambiguous` is load-bearing and must never be folded
+# into `refused`: "refused" asserts that no order exists, and after a submission whose venue outcome
+# was never established that claim is unavailable -- the same lie a prior ruling removed from the
+# forensic ledger.
+_EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "canceled", "filled", "refused", "ambiguous")
+# Every name the venue's own `LiquiditySide` can produce, lower-cased -- pinned against the real
+# enum by tests/test_engine_metrics.py rather than derived here, because importing nautilus-trader
+# at this module's top level would put ~1 s on `zcrypto --help`. `no_liquidity_side` is deliberate
+# and pre-registered like the other two: a fill the venue did not attribute is still a fill, and
+# neither silently counting it as taker nor letting a third label appear at runtime is acceptable
+# when the maker-vs-taker split is the number this ladder exists to measure.
+_EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
+
+
+class _ExecutionMetrics:
+    """What the executor did, as opposed to `_ExecGauges`' what it was ALLOWED to do. Built on the
+    SAME registry as `_CycleGauges`/`_ExecGauges` and installed on the executor's telemetry hooks,
+    which are wrapped at every call site there -- nothing here can alter or stop a submission.
+
+    Every counter's label children are registered up front, unlike the gauges above whose absent
+    series are the honest state: a Counter's zero is a MEASURED fact ("nothing has been refused
+    yet"), where a Gauge's would be an unmeasured claim, and a `rejected` series that springs into
+    existence at the first rejection gives `rate()` no baseline and reads exactly like a scrape gap
+    until then. `position` is the exception -- symbol-labelled, so it publishes only the symbols
+    `run()`'s seed or a fill has actually named.
+
+    `realized_pnl` is a Gauge because realized PnL falls; it is registered eagerly at 0, which is
+    true of a fresh process before its first trade. It is NOT seeded from disk, so a process
+    restarted mid-probe reads 0 until its next fill -- accepted here because the probe windows are
+    attended and the engine is converged only in the inter-cycle gap.
+    """
+
+    def __init__(self, registry) -> None:
+        self.orders = Counter("zcrypto_exec_orders_total", "Executor orders by outcome.", ["outcome"], registry=registry)
+        self.fills = Counter("zcrypto_exec_fills_total", "Order fills by liquidity side.", ["liquidity"], registry=registry)
+        self.fees = Counter("zcrypto_exec_fees_eur_total", "Trading fees paid, in EUR.", registry=registry)
+        self.position = Gauge(
+            "zcrypto_exec_position", "Net position quantity by symbol, in base units.", ["symbol"], registry=registry
+        )
+        self.realized_pnl = Gauge("zcrypto_exec_realized_pnl_eur", "Realized profit and loss, in EUR.", registry=registry)
+        for outcome in _EXEC_ORDER_OUTCOMES:
+            self.orders.labels(outcome=outcome)
+        for liquidity in _EXEC_LIQUIDITY_SIDES:
+            self.fills.labels(liquidity=liquidity)
+
+    def inc_order(self, outcome: str) -> None:
+        self.orders.labels(outcome=outcome).inc()
+
+    def inc_fill(self, liquidity: str, fee_eur: float | None) -> None:
+        """`fee_eur is None` means the caller could not denominate the commission in EUR. The fill
+        still counts -- it happened -- and the fee does not: this total is EUR by name, and adding a
+        differently-denominated commission to it would produce a number with no unit."""
+        self.fills.labels(liquidity=liquidity).inc()
+        if fee_eur is not None:
+            self.fees.inc(fee_eur)
+
+    def set_position(self, symbol: str, qty: float) -> None:
+        self.position.labels(symbol=symbol).set(qty)
+
+    def set_realized(self, value: float) -> None:
+        self.realized_pnl.set(value)
 
 
 class _VenueGauges:
@@ -683,17 +757,20 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
 
     Deliberately NO try/except of its own, mirroring `_seed_cycle_state`: an unreadable file
     (PermissionError) or a malformed record propagates to the caller's own guard, which must never
-    let telemetry setup kill the engine daemon.
+    let telemetry setup kill the engine daemon. Every record is `validate_venue_record`-checked
+    before its `status` is even consulted (T0140 D9) -- a record that fails to validate is a
+    malformed record, and the caller's guard is exactly where that must surface, never a silent skip.
 
     Local import: `cli.engine.venueledger` pulls in `cli.engine.venuestate`, which imports
     nautilus_trader (~1s) at module level -- deferred to here for the same reason `cycle.py`'s
     `_record_venue_state` defers it, so `cli.engine.command`'s own module-level import stays
     nautilus-free (`zcrypto --help`)."""
-    from cli.engine.venueledger import read_venue_record
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     newest: tuple[datetime, dict] | None = None
     for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
         doc = read_venue_record(path)
+        validate_venue_record(doc)
         if doc.get("status") != "ok":
             continue
         cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
@@ -708,6 +785,51 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
         "failures": len(doc["concordance"]["failures"]),
         "snapshot_at": doc["state"]["snapshot_at"],
     }
+
+
+def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
+    """The startup seed for the (symbol-labelled) positions gauge: the newest `venue-<HH>.json`
+    whose `status` is `"ok"` AND `schema_version == 2`, reduced to `dict(doc["state"]["positions"])`
+    -- a base-keyed schema_version 1 record is skipped even when `"ok"`, never coerced, because the
+    gauge it seeds is symbol-labelled and a v1 record cannot honestly produce that label. Mirrors
+    `_seed_venue_state` above: same glob/newest logic, same no-try/except contract (the caller's own
+    telemetry guard owns isolation), same `validate_venue_record`-before-`status` ordering (T0140
+    D9) -- a malformed record propagates rather than being silently skipped."""
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
+
+    newest: tuple[datetime, dict] | None = None
+    for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
+        doc = read_venue_record(path)
+        validate_venue_record(doc)
+        if doc.get("status") != "ok" or doc.get("schema_version") != 2:
+            continue
+        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
+        if newest is None or cycle_ts > newest[0]:
+            newest = (cycle_ts, doc)
+    if newest is None:
+        return None
+    return dict(newest[1]["state"]["positions"])
+
+
+def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_gauges):
+    """`run()`'s per-cycle metrics sink, at module level rather than inline so the ORDER inside it
+    can be driven by a test: the ledger write comes first, and a test that cannot reach this closure
+    cannot prove that a failing writer starves the heartbeat rather than being papered over by a
+    gauge that keeps ticking."""
+
+    def _sink(result, completed_at, duration_seconds):
+        # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
+        # either gauge group is touched, so a raising gauge update can never cost this cycle's record.
+        verdict = gate.evaluate(completed_at)
+        write_exec_record(journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
+        if cycle_gauges is not None:
+            cycle_gauges.update(result, completed_at, duration_seconds)
+        if exec_gauges is not None:
+            exec_gauges.update(verdict, evaluated_at=completed_at)
+        if venue_gauges is not None:
+            venue_gauges.update(result.venue)
+
+    return _sink
 
 
 @engine_app.command()
@@ -786,19 +908,32 @@ def run() -> None:
     gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
     exec_gauges = _ExecGauges(registry) if registry is not None else None
 
-    def _sink(result, completed_at, duration_seconds):
-        # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
-        # either gauge group is touched, so a raising gauge update can never cost this cycle's record.
-        verdict = gate.evaluate(completed_at)
-        write_exec_record(config.journal_dir, result.cycle_ts, verdict, evaluated_at=completed_at)
-        if cycle_gauges is not None:
-            cycle_gauges.update(result, completed_at, duration_seconds)
-        if exec_gauges is not None:
-            exec_gauges.update(verdict, evaluated_at=completed_at)
-        if venue_gauges is not None:
-            venue_gauges.update(result.venue)
+    exec_metrics = None
+    if registry is not None:
+        # Its own isolation guard, the `_VenueGauges` pattern: `_seed_exec_positions` reads arbitrary
+        # on-disk journal artifacts and raises by contract on a malformed one, and telemetry may
+        # never kill the engine daemon. The families are registered BEFORE the seed, so a failed
+        # seed costs the starting values, never the series.
+        try:
+            exec_metrics = _ExecutionMetrics(registry)
+            positions = _seed_exec_positions(config.journal_dir)
+            if positions is not None:  # None => no readable v2 "ok" record yet -- publish no symbol
+                for symbol, qty in positions.items():
+                    exec_metrics.position.labels(symbol=symbol).set(qty)
+        except Exception:
+            logger.exception("execution metrics setup failed -- continuing without them")
 
-    set_metrics_sink(_sink)
+    set_metrics_sink(_make_exec_sink(gate, config.journal_dir, cycle_gauges, exec_gauges, venue_gauges))
+
+    # Lazy: cli.engine.executor imports nautilus-trader (~1 s); `zcrypto --help` must never pay it.
+    from cli.engine import executor
+
+    # Installed whether or not the exporter is on -- with both hooks None when it is off, which is
+    # exactly what the executor's own None-safe wrappers expect.
+    executor.set_executor_hooks(
+        publish_verdict=(exec_gauges.update if exec_gauges is not None else None),
+        metrics=exec_metrics,
+    )
 
     # One evaluation at startup so no latch gauge sits at its seeded default. Inside the same
     # isolation the sink enjoys: telemetry must never be able to stop the engine from starting.
@@ -1339,7 +1474,142 @@ def exec_status(
         venue_reader=read_system_status,  # explicit so tests can substitute it (no --no-venue-check flag)
     )
     verdict = gate.evaluate(_utc_now())
+    _echo_gate_verdict(verdict)
+
+
+def _echo_gate_verdict(verdict: GateVerdict) -> None:
     typer.echo(f"level={verdict.level}")
     typer.echo(f"reasons={','.join(verdict.reasons) or '-'}")
     for key, value in sorted(verdict.inputs.items()):
         typer.echo(f"  {key}={value}")
+
+
+def _newest_venue_record(journal_dir: Path) -> dict | None:
+    """The newest `ok`, schema-2 `venue-<HH>.json` document in full, or None when the journal holds
+    none. `_seed_exec_positions`' scan, kept whole rather than reduced: this caller needs both the
+    instrument constraints and the balances. Same no-try/except contract -- a record that fails
+    `validate_venue_record` raises rather than being skipped, because reading past a broken record
+    would make every floor below fail open."""
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
+
+    newest: tuple[datetime, dict] | None = None
+    for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
+        doc = read_venue_record(path)
+        validate_venue_record(doc)
+        if doc.get("status") != "ok" or doc.get("schema_version") != 2:
+            continue
+        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
+        if newest is None or cycle_ts > newest[0]:
+            newest = (cycle_ts, doc)
+    return None if newest is None else newest[1]
+
+
+def _intent_floor_check(index: int, intent, entry: dict) -> tuple[str, list[str]]:
+    """One intent's checkable floors against one venue-snapshot instrument entry: the printable
+    line, and every refusal it earned.
+
+    A notional intent meets `costmin`, and ONLY when both are EUR: comparing a EUR notional against
+    a `/BTC` leg's BTC-denominated floor passes everything silently (2e-05 is under any EUR figure),
+    which is exactly the fail-open direction `size_probe_order`'s guard refuses at sizing time. A
+    qty intent meets `ordermin` and the lot step instead -- it carries no price here, so no notional
+    exists to check.
+    """
+    refusals: list[str] = []
+    head = f"  [{index}] {intent.symbol} {intent.side} {intent.action} {intent.mode}"
+    if intent.notional_eur is not None:
+        quote = entry["costmin_quote"]
+        if quote != "EUR":
+            return (
+                f"{head}: notional {intent.notional_eur:.2f} EUR -- NOT COMPARED",
+                [
+                    f"intent {index}: {intent.symbol}'s costmin is denominated in {quote!r}, so it cannot be "
+                    "compared against a EUR notional"
+                ],
+            )
+        costmin = float(entry["costmin"])
+        if intent.notional_eur < costmin:
+            refusals.append(f"intent {index}: notional {intent.notional_eur:.2f} EUR is below costmin {costmin:.2f} EUR")
+        return f"{head}: notional {intent.notional_eur:.2f} EUR, costmin {costmin:.2f} EUR", refusals
+
+    ordermin = float(entry["ordermin"])
+    lot_step = float(entry["lot_step"])
+    if intent.qty < ordermin:
+        refusals.append(f"intent {index}: qty {intent.qty:.10g} is below ordermin {ordermin:.10g}")
+    if lot_step <= 0:
+        refusals.append(f"intent {index}: the venue snapshot's lot step for {intent.symbol} is {lot_step!r}, not a positive step")
+    elif _floor_to_step(intent.qty, lot_step) != intent.qty:
+        refusals.append(f"intent {index}: qty {intent.qty:.10g} is not a multiple of the {lot_step:.10g} lot step")
+    return f"{head}: qty {intent.qty:.10g}, ordermin {ordermin:.10g}, lot step {lot_step:.10g}", refusals
+
+
+@engine_app.command(name="probe-plan")
+def probe_plan(
+    plan_path: Path = typer.Argument(..., help="Probe plan JSON file to validate."),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Validate the plan offline: shape, expiry, duplicate plan ids, the plan-level caps, and each intent "
+        "against the newest venue snapshot's constraints. Advisory only -- the engine re-validates every plan live "
+        "before any order.",
+    ),
+) -> None:
+    """Validate an operator-authored probe plan against the newest journaled venue snapshot.
+
+    Read-only and offline: it reads the plan file, the journal, and the control-file tree, and writes nothing anywhere. The gate verdict it prints is a REPORT, never a permission -- the engine evaluates the gate itself inside every submission, so a plan that validates cleanly while the gate is shut is still a valid plan."""
+    if not check:
+        raise _abort("only --check is implemented -- the engine consumes plans from its state directory, never from this command")
+
+    config = _load_engine_config()
+    try:
+        text = plan_path.read_text()
+    except OSError as exc:
+        raise _abort(f"could not read the probe plan {plan_path}: {exc}") from exc
+    try:
+        plan = parse_plan(text)
+    except ProbePlanError as exc:
+        raise _abort(str(exc)) from exc
+
+    try:
+        record = _newest_venue_record(config.journal_dir)
+    except (OSError, EngineJournalError, KeyError, TypeError, ValueError) as exc:
+        raise _abort(f"the newest venue snapshot under {config.journal_dir} could not be read: {exc}") from exc
+    if record is None:
+        raise _abort(
+            f"no usable venue snapshot under {config.journal_dir} -- the per-intent floors are read from one, "
+            "and a plan checked without it would report floors it never measured"
+        )
+    instruments = record["state"]["instruments"]
+    balances = record["state"]["balances"]
+
+    gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
+    now = _utc_now()
+    _echo_gate_verdict(gate.evaluate(now))
+    typer.echo(f"venue snapshot: {record['state']['snapshot_at']}")
+
+    # The live balances spell the free-cash currency `EUR` (measured: `{'EUR': 99.84}`), so this
+    # resolves on its SECOND arm against a real record. The `ZEUR` arm stays because the adapter's
+    # other surface spells the euro `ZEUR` (the instrument quote currency); both absent reads 0.0,
+    # which refuses any margin intent -- the executor's own reading.
+    free_zeur = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
+    refusals = list(
+        plan_refusals(
+            plan,
+            now=now,
+            ledgered=ledgered_plan_ids(config.journal_dir, now),
+            max_plan_notional_eur=config.exec_max_plan_notional_eur,
+            free_zeur=float(free_zeur),
+        )
+    )
+    for index, intent in enumerate(plan.intents):
+        entry = instruments.get(intent.symbol)
+        if entry is None:
+            refusals.append(f"intent {index}: {intent.symbol} is absent from the venue snapshot")
+            continue
+        line, intent_refusals = _intent_floor_check(index, intent, entry)
+        typer.echo(line)
+        refusals.extend(intent_refusals)
+
+    if refusals:
+        raise _abort("plan refused: " + "; ".join(refusals))
+    total = sum(i.notional_eur or 0.0 for i in plan.intents)
+    typer.echo(f"plan ok: {len(plan.intents)} intent(s), total notional {total:.2f} EUR")
