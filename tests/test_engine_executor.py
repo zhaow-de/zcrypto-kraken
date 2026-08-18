@@ -74,15 +74,20 @@ def test_a_below_costmin_result_names_the_floor():
 # --- the structural pin -------------------------------------------------------------------------
 
 
-def test_submit_order_and_order_factory_have_exactly_one_module():
+_VENUE_MUTATING_NAMES = ("submit_order", "cancel_order", "order_factory")
+
+
+def test_the_venue_mutating_names_have_exactly_one_module():
     """D4's structural pin: all venue-mutating calls live in cli/engine/executor.py. A text walk,
-    not an import walk -- a reference in a comment is still a reference a refactor can activate."""
+    not an import walk -- a reference in a comment is still a reference a refactor can activate.
+    `cancel_order` is on the list because the maker-first ladder cancels: a cancel reaches the venue
+    exactly as a submit does, so a second module learning to cancel is the same escape."""
     offenders = []
     for path in sorted(Path("cli").rglob("*.py")):
         if path.as_posix() == "cli/engine/executor.py":
             continue
         text = path.read_text()
-        if "submit_order" in text or "order_factory" in text:
+        if any(name in text for name in _VENUE_MUTATING_NAMES):
             offenders.append(path.as_posix())
     assert offenders == []
 
@@ -172,6 +177,12 @@ class StubClient:
         self.subscribed = []
         self.unsubscribed = []
         self._submit_raises = submit_raises
+
+    @property
+    def last_order_id(self):
+        """The client_order_id of the most recent submission -- every reprice and every IOC attempt
+        mints a new one, so a ladder test must never hardcode `O-1`."""
+        return str(self.submitted[-1][0].client_order_id)
 
     def submit_order(self, order, params=None):
         self.submitted.append((order, params))
@@ -289,6 +300,59 @@ def _intent_entry(tmp_path: Path, index: int, when: datetime = NOW) -> dict:
 
 def _quote(instrument_id="BTC/EUR.KRAKEN", bid=30000.0, ask=30001.0):
     return SimpleNamespace(instrument_id=instrument_id, bid_price=bid, ask_price=ask)
+
+
+def _named(name, **attrs):
+    """An instance of a dynamically created class called `name`, so the executor's
+    `type(event).__name__` dispatch sees the real event names on plain stub objects."""
+    return type(name, (SimpleNamespace,), {})(**attrs)
+
+
+class _Clock:
+    """A movable clock. The executor timestamps `last_quote_at` off its own clock, so a fixed
+    `lambda: NOW` would make every advanced tick look like 30 s of quote silence and revoke the
+    order long before the 15-minute time-box could ever elapse."""
+
+    def __init__(self, start=NOW):
+        self.now = start
+
+    def __call__(self):
+        return self.now
+
+
+def _intent_outcome(tmp_path, index: int = 0, when: datetime = NOW) -> str:
+    return _intent_entry(tmp_path, index, when)["outcome"]
+
+
+def _resting_executor(tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None):
+    """A plan accepted and its first intent resting: exactly one order at the venue. The trailing
+    assert is the point -- a helper that quietly submitted nothing would hand every ladder test
+    below a green it never earned."""
+    clock = _Clock()
+    client = client if client is not None else StubClient()
+    ex = _executor(tmp_path, client=client, clock=clock)
+    _drop_plan(tmp_path, _plan_dict(intents=intents))
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote(bid=bid, ask=ask))
+    assert len(client.submitted) == 1
+    return ex, client, clock
+
+
+def _advance_ticks(ex, *, minutes):
+    """Bare timer ticks from NOW, no quotes and no clock movement -- for a plan that must emit
+    nothing whatever the timer does."""
+    for step in range(1, int(minutes * 60 // 5) + 1):
+        ex.on_timer(NOW + timedelta(seconds=5 * step))
+
+
+def _advance_with_quotes(ex, clock, *, minutes, bid=30000.0, ask=30001.0):
+    """Ticks carrying a live quote on every one. The time-box (15 min) can only be reached this way:
+    quote silence (30 s) would otherwise revoke the resting order first."""
+    end = clock.now + timedelta(minutes=minutes)
+    while clock.now < end:
+        clock.now += timedelta(seconds=10)
+        ex.on_quote(_quote(bid=bid, ask=ask))
+        ex.on_timer(clock.now)
 
 
 @pytest.fixture(autouse=True)
@@ -472,11 +536,13 @@ def test_reduce_only_refuses_an_open_intent(tmp_path):
 
 def test_reduce_only_permits_a_close_intent(tmp_path):
     """The other half of the level rule -- without it, a `_level_permits` that refused everything
-    at REDUCE_ONLY would pass the test above."""
+    at REDUCE_ONLY would pass the test above. The 0.001 qty is load-bearing: this intent's EUR
+    notional only exists at sizing time, and 0.01 at the fixture touch would be refused by the plan
+    cap instead, greening this test for the wrong reason."""
     client = StubClient()
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
     _drop_plan(
-        tmp_path, _plan_dict(intents=[{"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "qty": 0.01}])
+        tmp_path, _plan_dict(intents=[{"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "qty": 0.001}])
     )
 
     ex.on_timer(NOW)
@@ -817,16 +883,37 @@ class OrderAccepted:
         self.client_order_id = client_order_id
 
 
-class OrderFilled:
-    def __init__(self, client_order_id, last_qty):
-        self.client_order_id = client_order_id
-        self.last_qty = last_qty
-
-
 class OrderRejected:
     def __init__(self, client_order_id, reason):
         self.client_order_id = client_order_id
         self.reason = reason
+
+
+class _FakeMoney:
+    """`float(commission)` + `commission.currency.code` -- the two accessors the fill row reads off
+    nautilus's Money, which is not importable as a plain value here."""
+
+    def __init__(self, amount, code="EUR"):
+        self._amount = amount
+        self.currency = _FakeCurrency(code=code)
+
+    def __float__(self):
+        return float(self._amount)
+
+
+def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR"):
+    """An `OrderFilled` carrying every field the executor's fill row reads -- the real event always
+    has them, so the stub must too, or the row would be pinned against a shape the venue never
+    sends."""
+    return _named(
+        "OrderFilled",
+        client_order_id=client_order_id,
+        last_qty=last_qty,
+        last_px=px,
+        commission=_FakeMoney(fee, fee_code),
+        liquidity_side="MAKER",
+        trade_id="T-1",
+    )
 
 
 def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_starts(tmp_path):
@@ -839,7 +926,7 @@ def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_start
     ex.on_order_event(OrderAccepted("O-1"))
     assert _record(tmp_path)["submitted"][0]["state"] == "accepted"
 
-    ex.on_order_event(OrderFilled("O-1", 0.001))
+    ex.on_order_event(_fill("O-1", 0.001))
     row = _record(tmp_path)["submitted"][0]
     assert row["state"] == "filled" and row["filled_qty"] == 0.001
     assert _intent_entry(tmp_path, 0)["outcome"] == "filled"
@@ -885,3 +972,214 @@ def test_the_verdict_hook_sees_every_evaluation_and_a_raising_hook_never_stops_a
     assert len(client.submitted) == 1
     assert seen and all(level == GateLevel.FULL for level, _ in seen)
     assert metrics.orders == ["submitted"]
+
+
+# --- the maker-first ladder -----------------------------------------------------------------------
+
+
+def test_both_crossing_surfaces_count_one_reprice_and_the_sixth_refuses(tmp_path):
+    """Surface 1: OrderRejected(due_post_only=True) -- the adapter's synchronous mapping.
+    Surface 2: accept-then-venue-cancel (OrderCanceled with no cancel requested). Alternate them:
+    5 reprices happen (6 submissions total), the 6th reprice is refused and the intent halts
+    unfilled with NO 7th order."""
+    ex, client, now = _resting_executor(tmp_path)  # helper: plan accepted, first order submitted
+    # _named(name, **attrs) builds an instance of a dynamically created class called `name`, so the
+    # executor's type(event).__name__ dispatch sees the real event names on plain stub objects.
+    for i in range(5):
+        if i % 2 == 0:
+            ex.on_order_event(
+                _named(
+                    "OrderRejected",
+                    client_order_id=client.last_order_id,
+                    reason="POST_ONLY_REJECTED: would cross",
+                    due_post_only=True,
+                )
+            )
+        else:
+            ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+        ex.on_quote(_quote(bid=30000.0, ask=30001.0))
+    assert len(client.submitted) == 6  # initial + 5 reprices
+    ex.on_order_event(
+        _named("OrderRejected", client_order_id=client.last_order_id, reason="POST_ONLY_REJECTED: would cross", due_post_only=True)
+    )
+    assert len(client.submitted) == 6  # the sixth reprice refused, nothing new
+    assert _intent_outcome(tmp_path) == "unfilled"
+
+
+def test_an_ambiguous_rejection_halts_with_no_second_order(tmp_path):
+    """The double-submit construction, seen refused: a timeout surfaced as a rejection carrying no
+    Kraken error code and no post-only marker. The intent halts ambiguous; no reprice, no IOC."""
+    ex, client, now = _resting_executor(tmp_path)
+    ex.on_order_event(
+        _named("OrderRejected", client_order_id=client.last_order_id, reason="request timed out", due_post_only=False)
+    )
+    _advance_ticks(ex, minutes=20)  # deep past the time-box: still nothing may be emitted
+    assert len(client.submitted) == 1
+    assert _intent_outcome(tmp_path) == "ambiguous"
+
+
+def test_an_ambiguous_rejection_drops_the_later_intents_too(tmp_path):
+    """The other half of the halt: a plan's remaining intents were authorized against a venue state
+    that an order which may be live has just made unknown."""
+    ex, client, _ = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(_named("OrderRejected", client_order_id=client.last_order_id, reason="request timed out"))
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]  # intent 1 never even subscribed
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"
+    assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_the_time_box_cancels_then_fires_an_ioc_at_the_opposite_touch(tmp_path):
+    """The fallback is price-bounded, never a market order: a LIMIT IOC at the opposite touch."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    resting_order = client.submitted[0][0]
+
+    _advance_with_quotes(ex, clock, minutes=16)
+    assert client.canceled == [resting_order]
+    assert len(client.submitted) == 1  # the cancel is not a submission -- the ack is what fires the IOC
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 2
+    ioc, _ = client.submitted[1]
+    assert ioc.price == 30001.0  # the ASK -- a buy's opposite touch, bounded by a limit
+    assert ioc.time_in_force == TimeInForce.IOC
+    assert ioc.post_only is False
+    assert ioc.order_side == OrderSide.BUY
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_partial_fill_then_the_time_box_sizes_the_ioc_to_the_remainder(tmp_path):
+    """Quantity conservation across orders: 30 EUR at a 30.00 touch is a 1.0 target, 0.4 fills on
+    the maker order, so the fallback may only ask for 0.6. A resubmission at full size would
+    over-execute the intent by 0.4 -- and every assertion below still passes if it did, except this
+    one."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    assert client.submitted[0][0].quantity == 1.0
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_fill(client.last_order_id, 0.4, px=30.0))
+    assert _record(tmp_path)["submitted"][0]["filled_qty"] == 0.4
+
+    _advance_with_quotes(ex, clock, minutes=16, bid=30.0, ask=30.05)
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+
+    assert len(client.submitted) == 2
+    assert client.submitted[1][0].quantity == 0.6
+
+
+def test_three_unfilled_iocs_end_the_intent_unfilled_after_exactly_four_submissions(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    _advance_with_quotes(ex, clock, minutes=16)
+
+    for _ in range(3):  # the time-box cancel ack, then each IOC's unfilled remainder coming back
+        ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 4  # the maker order + three IOC attempts
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 4  # the budget is three, not four
+    assert _intent_outcome(tmp_path) == "unfilled"
+
+
+def test_a_remainder_below_ordermin_ends_the_intent_partial_with_no_further_order(tmp_path):
+    """A terminal partial is a legitimate end state -- never an unfillable order the venue rejects."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    ex.on_order_event(_fill(client.last_order_id, 0.00095))  # of a 0.001 target: 5e-05 left, ordermin is 1e-04
+
+    _advance_with_quotes(ex, clock, minutes=16)
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "partial"
+    assert any("ordermin" in r for r in intent["reasons"])
+    assert intent["filled_qty"] == 0.00095
+
+
+def test_a_kill_file_mid_rest_cancels_with_no_fallback_and_halts_the_plan(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    resting_order = client.submitted[0][0]
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_quote(_quote())  # a live quote: what revokes here is the gate, not silence
+    ex.on_timer(clock.now)
+    assert client.canceled == [resting_order]
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 1  # a revoked intent NEVER falls back
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "revoked"
+    assert "kill_switch" in intent["reasons"]
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+
+    ex.on_timer(NOW + timedelta(seconds=10))
+    assert client.subscribed == ["BTC/EUR.KRAKEN"]  # the plan halted: intent 1 never subscribed
+    assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_quote_silence_past_the_window_cancels_and_halts_the_plan(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)
+    assert client.canceled == [client.submitted[0][0]]
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "revoked"
+    assert intent["reasons"] == ["quote_silence"]
+
+
+def test_rest_cancel_mode_rests_five_percent_passive_and_never_executes(tmp_path):
+    """The drill: it must never be fillable in the instant between acknowledgment and the cancel,
+    so it prices 5% away on the passive side instead of joining the touch."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-cancel")])
+    order, _ = client.submitted[0]
+    assert order.price == 28500.0  # 5% BELOW the 30000 bid
+    assert order.post_only is True and order.time_in_force == TimeInForce.GTC
+
+    ex.on_order_event(OrderAccepted(client.last_order_id))
+    assert client.canceled == [order]  # cancelled on the acknowledgment, not on a timer
+
+    ex.on_order_event(_named("OrderCanceled", client_order_id=client.last_order_id))
+    assert len(client.submitted) == 1  # exactly one submission, ever
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "canceled" and row["filled_qty"] == 0.0
+    assert _intent_outcome(tmp_path) == "rest_cancel_ok"
+
+
+def test_a_disposal_intent_over_the_plan_cap_is_refused_naming_the_cap(tmp_path):
+    """D8's sizing-time half: a `qty` intent's EUR notional exists only here (`qty x the chosen
+    limit price`), so `plan_refusals` counted it as 0.00 at the plan wall. 0.01 BTC at 30001 is
+    300 EUR against the 100 EUR cap -- and the cap has no exclusion for a disposal."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.01)]))
+
+    ex.on_timer(NOW)
+    assert _plan_entry(tmp_path)["disposition"] == "accepted"  # the plan wall could not see it
+    ex.on_quote(_quote())
+
+    assert client.submitted == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert any("exceeds the cap" in r for r in intent["reasons"])
+
+
+def test_a_kraken_coded_rejection_is_terminal_with_no_retry(tmp_path):
+    """A positive venue verdict -- the order does not exist and never will. No reprice, no IOC."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_named("OrderRejected", client_order_id=client.last_order_id, reason="EOrder:Insufficient funds"))
+    _advance_with_quotes(ex, clock, minutes=16)
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "rejected"
+    assert intent["reasons"] == ["EOrder:Insufficient funds"]
+    assert _record(tmp_path)["submitted"][0]["state"] == "rejected"

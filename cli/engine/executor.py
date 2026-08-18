@@ -141,6 +141,17 @@ def size_probe_order(target_qty: float, touch_price: float, constraints: Instrum
     )
 
 
+def _as_price(raw) -> float | None:
+    """A usable touch, or None. Anything non-numeric, non-finite or non-positive is not a price --
+    and a tick that carries one is not a quote, so it neither prices an order nor counts as the
+    liveness that holds the quote-silence guard open."""
+    try:
+        value = float(raw)
+    except TypeError, ValueError:
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
 def _level_permits(level: str, intent: ProbeIntent) -> bool:
     """An OPEN intent needs the full level; a CLOSE intent is permitted at reduce-only too -- the
     restart hold exists to let the engine flatten, not to trap it."""
@@ -152,7 +163,14 @@ def _level_permits(level: str, intent: ProbeIntent) -> bool:
 @dataclass
 class _ActiveIntent:
     """The one intent in flight. Mutable and process-local -- everything durable about it is the
-    exec ledger's submitted row, which is written before the order exists."""
+    exec ledger's submitted row, which is written before the order exists.
+
+    `filled` is cumulative across ALL of this intent's orders and `order_filled` across the live one
+    only: every resubmission is sized `target_qty - filled`, because successive full-size orders
+    would over-execute the intent by whatever the earlier ones already got. `target_qty` is the
+    FIRST order's sized quantity, not the raw target -- a notional intent's raw target rarely lands
+    on the lot step, and a remainder of one flooring residue would never terminate.
+    """
 
     index: int
     intent: ProbeIntent
@@ -160,22 +178,24 @@ class _ActiveIntent:
     instrument_id: InstrumentId
     constraints: InstrumentConstraints
     phase: str
+    started_at: datetime
     quote_deadline: datetime
+    timebox_at: datetime
+    last_quote_at: datetime | None = None
+    bid: float | None = None
+    ask: float | None = None
+    reprices: int = 0
+    ioc_attempts: int = 0
+    filled: float = 0.0
+    target_qty: float = 0.0
+    order: object | None = None
     order_payload: dict | None = None
     client_order_id: str | None = None
     order_qty: float = 0.0
-    filled_qty: float = 0.0
-
-
-# type(event).__name__ -> the submitted row's terminal state. Dispatching on the class NAME keeps
-# this stub-friendly and adapter-real at once: the nautilus event classes are matched without
-# importing them, and a test double named the same way exercises the identical branch.
-_TERMINAL_EVENT_STATES = {
-    "OrderRejected": "rejected",
-    "OrderDenied": "rejected",
-    "OrderCanceled": "venue_canceled",
-    "OrderExpired": "venue_canceled",
-}
+    order_filled: float = 0.0
+    cancel_requested: bool = False
+    falling_back: bool = False
+    revoke_reasons: tuple[str, ...] = ()
 
 
 class ProbeExecutor:
@@ -198,6 +218,10 @@ class ProbeExecutor:
         self._plan_cycle_ts: datetime | None = None
         self._index = 0
         self._active: _ActiveIntent | None = None
+        # intent index -> the EUR notional a `qty` intent only acquired at sizing time. Kept for the
+        # running plan so a second disposal cumulates against the first one's real notional rather
+        # than against the 0.00 the plan wall had to assume for it.
+        self._resolved_notional: dict[int, float] = {}
 
     # --- the gate ------------------------------------------------------------------------------
 
@@ -350,13 +374,16 @@ class ProbeExecutor:
         self._plan = plan
         self._plan_cycle_ts = cycle_ts
         self._index = 0
+        self._resolved_notional = {}
 
     def _pump(self, now: datetime) -> None:
         if self._plan is None:
             return
-        self._evaluate(now)  # a plan is running: publish a fresh verdict on every tick
+        # A plan is running: publish a fresh verdict on every tick -- and this ONE evaluation is
+        # also what an order in flight is polled against, so a tick never reads the gate twice.
+        verdict = self._evaluate(now)
         if self._active is not None:
-            self._poll(now)
+            self._poll(now, verdict)
             return
         while self._active is None and self._plan is not None:
             if self._index >= len(self._plan.intents):
@@ -365,10 +392,34 @@ class ProbeExecutor:
                 return
             self._start_intent(now)
 
-    def _poll(self, now: datetime) -> None:
+    def _poll(self, now: datetime, verdict: GateVerdict) -> None:
+        """The timer's whole authority over an in-flight intent. Only a RESTING order is revocable
+        or time-boxable: a cancel is already outstanding in `cancelling`, and an IOC resolves at the
+        venue within the tick rather than sitting there."""
         active = self._active
-        if active.phase == "awaiting_quote" and now > active.quote_deadline:
-            self._finish_active("refused", (f"no quote within {int(_QUOTE_WAIT.total_seconds())}s",))
+        if active.phase == "awaiting_quote":
+            if now > active.quote_deadline:
+                self._finish_active("refused", (f"no quote within {int(_QUOTE_WAIT.total_seconds())}s",))
+            return
+        if active.phase != "resting":
+            return
+
+        # The kill file, a disarm, the restart hold latching, and the venue leaving online all reach
+        # here as a level this intent no longer clears -- one condition, read off the same verdict.
+        if not _level_permits(verdict.level, active.intent):
+            self._revoke(active, verdict.reasons)
+            return
+        if active.last_quote_at is not None and now - active.last_quote_at > _QUOTE_SILENCE:
+            # Repricing against a stale touch is worse than not repricing at all.
+            self._revoke(active, ("quote_silence",))
+            return
+        if now > active.timebox_at:
+            active.cancel_requested = True
+            # A rest-cancel drill must never execute: the time-box cancels it and stops there.
+            active.falling_back = active.intent.mode != "rest-cancel"
+            active.revoke_reasons = ("time box elapsed",)
+            active.phase = "cancelling"
+            self._cancel(active)
 
     def _start_intent(self, now: datetime) -> None:
         """Always either arms `_active` or advances `_index` -- `_pump`'s loop depends on it."""
@@ -410,7 +461,9 @@ class ProbeExecutor:
             instrument_id=instrument_id,
             constraints=constraints,
             phase="awaiting_quote",
+            started_at=now,
             quote_deadline=now + _QUOTE_WAIT,
+            timebox_at=now + _TIME_BOX,
         )
 
     # --- quotes --------------------------------------------------------------------------------
@@ -418,71 +471,200 @@ class ProbeExecutor:
     def on_quote(self, tick) -> None:
         try:
             active = self._active
-            if active is None or active.phase != "awaiting_quote":
+            if active is None:
                 return
             if str(getattr(tick, "instrument_id", "")) != str(active.instrument_id):
                 return
-            self._on_touch(active, tick)
+            bid = _as_price(getattr(tick, "bid_price", None))
+            ask = _as_price(getattr(tick, "ask_price", None))
+            if bid is not None and ask is not None:
+                # Both sides or neither: a reprice needs the near touch and the IOC fallback the
+                # far one, and half a book is not a book to price either against.
+                active.bid, active.ask = bid, ask
+                active.last_quote_at = self._now()
+            if active.phase == "awaiting_quote":
+                self._first_submission(active)
         except Exception:
             logger.exception("executor quote handling raised -- refusing the intent")
             if self._active is not None:
                 self._finish_active("refused", ("quote handling failed",))
 
-    def _on_touch(self, active: _ActiveIntent, tick) -> None:
-        intent = active.intent
-        # Post-only: a buy joins the bid and a sell the ask. Crossing the spread would be taking.
-        raw_touch = tick.bid_price if intent.side == "buy" else tick.ask_price
-        try:
-            touch = float(raw_touch)
-        except TypeError, ValueError:
-            touch = float("nan")
-        if not math.isfinite(touch) or touch <= 0:
-            self._finish_active("refused", (f"no usable touch price for {intent.symbol}",))
-            return
+    def _limit_price(self, active: _ActiveIntent) -> float | None:
+        """The resting price for this intent's side and mode, or None when no usable touch is known.
 
-        target_qty = intent.qty if intent.qty is not None else intent.notional_eur / touch
+        `execute` joins the touch -- a buy the bid, a sell the ask; crossing the spread would be
+        taking. `rest-cancel` is a drill that must never fill, so it prices `_REST_CANCEL_OFFSET`
+        away on the passive side instead: joining the touch can fill in the instant between the
+        venue's acknowledgment and this process's cancel.
+        """
+        touch = active.bid if active.intent.side == "buy" else active.ask
+        if touch is None:
+            return None
+        if active.intent.mode == "rest-cancel":
+            return touch * (1 - _REST_CANCEL_OFFSET) if active.intent.side == "buy" else touch * (1 + _REST_CANCEL_OFFSET)
+        return touch
+
+    def _opposite_touch(self, active: _ActiveIntent) -> float | None:
+        """What the marketable fallback is bounded by: a buy's ask, a sell's bid. A limit, always --
+        a market order has no price bound at all, which is the one thing this path may not emit."""
+        return active.ask if active.intent.side == "buy" else active.bid
+
+    def _over_cap_reason(self, active: _ActiveIntent, target_qty: float, price: float) -> str | None:
+        """D8's sizing-time half of the plan-notional cap, and the only place a `qty` intent meets
+        it: `plan_refusals` had no price to convert its base quantity with, so it counted the intent
+        as 0.00 EUR. There is no exclusion -- the disposal's real notional cumulates with the plan's
+        declared ones. Checked on the PRE-floor target, which can only overstate the order.
+        """
+        if active.intent.qty is None:
+            return None  # a notional intent was already summed, in EUR, at the plan wall
+        notional = target_qty * price
+        cap = self._config.exec_max_plan_notional_eur
+        declared = sum(i.notional_eur or 0.0 for i in self._plan.intents)
+        resolved = sum(value for index, value in self._resolved_notional.items() if index != active.index)
+        total = declared + resolved + notional
+        if total > cap:
+            return f"plan notional {total:.2f} EUR exceeds the cap {cap:.2f} EUR"
+        self._resolved_notional[active.index] = notional
+        return None
+
+    def _place(self, active: _ActiveIntent, target_qty: float, price: float, *, time_in_force, post_only: bool) -> tuple[str, str]:
+        """Size, build and submit ONE order through the chokepoint. Returns
+        `(result, detail)` where result is `_submit`'s outcome or the local `"below_minimum"` /
+        `"error"` -- the caller owns what each means for the intent, because the same sizing failure
+        is a refusal before the first order and a terminal partial after one has filled.
+        """
+        intent = active.intent
         try:
-            sized = size_probe_order(target_qty, touch, active.constraints)
+            sized = size_probe_order(target_qty, price, active.constraints)
         except EngineError as exc:
-            self._finish_active("refused", (str(exc),))
-            return
+            return "error", str(exc)
         if isinstance(sized, BelowMinimum):
-            self._finish_active("refused", (sized.reason,))
-            return
+            return "below_minimum", sized.reason
 
         instrument = self._client.cache.instrument(active.instrument_id)
         if instrument is None:
-            self._finish_active("refused", (f"{intent.symbol}: instrument not found in Cache",))
-            return
+            return "error", f"{intent.symbol}: instrument not found in Cache"
 
         order = self._client.order_factory.limit(
             instrument_id=active.instrument_id,
             order_side=OrderSide.BUY if intent.side == "buy" else OrderSide.SELL,
             quantity=instrument.make_qty(sized.qty),
             price=instrument.make_price(sized.price),
-            time_in_force=TimeInForce.GTC,
-            post_only=True,
+            time_in_force=time_in_force,
+            post_only=post_only,
         )
+        active.order = order
         active.order_qty = sized.qty
+        active.order_filled = 0.0
+        # A new order carries none of the previous one's in-flight state: a cancel ack arriving for
+        # THIS order must not be read as the ack of the cancel that ended the last one.
+        active.cancel_requested = False
+        active.falling_back = False
         active.order_payload = {
             "symbol": intent.symbol,
             "side": intent.side,
             "qty": sized.qty,
             "price": sized.price,
             "notional": sized.notional,
-            "time_in_force": "GTC",
-            "post_only": True,
+            "time_in_force": "IOC" if time_in_force == TimeInForce.IOC else "GTC",
+            "post_only": post_only,
             "leverage": intent.leverage,
         }
         params = {"leverage": intent.leverage} if intent.leverage is not None else None
-        outcome = self._submit(active, order, params)
-        if outcome == "ambiguous":
+        return self._submit(active, order, params), ""
+
+    def _first_submission(self, active: _ActiveIntent) -> None:
+        price = self._limit_price(active)
+        if price is None:
+            self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",))
+            return
+        target_qty = active.intent.qty if active.intent.qty is not None else active.intent.notional_eur / price
+        over_cap = self._over_cap_reason(active, target_qty, price)
+        if over_cap is not None:
+            self._finish_active("refused", (over_cap,))
+            return
+
+        result, detail = self._place(active, target_qty, price, time_in_force=TimeInForce.GTC, post_only=True)
+        if result in ("below_minimum", "error"):
+            self._finish_active("refused", (detail,))
+            return
+        if result == "ambiguous":
             self._drop_remainder_after_ambiguity(active)
             return
-        if outcome == "refused":
+        if result == "refused":
             self._finish_active()
             return
+        active.target_qty = active.order_qty
         active.phase = "resting"
+
+    def _reprice(self, active: _ActiveIntent) -> None:
+        """Both crossing surfaces funnel here: the venue's synchronous post-only rejection and its
+        accept-then-cancel. The counter counts RESUBMISSIONS -- the first submission was never a
+        reprice -- so `_MAX_REPRICES` of them happen and the next one refuses."""
+        active.reprices += 1
+        if active.reprices > _MAX_REPRICES:
+            self._finish_active("unfilled", ("reprice budget exhausted",), active.filled)
+            return
+        price = self._limit_price(active)
+        if price is None:
+            self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",), active.filled)
+            return
+        self._resubmit(active, price, time_in_force=TimeInForce.GTC, post_only=True, next_phase="resting")
+
+    def _fallback(self, active: _ActiveIntent) -> None:
+        """The bounded marketable fallback: at most `_MAX_IOC_ATTEMPTS` limit-IOC orders at the
+        opposite touch, each sized to what is still owed. The budget spent unfilled is a terminal
+        `unfilled` for the operator, never a further attempt."""
+        if active.ioc_attempts >= _MAX_IOC_ATTEMPTS:
+            self._finish_active("unfilled", ("the bounded fallback did not fill",), active.filled)
+            return
+        active.ioc_attempts += 1
+        price = self._opposite_touch(active)
+        if price is None:
+            self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",), active.filled)
+            return
+        self._resubmit(active, price, time_in_force=TimeInForce.IOC, post_only=False, next_phase="ioc")
+
+    def _resubmit(self, active: _ActiveIntent, price: float, *, time_in_force, post_only: bool, next_phase: str) -> None:
+        """Every order after the first, sized to `target_qty - filled`. Quantity conservation is the
+        whole point: a resubmission at the intent's full size would re-buy what the earlier orders
+        already got. A remainder the venue cannot accept is a terminal `partial` -- a legitimate end
+        state -- never an order that would only be rejected.
+        """
+        remainder = active.target_qty - active.filled
+        result, detail = self._place(active, remainder, price, time_in_force=time_in_force, post_only=post_only)
+        if result == "below_minimum":
+            self._finish_active("partial", (detail,), active.filled)
+            return
+        if result == "error":
+            self._finish_active("refused", (detail,), active.filled)
+            return
+        if result == "ambiguous":
+            self._drop_remainder_after_ambiguity(active)
+            return
+        if result == "refused":
+            self._finish_active(None, (), active.filled)
+            return
+        active.phase = next_phase
+
+    def _revoke(self, active: _ActiveIntent, reasons) -> None:
+        """Pull the resting order and stop: NO fallback follows a revocation. Whatever revoked it --
+        the kill file, a disarm, the hold, the venue going offline, a dead quote feed -- is a reason
+        not to be at the venue at all, and a marketable IOC would be the most aggressive order this
+        path can emit. Terminal on the cancel ack, where the row is written."""
+        active.cancel_requested = True
+        active.falling_back = False
+        active.revoke_reasons = tuple(reasons)
+        active.phase = "cancelling"
+        self._cancel(active)
+
+    def _cancel(self, active: _ActiveIntent) -> None:
+        try:
+            self._client.cancel_order(active.order)
+        except Exception:
+            # No retry and no fallback: the order may still rest, and the intent stays in
+            # `cancelling` -- an open ledger row for reconciliation, and no further order.
+            logger.critical("cancel of %s raised -- the order may still rest at the venue", active.client_order_id, exc_info=True)
 
     # --- order events --------------------------------------------------------------------------
 
@@ -509,24 +691,110 @@ class ProbeExecutor:
 
         if name == "OrderAccepted":
             self._update_row(active, state="accepted", event=payload)
+            _inc_order("accepted")
             active.phase = "resting"
+            if active.intent.mode == "rest-cancel":
+                # The drill's whole shape: rest, be acknowledged, come straight back off the book.
+                active.cancel_requested = True
+                active.phase = "cancelling"
+                self._cancel(active)
             return
 
         if name == "OrderFilled":
-            filled = float(getattr(event, "last_qty", 0.0) or 0.0)
-            active.filled_qty += filled
-            done = active.filled_qty >= active.order_qty
-            self._update_row(active, state="filled" if done else "accepted", event=payload, add_filled_qty=filled)
-            if done:
-                self._finish_active("filled", (), active.filled_qty)
+            self._on_fill(active, event)
             return
 
-        state = _TERMINAL_EVENT_STATES.get(name)
-        if state is None:
-            self._update_row(active, event=payload)  # recorded as evidence, no state claim
+        if name == "OrderRejected":
+            self._on_rejected(active, str(reason), payload, due_post_only=bool(getattr(event, "due_post_only", False)))
             return
-        self._update_row(active, state=state, event=payload)
-        self._finish_active(state, (str(reason),) if reason is not None else (), active.filled_qty)
+
+        if name == "OrderDenied":
+            # A LOCAL refusal -- nothing reached the venue, so there is nothing ambiguous about it.
+            self._update_row(active, state="rejected", event=payload)
+            _inc_order("rejected")
+            self._finish_active("rejected", (str(reason),) if reason is not None else (), active.filled)
+            return
+
+        if name in ("OrderCanceled", "OrderExpired"):
+            self._on_cancel_ack(active, payload)
+            return
+
+        self._update_row(active, event=payload)  # recorded as evidence, no state claim
+
+    def _on_rejected(self, active: _ActiveIntent, reason: str, payload: dict, *, due_post_only: bool) -> None:
+        """Three verdicts, and telling them apart is the whole safety of this branch.
+
+        A post-only rejection is the venue saying the touch moved -- the order does not exist, so
+        repricing it is safe. A Kraken error code is a positive verdict on the same terms, and one
+        this process must not argue with. ANYTHING ELSE is not a verdict at all: the installed
+        adapter maps any submit failure onto a rejection, so the order may be live at the venue --
+        no resubmission, no fallback, and the plan halts until an open-orders re-read says what
+        actually reached it.
+        """
+        if due_post_only or _POST_ONLY_MARKER in reason:
+            self._update_row(active, state="rejected", event=payload)
+            _inc_order("rejected")
+            self._reprice(active)
+            return
+        if any(marker in reason for marker in _KRAKEN_ERROR_MARKERS):
+            self._update_row(active, state="rejected", event=payload)
+            _inc_order("rejected")
+            self._finish_active("rejected", (reason,), active.filled)
+            return
+        self._update_row(active, state="ambiguous", event=payload)
+        _inc_order("ambiguous")
+        self._journal_intent(active.index, "ambiguous", (reason,), active.filled)
+        self._drop_remainder_after_ambiguity(active)
+
+    def _on_cancel_ack(self, active: _ActiveIntent, payload: dict) -> None:
+        """A cancel WE asked for writes its row terminal here -- the mid-rest revoke, the time-box
+        cancel and the rest-cancel drill alike -- before anything decides what the intent becomes.
+        One that we did NOT ask for is the venue's own doing: the accept-then-venue-cancel crossing
+        surface while resting, or an IOC's unfilled remainder coming back.
+        """
+        if active.cancel_requested:
+            self._update_row(active, state="canceled", event=payload)
+            _inc_order("canceled")
+            if active.falling_back:
+                self._fallback(active)
+                return
+            if active.intent.mode == "rest-cancel":
+                self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
+                return
+            index = active.index
+            self._finish_active("revoked", active.revoke_reasons, active.filled)
+            self._halt_plan(index, f"not run -- intent {index} was revoked mid-flight")
+            return
+
+        if active.phase == "ioc":
+            self._update_row(active, state="venue_canceled", event=payload)
+            self._fallback(active)
+            return
+        self._update_row(active, state="venue_canceled", event=payload)
+        _inc_order("venue_canceled")
+        self._reprice(active)
+
+    def _on_fill(self, active: _ActiveIntent, event) -> None:
+        qty = float(event.last_qty)
+        active.filled += qty
+        active.order_filled += qty
+        payload = {
+            "event": "fill",
+            "at": self._now().isoformat(),
+            "qty": qty,
+            "px": float(event.last_px),
+            "fee": float(event.commission),
+            "fee_currency": event.commission.currency.code,
+            "liquidity": str(event.liquidity_side),
+            "trade_id": str(event.trade_id),
+        }
+        order_done = active.order_filled >= active.order_qty
+        self._update_row(active, state="filled" if order_done else "accepted", event=payload, add_filled_qty=qty)
+        if order_done:
+            _inc_order("filled")
+        if active.target_qty - active.filled <= 0:
+            self._finish_active("filled", (), active.filled)
+        # A partial on a resting GTC keeps resting: the remainder is still working at the touch.
 
     # --- journaling ----------------------------------------------------------------------------
 
@@ -607,8 +875,19 @@ class ProbeExecutor:
             self._journal_intent(active.index, outcome, reasons, filled_qty)
             if outcome == "refused":
                 _inc_order("refused")
+        active.phase = "done"
         self._active = None
         self._index += 1
+
+    def _halt_plan(self, from_index: int, reason: str) -> None:
+        """Stop the plan after `from_index`: journal every later intent as refused, naming why, and
+        drop the running plan. The ledger, not this process's memory, is what says they never ran."""
+        for index in range(from_index + 1, len(self._plan.intents)):
+            self._journal_intent(index, "refused", (reason,))
+            _inc_order("refused")
+        self._active = None
+        self._plan = None
+        self._index = 0
 
     def _drop_remainder_after_ambiguity(self, active: _ActiveIntent) -> None:
         """An ambiguous submit ends the WHOLE plan, not just its intent (owner ruling).
@@ -620,26 +899,24 @@ class ProbeExecutor:
         forbids. Rung-1 plans carry one or two intents and the operator is attended, so the cost of
         stopping is a re-drop after reading the venue.
 
-        `_submit` has already journaled the ambiguous intent and left its row `submitting`, which is
-        an OPEN state -- reconciliation must keep seeing a possibly-live order.
+        The ambiguous intent itself is already journaled when this is reached -- by `_submit` for a
+        transport failure (leaving its row `submitting`, an OPEN state reconciliation must keep
+        seeing) or by `_on_rejected` for an unclassifiable rejection.
         """
         try:
             self._client.unsubscribe_quote_ticks(active.instrument_id)
         except Exception:
             logger.warning("unsubscribe failed for %s -- continuing", active.instrument_id, exc_info=True)
-        reason = f"not run -- intent {active.index} ended ambiguous, so the venue state this plan was authorized against is unknown"
-        for index in range(active.index + 1, len(self._plan.intents)):
-            self._journal_intent(index, "refused", (reason,))
-            _inc_order("refused")
         logger.critical(
             "plan %s dropped after intent %d ended ambiguous -- %d later intent(s) will not run",
             self._plan.plan_id,
             active.index,
             len(self._plan.intents) - active.index - 1,
         )
-        self._active = None
-        self._plan = None
-        self._index = 0
+        self._halt_plan(
+            active.index,
+            f"not run -- intent {active.index} ended ambiguous, so the venue state this plan was authorized against is unknown",
+        )
 
     def _delete(self, path: Path) -> None:
         try:
