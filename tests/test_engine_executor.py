@@ -1775,3 +1775,79 @@ def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_pat
     assert client.submitted[2][0].quantity == 0.5  # not 0.6 -- the late fill was counted
     row = _record(tmp_path)["submitted"][0]
     assert row["client_order_id"] == "O-1" and row["filled_qty"] == 0.5
+
+
+class _FlakyOrdersCache(StubCache):
+    """`orders_open` raises the first time and answers the second -- the transient a startup pass
+    must survive rather than latch through."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.calls = 0
+
+    def orders_open(self, *, venue=None, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("the cache is not populated yet")
+        return super().orders_open(venue=venue, **kwargs)
+
+
+def test_a_startup_canceled_orders_fill_and_cancel_ack_still_land_in_its_row(tmp_path):
+    """The cancel is a request, not an outcome: between it and the venue's answer the order can
+    still fill. Attaching only the KEPT orders would drop that fill and the ack with it, leaving the
+    row open and underfilled forever -- a fill with no forensic row, which is the one thing the
+    write-ahead row exists to make impossible."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier)
+    client = StubClient(StubCache(open_orders=[_open_order("O-opener")]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]
+
+    ex.on_order_event(_fill("O-opener", 0.0002, px=30000.0))
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-opener"))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.0002
+    assert [e.get("event") or e.get("type") for e in row["events"]] == ["fill", "OrderCanceled"]
+    assert row["state"] == "accepted"  # no state claim: this process is not tracking that lifecycle
+
+
+def test_a_raising_open_orders_read_leaves_the_startup_pass_able_to_run_again(tmp_path):
+    """Latching the pass on a read that classified NOTHING would leave every previous-process order
+    resting unclassified for the life of the process. Nothing was canceled on that branch, so the
+    retry cannot double-cancel."""
+    client = StubClient(_FlakyOrdersCache(open_orders=[_open_order("O-orphan")]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+    assert client.canceled == []  # the read raised: nothing classified, nothing touched
+
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-orphan"]
+
+
+@pytest.mark.parametrize(
+    "level, expected",
+    [
+        (GateLevel.NONE, ["O-attached"]),  # a latched kill file leaves NOTHING working at the venue
+        (GateLevel.REDUCE_ONLY, []),  # the same construction, one level up: the reducer keeps working
+    ],
+)
+def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, level, expected):
+    """The kill switch's semantics are that a trip cancels resting orders, and `_poll` already
+    revokes a resting CLOSE when the level drops to NONE -- so "nothing is working at the venue"
+    must not have a restart-shaped hole. Both directions are constructed: without the second case a
+    pass that cancelled everything unconditionally would pass the first."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
+    client = StubClient(StubCache(open_orders=[_open_order("O-attached")]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, level))
+
+    ex.on_timer(NOW)
+
+    assert [str(o.client_order_id) for o in client.canceled] == expected
+    # Attached either way (cancel is a request, not an outcome), so the ack lands in the row.
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-attached"))
+    assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]

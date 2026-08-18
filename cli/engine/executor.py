@@ -439,30 +439,51 @@ class ProbeExecutor:
         Cancelling is always available to this pass; keeping is not -- an unreadable ledger
         justifies nothing, so it cancels everything rather than keeping what it cannot vouch for.
         A canceled close leg is re-dropped as a new signed-off plan.
+
+        At level NONE the pass cancels EVERYTHING, ledgered reducers included: a trip cancels
+        resting orders, `_poll` already revokes even a resting close when the level drops there, and
+        "nothing is working at the venue" must not have a restart-shaped hole -- a kill file that
+        survived the restart is exactly the state the operator pulled the switch for.
+
+        EVERY matched row is attached, canceled ones included, before any cancel goes out: a cancel
+        is a request, not an outcome, and an order can still fill between it and the venue's answer.
+        Attaching costs nothing (the detached path makes no state claim, and credits a running
+        intent only on a plan-and-index match) and is the only thing that keeps that fill, and the
+        ack itself, in a forensic row.
         """
-        self._adopted = True  # once, whatever happens below -- never a per-tick sweep
+        try:
+            resting = list(self._client.cache.orders_open(venue=_VENUE))
+        except Exception:
+            # Nothing can be adopted OR canceled without the list, and nothing has been touched --
+            # so the pass does NOT latch: leaving a previous process's orders unclassified for the
+            # life of this one is worse than reading again next tick, and there is no cancel to
+            # duplicate.
+            logger.critical("open orders could not be read at startup -- retrying on the next tick", exc_info=True)
+            return
+        self._adopted = True  # the read succeeded: this pass classified what there was to classify
+        if not resting:
+            return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
+
         try:
             rows = {row["client_order_id"]: (boundary, row) for boundary, row in open_submitted_rows(self._journal_dir, now)}
         except Exception:
             logger.critical("the exec ledger could not be read at startup -- every resting order will be canceled", exc_info=True)
             rows = {}
-        try:
-            resting = list(self._client.cache.orders_open(venue=_VENUE))
-        except Exception:
-            # Nothing can be adopted OR canceled without the list. Loud, and no order is touched.
-            logger.critical("open orders could not be read at startup -- resting orders are unclassified", exc_info=True)
-            return
+        kill_latched = self._evaluate(now).level == GateLevel.NONE
 
         for order in resting:
             client_order_id = str(getattr(order, "client_order_id", ""))
             attached = rows.get(client_order_id)
-            payload = attached[1].get("order") if attached is not None else None
-            if isinstance(payload, dict) and payload.get("reduce_only") is True:
+            if attached is not None:
                 self._attached[client_order_id] = attached
+            payload = attached[1].get("order") if attached is not None else None
+            if isinstance(payload, dict) and payload.get("reduce_only") is True and not kill_latched:
                 logger.warning("adopted resting order %s is a ledgered reducer -- left resting and re-attached", client_order_id)
                 continue
             logger.warning(
-                "canceling adopted resting order %s -- the ledger does not carry it as a resting reducer", client_order_id
+                "canceling adopted resting order %s -- %s",
+                client_order_id,
+                "the kill switch is latched" if kill_latched else "the ledger does not carry it as a resting reducer",
             )
             try:
                 self._client.cancel_order(order)
