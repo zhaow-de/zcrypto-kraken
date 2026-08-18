@@ -14,12 +14,20 @@ import cli.engine.executor as executor_module
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
-from cli.engine.execledger import append_plan_entry, exec_record_path, open_submitted_rows, read_exec_record
+from cli.engine.execledger import (
+    append_plan_entry,
+    append_submitted_row,
+    exec_record_path,
+    open_submitted_rows,
+    read_exec_record,
+    update_submitted_row,
+)
 from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder
 from cli.engine.probeplan import PLAN_FILENAME
 from cli.engine.venue import VenueStatus
-from cli.engine.venuestate import InstrumentConstraints, VenueState
+from cli.engine.venueledger import write_venue_record
+from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
@@ -134,10 +142,11 @@ class StubCache:
     """Duck-types the Cache accessors `venue_state_from_cache` and the executor call, matching
     their real signatures. `raises=True` is the no-venue-truth construction."""
 
-    def __init__(self, *, instruments=None, balances=None, positions=None, raises=False):
+    def __init__(self, *, instruments=None, balances=None, positions=None, open_orders=None, raises=False):
         self._instruments = _all_instruments() if instruments is None else instruments
         self._balances = {"ZEUR": 1000.0} if balances is None else balances
         self._positions = positions or {}
+        self._open_orders = open_orders or []
         self._raises = raises
 
     def instrument(self, instrument_id):
@@ -149,7 +158,7 @@ class StubCache:
         return self._positions.get(str(instrument_id), [])
 
     def orders_open(self, *, venue=None, **kwargs):
-        return []
+        return list(self._open_orders)
 
     def account_for_venue(self, *, venue=None, **kwargs):
         balances = {_FakeCurrency(code=code): value for code, value in self._balances.items()}
@@ -296,6 +305,65 @@ def _plan_entry(tmp_path: Path, when: datetime = NOW, index: int = 0) -> dict:
 def _intent_entry(tmp_path: Path, index: int, when: datetime = NOW) -> dict:
     entry = _plan_entry(tmp_path, when)
     return next(i for i in entry["intents"] if i["index"] == index)
+
+
+def _held(**by_symbol):
+    """`StubCache(positions=...)`: constructed `signed_qty` namespaces keyed by instrument id --
+    exactly the shape `Cache.positions_open(instrument_id=...)` returns (negative = SHORT)."""
+    return {INSTRUMENT_IDS[symbol]: [SimpleNamespace(signed_qty=qty)] for symbol, qty in by_symbol.items()}
+
+
+def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = NOW) -> Path:
+    """A REAL schema-2 `venue-<HH>.json` through `write_venue_record`. The executor
+    `validate_venue_record`-checks what it reads, so a hand-built dict would prove nothing about the
+    shape the engine actually writes."""
+    state = VenueState(snapshot_at=when, instruments={}, positions=positions or {}, balances=balances)
+    return write_venue_record(
+        tmp_path / "journal",
+        _boundary(when),
+        state=state,
+        concordance=ConcordanceVerdict(ok=True, failures=()),
+        code_version="test",
+    )
+
+
+def _open_order(client_order_id, *, is_reduce_only=False):
+    """A resting order as reconciliation adopts it. `is_reduce_only` is present because the real
+    adopted report carries it -- and the startup pass must be seen NOT to consult it."""
+    return SimpleNamespace(client_order_id=client_order_id, is_reduce_only=is_reduce_only)
+
+
+def _submitted_row(tmp_path: Path, client_order_id: str, *, reduce_only: bool, when: datetime = NOW, index: int = 0) -> dict:
+    """A write-ahead row a previous process left behind, through the real `append_submitted_row` --
+    `state` is one of `_OPEN_ORDER_STATES`, so the row is in the re-attach set."""
+    row = {
+        "plan_id": "p-before-the-restart",
+        "intent_index": index,
+        "client_order_id": client_order_id,
+        "intent": {"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "notional_eur": 30.0},
+        "order": {
+            "symbol": "BTC/EUR",
+            "side": "sell",
+            "qty": 0.001,
+            "price": 30000.0,
+            "notional": 30.0,
+            "time_in_force": "GTC",
+            "post_only": True,
+            "leverage": 2,
+            "reduce_only": reduce_only,
+        },
+        "state": "accepted",
+        "filled_qty": 0.0,
+        "events": [],
+    }
+    append_submitted_row(
+        tmp_path / "journal",
+        _boundary(when),
+        row,
+        verdict=GateVerdict(level=GateLevel.REDUCE_ONLY, reasons=("restart_hold",), inputs={}),
+        evaluated_at=when,
+    )
+    return row
 
 
 def _quote(instrument_id="BTC/EUR.KRAKEN", bid=30000.0, ask=30001.0):
@@ -543,8 +611,12 @@ def test_reduce_only_permits_a_close_intent(tmp_path):
     """The other half of the level rule -- without it, a `_level_permits` that refused everything
     at REDUCE_ONLY would pass the test above. The 0.001 qty is load-bearing: this intent's EUR
     notional only exists at sizing time, and 0.01 at the fixture touch would be refused by the plan
-    cap instead, greening this test for the wrong reason."""
+    cap instead, greening this test for the wrong reason. The venue record is load-bearing too: at
+    REDUCE_ONLY the disposal takes the full `qty <= balance` bound (D10), so without a record
+    showing the coin this intent is refused by the classification rather than permitted by the
+    level -- which is the opposite of what this test is about."""
     client = StubClient()
+    _venue_record(tmp_path, balances={"XXBT": 0.002, "ZEUR": 1000.0})
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
     _drop_plan(
         tmp_path, _plan_dict(intents=[{"symbol": "BTC/EUR", "side": "sell", "action": "close", "mode": "execute", "qty": 0.001}])
@@ -1423,3 +1495,283 @@ def test_a_second_disposal_cumulates_against_the_first_ones_resolved_notional(tm
     intent = _intent_entry(tmp_path, 1)
     assert intent["outcome"] == "refused"
     assert any("exceeds the cap" in r for r in intent["reasons"])
+
+
+# --- D10: the reduce-only classification ----------------------------------------------------------
+
+
+def test_a_margin_closer_is_sized_from_the_live_position_and_carries_the_venue_flag(tmp_path):
+    """The plan's 90 EUR would be 0.003 at the fixture ask; the position is 0.001. Sizing from the
+    Cache's live position is what makes an over-|held| closer unconstructible rather than merely
+    refused -- so the assertion is on the QUANTITY, not on the submission happening. The venue's own
+    `reduce_only` flag rides too, so the venue enforces the same bound this process just computed."""
+    client = StubClient(StubCache(positions=_held(**{"BTC/EUR": 0.001})))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=90.0, leverage=2)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert len(client.submitted) == 1
+    order, params = client.submitted[0]
+    assert order.quantity == 0.001  # abs(held) -- NOT 90 EUR / 30001, which is 0.00299
+    assert order.reduce_only is True
+    assert params == {"leverage": 2}
+    assert _record(tmp_path)["submitted"][0]["order"]["reduce_only"] is True
+
+
+@pytest.mark.parametrize(
+    "signed_qty, reason",
+    [
+        (-0.001, "side does not reduce the position"),  # a sell against a SHORT would double it
+        (0.0, "no position to close"),
+    ],
+)
+def test_a_margin_closer_that_does_not_reduce_is_refused(tmp_path, signed_qty, reason):
+    client = StubClient(StubCache(positions=_held(**{"BTC/EUR": signed_qty})))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=30.0, leverage=2)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert client.submitted == [] and client.subscribed == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert intent["reasons"] == [reason]  # WHICH branch refused, not merely that one did
+
+
+def test_the_venue_record_refutes_a_disposal_larger_than_the_balance_it_shows(tmp_path):
+    """The refutation half of D10: a POSITIVE balance smaller than the signed qty is the venue
+    record contradicting the plan, and a contradiction refuses."""
+    _venue_record(tmp_path, balances={"XXBT": 0.0005, "ZEUR": 1000.0})
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0006)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert client.submitted == [] and client.subscribed == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert intent["reasons"] == ["the venue record refutes the signed qty"]
+
+
+def test_a_disposal_within_the_recorded_balance_submits_a_plain_spot_sell(tmp_path):
+    """No venue-side `reduce_only` on a spot order -- Kraken's flag is a margin concept, so the
+    executor-side quantity bound plus the venue's insufficient-funds rejection is the whole guard."""
+    _venue_record(tmp_path, balances={"XXBT": 0.0005, "ZEUR": 1000.0})
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0004)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert len(client.submitted) == 1
+    order, params = client.submitted[0]
+    assert order.quantity == 0.0004
+    assert order.order_side == OrderSide.SELL
+    assert not hasattr(order, "reduce_only")  # never passed to the factory at all
+    assert params is None  # spot: no leverage param
+    assert _record(tmp_path)["submitted"][0]["order"]["reduce_only"] is False
+
+
+@pytest.mark.parametrize("balances", [{"ZEUR": 1000.0}, {"XXBT": 0.0, "ZEUR": 1000.0}])
+def test_a_zero_or_absent_recorded_balance_cannot_refute_the_signed_qty(tmp_path, balances):
+    """The pre-restart record's balances come from the connect-time account read, so it CANNOT see a
+    manually-created balance: zero-or-absent proves nothing and the intent proceeds on the G2-signed
+    figure, with the venue's own rejection as the backstop. A bound that read absence as 0.0 here
+    would refuse the one disposal the probe exists to run."""
+    _venue_record(tmp_path, balances=balances)
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0006)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert len(client.submitted) == 1
+    assert client.submitted[0][0].quantity == 0.0006
+
+
+@pytest.mark.parametrize(
+    "qty, balances, submits",
+    [
+        (0.0004, {"XXBT": 0.0005}, True),
+        (0.0006, {"XXBT": 0.0005}, False),  # the full qty <= balance bound, not merely refutation
+        (0.0004, {"ZEUR": 1000.0}, False),  # absent reads 0.0 once the record is fresh
+    ],
+)
+def test_the_post_restart_disposal_takes_the_full_balance_bound(tmp_path, qty, balances, submits):
+    """`reduce_only` implies the restart hold, which implies a fresh startup account read -- so the
+    record CAN confirm and the whole `qty <= balance` bound applies, in both directions."""
+    _venue_record(tmp_path, balances={**balances, "ZEUR": 1000.0})
+    client = StubClient()
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=qty)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    if submits:
+        assert len(client.submitted) == 1
+        assert not hasattr(client.submitted[0][0], "reduce_only")  # still no venue-side flag
+        return
+    assert client.submitted == [] and client.subscribed == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "refused"
+    assert intent["reasons"] == ["the venue record's balance does not cover the signed qty"]
+
+
+def test_a_spot_close_that_is_not_a_sell_is_refused(tmp_path):
+    """A `close` that BUYS spot grows exposure whatever it is labelled -- the classification judges
+    the order, never the label."""
+    _venue_record(tmp_path, balances={"XXBT": 0.002, "ZEUR": 1000.0})
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="buy", action="close", notional_eur=None, qty=0.0004)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert client.submitted == [] and client.subscribed == []
+    assert _intent_entry(tmp_path, 0)["reasons"] == ["a spot close must be a sell"]
+
+
+def test_a_spot_close_without_an_explicit_qty_is_refused(tmp_path):
+    """Neither closer shape: no leverage to size against a position, no `qty` for the venue record to
+    bound. Nothing here is a reducer this process can vouch for, so it refuses."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=30.0)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert client.submitted == [] and client.subscribed == []
+    assert _intent_entry(tmp_path, 0)["reasons"] == ["a spot close needs an explicit qty"]
+
+
+def test_an_unreadable_venue_record_refuses_the_disposal(tmp_path):
+    """A malformed record is not an absent one: absence proves nothing (and proceeds), but a record
+    this process cannot read leaves it unable to say whether the venue refutes the qty."""
+    day_dir = tmp_path / "journal" / f"{_boundary(NOW):%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / "venue-12.json").write_text('{"schema_version": 99}')
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(side="sell", action="close", notional_eur=None, qty=0.0004)]))
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    assert client.submitted == [] and client.subscribed == []
+    assert _intent_entry(tmp_path, 0)["reasons"] == ["the venue record could not be read"]
+
+
+# --- D10: the startup ledger-attach/cancel pass ---------------------------------------------------
+
+
+def test_the_startup_pass_keeps_only_the_ledger_attached_reduce_only_order(tmp_path):
+    """The whole matrix in one construction. (c) is the one that matters most: its adopted report
+    says `is_reduce_only=True` and it is canceled anyway -- whether Kraken's echo survives adoption
+    truthfully is unverifiable in the installed source, so the write-ahead row is the only witness."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, index=1)
+    cache = StubCache(
+        open_orders=[
+            _open_order("O-attached"),
+            _open_order("O-opener"),
+            _open_order("O-flagged", is_reduce_only=True),
+            _open_order("O-orphan"),
+        ]
+    )
+    client = StubClient(cache)
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener", "O-flagged", "O-orphan"]
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert len(client.canceled) == 3  # the pass is a STARTUP pass, not a per-tick sweep
+
+
+def test_a_terminal_ledger_row_does_not_save_its_order_from_the_startup_pass(tmp_path):
+    """The row must be non-terminal to justify keeping the order: a `canceled`/`filled` row says
+    this process already accounted for that order, so an order still resting under it is a
+    divergence, not something to re-attach to."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-done", reduce_only=True, when=earlier)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-done", state="canceled")
+    client = StubClient(StubCache(open_orders=[_open_order("O-done", is_reduce_only=True)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-done"]
+
+
+def test_an_unreadable_ledger_cancels_every_resting_order(tmp_path, monkeypatch):
+    """The pass may cancel; it may never KEEP what it cannot justify from the ledger. With the
+    ledger unreadable, nothing is justifiable -- including the order whose row would have saved it."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(executor_module, "open_submitted_rows", _raise)
+    client = StubClient(StubCache(open_orders=[_open_order("O-attached")]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached"]
+
+
+def test_a_post_restart_fill_on_a_re_attached_order_lands_in_its_own_boundarys_row(tmp_path):
+    """D5 across a restart: an adopted order left resting must still have an appender, and the
+    appender must write the row's OWN boundary -- the row lives in the 08:00 record, four hours
+    behind the tick that adopted it."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
+    client = StubClient(StubCache(open_orders=[_open_order("O-attached")]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+    assert client.canceled == []
+
+    ex.on_order_event(_fill("O-attached", 0.0004, px=30000.0))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.0004
+    assert [e["event"] for e in row["events"]] == ["fill"]
+    assert row["events"][0]["px"] == 30000.0 and row["events"][0]["qty"] == 0.0004
+    # Nothing was written to the CURRENT boundary: a fill filed under the tick that saw it would be
+    # a row this order's forensics never reach.
+    assert not exec_record_path(tmp_path / "journal", _boundary(NOW)).exists()
+
+
+def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_path):
+    """Reconciliation by ORDER, not only by re-attach. A fill arriving for an order the executor is
+    no longer tracking used to be dropped by the client-order-id filter -- which now feeds remainder
+    arithmetic, so the next resubmission would over-ask by exactly the dropped 0.1."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    assert client.submitted[0][0].quantity == 1.0
+    ex.on_order_event(OrderAccepted("O-1"))
+    ex.on_order_event(_fill("O-1", 0.4, px=30.0))
+
+    _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-1"))
+    assert client.submitted[1][0].quantity == 0.6  # the IOC, sized against the 0.4 already in
+
+    ex.on_order_event(_fill("O-1", 0.1, px=30.0))  # the late fill, for the order already superseded
+    ex.on_order_event(_named("OrderCanceled", client_order_id="O-2"))  # the IOC comes back unfilled
+
+    assert len(client.submitted) == 3
+    assert client.submitted[2][0].quantity == 0.5  # not 0.6 -- the late fill was counted
+    row = _record(tmp_path)["submitted"][0]
+    assert row["client_order_id"] == "O-1" and row["filled_qty"] == 0.5

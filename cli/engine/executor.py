@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nautilus_trader.model.enums import OrderSide, TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, Venue
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -40,11 +40,13 @@ from cli.engine.execledger import (
     append_submitted_row,
     ledgered_intent_keys,
     ledgered_plan_ids,
+    open_submitted_rows,
     update_plan_intent,
     update_submitted_row,
 )
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.venueledger import read_venue_record, validate_venue_record
 from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
 from cli.logging import get_logger
 
@@ -71,6 +73,11 @@ _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 
 _H4 = 4
+
+_VENUE = Venue("KRAKEN")
+# Kraken spells one asset three ways across its surfaces; the balance read tries them in order.
+# Every other base gets the plain code plus its `X`-prefixed classic spelling.
+_BTC_BALANCE_ALIASES = ("BTC", "XBT", "XXBT")
 
 # Module-level, None-safe, installed by command.run() -- the `cycle.set_metrics_sink` pattern. Left
 # unset (the default), every call below is a no-op, so a one-shot subcommand or a test that never
@@ -167,6 +174,86 @@ def _level_permits(level: str, intent: ProbeIntent) -> bool:
     return level == GateLevel.FULL
 
 
+def _spot_balance(balances: dict, base: str) -> float:
+    """What the venue record says is held of `base`, or 0.0 when no spelling of it is present.
+    Raises on a present-but-unreadable value -- the caller turns that into a refusal, because a
+    balance this process cannot parse is not a balance it may reason about."""
+    aliases = _BTC_BALANCE_ALIASES if base == "BTC" else (base, f"X{base}")
+    for alias in aliases:
+        if alias in balances:
+            return float(balances[alias])
+    return 0.0
+
+
+def _newest_venue_balances(journal_dir: Path) -> dict:
+    """`state.balances` from the newest `ok`, schema-2 `venue-<HH>.json`, or `{}` when the journal
+    holds none. Mirrors `command._seed_exec_positions`: every record is `validate_venue_record`-
+    checked BEFORE its `status` is consulted, and a malformed one raises rather than being skipped
+    -- silently reading past a broken record would make the disposal bound fail open."""
+    newest: tuple[datetime, dict] | None = None
+    for path in sorted(Path(journal_dir).glob("*/venue-*.json")):
+        doc = read_venue_record(path)
+        validate_venue_record(doc)
+        if doc.get("status") != "ok" or doc.get("schema_version") != 2:
+            continue
+        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
+        if newest is None or cycle_ts > newest[0]:
+            newest = (cycle_ts, doc)
+    return {} if newest is None else dict(newest[1]["state"]["balances"])
+
+
+@dataclass(frozen=True)
+class _CloseDecision:
+    """D10's verdict on a close intent: the quantity that may be ordered and whether the venue's own
+    `reduce_only` flag rides with it -- or `refusal`, which means no order at all."""
+
+    qty: float = 0.0
+    reduce_only: bool = False
+    refusal: str | None = None
+
+
+def _classify_margin_close(intent: ProbeIntent, held: float) -> _CloseDecision:
+    """A margin closer is sized from the Cache's LIVE position, never from the plan (the plan's
+    `notional_eur` on a closer is advisory): an over-|held| closer is thereby unconstructible rather
+    than merely refused. The venue's own `reduce_only` flag rides too, so the same bound is enforced
+    at both ends."""
+    if held == 0.0:
+        return _CloseDecision(refusal="no position to close")
+    if (held > 0) != (intent.side == "sell"):
+        return _CloseDecision(refusal="side does not reduce the position")
+    return _CloseDecision(qty=abs(held), reduce_only=True)
+
+
+def _classify_spot_close(intent: ProbeIntent, *, balances: dict, level: str) -> _CloseDecision:
+    """The D7 disposal: a sell of coin a manual venue action created, whose `qty` came through the
+    owner's sign-off from the ledger export.
+
+    Before the restart the venue record can REFUTE but not confirm that figure -- its balances come
+    from the connect-time account read, so no pre-restart record can see the settle; a positive
+    balance smaller than `qty` is a contradiction and refuses, while zero-or-absent proves nothing
+    and the intent proceeds on the signed figure with the venue's own insufficient-funds rejection
+    as the enforcing backstop. At `reduce_only` -- which implies the hold, which implies a restart,
+    which implies a fresh startup account read -- the record CAN confirm, so the full `qty <=
+    balance` bound applies and an absent balance reads 0.0.
+
+    NO venue-side flag either way: Kraken's `reduce_only` is a margin-order concept a spot order
+    cannot carry, so this bound plus the venue backstop IS the whole guard.
+    """
+    if intent.qty is None:
+        # Neither closer shape: nothing to size against a position, nothing for the record to bound.
+        return _CloseDecision(refusal="a spot close needs an explicit qty")
+    if intent.side != "sell":
+        return _CloseDecision(refusal="a spot close must be a sell")
+    balance = _spot_balance(balances, intent.symbol.split("/")[0])
+    if level == GateLevel.REDUCE_ONLY:
+        if intent.qty > balance:
+            return _CloseDecision(refusal="the venue record's balance does not cover the signed qty")
+        return _CloseDecision(qty=intent.qty)
+    if 0.0 < balance < intent.qty:
+        return _CloseDecision(refusal="the venue record refutes the signed qty")
+    return _CloseDecision(qty=intent.qty)
+
+
 @dataclass
 class _ActiveIntent:
     """The one intent in flight. Mutable and process-local -- everything durable about it is the
@@ -195,6 +282,11 @@ class _ActiveIntent:
     ioc_attempts: int = 0
     filled: float = 0.0
     target_qty: float = 0.0
+    # D10's classification, decided once at intent start: the quantity a close intent may ask for
+    # (None for an opener, which sizes from the plan) and whether the order carries the venue's own
+    # reduce-only flag.
+    close_qty: float | None = None
+    reduce_only: bool = False
     order: object | None = None
     order_payload: dict | None = None
     client_order_id: str | None = None
@@ -232,6 +324,15 @@ class ProbeExecutor:
         # running plan so a second disposal cumulates against the first one's real notional rather
         # than against the 0.00 the plan wall had to assume for it.
         self._resolved_notional: dict[int, float] = {}
+        # client_order_id -> (the boundary whose exec record holds its row, the row). EVERY order
+        # this process knows about is here: the ones it submitted, and the ones the startup pass
+        # adopted from a previous process. It is what makes a fill land in a forensic row even when
+        # the order is not the one currently in flight -- without it, a fill for a superseded or
+        # adopted order is dropped by the client-order-id filter, which costs the row (D5) and
+        # understates the remainder the next resubmission is sized against.
+        self._attached: dict[str, tuple[datetime, dict]] = {}
+        # The startup pass runs on the first tick, once, whatever it finds.
+        self._adopted = False
 
     # --- the gate ------------------------------------------------------------------------------
 
@@ -287,6 +388,9 @@ class ProbeExecutor:
             return "refused"
 
         ctx.client_order_id = client_order_id
+        # Attached BEFORE the venue call, for the same reason the row is written before it: an order
+        # whose submit raises may still be live, and its fill must have somewhere to land.
+        self._attached[client_order_id] = (self._plan_cycle_ts, row)
         try:
             self._client.submit_order(order, params=params)
         except Exception:
@@ -308,6 +412,8 @@ class ProbeExecutor:
     def on_timer(self, now: datetime) -> None:
         try:
             now = _aware_utc(now)
+            if not self._adopted:
+                self._adopt_resting_orders(now)
             if self._plan is None:
                 self._pickup(now)
             self._pump(now)
@@ -318,6 +424,52 @@ class ProbeExecutor:
             self._plan = None
             self._active = None
             self._index = 0
+
+    def _adopt_resting_orders(self, now: datetime) -> None:
+        """The startup pass (D10), run once on the first tick: decide, per resting order this
+        process just adopted, whether it may keep resting.
+
+        Classified against the LEDGER, never against the adopted report's own flags -- whether
+        Kraken's OpenOrders echo survives adoption with a truthful `is_reduce_only` is unverifiable
+        in the installed source (the population happens in the opaque Rust layer), so the
+        write-ahead row is the only trusted witness. An order matching a non-terminal row whose
+        LEDGERED order was reduce-only is left resting and re-attached, so its later fills append to
+        that row rather than beside it. Everything else is canceled: a resting opener is a pending
+        widening the hold exists to forbid, and an order with no row would fill with no appender.
+        Cancelling is always available to this pass; keeping is not -- an unreadable ledger
+        justifies nothing, so it cancels everything rather than keeping what it cannot vouch for.
+        A canceled close leg is re-dropped as a new signed-off plan.
+        """
+        self._adopted = True  # once, whatever happens below -- never a per-tick sweep
+        try:
+            rows = {row["client_order_id"]: (boundary, row) for boundary, row in open_submitted_rows(self._journal_dir, now)}
+        except Exception:
+            logger.critical("the exec ledger could not be read at startup -- every resting order will be canceled", exc_info=True)
+            rows = {}
+        try:
+            resting = list(self._client.cache.orders_open(venue=_VENUE))
+        except Exception:
+            # Nothing can be adopted OR canceled without the list. Loud, and no order is touched.
+            logger.critical("open orders could not be read at startup -- resting orders are unclassified", exc_info=True)
+            return
+
+        for order in resting:
+            client_order_id = str(getattr(order, "client_order_id", ""))
+            attached = rows.get(client_order_id)
+            payload = attached[1].get("order") if attached is not None else None
+            if isinstance(payload, dict) and payload.get("reduce_only") is True:
+                self._attached[client_order_id] = attached
+                logger.warning("adopted resting order %s is a ledgered reducer -- left resting and re-attached", client_order_id)
+                continue
+            logger.warning(
+                "canceling adopted resting order %s -- the ledger does not carry it as a resting reducer", client_order_id
+            )
+            try:
+                self._client.cancel_order(order)
+            except Exception:
+                logger.critical(
+                    "cancel of adopted order %s raised -- it may still rest at the venue", client_order_id, exc_info=True
+                )
 
     def _pickup(self, now: datetime) -> None:
         path = exec_dir(self._state_dir) / PLAN_FILENAME
@@ -470,6 +622,13 @@ class ProbeExecutor:
             self._refuse_intent(index, (f"{intent.symbol} is absent from venue truth",))
             return
 
+        decision = _CloseDecision()
+        if intent.action == "close":
+            decision = self._classify_close(intent, state, verdict.level)
+            if decision.refusal is not None:
+                self._refuse_intent(index, (decision.refusal,))
+                return
+
         instrument_id = InstrumentId.from_str(INSTRUMENT_IDS[intent.symbol])
         self._client.subscribe_quote_ticks(instrument_id)
         self._active = _ActiveIntent(
@@ -482,7 +641,28 @@ class ProbeExecutor:
             started_at=now,
             quote_deadline=now + _QUOTE_WAIT,
             timebox_at=now + _TIME_BOX,
+            close_qty=decision.qty if intent.action == "close" else None,
+            reduce_only=decision.reduce_only,
         )
+
+    def _classify_close(self, intent: ProbeIntent, state, level: str) -> _CloseDecision:
+        """D10's classification, taken at intent start off the venue truth this intent was resolved
+        against. A margin closer (leverage present) reads the Cache's live position -- the same
+        `sum(signed_qty)` the frozen snapshot already computed, so the sizing and the venue-truth
+        artifact can never disagree; a spot disposal reads the newest venue record's balances, and a
+        record it cannot read is a refusal rather than a bound that fails open."""
+        if intent.leverage is not None:
+            return _classify_margin_close(intent, state.positions.get(intent.symbol, 0.0))
+        try:
+            balances = _newest_venue_balances(self._journal_dir)
+        except Exception:
+            logger.warning("the newest venue record could not be read -- refusing the disposal", exc_info=True)
+            return _CloseDecision(refusal="the venue record could not be read")
+        try:
+            return _classify_spot_close(intent, balances=balances, level=level)
+        except Exception:
+            logger.warning("the venue record's balance for %s is unreadable -- refusing", intent.symbol, exc_info=True)
+            return _CloseDecision(refusal="the venue record could not be read")
 
     # --- quotes --------------------------------------------------------------------------------
 
@@ -563,6 +743,9 @@ class ProbeExecutor:
         if instrument is None:
             return "error", f"{intent.symbol}: instrument not found in Cache"
 
+        # `reduce_only` is passed ONLY when the classification set it (a margin closer). Kraken's
+        # reduce-only is a margin-order concept, so a spot order never carries it at all.
+        flag = {"reduce_only": True} if active.reduce_only else {}
         order = self._client.order_factory.limit(
             instrument_id=active.instrument_id,
             order_side=OrderSide.BUY if intent.side == "buy" else OrderSide.SELL,
@@ -570,6 +753,7 @@ class ProbeExecutor:
             price=instrument.make_price(sized.price),
             time_in_force=time_in_force,
             post_only=post_only,
+            **flag,
         )
         active.order = order
         active.order_qty = sized.qty
@@ -587,6 +771,8 @@ class ProbeExecutor:
             "time_in_force": "IOC" if time_in_force == TimeInForce.IOC else "GTC",
             "post_only": post_only,
             "leverage": intent.leverage,
+            # The startup pass's ONLY witness: whether the order this row stands for was a reducer.
+            "reduce_only": active.reduce_only,
         }
         params = {"leverage": intent.leverage} if intent.leverage is not None else None
         return self._submit(active, order, params), ""
@@ -596,7 +782,14 @@ class ProbeExecutor:
         if price is None:
             self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",))
             return
-        target_qty = active.intent.qty if active.intent.qty is not None else active.intent.notional_eur / price
+        # A close intent's quantity is D10's, not the plan's: a margin closer is sized from the live
+        # position, and a disposal from the qty the venue record did not refute.
+        if active.close_qty is not None:
+            target_qty = active.close_qty
+        elif active.intent.qty is not None:
+            target_qty = active.intent.qty
+        else:
+            target_qty = active.intent.notional_eur / price
         over_cap = self._over_cap_reason(active, target_qty, price)
         if over_cap is not None:
             self._finish_active("refused", (over_cap,))
@@ -724,9 +917,9 @@ class ProbeExecutor:
 
     def _on_order_event(self, event) -> None:
         active = self._active
-        if active is None or active.client_order_id is None:
-            return
-        if str(getattr(event, "client_order_id", "")) != active.client_order_id:
+        client_order_id = str(getattr(event, "client_order_id", ""))
+        if active is None or active.client_order_id is None or client_order_id != active.client_order_id:
+            self._on_detached_event(client_order_id, event)
             return
 
         name = type(event).__name__
@@ -837,20 +1030,52 @@ class ProbeExecutor:
         _inc_order("venue_canceled")
         self._reprice(active)
 
-    def _on_fill(self, active: _ActiveIntent, event) -> None:
-        qty = float(event.last_qty)
-        active.filled += qty
-        active.order_filled += qty
-        payload = {
+    def _fill_payload(self, event) -> dict:
+        """The forensic shape of one fill. Shared by the in-flight path and the detached one so an
+        adopted order's fill is recorded in exactly the same terms as an order this process placed."""
+        return {
             "event": "fill",
             "at": self._now().isoformat(),
-            "qty": qty,
+            "qty": float(event.last_qty),
             "px": float(event.last_px),
             "fee": float(event.commission),
             "fee_currency": event.commission.currency.code,
             "liquidity": str(event.liquidity_side),
             "trade_id": str(event.trade_id),
         }
+
+    def _on_detached_event(self, client_order_id: str, event) -> None:
+        """An event for an order that is not the one in flight: an order this process superseded, one
+        it already finished with, or one the startup pass adopted from a previous process.
+
+        It still gets its ledger row -- that is the no-fill-without-a-forensic-row invariant, and the
+        row is chosen by the boundary the ORDER was filed under, never the boundary of the tick that
+        saw the event. No state claim is made: this process is not tracking that order's lifecycle,
+        so the row keeps whatever open state it has and stays visible to the next re-attach.
+
+        A fill on an order belonging to the RUNNING intent also grows `filled`, so the next
+        resubmission is sized against it. Without that the remainder over-asks by exactly the
+        dropped quantity. Journal first, count second: a fill this process could not record is not
+        one it may account for.
+        """
+        attached = self._attached.get(client_order_id)
+        if attached is None:
+            return  # an order this process never ledgered -- nothing to append to
+        boundary, row = attached
+        is_fill = type(event).__name__ == "OrderFilled"
+        payload = self._fill_payload(event) if is_fill else {"type": type(event).__name__, "at": self._now().isoformat()}
+        qty = float(event.last_qty) if is_fill else 0.0
+        update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload, add_filled_qty=qty)
+        active = self._active
+        if qty and active is not None and self._plan is not None:
+            if row.get("plan_id") == self._plan.plan_id and row.get("intent_index") == active.index:
+                active.filled += qty
+
+    def _on_fill(self, active: _ActiveIntent, event) -> None:
+        qty = float(event.last_qty)
+        active.filled += qty
+        active.order_filled += qty
+        payload = self._fill_payload(event)
         # Both completion tests carry a one-lot-step tolerance, because both compare a SUM of
         # per-fill floats against a single sized float: 0.1 + 0.7 == 0.7999999999999999, an ulp
         # under the 0.8 that was ordered. Exact tests strand a fully-filled intent on a dead order
