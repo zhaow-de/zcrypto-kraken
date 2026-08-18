@@ -12,5 +12,8 @@ exec_enabled = true
 # value that belongs here outside an attended probe window: arming also needs the `exec/armed`
 # file on the host, and the resting state is disarmed.
 exec_armed = false
+# Rendered explicitly, like exec_armed above, so a converge diff shows it — the blast-radius
+# bound on a single probe plan's total notional.
+exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}
 shadow_nav_eur = {{ engine_shadow_nav_eur }}
 settle_delay_secs = {{ engine_settle_delay_secs }}

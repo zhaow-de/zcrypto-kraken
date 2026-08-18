@@ -376,4 +376,5 @@ Optional table tuning the `zcrypto engine` shadow node. Every key has a built-in
 | `journal_dir` | `data/engine-journal` | The cycle journal root: per-day success records, failed-cycle sidecars, input snapshots, and `orders.jsonl`. |
 | `shadow_nav_eur` | `1000.0` | The shadow book's NAV; an intended order's notional is `Δtarget × shadow_nav_eur`. |
 | `exec_enabled` | `false` | Attach the Kraken execution client to the node. Keep `false` off the VPS — the trade key is IP-bound, so local runs are keyless. |
+| `exec_max_plan_notional_eur` | `100.0` | The total-notional cap a probe plan may carry — the blast-radius bound. |
 | `settle_delay_secs` | `90` | Seconds after each 4h boundary before the cycle's first store refresh, letting the venue commit the boundary candle. |

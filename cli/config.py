@@ -38,6 +38,8 @@ class EngineConfig:
     # connected) and, on its own, insufficient: arming also requires the arm file on the host, so
     # no single change can arm the live trade path.
     exec_armed: bool = False
+    # The total-notional cap a probe plan may carry — the blast-radius bound.
+    exec_max_plan_notional_eur: float = 100.0
     settle_delay_secs: int = 90
 
 
@@ -123,6 +125,13 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
         if not isinstance(value, bool):
             raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_armed in {config_path} must be a boolean")
         overrides["exec_armed"] = value
+
+    if "exec_max_plan_notional_eur" in raw:
+        value = raw["exec_max_plan_notional_eur"]
+        # bool is a subclass of int — reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_max_plan_notional_eur in {config_path} must be a positive number")
+        overrides["exec_max_plan_notional_eur"] = float(value)
 
     if "settle_delay_secs" in raw:
         value = raw["settle_delay_secs"]

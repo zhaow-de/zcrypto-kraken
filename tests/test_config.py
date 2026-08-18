@@ -194,6 +194,35 @@ def test_exec_armed_rejects_a_non_boolean(tmp_path):
         load_config(cfg_path)
 
 
+def test_exec_max_plan_notional_eur_defaults_to_100_when_absent(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text("[zcrypto.engine]\nexec_armed = true\n")
+    cfg = load_config(cfg_path)
+    assert cfg.engine.exec_max_plan_notional_eur == 100.0
+
+
+def test_exec_max_plan_notional_eur_reads_a_set_value(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text("[zcrypto.engine]\nexec_max_plan_notional_eur = 250\n")
+    assert load_config(cfg_path).engine.exec_max_plan_notional_eur == 250.0
+
+
+def test_exec_max_plan_notional_eur_rejects_a_non_number_non_positive_or_bool(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    for bad in ('"nope"', "0", "true"):
+        cfg_path.write_text(f"[zcrypto.engine]\nexec_max_plan_notional_eur = {bad}\n")
+        with pytest.raises(ConfigError, match="must be a positive number"):
+            load_config(cfg_path)
+
+
+def test_the_engine_role_template_renders_the_plan_cap_explicitly():
+    """The blast-radius bound must appear in a converge diff, exactly like exec_armed."""
+    text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
+    assert "exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}" in text
+    defaults = Path("infra/ansible/roles/engine/defaults/main.yml").read_text()
+    assert "engine_exec_max_plan_notional_eur: 100.0" in defaults
+
+
 def test_committed_zcrypto_toml_has_no_engine_table():
     # the committed config stays unchanged — EngineConfig defaults live in code (spec precedent).
     cfg = load_config(Path("zcrypto.toml"))
