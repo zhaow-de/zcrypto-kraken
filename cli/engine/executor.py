@@ -83,9 +83,9 @@ _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 _H4 = 4
 
 _VENUE = Venue("KRAKEN")
-# Kraken spells the euro both ways across its surfaces (the adapter's Money carries `EUR`, the
-# balance/asset surfaces the classic `ZEUR`); anything else is a different currency and is never
-# summed into a EUR total.
+# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
+# balances carry `EUR`, the asset/instrument-quote surfaces the classic `ZEUR`); anything else is a
+# different currency and is never summed into a EUR total.
 _EUR_CODES = ("EUR", "ZEUR")
 # The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
 # out, so a member the library adds is admitted automatically. Plain ints, and the test is
@@ -416,8 +416,10 @@ class ProbeExecutor:
         self._attached: dict[str, tuple[datetime, dict]] = {}
         # Instrument ids this process has actually filled in, for the realized-PnL sum. Scoped to
         # them rather than to the whole basket so a leg this process never touched cannot drag a
-        # previous run's closed positions into a number presented as this window's.
-        self._traded: set[str] = set()
+        # previous run's closed positions into a number presented as this window's. Held as
+        # `InstrumentId`, never as its string: the Cache accessors are Cython-typed and REFUSE a
+        # str, so a set of strings would raise on every read into the swallowing `except`.
+        self._traded: set[InstrumentId] = set()
         # The startup pass runs on the first tick, once, whatever it finds.
         self._adopted = False
         # Set by the first trip and never cleared. NOT a substitute for the kill file -- the file is
@@ -637,8 +639,11 @@ class ProbeExecutor:
                 self._delete(path)
             return
 
-        # Live balances spell the currency `ZEUR` (the adapter's code, measured); the `EUR` fallback
-        # covers a constructed state, and both absent reads 0.0, which refuses any margin intent.
+        # Live balances spell the free-cash currency `EUR` -- measured against the live engine
+        # (`{'EUR': 99.84}`), so this resolves on its SECOND arm in production. The `ZEUR` arm stays
+        # first and is not dead: the adapter's other surface genuinely spells the euro `ZEUR` (the
+        # instrument quote currency), so the two differ by surface and the fallback covers both.
+        # Both absent reads 0.0, which refuses any margin intent.
         free_zeur = state.balances.get("ZEUR", 0.0) or state.balances.get("EUR", 0.0)
         reasons = plan_refusals(
             plan,
@@ -1397,10 +1402,10 @@ class ProbeExecutor:
             return
         try:
             _metrics.inc_fill(_liquidity(event.liquidity_side).lower(), _fee_eur(event.commission))
-            instrument_id = str(event.instrument_id)
+            instrument_id = event.instrument_id
             self._traded.add(instrument_id)
             held = self._client.cache.positions_open(instrument_id=instrument_id)
-            _metrics.set_position(_SYMBOL_BY_INSTRUMENT_ID[instrument_id], sum(float(p.signed_qty) for p in held))
+            _metrics.set_position(_SYMBOL_BY_INSTRUMENT_ID[str(instrument_id)], sum(float(p.signed_qty) for p in held))
             _metrics.set_realized(self._realized_eur())
         except Exception:
             logger.exception("executor fill metrics hook raised -- continuing")

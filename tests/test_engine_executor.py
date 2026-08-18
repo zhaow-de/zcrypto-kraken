@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from nautilus_trader.model.enums import LiquiditySide, OrderSide, TimeInForce
+from nautilus_trader.model.identifiers import InstrumentId
 
 import cli.engine.executor as executor_module
 from cli.config import EngineConfig
@@ -155,11 +156,24 @@ class StubCache:
             raise RuntimeError("cache read failed")
         return self._instruments.get(str(instrument_id))
 
+    @staticmethod
+    def _position_key(instrument_id):
+        """The installed Cache's accessors are Cython-typed and REFUSE a str -- `TypeError:
+        Argument 'instrument_id' has incorrect type`. This stub used to coerce with `str()`, which
+        accepted what production could not: every live `_publish_fill` raised into its swallowing
+        `except` and the position/PnL gauges never moved, with the whole suite green. Refusing here
+        is what makes that class of defect visible at all."""
+        if not isinstance(instrument_id, InstrumentId):
+            raise TypeError(
+                f"Argument 'instrument_id' has incorrect type (expected InstrumentId, got {type(instrument_id).__name__})"
+            )
+        return str(instrument_id)
+
     def positions_open(self, *, instrument_id=None, **kwargs):
-        return self._positions.get(str(instrument_id), [])
+        return self._positions.get(self._position_key(instrument_id), [])
 
     def positions_closed(self, *, instrument_id=None, **kwargs):
-        return self._closed.get(str(instrument_id), [])
+        return self._closed.get(self._position_key(instrument_id), [])
 
     def set_position(self, symbol, signed_qty, *, realized_pnl=None):
         """What the Cache says is held, in the shape `_held()` builds -- the one accessor a test
@@ -898,6 +912,26 @@ def test_a_margin_floor_violating_plan_is_refused_naming_the_floor(tmp_path):
     assert any("margin floor" in r for r in entry["reasons"])
 
 
+def test_an_eur_only_balance_is_the_free_cash_figure_the_margin_floor_is_measured_against(tmp_path):
+    """The LIVE spelling: the pre-merge read against the engine returned `{'EUR': 99.84}`, so the
+    `ZEUR`-then-`EUR` fallback resolves on its SECOND arm in production. Every other fixture here
+    spells it `ZEUR`, which left the live-resolving arm unpinned -- deleting it would have left this
+    suite green while production sized every plan against 0.00 free EUR and refused it.
+
+    The assertion is the figure inside the reason, not the word 'margin floor': dropping the `EUR`
+    arm still refuses (0.00 is under any floor), so only the VALUE separates the two worlds."""
+    client = StubClient(StubCache(balances={"EUR": 99.84}))
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(notional_eur=90.0, leverage=2)]))
+
+    ex.on_timer(NOW)
+
+    assert client.subscribed == [] and client.submitted == []
+    entry = _plan_entry(tmp_path)
+    assert entry["disposition"] == "refused"
+    assert any("free_zeur 99.84 EUR" in r for r in entry["reasons"])
+
+
 def test_an_unparseable_plan_is_journaled_and_deleted(tmp_path):
     ex = _executor(tmp_path)
     d = exec_dir(tmp_path)
@@ -1067,11 +1101,14 @@ def _fill(client_order_id, last_qty, *, px=30000.0, fee=0.012, fee_code="EUR", s
     `liquidity_side` is the REAL `LiquiditySide` member, never the string it looks like: in the
     installed nautilus-trader it is an int-backed enum whose `__str__` returns the NUMBER, so a
     plain-string fake makes `str(event.liquidity_side)` look correct here while production writes
-    '1'/'2'. That gap hid a live defect in both the ledger row and the metric label."""
+    '1'/'2'. That gap hid a live defect in both the ledger row and the metric label.
+
+    `instrument_id` is the REAL `InstrumentId` for the same reason: the venue's `OrderFilled`
+    carries one, and the Cython Cache accessors `_publish_fill` hands it to refuse anything else."""
     return _named(
         "OrderFilled",
         client_order_id=client_order_id,
-        instrument_id=INSTRUMENT_IDS[symbol],
+        instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]),
         last_qty=last_qty,
         last_px=px,
         commission=_FakeMoney(fee, fee_code),

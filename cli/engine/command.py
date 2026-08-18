@@ -1586,8 +1586,10 @@ def probe_plan(
     _echo_gate_verdict(gate.evaluate(now))
     typer.echo(f"venue snapshot: {record['state']['snapshot_at']}")
 
-    # The live balances spell the currency `ZEUR`; the `EUR` fallback covers a hand-built record,
-    # and both absent reads 0.0, which refuses any margin intent -- the executor's own reading.
+    # The live balances spell the free-cash currency `EUR` (measured: `{'EUR': 99.84}`), so this
+    # resolves on its SECOND arm against a real record. The `ZEUR` arm stays because the adapter's
+    # other surface spells the euro `ZEUR` (the instrument quote currency); both absent reads 0.0,
+    # which refuses any margin intent -- the executor's own reading.
     free_zeur = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
     refusals = list(
         plan_refusals(
