@@ -23,7 +23,7 @@ from cli.engine import concordance
 from cli.engine.cycle import CycleResult
 from cli.engine.errors import EngineError
 from cli.engine.execgate import GateLevel, GateVerdict
-from cli.engine.execledger import write_exec_record
+from cli.engine.execledger import append_plan_entry, write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
 from cli.engine.store import BASKET, GRID_INTERVALS, SeedEntry, SeedReport, _store_path
 from cli.engine.venue import VenueStatus
@@ -835,6 +835,243 @@ def test_exec_status_prints_the_level_and_every_reason(tmp_path, monkeypatch):
     assert "arm_file_absent" in result.stdout
     assert "restart_hold" in result.stdout
     assert "venue_status=stubbed-by-test" in result.stdout
+
+
+# --- probe-plan --check ------------------------------------------------------------------------------
+
+PLAN_AT = datetime(2026, 7, 10, 8, 30, tzinfo=UTC)
+
+
+def _instrument(symbol: str, *, ordermin=0.0001, costmin=0.45, costmin_quote="EUR", lot_step=1e-08, tick_size=0.1) -> dict:
+    return {
+        "symbol": symbol,
+        "instrument_id": f"{symbol}.KRAKEN",
+        "ordermin": ordermin,
+        "costmin": costmin,
+        "costmin_quote": costmin_quote,
+        "lot_step": lot_step,
+        "tick_size": tick_size,
+        "costmin_source": "snapshot-constant",
+    }
+
+
+def _write_venue_record(journal_dir: Path, cycle_ts: datetime, *, instruments: dict, balances: dict) -> Path:
+    """A schema-2 `ok` venue record built as literal JSON -- the shape `write_venue_record` emits,
+    without importing nautilus into this module (`validate_venue_record` checks it either way)."""
+    doc = {
+        "schema_version": 2,
+        "cycle_ts": cycle_ts.isoformat(),
+        "code_version": "test",
+        "status": "ok",
+        "state": {
+            "snapshot_at": cycle_ts.isoformat(),
+            "instruments": instruments,
+            "positions": {},
+            "balances": balances,
+        },
+        "concordance": {"ok": True, "failures": []},
+    }
+    path = journal_dir / f"{cycle_ts:%Y-%m-%d}" / f"venue-{cycle_ts:%H}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def _write_plan(tmp_path: Path, intents: list[dict], *, created_at: datetime = PLAN_AT, plan_id: str = "probe-1") -> Path:
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps({"plan_id": plan_id, "created_at": created_at.isoformat(), "intents": intents}))
+    return path
+
+
+def _intent(symbol="BTC/EUR", **overrides) -> dict:
+    return {"symbol": symbol, "side": "buy", "action": "open", "mode": "execute", "notional_eur": 20.0} | overrides
+
+
+def _probe_plan_env(tmp_path, monkeypatch, *, instruments=None, balances=None) -> EngineConfig:
+    """The configured journal + a stubbed venue read + a frozen clock inside the plan's TTL."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    if instruments is not None:
+        _write_venue_record(engine_cfg.journal_dir, CYCLE_TS, instruments=instruments, balances=balances or {"ZEUR": 500.0})
+    monkeypatch.setattr(command, "_utc_now", lambda: PLAN_AT + timedelta(minutes=5))
+    # The same sentinel-status stub exec-status uses: no test may reach the network, and a dropped
+    # `venue_reader=read_system_status` seam would surface rather than pass silently.
+    monkeypatch.setattr(
+        "cli.engine.command.read_system_status",
+        lambda *, now, opener=None: VenueStatus(status="stubbed-by-test", ok=False, observed_at=now),
+    )
+    return engine_cfg
+
+
+def test_probe_plan_without_check_submits_nothing_and_exits_1(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent()])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan)])
+
+    assert result.exit_code == 1
+    assert "--check" in _output(result)
+
+
+def test_probe_plan_check_accepts_a_valid_plan(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent()])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    assert "plan ok: 1 intent(s), total notional 20.00 EUR" in out
+    assert "BTC/EUR" in out
+    # The gate is REPORTED, never held: a validator that exited 0 only when the gate was open would
+    # read as permission, and the engine re-takes the gate inside every submission anyway.
+    assert "level=none" in out
+    assert "venue_status=stubbed-by-test" in out
+
+
+def test_probe_plan_check_refuses_an_expired_plan(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent()], created_at=PLAN_AT - timedelta(hours=3))
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 1
+    assert "expired" in _output(result)
+
+
+def test_probe_plan_check_refuses_without_a_venue_snapshot(tmp_path, monkeypatch):
+    engine_cfg = _probe_plan_env(tmp_path, monkeypatch)  # no venue record written
+    plan = _write_plan(tmp_path, [_intent()])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    out = _output(result)
+    assert result.exit_code == 1
+    assert str(engine_cfg.journal_dir) in out
+
+
+def test_probe_plan_check_refuses_a_plan_over_the_cap(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent(notional_eur=90.0), _intent(notional_eur=90.0)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 1
+    assert "exceeds the cap" in _output(result)
+
+
+def test_probe_plan_check_refuses_a_plan_id_already_ledgered(tmp_path, monkeypatch):
+    engine_cfg = _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    append_plan_entry(
+        engine_cfg.journal_dir,
+        CYCLE_TS,
+        {
+            "plan_id": "probe-1",
+            "received_at": CYCLE_TS.isoformat(),
+            "disposition": "accepted",
+            "reasons": [],
+            "plan": {},
+            "intents": [],
+        },
+        verdict=_refusing_verdict(),
+        evaluated_at=CYCLE_TS,
+    )
+    plan = _write_plan(tmp_path, [_intent()])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 1
+    assert "already ledgered" in _output(result)
+
+
+def test_probe_plan_check_refuses_a_cross_denomination_notional(tmp_path, monkeypatch):
+    # The T0138 guard's rule at the validator: a /BTC leg's BTC-denominated costmin must never be
+    # compared against a EUR notional -- 2e-05 BTC would pass every EUR figure silently.
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"ETH/BTC": _instrument("ETH/BTC", costmin=2e-05, costmin_quote="BTC")})
+    plan = _write_plan(tmp_path, [_intent("ETH/BTC")])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    out = _output(result)
+    assert result.exit_code == 1
+    assert "'BTC'" in out
+
+
+def test_probe_plan_check_refuses_a_notional_below_costmin(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent(notional_eur=0.2)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 1
+    assert "costmin" in _output(result)
+
+
+def test_probe_plan_check_refuses_a_qty_below_ordermin_and_off_the_lot_step(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR", ordermin=0.5, lot_step=0.1)})
+    plan = _write_plan(tmp_path, [_intent(action="close", side="sell", notional_eur=None, qty=0.25)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    out = _output(result)
+    assert result.exit_code == 1
+    assert "ordermin" in out
+    assert "lot step" in out
+
+
+def test_probe_plan_check_accepts_a_lot_aligned_qty_disposal(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR", ordermin=0.5, lot_step=0.1)})
+    plan = _write_plan(tmp_path, [_intent(action="close", side="sell", notional_eur=None, qty=0.6)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    out = _output(result)
+    assert result.exit_code == 0, out
+    # A qty intent carries no EUR notional at validation time -- the plan wall counts it as 0.00 and
+    # the executor cumulates its real notional at sizing time instead.
+    assert "plan ok: 1 intent(s), total notional 0.00 EUR" in out
+
+
+def test_probe_plan_check_refuses_a_malformed_plan(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    path = tmp_path / "plan.json"
+    path.write_text('{"plan_id": "probe-1", "created_at": "2026-07-10T08:30:00+00:00", "intents": []}')
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(path), "--check"])
+
+    assert result.exit_code == 1
+    assert "intents" in _output(result)
+
+
+def test_probe_plan_check_refuses_an_unreadable_plan_file(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(tmp_path / "nope.json"), "--check"])
+
+    assert result.exit_code == 1
+    assert "nope.json" in _output(result)
+
+
+def test_probe_plan_check_refuses_a_margin_intent_over_the_free_balance(tmp_path, monkeypatch):
+    _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")}, balances={"ZEUR": 5.0})
+    plan = _write_plan(tmp_path, [_intent(notional_eur=40.0, leverage=2)])
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 1
+    assert "margin floor" in _output(result)
+
+
+def test_probe_plan_check_mutates_nothing(tmp_path, monkeypatch):
+    engine_cfg = _probe_plan_env(tmp_path, monkeypatch, instruments={"BTC/EUR": _instrument("BTC/EUR")})
+    plan = _write_plan(tmp_path, [_intent()])
+    before = {p: p.read_bytes() for p in sorted(engine_cfg.journal_dir.rglob("*")) if p.is_file()}
+
+    result = runner.invoke(app, ["engine", "probe-plan", str(plan), "--check"])
+
+    assert result.exit_code == 0, _output(result)
+    assert {p: p.read_bytes() for p in sorted(engine_cfg.journal_dir.rglob("*")) if p.is_file()} == before
+    # And nothing was dropped where the engine would pick it up.
+    assert not (tmp_path / "exec").exists()
 
 
 # --- --journal-dir overrides on replay/report ------------------------------------------------------

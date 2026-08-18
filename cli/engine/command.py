@@ -29,7 +29,7 @@ from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, 
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
-from cli.engine.execledger import write_exec_record
+from cli.engine.execledger import ledgered_plan_ids, write_exec_record
 from cli.engine.feeders import accumulation_report, decompose_report, load_minimums
 from cli.engine.gate_cache import (
     GateCache,
@@ -40,8 +40,9 @@ from cli.engine.gate_cache import (
     replay_fingerprint,
     save_cache,
 )
-from cli.engine.instruments import INSTRUMENT_IDS
+from cli.engine.instruments import INSTRUMENT_IDS, _floor_to_step
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
+from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, seed_store
 from cli.engine.venue import read_system_status
@@ -1366,7 +1367,140 @@ def exec_status(
         venue_reader=read_system_status,  # explicit so tests can substitute it (no --no-venue-check flag)
     )
     verdict = gate.evaluate(_utc_now())
+    _echo_gate_verdict(verdict)
+
+
+def _echo_gate_verdict(verdict: GateVerdict) -> None:
     typer.echo(f"level={verdict.level}")
     typer.echo(f"reasons={','.join(verdict.reasons) or '-'}")
     for key, value in sorted(verdict.inputs.items()):
         typer.echo(f"  {key}={value}")
+
+
+def _newest_venue_record(journal_dir: Path) -> dict | None:
+    """The newest `ok`, schema-2 `venue-<HH>.json` document in full, or None when the journal holds
+    none. `_seed_exec_positions`' scan, kept whole rather than reduced: this caller needs both the
+    instrument constraints and the balances. Same no-try/except contract -- a record that fails
+    `validate_venue_record` raises rather than being skipped, because reading past a broken record
+    would make every floor below fail open."""
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
+
+    newest: tuple[datetime, dict] | None = None
+    for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
+        doc = read_venue_record(path)
+        validate_venue_record(doc)
+        if doc.get("status") != "ok" or doc.get("schema_version") != 2:
+            continue
+        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
+        if newest is None or cycle_ts > newest[0]:
+            newest = (cycle_ts, doc)
+    return None if newest is None else newest[1]
+
+
+def _intent_floor_check(index: int, intent, entry: dict) -> tuple[str, list[str]]:
+    """One intent's checkable floors against one venue-snapshot instrument entry: the printable
+    line, and every refusal it earned.
+
+    A notional intent meets `costmin`, and ONLY when both are EUR: comparing a EUR notional against
+    a `/BTC` leg's BTC-denominated floor passes everything silently (2e-05 is under any EUR figure),
+    which is exactly the fail-open direction `size_probe_order`'s guard refuses at sizing time. A
+    qty intent meets `ordermin` and the lot step instead -- it carries no price here, so no notional
+    exists to check.
+    """
+    refusals: list[str] = []
+    head = f"  [{index}] {intent.symbol} {intent.side} {intent.action} {intent.mode}"
+    if intent.notional_eur is not None:
+        quote = entry["costmin_quote"]
+        if quote != "EUR":
+            return (
+                f"{head}: notional {intent.notional_eur:.2f} EUR -- NOT COMPARED",
+                [
+                    f"intent {index}: {intent.symbol}'s costmin is denominated in {quote!r}, so it cannot be "
+                    "compared against a EUR notional"
+                ],
+            )
+        costmin = float(entry["costmin"])
+        if intent.notional_eur < costmin:
+            refusals.append(f"intent {index}: notional {intent.notional_eur:.2f} EUR is below costmin {costmin:.2f} EUR")
+        return f"{head}: notional {intent.notional_eur:.2f} EUR, costmin {costmin:.2f} EUR", refusals
+
+    ordermin = float(entry["ordermin"])
+    lot_step = float(entry["lot_step"])
+    if intent.qty < ordermin:
+        refusals.append(f"intent {index}: qty {intent.qty:.10g} is below ordermin {ordermin:.10g}")
+    if lot_step <= 0:
+        refusals.append(f"intent {index}: the venue snapshot's lot step for {intent.symbol} is {lot_step!r}, not a positive step")
+    elif _floor_to_step(intent.qty, lot_step) != intent.qty:
+        refusals.append(f"intent {index}: qty {intent.qty:.10g} is not a multiple of the {lot_step:.10g} lot step")
+    return f"{head}: qty {intent.qty:.10g}, ordermin {ordermin:.10g}, lot step {lot_step:.10g}", refusals
+
+
+@engine_app.command(name="probe-plan")
+def probe_plan(
+    plan_path: Path = typer.Argument(..., help="Probe plan JSON file to validate."),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Validate the plan offline: shape, expiry, duplicate plan ids, the plan-level caps, and each intent "
+        "against the newest venue snapshot's constraints. Advisory only -- the engine re-validates every plan live "
+        "before any order.",
+    ),
+) -> None:
+    """Validate an operator-authored probe plan against the newest journaled venue snapshot.
+
+    Read-only and offline: it reads the plan file, the journal, and the control-file tree, and writes nothing anywhere. The gate verdict it prints is a REPORT, never a permission -- the engine evaluates the gate itself inside every submission, so a plan that validates cleanly while the gate is shut is still a valid plan."""
+    if not check:
+        raise _abort("only --check is implemented -- the engine consumes plans from its state directory, never from this command")
+
+    config = _load_engine_config()
+    try:
+        text = plan_path.read_text()
+    except OSError as exc:
+        raise _abort(f"could not read the probe plan {plan_path}: {exc}") from exc
+    try:
+        plan = parse_plan(text)
+    except ProbePlanError as exc:
+        raise _abort(str(exc)) from exc
+
+    try:
+        record = _newest_venue_record(config.journal_dir)
+    except (OSError, EngineJournalError, KeyError, TypeError, ValueError) as exc:
+        raise _abort(f"the newest venue snapshot under {config.journal_dir} could not be read: {exc}") from exc
+    if record is None:
+        raise _abort(
+            f"no usable venue snapshot under {config.journal_dir} -- the per-intent floors are read from one, "
+            "and a plan checked without it would report floors it never measured"
+        )
+    instruments = record["state"]["instruments"]
+    balances = record["state"]["balances"]
+
+    gate = ExecutionGate(armed_in_config=config.exec_armed, state_dir=config.journal_dir.parent, venue_reader=read_system_status)
+    now = _utc_now()
+    _echo_gate_verdict(gate.evaluate(now))
+    typer.echo(f"venue snapshot: {record['state']['snapshot_at']}")
+
+    # The live balances spell the currency `ZEUR`; the `EUR` fallback covers a hand-built record,
+    # and both absent reads 0.0, which refuses any margin intent -- the executor's own reading.
+    free_zeur = balances.get("ZEUR", 0.0) or balances.get("EUR", 0.0)
+    refusals = list(
+        plan_refusals(
+            plan,
+            now=now,
+            ledgered=ledgered_plan_ids(config.journal_dir, now),
+            max_plan_notional_eur=config.exec_max_plan_notional_eur,
+            free_zeur=float(free_zeur),
+        )
+    )
+    for index, intent in enumerate(plan.intents):
+        entry = instruments.get(intent.symbol)
+        if entry is None:
+            refusals.append(f"intent {index}: {intent.symbol} is absent from the venue snapshot")
+            continue
+        line, intent_refusals = _intent_floor_check(index, intent, entry)
+        typer.echo(line)
+        refusals.extend(intent_refusals)
+
+    if refusals:
+        raise _abort("plan refused: " + "; ".join(refusals))
+    total = sum(i.notional_eur or 0.0 for i in plan.intents)
+    typer.echo(f"plan ok: {len(plan.intents)} intent(s), total notional {total:.2f} EUR")
