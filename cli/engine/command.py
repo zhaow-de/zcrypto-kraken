@@ -683,17 +683,20 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
 
     Deliberately NO try/except of its own, mirroring `_seed_cycle_state`: an unreadable file
     (PermissionError) or a malformed record propagates to the caller's own guard, which must never
-    let telemetry setup kill the engine daemon.
+    let telemetry setup kill the engine daemon. Every record is `validate_venue_record`-checked
+    before its `status` is even consulted (T0140 D9) -- a record that fails to validate is a
+    malformed record, and the caller's guard is exactly where that must surface, never a silent skip.
 
     Local import: `cli.engine.venueledger` pulls in `cli.engine.venuestate`, which imports
     nautilus_trader (~1s) at module level -- deferred to here for the same reason `cycle.py`'s
     `_record_venue_state` defers it, so `cli.engine.command`'s own module-level import stays
     nautilus-free (`zcrypto --help`)."""
-    from cli.engine.venueledger import read_venue_record
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     newest: tuple[datetime, dict] | None = None
     for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
         doc = read_venue_record(path)
+        validate_venue_record(doc)
         if doc.get("status") != "ok":
             continue
         cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
@@ -708,6 +711,30 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
         "failures": len(doc["concordance"]["failures"]),
         "snapshot_at": doc["state"]["snapshot_at"],
     }
+
+
+def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
+    """The startup seed for the (symbol-labelled) positions gauge: the newest `venue-<HH>.json`
+    whose `status` is `"ok"` AND `schema_version == 2`, reduced to `dict(doc["state"]["positions"])`
+    -- a base-keyed schema_version 1 record is skipped even when `"ok"`, never coerced, because the
+    gauge it seeds is symbol-labelled and a v1 record cannot honestly produce that label. Mirrors
+    `_seed_venue_state` above: same glob/newest logic, same no-try/except contract (the caller's own
+    telemetry guard owns isolation), same `validate_venue_record`-before-`status` ordering (T0140
+    D9) -- a malformed record propagates rather than being silently skipped."""
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
+
+    newest: tuple[datetime, dict] | None = None
+    for _, path in _journal_artifacts(journal_dir, "*", "venue-*.json"):
+        doc = read_venue_record(path)
+        validate_venue_record(doc)
+        if doc.get("status") != "ok" or doc.get("schema_version") != 2:
+            continue
+        cycle_ts = datetime.fromisoformat(doc["cycle_ts"])
+        if newest is None or cycle_ts > newest[0]:
+            newest = (cycle_ts, doc)
+    if newest is None:
+        return None
+    return dict(newest[1]["state"]["positions"])
 
 
 @engine_app.command()

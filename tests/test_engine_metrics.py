@@ -20,7 +20,7 @@ import cli.engine.command as command
 import cli.engine.cycle as cycle
 from cli.__main__ import app
 from cli.config import AppConfig, DataConfig, EngineConfig, FetchConfig
-from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at, _VenueGauges
+from cli.engine.command import _CycleGauges, _ExecGauges, _seed_completed_at, _seed_exec_positions, _VenueGauges
 from cli.engine.cycle import CycleResult, run_cycle
 from cli.engine.execgate import LEVEL_CODE, GateLevel, GateVerdict
 from cli.engine.instruments import INSTRUMENT_IDS
@@ -620,16 +620,73 @@ def _write_venue_record(
     nautilus_trader. The pinned `schema_version: 1` is deliberate v1-reader coverage, not drift
     against the current `VENUE_SCHEMA_VERSION`: every record written before the widening is v1 and
     the startup seed must keep reading them, so a v1 record is exactly what these gauges must
-    survive at the deploy boundary."""
+    survive at the deploy boundary. Base-keyed throughout (`ASSET{i}`, no "/"), each instrument
+    entry carrying the full v1 key set (base/instrument_id/ordermin/costmin/lot_step/tick_size/
+    costmin_source, no `costmin_quote`) -- `_seed_venue_state` now `validate_venue_record`-checks
+    every record it reads (T0140 D9), so this fixture's output must itself validate."""
     day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
     day_dir.mkdir(parents=True, exist_ok=True)
     doc = {"schema_version": 1, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
     if status == "ok":
         doc["state"] = {
             "snapshot_at": (snapshot_at or cycle_ts).isoformat(),
-            "instruments": {f"ASSET{i}": {} for i in range(loaded)},
+            "instruments": {
+                f"ASSET{i}": {
+                    "base": f"ASSET{i}",
+                    "instrument_id": f"ASSET{i}/EUR.KRAKEN",
+                    "ordermin": 0.0001,
+                    "costmin": 0.5,
+                    "lot_step": 0.00000001,
+                    "tick_size": 0.1,
+                    "costmin_source": "snapshot-constant",
+                }
+                for i in range(loaded)
+            },
+            "positions": {f"ASSET{i}": 0.0 for i in range(loaded)},
+            "balances": {"EUR": 1000.0},
         }
         doc["concordance"] = {"ok": failures == 0, "failures": [f"F{i}" for i in range(failures)]}
+    else:
+        doc["error"] = "no venue snapshot available for this cycle"
+    (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
+def _write_venue_record_v2(
+    journal_dir: Path,
+    cycle_ts: datetime,
+    *,
+    status: str = "ok",
+    positions: dict[str, float] | None = None,
+) -> None:
+    """A raw **schema-2** venue-<HH>.json, written directly for the same avoid-nautilus reason
+    `_write_venue_record` documents above -- symbol-keyed instruments/positions (the shape
+    `validate_venue_record` requires for schema_version 2). Used by the `_seed_exec_positions`
+    tests: only a schema_version 2 "ok" record can seed the symbol-labelled positions gauge, so
+    these tests need genuine v2 fixtures rather than `_write_venue_record`'s v1 ones."""
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    doc = {"schema_version": 2, "cycle_ts": cycle_ts.isoformat(), "code_version": "test", "status": status}
+    if status == "ok":
+        pos = positions if positions is not None else {"BTC/EUR": 0.0}
+        doc["state"] = {
+            "snapshot_at": cycle_ts.isoformat(),
+            "instruments": {
+                symbol: {
+                    "symbol": symbol,
+                    "instrument_id": f"{symbol}.KRAKEN",
+                    "ordermin": 0.0001,
+                    "costmin": 0.5,
+                    "costmin_quote": symbol.split("/")[1],
+                    "lot_step": 0.00000001,
+                    "tick_size": 0.1,
+                    "costmin_source": "snapshot-constant",
+                }
+                for symbol in pos
+            },
+            "positions": pos,
+            "balances": {"EUR": 1000.0},
+        }
+        doc["concordance"] = {"ok": True, "failures": []}
     else:
         doc["error"] = "no venue snapshot available for this cycle"
     (day_dir / f"venue-{cycle_ts:%H}.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
@@ -722,6 +779,42 @@ def test_seed_venue_state_an_error_record_never_overrides_the_last_ok_one(tmp_pa
     seed = command._seed_venue_state(journal_dir)
 
     assert seed == {"loaded": 10, "expected": len(INSTRUMENT_IDS), "failures": 0, "snapshot_at": ok_at.isoformat()}
+
+
+# --- command.py: _seed_exec_positions (T0140) -------------------------------------------------------
+
+
+def test_seed_exec_positions_returns_none_when_the_journal_is_empty(tmp_path):
+    assert _seed_exec_positions(tmp_path / "journal") is None
+
+
+def test_seed_exec_positions_reads_the_newest_ok_records_positions(tmp_path):
+    journal_dir = tmp_path / "journal"
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), positions={"BTC/EUR": 1.0})
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), positions={"BTC/EUR": 2.5, "ETH/EUR": -1.0})
+
+    seed = _seed_exec_positions(journal_dir)
+
+    assert seed == {"BTC/EUR": 2.5, "ETH/EUR": -1.0}
+
+
+def test_seed_exec_positions_skips_an_error_record_even_when_newer(tmp_path):
+    journal_dir = tmp_path / "journal"
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), positions={"BTC/EUR": 1.0})
+    _write_venue_record_v2(journal_dir, datetime(2026, 7, 10, 8, 0, tzinfo=UTC), status="error")
+
+    seed = _seed_exec_positions(journal_dir)
+
+    assert seed == {"BTC/EUR": 1.0}
+
+
+def test_seed_exec_positions_skips_a_schema_version_1_record(tmp_path):
+    # A base-keyed v1 "ok" record cannot honestly seed the symbol-labelled positions gauge -- it
+    # must be skipped even though "ok" is otherwise the qualifying status.
+    journal_dir = tmp_path / "journal"
+    _write_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC), loaded=1)
+
+    assert _seed_exec_positions(journal_dir) is None
 
 
 # --- command.py: _ExecGauges -------------------------------------------------------------------------
