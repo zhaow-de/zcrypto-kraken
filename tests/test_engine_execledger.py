@@ -273,6 +273,20 @@ def test_non_list_reasons_on_the_doc_is_refused():
         validate_exec_record(doc)
 
 
+def test_a_row_with_an_unknown_state_is_refused():
+    doc = _v2_doc()
+    doc["submitted"] = [_row(state="acepted")]
+    with pytest.raises(EngineJournalError):
+        validate_exec_record(doc)
+
+
+def test_a_v1_record_with_a_plans_key_is_refused():
+    doc = _v1_doc()
+    doc["plans"] = []
+    with pytest.raises(EngineJournalError):
+        validate_exec_record(doc)
+
+
 def test_a_merge_over_a_v1_on_disk_record_upgrades_to_v2(tmp_path):
     path = exec_record_path(tmp_path, CYCLE_TS)
     path.parent.mkdir(parents=True)
@@ -314,6 +328,33 @@ def test_update_submitted_row_raises_on_an_unknown_client_order_id(tmp_path):
 def test_update_submitted_row_raises_when_the_record_is_absent(tmp_path):
     with pytest.raises(EngineError):
         update_submitted_row(tmp_path, CYCLE_TS, "coid-1", state="filled")
+
+
+def test_update_submitted_row_refuses_a_bogus_state_and_leaves_the_record_untouched(tmp_path):
+    """A typo'd state (construct the defect) must be REFUSED, not persisted -- an accepted-looking
+    typo would otherwise vanish from `open_submitted_rows`' re-attach set with no raise anywhere."""
+    row = _row()
+    append_submitted_row(tmp_path, CYCLE_TS, row, verdict=_verdict(), evaluated_at=CYCLE_TS)
+    path = exec_record_path(tmp_path, CYCLE_TS)
+    before = path.read_text()
+    with pytest.raises(EngineError):
+        update_submitted_row(tmp_path, CYCLE_TS, row["client_order_id"], state="acepted")
+    assert path.read_text() == before
+
+
+def test_append_submitted_row_raises_on_a_malformed_row(tmp_path):
+    row = _row()
+    del row["events"]
+    with pytest.raises(EngineJournalError):
+        append_submitted_row(tmp_path, CYCLE_TS, row, verdict=_verdict(), evaluated_at=CYCLE_TS)
+
+
+def test_append_plan_entry_preserves_a_populated_submitted_list(tmp_path):
+    append_submitted_row(tmp_path, CYCLE_TS, _row(), verdict=_verdict(), evaluated_at=CYCLE_TS)
+    before = read_exec_record(exec_record_path(tmp_path, CYCLE_TS))["submitted"]
+    append_plan_entry(tmp_path, CYCLE_TS, _refused_plan_entry(), verdict=_verdict(), evaluated_at=CYCLE_TS)
+    after = read_exec_record(exec_record_path(tmp_path, CYCLE_TS))["submitted"]
+    assert after == before
 
 
 def test_append_plan_entry_and_update_plan_intent(tmp_path):

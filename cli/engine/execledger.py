@@ -26,6 +26,7 @@ _V2_KEYS = _V1_KEYS | {"plans"}
 _ROW_KEYS = frozenset({"plan_id", "intent_index", "client_order_id", "intent", "order", "state", "filled_qty", "events"})
 _PLAN_ENTRY_KEYS = frozenset({"plan_id", "received_at", "disposition", "reasons", "plan", "intents"})
 
+_ROW_STATES = frozenset({"submitting", "accepted", "rejected", "venue_canceled", "canceled", "filled", "ambiguous"})
 # A resting order that could still change state on its own (venue fill/cancel) or that this
 # process could still act on -- the re-attach input for D10's reconciliation-on-restart.
 _OPEN_ORDER_STATES = frozenset({"submitting", "accepted"})
@@ -46,7 +47,10 @@ def validate_exec_record(doc: dict) -> None:
     unknown schema_version; a doc whose key set doesn't match its schema's exact set exactly (this
     alone rejects both "v1 with a `plans` key" and "v2 without `plans`"); a v1 record with a
     non-empty `submitted`; a submitted row or plan entry whose key set isn't the exact row/plan-entry
-    set; or a `submitted`/`plans`/`reasons`/`events` field that isn't a list."""
+    set; a `submitted`/`plans`/`reasons`/`events` field that isn't a list; or a row whose `state`
+    isn't one of `_ROW_STATES` -- the choke point every mutator's `_store` call routes through, so a
+    typo'd state (e.g. "acepted") can never persist and silently drop out of `open_submitted_rows`'
+    re-attach set with nothing ever raising."""
     schema_version = doc.get("schema_version") if isinstance(doc, dict) else None
     if schema_version not in _LOADABLE_EXEC_SCHEMA_VERSIONS:
         raise EngineJournalError(
@@ -68,6 +72,8 @@ def validate_exec_record(doc: dict) -> None:
             raise _key_error("submitted row", row, _ROW_KEYS)
         if not isinstance(row["events"], list):
             raise EngineJournalError(f"submitted row 'events' must be a list, got {row['events']!r}")
+        if row["state"] not in _ROW_STATES:
+            raise EngineJournalError(f"submitted row 'state' must be one of {sorted(_ROW_STATES)}, got {row['state']!r}")
 
     if schema_version == 2:
         if not isinstance(doc["plans"], list):
@@ -104,7 +110,14 @@ def _load_or_new(path: Path, verdict: GateVerdict, evaluated_at: datetime) -> di
     an existing one is validated in its own shape and upgraded to v2, carrying `submitted`/`plans`
     forward untouched (a v1 record has no `plans` -- it upgrades to `plans: []`). Only the verdict
     fields (`level`, `reasons`, `inputs`, `evaluated_at`) come from this call's arguments -- that is
-    the whole of merge-never-clobber."""
+    the whole of merge-never-clobber.
+
+    Single-writer assumption: this read-modify-write plus `_store`'s fixed `.tmp` sibling name carry
+    no lock, so two mutators racing on the same `path` can lose one's update. Holds today because
+    every mutator call site runs on the node's one event-loop thread (the cycle runs on it
+    synchronously; the executor is driven by that same loop's timers/callbacks). If a caller is ever
+    added on a different thread or process, this pair needs a real lock, not just this comment.
+    """
     cycle_ts = _cycle_ts_from_path(path)
     submitted: list = []
     plans: list = []
