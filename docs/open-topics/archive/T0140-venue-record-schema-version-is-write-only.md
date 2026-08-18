@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: a third writer or any reader of the venue record's payload appears — grep `cli/` for `VENUE_SCHEMA_VERSION` and for reads of a `venue-<HH>.json` payload beyond `_seed_venue_state`'s five keys; today the constant has exactly two occurrences, both writes
+status: resolved
 ---
 
 # The venue record's schema_version is write-only
@@ -25,8 +24,14 @@ Today the blast radius is small: both live readers are key-agnostic, so a shape 
 - The startup seed publishes a real, visible consequence of a shape change even without a validator: reading a pre-deploy base-keyed record yields `zcrypto_venue_instruments_loaded 10 / _expected 12` until the first post-deploy cycle. Measured, not predicted. It does not page (spec `00089` D6 excludes both gauges from alerting) but it reads as a fault to whoever looks.
 - `cli/engine/journal.py` is the worked example of the alternative — schema-aware validation that refuses wrong keying rather than silently normalizing it — including the `_LOADABLE_SCHEMA_VERSIONS` pattern for keeping older records readable.
 
-## Suggested next steps
+## Resolution
 
-- Decide the cheaper of two shapes, and record which and why: (a) give the venue record a `validate_venue_record` mirroring the journal's, refusing a payload whose key shape disagrees with its declared version; or (b) accept the stamp as provenance-only and say so **at the constant**, so the next reader does not mistake it for an enforced invariant. Option (b) is legitimate and may be right — the point is that the file currently says neither.
-- If (a): give the two existing tests something non-self-referential to assert — a stored record with a mismatched shape must be refused. Prove it by constructing the defect, per `agent-ops.md`; a guard is unproven until the defect it names is seen to trip it.
-- Re-check this when `00090` lands: if its reconciliation reads the venue payload structurally, option (b) stops being available.
+**Resolved 2026-08-18 (iter-140, spec/plan `00090` D9) — ruled option (a), and the third suggested step is what forced it.** `00090`'s executor seeds `zcrypto_exec_position{symbol}` at startup from the newest `venue-<HH>.json`'s `state.positions`, and its `reduce_only` classification reads `state.balances_free` to refute a spot-disposal quantity — both structural reads of the payload. That is exactly the condition this topic named as the one that removes option (b), so provenance-only labelling stopped being available and the ruling was forced by the consumer rather than chosen on cost.
+
+`cli/engine/venueledger.py::validate_venue_record` mirrors `cli/engine/journal.py::validate_record`: schema-aware in both directions, refusing a record whose key shape disagrees with its declared `schema_version`, with `_LOADABLE_VENUE_SCHEMA_VERSIONS = {1, 2}` keeping older records readable on the journal's own pattern. v1 loadability is deliberate and narrow — no v1 `venue-<HH>.json` ever existed on the engine host (`00089` first deployed 2026-08-16 with the schema already at 2), so it covers workstation-side journals only.
+
+The two self-referential tests are gone, replaced with refusal tests that can actually fail: a stored schema-2 record carrying base keys is **refused, not normalized**; a v1 record validates in its own shape (and is refused the moment a v2-only field is added to it); an unknown schema is refused. The *wiring* is proven separately and deliberately: every other venue-record fixture in `tests/test_engine_metrics.py` now writes schema-valid records, so a single v1-shaped body stamped `schema_version: 2` is what makes deleting either `validate_venue_record(doc)` call — in `_seed_venue_state` or in `_seed_exec_positions`, both of which validate **before** reading `status` — turn the suite red instead of leaving it green.
+
+**The exec ledger got the identical treatment in the same branch, for the identical reason** (`00090` D5): `validate_exec_record` with `_LOADABLE_EXEC_SCHEMA_VERSIONS = {1, 2}`, `EXEC_SCHEMA_VERSION` bumped 1 → 2 for the write-ahead `submitted` rows, routed through `_store` so every mutator refuses a bad record — including a typo'd row state (`"acepted"`), which previously persisted cleanly and then dropped silently out of the re-attach set with nothing raising. An unvalidated stamp on a forensic record beside real money is this same trap one artifact over.
+
+Commits: `d1099f98` + `479c49d1` (the exec ledger's schema 2 and its validator), `4004c764` + `f5237be3` (the venue validator, the startup position seed, and the erasable-proof pin). **The code has landed and is green; nothing is deployed** — the first record either validator will read on the fleet arrives at the deploy converge's next boundary.

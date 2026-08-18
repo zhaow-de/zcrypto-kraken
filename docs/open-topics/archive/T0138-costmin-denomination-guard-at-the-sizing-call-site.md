@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: a production (non-test) consumer of `InstrumentConstraints.costmin` exists — grep `cli/` for a read of `.costmin`
+status: resolved
 ---
 
 # Costmin denomination guard at the sizing call site
@@ -22,8 +21,16 @@ A BTC-denominated floor is `0.00002`; a EUR-denominated one is `0.45` — four o
 - `tests/test_engine_venuestate.py`'s `_XBT_LEG_ATTRS` distinctness is now load-bearing rather than decorative — `test_the_xbt_legs_freeze_their_own_cache_constraints` reads all three Cache-supplied values back for both `/BTC` legs, so a reader that reused the EUR fixture values or defaulted them fails. Landed with `00094`; do not redo it.
 - `cli/engine/feeders.py::load_minimums` filters `quote == "EUR"` **by design** and must keep doing so; the two BTC-quoted floors are read from the snapshot's `universe` block in the drift test, never through that reader.
 
-## Suggested next steps
+## Resolution
 
-- When `00090` builds the order path, put the guard at the comparison itself: wherever a notional is compared against `constraints.costmin`, assert `constraints.costmin_quote` equals the denomination of that notional, and fail loudly on mismatch rather than proceeding. The assertion belongs beside the comparison, not in the dataclass.
-- Prove the guard by constructing the defect, per `agent-ops.md` — a guard is unproven until the defect it names is seen to trip it. Build the mismatched pair (a `/BTC` leg's `costmin` of `2e-05` against a EUR-denominated notional) and confirm it raises; confirm the matched pair passes. Read *which* failure fired, since a red exit can be the guard misfiring on a healthy path.
-- Use `fx_eur_notional(symbol, qty, price, btc_eur_close)` (`cli/engine/instruments.py`, landed by `00094` D5 pure and uncalled precisely so `00090` inherits a proven conversion) rather than writing a second conversion beside real money.
+**Resolved 2026-08-18 (iter-140, spec/plan `00090` D8) — the guard landed at the comparison, exactly where this topic said it belonged, and the defect it names was constructed and seen to trip it.**
+
+`cli/engine/executor.py::size_probe_order` is the order path's single sizing call site: every probe intent is sized there, on the Cache-fresh constraints and the committed `COSTMIN`, through the one proven `size_order`. Its first act — before any comparison reaches `size_order` — is `if constraints.costmin_quote != "EUR": raise EngineError(...)`, naming the symbol, the offending denomination, and the remedy (`convert through fx_eur_notional before sizing a non-EUR-quoted leg`). The `__post_init__` shape this topic ruled out was not revisited: the guard is a call-site refusal, so the concordance tests' deliberately-wrong hand-built states are untouched and `InstrumentConstraints` stays a plain evidence dataclass.
+
+The guard is proven, not merely present. `tests/test_engine_executor.py::test_the_mismatched_denomination_raises_and_names_the_defect` builds this topic's own construction — an `ETH/BTC` leg's `costmin=2e-05, costmin_quote="BTC"` against a EUR notional — and asserts on `match="cross-denomination"`, so it reads *which* failure fired rather than accepting any red. The matched EUR pair sizes through unchanged, and the **fail-open direction is pinned separately**: `test_a_below_costmin_result_names_the_floor` drives a matched EUR pair that clears `ordermin` and falls under the EUR costmin floor, asserting the reason names `costmin` — so a costmin drop to `0.0`, the silent pass-everything failure this topic exists to prevent, cannot survive the suite.
+
+The refusal reaches the operator surface too: `zcrypto engine probe-plan --check` refuses the comparison outright when a leg's `costmin` is not EUR-denominated, rather than validating an intent the node would then raise on.
+
+`fx_eur_notional` stays pure and uncalled — the rung-1 probe's notionals are all EUR and all its legs EUR-quoted, so the live path is the matched case; the guard is what forces a future `/BTC`-leg notional through that conversion instead of a second one written beside real money.
+
+Commits: `da9a2c71` (the sizing seam and the guard), `0a1ed02d` (the fail-open-direction proof), `5c5485c3` (the CLI validator's matching refusal). **The code has landed and is green; nothing is deployed and no order has ever been submitted** — the guard's live exercise is the probe window, which the `engine-probe-window` runbook section gates.
