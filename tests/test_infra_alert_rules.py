@@ -509,23 +509,48 @@ def test_the_sleeve_composition_rule_stays_quiet_while_the_series_does_not_exist
 # shipped a runbook section that existed but was unreachable from the page it served, which is worth
 # exactly as much as no runbook at all -- the responder is on a phone at 03:00 with nothing open.
 
-RUNBOOK = REPO / "infra/runbooks/README.md"
+RUNBOOKS = REPO / "infra/runbooks"
 # The anchors are explicit `<a name=...>` tags rather than heading slugs precisely so the
 # `-- ALERT` / `-- KNOWN LIMITATION` marker cannot become part of them; match that literal form.
-_RUNBOOK_LINK = re.compile(r"infra/runbooks/README\.md#([A-Za-z0-9._-]+)")
+_ANCHOR_TAG = re.compile(r'<a name="([A-Za-z0-9._-]+)"></a>')
+# Path-agnostic across the runbook directory: the procedures live in per-subsystem files and the
+# README is only the index, so a citation names whichever file holds the section. BOTH halves are
+# captured, because a link resolves against the file it names -- an anchor that lives in a SIBLING
+# file scrolls nowhere, which is exactly what a section moved without its citations looks like.
+_RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9._-]+)")
+
+
+def _runbook_anchors() -> dict[str, list[str]]:
+    """Every anchor under `infra/runbooks/`, mapped to the file name(s) that define it."""
+    found: dict[str, list[str]] = {}
+    for path in sorted(RUNBOOKS.glob("*.md")):
+        for anchor in _ANCHOR_TAG.findall(path.read_text()):
+            found.setdefault(anchor, []).append(path.name)
+    return found
+
+
+def test_every_runbook_anchor_is_defined_in_exactly_one_file():
+    """Two files defining the same anchor makes every citation of it ambiguous -- and a section
+    copied to its new subsystem file without being deleted from the old one is exactly how that
+    happens, silently, while every citation still resolves."""
+    dupes = {anchor: files for anchor, files in _runbook_anchors().items() if len(files) > 1}
+    assert not dupes, f"a runbook anchor is defined in more than one file, so a citation of it is ambiguous: {dupes}"
 
 
 def test_every_runbook_link_in_an_alert_summary_resolves():
-    text = RUNBOOK.read_text()
+    anchors = _runbook_anchors()
     cited, broken = [], []
     for rule in _rules():
-        for anchor in _RUNBOOK_LINK.findall(" ".join((rule.get("annotations") or {}).values())):
-            cited.append(anchor)
-            if f'<a name="{anchor}"></a>' not in text:
-                broken.append((rule["uid"], anchor))
+        for filename, anchor in _RUNBOOK_LINK.findall(" ".join((rule.get("annotations") or {}).values())):
+            cited.append(f"{filename}#{anchor}")
+            if filename not in anchors.get(anchor, ()):
+                broken.append((rule["uid"], f"{filename}#{anchor}", anchors.get(anchor) or "no runbook file"))
 
     assert cited, "no rule cites a runbook anchor -- the regex is broken, not the summaries"
-    assert not broken, f"alert summary points at a runbook anchor that does not exist: {broken}"
+    assert not broken, (
+        f"an alert summary points at a runbook anchor the file it names does not define -- the "
+        f"responder gets a fragment and no next step (uid, cited, actually defined in): {broken}"
+    )
 
 
 def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
