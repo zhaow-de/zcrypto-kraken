@@ -62,7 +62,11 @@ VOCABULARY = re.compile(
       | \biter-\d+             # iter-117
       | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
       | \bWP\d                 # WP4
-      | \bD\d{1,2}\b           # D3 / D12 — spec decision numbers (the rule names them; this enforces it)
+      | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (the rule names them; this
+                               # enforces it). The optional letter is NOT cosmetic: `\bD\d{1,2}\b`
+                               # cannot match `D5a`, because there is no word boundary between `5`
+                               # and `a` — so every lettered decision escaped the guard entirely,
+                               # and D5a/D6a/D1c are the most-cited decisions in the specs.
     )""",
     re.VERBOSE,
 )
