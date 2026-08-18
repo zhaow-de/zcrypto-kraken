@@ -1165,6 +1165,41 @@ def test_a_fills_liquidity_side_is_named_not_numbered_in_both_the_row_and_the_me
     assert metrics.fills == [(label, pytest.approx(0.012))]
 
 
+def test_a_composite_liquidity_side_never_reaches_the_helper_that_would_abort_the_process(tmp_path):
+    """`liquidity_side_to_str` does not merely raise on an out-of-range value -- on 3 it hard-aborts
+    the process with a Rust capacity-overflow panic (SIGABRT), which no `except BaseException` can
+    catch. And 3 is CONSTRUCTIBLE as `LiquiditySide.MAKER | LiquiditySide.TAKER`, because IntFlag
+    keeps out-of-range composites under its KEEP boundary. So the membership guard, not the
+    try/except, is what keeps a live engine alive here: reaching the helper at all would kill the
+    process on the write-ahead path with real money in flight.
+
+    Unreachable in practice -- the fill's value arrives from the Rust core as 0, 1 or 2 -- but the
+    failure mode is an uncatchable abort, so it is guarded rather than argued about. That this test
+    RETURNS is itself half the assertion: before the guard, it takes the whole pytest process down
+    with exit 134."""
+    composite = LiquiditySide.MAKER | LiquiditySide.TAKER
+    assert int(composite) == 3 and composite not in tuple(LiquiditySide)
+
+    # The guard function directly, first: the one call that would abort.
+    assert executor_module._liquidity(composite) == "3"
+
+    # Then the whole write-ahead path: the fill still earns its forensic row.
+    client = StubClient()
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+    _deliver_fill(ex, client, "O-1", 0.001, liquidity=composite)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert row["filled_qty"] == 0.001
+    assert [e["liquidity"] for e in row["events"] if e.get("event") == "fill"] == ["3"]
+    assert metrics.fills == [("3", pytest.approx(0.012))]
+
+
 def test_an_unrecognisable_liquidity_side_still_gets_its_forensic_row(tmp_path):
     """The payload builder sits on the write-ahead path, where a raise costs the fill its row --
     and `liquidity_side_to_str` raises on a non-int and reads garbage memory on an out-of-range

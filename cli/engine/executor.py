@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model.enums import OrderSide, TimeInForce, liquidity_side_to_str
+from nautilus_trader.model.enums import LiquiditySide, OrderSide, TimeInForce, liquidity_side_to_str
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 
 from cli.config import EngineConfig
@@ -87,6 +87,12 @@ _VENUE = Venue("KRAKEN")
 # balance/asset surfaces the classic `ZEUR`); anything else is a different currency and is never
 # summed into a EUR total.
 _EUR_CODES = ("EUR", "ZEUR")
+# The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
+# out, so a member the library adds is admitted automatically. Plain ints, and the test is
+# `isinstance(side, int) and int(side) in ...`: a set membership on the enum member itself would
+# lean on Enum's own hashing, and a string that happens to spell a number must not slip through.
+# See `_liquidity` for why this gate exists at all -- it is a process-survival guard, not a filter.
+_LIQUIDITY_VALUES = frozenset(int(member) for member in LiquiditySide)
 # The instrument-id -> symbol direction, for labelling a fill's metric. Inverted from the ratified
 # map rather than string-split off the id, so an id this engine never ratified raises instead of
 # inventing a label.
@@ -143,13 +149,21 @@ def _liquidity(side) -> str:
 
     Falls back to `str(side)`, logged, for anything the enum cannot name. This sits on the
     write-ahead path where a raise costs the fill its row, and `liquidity_side_to_str` is not
-    total: it raises `TypeError` on a non-int and, on an out-of-range int, decodes garbage memory
-    into a `UnicodeDecodeError`. An unnameable side is recorded verbatim, never dropped."""
-    try:
+    total: it raises `TypeError` on a non-int, `OverflowError` on -1, and on an out-of-range
+    positive int decodes garbage memory into a `UnicodeDecodeError`. An unnameable side is recorded
+    verbatim, never dropped.
+
+    The membership test in front of that call is NOT redundant with the `except`, and must not be
+    "simplified" away: on 3 the helper does not raise at all, it ABORTS THE PROCESS with a Rust
+    capacity-overflow panic (SIGABRT) that no `except BaseException` can catch -- and 3 is
+    constructible as `LiquiditySide.MAKER | LiquiditySide.TAKER`, because IntFlag keeps
+    out-of-range composites under its KEEP boundary. Only never making the call survives it, and
+    dying here would kill a live engine mid-probe with money in flight. `_LIQUIDITY_VALUES` is
+    derived from the enum, so a member the library adds widens the guard with it."""
+    if isinstance(side, int) and int(side) in _LIQUIDITY_VALUES:
         return liquidity_side_to_str(side)
-    except Exception:
-        logger.warning("fill carries an unrecognisable liquidity side %r -- recording it verbatim", side)
-        return str(side)
+    logger.warning("fill carries an unrecognisable liquidity side %r -- recording it verbatim", side)
+    return str(side)
 
 
 def _fee_eur(commission) -> float | None:
