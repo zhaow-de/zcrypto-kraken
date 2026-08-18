@@ -509,23 +509,88 @@ def test_the_sleeve_composition_rule_stays_quiet_while_the_series_does_not_exist
 # shipped a runbook section that existed but was unreachable from the page it served, which is worth
 # exactly as much as no runbook at all -- the responder is on a phone at 03:00 with nothing open.
 
-RUNBOOK = REPO / "infra/runbooks/README.md"
+RUNBOOKS = REPO / "infra/runbooks"
 # The anchors are explicit `<a name=...>` tags rather than heading slugs precisely so the
 # `-- ALERT` / `-- KNOWN LIMITATION` marker cannot become part of them; match that literal form.
-_RUNBOOK_LINK = re.compile(r"infra/runbooks/README\.md#([A-Za-z0-9._-]+)")
+_ANCHOR_TAG = re.compile(r'<a name="([A-Za-z0-9._-]+)"></a>')
+# Path-agnostic across the runbook directory: the procedures live in per-subsystem files and the
+# README is only the index, so a citation names whichever file holds the section. BOTH halves are
+# captured, because a link resolves against the file it names -- an anchor that lives in a SIBLING
+# file scrolls nowhere, which is exactly what a section moved without its citations looks like.
+# The anchor half excludes `.` (the file half needs it): no anchor carries one, and the dashboard
+# descriptions end the sentence right after the citation, which a dot-accepting class would swallow.
+# Fail-closed if that ever changes -- a truncated anchor resolves to nothing and the test says so.
+_RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
+# The index's own rows link SIDEWAYS -- `](capture.md#anchor)`, relative, no `infra/runbooks/`
+# prefix -- so `_RUNBOOK_LINK` structurally cannot see them. Matched separately for that reason.
+_INDEX_LINK = re.compile(r"\]\(([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)\)")
+
+
+def _runbook_anchors() -> dict[str, list[str]]:
+    """Every anchor under `infra/runbooks/`, mapped to the file name(s) that define it."""
+    found: dict[str, list[str]] = {}
+    for path in sorted(RUNBOOKS.glob("*.md")):
+        for anchor in _ANCHOR_TAG.findall(path.read_text()):
+            found.setdefault(anchor, []).append(path.name)
+    return found
+
+
+def test_every_runbook_anchor_is_defined_in_exactly_one_file():
+    """Two files defining the same anchor makes every citation of it ambiguous -- and a section
+    copied to its new subsystem file without being deleted from the old one is exactly how that
+    happens, silently, while every citation still resolves."""
+    dupes = {anchor: files for anchor, files in _runbook_anchors().items() if len(files) > 1}
+    assert not dupes, f"a runbook anchor is defined in more than one file, so a citation of it is ambiguous: {dupes}"
 
 
 def test_every_runbook_link_in_an_alert_summary_resolves():
-    text = RUNBOOK.read_text()
+    anchors = _runbook_anchors()
     cited, broken = [], []
     for rule in _rules():
-        for anchor in _RUNBOOK_LINK.findall(" ".join((rule.get("annotations") or {}).values())):
-            cited.append(anchor)
-            if f'<a name="{anchor}"></a>' not in text:
-                broken.append((rule["uid"], anchor))
+        for filename, anchor in _RUNBOOK_LINK.findall(" ".join((rule.get("annotations") or {}).values())):
+            cited.append(f"{filename}#{anchor}")
+            if filename not in anchors.get(anchor, ()):
+                broken.append((rule["uid"], f"{filename}#{anchor}", anchors.get(anchor) or "no runbook file"))
 
     assert cited, "no rule cites a runbook anchor -- the regex is broken, not the summaries"
-    assert not broken, f"alert summary points at a runbook anchor that does not exist: {broken}"
+    assert not broken, (
+        f"an alert summary points at a runbook anchor the file it names does not define -- the "
+        f"responder gets a fragment and no next step (uid, cited, actually defined in): {broken}"
+    )
+
+
+def test_every_runbook_link_in_a_dashboard_description_resolves():
+    """The panel descriptions cite sections the same way the summaries do, and they are read at the
+    same moment -- a responder who followed the notification's panel link is already on the board.
+    Held to the same bar rather than left to the summaries' test, which reads `alerts.yaml` only."""
+    anchors = _runbook_anchors()
+    cited, broken = [], []
+    for path in sorted((REPO / "infra/grafana").glob("*.json")):
+        for filename, anchor in _RUNBOOK_LINK.findall(path.read_text()):
+            cited.append(f"{filename}#{anchor}")
+            if filename not in anchors.get(anchor, ()):
+                broken.append((path.name, f"{filename}#{anchor}", anchors.get(anchor) or "no runbook file"))
+
+    assert cited, "no dashboard cites a runbook anchor -- the regex is broken, not the descriptions"
+    assert not broken, f"a dashboard description points at a runbook anchor its named file does not define: {broken}"
+
+
+def test_the_index_routes_to_every_section_and_only_to_real_ones():
+    """The README is a pure index, so its rows ARE the entry point: a summary's path resolves to
+    that page, and the row is the responder's next tap. Its links are relative, which puts them
+    outside every other guard here -- a move that updates the summaries and the panels and forgets
+    the index misroutes exactly the page the responder lands on. Both directions are pinned: a row
+    pointing at a file that does not define the anchor, and a section no row routes to at all,
+    which is reachable only by someone who already knows which file to open."""
+    anchors = _runbook_anchors()
+    linked = _INDEX_LINK.findall((RUNBOOKS / "README.md").read_text())
+
+    assert linked, "the index has no anchor-bearing rows -- the regex is broken, not the index"
+    broken = [(f"{name}#{a}", anchors.get(a) or "no runbook file") for name, a in linked if name not in anchors.get(a, ())]
+    assert not broken, f"an index row links at a section the file it names does not define (row, actually defined in): {broken}"
+
+    unrouted = sorted(set(anchors) - {a for _, a in linked})
+    assert not unrouted, f"a runbook section no index row routes to -- unreachable from the entry point: {unrouted}"
 
 
 def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():

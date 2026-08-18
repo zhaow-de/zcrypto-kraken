@@ -90,8 +90,8 @@ repos:
       - mdformat-gfm
       - mdformat-toc
       # Allowlist of mdformat-managed docs: the three READMEs + infra/external-systems.md + EVERY
-      # report under docs/research/, matched by glob so a new research paper is covered
-      # automatically (no per-file edit here).
+      # file under infra/runbooks/ + EVERY report under docs/research/, matched by glob so a new
+      # subsystem runbook or research paper is covered automatically (no per-file edit here).
       # Excluded by the negative lookahead: the verbatim per-phase decision logs *-decisions.md,
       # whose option lists + "(Decision: N)" markers mdformat would restructure (see
       # .claude/rules/decisions-log.md). Nothing else under docs/ is covered (reference/, specs/,
@@ -101,7 +101,7 @@ repos:
             README\.md|
             infra/README\.md|
             infra/external-systems\.md|
-            infra/runbooks/README\.md|
+            infra/runbooks/.*\.md|
             docs/open-topics/README\.md|
             docs/research/(?!.*-decisions\.md$).*\.md
         )$

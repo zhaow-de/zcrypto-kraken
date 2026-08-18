@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: order submission stops being an attended-window act — check `grep -n exec_armed infra/ansible/roles/engine/templates/zcrypto.toml.j2` and read the committed default; while it renders `false` the engine is armed only inside a window a human is watching and a restart mid-window is an abort, not a routine event. Ripe the moment that default becomes `true` (continuous arming), or earlier if an exec ledger record is ever observed carrying a non-terminal reduce-only `submitted` row across a container restart — the ledger read in `infra/runbooks/README.md#engine-probe-window` prints the row states, and `docker inspect --format '{{.State.StartedAt}}' zcrypto-engine` gives the restart to compare against
+ripe_when: order submission stops being an attended-window act — check `grep -n exec_armed infra/ansible/roles/engine/templates/zcrypto.toml.j2` and read the committed default; while it renders `false` the engine is armed only inside a window a human is watching and a restart mid-window is an abort, not a routine event. Ripe the moment that default becomes `true` (continuous arming), or earlier if an exec ledger record is ever observed carrying a non-terminal reduce-only `submitted` row across a container restart — the ledger read in `infra/runbooks/engine.md#engine-probe-window` prints the row states, and `docker inspect --format '{{.State.StartedAt}}' zcrypto-engine` gives the restart to compare against
 ---
 
 # Adopted resting orders: their fills are unobservable after a restart

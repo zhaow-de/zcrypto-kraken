@@ -166,7 +166,7 @@ def containing_dark_window(
     # above by the stream's own, so a thin pair can straddle far wider. What bounds it is the
     # measured silence distribution above. Closing it costs an H-1 segment read per pair on every
     # fleet-dark hour. Re-measure the share before changing this:
-    # infra/runbooks/README.md#cross-hour-straddle
+    # infra/runbooks/capture.md#cross-hour-straddle
     inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
     edges = [hour_start, *inside, hour_end]
     for a, b in zip(edges, edges[1:], strict=False):
