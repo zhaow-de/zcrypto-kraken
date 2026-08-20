@@ -773,7 +773,7 @@ timeout 60 git push -u origin feat/t0143-venue-silence-discriminator
 
 ---
 
-### Task 5: Attended verification against BOTH real events
+### Task 5: Attended replay against the real archive (PRE-merge)
 
 > **MAIN LOOP ONLY — do not dispatch this to a subagent or a workflow.** It reads a NAS/host copy of the capture tree, and the permission gate blocks ssh/sudo steps inside a subagent, where the prompt dies unseen (`agent-ops.md`). Verified 2026-08-20: there is no local `capture-segments` tree to substitute.
 
@@ -797,24 +797,7 @@ Reproduce every number from the data at full precision; never quote it from the 
 
 The replay is read-only and must **not** rewrite the live ledger: `_decided` prevents re-deciding an already-ledgered `(pair, kind, hour, state)`, so all four production records keep no verdict and count as `undetermined` (D4a). After the converge, confirm the live counter shows exactly that — `undetermined` carrying the sum of all four (21,887.369457 s — which is the ENTIRE residual counter today, so the partition is exactly checkable) and `venue_silent` at 0.0 — rather than assuming it.
 
-- [ ] **Step 2: Record the digest, then converge ops**
-
-`zcrypto-ops` is the compute tier — no canary bake owed — but four operands are mechanically required and a converge missing any of them bounces (`capture-deploys.md`):
-
-1. **Record the running digest in `docs/reference/fleet-pins.md` FIRST** — the pins assert refuses otherwise, and that row is the only rollback operand (`ops_image_digest` has no repo default).
-2. **Pull the digest on the host first** — every runner is `--pull never`, and the ops role's digest preflight refuses a digest the host has not pulled.
-3. **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Use `infra/ansible/scripts/converge.sh`, which refuses the bare form and previews first. Never wrap it in `timeout`.
-4. **`-e liquidations_decision=roll-after`** — `ops_image_digest` also repins the liquidations compose, which the role never restarts, and it refuses the repin without this. `roll-after` is the standing preference: the poller re-fetches a 30 h window every cycle, so a converge-length restart self-heals.
-
-**Omit `ops_alloy_digest`** — Alloy is not the subject here. No `config.alloy` edit is owed at all: the ops keep-list already admits `zcrypto_reconcile_.*` as a prefix family, so the new series is admitted without touching it. Verify that claim by reading the rendered keep-list before converging rather than trusting this line.
-
-- [ ] **Step 3: Verify the new series by VALUE, then push the alert**
-
-At the next tick run `infra/scripts/ops-postverify.sh` — `(no series)` reads FAIL, never a zero.
-
-Then read the new counter's three label values directly. **Read the numbers, do not check for presence** (`agent-ops.md`): `increase()`/`delta()` are blind to a condition already present in a series' first sample, so a fault born in the deploy window is baked into the baseline and never fires. Expect `undetermined` to be non-zero from the first scrape — the two historical episodes land there by D4a — and `venue_silent` to be 0.0 until a *new* episode books. Assert the partition: the three values must sum to the `both_streams_silent` share of `residual_gap_seconds_total`.
-
-Then `infra/scripts/grafana-push.sh` for the annotation change, and confirm the rule is **evaluating** by value. **No prune is owed** — same uid, annotation-only (Task 3, Step 1) — so do not run `GRAFANA_PRUNE=1`.
+> **The converge does NOT ride this task — it cannot.** `.github/workflows/capture-image.yml` builds the image only on push to `develop`/`main` (plus tags and manual dispatch), so no image carrying this code exists while the branch is unmerged. The converge, the Grafana push, and the verify-by-value are therefore Task 7, after the PR merges and CI publishes an image. Step 1 above needs no image and is the only part that can run now.
 
 ---
 
@@ -849,3 +832,29 @@ Load the `iteration-closeout` skill first; it owns entry format, phase routing, 
 Load the `open-pr` skill. Title: `feat(archive): iter-141 — a venue-silence discriminator for the residual-gap counter`. Target `develop`.
 
 **Only on the user's explicit word** (`branch-workflow.md` PR gate, attended session). If the word has not come, report the branch ready and stop.
+
+---
+
+### Task 7: Post-merge converge, push, and verify by value
+
+> **MAIN LOOP ONLY, attended, and only AFTER the PR has merged to `develop` and CI has published an image containing this code.** Confirm the image exists and note its digest before starting.
+
+- [ ] **Step 1: Record the digest, then converge ops**
+
+`zcrypto-ops` is the compute tier — no canary bake owed — but four operands are mechanically required and a converge missing any of them bounces (`capture-deploys.md`):
+
+1. **Record the running digest in `docs/reference/fleet-pins.md` FIRST** — the pins assert refuses otherwise, and that row is the only rollback operand (`ops_image_digest` has no repo default).
+2. **Pull the digest on the host first** — every runner is `--pull never`, and the ops role's digest preflight refuses a digest the host has not pulled.
+3. **`--limit zcrypto-ops` is mandatory** — a bare `site.yml` still runs the NAS play. Use `infra/ansible/scripts/converge.sh`, which refuses the bare form and previews first. Never wrap it in `timeout`.
+4. **`-e liquidations_decision=roll-after`** — `ops_image_digest` also repins the liquidations compose, which the role never restarts, and it refuses the repin without this. `roll-after` is the standing preference: the poller re-fetches a 30 h window every cycle, so a converge-length restart self-heals.
+5. **The roll itself is then OWED as a separate act.** `fleet-pins.md`'s standing constraints are explicit: `roll-after` is an **acknowledgement, not an action** — the manual `docker compose up -d` in `/etc/zcrypto-ops` must follow the converge, and be verified *from the container* afterwards (`docker inspect --format '{{.Config.Image}}'`), never from the compose file. Skip it and the liquidations container keeps running the old image while its compose pins the new one — armed to fire at the next unrelated `compose up`.
+
+**Omit `ops_alloy_digest`** — Alloy is not the subject here. No `config.alloy` edit is owed at all: the ops keep-list already admits `zcrypto_reconcile_.*` as a prefix family, so the new series is admitted without touching it. Verify that claim by reading the rendered keep-list before converging rather than trusting this line.
+
+- [ ] **Step 2: Verify the new series by VALUE, then push the alert**
+
+At the next tick run `infra/scripts/ops-postverify.sh` — `(no series)` reads FAIL, never a zero.
+
+Then read the new counter's three label values directly. **Read the numbers, do not check for presence** (`agent-ops.md`): `increase()`/`delta()` are blind to a condition already present in a series' first sample, so a fault born in the deploy window is baked into the baseline and never fires. Expect `undetermined` to be non-zero from the first scrape — the two historical episodes land there by D4a — and `venue_silent` to be 0.0 until a *new* episode books. Assert the partition: the three values must sum to the `both_streams_silent` share of `residual_gap_seconds_total`.
+
+Then `infra/scripts/grafana-push.sh` for the annotation change, and confirm the rule is **evaluating** by value. **No prune is owed** — same uid, annotation-only (Task 3, Step 1) — so do not run `GRAFANA_PRUNE=1`.
