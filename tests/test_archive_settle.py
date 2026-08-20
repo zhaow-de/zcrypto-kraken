@@ -7,6 +7,7 @@ import polars as pl
 
 from cli.archive.settle import (
     CAPTURE_DIVERGENT,
+    INTERIOR_MAX_SECONDS,
     LATE_MINT_HOURS,
     SETTLE_HOURS,
     UNDETERMINED,
@@ -491,6 +492,38 @@ def test_a_pair_whose_mirror_has_not_landed_caps_the_verdict():
     assert verdict.verdict == UNDETERMINED
     assert verdict.pairs_skipped == 1
     assert verdict.pairs_agreeing == 1
+
+
+def test_three_or_more_windows_are_never_classified():
+    # THE re-derivation. With 3+ windows there is no way to tell which gaps are the episode's own
+    # sputtering and which are healthy traffic separating unrelated incidents -- and an aggregate
+    # dominance check lets one large genuine outage's dark time carry an unrelated pair of disjoint
+    # blips to venue_silent. Constructed against the aggregate rule, which passed it. Refusing costs
+    # nothing measurable: every both_streams_silent record in the live ledger has one window or two.
+    three = [
+        DarkWindow(start=_at(0), end=_at(3000), seconds=3000.0),
+        DarkWindow(start=_at(3001), end=_at(3002), seconds=1.0),
+        DarkWindow(start=_at(3599), end=_at(3600), seconds=1.0),
+    ]
+    verdict = classify_dark_episode(
+        three,
+        {"BTC/EUR": {"primary": [(_at(3000), "update")], "secondary": [(_at(3000), "update")]}},
+    )
+    assert verdict.verdict == UNDETERMINED
+
+
+def test_a_long_healthy_interior_is_two_incidents_not_one_episode():
+    # The survivor of a per-gap dominance rule: 600 s dark, 1,000 s of PERFECTLY HEALTHY traffic on
+    # both mirrors, 600 s dark. Relative dominance passes it (1,000 < 1,200); the absolute bound
+    # refuses it. Interior evidence is bracket evidence -- it proves both hosts were receiving
+    # BETWEEN the darks, never during them -- so only a BRIEF interior makes a synchronised two-host
+    # failure-and-recovery implausible enough to weigh.
+    two = [DarkWindow(start=_at(0), end=_at(600), seconds=600.0), DarkWindow(start=_at(1600), end=_at(2200), seconds=600.0)]
+    healthy = [(_at(t), "update") for t in range(601, 1600)]
+    verdict = classify_dark_episode(two, {"BTC/EUR": {"primary": healthy, "secondary": list(healthy)}})
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.interior_seconds == 1000.0
+    assert verdict.interior_seconds > INTERIOR_MAX_SECONDS
 
 
 def test_a_healthy_hour_with_no_windows_is_undetermined_and_never_classifies():
