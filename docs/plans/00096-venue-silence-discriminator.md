@@ -350,10 +350,12 @@ First confirm the probe actually collects the tests under proof:
 uv run pytest tests/test_archive_settle.py -q --collect-only | tail -3
 ```
 
-Then run the probe. `--control` must be a mutation that certainly breaks the tests (proving the harness bites); `--mutation` is the real defect under proof:
+Then run the probe. `--control` must be a mutation that certainly breaks the tests (proving the harness bites); `--mutation` is the real defect under proof.
+
+**Do not use a fail-closed guard as the control.** The obvious choice — weakening the `len(windows) < 2` early return — is MASKED, and `mutate-probe.sh` correctly refuses at rc 5: with zero windows the `len(gaps) != len(windows) - 1` check returns the same verdict, and with one window `gaps` is empty so no pair has interior rows and `agreeing` stays 0. Every path still answers `undetermined`. The control below flips the fail-closed default itself, which no test can survive:
 
 ```bash
-infra/scripts/mutate-probe.sh   --file cli/archive/settle.py   --control 's/if len(windows) < 2:/if len(windows) < 0:/'   --mutation 's/if inside_p == inside_s:/if True:/'   -- uv run pytest tests/test_archive_settle.py -q
+infra/scripts/mutate-probe.sh   --file cli/archive/settle.py   --control 's/verdict = UNDETERMINED/verdict = VENUE_SILENT/'   --mutation 's/if inside_p == inside_s:/if True:/'   -- uv run pytest tests/test_archive_settle.py -q
 ```
 
 Expected: the control FAILS the probe (rc 0 overall, control proven), and the mutation is reported KILLED. Read **which** test failed under the mutation — it must be `test_a_mirror_that_missed_an_interior_event_is_a_capture_finding` and `test_divergence_on_any_pair_outranks_agreement_on_every_other` asserting on the verdict, not a collection or import error.
