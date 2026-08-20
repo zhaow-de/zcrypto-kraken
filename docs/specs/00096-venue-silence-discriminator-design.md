@@ -114,6 +114,7 @@ Any divergence from this table is a finding about the implementation, since the 
 ## What this does NOT do — bounded claims
 
 - It does not detect a shared upstream path failure — one where the venue sent data that some other vantage could have captured but neither of our hosts' paths carried. Two hosts cannot see that; it needs a third, independent vantage.
+- It does not close the interior entirely. Up to `INTERIOR_MAX_SECONDS` of genuinely healthy traffic can still sit between two large dark windows and read `venue_silent` — two independent incidents 299 s apart is the shape. The exposure is BOUNDED (it was unbounded before D2b) and the honest fix is the density test D2b rejected on complexity; if a real episode of that shape is ever seen, that rejection is what to revisit.
 - It does not prove venue silence. It records what the available evidence weighs toward, for the subset of episodes carrying interior evidence, and says `undetermined` otherwise.
 - It does not change alert severity, threshold, or firing behaviour. A venue outage still pages `critical`; what changes is that triage is one field away instead of a derivation.
 - It does not subtract anything from `residual_gap`, now or ever.
