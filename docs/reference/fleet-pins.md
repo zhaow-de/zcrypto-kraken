@@ -16,7 +16,7 @@ Reading rules:
 | capture | zcrypto-red | `636012cc00d9` — same build; this host's bake gated the engine re-pin | 2026-08-18 14:07:41 | `419feafc304f` (2026-08-15) |
 | engine | zcrypto | `636012cc00d9` — same build, **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-19 21:27:23 | `419feafc304f` (2026-08-16) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
-| ops (timers + liquidations) | zcrypto-ops | `419feafc304f` — specs `00094` + `00089`, revision `e0757909`; the liquidations container was rolled manually 2026-08-15 14:23 (the roll is always a separate act — see Standing constraints) | 2026-08-15 13:58:23 | `a8cd3a9524eb` (2026-08-10) |
+| ops (timers + liquidations) | zcrypto-ops | `6b4c13899653` — spec `00096` (the dark-episode verdict), revision `2c248fe4`; the liquidations container was rolled manually 2026-08-20 18:35:26Z (the roll is always a separate act — see Standing constraints) | 2026-08-20 18:33:37 | `419feafc304f` (2026-08-15) |
 | archive-pull | nas | `5f890c26237a` — the `-compat` build of `e0757909`; repo pin `nas_capture_image` (`infra/ansible/host_vars/nas/vars.yml`), the one surface whose pin is a committed file | 2026-08-15 13:40:38 | `620114511f19` (2026-07-17) |
 
 **Bridgehead `zaccess` — apt-pinned native packages, not image digests** (spec `00075`; no Docker on the edge). These are `access_*` role defaults, held with `dpkg --set-selections`; a version bump = unhold → converge with the new pin → the role re-applies the hold.
