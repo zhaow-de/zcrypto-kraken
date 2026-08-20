@@ -1179,7 +1179,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this."
+      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this. TRIAGE FIRST: a both_streams_silent record carries a verdict field, also exported as zcrypto_reconcile_dark_episode_seconds_total by verdict. venue_silent means both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts -- weigh it as a venue event, and treat it sceptically if a fleet-wide image change just landed. capture_divergent means one host missed what the other received: investigate the fleet. undetermined means no evidence either way -- treat it as loss, and check zcrypto_capture_venue_status_total for that hour, where a series for anything other than online is itself a venue signal this check cannot see. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-residual-gap"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of unrecoverable silence"
