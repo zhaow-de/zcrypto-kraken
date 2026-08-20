@@ -5,6 +5,10 @@
 # its own stable `uid` (GET to check whether it already exists, then POST to create or PUT to
 # update) -- safe to re-run after any commit to infra/grafana/.
 #
+# Sequencing: when summaries or panel descriptions cite repo paths, push AFTER the PR merges,
+# never from the unmerged branch -- a branch push ships alert summaries naming files develop
+# does not have (degraded between merge and push, wrong the other way around).
+#
 # Env. Only GRAFANA_SA_TOKEN has no default (it is the secret); the rest default to THIS project's
 # real, verified values so nobody has to guess them again -- guessing them wrong is not a harmless
 # error, it is T0034: "first datasource of each type" once silently repointed all 7 rules at the
