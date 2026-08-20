@@ -61,7 +61,7 @@ VOCABULARY = re.compile(
       | \bT\d{4}\b             # T0096
       | \biter-\d+             # iter-117
       | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
-      | \bWP\d                 # WP4
+      | \bWP\d                 # work-package tokens
       | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (the rule names them; this
                                # enforces it). The optional letter is NOT cosmetic: `\bD\d{1,2}\b`
                                # cannot match `D5a`, because there is no word boundary between `5`

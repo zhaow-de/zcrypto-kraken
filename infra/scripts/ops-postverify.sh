@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Verify-by-outcome after an ops converge, as one command (traceability: spec 00083 D3). Six
-# checks through grafana-query.py; each prints PASS/FAIL; exit 0 iff all pass. "(no series)" is a
+# Verify-by-outcome after an ops converge, as one command (traceability: spec 00083 D3). Every
+# check runs through grafana-query.py; each prints PASS/FAIL; exit 0 iff all pass. "(no series)" is a
 # FAIL, never a zero — an empty query is not an absent event.
 set -uo pipefail   # deliberately NOT -e: a failed query is a FAIL result, not a crash
 QUERY="${ZCRYPTO_GRAFANA_QUERY:-uv run python infra/scripts/grafana-query.py}"
