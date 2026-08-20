@@ -15,7 +15,7 @@
     {
       "id": 100,
       "type": "row",
-      "title": "Capture \u2014 live ingest",
+      "title": "Capture — live ingest",
       "collapsed": false,
       "panels": [],
       "gridPos": {
@@ -28,8 +28,8 @@
     {
       "id": 101,
       "type": "timeseries",
-      "title": "Book desync \u2014 live and stuck (15m)",
-      "description": "Which pair's book is checksum-desynced right now, and whether it is in the shape that pages. The live series sits at 1 while a pair's book is desynced; the 15-minute minimum is the series the alert reads, because a desync that healed inside the window carries a zero and reads 0 \u2014 recovery is a single fire-and-forget resubscribe fired only on the transition, so a pair whose one attempt did not take stays stuck and nothing retries it. That series pages above 0.5 after `for: 5m`, so roughly twenty minutes in total: a 15-minute window plus the hold. Scoped by the capture-machine and pair pickers.",
+      "title": "Book desync — live and stuck (15m)",
+      "description": "Which pair's book is checksum-desynced right now, and whether it is in the shape that pages. The live series sits at 1 while a pair's book is desynced; the 15-minute minimum is the series the alert reads, because a desync that healed inside the window carries a zero and reads 0 — recovery is a single fire-and-forget resubscribe fired only on the transition, so a pair whose one attempt did not take stays stuck and nothing retries it. That series pages above 0.5 after `for: 5m`, so roughly twenty minutes in total: a 15-minute window plus the hold. Scoped by the capture-machine and pair pickers.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -48,7 +48,7 @@
           },
           "expr": "zcrypto_capture_book_desynced{host=~\"$capture_host\", pair=~\"$pair\"}",
           "refId": "A",
-          "legendFormat": "{{host}} {{pair}} \u2014 live"
+          "legendFormat": "{{host}} {{pair}} — live"
         },
         {
           "datasource": {
@@ -57,7 +57,7 @@
           },
           "expr": "min_over_time(zcrypto_capture_book_desynced{host=~\"$capture_host\", pair=~\"$pair\"}[15m])",
           "refId": "B",
-          "legendFormat": "{{host}} {{pair}} \u2014 stuck 15m"
+          "legendFormat": "{{host}} {{pair}} — stuck 15m"
         }
       ],
       "fieldConfig": {
@@ -133,7 +133,7 @@
       "id": 102,
       "type": "timeseries",
       "title": "Seconds since last book message (per pair)",
-      "description": "Per-pair proof of life: which stream has gone quiet and for how long, while it is still a live condition rather than a ledger entry booked hours later. Two page lines for two different faults. The per-machine minimum across every pair crossing 120 seconds means the WHOLE feed is silent \u2014 one thin leg being quiet is normal at any hour, every pair at once is not, and no natural cause produces it, which is why that bar can be tight. It fires with **no hold at all** (`for: 0s`): the gauge is scraped once a minute, so a pending period would spend the entire notice budget rather than buy confidence. A single per-pair series crossing 300 seconds \u2014 with no hold either \u2014 is the one-stuck-stream shape nothing else catches: the dead-man still pings, the desync rule sees no checksum failure, and the minimum reads off a healthy pair. Every gauge reads 0 at process start, so a restart cannot false-fire either line. The per-pair series follows both pickers; the minimum follows only the machine picker, exactly as its alert evaluates it.",
+      "description": "Per-pair proof of life: which stream has gone quiet and for how long, while it is still a live condition rather than a ledger entry booked hours later. Two page lines for two different faults. The per-machine minimum across every pair crossing 120 seconds means the WHOLE feed is silent — one thin leg being quiet is normal at any hour, every pair at once is not, and no natural cause produces it, which is why that bar can be tight. It fires with **no hold at all** (`for: 0s`): the gauge is scraped once a minute, so a pending period would spend the entire notice budget rather than buy confidence. A single per-pair series crossing 300 seconds — with no hold either — is the one-stuck-stream shape nothing else catches: the dead-man still pings, the desync rule sees no checksum failure, and the minimum reads off a healthy pair. Every gauge reads 0 at process start, so a restart cannot false-fire either line. The per-pair series follows both pickers; the minimum follows only the machine picker, exactly as its alert evaluates it.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -161,7 +161,7 @@
           },
           "expr": "min by (host) (zcrypto_capture_seconds_since_last_book_message{host=~\"$capture_host\"})",
           "refId": "B",
-          "legendFormat": "{{host}} \u2014 quietest pair"
+          "legendFormat": "{{host}} — quietest pair"
         }
       ],
       "fieldConfig": {
@@ -264,8 +264,8 @@
     {
       "id": 103,
       "type": "timeseries",
-      "title": "Recovery ladder \u2014 24h increase",
-      "description": "Is the desync recovery path being exercised more than it should be, and does it work? Two page lines, both held for `for: 30m`. Resubscribes over 24 hours above 1.5 mean the rate is re-elevating or a pair is flapping. Rejected frames and missing unsubscribe acks are SUMMED before the same 1.5 line, because that is how the alert evaluates them \u2014 one of each is two and pages, while two separate per-counter series would both read green. 1.5 rather than 1 because a single increment extrapolates to about 1.0007 and would page on one genuine self-healed event. Reconnects are context only: no alert watches them. Neither resubscribe counter carries a pair label, so this says THAT the rate rose, not which pair \u2014 the desync panel above names the pair. Scoped by the capture-machine picker.",
+      "title": "Recovery ladder — 24h increase",
+      "description": "Is the desync recovery path being exercised more than it should be, and does it work? Two page lines, both held for `for: 30m`. Resubscribes over 24 hours above 1.5 mean the rate is re-elevating or a pair is flapping. Rejected frames and missing unsubscribe acks are SUMMED before the same 1.5 line, because that is how the alert evaluates them — one of each is two and pages, while two separate per-counter series would both read green. 1.5 rather than 1 because a single increment extrapolates to about 1.0007 and would page on one genuine self-healed event. Reconnects are context only: no alert watches them. Neither resubscribe counter carries a pair label, so this says THAT the rate rose, not which pair — the desync panel above names the pair. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -401,8 +401,8 @@
     {
       "id": 104,
       "type": "timeseries",
-      "title": "Book silence \u2014 gap seconds per pair (24h increase)",
-      "description": "Which pair contributed how much book silence in the last day \u2014 the capture-side origin of every healable and residual second booked downstream. The 30-second line is the capture daemon's own derived silence bar, roughly 2.4 times the thinnest leg's worst natural spacing, and it deliberately equals the reconciler's minimum-gap setting. It is **not** an alerting bar: no rule watches this counter per pair, and the reconciler's own 600-second figure is computed on a different metric entirely \u2014 an aggregate divided by the live pair count \u2014 so it does not belong on this panel. Scoped by the capture-machine and pair pickers.",
+      "title": "Book silence — gap seconds per pair (24h increase)",
+      "description": "Which pair contributed how much book silence in the last day — the capture-side origin of every healable and residual second booked downstream. The 30-second line is the capture daemon's own derived silence bar, roughly 2.4 times the thinnest leg's worst natural spacing, and it deliberately equals the reconciler's minimum-gap setting. It is **not** an alerting bar: no rule watches this counter per pair, and the reconciler's own 600-second figure is computed on a different metric entirely — an aggregate divided by the live pair count — so it does not belong on this panel. Scoped by the capture-machine and pair pickers.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -491,7 +491,7 @@
       "id": 105,
       "type": "timeseries",
       "title": "Rows held vs quarantined (6h increase)",
-      "description": "Did rows arrive after their hour was finalized and get spilled out of the canonical tree? Held rows are parked pending hour confirmation; quarantined rows were actually written to a sidecar file and are **not** in the canonical tree, so the reconciler has to fold them and nobody knows to look. The measured baseline over seven days is zero on both capture machines, so any nonzero quarantine value is a real event and pages after `for: 15m`. Both counters are unlabeled totals summed across every pair and kind at the source, so which pair cannot be shown here \u2014 no such panel can be built. Scoped by the capture-machine picker.",
+      "description": "Did rows arrive after their hour was finalized and get spilled out of the canonical tree? Held rows are parked pending hour confirmation; quarantined rows were actually written to a sidecar file and are **not** in the canonical tree, so the reconciler has to fold them and nobody knows to look. The measured baseline over seven days is zero on both capture machines, so any nonzero quarantine value is a real event and pages after `for: 15m`. Both counters are unlabeled totals summed across every pair and kind at the source, so which pair cannot be shown here — no such panel can be built. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -588,7 +588,7 @@
     {
       "id": 106,
       "type": "timeseries",
-      "title": "Capture counters \u2014 cumulative since process start",
+      "title": "Capture counters — cumulative since process start",
       "description": "How much damage each capture machine has taken over its whole life. Deliberately all-green with no page lines: scale reads here, recency reads on the delta panels beside it. Every series resets when the capture container is recreated, so a step down to zero is a restart, not a repair. Gap seconds are on the right axis because they are the one series here measured in time rather than counts. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
@@ -724,7 +724,7 @@
       "id": 107,
       "type": "timeseries",
       "title": "Spool free % (root filesystem)",
-      "description": "How much runway the unbackfillable capture spool has before the prune ring must be fixed. The spool lives on the root filesystem. The 10 percent line is the early warning, held for `for: 5m` \u2014 it fires long before the daemon's own 1 GiB watermark starts discarding, so reaching it means the prune ring broke or an unexpected consumer appeared. Context here: the page for this line points at the fleet board, which plots the same ratio for every machine. Scoped by the capture-machine picker.",
+      "description": "How much runway the unbackfillable capture spool has before the prune ring must be fixed. The spool lives on the root filesystem. The 10 percent line is the early warning, held for `for: 5m` — it fires long before the daemon's own 1 GiB watermark starts discarding, so reaching it means the prune ring broke or an unexpected consumer appeared. Context here: the page for this line points at the fleet board, which plots the same ratio for every machine. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -812,8 +812,8 @@
     {
       "id": 108,
       "type": "timeseries",
-      "title": "Hard stops \u2014 disk watermark & venue status",
-      "description": "The two conditions under which capture is no longer trustworthy at the source. A breached disk watermark is not a warning: the book and trade handlers drop every incoming message instead of writing it, the data is unbackfillable, and the daemon also withholds its dead-man ping, so nothing else on that machine can page. It fires on the first breaching sample above 0.5 \u2014 no pending period, and by then the discard has already been running for up to 90 s, because the daemon re-checks the watermark every 30 s and the gauge is scraped every 60 s. The venue counter has a series only for states the daemon has actually seen, so it is EMPTY while the venue is online \u2014 the trailing zero fallback keeps the panel at 0 rather than blank, and the `on()` in it is load-bearing: without it the fallback stops being mutually exclusive and rides through as a permanent extra series. Any non-online state pages after `for: 5m`, and the state decides the response: maintenance is planned and you wait, cancel-only or post-only mean the venue is degraded. That counter is born at 1 on the event and latches until the daemon restarts, which is why the alert is presence-based rather than an increase. Scoped by the capture-machine picker.",
+      "title": "Hard stops — disk watermark & venue status",
+      "description": "The two conditions under which capture is no longer trustworthy at the source. A breached disk watermark is not a warning: the book and trade handlers drop every incoming message instead of writing it, the data is unbackfillable, and the daemon also withholds its dead-man ping, so nothing else on that machine can page. It fires on the first breaching sample above 0.5 — no pending period, and by then the discard has already been running for up to 90 s, because the daemon re-checks the watermark every 30 s and the gauge is scraped every 60 s. The venue counter has a series only for states the daemon has actually seen, so it is EMPTY while the venue is online — the trailing zero fallback keeps the panel at 0 rather than blank, and the `on()` in it is load-bearing: without it the fallback stops being mutually exclusive and rides through as a permanent extra series. Any non-online state pages after `for: 5m`, and the state decides the response: maintenance is planned and you wait, cancel-only or post-only mean the venue is degraded. That counter is born at 1 on the event and latches until the daemon restarts, which is why the alert is presence-based rather than an increase. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -941,7 +941,7 @@
       "id": 109,
       "type": "timeseries",
       "title": "Segments written & bytes (1h increase)",
-      "description": "Is the writer still committing hourly segments at normal size while the process stays up? Both counters are unlabeled totals summed across every pair and kind at the source, so per-pair write counts do not exist and cannot be charted \u2014 the only per-pair evidence available is silence, staleness and desync, on the panels above. No alert watches either series. Scoped by the capture-machine picker.",
+      "description": "Is the writer still committing hourly segments at normal size while the process stays up? Both counters are unlabeled totals summed across every pair and kind at the source, so per-pair write counts do not exist and cannot be charted — the only per-pair evidence available is silence, staleness and desync, on the panels above. No alert watches either series. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1044,7 +1044,7 @@
       "id": 201,
       "type": "timeseries",
       "title": "Mirror lag by source & reconciler liveness",
-      "description": "Are both mirrors still producing, and is the reconciler that compares them still running? Lag is per mirror side, so the alert instance names which side went quiet; either side above 3 hours pages after `for: 10m`. One to two hours of lag is the healthy steady state, because a final only commits after its hour closes and the pull is hourly. If it is the SECONDARY side, the fleet has no witness and the next primary gap is permanent. The liveness series is now minus the reconciler's last clean cycle and pages above the same 3 hours after `for: 5m` \u2014 the exported file is scraped in place, so a dead reconciler holds its last value forever and only the timestamp reveals it. Same number, two different alerts. Published only by the ops machine. The only per-pair evidence for a lagging mirror is on the capture row above: a per-pair write count does not exist.",
+      "description": "Are both mirrors still producing, and is the reconciler that compares them still running? Lag is per mirror side, so the alert instance names which side went quiet; either side above 3 hours pages after `for: 10m`. One to two hours of lag is the healthy steady state, because a final only commits after its hour closes and the pull is hourly. If it is the SECONDARY side, the fleet has no witness and the next primary gap is permanent. The liveness series is now minus the reconciler's last clean cycle and pages above the same 3 hours after `for: 5m` — the exported file is scraped in place, so a dead reconciler holds its last value forever and only the timestamp reveals it. Same number, two different alerts. Published only by the ops machine. The only per-pair evidence for a lagging mirror is on the capture row above: a per-pair write count does not exist.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1063,7 +1063,7 @@
           },
           "expr": "max by (source) (zcrypto_reconcile_source_lag_seconds{host=\"ops\"})",
           "refId": "A",
-          "legendFormat": "mirror lag \u2014 {{source}}"
+          "legendFormat": "mirror lag — {{source}}"
         },
         {
           "datasource": {
@@ -1171,8 +1171,8 @@
     {
       "id": 202,
       "type": "timeseries",
-      "title": "Gap outcome \u2014 last 24h",
-      "description": "Did loss and healing pressure happen IN THE LAST DAY \u2014 the panel that answers \"is the red number new?\" without leaving the board. Both series carry their alerts' own reset guard, and that is load-bearing: a deliberate ledger correction reads to the time-series store as a counter reset, and a bare increase would report the whole post-reset value as fresh permanent loss \u2014 painting this panel red at the exact moment the alert, hardened against precisely this, correctly stays silent. Residual seconds are silence NEITHER mirror covered, so they can be neither healed nor backfilled; any increase above zero pages immediately, with no hold at all (`for: 0s`). The healable series is divided by the live pair count exactly as its alert divides it, and pages above 600 after `for: 30m`. That divisor is plotted beside it and is the FULL pair count, not a count of desynced pairs \u2014 the gauge it counts is emitted for every pair on every scrape, so a flat twelve is health. The divisor is deliberately left unscoped, as the alert writes it: scoping it would make this panel disagree with the page whenever the two capture machines' pair sets differ, which is exactly what adding a pair creates for one converge window. Published only by the ops machine.",
+      "title": "Gap outcome — last 24h",
+      "description": "Did loss and healing pressure happen IN THE LAST DAY — the panel that answers \"is the red number new?\" without leaving the board. Both series carry their alerts' own reset guard, and that is load-bearing: a deliberate ledger correction reads to the time-series store as a counter reset, and a bare increase would report the whole post-reset value as fresh permanent loss — painting this panel red at the exact moment the alert, hardened against precisely this, correctly stays silent. Residual seconds are silence NEITHER mirror covered, so they can be neither healed nor backfilled; any increase above zero pages immediately, with no hold at all (`for: 0s`). The healable series is divided by the live pair count exactly as its alert divides it, and pages above 600 after `for: 30m`. That divisor is plotted beside it and is the FULL pair count, not a count of desynced pairs — the gauge it counts is emitted for every pair on every scrape, so a flat twelve is health. The divisor is deliberately left unscoped, as the alert writes it: scoping it would make this panel disagree with the page whenever the two capture machines' pair sets differ, which is exactly what adding a pair creates for one converge window. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1191,7 +1191,7 @@
           },
           "expr": "(increase(zcrypto_reconcile_residual_gap_seconds_total{host=\"ops\"}[24h]) > 0 and resets(zcrypto_reconcile_residual_gap_seconds_total{host=\"ops\"}[24h]) == 0) or on() vector(0)",
           "refId": "A",
-          "legendFormat": "residual \u2014 PERMANENT loss (24h)"
+          "legendFormat": "residual — PERMANENT loss (24h)"
         },
         {
           "datasource": {
@@ -1339,7 +1339,7 @@
     {
       "id": 206,
       "type": "timeseries",
-      "title": "Dark-episode verdict split \u2014 cumulative since ledger genesis",
+      "title": "Dark-episode verdict split — cumulative since ledger genesis",
       "description": "The both_streams_silent seconds from the panel above, split by what the evidence weighs toward: venue_silent (both capture hosts recorded the same venue message timestamps inside the episode -- the silence was upstream of both), capture_divergent (one host missed what the other received), and undetermined (no evidence either way, including every episode recorded before this split existed). A parallel view, not an alternative count -- it never pages: venue silence is not an actionable fault, and the sum of the three never exceeds the residual total beside it. Read during triage of the residual-gap page, to see whether the silence was upstream or a capture-side miss. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
@@ -1415,8 +1415,8 @@
     {
       "id": 203,
       "type": "timeseries",
-      "title": "Gap totals \u2014 cumulative since ledger genesis",
-      "description": "A number here is history, not an incident. Lifetime scale in each of the three outcomes, all-green with no page lines \u2014 recency lives on the panel beside this one, which carries the page lines and the reset guard. The record count is the explanatory series: it is how many append-only ledger records the cycle summed its totals from, so a step DOWN in any counter is legible as a deliberate ledger correction rather than a mystery. That matters precisely because the guarded panel beside this one correctly reads zero after a correction, which also makes the correction invisible there. Published only by the ops machine.",
+      "title": "Gap totals — cumulative since ledger genesis",
+      "description": "A number here is history, not an incident. Lifetime scale in each of the three outcomes, all-green with no page lines — recency lives on the panel beside this one, which carries the page lines and the reset guard. The record count is the explanatory series: it is how many append-only ledger records the cycle summed its totals from, so a step DOWN in any counter is legible as a deliberate ledger correction rather than a mystery. That matters precisely because the guarded panel beside this one correctly reads zero after a correction, which also makes the correction invisible there. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1523,7 +1523,7 @@
     {
       "id": 204,
       "type": "timeseries",
-      "title": "Reconcile output \u2014 hours minted (24h)",
+      "title": "Reconcile output — hours minted (24h)",
       "description": "Is the healer actually writing hours into the overlay? This is what separates \"nothing was broken\" from \"the healing step is not running\". Spliced hours are book hours minted from a primary-plus-secondary splice; union hours are trade hours minted from a cross-machine trade-id union. No alert watches either. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
@@ -1590,8 +1590,8 @@
     {
       "id": 205,
       "type": "timeseries",
-      "title": "Trade reconciliation \u2014 deficit & dedup rows (24h)",
-      "description": "How many trade rows each mirror was missing that the other had \u2014 the only measure of whether the two trade streams are genuinely redundant. **Read the selector before editing it**: the deficit counter is emitted with its OWN host label carrying a mirror SIDE rather than a machine name, and the fleet-wide machine stamp is only applied where that label is absent, so it never lands on this family. Selecting the publishing machine here renders this panel permanently empty. The duplicate-row counter is an ordinary single-publisher series. Published only by the ops machine. No alert watches either.",
+      "title": "Trade reconciliation — deficit & dedup rows (24h)",
+      "description": "How many trade rows each mirror was missing that the other had — the only measure of whether the two trade streams are genuinely redundant. **Read the selector before editing it**: the deficit counter is emitted with its OWN host label carrying a mirror SIDE rather than a machine name, and the fleet-wide machine stamp is only applied where that label is absent, so it never lands on this family. Selecting the publishing machine here renders this panel permanently empty. The duplicate-row counter is an ordinary single-publisher series. Published only by the ops machine. No alert watches either.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1610,7 +1610,7 @@
           },
           "expr": "increase(zcrypto_reconcile_trade_deficit_rows_total{host=~\"primary|secondary\"}[24h])",
           "refId": "A",
-          "legendFormat": "deficit \u2014 {{host}} side"
+          "legendFormat": "deficit — {{host}} side"
         },
         {
           "datasource": {
@@ -1670,8 +1670,8 @@
     {
       "id": 301,
       "type": "stat",
-      "title": "Verify-replay \u2014 run verdict",
-      "description": "Did the sweep complete at all? A crash, an I/O error, or a mount that silently resolved empty all present as a run that did not complete, while every count below stays frozen at its carried-forward value \u2014 so today's findings are unknown, not clean. It pages below 1 after `for: 15m`. The exit code sits beside it as context ONLY and is deliberately uncoloured: it stays at 1 forever once any hour has ever failed, which is exactly why alerting on it was retired in favour of the change-based rule on the panel below, and colouring it here would rebuild that red-forever defect next to the panel that replaced it. Published only by the ops machine.",
+      "title": "Verify-replay — run verdict",
+      "description": "Did the sweep complete at all? A crash, an I/O error, or a mount that silently resolved empty all present as a run that did not complete, while every count below stays frozen at its carried-forward value — so today's findings are unknown, not clean. It pages below 1 after `for: 15m`. The exit code sits beside it as context ONLY and is deliberately uncoloured: it stays at 1 forever once any hour has ever failed, which is exactly why alerting on it was retired in favour of the change-based rule on the panel below, and colouring it here would rebuild that red-forever defect next to the panel that replaced it. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1783,8 +1783,8 @@
     {
       "id": 302,
       "type": "timeseries",
-      "title": "Verify-replay \u2014 freshness (last run vs last clean run)",
-      "description": "Is the nightly sweep still firing at all, separately from whether its runs come back clean? **No alert watches either age**, so this panel is the only coverage that exists for a sweep that has simply stopped running \u2014 nothing will page. A healthy pattern is a daily sawtooth on both. A last-clean stamp of zero means the sweep has never completed cleanly, in which case the age renders as time since the epoch rather than a small number and will flatten every other series on the axis. Published only by the ops machine.",
+      "title": "Verify-replay — freshness (last run vs last clean run)",
+      "description": "Is the nightly sweep still firing at all, separately from whether its runs come back clean? **No alert watches either age**, so this panel is the only coverage that exists for a sweep that has simply stopped running — nothing will page. A healthy pattern is a daily sawtooth on both. A last-clean stamp of zero means the sweep has never completed cleanly, in which case the age renders as time since the epoch rather than a small number and will flatten every other series on the axis. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1850,8 +1850,8 @@
     {
       "id": 303,
       "type": "timeseries",
-      "title": "Verify-replay \u2014 hour ledger",
-      "description": "Where every canonical hour sits, and whether the total still balances against replayed plus reused plus pending. Context for the breakage panel below \u2014 no alert reads these counts directly. All of them are carried forward unchanged when a run breaks before reporting, so read them together with the run verdict, or a frozen ledger looks like a stable one. Published only by the ops machine.",
+      "title": "Verify-replay — hour ledger",
+      "description": "Where every canonical hour sits, and whether the total still balances against replayed plus reused plus pending. Context for the breakage panel below — no alert reads these counts directly. All of them are carried forward unchanged when a run breaks before reporting, so read them together with the run verdict, or a frozen ledger looks like a stable one. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1944,8 +1944,8 @@
     {
       "id": 304,
       "type": "timeseries",
-      "title": "Verify-replay \u2014 new breakage & backlog drift",
-      "description": "Did a NEW hour break, or has the backlog stopped draining? A known bad hour is a constant in the failed-hour count and contributes nothing to the 25-hour change, so only an hour that failed today and did not fail in the prior sweep moves that series above zero \u2014 and it pages immediately, with no hold at all (`for: 0s`), because a re-failing known hour is exactly what this replaced. The backlog page is a conjunction this panel cannot draw as a single line: it needs pending hours above zero AND the 26-hour change at or above zero, held for `for: 27h`. So a backlog drained to zero shows the change series sitting on its coloured step while the alert correctly stays silent \u2014 read the two series together. Note the direction on that series: at or above zero is the fault, and a NEGATIVE change is the healthy drain. Published only by the ops machine.",
+      "title": "Verify-replay — new breakage & backlog drift",
+      "description": "Did a NEW hour break, or has the backlog stopped draining? A known bad hour is a constant in the failed-hour count and contributes nothing to the 25-hour change, so only an hour that failed today and did not fail in the prior sweep moves that series above zero — and it pages immediately, with no hold at all (`for: 0s`), because a re-failing known hour is exactly what this replaced. The backlog page is a conjunction this panel cannot draw as a single line: it needs pending hours above zero AND the 26-hour change at or above zero, held for `for: 27h`. So a backlog drained to zero shows the change series sitting on its coloured step while the alert correctly stays silent — read the two series together. Note the direction on that series: at or above zero is the fault, and a NEGATIVE change is the healthy drain. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1973,7 +1973,7 @@
           },
           "expr": "ops_verify_replay_pending_hours",
           "refId": "B",
-          "legendFormat": "backlog \u2014 pending hours"
+          "legendFormat": "backlog — pending hours"
         },
         {
           "datasource": {
@@ -2111,8 +2111,8 @@
     {
       "id": 305,
       "type": "timeseries",
-      "title": "Verify-replay \u2014 audit mismatches & sweep duration",
-      "description": "Does the checkpoint the sweep reuses hours from still agree with a fresh replay \u2014 the only signal that a reused hour is verified rather than skipped. The mismatch count is a GAUGE carried forward from the last sweep that reported one, not a counter, so its recent view is a 25-hour change: an increase-style read would show it flat forever. Sweep duration sits beside it on the right axis so a lengthening sweep is visible before it starts colliding with the drain budget. No alert watches either. Published only by the ops machine.",
+      "title": "Verify-replay — audit mismatches & sweep duration",
+      "description": "Does the checkpoint the sweep reuses hours from still agree with a fresh replay — the only signal that a reused hour is verified rather than skipped. The mismatch count is a GAUGE carried forward from the last sweep that reported one, not a counter, so its recent view is a 25-hour change: an increase-style read would show it flat forever. Sweep duration sits beside it on the right axis so a lengthening sweep is visible before it starts colliding with the drain budget. No alert watches either. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2224,7 +2224,7 @@
       "id": 401,
       "type": "timeseries",
       "title": "Job exit codes",
-      "description": "Did each of the five canonical-tree writers come back clean on its last pass? Any non-zero value pages on four of them, after `for: 5m` \u2014 but they are not equally severe: a failed panel materialize costs freshness on derived, recomputable data, while a verified-path mismatch or a failed trade backfill means the canonical result itself is in question, and those two are the critical pair. On the overlay-writer cycle, a gate skip and a trade-backfill failure both leave the code at zero; only the reconcile step sets it non-zero, and the backfill has its own series here. Published only by the ops machine. The tape-bars materializer is the fifth and is plotted unlined: a day it cannot publish yet is not an error, so its refusals show up as counts on its own panel rather than here, and only an unexpected failure \u2014 a corrupt segment, an unwritable output \u2014 lifts this series off zero.",
+      "description": "Did each of the five canonical-tree writers come back clean on its last pass? Any non-zero value pages on four of them, after `for: 5m` — but they are not equally severe: a failed panel materialize costs freshness on derived, recomputable data, while a verified-path mismatch or a failed trade backfill means the canonical result itself is in question, and those two are the critical pair. On the overlay-writer cycle, a gate skip and a trade-backfill failure both leave the code at zero; only the reconcile step sets it non-zero, and the backfill has its own series here. Published only by the ops machine. The tape-bars materializer is the fifth and is plotted unlined: a day it cannot publish yet is not an error, so its refusals show up as counts on its own panel rather than here, and only an unexpected failure — a corrupt segment, an unwritable output — lifts this series off zero.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2504,7 +2504,7 @@
           },
           "expr": "time() - zcrypto_tapebars_last_publish_timestamp_seconds",
           "refId": "F",
-          "legendFormat": "tape-bars \u2014 since a day was last published (no page line)"
+          "legendFormat": "tape-bars — since a day was last published (no page line)"
         }
       ],
       "fieldConfig": {
@@ -2633,8 +2633,8 @@
     {
       "id": 403,
       "type": "timeseries",
-      "title": "Did it run at all? \u2014 last-run age",
-      "description": "Separates a timer that stopped firing from a job that fires and fails. The sawtooth is the signal: each series should drop to near zero on every tick of its own cadence. A rising ramp with no reset is the fault \u2014 the timer is not firing, which the exit-code and last-success panels cannot distinguish from a job that runs and succeeds. No alert watches any of these, so this panel is the only place that distinction is visible. Published only by the ops machine.",
+      "title": "Did it run at all? — last-run age",
+      "description": "Separates a timer that stopped firing from a job that fires and fails. The sawtooth is the signal: each series should drop to near zero on every tick of its own cadence. A rising ramp with no reset is the fault — the timer is not firing, which the exit-code and last-success panels cannot distinguish from a job that runs and succeeds. No alert watches any of these, so this panel is the only place that distinction is visible. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2737,7 +2737,7 @@
       "id": 404,
       "type": "timeseries",
       "title": "Verified-path lag & trade repairs",
-      "description": "How far the verified path has fallen behind, and whether trade hours are being repaired NOW or merely were at some point. Days behind is zero when the replay is fully caught up. The repair counter is a true monotone counter \u2014 the emitter reads its own previous value and adds \u2014 so the 24-hour increase beside it is what answers \"now\", while the cumulative line answers \"ever\". No alert watches either. Published only by the ops machine.",
+      "description": "How far the verified path has fallen behind, and whether trade hours are being repaired NOW or merely were at some point. Days behind is zero when the replay is fully caught up. The repair counter is a true monotone counter — the emitter reads its own previous value and adds — so the 24-hour increase beside it is what answers \"now\", while the cumulative line answers \"ever\". No alert watches either. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2756,7 +2756,7 @@
           },
           "expr": "ops_verified_replay_days_behind",
           "refId": "A",
-          "legendFormat": "verified path \u2014 days behind"
+          "legendFormat": "verified path — days behind"
         },
         {
           "datasource": {
@@ -2831,8 +2831,8 @@
     {
       "id": 405,
       "type": "timeseries",
-      "title": "Tape-bars \u2014 days published, refused & permanently missing",
-      "description": "The tape-bars materializer sweeps hourly and publishes a day of 15m bars once that day's trade tape is measured contiguous. Days published sits at zero most of the time: a day becomes eligible about a day after it ends, so one tick a day carries a one and the rest carry nothing \u2014 the flat line is the healthy shape, not a stall. Refused counts settled days whose trade sequence still has a hole; they are retried while the heal window still reaches them, and a steady one for a pair that left the capture set is documented noise rather than a fault. Permanently missing is the irreversible one: a settled day that fell past the retry window with no file will never be published, and nothing else in the fleet reports it. Days in error counts unexpected failures \u2014 a corrupt segment, an unwritable output \u2014 each costing exactly one day rather than the whole sweep. Published only by the ops machine.",
+      "title": "Tape-bars — days published, refused & permanently missing",
+      "description": "The tape-bars materializer sweeps hourly and publishes a day of 15m bars once that day's trade tape is measured contiguous. Days published sits at zero most of the time: a day becomes eligible about a day after it ends, so one tick a day carries a one and the rest carry nothing — the flat line is the healthy shape, not a stall. Refused counts settled days whose trade sequence still has a hole; they are retried while the heal window still reaches them, and a steady one for a pair that left the capture set is documented noise rather than a fault. Permanently missing is the irreversible one: a settled day that fell past the retry window with no file will never be published, and nothing else in the fleet reports it. Days in error counts unexpected failures — a corrupt segment, an unwritable output — each costing exactly one day rather than the whole sweep. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2860,7 +2860,7 @@
           },
           "expr": "zcrypto_tapebars_days_unhealed",
           "refId": "B",
-          "legendFormat": "days refused \u2014 tape not healed yet"
+          "legendFormat": "days refused — tape not healed yet"
         },
         {
           "datasource": {
@@ -2962,7 +2962,7 @@
       "id": 501,
       "type": "stat",
       "title": "Gate verdict",
-      "description": "Does the fleet currently satisfy its own admission gate, and how long has it held? Deliberately informational, with a text mapping and no red: the gate is met only after at least fourteen consecutive clean days, so not-yet-met is the CORRECT and expected state for the entire accumulation window, and a red tile for a fortnight of healthy days is alarm fatigue in visual form. No alert reads this verdict \u2014 the signal that something actually broke is the streak going BACKWARDS, which is on the panel beside this one. Published only by the NAS.",
+      "description": "Does the fleet currently satisfy its own admission gate, and how long has it held? Deliberately informational, with a text mapping and no red: the gate is met only after at least fourteen consecutive clean days, so not-yet-met is the CORRECT and expected state for the entire accumulation window, and a red tile for a fortnight of healthy days is alarm fatigue in visual form. No alert reads this verdict — the signal that something actually broke is the streak going BACKWARDS, which is on the panel beside this one. Published only by the NAS.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3075,7 +3075,7 @@
       "id": 502,
       "type": "timeseries",
       "title": "Streak & mismatch trend",
-      "description": "Is the streak climbing or was it reset, and is the mismatch behind it recent or ancient? The streak only ever increments on a clean complete day or resets to zero on a failed one, so a NEGATIVE 6-hour change is the failure and nothing else produces one \u2014 which is why the page line on that series sits BELOW zero rather than above it. It fires after `for: 5m` and auto-resolves as the window rolls past, one alert per broken run rather than a drumbeat. At least one replay mismatch or validation failure in the last day pages after `for: 5m` as well. The raw streak is context on the right axis and carries no line. Published only by the NAS.",
+      "description": "Is the streak climbing or was it reset, and is the mismatch behind it recent or ancient? The streak only ever increments on a clean complete day or resets to zero on a failed one, so a NEGATIVE 6-hour change is the failure and nothing else produces one — which is why the page line on that series sits BELOW zero rather than above it. It fires after `for: 5m` and auto-resolves as the window rolls past, one alert per broken run rather than a drumbeat. At least one replay mismatch or validation failure in the last day pages after `for: 5m` as well. The raw streak is context on the right axis and carries no line. Published only by the NAS.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3234,7 +3234,7 @@
       "id": 503,
       "type": "timeseries",
       "title": "Exporter freshness, duration & journal pull lag",
-      "description": "Is the verdict on screen fresh, is the journal it was computed from current, and is a slow export still running or did it die? Two different bars on one panel, so each series carries its own: no successful export in over 2 hours pages after `for: 5m`, and a newest journaled cycle more than 6 hours old pages after `for: 5m`. Those bars are not interchangeable \u2014 the pull-lag floor is the trading cycle's own 4-hourly cadence rather than a measure of pull health, which is why it sits so much higher. Export duration is context with no line; read it beside export age to tell a slow run from a dead one. Published only by the NAS.",
+      "description": "Is the verdict on screen fresh, is the journal it was computed from current, and is a slow export still running or did it die? Two different bars on one panel, so each series carries its own: no successful export in over 2 hours pages after `for: 5m`, and a newest journaled cycle more than 6 hours old pages after `for: 5m`. Those bars are not interchangeable — the pull-lag floor is the trading cycle's own 4-hourly cadence rather than a measure of pull health, which is why it sits so much higher. Export duration is context with no line; read it beside export age to tell a slow run from a dead one. Published only by the NAS.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3370,8 +3370,8 @@
     {
       "id": 504,
       "type": "timeseries",
-      "title": "Scoring cache \u2014 is the journal still being re-hashed?",
-      "description": "A stalled scoring cache is indistinguishable from a healthy one everywhere except these four numbers, because a cache hit skips the only place the journal's parquet bytes are ever re-hashed. The oldest cycle's verification age pages above 3 days after `for: 15m` \u2014 a full rotation is about a day, so that is roughly three sweeps of slack. An EMPTY series here is EXPECTED, not a fault: the exporter emits that gauge only when the scoring cache is active and non-empty, and its alert treats no data as OK for exactly that reason. Cycles replayed should be above zero on every run; a cache that stopped rotating shows replayed at zero with hits at the full count. The invalidated flag is a per-run 0 or 1 rather than a counter, so its recent view is a 24-hour MAXIMUM \u2014 \"did it happen at all today\" is the only meaningful read of it. Published only by the NAS.",
+      "title": "Scoring cache — is the journal still being re-hashed?",
+      "description": "A stalled scoring cache is indistinguishable from a healthy one everywhere except these four numbers, because a cache hit skips the only place the journal's parquet bytes are ever re-hashed. The oldest cycle's verification age pages above 3 days after `for: 15m` — a full rotation is about a day, so that is roughly three sweeps of slack. An EMPTY series here is EXPECTED, not a fault: the exporter emits that gauge only when the scoring cache is active and non-empty, and its alert treats no data as OK for exactly that reason. Cycles replayed should be above zero on every run; a cache that stopped rotating shows replayed at zero with hits at the full count. The invalidated flag is a per-run 0 or 1 rather than a counter, so its recent view is a 24-hour MAXIMUM — \"did it happen at all today\" is the only meaningful read of it. Published only by the NAS.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3517,8 +3517,8 @@
     {
       "id": 601,
       "type": "timeseries",
-      "title": "Log shipping \u2014 dropped vs shipped (6h)",
-      "description": "Was any log line discarded before it reached the log store \u2014 the one fault that makes every log-based alert's SILENCE meaningless, because those rules then reason over an incomplete stream. The measured baseline over seven days is zero on every machine, so any drop in 6 hours is real and pages after `for: 15m`. The cumulative total sits beside it, all-green, so old damage is legible without being mistaken for new. Shipped lines on the right axis give the scale to read a drop against. Legends name the machine and the daemon together, because one machine runs two shippers and the machine name alone is ambiguous there. Scoped by the shipping-machine picker.",
+      "title": "Log shipping — dropped vs shipped (6h)",
+      "description": "Was any log line discarded before it reached the log store — the one fault that makes every log-based alert's SILENCE meaningless, because those rules then reason over an incomplete stream. The measured baseline over seven days is zero on every machine, so any drop in 6 hours is real and pages after `for: 15m`. The cumulative total sits beside it, all-green, so old damage is legible without being mistaken for new. Shipped lines on the right axis give the scale to read a drop against. Legends name the machine and the daemon together, because one machine runs two shippers and the machine name alone is ambiguous there. Scoped by the shipping-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3642,8 +3642,8 @@
     {
       "id": 602,
       "type": "timeseries",
-      "title": "Log shipping \u2014 worker liveness",
-      "description": "Is the shipper alive? Read CYCLE age for that, and only that: the worker cycles every second and advances that gauge even on an idle cycle, stalling only while it is stuck retrying a push it cannot complete or the thread is wedged. It is the series the page reads \u2014 above 5 minutes, held for `for: 10m`, which is about three hundred missed cycles. Last-ship age is context and deliberately carries NO line: the worker skips the push on an empty buffer, so on a healthy quiet machine cycle age reads seconds while last-ship age reads tens of minutes at the same instant. Read it only together with the shipped-line count beside it. That series is also absent until the worker has completed one successful ship, which is expected rather than a fault. What neither series catches is a permanently rejected batch: it still completes a cycle and still advances the liveness gauge, and shows up as dropped lines on the panel beside this one. Legends name the machine and the daemon together. Scoped by the shipping-machine picker.",
+      "title": "Log shipping — worker liveness",
+      "description": "Is the shipper alive? Read CYCLE age for that, and only that: the worker cycles every second and advances that gauge even on an idle cycle, stalling only while it is stuck retrying a push it cannot complete or the thread is wedged. It is the series the page reads — above 5 minutes, held for `for: 10m`, which is about three hundred missed cycles. Last-ship age is context and deliberately carries NO line: the worker skips the push on an empty buffer, so on a healthy quiet machine cycle age reads seconds while last-ship age reads tens of minutes at the same instant. Read it only together with the shipped-line count beside it. That series is also absent until the worker has completed one successful ship, which is expected rather than a fault. What neither series catches is a permanently rejected batch: it still completes a cycle and still advances the liveness gauge, and shows up as dropped lines on the panel beside this one. Legends name the machine and the daemon together. Scoped by the shipping-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -3792,7 +3792,7 @@
           },
           "expr": "increase(zcrypto_liquidations_polls_total[1h])",
           "refId": "A",
-          "legendFormat": "poll cycles \u2014 {{outcome}}"
+          "legendFormat": "poll cycles — {{outcome}}"
         },
         {
           "datasource": {
@@ -3889,7 +3889,7 @@
         "allValue": "",
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Which capture machine the panels below select. All expands to both machines joined into one matcher, and it is the deliberate default: a fault on one and not the other IS the diagnosis. The option list is the pin \u2014 a stray label value cannot appear here \u2014 and it is a second place to edit if a third capture machine ever joins.",
+        "description": "Which capture machine the panels below select. All expands to both machines joined into one matcher, and it is the deliberate default: a fault on one and not the other IS the diagnosis. The option list is the pin — a stray label value cannot appear here — and it is a second place to edit if a third capture machine ever joins.",
         "current": {
           "selected": true,
           "text": [
@@ -3961,7 +3961,7 @@
         "sort": 1,
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Scopes the two log-shipping panels and nothing else \u2014 named for its scope on purpose, because a picker called Host that governs two of thirty panels is a trap. Derived from a shipping family, so its domain is exactly the machines that run a shipping worker; four daemons across three machines publish it, which is why those legends name the daemon as well.",
+        "description": "Scopes the two log-shipping panels and nothing else — named for its scope on purpose, because a picker called Host that governs two of thirty panels is a trap. Derived from a shipping family, so its domain is exactly the machines that run a shipping worker; four daemons across three machines publish it, which is why those legends name the daemon as well.",
         "current": {
           "selected": true,
           "text": [
