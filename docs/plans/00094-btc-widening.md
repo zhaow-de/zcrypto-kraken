@@ -165,7 +165,7 @@ def test_btc_legs_are_exactly_zero_and_emit_no_orders(...):
 - [ ] **Step 2:** Decisions log: the three owner rulings (fully-tradeable depth over minimal; keep-DOT over retire; coupled re-ratification over capability-first) plus D1's construction and D3's mixed-window design, options and `(Decision: N)` marked.
 - [ ] **Step 3:** **T0137 → `resolved` + archived**, both halves cited, `ripe_when` absent, index bullet moved and repointed.
 - [ ] **Step 4: THE FULL SUITE, in this task, foreground** — `uv run pytest -q`, the `00089` lesson as standing practice. Green before the closeout commit.
-- [ ] **Step 5:** Refresh the memo's queue via the ad-hoc procedure (`memo-protocol.md`): the `00094` item under T0018's WP2 records this iteration's completion state, so a session dying between merge and deploy leaves the pick-time view true.
+- [ ] **Step 5:** Refresh the memo's queue via the ad-hoc procedure (`memo-protocol.md`): the `00094` item in T0018's queue group records this iteration's completion state, so a session dying between merge and deploy leaves the pick-time view true.
 - [ ] **Step 6:** Deploy notes into the closeout entry: this payload stacks with `00089`'s still-owed converge — one converge may carry both or two may run; decided at deploy time under `capture-deploys.md`, with D3's specific by-value check (the gate streak after the first schema-2 cycle equals the streak before it plus one).
 - [ ] **Step 7: Gate, stage by explicit path, commit** `docs(engine): iter-<N> closeout -- the /BTC widening lands; T0137 resolves`.
 

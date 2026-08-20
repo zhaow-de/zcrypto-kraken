@@ -641,4 +641,4 @@ git commit -m "docs(ops): iter closeout -- the two 6b feeder measurements answer
 
 - [ ] **Step 5: Memo (ORCHESTRATOR ONLY — main loop, Edit/Write tools, never staged: gitignored)**
 
-Move the T0117 and T0118 queue items to `DONE ITEMS` with their measured answers; note in WP1 that T0116's parameters are now supplied.
+Move the T0117 and T0118 queue items to `DONE ITEMS` with their measured answers; note in the owning queue group that T0116's parameters are now supplied.

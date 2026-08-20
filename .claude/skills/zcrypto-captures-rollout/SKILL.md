@@ -14,7 +14,7 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 - **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside (`agent-ops.md`).
 - Rollout order: **secondary first, primary last.**
 - Digest identity is always `{{.Config.Image}}` — `{{.Image}}` is host-dependent and lies under classic storage.
-- Playbooks via `infra/ansible/scripts/run.sh`; preview every converge with `--check --diff`; never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `capture-deploys.md` and CLAUDE.md `## Secrets`.
+- Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `capture-deploys.md` and CLAUDE.md `## Secrets`.
 
 ## Phase 0 — Preflight
 
@@ -33,10 +33,10 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 **The gate is event-coverage: the smallest window between the two re-pins that satisfies all three.** Compute the window, state it for the user's word, then start it:
 
 1. **A clean prune under the new image** — the one recurring writer that mutates the capture dir concurrently with the daemon. Do not wait for 03:17: `sudo systemctl start zcrypto-capture-prune.service` on the just-converged host fires it now. **Read `deleted=N` in the result**: `deleted=0` exercises the scan but never the deletion path (the weak form) — note which form the bake got, and prefer a host/day where the archive age yields a deleting prune.
-2. **≥3 full segment-rotation hours** — the first hour's every book `<HH>.parquet` beginning at `:00:00.0x` proves the boundary write; three hours are the RSS-slope row's minimal viable duration — two complete rotation cycles plus the current one, separating a real trend from the rotation sawtooth.
+2. **≥3 full segment-rotation hours** — the first hour's every book `<HH>.parquet` beginning at `:00:00.0x` proves the boundary write; three hours are the RSS-slope row's minimal viable duration — two complete rotation cycles plus the current one, separating a real trend from the rotation sawtooth. **FULL hours only — hours that BEGIN after the re-pin; the converge's own partial hour never counts** (re-pin at 14:07 → hours 15/16/17 → gate 18:00Z). Counting boundaries instead of full hours reads the gate an hour early — a measured mistake, 2026-08-18.
 3. **Every abort signal clear throughout** (table below).
 
-**The residual, named:** a leak slower than the window can still pass the slope row — re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host.
+**The residual, named:** a leak slower than the window can still pass the slope row — re-read both hosts' `process_resident_memory_bytes` against their own earlier samples at ~T+24 h from the secondary converge; a material rise trips Phase 4 on the affected host. **Read the residual as a CURVE, never an endpoint pair** — two points cannot tell a leak from a step, and steps arrive as ~4 h RAMPS: sample THROUGH any step's anniversary band at 4–6 h resolution, and let no deciding read straddle the band (T0131's discharge failed four times on straddling windows before a band-avoiding pair closed it). A step the CONTROL host takes in the same window on the OLD image is environmental, not the build — measured 2026-08-19, +11.04 vs +10.07 MiB in one window.
 
 - **Read the FLOOR, never an instantaneous sample** — `min_over_time(...[1h])` at named hours. The rotation sawtooth spans several MiB and swamps the signal.
 - **Compare against the WARM floor, not the converge-time number** — RSS climbs for ~1 h after a restart as buffers fill; the cold sample manufactures a rise that means nothing.
@@ -57,7 +57,7 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 | capture stdout | any `quarantined` / `ambiguous` / `merge failed` | `docker logs` |
 | newest parquet | `find <data-dir> -name '*.parquet' -mmin -3` returns 0 | host shell |
 | RSS slope | materially positive vs the daemon's **own** earlier samples — never cross-host (mem limits differ: primary 2 GiB, secondary 1 GiB) | `/metrics` `process_resident_memory_bytes` |
-| prune unit | anything but `Result=success` | `systemctl show -p Result zcrypto-capture-prune.service` |
+| prune unit | anything but `Result=success` — read only AFTER the unit has run this bake (event 1 fires it): a never-run oneshot reports `Result=success` by default, which once nearly produced a false pass | `systemctl show -p Result zcrypto-capture-prune.service` |
 
 ## Phase 3 — Primary re-pin
 
@@ -83,6 +83,8 @@ The previous-good digest is retained locally (verified in Phase 0), so rollback 
 
 **Runs after EVERY converge, secondary included — not once at the end**, so `docs/reference/fleet-pins.md` never disagrees with a live host for the length of the bake.
 
-After the next hour boundary: every book stream's `<HH>.parquet` begins `:00:00.0x` — read from the **pulled** copy, since the hosts have no parquet reader; the NAS archive-pull's next cycle reports `failed=0` (that IS the manifest verification); `continuity.py` on a pulled copy shows no new truncated hours (read past a new stream's genesis hour). Update `docs/reference/fleet-pins.md` with the new digest in the same change, and record which bake form (`deleted=N`) the gate actually got.
+After the next hour boundary: every book stream's `<HH>.parquet` begins `:00:00.0x` — read from the **pulled** copy, since the hosts have no parquet reader; the NAS archive-pull's next cycle reports `failed=0` (that IS the manifest verification); `continuity.py` on a pulled copy shows no new truncated hours (read past a new stream's genesis hour). Update `docs/reference/fleet-pins.md` in the same change — **the file is a STATE record, not a changelog**: re-true the row (digest, since, operand verified resident) and any standing constraint the converge produced, and put the converge's evidence — every check read, the values quoted, the bake form (`deleted=N`) — in that update's **COMMIT MESSAGE**, never in the file. `git log --follow` on the file is the deploy chronicle; a narrative row goes stale the moment later work lands beside it, and a stale "still owed" claim in a pins row is exactly what this convention retired.
 
 Read the pull result with `sudo /usr/local/bin/docker logs --since <ts> zcrypto-archive-pull` on the NAS (a container, not a systemd unit; full path — `docker` is off the non-interactive ssh `PATH` there). Allow ~35 min after the hour boundary before the finals appear.
+
+**The rollout record is not complete while the two capture hosts differ**: either the primary's leg is done, or the hold and its bound are in the pins row. A gate passed with no primary leg and no bounded hold is an open rollout that reads as finished — the state two consecutive rollouts actually left behind before this rule existed.
