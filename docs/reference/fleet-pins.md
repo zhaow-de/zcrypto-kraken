@@ -34,7 +34,7 @@ Reading rules:
 - **`ops_image_digest` also repins the liquidations compose, which the role never restarts**: `liquidations_decision=roll-after` is an acknowledgement, not an action — the manual `docker compose up -d` in `/etc/zcrypto-ops` is owed after every ops converge that repins it, and verified from the container afterwards.
 - **A fingerprint-invalidating NAS pin replays the whole gate-export** — anything touching `journal.py` changes `gate_cache.py`'s fingerprint, and the cold export measured **2490 s**, not the incremental ~627 s: size converge windows against 2490.
 - **The secondary's capture bake IS the engine's canary gate** — there is no engine secondary; the engine role's assert cites this file for that fact.
-- **A single-host capture re-pin costs ~zero data while the other host is healthy** — a per-host gap is healed by splicing the other host, and loss books only as `both_streams_silent` (both hosts dark in one window); the real constraint is never restarting **both** capture hosts close together. Measured 2026-08-20: a primary restart's own gap was 4.3–4.8 s per stream, covered continuously by the secondary.
+- **A single-host capture re-pin costs ~zero data while the other host is healthy** — a per-host gap is healed by splicing the other host, and a healed hour books only whatever its splice leaves UNFILLED; the real constraint is never restarting **both** capture hosts close together — that books outright as `both_streams_silent`. Measured 2026-08-20: a primary restart's own gap was 4.3–4.8 s per stream, covered continuously by the secondary, leaving nothing unfilled.
 
 ## Full digests — current pins and their operands only; everything older is in this file's git log
 
