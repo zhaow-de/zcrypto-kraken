@@ -57,7 +57,7 @@ Schedule the Slack reminder (`slack_schedule_message` — survives the session) 
 | capture stdout | any `quarantined` / `ambiguous` / `merge failed` | `docker logs` |
 | newest parquet | `find <data-dir> -name '*.parquet' -mmin -3` returns 0 | host shell |
 | RSS slope | materially positive vs the daemon's **own** earlier samples — never cross-host (mem limits differ: primary 2 GiB, secondary 1 GiB) | `/metrics` `process_resident_memory_bytes` |
-| prune unit | anything but `Result=success` | `systemctl show -p Result zcrypto-capture-prune.service` |
+| prune unit | anything but `Result=success` — read only AFTER the unit has run this bake (event 1 fires it): a never-run oneshot reports `Result=success` by default, which once nearly produced a false pass | `systemctl show -p Result zcrypto-capture-prune.service` |
 
 ## Phase 3 — Primary re-pin
 
