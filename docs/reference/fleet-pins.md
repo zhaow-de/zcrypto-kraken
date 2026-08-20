@@ -19,12 +19,10 @@ Reading rules:
 | ops (timers + liquidations) | zcrypto-ops | `6b4c13899653` — spec `00096` (the dark-episode verdict), revision `2c248fe4`; the liquidations container was rolled manually 2026-08-20 18:35:26Z (the roll is always a separate act — see Standing constraints) | 2026-08-20 18:33:37 | `419feafc304f` (2026-08-15) |
 | archive-pull | nas | `5f890c26237a` — the `-compat` build of `e0757909`; repo pin `nas_capture_image` (`infra/ansible/host_vars/nas/vars.yml`), the one surface whose pin is a committed file | 2026-08-15 13:40:38 | `620114511f19` (2026-07-17) |
 
-**Bridgehead `zaccess` — apt-pinned native packages, not image digests** (spec `00075`; no Docker on the edge). These are `access_*` role defaults, held with `dpkg --set-selections`; a version bump = unhold → converge with the new pin → the role re-applies the hold.
+**Non-image pins.** `zaccess`'s own apt packages — `caddy` and `alloy` — are **deliberately absent from this file**, and their absence is the record. They come from third-party apt repos we do not control; since 2026-08-20 the access role installs them unversioned and actively clears any `dpkg` hold, so there is no pin to record and nothing here could be a rollback operand. A version written down anyway would have **no producer and no consumer** — nothing asserts it, nothing updates it, and it would drift into a confidently-wrong number the first time anyone ran `apt upgrade`. Read the installed versions off the host when you need them (`dpkg-query -W alloy caddy`); the role's own note carries the reasoning.
 
 | package | host | version | since (UTC) | notes |
 | --- | --- | --- | --- | --- |
-| caddy | zaccess | `2.11.4` (upstream cloudsmith `stable`) | 2026-07-30 | the mTLS edge |
-| alloy | zaccess | `1.18.0-1` (Grafana apt `stable`) | 2026-07-30 | native — not the containerized `491b0578c049` the other four run; `host="zaccess"` |
 | agentboard | zcrypto-ops | `0.4.8` (`@gbasin/agentboard`, npm global as `zhaow`) | 2026-08-05 | **every re-pin is security-relevant** (the mTLS edge is its only auth) — attended, no bake. Read the running version the way the role does: `sudo -u zhaow bash -c 'source /home/zhaow/.nvm/nvm.sh && npm ls -g @gbasin/agentboard --depth=0'` — a bare `npm ls -g` over ssh finds NOTHING here (the package lives under nvm's node, off the non-interactive PATH), so its empty output is not evidence |
 
 ## Standing constraints — they outlive any single converge
