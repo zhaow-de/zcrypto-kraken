@@ -34,6 +34,8 @@ status: open   # one of: open | partial | resolved
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
+**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first), and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently (T0139's close ate three sections and needed a rebuild from the pre-close body).
+
 ## Partially completing a topic
 
 **Keep `status` in sync with the sub-items — flip it as soon as work lands, don't batch it to a closeout sweep.** The frontmatter `status` must track the `## Suggested next steps` checklist: the moment the **first** sub-item is resolved while others remain, the topic is `partial`; when the **last** one resolves, it is `resolved`. A topic whose body shows completed / checked-off items but still reads `status: open` is a **state-drift bug** — flip it in the same change that lands the work, in interactive and autonomous work alike. This is per sub-item, not a once-at-the-end action.
