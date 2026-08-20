@@ -1,8 +1,9 @@
 """Internal development vocabulary must not reach a surface an operator sees at runtime (T0096).
 
-`Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec <NNNNN>` (+ its D-numbers) and `WP<N>` are the repo's
+`Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec <NNNNN>` (+ its D-numbers) are the repo's
 traceability convention. They belong in specs, plans, decision logs and source comments, where they
-are load-bearing. On a surface visible **without opening the repo** they are noise at best and
+are load-bearing. `WP<N>` is different — memo-private, banned from every git-tracked file outright,
+with exactly two recorded carriers (enforced by the last test in this file). On a surface visible **without opening the repo** they are noise at best and
 confusion at worst — the triggering example was a systemd unit announcing itself to `systemctl` as
 `zcrypto shadow engine (Phase 6a soak)`.
 
@@ -41,6 +42,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -317,3 +319,36 @@ def test_rendered_cli_help_carries_no_internal_vocabulary():
     assert screens, "walked no help screens — the walker is broken, not the CLI clean"
     found = [(cmd, hits) for cmd, text in screens if (hits := _leaks(text))]
     assert not found, "\n".join(f"`{cmd} --help` leaks {hits}" for cmd, hits in found)
+
+
+# ---------------------------------------------------------------------------------------------
+# The WP ban is repo-wide, not an operator-surface rule (operator-facing-text.md): WP labels are
+# memo-private structure. The ban was violated twice in docs/ while written down as prose, which
+# makes it a mechanization candidate (refine round 4), not a wording problem.
+
+_WP = re.compile(r"\bWP\d")
+_WP_CARRIERS = {
+    # the one historical exception: this spec's title carries the token (work package seven)
+    "docs/specs/00058-soak-check-oos-report-design.md",
+    # the file that RECORDS the ban and the exception, and defines the memo's work-package format
+    ".claude/skills/zcrypto-grooming/references/memo-protocol.md",
+}
+
+
+def test_wp_tokens_stay_out_of_git_tracked_files():
+    """Banned everywhere, two recorded carriers — and the allowlist is asserted BOTH ways: a
+    carrier that stops matching is a stale allowlist entry, never a silent pass."""
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True).stdout.splitlines()
+    assert len(tracked) > 100, "git ls-files returned suspiciously few files — the walk is broken"
+    hits = set()
+    for rel in tracked:
+        try:
+            text = (REPO / rel).read_text(encoding="utf-8")
+        except UnicodeDecodeError, FileNotFoundError:
+            continue  # binary, or deleted in the worktree
+        if _WP.search(text):
+            hits.add(rel)
+    strays = sorted(hits - _WP_CARRIERS)
+    assert not strays, f"WP tokens outside the recorded carriers: {strays}"
+    stale = sorted(_WP_CARRIERS - hits)
+    assert not stale, f"stale allowlist — recorded carriers no longer carry a WP token: {stale}"
