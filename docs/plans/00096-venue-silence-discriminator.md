@@ -47,7 +47,7 @@ Copied verbatim from spec `00096`; every task's requirements implicitly include 
 - Consumes: `DarkWindow` (already defined in this module: frozen dataclass with `start: datetime`, `end: datetime`, `seconds: float`).
 - Produces:
   - `VENUE_SILENT = "venue_silent"`, `CAPTURE_DIVERGENT = "capture_divergent"`, `UNDETERMINED = "undetermined"`
-  - `EpisodeVerdict` — frozen dataclass, fields `verdict: str`, `interior_updates: int`, `interior_snapshots: int`, `pairs_agreeing: int`, `divergent_pairs: tuple[str, ...]`
+  - `EpisodeVerdict` — frozen dataclass, fields `verdict: str`, `interior_updates: int`, `interior_snapshots: int`, `interior_seconds: float`, `pairs_agreeing: int`, `pairs_skipped: int`, `divergent_pairs: tuple[str, ...]`
   - `classify_dark_episode(windows: Sequence[DarkWindow], mirror_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]]) -> EpisodeVerdict`
 
   Both counts are **parquet rows, not wire messages**: the capture writer emits one row per price level per side per message (`cli/capture/command.py`), so a single real book update yields many rows. The names say rows so nobody reads them as message counts. Each row is `(ts, type)` with `type` exactly `"snapshot"` or `"update"`.
@@ -140,6 +140,7 @@ def test_a_pair_missing_a_mirror_entirely_contributes_no_evidence():
         {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": None}},
     )
     assert verdict.verdict == UNDETERMINED
+    assert verdict.pairs_skipped == 1
     assert verdict.divergent_pairs == ()
 
 
@@ -169,6 +170,37 @@ def test_one_interior_update_is_enough_even_beside_snapshots():
     assert verdict.verdict == VENUE_SILENT
     assert verdict.interior_updates == 1
     assert verdict.interior_snapshots == 1
+
+
+def test_two_disjoint_blips_in_one_hour_never_promote_on_the_healthy_middle():
+    # F3, constructed. A both-host crash-loop (same image on both hosts by the canary rule, systemd
+    # restart backoff) makes TWO fleet-dark windows far apart. The dense healthy traffic between them
+    # is bracketing evidence for each blip -- and each blip alone is exactly the single-window shape
+    # D3 says must stay undetermined. The silence must DOMINATE the episode, or it is not one episode.
+    far = [DarkWindow(start=_at(300), end=_at(340), seconds=40.0),
+           DarkWindow(start=_at(3000), end=_at(3040), seconds=40.0)]
+    healthy = [(_at(t), "update") for t in range(341, 3000, 2)]
+    verdict = classify_dark_episode(far, {"BTC/EUR": {"primary": healthy, "secondary": list(healthy)}})
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.interior_updates == 1330  # it SAW them; it refused to be convinced by them
+    assert verdict.interior_seconds > sum(w.seconds for w in far)
+
+
+def test_a_pair_whose_mirror_has_not_landed_caps_the_verdict():
+    # F4, constructed. Single-mirror hours exist BY CONSTRUCTION (a pair is added primary-first), and
+    # `both_streams_silent` is decided ONCE -- so a mirror arriving next cycle that would have shown
+    # divergence could never demote a venue_silent already written. Excusing on partial evidence is
+    # the forbidden direction, so an unlanded mirror caps the verdict.
+    verdict = classify_dark_episode(
+        _episode(),
+        {
+            "BTC/EUR": {"primary": [(_at(500), "update")], "secondary": [(_at(500), "update")]},
+            "ETH/EUR": {"primary": [(_at(500), "update")], "secondary": None},
+        },
+    )
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.pairs_skipped == 1
+    assert verdict.pairs_agreeing == 1
 
 
 def test_a_healthy_hour_with_no_windows_is_undetermined_and_never_classifies():
@@ -206,7 +238,9 @@ class EpisodeVerdict:
     verdict: str
     interior_updates: int
     interior_snapshots: int
+    interior_seconds: float
     pairs_agreeing: int
+    pairs_skipped: int
     divergent_pairs: tuple[str, ...]
 
 
@@ -241,22 +275,34 @@ def classify_dark_episode(
     right, and must not be masked by every other pair agreeing.
     """
     if len(windows) < 2:
-        return EpisodeVerdict(UNDETERMINED, 0, 0, 0, ())  # nothing split the episode: no interior
-    span_start, span_end = windows[0].end, windows[-1].start
-    if span_start > span_end:
-        return EpisodeVerdict(UNDETERMINED, 0, 0, 0, ())  # guarded, never assumed: no span to read
-    updates = 0
-    snapshots = 0
-    agreeing = 0
+        return EpisodeVerdict(UNDETERMINED, 0, 0, 0.0, 0, 0, ())  # nothing split it: no interior
+    # The interior is the INTER-WINDOW GAPS, not the whole span from first end to last start. Two
+    # DISJOINT blips in one hour would otherwise put the dense healthy traffic between them inside
+    # the "interior" and promote it -- bracket evidence arriving through a door D3 did not close.
+    # Constructed: two 40 s fleet-dark windows 2,660 s apart read `venue_silent` on 1,330 healthy
+    # updates under the span definition, while each blip ALONE is the single-window shape D3 says
+    # must stay `undetermined`.
+    gaps = [(a.end, b.start) for a, b in zip(windows, windows[1:], strict=False) if b.start >= a.end]
+    if len(gaps) != len(windows) - 1:
+        return EpisodeVerdict(UNDETERMINED, 0, 0, 0.0, 0, 0, ())  # overlapping windows: not a timeline
+    interior_seconds = sum((hi - lo).total_seconds() for lo, hi in gaps)
+    dark_seconds = sum(w.seconds for w in windows)
+
+    def inside(rows):
+        return sorted(row for row in rows if any(lo <= row[0] <= hi for lo, hi in gaps))
+
+    updates = snapshots = agreeing = skipped = 0
     divergent: list[str] = []
     for pair in sorted(mirror_rows):
         mirrors = mirror_rows[pair]
         primary, secondary = mirrors.get("primary"), mirrors.get("secondary")
         if primary is None or secondary is None:
-            continue  # an absent or unreadable mirror is not a divergence -- there is no comparison
-        # The key is (ts, type), so a TYPE divergence between mirrors is a divergence like any other.
-        inside_p = sorted(row for row in primary if span_start <= row[0] <= span_end)
-        inside_s = sorted(row for row in secondary if span_start <= row[0] <= span_end)
+            # Not a divergence -- there is nothing to compare. But NOT free either: this cycle's
+            # verdict is decided ONCE (`_decided`), and a mirror landing next cycle could have shown
+            # divergence that can then never demote it. Counted, and it caps the verdict below.
+            skipped += 1
+            continue
+        inside_p, inside_s = inside(primary), inside(secondary)
         if not inside_p and not inside_s:
             continue  # this pair simply had nothing to say in the interior
         if inside_p == inside_s:
@@ -265,16 +311,19 @@ def classify_dark_episode(
             snapshots += sum(1 for _, kind in inside_p if kind != "update")
         else:
             divergent.append(pair)
+
     if divergent:
-        verdict = CAPTURE_DIVERGENT
-    elif agreeing and updates:
-        verdict = VENUE_SILENT
-    else:
-        # Includes the snapshot-only interior (D2a): agreement on periodic/resubscribe artifacts is
-        # not evidence of a live feed. The counts are still returned, so the ledger record explains
-        # ITSELF rather than needing the classifier re-run to find out why.
+        verdict = CAPTURE_DIVERGENT  # a finding in its own right: never masked by others agreeing
+    elif skipped or not agreeing or not updates or interior_seconds >= dark_seconds:
+        # Every path to "cannot tell", fail-closed: a pair whose mirror has not landed; no agreement;
+        # snapshot-only (D2a); or an episode whose silence does NOT dominate it, which means these
+        # are separate events with healthy traffic between rather than one episode.
         verdict = UNDETERMINED
-    return EpisodeVerdict(verdict, updates, snapshots, agreeing, tuple(divergent))
+    else:
+        verdict = VENUE_SILENT
+    return EpisodeVerdict(
+        verdict, updates, snapshots, interior_seconds, agreeing, skipped, tuple(divergent)
+    )
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -334,7 +383,7 @@ Note in the body that the `span_start > span_end` early return is a **defensive 
 Append to `tests/test_archive_reconcile_command.py`. Reuse the file's existing helpers (`_roots`, `_write`, `_book`, `_run`, `_ledger`, `_series`, `H`, `SETTLED`, `PAIRS`).
 
 ```python
-def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_path, monkeypatch, caplog):
+def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_path, monkeypatch):
     """Spec 00096 D1/D4 — the load-bearing regression, because the booking is a CONTRACT.
 
     Splitting an episode into two windows must not move `residual_seconds` by a single second: the
@@ -353,8 +402,12 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
     _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
     _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
 
-    with caplog.at_level(logging.ERROR):
-        result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+    # NOT caplog: cli/logging/config.py sets `propagate = False` on the `zcrypto` logger and
+    # cli/__main__.py calls configure() on every CliRunner invocation, so records never reach
+    # pytest's root handler. Verified -- caplog is empty here every time.
+    lines: list[str] = []
+    monkeypatch.setattr(command.logger, "error", lambda fmt, *a, **k: lines.append(fmt % a))
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
 
     assert result.exit_code == 0
     silent = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
@@ -373,14 +426,15 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
     assert record["pairs_agreeing"] == 1
     assert record["divergent_pairs"] == []
 
-    # (c) the key set is pinned EXACTLY: the record gains these four keys and nothing else.
+    # (c) the key set is pinned EXACTLY: the record gains these keys and nothing else.
     assert set(record) == {
         "at", "state", "pair", "kind", "hour", "pairs", "windows", "stream_windows", "residual_seconds",
-        "verdict", "interior_updates", "interior_snapshots", "pairs_agreeing", "divergent_pairs",
+        "verdict", "interior_updates", "interior_snapshots", "interior_seconds",
+        "pairs_agreeing", "pairs_skipped", "divergent_pairs",
     }
 
     # (d) the operator's log line carries it too -- that is the 3am path
-    line = next(m for m in caplog.messages if "both_streams_silent" in m)
+    line = next(m for m in lines if "both_streams_silent" in m)
     assert "verdict=venue_silent" in line
 
 
@@ -447,8 +501,6 @@ def test_a_record_written_before_the_discriminator_existed_counts_as_undetermine
 
 Check `_run`'s existing signature for the textfile flag's real name before writing these — grep the file for `--textfile` and copy the flag exactly as other tests pass it. If the flag differs, use the real one; do not invent it.
 
-**If `caplog` captures nothing**, the CLI has reconfigured logging under `CliRunner`. Do not weaken assertion (d) — instead `monkeypatch.setattr(command.logger, "error", recorder)` with a recorder appending `fmt % args`, and assert on that.
-
 The numbers 310.0 / 300.0 / 1220.0 are derived, not guessed: `dark` omits `1200 <= s < 1800` on a 10 s cadence, so the fleet-dark span runs `1190 -> 1800` (610 s) and the event at `1500` splits it into 310 + 300; ETH, having no event at 1500, books its containing 610 s once. Re-derive if you change the cadence.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -494,13 +546,15 @@ Widen the log call:
                 )
 ```
 
-Add four keys to the `_ledger(...)` call that follows — and **change none of its existing arguments**:
+Add these keys to the `_ledger(...)` call that follows — and **change none of its existing arguments**:
 
 ```python
                     verdict=episode.verdict,
                     interior_updates=episode.interior_updates,
                     interior_snapshots=episode.interior_snapshots,
+                    interior_seconds=episode.interior_seconds,
                     pairs_agreeing=episode.pairs_agreeing,
+                    pairs_skipped=episode.pairs_skipped,
                     divergent_pairs=list(episode.divergent_pairs),
 ```
 
@@ -541,16 +595,32 @@ Add one `_emit` beside `residual_gap_seconds_total`. **The HELP text is operator
 Run: `uv run pytest tests/test_archive_reconcile_command.py -v`
 Expected: PASS, including every pre-existing test — particularly `test_both_streams_silent_is_ledgered_paged_and_never_minted`, `test_a_fleet_dark_window_is_never_booked_as_loss_twice`, and `test_one_pair_going_quiet_alone_is_never_both_streams_silent`.
 
-- [ ] **Step 5: Confirm the active-series budget still holds**
+- [ ] **Step 5: Update the two existing guards this change trips**
+
+Neither is optional and neither is in a file the plan otherwise touches — **verify both are red before you fix them**, so you know the guard bit rather than assuming it.
+
+1. **`tests/test_archive_reconcile_command.py::test_the_textfile_carries_every_series_and_is_written_atomically`** pins the emitted series set EXACTLY (`assert set(series) == {...}`, 12 entries). Three new series make it fail. Add them to the pinned set:
+
+```python
+        'zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}',
+        'zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}',
+        'zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}',
+```
+
+2. **`tests/test_dashboards_cover_metrics.py::test_every_published_app_family_is_charted`** auto-discovers reconcile families from `_emit` call sites via `_RECONCILE_EMIT`, and `NOT_CHARTED` is currently an **empty dict**. A new family must therefore be charted or excluded with a written reason. **Chart it** rather than exclude it — spec D5's new alert summary sends the operator to this very metric, so a page whose triage step points at an uncharted series is the gap this guard exists to catch. Add a verdict-split panel to the `zcrypto-integrity` dashboard beside panel 202 (the residual-gap panel the alert already links via `__panelId__`).
+
+If you chart it, `NOT_CHARTED` stays empty and no exclusion reason is owed. If a panel proves impractical, the fallback is a `NOT_CHARTED` entry whose reason states that the series is deliberately unalerted (venue silence must not page) and is read only during triage of the residual-gap rule — but prefer the panel.
+
+- [ ] **Step 6: Confirm the active-series budget still holds**
 
 Three new series against a measured 884 active and spec `00043`'s <1k ceiling. Note the count in the commit message; if the fleet has grown since, re-measure before assuming headroom.
 
-- [ ] **Step 6: Run the full suite**
+- [ ] **Step 7: Run the full suite**
 
 Run: `uv run pytest -q`
 Expected: all pass. Budget ~7 min 30 s — `data/ohlc-full` is present, so the data-dependent regression tests run.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add cli/archive/command.py tests/test_archive_reconcile_command.py
@@ -565,7 +635,8 @@ Message: `feat(archive): record and count the dark-episode verdict beside the bo
 
 **Files:**
 - Modify: `infra/grafana/alerts.yaml` — `uid: zcrypto-reconcile-residual-gap`, `annotations.summary` only
-- Modify: `infra/runbooks/ops.md` — add the missing `zcrypto-reconcile-residual-gap` section
+- Modify: `infra/runbooks/ops.md` — add the missing `zcrypto-reconcile-residual-gap` section (with its `<a name=...>` anchor)
+- Modify: `infra/runbooks/README.md` — the per-alert index row
 - Test: `tests/test_internal_terms_not_operator_visible.py` (existing; no edit — it must keep passing)
 
 **Interfaces:** none. Text changes.
@@ -577,7 +648,7 @@ Message: `feat(archive): record and count the dark-episode verdict beside the bo
 Replace the `summary:` value of the `zcrypto-reconcile-residual-gap` rule with:
 
 ```yaml
-      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this. TRIAGE FIRST: a both_streams_silent record carries a verdict field, also exported as dark_episode_seconds_total by verdict. venue_silent means both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts -- weigh it as a venue event, and treat it sceptically if a fleet-wide image change just landed. capture_divergent means one host missed what the other received: investigate the fleet. undetermined means no evidence either way -- treat it as loss, and check zcrypto_capture_venue_status_total for that hour, where a series for anything other than online is itself a venue signal this check cannot see."
+      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this. TRIAGE FIRST: a both_streams_silent record carries a verdict field, also exported as zcrypto_reconcile_dark_episode_seconds_total by verdict. venue_silent means both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts -- weigh it as a venue event, and treat it sceptically if a fleet-wide image change just landed. capture_divergent means one host missed what the other received: investigate the fleet. undetermined means no evidence either way -- treat it as loss, and check zcrypto_capture_venue_status_total for that hour, where a series for anything other than online is itself a venue signal this check cannot see."
 ```
 
 `expr`, `condition`, `for`, `noDataState`, `execErrState`, `labels.severity`, `uid`, and the `__dashboardUid__`/`__panelId__`/`unit` annotations are unchanged. This is an **upsert of annotation text**: no uid is superseded, so **no prune is owed** (`capture-deploys.md`).
@@ -631,13 +702,13 @@ It must carry, at minimum:
 - **What to do**, as numbered steps: (1) read the `verdict` on the hour's `both_streams_silent` ledger record, or `zcrypto_reconcile_dark_episode_seconds_total` by label; (2) `venue_silent` — the silence was upstream of both hosts; treat it sceptically if a fleet-wide image change just landed, since both hosts run the same digest by the canary rule; (3) `capture_divergent` — one host missed what the other received, investigate the fleet; (4) `undetermined` — check `zcrypto_capture_venue_status_total` for that hour, where a series for anything other than `online` is itself a venue signal this check cannot see. **If step 4 comes back non-`online`, [[T0144]] is ripe** — record it and pick it up or consciously re-defer.
 - **Retire when**: never, while the counter exists — this is the triage path for the system's highest-severity rule.
 
-Add a row for it to the runbook index at the top of the file if that file keeps one.
+Two mechanics the file enforces and a literal reader would miss: every section carries an explicit `<a name="<uid>"></a>` anchor (that anchor IS the file's lookup contract — find the section whose anchor matches the alert uid), and the per-alert index is **`infra/runbooks/README.md`**, not the top of `ops.md`, which keeps none. Add the anchor and the README row. Also consider adding `Runbook: infra/runbooks/ops.md#zcrypto-reconcile-residual-gap` to the alert's annotations, matching the sibling rules that already carry one.
 
 - [ ] **Step 5: Run the gate and commit**
 
 ```bash
 uv run pre-commit run -a
-git add infra/grafana/alerts.yaml infra/runbooks/ops.md
+git add infra/grafana/alerts.yaml infra/runbooks/ops.md infra/runbooks/README.md
 git commit
 ```
 
