@@ -1,69 +1,82 @@
 # 00096 — venue silence vs capture loss: a triage discriminator for the residual-gap counter
 
-Resolves [[T0143]]. Read-only with respect to the ledger: **nothing here changes what `zcrypto_reconcile_residual_gap_seconds_total` books, by how much, or when.** What changes is that the reconciler says *why* it believes the fleet went dark, and the operator woken by the highest-severity rule in the system has that reason in hand instead of having to derive it at 3am.
+Resolves [[T0143]]. **Nothing here changes what `zcrypto_reconcile_residual_gap_seconds_total` books, by how much, or when.** What is added is a verdict — recorded on the ledger, exported as a parallel counter, and surfaced in the page's triage line — saying *why* the reconciler believes the fleet went dark.
 
-## Context — a venue outage is indelibly recorded as permanent capture loss
+## Context — venue outages are indelibly recorded as permanent capture loss
 
-On 2026-08-20 Kraken's book feed emitted essentially nothing between 07:01:04Z and 07:10:14Z across all twelve streams. At the 09:12Z reconcile tick the ledger booked it exactly as designed: `residual_gap` moved 15636.019483 → 21887.369457 (**+6251.35 s**, 520.9 s per stream), state `both_streams_silent`, with `healable_gap` unmoved. Correct by the counter's definition, and wrong as a description of what happened — no data was lost, because there was no data to lose.
+This has happened **twice**, and both are in the ledger:
 
-Two harms follow, and they compound:
+| Window | Booked as `both_streams_silent` | Kraken status page |
+| --- | --- | --- |
+| 2026-08-06 07:01:02 → 07:18:18 | 10,588.382751 s | **Posted** — `maintenance` → `cancel_only` → `post_only` → `online` |
+| 2026-08-20 07:01:04 → 07:10:14 | 6,251.35 s | **Not posted** |
 
-- **The alert teaches the wrong lesson.** `Reconciler · residual gap increased (permanent loss)` is `severity: critical` and fires on any increase at all (`> 0`, deliberately no tolerance). A venue outage that pages it at top severity trains the operator to discount the one alert that must never be discounted — the same [[T0135]] failure mode `00089` D2 was written to avoid, arriving from the opposite direction.
-- **The denominator is corrupted.** `continuity.py` over 2026-08-20 reports a 1.88 % gap and FAILS its <0.1 % exit bar entirely on this window. A later reader comparing day-over-day continuity sees a capture regression that did not happen.
+Both correct by the counter's definition, and both wrong as descriptions of what happened: each was investigated after the fact and found venue-side, so nothing was lost because there was nothing to lose. (That is a retrospective human conclusion on two specific events, with Kraken's own status posting behind the first — a stronger warrant than the automatic verdict D2 introduces, which is why D5 forbids the summary from asserting it.) Two harms follow:
 
-The counter is monotonic and derived by summing an append-only ledger, so the 6251.35 s can never be walked back — only explained.
+- **The alert teaches the wrong lesson.** `Reconciler · residual gap increased (permanent loss)` is `severity: critical` and fires on any increase at all (`> 0`, deliberately no tolerance). A venue outage paging it at top severity trains the operator to discount the one alert that must never be discounted — the [[T0135]] failure mode `00089` D2 exists to avoid, arriving from the opposite direction.
+- **The denominator is corrupted, and nothing can answer it mechanically.** `continuity.py` over 2026-08-20 reports 1.88 % and FAILS its exit bar entirely on that window. Today the only way to ask "how much of our booked permanent loss was never ours?" is to read prose.
 
-## The load-bearing measurement, and why the obvious signal fails
+The counter is monotonic and derived by summing an append-only ledger, so those seconds can never be walked back — only explained.
 
-**Kraken's status page reported no incident.** The candidate signal T0143 offered first — a `SystemStatus` read, the same public endpoint `00088`'s execution gate already consumes — would therefore have booked 2026-08-20 identically. It is refuted by the only event we have. Brief venue degradations routinely go unposted, so this is a property of the source, not bad luck on one sample.
+## The load-bearing measurements
 
-The discriminator that *did* work is cross-host agreement: the primary and the secondary, independent hosts on separate networks and processes, recorded the same sparse events with **microsecond-identical timestamps** (`07:01:04.553253` → `07:08:01.113758` on BTC/EUR on both).
+**Venue status alone is not the discriminator.** 2026-08-06 was posted; 2026-08-20 was not. A `SystemStatus` read — the same public endpoint `00088`'s execution gate consumes — therefore catches **one of the two**, and brief degradations routinely go unposted. That is a property of the source, not bad luck on one sample.
+
+**Cross-host agreement catches both.** On each event the primary and the secondary — independent hosts, separate networks, separate processes — recorded the same sparse events with microsecond-identical timestamps (`07:01:04.553253` → `07:08:01.113758` on BTC/EUR on both, 2026-08-20).
 
 That agreement is sound rather than coincidental, and the reason is verifiable in the capture writer: `cli/capture/command.py` sets `ts = _parse_ts(entry["timestamp"])` — **Kraken's own message timestamp, carried in the payload, never local receipt time.** Two hosts that receive the same message therefore record byte-identical `ts` by construction, and a host that was not receiving cannot manufacture one.
 
+**What agreement does and does not establish.** It establishes that both hosts were connected and receiving *at those instants*, and therefore that the silence was **upstream of both hosts' write paths**. It is evidence-weighting, not proof. It cannot exclude a deterministic shared-code drop — the canary rule makes both hosts run the same image digest by design, so a parser that skips a changed payload shape, or a correlated `watermark.breached`, writes byte-identical sparse mirrors — nor a shared Kraken-edge path failure another vantage could have captured. This is precisely why the verdict never feeds the booking (D1), and why a verdict arriving right after a fleet-wide image change deserves scepticism.
+
 ## Decisions
 
-**D1 — `residual_gap_seconds_total` books ABSENCE of data, not FAULT attribution. That is now the ruling, not an accident of implementation.** The counter's contract is "no book data exists for this window on either mirror, and no later cycle can heal it." That statement was true on 2026-08-20 and stays true. Attribution is a separate question with a separate, weaker evidence base, and fusing the two would make a monotonic fail-closed ledger depend on an inference. Recorded here so the booking is never later "corrected" by someone reading the counter's `permanent loss` label as a fault claim.
+**D1 — `residual_gap_seconds_total` books ABSENCE of data, not FAULT attribution, and the booking never changes.** Its contract is "no book data exists for this window on either mirror, and no later cycle can heal it." That was true on both events and stays true. Three reasons this is a ruling rather than a limitation: the counter has already survived one traumatic ledger correction (2026-07-14, 6261.8 → 2661.8 s) whose `resets()` guard still costs a 24 h blind spot; the failure direction is asymmetric, because *not* booking a `venue_silent`-classified window would let the shared-mode failures above go unbooked and unpaged; and the verdict is evidence-weighting (above), which must never gate a monotonic, unwalkbackable record. The mismatch is the *label* "permanent loss", and D5 fixes the label surface.
 
-**D2 — the booking block gains a three-valued verdict, computed from evidence it already holds.** A booked `both_streams_silent` window contains zero events *by construction* — `fleet_dark_windows` runs over the union of both mirrors across all pairs — so the evidence cannot come from inside a window. It comes from the **interior span**: the events falling *between* adjacent booked windows of the same hour, which exist precisely because some stream ticked there. That is what 2026-08-20 produced (one lone book update mid-episode, on both hosts).
+**D2 — a three-valued verdict, computed from evidence the booking block already holds.** A booked window contains zero events *by construction* — `fleet_dark_windows` runs over the union of both mirrors across all pairs — so evidence cannot come from inside one. It comes from the **interior span**: events falling *between* adjacent booked windows of the same hour, which exist precisely because some stream ticked there. Per pair, compare the two mirrors' `ts` multisets over that span:
 
-Per pair, compare the two mirrors' `ts` multisets over the interior span:
-
-| Interior evidence | Verdict | What it establishes |
+| Interior evidence | Verdict | Reading |
 | --- | --- | --- |
-| Non-empty, mirrors **equal** | `venue_silent` | Both hosts were connected and receiving the same venue messages *during* the episode — the silence was upstream |
+| Non-empty, mirrors **equal** | `venue_silent` | Both hosts were receiving the same venue messages during the episode; the silence was upstream of both |
 | Non-empty, mirrors **differ** | `capture_divergent` | One host missed what the other received — a capture-side finding in its own right |
-| Empty | `undetermined` | No interior evidence exists; the case cannot be distinguished |
+| Empty | `undetermined` | No interior evidence; the case cannot be distinguished |
 
-**D3 — `undetermined` is the default, and bracketing events never promote to `venue_silent`.** Agreement on the events immediately *before* and *after* the episode proves only that both hosts were healthy before and after it — a simultaneous both-host outage that self-healed produces exactly that signature. Accepting brackets would label a real, correlated capture failure `venue_silent`, which is the one direction this design must not fail in. Only interior evidence counts.
+Divergence outranks agreement: one mirror missing one message is a finding that must not be masked by every other pair agreeing. Both mirrors' frames are already in hand at the booking site, so this costs no I/O.
 
-**D4 — no ledger field, no new counter, no schema change.** The verdict is computed at booking time and written to the existing `logger.error("archive reconcile: both_streams_silent …")` line, alongside the window count and residual seconds it already carries. Consequences, all deliberate: the reconcile ledger's record format is untouched, so `capture-deploys.md`'s **readers-before-writer** converge ordering is not triggered; no series joins the active-series budget, so no Alloy keep-list edit and no admitted-metrics rule is owed; and `gate_cache.py`'s replay fingerprint is untouched — `cli/archive/command.py` is measured absent from the 74-file transitive `cli.*` replay closure, so no NAS converge pays the cold gate-export replay.
+**D3 — `undetermined` is the default, and bracketing events never promote.** Agreement on events *before* and *after* the episode proves only that both hosts were healthy either side of it — exactly the signature of a simultaneous both-host outage that self-healed. Accepting brackets would label a real correlated capture failure `venue_silent`, the one direction this must not fail in. Only interior evidence counts. The genuinely uncovered case is a hard halt emitting nothing at all: one window, no interior, `undetermined` — and it pages exactly as today, by design.
 
-The upgrade path is left open and explicitly *not* taken now: if a second episode books and the verdict proves out on a second independent sample, promoting it to a ledger field and a `venue_silent` counter is additive and can be specified then. Building the counter on one sample would be speculative, and a wrong classifier baked into an append-only ledger is not walk-backable.
+**D4 — the verdict is durable: a ledger field and a parallel counter, never a subtraction.** The log line alone is ephemeral (finite retention), and for every future episode the ledger — the durable record — would carry no verdict at all, leaving 3am triage evidence to expire. So:
 
-**D5 — the alert gains a triage line naming the discriminator.** `zcrypto-reconcile-residual-gap`'s `summary` currently sends the operator to the ledger for the *state* behind the increase. It gains the next step: check the reconcile log's verdict for that hour, and the discriminator itself — two independent hosts recording identical venue timestamps across the window means the silence was upstream. The rule's `expr`, threshold, `for`, severity, and uid are unchanged, so this is an upsert of annotation text with **no prune owed** and no superseded uid. Per `capture-deploys.md`'s alert-rule lifecycle the push still happens after the converge, and the rule is verified evaluating by value rather than merely stored.
+- The `both_streams_silent` record gains `verdict`, plus the evidence behind it (`interior_rows`, `pairs_agreeing`, `divergent_pairs`).
+- The exporter gains `zcrypto_reconcile_dark_episode_seconds_total{verdict=...}`, derived by summing the ledger exactly as every sibling counter is. Its three label values **fully partition** the `both_streams_silent` seconds, so the parts sum to the whole and the metric checks itself.
+- **It is a parallel view, never a subtraction.** `residual_gap` continues to book every second; `venue_silent` ≤ `residual_gap` always. Anyone wanting "loss that was actually ours" subtracts at read time, in a query, where the judgement is revisable — not in the ledger, where it would not be.
 
-The summary is operator-facing text read on a phone with nothing open, so it carries no `T<NNNN>`, spec serial, or phase token — `operator-facing-text.md`, enforced by `tests/test_internal_terms_not_operator_visible.py`.
+Costs measured rather than assumed: `capture-deploys.md`'s **readers-before-writer** converge ordering is **not owed** — the only reader of `reconcile-ledger.jsonl` is `cli/archive/command.py` itself, the NAS transports it without parsing, and every read is `record.get(...)` with a default, a pattern `_booked_dark` already uses to tolerate records written before an earlier widening. No **Alloy keep-list edit** is owed either: the ops keep-list admits `zcrypto_reconcile_.*` as a prefix family. `gate_cache.py`'s replay fingerprint is untouched — `cli/archive/command.py` is measured absent from the 74-file transitive `cli.*` replay closure — so no NAS converge pays the cold gate-export replay.
 
-**D6 — the 2026-08-20 event is annotated where its numbers are quoted, not corrected.** The counter is monotonic; the 6251.35 s stands forever. `docs/reference/` gains the explanation wherever that day's continuity figure can be read, so a future reader comparing day-over-day continuity is not misled into diagnosing a capture regression. The narrative is written in place rather than appended as a retraction (`agent-ops.md`), and the per-event evidence — the timestamps, the counter values, the tick that booked it — belongs to the updating commit's message, not the living doc (`docs-style.md`).
+**D4a — the two historical episodes book as `undetermined`, and that is the honest answer.** Their records predate the discriminator and `_decided` prevents re-deciding an already-ledgered `(pair, kind, hour, state)`, so they carry no `verdict` and the exporter counts them `undetermined`. The counter must never retroactively claim knowledge the system did not have. A useful side effect: the series is non-zero from its first scrape, so it does not trip the eagerly-registered-at-zero staleness trap.
+
+**D5 — the alert gains a triage line; no rule is added, and the new series is excluded with a written reason.** `zcrypto-reconcile-residual-gap`'s `summary` gains the next step — read the verdict, and what each value means — with its `expr`, threshold, `for`, severity, and uid unchanged, so this is an annotation upsert with **no prune owed**. The new series gets **no rule of its own**: venue silence is not a fault and must not page, and the residual rule already owns the wake-up. The admitted-metrics guard requires every admitted series watched or excluded-with-reason; this is the exclusion, the shape `00089` D6 set for its level gauges.
+
+The summary says the silence was upstream of both hosts — never "no data was lost", which overclaims past what agreement establishes. It is operator-facing text read on a phone with nothing open, so it carries no topic id, spec serial, or phase token (`operator-facing-text.md`, enforced by `tests/test_internal_terms_not_operator_visible.py`).
+
+**D6 — both historical events are annotated where their numbers are read.** `docs/reference/capture-era-data-hygiene-map.md` already carries the 2026-08-06 row in exactly the right form — venue cause, gap-seconds, the reconciler's booking, and a FLAG verdict for continuity-sensitive analyses. 2026-08-20 gets its row in the same shape. The narrative is written in place, never appended as a retraction (`agent-ops.md`), and the per-event evidence belongs to the updating commit's message rather than the living doc (`docs-style.md`).
 
 ## Verification
 
-- **The guard is unproven until the defect trips it** (`agent-ops.md`), so each verdict is constructed from synthetic two-mirror frames: equal interior multisets → `venue_silent`; a single event dropped from one mirror → `capture_divergent`; an episode with no interior events → `undetermined`.
-- **A true-positive is mandatory**: a production-shaped healthy hour — no fleet-dark window at all — must book nothing and emit no verdict, so an always-classifying implementation cannot ship green.
-- **The booking is pinned as unchanged**, and this is the load-bearing regression test: for an input that books `both_streams_silent` today, `residual_seconds` and the ledger record must be byte-identical with the verdict present. D1 is a claim about behaviour, so it gets a test, not a sentence.
-- **Replayed against the real 2026-08-20 hour-07 data** on a pulled copy (never the live capture dir), the verdict must read `venue_silent` and the booked seconds must reproduce 6251.35 s at full precision — the number is reproduced from source, not quoted from the topic (`agent-ops.md`).
+- **The guard is unproven until the defect trips it** (`agent-ops.md`): each verdict is constructed from synthetic two-mirror frames — equal interior multisets → `venue_silent`; one event dropped from one mirror → `capture_divergent`; no interior events → `undetermined` — and the classifier is mutation-probed through `infra/scripts/mutate-probe.sh`, never a hand-rolled mutate-and-restore loop.
+- **A true-positive is mandatory**: a production-shaped healthy hour, with no fleet-dark window at all, must book nothing and emit no verdict, so an always-classifying implementation cannot ship green.
+- **The booking is pinned as unchanged**, and this is the load-bearing regression: splitting an episode into two windows must leave `residual_seconds` identical to the single-window case, to the second.
+- **The counter partitions**: for any ledger, the three label values sum to exactly the `both_streams_silent` seconds inside `residual_gap` — asserted, not assumed.
+- **Replayed against both real events** — 2026-08-06 hour 07 and 2026-08-20 hour 07 — on a pulled copy, never the live capture dir. Every number reproduced from source at full precision, not quoted from this spec.
 - The alert's post-push verification reads the rule **evaluating**, by value.
 
 ## What this does NOT do — bounded claims
 
-- It does not make the counter able to distinguish venue silence from capture loss. It makes the *reconciler* able to say which it believes, for the subset of episodes carrying interior evidence, and leaves the counter's contract exactly as it was.
-- It does not classify an episode with no interior events. Such an episode reads `undetermined` and pages exactly as it does today — by design, per D3.
-- It does not change alert severity, threshold, or firing behaviour. A venue outage will still page `critical`; what changes is that the page's triage path is one log line away instead of a derivation.
-- It does not retroactively alter the 6251.35 s already booked, or `continuity.py`'s 2026-08-20 verdict. Both are explained (D6), never corrected.
+- It does not prove venue silence. It records what the available evidence weighs toward, for the subset of episodes carrying interior evidence, and says `undetermined` otherwise.
+- It does not change alert severity, threshold, or firing behaviour. A venue outage still pages `critical`; what changes is that triage is one field away instead of a derivation.
+- It does not subtract anything from `residual_gap`, now or ever.
+- It does not retroactively classify the two historical episodes (D4a), or alter the seconds already booked.
 
 ## Out of scope
 
-- A `venue_silent` counter and its ledger field — D4's deliberate upgrade path, gated on a second independent sample.
-- Any venue-status input to the reconciler — refuted for this purpose by the 2026-08-20 measurement, and re-opening it needs a source that demonstrably reports brief degradations.
-- `continuity.py`'s exit-bar arithmetic — and **not** because the classification is missing. It takes a single positional capture `root` and never reads the reconcile ledger, so no ledger field or counter this spec could build would be visible to it, and with one mirror the cross-host discriminator is unavailable in principle. More decisively, spec `00050` deliberately isolates the exit-bar report from any second source that heals gaps — its own docstring: an overlay "would otherwise let a raw-capture regression bank a 'clean' run -- exactly the defect class the bar exists to catch". A venue-fault verdict is structurally that same move, so feeding one in is refused by design rather than deferred. The 2026-08-20 FAIL is explained (D6), never subtracted. Stakes are bounded: T0003's bar was met and resolved 2026-07-16, so what this instrument gates today is the post-deploy truncated-hours check, which this window does not touch.
+- Any venue-status input to the reconciler — it catches one of the two known events, and cross-host catches both. Re-opening needs a source that demonstrably reports brief degradations.
+- `continuity.py`'s exit-bar arithmetic — and **not** because a classification is missing. It takes a single positional capture `root` and never reads the reconcile ledger, so nothing built here is visible to it, and with one mirror the cross-host discriminator is unavailable in principle. More decisively, spec `00050` deliberately isolates the exit-bar report from any second source that heals gaps — its own docstring: an overlay "would otherwise let a raw-capture regression bank a 'clean' run -- exactly the defect class the bar exists to catch". A venue-fault verdict is structurally that same move, so feeding one in is refused by design rather than deferred. Stakes are bounded: T0003's bar was met and resolved 2026-07-16, so what this instrument gates today is the post-deploy truncated-hours check, which neither window touches.
