@@ -14,7 +14,7 @@ The executable form of the capture-image canary rollout. L2 capture is unbackfil
 - **Every irreversible action** — converge, re-pin, restart — takes the user's explicit word at that step, with the blocker sweep (open-topics index + memo) presented alongside (`agent-ops.md`).
 - Rollout order: **secondary first, primary last.**
 - Digest identity is always `{{.Config.Image}}` — `{{.Image}}` is host-dependent and lies under classic storage.
-- Playbooks via `infra/ansible/scripts/run.sh`; preview every converge with `--check --diff`; never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `capture-deploys.md` and CLAUDE.md `## Secrets`.
+- Converges via `infra/ansible/scripts/converge.sh` — it requires `--limit`, shows the `--check --diff` preview, and takes a typed confirm before the real pass (preview-only: pass `--check`); never wrap it in `timeout` (attended by design; the orphaned child would converge unsupervised); never run the primary un-tagged; `-e converge_primary=true` restarts live capture — mean it. Vault and inspect-scoping invariants: `capture-deploys.md` and CLAUDE.md `## Secrets`.
 
 ## Phase 0 — Preflight
 

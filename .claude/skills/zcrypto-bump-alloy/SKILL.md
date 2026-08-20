@@ -18,7 +18,7 @@ The codified Alloy image bump (T0081). Four hosts run digest-pinned `grafana/all
 
 ## Standing cautions (they all transfer)
 
-- Playbooks via `infra/ansible/scripts/run.sh`; **never** `ansible-inventory --host/--list` (prints the vault, incl. the live trade key). `--check --diff` before every real converge.
+- Converges via `infra/ansible/scripts/converge.sh` — requires `--limit`, shows the `--check --diff` preview, takes a typed confirm (preview-only: pass `--check`); **never wrap it in `timeout`** (it is attended by design, and `timeout` orphans the running `ansible-playbook` child). **Never** `ansible-inventory --host/--list` (prints the vault, incl. the live trade key).
 - Timeout-guard every network command; an empty filtered query is not an absent event — verify by positive trace.
 - NAS docker is `/usr/local/bin/docker` (not on sudo's PATH); the NAS play refuses on a non-UTC clock (`tags: [always]` guard).
 - **Read the `--check --diff` output before every converge, and stop on any diff you did not intend.** The capture-role converge re-renders the *capture* compose too: if that render shows changes beyond your intent, the tree you are deploying from has drifted against the hosts (the 2026-07-23 lesson: hosts deployed from an unmerged branch make a develop-based converge silently revert it). Reconcile first; never converge through an unexplained diff.
@@ -55,8 +55,8 @@ Between hosts: wait until the just-bumped host's verification (Step 3) is fully 
 
 ```bash
 cd infra/ansible
-timeout 600 ./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<new> --check --diff
-timeout 600 ./scripts/run.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<new>
+./scripts/converge.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<new> --check   # preview only
+./scripts/converge.sh site.yml --limit zcrypto-ops -e ops_alloy_digest=sha256:<new>
 # NB an EMPTY -e ops_alloy_digest= still counts as defined and renders a broken image ref —
 # the same footgun as capture_alloy_digest below; pass a real digest or omit the flag entirely.
 ssh hp 'cd /etc/zcrypto-ops/alloy && sudo docker compose up -d'   # role renders only — never starts
@@ -70,8 +70,8 @@ ssh hp 'cd /etc/zcrypto-ops/alloy && sudo docker compose up -d'   # role renders
 Pin already updated in Step 1; the apply also restarts `archive-pull` (every apply does).
 
 ```bash
-timeout 600 ./scripts/run.sh site.yml --limit nas --tags nas --check --diff
-timeout 600 ./scripts/run.sh site.yml --limit nas --tags nas -e nas_apply_compose=true   # up -d + restart alloy baked in
+./scripts/converge.sh site.yml --limit nas --tags nas --check   # preview only
+./scripts/converge.sh site.yml --limit nas --tags nas -e nas_apply_compose=true   # up -d + restart alloy baked in
 ```
 
 The `.env` render is `no_log`/`diff: false` (it carries a vaulted URL), so the pin change will NOT show in the diff — the changed-files report naming `.env` is the signal.
@@ -82,15 +82,15 @@ Pass the **currently-running capture digest** — read it with `ssh red 'sudo do
 
 ```bash
 # secondary
-timeout 600 ./scripts/run.sh site.yml --limit zcrypto-red \
-  -e capture_image_digest=<current running capture digest> -e capture_alloy_digest=sha256:<new> --check --diff   # then real
+./scripts/converge.sh site.yml --limit zcrypto-red \
+  -e capture_image_digest=<current running capture digest> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh red 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'   # role renders only — never starts
 
 # primary — converge_primary is required, and --skip-tags engine is LOAD-BEARING
 # (bare --limit zcrypto pulls in the engine play, whose digest assert fails the host closed;
 #  "fixing" that with -e engine_image_digest would restart the LIVE trade engine)
-timeout 600 ./scripts/run.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true \
-  -e capture_image_digest=<current running capture digest> -e capture_alloy_digest=sha256:<new> --check --diff   # then real
+./scripts/converge.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true \
+  -e capture_image_digest=<current running capture digest> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh zcrypto 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'
 ```
 
