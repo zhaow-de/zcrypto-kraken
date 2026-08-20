@@ -6,9 +6,14 @@ from pathlib import Path
 import polars as pl
 
 from cli.archive.settle import (
+    CAPTURE_DIVERGENT,
     LATE_MINT_HOURS,
     SETTLE_HOURS,
+    UNDETERMINED,
+    VENUE_SILENT,
     DarkWindow,
+    EpisodeVerdict,
+    classify_dark_episode,
     containing_dark_window,
     fleet_dark_windows,
     hour_path,
@@ -335,3 +340,170 @@ def test_a_stream_that_ticked_inside_the_fleet_window_has_no_containing_window()
     fleet = DarkWindow(start=_at(150), end=_at(300), seconds=150.0)
 
     assert containing_dark_window(stamps, fleet, hour_start=H, hour_end=HOUR_END) is None
+
+
+# --- the venue-silence discriminator (spec 00096) -------------------------------------------------
+#
+# A booked window contains ZERO events by construction -- `fleet_dark_windows` runs over the union
+# of both mirrors across every pair -- so the evidence lives in the INTERIOR span: the events
+# BETWEEN adjacent booked windows, which exist precisely because some stream ticked there.
+
+
+def _episode() -> list[DarkWindow]:
+    """Two booked windows split by a lone interior event at t=500 -- the 2026-08-20 shape."""
+    return [
+        DarkWindow(start=_at(0), end=_at(500), seconds=500.0),
+        DarkWindow(start=_at(500), end=_at(1000), seconds=500.0),
+    ]
+
+
+def test_mirrors_agreeing_on_the_interior_event_prove_the_venue_went_silent():
+    # Both hosts recorded the SAME lone mid-episode message. `ts` is Kraken's own payload timestamp
+    # (cli/capture/command.py), never local receipt time, so identical stamps mean both hosts were
+    # connected and receiving DURING the episode -- a host that was not receiving cannot invent one.
+    verdict = classify_dark_episode(
+        _episode(),
+        {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": [(_at(500), "update")]}},
+    )
+    assert verdict.verdict == VENUE_SILENT
+    assert verdict.interior_updates == 1
+    assert verdict.pairs_agreeing == 1
+    assert verdict.divergent_pairs == ()
+
+
+def test_a_mirror_that_missed_an_interior_event_is_a_capture_finding():
+    # The secondary lacks what the primary got: one host missed a message the venue sent. That is
+    # capture-side, and it must NEVER read as venue silence.
+    verdict = classify_dark_episode(
+        _episode(),
+        {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": []}},
+    )
+    assert verdict.verdict == CAPTURE_DIVERGENT
+    assert verdict.divergent_pairs == ("BTC/EUR",)
+
+
+def test_divergence_on_any_pair_outranks_agreement_on_every_other():
+    # Fail-closed ordering: one mirror missing one message is a finding in its own right, and must
+    # not be masked by eleven other pairs agreeing.
+    verdict = classify_dark_episode(
+        _episode(),
+        {
+            "BTC/EUR": {"primary": [(_at(500), "update")], "secondary": [(_at(500), "update")]},
+            "ETH/EUR": {"primary": [(_at(500), "update")], "secondary": []},
+        },
+    )
+    assert verdict.verdict == CAPTURE_DIVERGENT
+    assert verdict.divergent_pairs == ("ETH/EUR",)
+
+
+def test_a_single_booked_window_has_no_interior_and_is_undetermined():
+    # Nothing split the episode, so there is no interior span at all. THE fail-closed default: a
+    # simultaneous both-host outage looks exactly like this, and must not be excused.
+    one = [DarkWindow(start=_at(0), end=_at(1000), seconds=1000.0)]
+    verdict = classify_dark_episode(one, {"BTC/EUR": {"primary": [], "secondary": []}})
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.interior_updates == 0
+
+
+def test_bracketing_events_never_promote_to_venue_silent():
+    # D3. Both mirrors agree on the events immediately BEFORE and AFTER the episode -- which proves
+    # only that both hosts were healthy either side of it. A both-host outage that self-healed
+    # produces exactly this signature, so the verdict stays undetermined.
+    one = [DarkWindow(start=_at(100), end=_at(1000), seconds=900.0)]
+    verdict = classify_dark_episode(
+        one,
+        {
+            "BTC/EUR": {
+                "primary": [(_at(50), "update"), (_at(1100), "update")],
+                "secondary": [(_at(50), "update"), (_at(1100), "update")],
+            }
+        },
+    )
+    assert verdict.verdict == UNDETERMINED
+
+
+def test_a_pair_missing_a_mirror_entirely_contributes_no_evidence():
+    # An unreadable/absent segment is not a divergence: there is nothing to compare against.
+    verdict = classify_dark_episode(
+        _episode(),
+        {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": None}},
+    )
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.pairs_skipped == 1
+    assert verdict.divergent_pairs == ()
+
+
+def test_a_snapshot_only_interior_never_reads_as_venue_silence():
+    # D2a -- THE constructible false positive. A regression that breaks update-row writing while
+    # leaving book_snapshot handling intact makes BOTH hosts (same image, by the canary rule)
+    # write identical sparse snapshot rows. A snapshot is a periodic/resubscribe artifact and
+    # proves nothing about a live feed, so this must NOT read as the venue going quiet.
+    verdict = classify_dark_episode(
+        _episode(),
+        {"BTC/EUR": {"primary": [(_at(500), "snapshot")], "secondary": [(_at(500), "snapshot")]}},
+    )
+    assert verdict.verdict == UNDETERMINED
+    # the counts are still recorded, so the record explains ITSELF without re-running anything
+    assert verdict.interior_snapshots == 1
+    assert verdict.interior_updates == 0
+
+
+def test_one_interior_update_is_enough_even_beside_snapshots():
+    verdict = classify_dark_episode(
+        _episode(),
+        {
+            "BTC/EUR": {
+                "primary": [(_at(500), "snapshot"), (_at(500), "update")],
+                "secondary": [(_at(500), "snapshot"), (_at(500), "update")],
+            }
+        },
+    )
+    assert verdict.verdict == VENUE_SILENT
+    assert verdict.interior_updates == 1
+    assert verdict.interior_snapshots == 1
+
+
+def test_two_disjoint_blips_in_one_hour_never_promote_on_the_healthy_middle():
+    # F3, constructed. A both-host crash-loop (same image on both hosts by the canary rule, systemd
+    # restart backoff) makes TWO fleet-dark windows far apart. The dense healthy traffic between them
+    # is bracketing evidence for each blip -- and each blip alone is exactly the single-window shape
+    # D3 says must stay undetermined. The silence must DOMINATE the episode, or it is not one episode.
+    far = [DarkWindow(start=_at(300), end=_at(340), seconds=40.0), DarkWindow(start=_at(3000), end=_at(3040), seconds=40.0)]
+    healthy = [(_at(t), "update") for t in range(341, 3000, 2)]
+    verdict = classify_dark_episode(far, {"BTC/EUR": {"primary": healthy, "secondary": list(healthy)}})
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.interior_updates == 1330  # it SAW them; it refused to be convinced by them
+    assert verdict.interior_seconds > sum(w.seconds for w in far)
+
+
+def test_a_pair_whose_mirror_has_not_landed_caps_the_verdict():
+    # F4, constructed. Single-mirror hours exist BY CONSTRUCTION (a pair is added primary-first), and
+    # `both_streams_silent` is decided ONCE -- so a mirror arriving next cycle that would have shown
+    # divergence could never demote a venue_silent already written. Excusing on partial evidence is
+    # the forbidden direction, so an unlanded mirror caps the verdict.
+    verdict = classify_dark_episode(
+        _episode(),
+        {
+            "BTC/EUR": {"primary": [(_at(500), "update")], "secondary": [(_at(500), "update")]},
+            "ETH/EUR": {"primary": [(_at(500), "update")], "secondary": None},
+        },
+    )
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.pairs_skipped == 1
+    assert verdict.pairs_agreeing == 1
+
+
+def test_a_healthy_hour_with_no_windows_is_undetermined_and_never_classifies():
+    # THE true-positive: a production-shaped healthy hour books nothing, so the classifier must not
+    # manufacture a verdict. An always-classifying implementation fails here.
+    verdict = classify_dark_episode(
+        [],
+        {
+            "BTC/EUR": {
+                "primary": [(_at(s), "update") for s in range(0, 3600, 5)],
+                "secondary": [(_at(s), "update") for s in range(0, 3600, 5)],
+            }
+        },
+    )
+    assert verdict.verdict == UNDETERMINED
+    assert verdict.interior_updates == 0
