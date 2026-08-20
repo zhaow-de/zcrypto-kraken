@@ -361,6 +361,9 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
         "zcrypto_reconcile_healable_gap_seconds_total",
         "zcrypto_reconcile_healed_gap_seconds_total",
         "zcrypto_reconcile_residual_gap_seconds_total",
+        'zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}',
+        'zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}',
+        'zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}',
         'zcrypto_reconcile_trade_deficit_rows_total{host="primary"}',
         'zcrypto_reconcile_trade_deficit_rows_total{host="secondary"}',
         "zcrypto_reconcile_trade_dedup_rows_total",
@@ -523,6 +526,9 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
                 "deficit_secondary",
                 "dedup_rows",
                 "ledger_records",
+                "dark_venue_silent",
+                "dark_capture_divergent",
+                "dark_undetermined",
             ),
             0.0,
         ),
@@ -552,6 +558,9 @@ def test_textfile_publishes_the_ledger_record_count(tmp_path):
             "deficit_primary",
             "deficit_secondary",
             "dedup_rows",
+            "dark_venue_silent",
+            "dark_capture_divergent",
+            "dark_undetermined",
         ),
         0.0,
     )
@@ -1032,3 +1041,163 @@ def test_an_unknown_ledger_state_moves_no_counter(tmp_path, monkeypatch):
     series = _series(tmp_path / "r.prom")
     for name in ("healed_gap_seconds_total", "residual_gap_seconds_total", "healable_gap_seconds_total"):
         assert series[f"zcrypto_reconcile_{name}"] == pytest.approx(0.0), f"{name} moved on a note record"
+
+
+def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_path, monkeypatch):
+    """Spec 00096 D1/D4 -- the load-bearing regression, because the booking is a CONTRACT.
+
+    Splitting an episode into two windows must not move `residual_seconds` by a single second: the
+    counter derived from it is monotonic and unwalkbackable. The verdict rides ALONGSIDE, on the
+    record and in its own partitioned counter, and never subtracts from residual.
+    """
+    pri, sec, rec = _roots(tmp_path)
+    dark = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
+    for pair in PAIRS:
+        _write(pri, pair, "book", H, _book(pair, H, dark))
+        _write(sec, pair, "book", H, _book(pair, H, dark))
+    # ONE interior event, on BTC only, written IDENTICALLY to both mirrors -- the 2026-08-20 shape.
+    # It splits the fleet-dark span into TWO windows, which is the only thing that creates an
+    # interior span at all; without it there is nothing for the discriminator to read.
+    split = sorted(dark + [(1500.0, "update")])
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
+
+    # NOT caplog: cli/logging/config.py sets `propagate = False` on the `zcrypto` logger and
+    # cli/__main__.py calls configure() on every CliRunner invocation, so records never reach
+    # pytest's root handler. Verified -- caplog is empty here every time.
+    lines: list[str] = []
+    monkeypatch.setattr(command.logger, "error", lambda fmt, *a, **k: lines.append(fmt % a))
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=SETTLED, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 0
+    silent = [r for r in _ledger(rec) if r["state"] == "both_streams_silent"]
+    assert len(silent) == 1
+    record = silent[0]
+
+    # (a) THE CONTRACT: the booked seconds are IDENTICAL to the single-window case in
+    #     test_both_streams_silent_is_ledgered_paged_and_never_minted, even though the episode now
+    #     books as two windows instead of one -- BTC books 310+300, ETH books its containing 610
+    #     once. Splitting an episode must not move the counter.
+    assert record["residual_seconds"] == pytest.approx(1220.0)
+    assert [w["seconds"] for w in record["windows"]] == [pytest.approx(310.0), pytest.approx(300.0)]
+
+    # (b) the verdict and its evidence are on the DURABLE record, not only in a log line
+    assert record["verdict"] == "venue_silent"
+    assert record["pairs_agreeing"] == 1
+    assert record["divergent_pairs"] == []
+
+    # (c) the key set is pinned EXACTLY: the record gains these keys and nothing else.
+    assert set(record) == {
+        "at",
+        "state",
+        "pair",
+        "kind",
+        "hour",
+        "pairs",
+        "windows",
+        "stream_windows",
+        "residual_seconds",
+        "verdict",
+        "interior_updates",
+        "interior_snapshots",
+        "interior_seconds",
+        "pairs_agreeing",
+        "pairs_skipped",
+        "divergent_pairs",
+    }
+
+    # (d) the operator's log line carries it too -- that is the 3am path
+    line = next(m for m in lines if "both_streams_silent" in m)
+    assert "verdict=venue_silent" in line
+
+
+def test_the_dark_episode_counter_partitions_the_booked_seconds(tmp_path, monkeypatch):
+    """D4 -- the metric checks itself: the three label values sum to exactly the
+    `both_streams_silent` seconds, so a classification bug cannot quietly lose or duplicate time.
+
+    And it is a PARALLEL VIEW: residual_gap still books every second, so venue_silent <= residual.
+    """
+    pri, sec, rec = _roots(tmp_path)
+    dark = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
+    for pair in PAIRS:
+        _write(pri, pair, "book", H, _book(pair, H, dark))
+        _write(sec, pair, "book", H, _book(pair, H, dark))
+    split = sorted(dark + [(1500.0, "update")])
+    _write(pri, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
+    _write(sec, "BTC/EUR", "book", H, _book("BTC/EUR", H, split))
+
+    textfile = tmp_path / "reconcile.prom"
+    result = _run(
+        [str(pri), str(sec), str(rec), "--mint", "--textfile", str(textfile)],
+        now=SETTLED,
+        monkeypatch=monkeypatch,
+    )
+    assert result.exit_code == 0
+    series = _series(textfile)
+
+    booked = sum(v for k, v in series.items() if k.startswith("zcrypto_reconcile_dark_episode_seconds_total{"))
+    assert booked == pytest.approx(1220.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(1220.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}'] == pytest.approx(0.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(0.0)
+    # the parallel-view invariant: residual books everything, and never less than the classified part
+    assert series["zcrypto_reconcile_residual_gap_seconds_total"] >= booked
+
+
+def test_a_record_written_before_the_discriminator_existed_counts_as_undetermined(tmp_path, monkeypatch):
+    """D4a. The two real historical episodes are already in the live ledger with no `verdict`, and
+    `_decided` prevents re-deciding them. The counter must NEVER retroactively claim knowledge the
+    system did not have -- a verdict-less record is `undetermined`, not `venue_silent`.
+    """
+    pri, sec, rec = _roots(tmp_path)
+    rec.mkdir(parents=True, exist_ok=True)
+    legacy = {
+        "at": "2026-08-06T09:12:00+00:00",
+        "state": "both_streams_silent",
+        "pair": "*",
+        "kind": "book",
+        "hour": "2026-08-06T07:00:00+00:00",
+        "pairs": ["BTC/EUR"],
+        "windows": [{"start": "2026-08-06T07:01:02+00:00", "end": "2026-08-06T07:18:18+00:00", "seconds": 1036.0}],
+        "residual_seconds": 1036.0,
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(legacy) + "\n")
+
+    textfile = tmp_path / "reconcile.prom"
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0
+    series = _series(textfile)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(1036.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(0.0)
+
+
+def test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash(tmp_path, monkeypatch):
+    """D4a's sibling gap: the neighbouring test covers a MISSING verdict (a pre-discriminator
+    record); this covers an UNRECOGNIZED one. The ledger is append-only and outlives any single
+    image version -- widen the verdict vocabulary later, then roll back to this code (a normal
+    operation, per capture-deploys.md), and it must not crash-loop indexing a `dark_<verdict>` key
+    that does not exist. An unknown verdict is bucketed as `undetermined`, same as no verdict at
+    all -- not silently dropped, which would break the three-label partition of the booked seconds.
+    """
+    pri, sec, rec = _roots(tmp_path)
+    rec.mkdir(parents=True, exist_ok=True)
+    future = {
+        "at": "2026-09-01T09:12:00+00:00",
+        "state": "both_streams_silent",
+        "pair": "*",
+        "kind": "book",
+        "hour": "2026-09-01T07:00:00+00:00",
+        "pairs": ["BTC/EUR"],
+        "windows": [{"start": "2026-09-01T07:01:02+00:00", "end": "2026-09-01T07:18:18+00:00", "seconds": 1036.0}],
+        "residual_seconds": 1036.0,
+        "verdict": "venue_silent_likely",  # a value a NEWER image wrote, unknown to this code
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(future) + "\n")
+
+    textfile = tmp_path / "reconcile.prom"
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output  # never a KeyError abort on a rollback
+    series = _series(textfile)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(1036.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(0.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}'] == pytest.approx(0.0)

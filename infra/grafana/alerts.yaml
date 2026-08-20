@@ -1179,7 +1179,7 @@ rules:
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this."
+      summary: "Permanent L2 loss: silence NEITHER capture host covered -- unhealable, the data is gone. The counter books ABSENCE of data, not fault: a venue outage lands here exactly like a capture failure. TRIAGE FIRST -- read the verdict on the hour's both_streams_silent ledger record, or zcrypto_reconcile_dark_episode_seconds_total by verdict: venue_silent = the silence was upstream of both hosts; capture_divergent = one host missed what the other got, investigate the fleet; undetermined = treat as loss. Full steps, including the venue-status cross-check: Runbook: infra/runbooks/ops.md#zcrypto-reconcile-residual-gap"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of unrecoverable silence"

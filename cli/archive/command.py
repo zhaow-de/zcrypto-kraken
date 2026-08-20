@@ -42,6 +42,7 @@ from cli.archive.reconcile import (
     union_trades,
 )
 from cli.archive.settle import (
+    classify_dark_episode,
     containing_dark_window,
     fleet_dark_windows,
     hour_path,
@@ -283,6 +284,9 @@ def _totals(records: list[dict]) -> dict[str, float]:
             "deficit_secondary",
             "dedup_rows",
             "ledger_records",
+            "dark_venue_silent",
+            "dark_capture_divergent",
+            "dark_undetermined",
         ),
         0.0,
     )
@@ -296,6 +300,17 @@ def _totals(records: list[dict]) -> dict[str, float]:
             # carries no `residual_seconds` key at all, so it contributes nothing here by
             # construction rather than by being zero -- see T0108 for what that leaves unseen.
             totals["residual_seconds"] += float(record.get("residual_seconds") or 0.0)
+        if state == "both_streams_silent":
+            # A record written before the discriminator existed carries no verdict, and the counter
+            # must not claim knowledge the system did not have (spec 00096 D4a).
+            verdict = record.get("verdict") or "undetermined"
+            if verdict not in ("venue_silent", "capture_divergent", "undetermined"):
+                # The ledger is append-only and outlives any single image version: widen the verdict
+                # vocabulary later, then roll back to THIS code (a normal operation), and it must not
+                # crash-loop indexing a key that does not exist -- an unrecognized verdict is bucketed
+                # as undetermined, same as no verdict at all, rather than raising KeyError.
+                verdict = "undetermined"
+            totals[f"dark_{verdict}"] += float(record.get("residual_seconds") or 0.0)
         if state == "minted":
             totals["healed_seconds"] += float(record.get("healed_seconds") or 0.0)
             totals["spliced_hours" if record.get("kind") == "book" else "union_hours"] += 1
@@ -406,6 +421,21 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "market -- is deliberately not counted and reaches no counter at all, living in the ledger and the "
         "WARNING log only.",
         [("", totals["residual_seconds"])],
+    )
+    _emit(
+        "dark_episode_seconds_total",
+        "counter",
+        "The both_streams_silent seconds above, split by what the evidence weighs toward. "
+        "venue_silent: both capture hosts recorded the same venue message timestamps inside the "
+        "episode, so the silence was upstream of both. capture_divergent: one host missed what the "
+        "other received. undetermined: no evidence either way -- including every record written "
+        "before this split existed. A PARALLEL VIEW of residual_gap_seconds_total, never subtracted "
+        "from it; the three add up to the both_streams_silent share of it.",
+        [
+            ('{verdict="venue_silent"}', totals["dark_venue_silent"]),
+            ('{verdict="capture_divergent"}', totals["dark_capture_divergent"]),
+            ('{verdict="undetermined"}', totals["dark_undetermined"]),
+        ],
     )
     _emit(
         "trade_deficit_rows_total",
@@ -618,11 +648,29 @@ def reconcile(
                     - overlap_seconds(_booked_residual(records, p, hour), [(c.start, c.end) for c in own])
                     for p, own in stream_windows.items()
                 )
+                # TRIAGE ONLY -- never an input to `residual` above (spec 00096 D1). Both mirrors'
+                # frames are already in hand from the read above, so this costs no I/O.
+                episode = classify_dark_episode(
+                    windows,
+                    {
+                        p: {
+                            # (ts, type) pairs. Zipped explicitly rather than `.rows()`, which would
+                            # depend on the column order `_read` happened to return.
+                            src: (None if f is None else list(zip(f["ts"].to_list(), f["type"].to_list(), strict=True)))
+                            for src, f in books[p].items()
+                        }
+                        for p in present
+                    },
+                )
                 logger.error(
-                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f",
+                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s",
                     hour.isoformat(),
                     len(windows),
                     residual,
+                    episode.verdict,
+                    episode.interior_updates,
+                    episode.interior_snapshots,
+                    ",".join(episode.divergent_pairs) or "-",
                 )
                 _ledger(
                     state="both_streams_silent",
@@ -638,6 +686,13 @@ def reconcile(
                         for p, own in stream_windows.items()
                     },
                     residual_seconds=residual,
+                    verdict=episode.verdict,
+                    interior_updates=episode.interior_updates,
+                    interior_snapshots=episode.interior_snapshots,
+                    interior_seconds=episode.interior_seconds,
+                    pairs_agreeing=episode.pairs_agreeing,
+                    pairs_skipped=episode.pairs_skipped,
+                    divergent_pairs=list(episode.divergent_pairs),
                 )
 
         # --- the witness-based heal: books ------------------------------------------------------

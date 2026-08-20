@@ -19,7 +19,7 @@ No I/O policy and no Typer here — the tree scan is filename-only (it never ope
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -173,6 +173,104 @@ def containing_dark_window(
         if a <= window.start and window.end <= b:
             return DarkWindow(start=a, end=b, seconds=(b - a).total_seconds())
     return None
+
+
+VENUE_SILENT = "venue_silent"
+CAPTURE_DIVERGENT = "capture_divergent"
+UNDETERMINED = "undetermined"
+
+# An interior longer than this is not a sputtering venue -- it is healthy traffic separating two
+# INDEPENDENT incidents, and treating it as evidence is bracket promotion (D2b). Measured, with the
+# real event 3.0x inside it: 2026-08-20's interior is 98.497572 s. Re-measure before widening.
+INTERIOR_MAX_SECONDS = 300.0
+
+
+@dataclass(frozen=True)
+class EpisodeVerdict:
+    """Why the fleet went dark — TRIAGE ONLY, and deliberately not an input to any booking.
+
+    `residual_gap_seconds_total` books ABSENCE of data; this says what the reconciler believes
+    CAUSED the absence. Fusing the two would make a monotonic, unwalkbackable ledger depend on an
+    inference, so the verdict reaches the log line and the record and nothing else.
+    """
+
+    verdict: str
+    interior_updates: int
+    interior_snapshots: int
+    interior_seconds: float
+    pairs_agreeing: int
+    pairs_skipped: int
+    divergent_pairs: tuple[str, ...]
+
+
+def classify_dark_episode(
+    windows: Sequence[DarkWindow],
+    mirror_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]],
+) -> EpisodeVerdict:
+    """Was this episode the VENUE going quiet, or the fleet failing to record?
+
+    EVIDENCE-WEIGHTING, never proof — and the honest statement of what it weighs is narrow. The
+    capture writer stores Kraken's OWN message timestamp (`cli/capture/command.py` sets
+    `ts = _parse_ts(entry["timestamp"])`), never local receipt time, so two independent hosts that
+    receive the same message record byte-identical `ts` by construction and a host that was not
+    receiving cannot manufacture one. Identical interior rows therefore establish that both hosts
+    were receiving AT THOSE INSTANTS.
+
+    They do NOT establish anything about the dark windows themselves: every interior event is a
+    BRACKET for the silence on either side of it. What carries the verdict is that the interior is
+    BRIEF — a synchronised failure and recovery on two independent hosts, aligned to the microsecond
+    across a short window, is implausible in a way that "both hosts were simply fine for the twenty
+    minutes between two separate incidents" is not. Brevity is load-bearing, which is why
+    `INTERIOR_MAX_SECONDS` exists and why widening it is a design change, not a tuning knob.
+
+    EXACTLY TWO windows, deliberately. With three or more there is no way to tell which gaps are the
+    episode's own sputtering and which are healthy traffic separating unrelated incidents, and three
+    successive review rounds each constructed a different false `venue_silent` out of multi-gap
+    reasoning. Refusing to classify is the honest answer and costs nothing measurable: all four
+    `both_streams_silent` records in the live ledger carry one window or two, never more.
+    """
+    if len(windows) != 2:
+        return EpisodeVerdict(UNDETERMINED, 0, 0, 0.0, 0, 0, ())
+    lo, hi = windows[0].end, windows[1].start
+    if hi < lo:
+        return EpisodeVerdict(UNDETERMINED, 0, 0, 0.0, 0, 0, ())  # overlapping: not a timeline
+    interior_seconds = (hi - lo).total_seconds()
+    dark_seconds = windows[0].seconds + windows[1].seconds
+
+    def inside(rows):
+        return sorted(row for row in rows if lo <= row[0] <= hi)
+
+    updates = snapshots = agreeing = skipped = 0
+    divergent: list[str] = []
+    for pair in sorted(mirror_rows):
+        mirrors = mirror_rows[pair]
+        primary, secondary = mirrors.get("primary"), mirrors.get("secondary")
+        if primary is None or secondary is None:
+            # Not a divergence -- there is nothing to compare. But NOT free either: this record is
+            # decided ONCE (`_decided`), and a mirror landing next cycle could have shown divergence
+            # that can then never demote it. Counted, and it caps the verdict below.
+            skipped += 1
+            continue
+        inside_p, inside_s = inside(primary), inside(secondary)
+        if not inside_p and not inside_s:
+            continue  # this pair simply had nothing to say in the interior
+        if inside_p == inside_s:
+            agreeing += 1
+            updates += sum(1 for _, kind in inside_p if kind == "update")
+            snapshots += sum(1 for _, kind in inside_p if kind != "update")
+        else:
+            divergent.append(pair)
+
+    if divergent:
+        verdict = CAPTURE_DIVERGENT  # a finding in its own right: never masked by others agreeing
+    elif skipped or not agreeing or not updates or interior_seconds >= dark_seconds or interior_seconds > INTERIOR_MAX_SECONDS:
+        # Every path to "cannot tell", fail-closed: a pair whose mirror has not landed; no agreement;
+        # snapshot-only; or an interior that does not look like one episode's sputtering -- either
+        # because the silence does not dominate it, or because it is simply too long to be one.
+        verdict = UNDETERMINED
+    else:
+        verdict = VENUE_SILENT
+    return EpisodeVerdict(verdict, updates, snapshots, interior_seconds, agreeing, skipped, tuple(divergent))
 
 
 def is_total_loss(

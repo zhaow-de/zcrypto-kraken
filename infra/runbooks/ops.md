@@ -121,3 +121,30 @@ A day becomes eligible roughly 26 hours after it ends, so publishing is about da
 ### Retire when
 
 `zcrypto-ops-tapebars-not-advancing` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_tapebars_last_publish_timestamp_seconds` is no longer exported by the ops runner.
+
+______________________________________________________________________
+
+<a name="zcrypto-reconcile-residual-gap"></a>
+
+## zcrypto-reconcile-residual-gap — ALERT
+
+### What you are seeing
+
+A critical-severity Grafana alert (`Reconciler · residual gap increased (permanent loss)`): `zcrypto_reconcile_residual_gap_seconds_total` increased with no counter reset in the last 24 hours. This is the highest-severity rule in the system.
+
+### What it means
+
+**The counter books the ABSENCE of data, never fault attribution.** It is derived by summing an append-only ledger and is monotonic, so whatever it books is permanent — there is no later correction path short of a deliberate, approved ledger edit. A venue outage lands here exactly the same way a capture failure does: both leave no book data on either host for the window, and the counter cannot on its own tell the two apart. Reading this page as "we lost data" is correct; reading it as "our capture broke" is not, and the discriminator below exists precisely to stop that leap.
+
+The three record shapes that drive it are `both_streams_silent`, `total_loss`, and a minted/would_mint hour whose splice left seconds unfilled — of these, only `both_streams_silent` carries the discriminator, because it is the one case where both hosts were reachable and simply recorded nothing.
+
+### What to do
+
+1. **Read the `verdict` on the hour's `both_streams_silent` ledger record**, or read `zcrypto_reconcile_dark_episode_seconds_total` broken out by its `verdict` label — this is TRIAGE FIRST, before chasing the fleet.
+2. **`venue_silent`**: both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts. Weigh it as a venue event, not a capture fault — and treat it sceptically if a fleet-wide image change just landed, since both hosts run the same digest by the canary rule and a shared-digest bug can masquerade as venue agreement.
+3. **`capture_divergent`**: one host missed what the other received. This is a real capture-side discrepancy — investigate the fleet.
+4. **`undetermined`**: no evidence either way from the cross-host comparison. Treat it as loss, then check `zcrypto_capture_venue_status_total` for that hour — a series present for anything other than `online` is itself a venue signal this check cannot see on its own. **If this comes back non-`online`, \[[T0144]\] is ripe** — record it and pick it up or consciously re-defer.
+
+### Retire when
+
+Never, while `zcrypto_reconcile_residual_gap_seconds_total` exists — this is the triage path for the system's highest-severity rule.
