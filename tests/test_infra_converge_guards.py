@@ -1051,3 +1051,49 @@ def test_the_new_timer_guard_never_skips_a_real_run(check_mode, units_changed, e
         "ops_unit_install": {"changed": units_changed},
     }
     assert truthy(when_conditions(task), variables) is expected, why
+
+
+# --- The probe must name a container that EXISTS ------------------------------------------------
+#
+# `test_pins_recording_semantics` above feeds the assert CONSTRUCTED probe outcomes, so it is
+# structurally blind to what the probe actually inspects. That blindness had a cost: the ops pins
+# probe named `liquidations-poll` -- the entrypoint COMMAND -- while the role's own compose template
+# rendered `zcrypto-ops-liquidations`. `docker inspect` therefore always returned rc=1, and the
+# guard's `when: ... rc == 0` gate skipped the assert on every ops converge this host ever ran. A
+# fail-OPEN guard on what its own fail_msg calls "the only rollback operand this host has", found
+# 2026-08-20 on a live converge.
+#
+# Both sites now read `ops_liquidations_container`. This test pins that they agree, so a future
+# edit to either one cannot silently re-open the hole.
+OPS_TASKS = ANSIBLE / "roles" / "ops" / "tasks" / "main.yml"
+OPS_DEFAULTS = ANSIBLE / "roles" / "ops" / "defaults" / "main.yml"
+OPS_COMPOSE_TEMPLATE = ANSIBLE / "roles" / "ops" / "templates" / "compose.yaml.j2"
+
+
+def test_ops_pins_probe_inspects_the_container_the_compose_template_names():
+    probe = find_task(load_tasks(OPS_TASKS), "probe — the currently-running digest this converge would replace (pins recording)")
+    command = probe["ansible.builtin.command"]
+    rendered = yaml.safe_load(OPS_DEFAULTS.read_text())["ops_liquidations_container"]
+
+    # the probe inspects the variable, never a literal -- a literal is how the two drifted before
+    assert "{{ ops_liquidations_container }}" in command, (
+        f"the pins probe must inspect ops_liquidations_container, not a literal: {command!r}"
+    )
+    # and the template names the same variable, so they cannot disagree
+    template = OPS_COMPOSE_TEMPLATE.read_text()
+    assert "container_name: {{ ops_liquidations_container }}" in template, (
+        "the liquidations compose template must render container_name from ops_liquidations_container"
+    )
+    # the value is a container name, not a CLI subcommand: the entrypoint runs `zcrypto
+    # liquidations-poll`, and naming THAT is the exact defect this test exists to prevent
+    assert rendered != "liquidations-poll", "ops_liquidations_container is the entrypoint command, not a container name"
+    # and EVERY entrypoint the template can render still ends in that subcommand. Asserted over
+    # both branches, not one: the ops host defines `logship_loki_token`, so production renders
+    # ["zcrypto", "--ship-logs", "liquidations-poll"] and a check for the bare
+    # '"zcrypto", "liquidations-poll"' fragment would pin only the branch production never takes.
+    entrypoints = [l.strip() for l in template.splitlines() if l.strip().startswith("entrypoint:")]
+    assert len(entrypoints) == 2, f"expected both logship branches to render an entrypoint: {entrypoints}"
+    for line in entrypoints:
+        assert line.endswith('"liquidations-poll"]'), (
+            f"every rendered entrypoint must invoke the liquidations-poll subcommand: {line}"
+        )

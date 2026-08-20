@@ -346,12 +346,17 @@
     ops_image_digest is defined
     and ops_liquidations_compose_stat.stat.exists | default(false)
 
-# Reads the liquidations-poll CONTAINER, never the compose file the guard above reads: a converge
-# that passed the wrong digest once left that file naming a digest the container was not running, so
-# the file is not evidence of what this converge would replace. rc != 0 (no such container — first
+# Reads the liquidations CONTAINER, never the compose file the guard above reads: a converge that
+# passed the wrong digest once left that file naming a digest the container was not running, so the
+# file is not evidence of what this converge would replace. rc != 0 (no such container — first
 # provision) skips the guard: there is nothing being replaced.
+#
+# The name comes from `ops_liquidations_container`, the same value the compose template renders --
+# NOT a literal. Two independent literals is exactly how this guard silently died: it probed
+# `liquidations-poll`, which is the entrypoint COMMAND and never a container, so the probe always
+# returned rc=1 and the `rc == 0` gate below skipped the assert on every converge this host ever ran.
 - name: probe — the currently-running digest this converge would replace (pins recording)
-  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' liquidations-poll
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' {{ ops_liquidations_container }}
   register: ops_running_digest_probe
   failed_when: false
   changed_when: false
