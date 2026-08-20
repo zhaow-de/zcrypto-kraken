@@ -1169,3 +1169,35 @@ def test_a_record_written_before_the_discriminator_existed_counts_as_undetermine
     series = _series(textfile)
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(1036.0)
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(0.0)
+
+
+def test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash(tmp_path, monkeypatch):
+    """D4a's sibling gap: the neighbouring test covers a MISSING verdict (a pre-discriminator
+    record); this covers an UNRECOGNIZED one. The ledger is append-only and outlives any single
+    image version -- widen the verdict vocabulary later, then roll back to this code (a normal
+    operation, per capture-deploys.md), and it must not crash-loop indexing a `dark_<verdict>` key
+    that does not exist. An unknown verdict is bucketed as `undetermined`, same as no verdict at
+    all -- not silently dropped, which would break the three-label partition of the booked seconds.
+    """
+    pri, sec, rec = _roots(tmp_path)
+    rec.mkdir(parents=True, exist_ok=True)
+    future = {
+        "at": "2026-09-01T09:12:00+00:00",
+        "state": "both_streams_silent",
+        "pair": "*",
+        "kind": "book",
+        "hour": "2026-09-01T07:00:00+00:00",
+        "pairs": ["BTC/EUR"],
+        "windows": [{"start": "2026-09-01T07:01:02+00:00", "end": "2026-09-01T07:18:18+00:00", "seconds": 1036.0}],
+        "residual_seconds": 1036.0,
+        "verdict": "venue_silent_likely",  # a value a NEWER image wrote, unknown to this code
+    }
+    (rec / "reconcile-ledger.jsonl").write_text(json.dumps(future) + "\n")
+
+    textfile = tmp_path / "reconcile.prom"
+    result = _run([str(pri), str(sec), str(rec), "--textfile", str(textfile)], now=SETTLED, monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output  # never a KeyError abort on a rollback
+    series = _series(textfile)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(1036.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(0.0)
+    assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}'] == pytest.approx(0.0)

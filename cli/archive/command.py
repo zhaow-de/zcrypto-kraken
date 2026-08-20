@@ -304,6 +304,12 @@ def _totals(records: list[dict]) -> dict[str, float]:
             # A record written before the discriminator existed carries no verdict, and the counter
             # must not claim knowledge the system did not have (spec 00096 D4a).
             verdict = record.get("verdict") or "undetermined"
+            if verdict not in ("venue_silent", "capture_divergent", "undetermined"):
+                # The ledger is append-only and outlives any single image version: widen the verdict
+                # vocabulary later, then roll back to THIS code (a normal operation), and it must not
+                # crash-loop indexing a key that does not exist -- an unrecognized verdict is bucketed
+                # as undetermined, same as no verdict at all, rather than raising KeyError.
+                verdict = "undetermined"
             totals[f"dark_{verdict}"] += float(record.get("residual_seconds") or 0.0)
         if state == "minted":
             totals["healed_seconds"] += float(record.get("healed_seconds") or 0.0)
