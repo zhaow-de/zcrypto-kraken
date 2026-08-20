@@ -574,7 +574,7 @@ Message: `feat(archive): record and count the dark-episode verdict beside the bo
 Replace the `summary:` value of the `zcrypto-reconcile-residual-gap` rule with:
 
 ```yaml
-      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this. TRIAGE FIRST: a both_streams_silent record carries a verdict field, also exported as dark_episode_seconds_total by verdict. venue_silent means both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts -- weigh it as a venue event, and treat it sceptically if a fleet-wide image change just landed. capture_divergent means one host missed what the other received: investigate the fleet. undetermined means no evidence either way -- treat it as loss."
+      summary: "Permanent L2 loss: silence that NEITHER capture host covered. This cannot be healed or backfilled -- the data is gone. Check the reconcile ledger for the records behind it: both_streams_silent or total_loss for correlated loss, or a minted/would_mint hour whose splice left seconds unfilled -- any of the three can drive this. TRIAGE FIRST: a both_streams_silent record carries a verdict field, also exported as dark_episode_seconds_total by verdict. venue_silent means both capture hosts recorded the same venue message timestamps inside the window, so the silence was upstream of both hosts -- weigh it as a venue event, and treat it sceptically if a fleet-wide image change just landed. capture_divergent means one host missed what the other received: investigate the fleet. undetermined means no evidence either way -- treat it as loss, and check zcrypto_capture_venue_status_total for that hour, where a series for anything other than online is itself a venue signal this check cannot see."
 ```
 
 `expr`, `condition`, `for`, `noDataState`, `execErrState`, `labels.severity`, `uid`, and the `__dashboardUid__`/`__panelId__`/`unit` annotations are unchanged. This is an **upsert of annotation text**: no uid is superseded, so **no prune is owed** (`capture-deploys.md`).
@@ -654,22 +654,25 @@ timeout 60 git push -u origin feat/t0143-venue-silence-discriminator
 
 > **MAIN LOOP ONLY — do not dispatch this to a subagent or a workflow.** It reads a NAS/host copy of the capture tree, and the permission gate blocks ssh/sudo steps inside a subagent, where the prompt dies unseen (`agent-ops.md`). Verified 2026-08-20: there is no local `capture-segments` tree to substitute.
 
-- [ ] **Step 1: Replay both venue episodes**
+- [ ] **Step 1: Replay all four records and match the measured table**
 
-Two independent real samples exist. Replay **both**, on a **pulled copy**, never the live capture dir:
+The archive is readable locally at `/mnt/zhao-crypto` (the aligned NFS mount — a pulled copy, never the live capture dir), so **this rule was already run against the real data before implementation**. These are regression expectations, not open questions. Any divergence is a finding about the implementation:
 
-| Hour | Expected verdict | Expected booked seconds |
-| --- | --- | --- |
-| 2026-08-06 07:00Z | `venue_silent` | 10,588.382751 s |
-| 2026-08-20 07:00Z | `venue_silent` | 6,251.35 s |
+| Hour | Expected verdict | Booked (full precision) | Interior evidence |
+| --- | --- | --- | --- |
+| 2026-07-13 07:00Z | `undetermined` | 2,661.788740 s | 1 window, no interior span |
+| 2026-07-27 07:00Z | `undetermined` | 2,385.847992 s | 1 window, no interior span |
+| 2026-08-06 07:00Z | `undetermined` | 10,588.382751 s | 1 instant, BTC/EUR only: 200 snapshot rows, **0 updates** |
+| 2026-08-20 07:00Z | `venue_silent` | 6,251.349974 s | 98 s span, 12/12 pairs byte-identical, **90 updates**, 2,200 snapshots |
 
-Reproduce every number from the data at full precision — never quote it from the spec or the hygiene map (`agent-ops.md`). 2026-08-06 is the stronger test: events flowed through roughly 14 % of its 17-minute window, so it should produce several booked windows with interior evidence, where 2026-08-20 has exactly one splitting event.
+Two of these are load-bearing beyond arithmetic:
 
-**Read the interior rows' `type`, never assume it.** T0143 calls 2026-08-20's lone mid-window event an update; if it is actually a `snapshot`, D2a's rule makes the verdict `undetermined` and the spec's own central example is uncovered by its own discriminator. Report that — never soften the rule to make the example pass.
+- **2026-07-13 is the true negative.** That hour was a Kraken WS 503 followed by a capture-side restart clobber that lost 270 s capture should have kept. It must read `undetermined`. A build that reads `venue_silent` there is excusing a real capture defect and must not ship.
+- **2026-08-06 reading `undetermined` is correct, not a miss.** Its only interior evidence is a resubscribe snapshot, which does not prove a live feed. Kraken posted that outage, so the operator-facing path for this class is the venue-status counter named in Task 3 — not a softened rule here.
 
-If either reads `undetermined`, that is a **finding, not something to route around**: it means the episode booked as a single window with no interior split, and D3's default fired correctly. Report it and stop — the spec's own central examples failing their own discriminator is a verdict on the design's shape, not a bug to patch.
+Reproduce every number from the data at full precision; never quote it from the spec, the hygiene map, or this table (`agent-ops.md`).
 
-The replay is read-only. It must **not** rewrite the live ledger: `_decided` prevents re-deciding an already-ledgered `(pair, kind, hour, state)`, so the production records for both days keep no verdict and count as `undetermined` (D4a). Confirm that is what the live counter shows after the converge, rather than assuming it.
+The replay is read-only and must **not** rewrite the live ledger: `_decided` prevents re-deciding an already-ledgered `(pair, kind, hour, state)`, so all four production records keep no verdict and count as `undetermined` (D4a). After the converge, confirm the live counter shows exactly that — `undetermined` carrying the sum of all four (21,887.369457 s — which is the ENTIRE residual counter today, so the partition is exactly checkable) and `venue_silent` at 0.0 — rather than assuming it.
 
 - [ ] **Step 2: Record the digest, then converge ops**
 
@@ -708,7 +711,9 @@ Rewrite narrative in place; never append a retraction (`agent-ops.md`). The per-
 
 Load the `topic-ops` skill first; it owns the `## Done so far` move, archive mechanics, and index sync.
 
-All three of T0143's own suggested next steps are discharged by this branch: the input decided (cross-host, not venue status), the triage line written, and the historical bookings annotated. **No successor topic is owed** — the counter promotion that D4 originally deferred is built here, so nothing is left parked. Confirm that against the topic file's own text before archiving; `open-topics.md` forbids archiving a topic still carrying a live deferred sub-item.
+All three of T0143's own suggested next steps are discharged by this branch: the input decided (cross-host), the triage line written, and the historical bookings annotated. The counter promotion D4 originally deferred is built here too.
+
+**One successor topic IS owed** — registered during planning, not deferred as prose: retroactive venue status. Measurement showed cross-host and venue status are complementary, each catching the event the other misses, and the reason status cannot be used here is that the public endpoint is current-state only while capture never writes what it receives into the archive. Confirm the topic exists and is queued in the memo before archiving T0143; `open-topics.md` forbids archiving a topic still carrying a live deferred sub-item, and registration without a memo queue entry is invisible at pick time.
 
 The whole topic update — `status`, `ripe_when`, `## Done so far`, and removal of the finished next-steps — lands in **this** PR.
 

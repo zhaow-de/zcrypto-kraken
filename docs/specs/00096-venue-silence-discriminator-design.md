@@ -4,12 +4,16 @@ Resolves [[T0143]]. **Nothing here changes what `zcrypto_reconcile_residual_gap_
 
 ## Context — venue outages are indelibly recorded as permanent capture loss
 
-This has happened **twice**, and both are in the ledger:
+The live ledger carries **four** `both_streams_silent` records — read from `capture-reconciled/reconcile-ledger.jsonl`, not inferred:
 
-| Window | Booked as `both_streams_silent` | Kraken status page |
-| --- | --- | --- |
-| 2026-08-06 07:01:02 → 07:18:18 | 10,588.382751 s | **Posted** — `maintenance` → `cancel_only` → `post_only` → `online` |
-| 2026-08-20 07:01:04 → 07:10:14 | 6,251.35 s | **Not posted** |
+| Hour | Booked | Windows | What it actually was |
+| --- | --- | --- | --- |
+| 2026-07-13 07:00Z | 2,661.788740 s | 1 | Kraken WS 503, then a capture-side restart clobber — a real capture defect |
+| 2026-07-27 07:00Z | 2,385.847992 s | 1 | correlated silence, cause not separately established |
+| 2026-08-06 07:00Z | 10,588.382751 s | 2 | venue outage — Kraken posted `maintenance` → `cancel_only` → `post_only` → `online` |
+| 2026-08-20 07:00Z | 6,251.349974 s | 2 | venue outage — Kraken posted nothing |
+
+The two venue events are booked identically to the capture defect. That is the problem.
 
 Both correct by the counter's definition, and both wrong as descriptions of what happened: each was investigated after the fact and found venue-side, so nothing was lost because there was nothing to lose. (That is a retrospective human conclusion on two specific events, with Kraken's own status posting behind the first — a stronger warrant than the automatic verdict D2 introduces, which is why D5 forbids the summary from asserting it.) Two harms follow:
 
@@ -22,7 +26,16 @@ The counter is monotonic and derived by summing an append-only ledger, so those 
 
 **Venue status alone is not the discriminator.** 2026-08-06 was posted; 2026-08-20 was not. A `SystemStatus` read — the same public endpoint `00088`'s execution gate consumes — therefore catches **one of the two**, and brief degradations routinely go unposted. That is a property of the source, not bad luck on one sample.
 
-**Cross-host agreement catches both.** On each event the primary and the secondary — independent hosts, separate networks, separate processes — recorded the same sparse events with microsecond-identical timestamps (`07:01:04.553253` → `07:08:01.113758` on BTC/EUR on both, 2026-08-20).
+**Cross-host agreement and venue status are COMPLEMENTARY, not redundant — each catches exactly what the other misses.** Measured by replaying both hours against this design's own rule:
+
+| Signal | 2026-08-06 | 2026-08-20 |
+| --- | --- | --- |
+| Kraken status page | posted | **not posted** |
+| Cross-host + D2a | **`undetermined`** — the only interior evidence is one 200-row resubscribe snapshot on BTC/EUR, zero updates | `venue_silent` — 12/12 pairs byte-identical across a 98 s interior span, 90 updates |
+
+So this design classifies **one of the two** known venue events, and D3's default covers the other. That is a weaker claim than "catches both", and it is the true one. Venue status is not the missing half either, for a reason D2 could not have fixed: the public endpoint reports *current* state only, and the reconciler runs two hours or more after the fact, so it cannot retroactively ask what the venue's status was.
+
+**The rule also refuses to excuse the one historical event that WAS our fault.** 2026-07-13 booked a single window with no interior span, so it reads `undetermined` rather than `venue_silent` — and that hour was a Kraken WS 503 followed by a capture-side restart clobber that lost 270 s capture should have kept. A discriminator that excused it would be worse than none.
 
 That agreement is sound rather than coincidental, and the reason is verifiable in the capture writer: `cli/capture/command.py` sets `ts = _parse_ts(entry["timestamp"])` — **Kraken's own message timestamp, carried in the payload, never local receipt time.** Two hosts that receive the same message therefore record byte-identical `ts` by construction, and a host that was not receiving cannot manufacture one.
 
@@ -60,6 +73,8 @@ Costs measured rather than assumed: `capture-deploys.md`'s **readers-before-writ
 
 **D5 — the alert gains a triage line; no rule is added, and the new series is excluded with a written reason.** `zcrypto-reconcile-residual-gap`'s `summary` gains the next step — read the verdict, and what each value means — with its `expr`, threshold, `for`, severity, and uid unchanged, so this is an annotation upsert with **no prune owed**. The new series gets **no rule of its own**: venue silence is not a fault and must not page, and the residual rule already owns the wake-up. The admitted-metrics guard requires every admitted series watched or excluded-with-reason; this is the exclusion, the shape `00089` D6 set for its level gauges.
 
+**The triage line names the complementary signal for the `undetermined` case**: `zcrypto_capture_venue_status_total` counts venue status messages by reported system state, and a series for anything other than `online` is itself the signal. That is what would have identified 2026-08-06, which this design's own rule cannot. An operator reading `undetermined` at 3am must be sent there rather than left to derive it.
+
 The summary says the silence was upstream of both hosts — never "no data was lost", which overclaims past what agreement establishes. It is operator-facing text read on a phone with nothing open, so it carries no topic id, spec serial, or phase token (`operator-facing-text.md`, enforced by `tests/test_internal_terms_not_operator_visible.py`).
 
 **D6 — both historical events are annotated where their numbers are read.** `docs/reference/capture-era-data-hygiene-map.md` already carries the 2026-08-06 row in exactly the right form — venue cause, gap-seconds, the reconciler's booking, and a FLAG verdict for continuity-sensitive analyses. 2026-08-20 gets its row in the same shape. The narrative is written in place, never appended as a retraction (`agent-ops.md`), and the per-event evidence belongs to the updating commit's message rather than the living doc (`docs-style.md`).
@@ -71,7 +86,16 @@ The summary says the silence was upstream of both hosts — never "no data was l
 - **A true-positive is mandatory**: a production-shaped healthy hour, with no fleet-dark window at all, must book nothing and emit no verdict, so an always-classifying implementation cannot ship green.
 - **The booking is pinned as unchanged**, and this is the load-bearing regression: splitting an episode into two windows must leave `residual_seconds` identical to the single-window case, to the second.
 - **The counter partitions**: for any ledger, the three label values sum to exactly the `both_streams_silent` seconds inside `residual_gap` — asserted, not assumed.
-- **Replayed against both real events** — 2026-08-06 hour 07 and 2026-08-20 hour 07 — on a pulled copy, never the live capture dir. Every number reproduced from source at full precision, not quoted from this spec. **The interior rows' `type` is read, not assumed**: T0143 describes 2026-08-20's lone mid-window event as an update, and if it proves to be a snapshot the verdict is `undetermined` and the spec's central example is uncovered by its own discriminator — a finding to report, never to soften the rule around.
+- **Replayed against all four real records**, on the NAS mount (a pulled copy, never the live capture dir). These are measured expectations, not hopes — the design was checked against the data before implementation:
+
+| Hour | Expected verdict | Evidence |
+| --- | --- | --- |
+| 2026-07-13 07:00Z | `undetermined` | 1 window, no interior span — the true negative on a real capture defect |
+| 2026-07-27 07:00Z | `undetermined` | 1 window, no interior span |
+| 2026-08-06 07:00Z | `undetermined` | interior is one 200-row snapshot, 0 updates |
+| 2026-08-20 07:00Z | `venue_silent` | 12/12 pairs identical, 90 updates, 2,200 snapshots |
+
+Any divergence from this table is a finding about the implementation, since the rule itself has already been run against the data.
 - The alert's post-push verification reads the rule **evaluating**, by value.
 
 ## What this does NOT do — bounded claims
@@ -84,5 +108,5 @@ The summary says the silence was upstream of both hosts — never "no data was l
 
 ## Out of scope
 
-- Any venue-status input to the reconciler — it catches one of the two known events, and cross-host catches both. Re-opening needs a source that demonstrably reports brief degradations.
+- **Retroactive venue-status input to the reconciler.** Not because it is redundant — measurement shows it is the complementary half, catching the 2026-08-06 event this design reads `undetermined`. It is out of scope because the public endpoint is **current-state only**, so a reconciler running hours later cannot ask it about a past hour. Capture already *receives* status and counts `zcrypto_capture_venue_status_total`, but does not write it to the archive where the reconciler could read it. Recording it there is a real feature rather than a line of code, and is registered as its own topic.
 - `continuity.py`'s exit-bar arithmetic — and **not** because a classification is missing. It takes a single positional capture `root` and never reads the reconcile ledger, so nothing built here is visible to it, and with one mirror the cross-host discriminator is unavailable in principle. More decisively, spec `00050` deliberately isolates the exit-bar report from any second source that heals gaps — its own docstring: an overlay "would otherwise let a raw-capture regression bank a 'clean' run -- exactly the defect class the bar exists to catch". A venue-fault verdict is structurally that same move, so feeding one in is refused by design rather than deferred. Stakes are bounded: T0003's bar was met and resolved 2026-07-16, so what this instrument gates today is the post-deploy truncated-hours check, which neither window touches.
