@@ -561,13 +561,16 @@ Message: `feat(archive): record and count the dark-episode verdict beside the bo
 
 ---
 
-### Task 3: The alert triage line
+### Task 3: The alert triage line and its runbook entry
 
 **Files:**
 - Modify: `infra/grafana/alerts.yaml` — `uid: zcrypto-reconcile-residual-gap`, `annotations.summary` only
+- Modify: `infra/runbooks/ops.md` — add the missing `zcrypto-reconcile-residual-gap` section
 - Test: `tests/test_internal_terms_not_operator_visible.py` (existing; no edit — it must keep passing)
 
-**Interfaces:** none. Text change.
+**Interfaces:** none. Text changes.
+
+`spec-plan-locations.md` makes the runbook entry **owed, not optional**: D5 rules on how triage is performed, and a ruling recorded only in a spec is invisible at execution time. The runbook is also where the topic id may appear — `operator-facing-text.md` scopes the ban to surfaces readable *without opening the repo*, and a runbook is in the repo.
 
 - [ ] **Step 1: Edit the summary**
 
@@ -618,15 +621,27 @@ PYEOF
 
 Expected: the `OK:` line plus both summaries. Read them — the new one must differ only by the appended triage sentences. Note the top-level shape is `{"rules": [...]}` (72 rules), not Grafana's `groups` form.
 
-- [ ] **Step 4: Run the gate and commit**
+- [ ] **Step 4: Add the missing runbook section**
+
+`infra/runbooks/ops.md` has no `zcrypto-reconcile-residual-gap` section — verify that first (`grep -n 'residual-gap' infra/runbooks/ops.md`), then add one following the file's existing per-alert shape exactly: `## zcrypto-reconcile-residual-gap — ALERT`, then `### What you are seeing`, `### What it means`, `### What to do`, `### Retire when`.
+
+It must carry, at minimum:
+
+- **What it means**: the counter books the ABSENCE of data, never fault attribution — it is monotonic and derived by summing an append-only ledger, so what it books is permanent. A venue outage lands here and is not a capture failure.
+- **What to do**, as numbered steps: (1) read the `verdict` on the hour's `both_streams_silent` ledger record, or `zcrypto_reconcile_dark_episode_seconds_total` by label; (2) `venue_silent` — the silence was upstream of both hosts; treat it sceptically if a fleet-wide image change just landed, since both hosts run the same digest by the canary rule; (3) `capture_divergent` — one host missed what the other received, investigate the fleet; (4) `undetermined` — check `zcrypto_capture_venue_status_total` for that hour, where a series for anything other than `online` is itself a venue signal this check cannot see. **If step 4 comes back non-`online`, [[T0144]] is ripe** — record it and pick it up or consciously re-defer.
+- **Retire when**: never, while the counter exists — this is the triage path for the system's highest-severity rule.
+
+Add a row for it to the runbook index at the top of the file if that file keeps one.
+
+- [ ] **Step 5: Run the gate and commit**
 
 ```bash
 uv run pre-commit run -a
-git add infra/grafana/alerts.yaml
+git add infra/grafana/alerts.yaml infra/runbooks/ops.md
 git commit
 ```
 
-Message: `feat(archive): give the residual-gap page its triage line`
+Message: `feat(archive): give the residual-gap page its triage line and runbook`
 
 **Do not push the rule to Grafana here.** Per `capture-deploys.md`'s alert-rule lifecycle the push happens after the converge, and is verified evaluating *by value*. That is Task 5.
 
