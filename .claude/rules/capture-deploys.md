@@ -15,6 +15,7 @@ L2 capture is unbackfillable — mistakes on `zcrypto` (primary) / `zcrypto-red`
 - Pre-stage every converge: verify the change is *in* the pulled image and stage the compose pin — the roles' digest preflights refuse a digest the host has not pulled; the stop→start window contains only stop → migration-if-any → start.
 - Converges run `site.yml`; `bootstrap.yml` is first-provision only — both refuse mechanically: `site.yml` refuses an un-tagged run on the live primary (a bare run pulls in the engine play and can restart the LIVE trade engine; only `--tags` naming plays or `--skip-tags engine` satisfy it), `bootstrap.yml` refuses an already-provisioned host without `-e rebootstrap=true`.
 - **Adding a capture pair (`capture_pairs` in `group_vars/capture_host/vars.yml`): PRIMARY first, secondary second** — the capture role refuses a secondary-first add (delegated read of the primary's deployed pairs; fail-closed when the primary is unreachable) — secondary-first floods the append-only ledger with false heals, silently on the trades half. A pair-list change is **config, not a digest re-pin** — pass the currently-running digest; no bake owed.
+- **A schema-widening deploy converges every READER of the record format before the WRITER** — old code meeting the first new-schema record classifies a healthy day unclean (and zeroes the ratified gate streak) with the deploy fully correct; the widened code reads both schemas, so readers-first is always safe.
 - Verify by outcome after the next hour boundary: every book stream's `<HH>.parquet` begins at `:00:00.0x`, the NAS archive-pull loop's next pull reports `failed=0` (that IS the manifest verification — it hash-verifies every segment hourly), `infra/scripts/continuity.py` (on a pulled copy, never the live dir) shows no new truncated hours. A new stream's genesis hour is annotated and not booked, so it no longer reads as a truncation.
 - **A `config.alloy` change ships only with `-e capture_alloy_digest=<currently-running>`** — the drift assert refuses an ordinary converge after a config edit. Config-only, so no bake owed.
 - `dropping late event` lines right after any capture restart are healthy (resubscribe replay), not a failure signal.
@@ -53,8 +54,16 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 - A converge during a regeneration window still needs `-e ops_panel_timer_hold=true` — the role's enable-and-start task re-arms the timer otherwise; the flag does not *stop* an already-armed timer, so time the converge just after a clean `:22` tick.
 - **Regeneration is the point of no return** — the previous image cannot read the new generation and no old tree survives, so rollback is another full rebuild. Take the user's word there, not at the converge.
 
-## Retiring an alert rule
+## NAS converges (`nas`)
 
+The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed pin.
+
+- **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by RUNNING polars in the pulled image, never by reading the label.
+- **A fingerprint-invalidating pin (anything touching `journal.py`) replays the whole gate-export at the measured 2490 s cold cost** — size the converge window against 2490, never the ~627 s incremental.
+
+## Alert-rule lifecycle
+
+- **Introducing a rule has the mirror trap of retiring one: pushed before its metric's first record exists, it pages a spurious no-data alert** — push after the first record, or knowingly accept one self-healing page on a first deploy; an eagerly-registered gauge at `0.0` likewise fires a staleness page on every converge — journal-seed it instead.
 - **Deleting a rule from `infra/grafana/alerts.yaml` does not retire it** — `grafana-push.sh` upserts and never deletes; the removed rule keeps evaluating and emailing. Retiring needs `GRAFANA_PRUNE=1`, and the orphan report must name exactly the uid you mean before you run it.
 - **Never prune the superseded rule until its replacement has a verified first sample** — the prune is irreversible, and between it and the first post-converge tick nothing covers the signal at all.
 - **Verify that first sample by VALUE, not presence** — `delta()`/`increase()` are blind to a condition already present in a series' first sample, so a fault born in the deploy window is baked into the baseline and never fires. Read the number and triage a nonzero as the page it would otherwise have been.
