@@ -26,7 +26,7 @@ The counter is monotonic and derived by summing an append-only ledger, so those 
 
 That agreement is sound rather than coincidental, and the reason is verifiable in the capture writer: `cli/capture/command.py` sets `ts = _parse_ts(entry["timestamp"])` — **Kraken's own message timestamp, carried in the payload, never local receipt time.** Two hosts that receive the same message therefore record byte-identical `ts` by construction, and a host that was not receiving cannot manufacture one.
 
-**What agreement does and does not establish.** It establishes that both hosts were connected and receiving *at those instants*, and therefore that the silence was **upstream of both hosts' write paths**. It is evidence-weighting, not proof. It cannot exclude a deterministic shared-code drop — the canary rule makes both hosts run the same image digest by design, so a parser that skips a changed payload shape, or a correlated `watermark.breached`, writes byte-identical sparse mirrors — nor a shared Kraken-edge path failure another vantage could have captured. This is precisely why the verdict never feeds the booking (D1), and why a verdict arriving right after a fleet-wide image change deserves scepticism.
+**What agreement does and does not establish.** It establishes that both hosts were connected and receiving *at those instants*, and therefore that the silence was **upstream of both hosts' write paths**. It is evidence-weighting, not proof. The one constructible shared-code failure — the canary rule makes both hosts run the same image digest by design, so a regression writing only `snapshot` rows would produce byte-identical sparse mirrors — is refused mechanically by D2a's `update` requirement. What remains is a shared Kraken-edge path failure another vantage could have captured, which our own two hosts cannot detect at all. This is precisely why the verdict never feeds the booking (D1), and why a verdict arriving right after a fleet-wide image change deserves scepticism.
 
 ## Decisions
 
@@ -36,17 +36,21 @@ That agreement is sound rather than coincidental, and the reason is verifiable i
 
 | Interior evidence | Verdict | Reading |
 | --- | --- | --- |
-| Non-empty, mirrors **equal** | `venue_silent` | Both hosts were receiving the same venue messages during the episode; the silence was upstream of both |
+| Contains an **`update`**, mirrors **equal** | `venue_silent` | Both hosts were receiving the same incremental venue messages during the episode; the silence was upstream of both |
 | Non-empty, mirrors **differ** | `capture_divergent` | One host missed what the other received — a capture-side finding in its own right |
-| Empty | `undetermined` | No interior evidence; the case cannot be distinguished |
+| Empty, or **snapshots only** | `undetermined` | No interior evidence that the feed was live; the case cannot be distinguished |
 
-Divergence outranks agreement: one mirror missing one message is a finding that must not be masked by every other pair agreeing. Both mirrors' frames are already in hand at the booking site, so this costs no I/O.
+**`venue_silent` requires at least one interior row of type `update`.** A `snapshot` is a periodic/resubscribe artifact and does not prove the feed is live; an incremental `update` mid-episode does. This closes the one constructible false-positive path (D2a). The comparison key is `(ts, type)`, so a type divergence between mirrors is a divergence like any other.
+
+Divergence outranks agreement: one mirror missing one message is a finding that must not be masked by every other pair agreeing. Both mirrors' frames are already in hand at the booking site — the block reads `["ts", "type"]` already — so this costs no I/O.
+
+**D2a — the snapshot-only interior is why the `update` requirement exists, and it is the only false positive we could construct.** For a window to book at all, essentially every book write on every pair must stop — the window is the intersection over the union of both mirrors — so a parser that drops *some* payload shapes leaves other messages flowing and books nothing. The false-`venue_silent` case therefore needs code that drops almost everything while letting an identical sparse subset through on both hosts, and the plausible instance is a regression that breaks update-row writing while leaving `book_snapshot` handling intact: both hosts, same image by the canary rule, writing identical sparse snapshot rows. Requiring an interior `update` refuses exactly that, mechanically. What remains uncovered — a shared upstream path failure another vantage could have captured — is named in the bounded claims and is not mechanically detectable from our own two hosts.
 
 **D3 — `undetermined` is the default, and bracketing events never promote.** Agreement on events *before* and *after* the episode proves only that both hosts were healthy either side of it — exactly the signature of a simultaneous both-host outage that self-healed. Accepting brackets would label a real correlated capture failure `venue_silent`, the one direction this must not fail in. Only interior evidence counts. The genuinely uncovered case is a hard halt emitting nothing at all: one window, no interior, `undetermined` — and it pages exactly as today, by design.
 
 **D4 — the verdict is durable: a ledger field and a parallel counter, never a subtraction.** The log line alone is ephemeral (finite retention), and for every future episode the ledger — the durable record — would carry no verdict at all, leaving 3am triage evidence to expire. So:
 
-- The `both_streams_silent` record gains `verdict`, plus the evidence behind it (`interior_rows`, `pairs_agreeing`, `divergent_pairs`).
+- The `both_streams_silent` record gains `verdict`, plus the evidence behind it: `interior_updates`, `interior_snapshots`, `pairs_agreeing`, `divergent_pairs`. The two row counts are recorded **separately and always**, so a `undetermined` verdict on a snapshot-only interior explains itself in the record rather than needing the classifier re-run to find out why.
 - The exporter gains `zcrypto_reconcile_dark_episode_seconds_total{verdict=...}`, derived by summing the ledger exactly as every sibling counter is. Its three label values **fully partition** the `both_streams_silent` seconds, so the parts sum to the whole and the metric checks itself.
 - **It is a parallel view, never a subtraction.** `residual_gap` continues to book every second; `venue_silent` ≤ `residual_gap` always. Anyone wanting "loss that was actually ours" subtracts at read time, in a query, where the judgement is revisable — not in the ledger, where it would not be.
 
@@ -63,14 +67,16 @@ The summary says the silence was upstream of both hosts — never "no data was l
 ## Verification
 
 - **The guard is unproven until the defect trips it** (`agent-ops.md`): each verdict is constructed from synthetic two-mirror frames — equal interior multisets → `venue_silent`; one event dropped from one mirror → `capture_divergent`; no interior events → `undetermined` — and the classifier is mutation-probed through `infra/scripts/mutate-probe.sh`, never a hand-rolled mutate-and-restore loop.
+- **The snapshot-only interior is constructed and must read `undetermined`** — the D2a defect, built as an interior span carrying only `snapshot` rows, identical on both mirrors. A classifier that ignores `type` ships green without it.
 - **A true-positive is mandatory**: a production-shaped healthy hour, with no fleet-dark window at all, must book nothing and emit no verdict, so an always-classifying implementation cannot ship green.
 - **The booking is pinned as unchanged**, and this is the load-bearing regression: splitting an episode into two windows must leave `residual_seconds` identical to the single-window case, to the second.
 - **The counter partitions**: for any ledger, the three label values sum to exactly the `both_streams_silent` seconds inside `residual_gap` — asserted, not assumed.
-- **Replayed against both real events** — 2026-08-06 hour 07 and 2026-08-20 hour 07 — on a pulled copy, never the live capture dir. Every number reproduced from source at full precision, not quoted from this spec.
+- **Replayed against both real events** — 2026-08-06 hour 07 and 2026-08-20 hour 07 — on a pulled copy, never the live capture dir. Every number reproduced from source at full precision, not quoted from this spec. **The interior rows' `type` is read, not assumed**: T0143 describes 2026-08-20's lone mid-window event as an update, and if it proves to be a snapshot the verdict is `undetermined` and the spec's central example is uncovered by its own discriminator — a finding to report, never to soften the rule around.
 - The alert's post-push verification reads the rule **evaluating**, by value.
 
 ## What this does NOT do — bounded claims
 
+- It does not detect a shared upstream path failure — one where the venue sent data that some other vantage could have captured but neither of our hosts' paths carried. Two hosts cannot see that; it needs a third, independent vantage.
 - It does not prove venue silence. It records what the available evidence weighs toward, for the subset of episodes carrying interior evidence, and says `undetermined` otherwise.
 - It does not change alert severity, threshold, or firing behaviour. A venue outage still pages `critical`; what changes is that triage is one field away instead of a derivation.
 - It does not subtract anything from `residual_gap`, now or ever.

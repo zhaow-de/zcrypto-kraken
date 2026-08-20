@@ -17,6 +17,7 @@ Copied verbatim from spec `00096`; every task's requirements implicitly include 
 - **Measured, so do not re-derive them:** readers-before-writer converge ordering is **not owed** (the only reader of `reconcile-ledger.jsonl` is `cli/archive/command.py` itself; the NAS transports it unparsed; every read is `record.get(...)` with a default). No Alloy keep-list edit is owed (the ops keep-list admits `zcrypto_reconcile_.*` as a prefix family). No new alert rule — the new series ships **excluded with a written reason**, because venue silence must not page.
 - **`undetermined` is the fail-closed default** (D3). Bracketing events — those before the first booked window or after the last — never promote to `venue_silent`.
 - **Verdict names are exactly** `venue_silent`, `capture_divergent`, `undetermined`.
+- **`venue_silent` requires at least one interior row of type `update`** (D2a). A snapshot is a periodic/resubscribe artifact and does not prove the feed is live. A snapshot-only interior reads `undetermined`.
 - **The alert summary is operator-facing text** (D5): no `T<NNNN>`, no spec serial, no `Phase <N>`, no `iter-<N>`. `tests/test_internal_terms_not_operator_visible.py` enforces this.
 - **Commit gate is `uv run pre-commit run -a`**, never `--no-verify`. Stage by explicit path, never `git add -A`.
 - **Every commit ends** `Co-Authored-By: <the actual authoring model> <noreply@anthropic.com>`, and carries `Reviewed-by:` from a *different* agent before push.
@@ -46,12 +47,11 @@ Copied verbatim from spec `00096`; every task's requirements implicitly include 
 - Consumes: `DarkWindow` (already defined in this module: frozen dataclass with `start: datetime`, `end: datetime`, `seconds: float`).
 - Produces:
   - `VENUE_SILENT = "venue_silent"`, `CAPTURE_DIVERGENT = "capture_divergent"`, `UNDETERMINED = "undetermined"`
-  - `EpisodeVerdict` — frozen dataclass, fields `verdict: str`, `interior_rows: int`, `pairs_agreeing: int`, `divergent_pairs: tuple[str, ...]`
+  - `EpisodeVerdict` — frozen dataclass, fields `verdict: str`, `interior_updates: int`, `interior_snapshots: int`, `pairs_agreeing: int`, `divergent_pairs: tuple[str, ...]`
+  - `classify_dark_episode(windows: Sequence[DarkWindow], mirror_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]]) -> EpisodeVerdict`
 
-  `interior_rows` counts **parquet rows, not wire messages**: the capture writer emits one row per price level per side per message (`cli/capture/command.py`), so a single real book update yields many rows. The name says rows so nobody reads it as a message count.
-  - `classify_dark_episode(windows: Sequence[DarkWindow], mirror_stamps: Mapping[str, Mapping[str, list[datetime] | None]]) -> EpisodeVerdict`
-
-`mirror_stamps` is keyed pair → `{"primary": [...] | None, "secondary": [...] | None}`; `None` means that mirror's segment was absent or unreadable this hour.
+  Both counts are **parquet rows, not wire messages**: the capture writer emits one row per price level per side per message (`cli/capture/command.py`), so a single real book update yields many rows. The names say rows so nobody reads them as message counts. Each row is `(ts, type)` with `type` exactly `"snapshot"` or `"update"`.
+  `mirror_rows` is keyed pair → `{"primary": [(ts, type), ...] | None, "secondary": [...] | None}`; `None` means that mirror's segment was absent or unreadable this hour.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -79,10 +79,10 @@ def test_mirrors_agreeing_on_the_interior_event_prove_the_venue_went_silent():
     # connected and receiving DURING the episode -- a host that was not receiving cannot invent one.
     verdict = classify_dark_episode(
         _episode(),
-        {"BTC/EUR": {"primary": [_at(500)], "secondary": [_at(500)]}},
+        {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": [(_at(500), "update")]}},
     )
     assert verdict.verdict == VENUE_SILENT
-    assert verdict.interior_rows == 1
+    assert verdict.interior_updates == 1
     assert verdict.pairs_agreeing == 1
     assert verdict.divergent_pairs == ()
 
@@ -92,7 +92,7 @@ def test_a_mirror_that_missed_an_interior_event_is_a_capture_finding():
     # capture-side, and it must NEVER read as venue silence.
     verdict = classify_dark_episode(
         _episode(),
-        {"BTC/EUR": {"primary": [_at(500)], "secondary": []}},
+        {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": []}},
     )
     assert verdict.verdict == CAPTURE_DIVERGENT
     assert verdict.divergent_pairs == ("BTC/EUR",)
@@ -104,8 +104,8 @@ def test_divergence_on_any_pair_outranks_agreement_on_every_other():
     verdict = classify_dark_episode(
         _episode(),
         {
-            "BTC/EUR": {"primary": [_at(500)], "secondary": [_at(500)]},
-            "ETH/EUR": {"primary": [_at(500)], "secondary": []},
+            "BTC/EUR": {"primary": [(_at(500), "update")], "secondary": [(_at(500), "update")]},
+            "ETH/EUR": {"primary": [(_at(500), "update")], "secondary": []},
         },
     )
     assert verdict.verdict == CAPTURE_DIVERGENT
@@ -118,7 +118,7 @@ def test_a_single_booked_window_has_no_interior_and_is_undetermined():
     one = [DarkWindow(start=_at(0), end=_at(1000), seconds=1000.0)]
     verdict = classify_dark_episode(one, {"BTC/EUR": {"primary": [], "secondary": []}})
     assert verdict.verdict == UNDETERMINED
-    assert verdict.interior_rows == 0
+    assert verdict.interior_updates == 0
 
 
 def test_bracketing_events_never_promote_to_venue_silent():
@@ -128,7 +128,7 @@ def test_bracketing_events_never_promote_to_venue_silent():
     one = [DarkWindow(start=_at(100), end=_at(1000), seconds=900.0)]
     verdict = classify_dark_episode(
         one,
-        {"BTC/EUR": {"primary": [_at(50), _at(1100)], "secondary": [_at(50), _at(1100)]}},
+        {"BTC/EUR": {"primary": [(_at(50), "update"), (_at(1100), "update")], "secondary": [(_at(50), "update"), (_at(1100), "update")]}},
     )
     assert verdict.verdict == UNDETERMINED
 
@@ -137,18 +137,46 @@ def test_a_pair_missing_a_mirror_entirely_contributes_no_evidence():
     # An unreadable/absent segment is not a divergence: there is nothing to compare against.
     verdict = classify_dark_episode(
         _episode(),
-        {"BTC/EUR": {"primary": [_at(500)], "secondary": None}},
+        {"BTC/EUR": {"primary": [(_at(500), "update")], "secondary": None}},
     )
     assert verdict.verdict == UNDETERMINED
     assert verdict.divergent_pairs == ()
 
 
+def test_a_snapshot_only_interior_never_reads_as_venue_silence():
+    # D2a -- THE constructible false positive. A regression that breaks update-row writing while
+    # leaving book_snapshot handling intact makes BOTH hosts (same image, by the canary rule)
+    # write identical sparse snapshot rows. A snapshot is a periodic/resubscribe artifact and
+    # proves nothing about a live feed, so this must NOT read as the venue going quiet.
+    verdict = classify_dark_episode(
+        _episode(),
+        {"BTC/EUR": {"primary": [(_at(500), "snapshot")], "secondary": [(_at(500), "snapshot")]}},
+    )
+    assert verdict.verdict == UNDETERMINED
+    # the counts are still recorded, so the record explains ITSELF without re-running anything
+    assert verdict.interior_snapshots == 1
+    assert verdict.interior_updates == 0
+
+
+def test_one_interior_update_is_enough_even_beside_snapshots():
+    verdict = classify_dark_episode(
+        _episode(),
+        {"BTC/EUR": {
+            "primary": [(_at(500), "snapshot"), (_at(500), "update")],
+            "secondary": [(_at(500), "snapshot"), (_at(500), "update")],
+        }},
+    )
+    assert verdict.verdict == VENUE_SILENT
+    assert verdict.interior_updates == 1
+    assert verdict.interior_snapshots == 1
+
+
 def test_a_healthy_hour_with_no_windows_is_undetermined_and_never_classifies():
     # THE true-positive: a production-shaped healthy hour books nothing, so the classifier must not
     # manufacture a verdict. An always-classifying implementation fails here.
-    verdict = classify_dark_episode([], {"BTC/EUR": {"primary": [_at(s) for s in range(0, 3600, 5)], "secondary": [_at(s) for s in range(0, 3600, 5)]}})
+    verdict = classify_dark_episode([], {"BTC/EUR": {"primary": [(_at(s), "update") for s in range(0, 3600, 5)], "secondary": [(_at(s), "update") for s in range(0, 3600, 5)]}})
     assert verdict.verdict == UNDETERMINED
-    assert verdict.interior_rows == 0
+    assert verdict.interior_updates == 0
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -176,14 +204,15 @@ class EpisodeVerdict:
     """
 
     verdict: str
-    interior_rows: int
+    interior_updates: int
+    interior_snapshots: int
     pairs_agreeing: int
     divergent_pairs: tuple[str, ...]
 
 
 def classify_dark_episode(
     windows: Sequence[DarkWindow],
-    mirror_stamps: Mapping[str, Mapping[str, list[datetime] | None]],
+    mirror_rows: Mapping[str, Mapping[str, list[tuple[datetime, str]] | None]],
 ) -> EpisodeVerdict:
     """Was this episode the VENUE going quiet, or the fleet failing to record?
 
@@ -212,32 +241,40 @@ def classify_dark_episode(
     right, and must not be masked by every other pair agreeing.
     """
     if len(windows) < 2:
-        return EpisodeVerdict(UNDETERMINED, 0, 0, ())  # nothing split the episode: no interior
+        return EpisodeVerdict(UNDETERMINED, 0, 0, 0, ())  # nothing split the episode: no interior
     span_start, span_end = windows[0].end, windows[-1].start
     if span_start > span_end:
-        return EpisodeVerdict(UNDETERMINED, 0, 0, ())  # guarded, never assumed: no span to read
-    rows = 0
+        return EpisodeVerdict(UNDETERMINED, 0, 0, 0, ())  # guarded, never assumed: no span to read
+    updates = 0
+    snapshots = 0
     agreeing = 0
     divergent: list[str] = []
-    for pair in sorted(mirror_stamps):
-        mirrors = mirror_stamps[pair]
+    for pair in sorted(mirror_rows):
+        mirrors = mirror_rows[pair]
         primary, secondary = mirrors.get("primary"), mirrors.get("secondary")
         if primary is None or secondary is None:
             continue  # an absent or unreadable mirror is not a divergence -- there is no comparison
-        inside_p = sorted(t for t in primary if span_start <= t <= span_end)
-        inside_s = sorted(t for t in secondary if span_start <= t <= span_end)
+        # The key is (ts, type), so a TYPE divergence between mirrors is a divergence like any other.
+        inside_p = sorted(row for row in primary if span_start <= row[0] <= span_end)
+        inside_s = sorted(row for row in secondary if span_start <= row[0] <= span_end)
         if not inside_p and not inside_s:
             continue  # this pair simply had nothing to say in the interior
         if inside_p == inside_s:
             agreeing += 1
-            rows += len(inside_p)
+            updates += sum(1 for _, kind in inside_p if kind == "update")
+            snapshots += sum(1 for _, kind in inside_p if kind != "update")
         else:
             divergent.append(pair)
     if divergent:
-        return EpisodeVerdict(CAPTURE_DIVERGENT, rows, agreeing, tuple(divergent))
-    if agreeing:
-        return EpisodeVerdict(VENUE_SILENT, rows, agreeing, ())
-    return EpisodeVerdict(UNDETERMINED, 0, 0, ())
+        verdict = CAPTURE_DIVERGENT
+    elif agreeing and updates:
+        verdict = VENUE_SILENT
+    else:
+        # Includes the snapshot-only interior (D2a): agreement on periodic/resubscribe artifacts is
+        # not evidence of a live feed. The counts are still returned, so the ledger record explains
+        # ITSELF rather than needing the classifier re-run to find out why.
+        verdict = UNDETERMINED
+    return EpisodeVerdict(verdict, updates, snapshots, agreeing, tuple(divergent))
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -290,7 +327,7 @@ Note in the body that the `span_start > span_end` early return is a **defensive 
 
 **Interfaces:**
 - Consumes: `classify_dark_episode` from Task 1.
-- Produces: ledger key `verdict` (plus `interior_rows`, `pairs_agreeing`, `divergent_pairs`) on `both_streams_silent` records; metric `zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent|capture_divergent|undetermined"}`.
+- Produces: ledger key `verdict` (plus `interior_updates`, `interior_snapshots`, `pairs_agreeing`, `divergent_pairs`) on `both_streams_silent` records; metric `zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent|capture_divergent|undetermined"}`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -339,7 +376,7 @@ def test_the_verdict_is_recorded_and_counted_while_the_booking_is_untouched(tmp_
     # (c) the key set is pinned EXACTLY: the record gains these four keys and nothing else.
     assert set(record) == {
         "at", "state", "pair", "kind", "hour", "pairs", "windows", "stream_windows", "residual_seconds",
-        "verdict", "interior_rows", "pairs_agreeing", "divergent_pairs",
+        "verdict", "interior_updates", "interior_snapshots", "pairs_agreeing", "divergent_pairs",
     }
 
     # (d) the operator's log line carries it too -- that is the 3am path
@@ -431,7 +468,12 @@ Immediately before the existing `logger.error("archive reconcile: both_streams_s
                 episode = classify_dark_episode(
                     windows,
                     {
-                        p: {src: (None if f is None else f["ts"].to_list()) for src, f in books[p].items()}
+                        p: {
+                            # (ts, type) pairs. Zipped explicitly rather than `.rows()`, which would
+                            # depend on the column order `_read` happened to return.
+                            src: (None if f is None else list(zip(f["ts"].to_list(), f["type"].to_list(), strict=True)))
+                            for src, f in books[p].items()
+                        }
                         for p in present
                     },
                 )
@@ -441,12 +483,13 @@ Widen the log call:
 
 ```python
                 logger.error(
-                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s interior_rows=%d divergent=%s",
+                    "archive reconcile: both_streams_silent hour=%s windows=%d residual_s=%.1f verdict=%s updates=%d snapshots=%d divergent=%s",
                     hour.isoformat(),
                     len(windows),
                     residual,
                     episode.verdict,
-                    episode.interior_rows,
+                    episode.interior_updates,
+                    episode.interior_snapshots,
                     ",".join(episode.divergent_pairs) or "-",
                 )
 ```
@@ -455,7 +498,8 @@ Add four keys to the `_ledger(...)` call that follows — and **change none of i
 
 ```python
                     verdict=episode.verdict,
-                    interior_rows=episode.interior_rows,
+                    interior_updates=episode.interior_updates,
+                    interior_snapshots=episode.interior_snapshots,
                     pairs_agreeing=episode.pairs_agreeing,
                     divergent_pairs=list(episode.divergent_pairs),
 ```
@@ -620,6 +664,8 @@ Two independent real samples exist. Replay **both**, on a **pulled copy**, never
 | 2026-08-20 07:00Z | `venue_silent` | 6,251.35 s |
 
 Reproduce every number from the data at full precision — never quote it from the spec or the hygiene map (`agent-ops.md`). 2026-08-06 is the stronger test: events flowed through roughly 14 % of its 17-minute window, so it should produce several booked windows with interior evidence, where 2026-08-20 has exactly one splitting event.
+
+**Read the interior rows' `type`, never assume it.** T0143 calls 2026-08-20's lone mid-window event an update; if it is actually a `snapshot`, D2a's rule makes the verdict `undetermined` and the spec's own central example is uncovered by its own discriminator. Report that — never soften the rule to make the example pass.
 
 If either reads `undetermined`, that is a **finding, not something to route around**: it means the episode booked as a single window with no interior split, and D3's default fired correctly. Report it and stop — the spec's own central examples failing their own discriminator is a verdict on the design's shape, not a bug to patch.
 
