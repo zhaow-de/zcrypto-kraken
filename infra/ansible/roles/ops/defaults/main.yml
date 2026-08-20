@@ -8,6 +8,14 @@ ops_compose_dir: /etc/zcrypto-ops
 # rendering units that point at a broken image reference.
 ops_image: ghcr.io/zhaow-de/zcrypto-capture
 
+# The liquidations poller's container name. A VARIABLE rather than two literals because the pins
+# guard inspects this container while the compose template names it, and when those were written
+# independently they disagreed: the guard probed `liquidations-poll` (the entrypoint COMMAND) while
+# the template rendered `zcrypto-ops-liquidations`. The probe's `failed_when: false` + `rc == 0`
+# gate then skipped the assert on every converge -- a fail-OPEN guard on the only rollback operand
+# this host has. Found 2026-08-20 on a live converge. Both sites read this one value now.
+ops_liquidations_container: zcrypto-ops-liquidations
+
 # Canonical tree names, mirroring the NAS layout. Since T0058 the capture/journal trees are read
 # from the NAS's NFS export (mounted at ops_nas_mount, container-visible as /nas); only the
 # reconciled overlay lives under ops_data_dir (this host WRITES it, /data in the containers).
