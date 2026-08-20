@@ -42,7 +42,7 @@ Compute tier (reconcile/backfill, panel, verify-replay, liquidations) — no can
 - **Pull the digest on the host first** — every runner is `--pull never`; the ops role's digest preflight refuses a digest the host has not pulled.
 - **Record the running digest in `fleet-pins.md` before converging** — the pins assert refuses otherwise; that row is the only rollback operand (`ops_image_digest` has no repo default).
 - **`ops_image_digest` also repins the liquidations compose, which the role never restarts** — the role refuses the repin without `-e liquidations_decision=roll-after|defer`. Prefer `roll-after`: the poller re-fetches a **30 h** window every cycle, so a converge-length restart self-heals within one cycle (verified 2026-07-31); a container down beyond that window does lose data, and the *unbackfillable* framing belongs to the shelved Binance WS recorder, not the running poller.
-- **Read a running image's digest from the container, never from the compose file** — `docker inspect --format '{{.Config.Image}}' <name>`: a compose file has pinned the wrong image while the container ran the right one (a past converge passed `ops_alloy_digest` the value of `ops_image_digest`), and nothing catches it — the drift assert runs only when `ops_alloy_digest` is *omitted*, so the wrong digest renders silently; the armed mistake fires at the next `docker compose up`.
+- **Read a running image's digest from the container, never from the compose file** — `docker inspect --format '{{.Config.Image}}' <name>`: a compose file has pinned the wrong image while the container ran the right one (a past converge passed `ops_alloy_digest` the value of `ops_image_digest`), and nothing catches it — the drift assert runs only when `ops_alloy_digest` is *omitted*, so the wrong digest renders silently; the armed mistake fires at the next `docker compose up`, taking ops telemetry dark.
 - **Verify by outcome** at the next tick: run `infra/scripts/ops-postverify.sh` — every check in one command; `(no series)` reads FAIL, never a zero.
 - Rollback = re-converge to the recorded digest. Expect `zcrypto_reconcile_healable_gap_seconds_total` to fall, which suppresses the degrading-primary rule for 24 h via its own `resets()` guard.
 
@@ -56,10 +56,10 @@ A `SCHEMA_VERSION` bump makes `_check_generation` refuse until the tree is regen
 
 ## NAS converges (`nas`)
 
-The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed pin.
+The archive-pull tier — outside the canary regime (no secondary, no bake owed); converges are `--limit nas`, and the pin is `nas_capture_image` in `infra/ansible/host_vars/nas/vars.yml`, the one committed capture-image pin.
 
 - **The NAS runs only `-compat` builds** — an AVX build is a silent `Illegal instruction` on the Atom; prove `runtime=compat` by RUNNING polars in the pulled image, never by reading the label.
-- **A fingerprint-invalidating pin (anything touching `journal.py`) replays the whole gate-export at the measured 2490 s cold cost** — size the converge window against 2490, never the ~627 s incremental.
+- **A fingerprint-invalidating pin (any change inside the transitive `cli.*` replay closure that `gate_cache.py` digests — `journal.py` was the 2026-08-15 instance) replays the whole gate-export at the measured 2490 s cold cost** — size the converge window against 2490, never the ~627 s smaller-journal figure.
 
 ## Alert-rule lifecycle
 
