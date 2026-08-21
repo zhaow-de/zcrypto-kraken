@@ -29,6 +29,7 @@ import polars as pl
 import typer
 
 from cli.archive import replay as replay_mod
+from cli.archive import scan_cache
 from cli.archive.checkpoint import CheckpointWriteError
 from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
@@ -534,6 +535,42 @@ def reconcile(
     seen = {(r.get("pair"), r.get("kind"), r.get("hour"), r.get("state")) for r in records}
     failures = 0
 
+    # --- the settled-hour skip cache (spec 00097 D4/D5) -------------------------------------------
+    # MINT-ONLY, and twice over: every load/save/audit below is gated on `mint`, AND `mint` is baked
+    # into the salt as an independent second guard. A detect-only run's verdicts are not the deployed
+    # cycle's, so one must never be able to make a minting cycle skip an hour it owes a heal.
+    window = settled_hours(now=now, window_hours=window_hours)  # ONE list, shared with the loop below
+    salt = scan_cache.algo_salt(min_gap_seconds, mint=mint)
+    cache = scan_cache.load_cache(reconciled_root, salt=salt) if mint else {}
+    fingerprints = (
+        {
+            hour.isoformat(): scan_cache.hour_fingerprint(
+                hour,
+                scans=scans,
+                primary_root=primary_root,
+                secondary_root=secondary_root,
+                reconciled_root=reconciled_root,
+                book_pairs=book_pairs,
+                trade_pairs=trade_pairs,
+            )
+            for hour in window
+        }
+        if mint
+        else {}
+    )
+    skippable = [
+        iso
+        for iso, (fingerprint, complete) in fingerprints.items()
+        if scan_cache.is_skippable(cache.get(iso), fingerprint, complete)
+    ]
+    # Inside the gate like its siblings, though `skippable` is already empty without `fingerprints`:
+    # spec D4 says a detect-only run neither loads, saves, fingerprints NOR audits, and a reader
+    # should not have to re-derive that this call is inert rather than read it from the code.
+    audit_hours = set(scan_cache.pick_audit_hours(skippable, cache)) if mint else set()  # window-scoped
+    skip_hours = set(skippable) - audit_hours
+    new_cache: dict[str, scan_cache.CacheEntry] = {}
+    cache_divergent = False
+
     def _ledger(**record) -> None:
         key = (record["pair"], record["kind"], record["hour"], record["state"])
         if key in seen:  # already decided in an earlier cycle -- re-appending would double every total
@@ -561,7 +598,12 @@ def reconcile(
     # them each cycle would re-fire the ERROR-log alert every hour for two days about a gap the operator
     # already knows about and can do nothing about. A page that repeats until it is ignored is worse than
     # no page. The ledger remains the durable record; the log is the announcement.
-    for hour in settled_hours(now=now, window_hours=window_hours):
+    for hour in window:
+        hour_iso = hour.isoformat()
+        if hour_iso in skip_hours:
+            new_cache[hour_iso] = cache[hour_iso]  # carried forward untouched -- `examined_at` must NOT move
+            continue
+        records_before, failures_before = len(records), failures
         hour_end = hour + timedelta(hours=1)
         late = is_late(hour, now=now)
 
@@ -899,9 +941,54 @@ def reconcile(
             )
             _ledger(state="minted", **entry)
 
+        # --- skip-cache bookkeeping: this hour was EXAMINED, in full -----------------------------
+        # The one top-level `continue` in this body sits below, after every decision above it.
+        if not mint:
+            continue  # spec D4: the cache exists only in --mint mode
+        fingerprint, complete = fingerprints[hour_iso]
+        changed = len(records) != records_before or failures != failures_before
+        # The audit's whole job: an hour the cache called settled, re-examined in full, decided
+        # something after all. Checked BEFORE the "never cache a changed hour" bail below -- in the
+        # other order the record half of this condition is unreachable, and records are the loud
+        # half (only a `_fail` that dedupes against `seen` moves `failures` without them).
+        if hour_iso in audit_hours and changed:
+            logger.error(
+                "archive reconcile: scan-cache audit divergence hour=%s fingerprint=%s -- the fingerprint "
+                "model failed somewhere, dropping the whole cache",
+                hour_iso,
+                fingerprint,
+            )
+            cache_divergent = True
+        if len(records) != records_before:
+            # Never cache an hour THIS cycle changed. The stored fingerprint is the PRE-pass one, so a
+            # minting cycle would otherwise store the pre-mint state -- byte-identical to what a
+            # hand-repair restores, letting the repair's re-mint be skipped. That is the complete
+            # characterization: mirror mtimes are monotone, so every other skew re-examines next
+            # cycle; only the overlay can be reverted to an earlier byte-identical state, and only a
+            # record-appending cycle writes it.
+            continue
+        new_cache[hour_iso] = scan_cache.CacheEntry(
+            fingerprint=fingerprint,
+            examined_at=now.isoformat(),
+            late_at_exam=late,
+            failures=failures - failures_before,
+            complete=complete,
+        )
+
+    if mint:  # a detect-only run neither deletes nor writes the deployed cycle's cache (spec D4)
+        if cache_divergent:
+            # `delete_cache` RAISES where `save_cache` swallows -- deliberately asymmetric, do not
+            # "fix" it. A failed save is fail-OPEN: no cache, the next cycle runs full and slow. A
+            # swallowed delete is fail-CLOSED-WRONG: the caller believes the cache is gone, the stale
+            # file survives under the same salt, and the next cycle honours stale skips.
+            scan_cache.delete_cache(reconciled_root)
+        else:
+            scan_cache.save_cache(reconciled_root, new_cache, salt=salt)
+
     totals = _totals(records)
     logger.info(
-        "reconcile complete mode=%s window_h=%d spliced=%d union=%d healed_s=%.1f residual_s=%.1f failures=%d",
+        "reconcile complete mode=%s window_h=%d spliced=%d union=%d healed_s=%.1f residual_s=%.1f "
+        "failures=%d skipped=%d audited=%d",
         "mint" if mint else "detect-only",
         window_hours,
         int(totals["spliced_hours"]),
@@ -909,6 +996,8 @@ def reconcile(
         totals["healed_seconds"],
         totals["residual_seconds"],
         failures,
+        len(skip_hours),
+        len(audit_hours),
     )
     if failures:
         # No textfile on a failed cycle: `last_success_timestamp` freezes and the exporter-stale rule

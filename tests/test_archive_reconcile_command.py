@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,8 +12,9 @@ import pytest
 from typer.testing import CliRunner
 
 from cli.__main__ import app
-from cli.archive import command
+from cli.archive import command, scan_cache
 from cli.archive.pull import verify_tree
+from cli.archive.settle import scan_hours
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
@@ -1280,3 +1282,246 @@ def test_an_unrecognized_verdict_string_counts_as_undetermined_not_a_crash(tmp_p
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="undetermined"}'] == pytest.approx(1036.0)
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="venue_silent"}'] == pytest.approx(0.0)
     assert series['zcrypto_reconcile_dark_episode_seconds_total{verdict="capture_divergent"}'] == pytest.approx(0.0)
+
+
+# --- the settled-hour skip cache (spec 00097 D4/D5) ------------------------------------------------
+
+CACHE = "scan-cache.json"
+# Three consecutive hours, and four cycle clocks at which every one of them is both SETTLED (+2 h)
+# and past the late deadline (+6 h). A window of exactly-three-late-hours does not exist: the newest
+# settled hour is only 2 h old, so the newest four window hours are never late.
+HOURS3 = (H, H + timedelta(hours=1), H + timedelta(hours=2))
+N1 = H + timedelta(hours=9)
+N2 = N1 + timedelta(hours=1)
+N3 = N1 + timedelta(hours=2)
+N4 = N1 + timedelta(hours=3)
+
+
+def _three_healthy_hours(pri: Path, sec: Path) -> None:
+    """Three consecutive healthy hours — the k=2 audit arithmetic needs THREE skippable hours before
+    a single one is ever skipped (3 skippable − 2 audited = 1)."""
+    for hour in HOURS3:
+        _healthy(pri, sec, hour)
+
+
+def _entries(rec: Path) -> dict[str, dict]:
+    return json.loads((rec / CACHE).read_text())["hours"]
+
+
+def _info(monkeypatch) -> list[str]:
+    """NOT caplog: `cli/logging/config.py` sets `propagate = False` on the `zcrypto` logger during the
+    first CliRunner invoke, so capture is order-dependent and a negative assertion passes vacuously."""
+    lines: list[str] = []
+    monkeypatch.setattr(command.logger, "info", lambda fmt, *a, **k: lines.append(fmt % a))
+    return lines
+
+
+def _complete(lines: list[str]) -> str:
+    matches = [line for line in lines if line.startswith("reconcile complete")]
+    assert len(matches) == 1, lines
+    return matches[0]
+
+
+def _stamps(rec: Path) -> dict[str, str]:
+    entries = _entries(rec)
+    return {hour.isoformat(): entries[hour.isoformat()]["examined_at"] for hour in HOURS3}
+
+
+def test_second_cycle_skips_settled_hours_and_first_does_not(tmp_path, monkeypatch):
+    """The optimization itself. A first cycle has no cache and skips nothing; the second skips the
+    hours the audit did not claim — and an examined hour and a skipped hour must decide the same
+    thing, which for a healthy hour is nothing at all."""
+    pri, sec, rec = _roots(tmp_path)
+    _three_healthy_hours(pri, sec)
+    lines = _info(monkeypatch)
+
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N1, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _complete(lines).endswith("skipped=0 audited=0")
+    first = _entries(rec)
+    assert [first[h.isoformat()]["examined_at"] for h in HOURS3] == [N1.isoformat()] * 3
+    assert all(first[h.isoformat()]["late_at_exam"] and first[h.isoformat()]["complete"] for h in HOURS3)
+    assert _ledger(rec) == []
+
+    lines.clear()
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N2, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _complete(lines).endswith("skipped=1 audited=2")
+    assert _ledger(rec) == []  # a skipped hour and an audited hour alike decide nothing new
+    # Durable proof of WHICH hours moved: the two oldest were audited (equal `examined_at` from
+    # cycle 1, tie broken by hour ascending), the newest was skipped and carried forward untouched.
+    assert _stamps(rec) == {
+        HOURS3[0].isoformat(): N2.isoformat(),
+        HOURS3[1].isoformat(): N2.isoformat(),
+        HOURS3[2].isoformat(): N1.isoformat(),
+    }
+
+
+def test_changed_file_reexamines(tmp_path, monkeypatch):
+    """The fingerprint is the whole safety argument: touch the final of the hour cycle 2 would have
+    skipped and it is examined in full instead."""
+    pri, sec, rec = _roots(tmp_path)
+    _three_healthy_hours(pri, sec)
+    lines = _info(monkeypatch)
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N1, monkeypatch=monkeypatch).exit_code == 0
+
+    os.utime(_seg_path(pri, "BTC/EUR", "book", HOURS3[2]), ns=(0, 0))
+    lines.clear()
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N2, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _complete(lines).endswith("skipped=0 audited=2")  # only two remain skippable, the audit takes both
+    assert _stamps(rec) == {h.isoformat(): N2.isoformat() for h in HOURS3}
+
+
+def test_non_late_hour_is_never_cached(tmp_path, monkeypatch):
+    """An hour past SETTLE but before LATE is still awaiting a possibly-arriving primary: its
+    examination is provisional, so it is recorded `late_at_exam=False` and never skipped."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    early, later = H + timedelta(hours=4), H + timedelta(hours=5)  # settled at +2 h, late only at +6 h
+
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=early, monkeypatch=monkeypatch).exit_code == 0
+
+    entry = _entries(rec)[H.isoformat()]
+    assert entry["late_at_exam"] is False and entry["complete"] is True
+
+    lines = _info(monkeypatch)
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=later, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _complete(lines).endswith("skipped=0 audited=0")
+    assert _entries(rec)[H.isoformat()]["examined_at"] == later.isoformat()
+
+
+def test_audit_divergence_drops_cache_and_logs_error(tmp_path, monkeypatch):
+    """The net under the fingerprint model. The audit re-examines a hour the cache called settled; if
+    that examination decides ANYTHING, the model failed somewhere and the whole cache is dropped —
+    a wrongly-skipped hour is permanent loss nothing downstream would ever detect.
+
+    Deleting the ledger is the cheapest constructible divergence; the mechanism is generic."""
+    pri, sec, rec = _roots(tmp_path)
+    dark = [(float(s), "update") for s in range(0, 3600, 10) if not 1200 <= s < 1800]
+    for pair in PAIRS:
+        _write(pri, pair, "book", H, _book(pair, H, dark))
+        _write(sec, pair, "book", H, _book(pair, H, dark))
+
+    # Cycle 1 DECIDES the hour, so it is deliberately not cached. Cycle 2 re-examines it, decides
+    # nothing new, and caches it.
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N1, monkeypatch=monkeypatch).exit_code == 0
+    assert "both_streams_silent" in _states(rec)
+    assert H.isoformat() not in _entries(rec)  # an hour THIS cycle changed is never cached
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N2, monkeypatch=monkeypatch).exit_code == 0
+    assert _entries(rec)[H.isoformat()]["examined_at"] == N2.isoformat()
+
+    (rec / "reconcile-ledger.jsonl").unlink()
+    errors: list[str] = []
+    monkeypatch.setattr(command.logger, "error", lambda fmt, *a, **k: errors.append(fmt % a))
+
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N3, monkeypatch=monkeypatch).exit_code == 0
+
+    assert [e for e in errors if "scan-cache audit divergence" in e and H.isoformat() in e]
+    assert not (rec / CACHE).exists()  # the WHOLE cache, not just the divergent hour
+
+
+def test_corrupt_cache_is_a_full_cycle(tmp_path, monkeypatch):
+    """Every cache failure is fail-open to a slow full cycle, never to a wrong skip."""
+    pri, sec, rec = _roots(tmp_path)
+    _three_healthy_hours(pri, sec)
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N1, monkeypatch=monkeypatch).exit_code == 0
+
+    (rec / CACHE).write_text("{ this is not json")
+    lines = _info(monkeypatch)
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N2, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _complete(lines).endswith("skipped=0 audited=0")
+    assert _stamps(rec) == {h.isoformat(): N2.isoformat() for h in HOURS3}  # and a valid cache is rewritten
+
+
+def test_detect_only_neither_reads_nor_writes_the_cache(tmp_path, monkeypatch):
+    """Spec D4's mode gate. A detect-only run's verdicts are not the deployed cycle's, so one must
+    never be able to make a `--mint` cycle skip an hour it owes a heal."""
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    _plant_primary_gap(pri, sec, H)
+
+    # "neither loads, saves, fingerprints NOR audits": the audit is the one of the four with no file
+    # of its own to observe, so it is counted directly. (c) below is its true positive -- a zero that
+    # only ever reads zero would pass with the counter wired to nothing.
+    picks: list[int] = []
+    real_pick = scan_cache.pick_audit_hours
+
+    def _counting_pick(*args, **kwargs):
+        picks.append(1)
+        return real_pick(*args, **kwargs)
+
+    monkeypatch.setattr(scan_cache, "pick_audit_hours", _counting_pick)
+
+    # (a) a detect-only cycle writes no cache at all
+    assert _run([str(pri), str(sec), str(rec)], now=N1, monkeypatch=monkeypatch).exit_code == 0
+    assert not (rec / CACHE).exists()
+    assert picks == []
+    assert _states(rec) == ["would_mint"]
+
+    # (b) a cache that WOULD mark the hour skippable is ignored. Salted `mint=False` deliberately:
+    #     the mode gate is then the ONLY thing between this entry and a skipped hour, so a future
+    #     change that drops the gate but keeps the salt fails here.
+    scans = {
+        src: {kind: scan_hours(root, kind) for kind in ("book", "trades")} for src, root in (("primary", pri), ("secondary", sec))
+    }
+    fingerprint, complete = scan_cache.hour_fingerprint(
+        H,
+        scans=scans,
+        primary_root=pri,
+        secondary_root=sec,
+        reconciled_root=rec,
+        book_pairs=sorted(PAIRS),
+        trade_pairs=[],
+    )
+    assert complete
+    (rec / CACHE).write_text(
+        json.dumps(
+            {
+                "algo": scan_cache.algo_salt(30.0, mint=False),
+                "hours": {
+                    H.isoformat(): {
+                        "fingerprint": fingerprint,
+                        "examined_at": N1.isoformat(),
+                        "late_at_exam": True,
+                        "failures": 0,
+                        "complete": True,
+                    }
+                },
+            }
+        )
+    )
+    seeded = (rec / CACHE).read_bytes()
+    (rec / "reconcile-ledger.jsonl").unlink()  # so a re-examination is observable
+
+    assert _run([str(pri), str(sec), str(rec)], now=N2, monkeypatch=monkeypatch).exit_code == 0
+
+    assert _states(rec) == ["would_mint"]  # examined: the seeded entry was never consulted
+    assert (rec / CACHE).read_bytes() == seeded  # nor rewritten
+    assert picks == []  # nor audited
+
+    # (c) and the follow-up minting cycle mints the hour, seeded cache and all
+    assert _run([str(pri), str(sec), str(rec), "--mint"], now=N3, monkeypatch=monkeypatch).exit_code == 0
+    assert _seg_path(rec, "BTC/EUR", "book", H).exists()
+    assert "minted" in _states(rec)
+    assert picks == [1]  # the true positive: a minting cycle DOES audit, so the zeros above are real
+
+
+def test_the_audited_hours_rotate_across_cycles(tmp_path, monkeypatch):
+    """`pick_audit_hours` rotates on `examined_at`, while spec D5 describes LRU on a `last_audited`.
+    The substitution is correct ONLY because an audited hour is FULLY examined and therefore restamped.
+    If a future change ever carried an audited hour's OLD entry forward, the same two hours would be
+    audited every cycle forever and the divergence net would cover 2 of ~48 window hours."""
+    pri, sec, rec = _roots(tmp_path)
+    _three_healthy_hours(pri, sec)
+
+    audited: list[set[str]] = []
+    for now in (N1, N2, N3, N4):
+        assert _run([str(pri), str(sec), str(rec), "--mint"], now=now, monkeypatch=monkeypatch).exit_code == 0
+        audited.append({hour for hour, at in _stamps(rec).items() if at == now.isoformat()})
+
+    h0, h1, h2 = (h.isoformat() for h in HOURS3)
+    assert audited == [{h0, h1, h2}, {h0, h1}, {h0, h2}, {h0, h1}]  # cycle 1 examines all three
+    assert set().union(*audited[1:]) == {h0, h1, h2}  # every hour swept within three audited cycles
