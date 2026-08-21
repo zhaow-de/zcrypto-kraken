@@ -363,6 +363,24 @@ def containing_dark_window(
 
 **Interfaces:**
 - Consumes: `partition_gaps` (Task 2), array-accepting `fleet_dark_windows`/`containing_dark_window` (Task 3).
+- **Produces first — `us_view` in `cli/archive/settle.py`**, because a bare `.to_numpy().view(np.int64)` here would be a real defect (found by Task 3's implementer): it bypasses every unit check on the branch. `us_array`'s refusal cannot catch it — `.view()` has already produced int64 — and nothing downstream catches it either, because the `both_streams_silent` block **books residual seconds before** the heal block ever calls `_message_ts` on the same frame. A wrong-unit column corrupts the booking — **and the shape differs from `_message_ts`'s, so state this path's own**: `fleet_dark_windows` *clamps* to the hour bounds, so `ms` integers fall below `hour_start` and vanish entirely, leaving the hour with no interior stamps at all. Measured at Task 4: a dense hour carrying one real 40 s hole books `[40.0]` correctly and `[3600.0]` through the bare view — a **90× over-book**, not the 1000× shrink `_message_ts`'s path produces. Opposite direction, same verdict. Write it beside `us_array`, reusing the same refusal:
+
+```python
+def us_view(stamps: pl.Series) -> np.ndarray:
+    """int64-μs view of a polars `ts` column, refusing any unit but microseconds.
+
+    `.view(np.int64)` reads the column's OWN unit, so this check is the only thing standing between a
+    non-µs column and a timeline that silently mixes two scales — and on this path the fleet-dark
+    booking happens before any other guard sees the frame.
+    """
+    if stamps.dtype != pl.Datetime("us", "UTC"):
+        raise CaptureError(f"book `ts` column is {stamps.dtype}, not Datetime('us', 'UTC') — refusing to reconcile")
+    if stamps.null_count():
+        raise CaptureError("null ts in a book segment — refusing to reconcile")
+    return stamps.to_numpy().view(np.int64)
+```
+
+TDD it like any other guard: construct an `ms` column and a null, watch each trip, and keep a production-shaped true positive. `settle.py` will need `import polars as pl` and `from cli.exceptions import CaptureError` (check the actual `CaptureError` import path used by `reconcile.py` and match it).
 
 - [ ] **Step 1: One regression test first** — ndarray truthiness is the known trap (`if pair_stamps.get(p)` raises on arrays). Add to `tests/test_archive_reconcile_command.py` a case that books a `both_streams_silent` hour where a pair has BOTH mirrors readable (so the `containing_dark_window` branch runs on a non-empty array). If the existing dark-hour test already covers both-mirrors-readable (check for `stream_windows` assertions), note that in the report instead of duplicating it.
 - [ ] **Step 2: Rewire.** In the per-hour book-load block replace the two `.to_list()` extends:
@@ -375,12 +393,19 @@ def containing_dark_window(
         for pair in book_pairs:
             frames: dict[str, pl.DataFrame | None] = {}
             for source, root in (("primary", primary_root), ("secondary", secondary_root)):
-                ...  # unchanged guards and _read
-                arr = frames[source]["ts"].to_numpy().view(np.int64)
+                ...  # unchanged guards
+                try:
+                    frames[source] = _read(root, pair, "book", hour, ["ts", "type"])
+                    # INSIDE this try, deliberately — see below.
+                    arr = us_view(frames[source]["ts"])
+                except Exception as exc:  # noqa: BLE001 -- any unreadable segment is an integrity fact
+                    ...  # unchanged: _fail(...), frames[source] = None, broken = True, continue
                 stamp_parts.append(arr)
                 pair_parts.setdefault(pair, []).append(arr)
             books[pair] = frames
 ```
+
+**`us_view` goes INSIDE the existing `try` around `_read`, not after it** — Task 3's review found the alternative is a real regression. The `fleet_dark_windows` call site sits in the per-hour loop with **no enclosing `try`** (nearest handlers are before the loop and in the heal block after it), so a `CaptureError` raised outside this `try` aborts the whole Typer command: no further hours, no textfile publish. That is precisely the failure spec D3 criticizes develop for. Inside the `try`, the existing `except` already does `_fail(...)` + `broken = True`, and `if present and not broken:` then suppresses this hour's fleet-dark booking — the promised degradation, one hour ledgered `failed` instead of a dead cycle. Add a command-level test proving a wrong-dtype/null segment ledgers `failed` for that hour and lets the cycle finish.
 
 Before `fleet_dark_windows`: `stamps = np.concatenate(stamp_parts) if stamp_parts else np.empty(0, dtype=np.int64)` and `pair_stamps = {p: np.concatenate(parts) for p, parts in pair_parts.items()}`. In the `stream_windows` construction replace the truthiness guard: `if both_mirrors and pair_stamps.get(p) is not None and pair_stamps[p].size` (was `and pair_stamps.get(p)`). The `classify_dark_episode` input block is untouched (it already reads from `books[p]` frames, not from `stamps`).
 
@@ -413,8 +438,9 @@ class CacheEntry:
     complete: bool      # no expected final was absent at examination time
 
 
-def algo_salt(min_gap_seconds: float) -> str          # f"v{ALGO_VERSION}:min_gap={min_gap_seconds!r}"
-def hour_fingerprint(hour, *, primary_root, secondary_root, book_pairs, trade_pairs) -> tuple[str, bool]
+def algo_salt(min_gap_seconds: float, *, mint: bool) -> str   # f"v{ALGO_VERSION}:min_gap={min_gap_seconds!r}:mint={mint}"
+def hour_fingerprint(hour, *, scans, primary_root, secondary_root, reconciled_root, book_pairs, trade_pairs) -> tuple[str, bool]
+    # PRESENCE comes from `scans`, never a fresh stat (spec D4) -- stat only what the scan listed.
     # (sha256, complete). Expected set: every book pair × book × both roots, every trade pair × trades × both roots.
     # Present file → line "pair|kind|source|size|mtime_ns"; absent → "ABSENT|pair|kind|source". complete = no ABSENT line.
 def load_cache(reconciled_root, *, salt) -> dict[str, CacheEntry]   # {} on absent/corrupt/foreign-salt — fail-open to slow
@@ -633,13 +659,13 @@ Run: FAIL (no skip machinery yet).
 
 ```python
     window = settled_hours(now=now, window_hours=window_hours)
-    salt = scan_cache.algo_salt(min_gap_seconds)
+    salt = scan_cache.algo_salt(min_gap_seconds, mint=mint)
     cache = scan_cache.load_cache(reconciled_root, salt=salt) if mint else {}
     fingerprints = (
         {
             hour.isoformat(): scan_cache.hour_fingerprint(
-                hour, primary_root=primary_root, secondary_root=secondary_root,
-                book_pairs=book_pairs, trade_pairs=trade_pairs,
+                hour, scans=scans, primary_root=primary_root, secondary_root=secondary_root,
+                reconciled_root=reconciled_root, book_pairs=book_pairs, trade_pairs=trade_pairs,
             )
             for hour in window
         }
@@ -672,7 +698,12 @@ At the very bottom of the hour body (after the trades loop, same indent as `hour
         if not mint:
             continue  # spec D4: the cache exists only in --mint mode
         fp, complete = fingerprints[hour_iso]
-        if hour_iso in audit_hours and (len(records) != records_before or failures != failures_before):
+        # ORDER IS LOAD-BEARING (Task 6 caught this plan snippet with the two swapped): the audit
+        # check must run BEFORE the never-cache bail, or the `len(records) != records_before` half of
+        # the divergence condition is unreachable and the loud half of the audit net is dead code --
+        # it could then only trip on a `_fail` that deduped against `seen`.
+        changed = len(records) != records_before or failures != failures_before
+        if hour_iso in audit_hours and changed:
             logger.error(
                 "archive reconcile: scan-cache audit divergence hour=%s fingerprint=%s -- the fingerprint "
                 "model failed somewhere, dropping the whole cache",
@@ -680,6 +711,14 @@ At the very bottom of the hour body (after the trades loop, same indent as `hour
                 fp,
             )
             cache_divergent = True
+        if len(records) != records_before:
+            # Never cache an hour THIS cycle changed -- the last blind window. The stored fingerprint
+            # is the pre-pass one, so a minting cycle would store the PRE-mint state, byte-identical
+            # to what a hand-repair restores, letting the repair's re-mint be skipped. Complete
+            # characterization: mirror mtimes are monotone so every other skew re-examines next
+            # cycle; only the overlay can be reverted to an earlier byte-identical state, and only a
+            # record-appending cycle writes it.
+            continue
         new_cache[hour_iso] = scan_cache.CacheEntry(
             fingerprint=fp,
             examined_at=now.isoformat(),
@@ -690,6 +729,8 @@ At the very bottom of the hour body (after the trades loop, same indent as `hour
 ```
 
 After the loop (before the `totals = _totals(records)` line):
+
+**`delete_cache` keeps raising, deliberately — do NOT make it symmetric with `save_cache`.** An earlier revision of this plan said to swallow; Task 5's re-review showed that is backwards, and the asymmetry needs its one-clause why recorded in the code or someone will "fix" it into a wrong-skip. A failed `save_cache` is fail-**open**: no cache is written, the next cycle runs full and slow. A swallowed `delete_cache` failure is fail-**closed-wrong**: the caller believes the cache is gone, the stale file survives under the same salt, and the next cycle honours stale skips.
 
 ```python
     if mint:  # a detect-only run neither deletes nor writes the deployed cycle's cache (spec D4)
@@ -702,6 +743,8 @@ After the loop (before the `totals = _totals(records)` line):
 (The `if not mint: continue` at the body's end means the hour-level trailing code is the ONE place a top-level `continue` now exists — it sits after everything else in the body, so it skips only the cache bookkeeping it guards. The Step 2 precondition check — no *pre-existing* hour-level `continue` — still stands and must still be verified.)
 
 Extend the completion log line with the two new counts: `… failures=%d skipped=%d audited=%d` (values `len(skip_hours)`, `len(audit_hours & {h.isoformat() for h in window})` — audit_hours is already window-scoped, so `len(audit_hours)`).
+
+**Pin the audit rotation explicitly.** `pick_audit_hours` rotates on `examined_at`, while spec D5 describes LRU on `last_audited`; the substitution is only correct because an audited hour is FULLY examined and therefore gets a fresh entry with `examined_at=now.isoformat()`. If a future change ever carries an audited hour's old entry forward, the same two hours are audited every cycle forever and the divergence net covers 2 of ~48 window hours. Add a test that audits rotate across three consecutive cycles.
 
 - [ ] **Step 3: Run.** `uv run pytest tests/test_archive_reconcile_command.py -v` — new and pre-existing all green (pre-existing single-cycle tests are unaffected: a first cycle skips nothing).
 - [ ] **Step 4: Full local gate.** `uv run pytest` (data-dependent tests skip without `data/ohlc-full`; note which skipped) and `uv run pre-commit run -a`.
@@ -771,6 +814,9 @@ diff <(grep -vE 'last_success_timestamp_seconds|cycle_duration_seconds|source_la
 **Files:**
 - Modify: `infra/grafana/alerts.yaml` (insert directly after the `zcrypto-reconcile-exporter-stale` rule, before `zcrypto-reconcile-residual-gap`).
 - Modify: `infra/runbooks/ops.md` (new section + one stale sentence fix).
+- Modify: `infra/nas/README.md` — **two obligations Task 6's review found homed only in spec prose**. (i) Line ~167 states the overlay carries "data + manifests + the ledger, **nothing else**", citing the 2026-07-16 exit-23 incident. `scan-cache.json` now lives there by spec D4's choice. The code does NOT reproduce that incident — perms match, `rsync -a --chmod` forces them, and `verify_tree`/`prune_stale_parts` walk only `*.parquet` — but the invariant as written is now false; rewrite it in place to admit the sidecar and say why it is safe, never append a correction. (ii) Spec D4 requires the delete-the-cache step in the runbook **and the ledger-correction procedure** — that procedure lives in this file, and it is currently in no task's scope. Add: a correction that mutates the ledger or the overlay deletes `scan-cache.json` in the same act.
+- Modify: `cli/archive/command.py` + `tests/` — **export `zcrypto_reconcile_hours_skipped` (gauge, hours skipped this cycle) — incremented INSIDE the skip branch, never published from `len(skip_hours)`**. Task 6's review proved why: with the skip branch disabled, the completion log still printed `skipped=1`, because that count is computed before the loop; only durable state caught it. A plan-derived gauge would inherit exactly that lie, and the runbook's `skipped=0` triage must be an observation of what happened beside the duration gauge. Task 6 found the cache degrades SILENTLY: `complete` demands every tree-wide pair on both mirrors, so removing a pair from `capture_pairs` drives the skip rate to zero permanently with no error, and the only observable today is the `skipped=`/`audited=` counts on a log line. A gauge makes the runbook's `skipped=0` triage readable from Prometheus instead of Loki. Emit it in every mode (detect-only publishes `0`), and note the charted-family guard will require a dashboard target for it.
+- Modify: `infra/grafana/data-integrity-dashboard.json` — panel 201 gained the cycle-duration target in Task 1 (forced by the charted-family guard); add the 1,500 s threshold override on its refId now that the rule exists, so the panel and the alert agree. Task 1's review found the panel's prose is a third copy of the staleness sentence being corrected here — verify it reads correctly against the end-stamp semantics in the same pass.
 - Test: `uv run pytest tests/test_internal_terms_not_operator_visible.py -q` and `uv run pre-commit run -a` (yamllint).
 
 - [ ] **Step 1: The rule** (push happens in Task 9 — this lands YAML only):
@@ -818,7 +864,7 @@ diff <(grep -vE 'last_success_timestamp_seconds|cycle_duration_seconds|source_la
       receiver: metrics
 ```
 
-- [ ] **Step 2: Runbook.** New `infra/runbooks/ops.md` section (anchor `zcrypto-reconcile-cycle-duration`, same shape as its siblings): *What you are seeing* — the last completed cycle exceeded 1,500 s of its 1,800 s tick. *What it means* — duration tracks the 48 h window's data volume plus the number of non-skipped hours; the skip-cache normally holds steady-state cycles to tens of seconds, so a page here means the cache is being bypassed (look for `scan-cache audit divergence` at ERROR, or a fingerprint churn — an incomplete hour re-examining every cycle) or volume genuinely outgrew the vectorized floor. *What to do* — read the cycle log's `skipped=`/`audited=` counts; `skipped=0` on consecutive cycles means the cache is not engaging: a `scan-cache audit divergence` ERROR dropped it, hours are incomplete (check for absent finals — a pair permanently removed from capture makes **every** window hour incomplete, a stable absence set with permanent `skipped=0`, and silently disables the whole cache), or a manual ledger/overlay mutation deleted it (which is correct — see below); a healthy skip count with high duration means volume — re-derive headroom before the next vol regime. **A manual mutation of the reconcile ledger or the overlay must delete `scan-cache.json` in the same act** — the next cycle is then deliberately full instead of divergent-then-paged up to ~11 h later when the audit's rotation reaches a poisoned hour. *Retire when* — the rule is absent from `alerts.yaml`, i.e. deliberately removed.
+- [ ] **Step 2: Runbook.** New `infra/runbooks/ops.md` section (anchor `zcrypto-reconcile-cycle-duration`, same shape as its siblings): *What you are seeing* — the last completed cycle exceeded 1,500 s of its 1,800 s tick. *What it means* — duration tracks the 48 h window's data volume plus the number of non-skipped hours; the skip-cache normally holds steady-state cycles to tens of seconds, so a page here means the cache is being bypassed (look for `scan-cache audit divergence` at ERROR, or a fingerprint churn — an incomplete hour re-examining every cycle) or volume genuinely outgrew the vectorized floor. *What to do* — read the cycle log's `skipped=`/`audited=` counts; `skipped=0` on consecutive cycles means the cache is not engaging: a `scan-cache audit divergence` ERROR dropped it, **a pair was just added** — expect `skipped=0` for a full window plus the primary→secondary interval, because a new pair is absent from every window hour older than its genesis and this repo adds the primary first — a **thin pair published no trades final** for some hour (legitimate: a zero-print hour writes no file, measured at ~0.16 % of pair-hours ≈ one hour of a 48 h window, and the count grows as thin pairs enter the universe), hours are incomplete (check for absent finals — a pair permanently removed from capture makes **every** window hour incomplete, a stable absence set with permanent `skipped=0`, and silently disables the whole cache), or a manual ledger/overlay mutation deleted it (which is correct — see below); a healthy skip count with high duration means volume — re-derive headroom before the next vol regime. **A manual mutation of the reconcile ledger or the overlay must delete `scan-cache.json` in the same act** — the next cycle is then deliberately full instead of divergent-then-paged up to ~11 h later when the audit's rotation reaches a poisoned hour. *Retire when* — the rule is absent from `alerts.yaml`, i.e. deliberately removed.
   Also **rewrite in place** (never append a correction) the residual-gap section's staleness guidance added 2026-08-21: the healthy age of `zcrypto_reconcile_last_success_timestamp_seconds` is one tick (30 min) plus a seconds-scale cycle, the stamp is written at cycle *completion* since spec `00097`, and the 23-minute cycle survives only as the pre-`00097` measurement that motivated the change.
 - [ ] **Step 3: Gates.** `uv run pre-commit run -a` and `uv run pytest tests/test_internal_terms_not_operator_visible.py -q` — green.
 - [ ] **Step 4: Commit.** `git add infra/grafana/alerts.yaml infra/runbooks/ops.md && git commit -m "feat(obs): warn when the reconcile cycle nears its tick"`.
@@ -829,7 +875,7 @@ diff <(grep -vE 'last_success_timestamp_seconds|cycle_duration_seconds|source_la
 
 **The deployed image is built from `develop`, never from a feature branch** — so this branch merges first, and the topic goes `partial` at merge, not `resolved`.
 
-- [ ] 1. T0147 → `partial` (`topic-ops` mechanics): `## Done so far` records the telemetry, vectorization, cache, alert YAML, and golden-equivalence result with the Task 7 numbers; `## Suggested next steps` trims to exactly one registered remainder — the attended rollout + measured resolution (Task 10) — so the deferral lives in the topic, never only in prose. Index bullet moves to `### Partially done`.
+- [ ] 1. T0147 → `partial` (`topic-ops` mechanics): `## Done so far` records the telemetry, vectorization, cache, alert YAML, and golden-equivalence result with the Task 7 numbers; `## Suggested next steps` trims to exactly one registered remainder — the attended rollout + measured resolution (Task 10) — so the deferral lives in the topic, never only in prose. **Also fix the topic's own stale cost model**, which Task 8's review found in two places: line ~14 (`## Why this matters`) says `last_success` "is stamped near cycle *start*" and line ~29 says healthy age is "one tick interval plus the current cycle length". Both describe the behaviour this spec removes. The next-steps trim covers the second; the first sits in a section that trim does not touch, so put it in the past tense explicitly — an archived topic must read correctly cold. Index bullet moves to `### Partially done`.
 - [ ] 2. Whole-branch review (Fable floor — the reconciler books permanent loss), trailers on every commit, push.
 - [ ] 3. PR into `develop` on the user's word (`open-pr` skill); merge on CI green (`merge-pr` gate). The PR body flags the `last_audited`→`examined_at` simplification and the two-PR rollout shape.
 
