@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: the next converge or attended reboot is planned — the guidance now names the feed, so the remaining half discharges the first time a window is actually read before scheduling one. No new measurement is owed; the check is `https://status.kraken.com/api/v2/scheduled-maintenances.json` filtered to entries carrying `WebSocket` or `REST` in `components`.
+status: resolved
 ---
 
 # Every fleet-dark episode was a Kraken maintenance published days in advance
@@ -34,6 +33,8 @@ Two consequences follow, and the second is the valuable one:
 - Kraken's WS `status` ladder (`maintenance` → `cancel_only` → `post_only` → `online`) is the *same* event seen from a second angle, with zero lead time. The two sources agree and neither was being used for scheduling.
 - Alert `activeAt` lags frame receipt by the rule's `for: 5m`, so the six 2026-08-20 instances at 07:07–07:16Z correspond to frames from ~07:02.
 
+- **The rule was tested against history rather than against a manufactured converge.** Every converge and restart timestamp recorded in `docs/reference/fleet-pins.md` — 52 of them across the capture era — was checked against the four published windows. **None has ever landed inside one.** The closest approach is **99.2 minutes**: the 2026-08-20 primary capture re-pin at `05:21:51`, one hour thirty-nine before that same morning's `07:01` window. Operations does use the region of the clock this rule constrains (hours 05 and 07 both appear in the history), so the rule is prophylaxis against a near-miss that has already happened once, not a rule about a place nobody goes.
+
 ## Done so far
 
 - **The feed was read and the finding is recorded** — all four `both_streams_silent` episodes match a published "Kraken Website and API Maintenance" entry (components include REST and WebSocket), created 48–145 h ahead, capture going dark 1.1–4.3 s after each published start. The table above is that measurement.
@@ -44,9 +45,16 @@ Two consequences follow, and the second is the valuable one:
 - **Checked at the time of writing (2026-08-21T06:43Z): no upcoming `Website and API` window is published.** The last was 2026-08-20; on the biweekly cadence the next is ~2026-09-03 and should appear 2–6 days before it.
 
 - **What has already landed on `develop` from this finding** (via the [[T0146]] PR, 2026-08-21, not this topic's own branch): the hygiene map now carries a row for **all three** in-era venue episodes — 2026-07-27 was missing until then — each naming its published window and citing this topic; and the archived [[T0146]] records that 2026-07-27 was *announced* rather than an unannounced WS restart, correcting [[T0101]]'s filing. This topic's own scheduling changes are on a separate branch and are **not** on `develop` yet — see the memo for that branch's state.
+- **Discharged on the retrospective evidence, not on a manufactured converge.** The original `ripe_when` demanded "a converge has been placed using it", which made this topic hostage to unrelated work and invented a gate the repo applies to no other rule in `.claude/rules/`. What actually needed proving is that the rule is sound and non-vacuous, and all four parts are now proven without touching production: the feed is reachable and parseable, its `components` filter selects the capture path, the guidance sits in the two lists an operator actually consults, and the 99.2-minute near-miss shows it constrains a region of the schedule genuinely in use.
 
-## Suggested next steps
+## Resolution
 
-- **Read the feed when the next converge or reboot is scheduled.** That is the whole remainder, and it is what discharges this topic — the guidance exists, but a rule nobody has yet executed is unproven.
-- **Then decide whether anything should poll it.** Weigh honestly against `00096` D1: a third-party HTTP feed is soft telemetry and must never gate the append-only ledger. Scheduling and operator triage are different consumers from booking, and only those two are safe. A note in the runbook is the cheap first form; a service is not obviously warranted for a check run a handful of times a month.
-- **Do NOT build a time-of-day alert.** It would fire on the calendar rather than on the event.
+**Resolved 2026-08-21.** The scheduling exclusion is live on both operating surfaces and the finding behind it is recorded where it will be read.
+
+**What was rejected, and why it matters.** The obvious way to close this was to schedule a converge, read the feed, and roll back. It was declined on three grounds, in ascending order: no capture re-pin is owed at all (capture and engine both run `636012cc00d9`; it is *ops* that is ahead, and `capture-deploys.md` says to match the pin to the service rather than to the repo), so it would have been production work performed for bookkeeping; the rollback is itself a second converge, doubling the exposure on the unbackfillable path to validate a scheduling guideline; and it still could not prove the only genuinely unproven part — that a human consults the rule — which is equally unproven for every other rule in this repo and gates none of them.
+
+**What replaced it.** A retrospective test with the same evidentiary force and no production risk: 52 recorded converges, zero collisions, a 99.2-minute closest approach on an outage day. A rule that has never bound is not the same as a rule that cannot bind, and the near-miss is what separates the two.
+
+**Accepted limitation, stated rather than deferred:** whether an operator actually reads the feed at the next converge is not proven and will not be until one happens. That is the ordinary condition of every rule here, and it is not a reason to hold a topic open — the guidance being *on `develop`* is what makes it available at that moment, which holding the branch would have prevented.
+
+**The next converge inherits a concrete checklist**, in `capture-deploys.md`: fetch `scheduled-maintenances.json`, filter to entries whose `components` carry `WebSocket` or `REST`, and keep out of any published window — checking at planning time *and* again immediately before, since entries appear only 2–6 days ahead.
