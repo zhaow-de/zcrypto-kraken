@@ -4,7 +4,7 @@
 # (spec 00056 D2). Excluded globally; its integrity is verified by hash against the in-fleet copy.
 # This line is the ONLY thing holding every non-ruff hook off that file — removed, trailing-whitespace
 # rewrites it (measured 2026-07-24). tests/test_vendored_rrsync_integrity.py is the tripwire.
-exclude: '^(infra/nas/rrsync|docs/reference/trial43-recovered-runners/.*\.py)$'
+exclude: '^infra/nas/rrsync$'
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

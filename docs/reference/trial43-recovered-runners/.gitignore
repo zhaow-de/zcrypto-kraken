@@ -1,4 +1,0 @@
-# The reproduce command writes this ~1.8 MB cache beside the scripts. It is a run artifact,
-# not provenance, and the directory is exempt from the pre-commit hooks that would otherwise
-# resist it (see the README).
-*.pkl
