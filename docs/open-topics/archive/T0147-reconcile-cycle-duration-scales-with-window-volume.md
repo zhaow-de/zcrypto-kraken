@@ -1,18 +1,18 @@
 ---
-status: partial
+status: resolved
 ---
 
 # Reconcile cycle duration scales with window byte volume and can outgrow its own tick
 
 ## Context — what
 
-The ops overlay-writer cycle (`zcrypto-archive-pull`, `:12`/`:42` ticks) re-reads every hour's parquet in its `--window-hours 48` window on **both** capture trees each cycle, so its wall-clock duration is proportional to the window's byte volume — which is market volume, not anything the fleet controls. Measured 2026-08-21 during the residual-gap alert investigation: cycle duration fell to a **315 s** floor on 2026-08-16 ~22:00 (the window covering the two ~20 MB/day weekend days), then grew continuously to **1,371 s** at the 2026-08-21 08:12Z cycle (window covering the 92 and 129 MB/day midweek vol-spike days, BTC/EUR book bytes as the proxy; both capture trees are byte-identical per day). The growth is smooth at roughly +12 s/cycle while daily volume rises: one new ~5 MB hour slides into the window every tick.
+The ops overlay-writer cycle (`zcrypto-archive-pull`, `:12`/`:42` ticks) re-read — until spec `00097`'s deploy, see `## Resolution` — every hour's parquet in its `--window-hours 48` window on **both** capture trees each cycle, so its wall-clock duration was proportional to the window's byte volume — which is market volume, not anything the fleet controls. Measured 2026-08-21 during the residual-gap alert investigation: cycle duration fell to a **315 s** floor on 2026-08-16 ~22:00 (the window covering the two ~20 MB/day weekend days), then grew continuously to **1,371 s** at the 2026-08-21 08:12Z cycle (window covering the 92 and 129 MB/day midweek vol-spike days, BTC/EUR book bytes as the proxy; both capture trees are byte-identical per day). The growth is smooth at roughly +12 s/cycle while daily volume rises: one new ~5 MB hour slides into the window every tick.
 
 ## Why this matters
 
 - **The tick interval is 1,800 s and the 08:12Z cycle took 1,371 s.** A sustained ~150 MB/day (16 % above 2026-08-20's 129) puts the cycle over its own tick. When a systemd timer fires while the unit is still `activating`, the trigger is dropped, not queued — cadence silently halves to hourly, booking latency for permanent-loss records grows by 30 min, and the runbooks' "books hour H at the next `:12`/`:42` tick after H+2 h" arithmetic bends without anything saying so.
 - **No alert sees the degradation below 3 h.** `zcrypto_reconcile_last_success_timestamp_seconds` **was** stamped near cycle *start* (measured: stamp `08:12:16` for a cycle that ended `08:35:06`; spec `00097` moved it to cycle completion), and `zcrypto-reconcile-exporter-stale` pages at 3 h — at hourly cadence with ~25 min cycles, staleness peaks well under that. The failure mode is silent until it is severe.
-- **No duration telemetry existed at all** before spec `00097` (published, though not yet deployed — see the remaining sub-item). Cycle duration was recoverable only by subtracting journal `Starting`/`Finished` lines on the ops host — which is how this was found, incidentally, during an unrelated alert investigation.
+- **No duration telemetry existed at all** before spec `00097` (now deployed — see `## Resolution`). Cycle duration was recoverable only by subtracting journal `Starting`/`Finished` lines on the ops host — which is how this was found, incidentally, during an unrelated alert investigation.
 
 ## Findings so far
 
@@ -31,6 +31,18 @@ The ops overlay-writer cycle (`zcrypto-archive-pull`, `:12`/`:42` ticks) re-read
 - **The cache fails open, never wrong.** An hour is skipped only if the cache entry matches on a fingerprint whose *presence* is derived from the same `scan_hours` result the examination uses (never a fresh `stat`), the examination was late and clean, no expected file is absent, and this cycle changed nothing about that hour. Anything unreadable, corrupt, mode-mismatched or stale reads as no cache at all. Two hours are re-examined every cycle as a rotating audit; any divergence logs at ERROR — which pages — and deletes the whole cache. Measured reach: a poisoned hour is caught within ~11 h, well inside the 48 h window.
 - **Operator surface**: `zcrypto_reconcile_cycle_duration_seconds` and `zcrypto_reconcile_hours_skipped` (incremented inside the skip branch, so it reports what happened rather than what was planned), both charted; the `zcrypto-reconcile-cycle-duration` warning rule staged in `alerts.yaml`; a new runbook section whose `skipped=0` triage names the real causes, including a pair add and a thin pair's zero-print hour; and `infra/nas/README.md` updated for the overlay's one new sidecar and the correction that must delete it.
 
-## Suggested next steps
+## Resolution
 
-- **The attended rollout, and the measurement that resolves this topic.** The image builds from `develop` after the feature PR merges; then the ops host pulls the digest, `fleet-pins.md` records it with the converge evidence in that commit's message, the Kraken maintenance feed and the open-topics/memo blockers are swept, and `converge.sh --limit zcrypto-ops -e ops_image_digest=… -e liquidations_decision=roll-after` runs between `:12`/`:42` ticks — followed by the owed liquidations roll (`docker compose up -d` in `/etc/zcrypto-ops`, digest read back from the container, never the compose file). Then **read two consecutive cycles by value**: the first builds the cache and should land near the cold figure, the second should land at the warm one. Push `zcrypto-reconcile-cycle-duration` only after that first live sample exists, and verify the rule against it by value rather than presence. This topic resolves on those two measured cycles and the live alert — not on either merge.
+**Resolved 2026-08-21, on the measurement the topic defined.** The rollout converged the ops tier to `06919e5dc50c` (revision `52b12ca1`) at 18:03:00Z, the liquidations roll followed as its own act at 18:03:52Z, and the two consecutive post-converge cycles were read by value from the unit journal:
+
+| cycle | duration | completion line |
+| --- | --- | --- |
+| last on the old image (started pre-converge) | **1,636 s** — 91 % of the 1,800 s tick | `17:42:54 → 18:10:10`, cleared the 18:12 trigger by 110 s |
+| cycle 1, new image — cache build | **101 s** | `18:12:13 → 18:13:54`, `skipped=0 audited=0` |
+| cycle 2, new image — steady state | **18 s** | `18:42:19 → 18:42:37`, `skipped=42 audited=2` |
+
+**1,636 s → 18 s is 90.9× in production** (both operands journal-bracketed unit times; the in-process gauge reads 16.96 s because it excludes container start/stop); the golden replay had predicted 89.9× against the merge-base — on a 72 h window versus production's 48 h, so the two ratios corroborate rather than equate. The skip arithmetic closes exactly (42 skipped + 2 audited + 4 never-late = 48 window hours), and the totals line is identical across all three cycles (`healed_s=18850.2 residual_s=21887.4 failures=0`) — the cache changed which hours were examined, never what any hour decided. `ops-postverify.sh`: ALL PASS, including residual/healable counters unbumped.
+
+**The telemetry is live and the alert is verified by value, not presence**: `zcrypto_reconcile_cycle_duration_seconds = 16.956187`, `zcrypto_reconcile_hours_skipped = 42`, and `last_success_timestamp_seconds` end-stamped at `18:42:37` — matching the journal's `Finished` line to the second, which is D1's fix observed in production. `zcrypto-reconcile-cycle-duration` was pushed only after that first sample existed (the alert-rule lifecycle), and its first evaluation read the live series: `health=ok`, instance `Normal` at 16.96 s against the 1,500 s threshold.
+
+**What resolves and what carries**: the defect this topic named — a cycle whose duration tracks market volume, silently approaching its own tick with nothing paging below 3 h — is closed by construction (O(new data per tick)) and now observable three ways (duration gauge, skip gauge, the warning rule). The volume-growth story that motivated it ended at 91 % of the tick on the old image, measured on its final cycle. Nothing is deferred: the spec, plan, golden equivalence, and every review round are recorded in `docs/iterations-history-phase6.md` and spec `00097`.
