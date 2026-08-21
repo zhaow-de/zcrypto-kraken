@@ -25,9 +25,12 @@ fewer `stat` per absent slot.
 The overlay the reconciler WRITES is fingerprinted too — `already_minted` is the one per-hour verdict
 input outside the mirrors, and it is read fresh (not from `scans`), so a fresh `stat` is the matching
 source of truth. It is a BACKSTOP, not a replacement for the `delete_cache` that spec D4 requires of
-a hand-repair: because the stored fingerprint is the pre-pass one, a MINTING cycle stores the
-PRE-mint fingerprint, which is byte-identical to what removing the minted file restores — so for
-that one hour, for one cycle, the backstop is blind and only `delete_cache` covers it. Its ABSENCE
+a hand-repair. In composition the overlay case is fully covered: the stored fingerprint is the
+pre-pass one, so a MINTING cycle would store the PRE-mint fingerprint — byte-identical to what
+removing the minted file restores — but the caller never caches an hour it changed, so a minting
+cycle stores no entry at all and a hand-repair re-mints in either window (measured). What
+`delete_cache` still owes is the LEDGER-only mutation: removing an hour's records while leaving
+its files untouched moves nothing this fingerprint can see, and the sampled audit owns that case. Its ABSENCE
 deliberately does NOT set `complete=False`: no minted file is the ordinary case for a healthy hour,
 and treating it as incomplete would make every such hour unskippable and delete the whole
 optimization. `complete` is about the MIRROR finals an examination reads.
@@ -59,6 +62,10 @@ from .settle import hour_path
 
 logger = get_logger("archive.scan_cache")
 
+# BUMP THIS whenever anything that decides an hour's verdict changes -- the examination logic, the gap
+# semantics, SETTLE_HOURS/LATE_MINT_HOURS. It salts every entry, so a bump invalidates the whole cache
+# and the next cycle re-examines from scratch. Nothing enforces it mechanically; the sampled audit is
+# the backstop, and it catches a missed bump only after ~11 h of skipping on a stale model.
 ALGO_VERSION = 1
 _FILENAME = "scan-cache.json"
 

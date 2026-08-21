@@ -12,7 +12,7 @@ The ops overlay-writer cycle (`zcrypto-archive-pull`, `:12`/`:42` ticks) re-read
 
 - **The tick interval is 1,800 s and the 08:12Z cycle took 1,371 s.** A sustained ~150 MB/day (16 % above 2026-08-20's 129) puts the cycle over its own tick. When a systemd timer fires while the unit is still `activating`, the trigger is dropped, not queued — cadence silently halves to hourly, booking latency for permanent-loss records grows by 30 min, and the runbooks' "books hour H at the next `:12`/`:42` tick after H+2 h" arithmetic bends without anything saying so.
 - **No alert sees the degradation below 3 h.** `zcrypto_reconcile_last_success_timestamp_seconds` **was** stamped near cycle *start* (measured: stamp `08:12:16` for a cycle that ended `08:35:06`; spec `00097` moved it to cycle completion), and `zcrypto-reconcile-exporter-stale` pages at 3 h — at hourly cadence with ~25 min cycles, staleness peaks well under that. The failure mode is silent until it is severe.
-- **No duration telemetry exists at all.** Cycle duration is currently only recoverable by subtracting journal `Starting`/`Finished` lines on the ops host — which is how this was found, incidentally, during an unrelated alert investigation.
+- **No duration telemetry existed at all** before spec `00097` (published, though not yet deployed — see the remaining sub-item). Cycle duration was recoverable only by subtracting journal `Starting`/`Finished` lines on the ops host — which is how this was found, incidentally, during an unrelated alert investigation.
 
 ## Findings so far
 

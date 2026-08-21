@@ -48,7 +48,7 @@ Neither input occurs in production, so the golden replay is unaffected.
 
 ### D4 — the skip-cache: an hour is skipped only when re-examination provably cannot say anything new
 
-New sidecar `<reconciled_root>/scan-cache.json`, written atomically (tmp + rename) each cycle. Per hour: `{fingerprint, examined_at, late_at_exam, failures, last_audited}` plus a top-level `algo` salt.
+New sidecar `<reconciled_root>/scan-cache.json`, written atomically (tmp + rename) each cycle. Per hour: `{fingerprint, examined_at, late_at_exam, failures, complete}` plus a top-level `algo` salt. `complete` is load-bearing — it carries precondition 5 below. There is no separate `last_audited`: an audited hour is *fully examined*, so its `examined_at` is restamped, and oldest-`examined_at` IS least-recently-audited.
 
 **The fingerprint's file-set must be, by construction, exactly what the examination reads** — timing alone cannot achieve this, and an earlier draft of this decision got it backwards. The examination reads only what `scan_hours` enumerated (an hour absent from `scans` is `continue`d without a read), so *any* fingerprint that discovers presence by its own `stat` can see a mirror the examination will not: a file landing between the scan and the fingerprint is stat'ed present, `complete` stays `True`, the hour is cached as fully examined — and because the fingerprint already counted that file, no later cycle ever sees a change. The heal is owed forever and never performed. Task 5's review reproduced this end-to-end.
 
@@ -70,7 +70,7 @@ Cache miss, corrupt cache, unreadable cache (including a JSON-valid non-object p
 
 ### D5 — the sampled audit: the cache is distrusted a little, every cycle, forever
 
-Every cycle, the **2 least-recently-audited** skippable hours are fully examined *despite* their valid cache entries (deterministic LRU rotation on `last_audited`; no randomness). If an audited hour's re-examination appends **any** ledger record or registers **any** failure, the divergence is logged at ERROR (which pages via the existing ops error-log alert, naming hour and fingerprint), and the **entire cache file is deleted** — the next cycle is full. One divergence means the fingerprint model is wrong somewhere, and a wrong model is not repaired entry-by-entry. This mirrors `verify-replay`'s sampled audit, which exists because that path's cache was once wrong in production. The audit's cost bounds the steady-state cycle: ~4 non-late hours + 2 audit hours examined per tick, everything else fingerprint-checked at `os.stat` cost.
+Every cycle, the **2 least-recently-audited** skippable hours are fully examined *despite* their valid cache entries (deterministic LRU rotation on `examined_at`, which an audited hour restamps because it is fully examined; no randomness). If an audited hour's re-examination appends **any** ledger record or registers **any** failure, the divergence is logged at ERROR (which pages via the existing ops error-log alert, naming hour and fingerprint), and the **entire cache file is deleted** — the next cycle is full. One divergence means the fingerprint model is wrong somewhere, and a wrong model is not repaired entry-by-entry. This mirrors `verify-replay`'s sampled audit, which exists because that path's cache was once wrong in production. The audit's cost bounds the steady-state cycle: ~4 non-late hours + 2 audit hours examined per tick, everything else fingerprint-checked at `os.stat` cost.
 
 ### D6 — proof: golden equivalence on real mirrors, TDD on every guard, benchmark recorded
 
