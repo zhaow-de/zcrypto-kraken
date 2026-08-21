@@ -83,7 +83,7 @@ In `reconcile()`, at the textfile call site (inside `if textfile is not None:`),
 
 Any other `_write_textfile` caller found by `grep -rn "_write_textfile" cli/ tests/` gets the new kwarg with a real `ended`.
 
-- [ ] **Step 4: Run the file's suite.** `uv run pytest tests/test_archive_reconcile_command.py -v` — all PASS (fix any existing test that pinned the start-stamp; the new semantics are the spec).
+- [ ] **Step 4: Run the file's suite.** `uv run pytest tests/test_archive_reconcile_command.py -v` — all PASS. Two named classes of existing test may be updated (the new surface is the spec): any test that pinned the start-stamp, and `test_the_textfile_carries_every_series_and_is_written_atomically`, whose exact series-name set gains `zcrypto_reconcile_cycle_duration_seconds`; every direct `_write_textfile` caller the Step 3 grep finds gains the `ended` kwarg.
 - [ ] **Step 5: Commit.** `git add cli/archive/command.py tests/test_archive_reconcile_command.py && git commit -m "feat(archive): cycle-duration gauge, and last_success stamps the cycle's end"` (+ trailers per `commit-messages.md`).
 
 ---
@@ -150,16 +150,37 @@ def test_partition_gaps_partitions_every_silence_window():
 
 
 def test_threshold_exact_window_is_not_a_gap():
-    # 30.0 s exactly: STRICTLY greater is the contract on both sides of the vectorization
-    primary = _frame([(0.0, "update"), (30.0, "update"), (3599.0, "update")])
+    # Messages every 30 s across the WHOLE hour: every window — including the 3570→3600 tail —
+    # is exactly 30.0 s, and STRICTLY greater is the contract on both sides of the vectorization.
+    primary = _frame([(float(s), "update") for s in range(0, 3600, 30)])
     gaps = _primary_silence(primary, 30.0, H, HOUR_END)
-    assert [(g.start.second, g.end.second) for g in gaps] == []  # 30.0 s and 1.0 s windows both below/at threshold
+    assert gaps == []
 
 
 def test_us_round_trip_is_exact():
     moments = [H + timedelta(microseconds=n) for n in (0, 1, 999_999, 123_456_789)]
     assert [dt_from_us(us_from_dt(m)) for m in moments] == moments
+
+
+def test_message_ts_refuses_a_null_ts():
+    # develop refuses a null with a bare TypeError mid-comparison; the vectorized path must refuse
+    # LOUDLY and TYPED — an iNaT silently clamped out of the timeline would vanish a message.
+    df = _frame([(0.0, "update")]).with_columns(pl.lit(None, dtype=pl.Datetime("us", "UTC")).alias("ts"))
+    with pytest.raises(CaptureError, match="null ts"):
+        _message_ts(df)
+
+
+def test_measure_residual_still_measures_after_the_message_ts_change():
+    # measure_residual consumes _message_ts (cold review C1): pin that a witnessed gap's residual
+    # arithmetic survives the int64 change byte-identically.
+    gap = Gap(start=H, end=H + timedelta(seconds=100), seconds=100.0,
+              start_is_primary_message=False, end_is_primary_message=True)
+    minted = _frame([(50.0, "update")])
+    residual = measure_residual([gap], minted, min_gap_seconds=30.0)
+    assert [(r.start, r.end) for r in residual] == [(H, H + timedelta(seconds=50)), (H + timedelta(seconds=50), H + timedelta(seconds=100))]
 ```
+
+(The exact expected residual windows above must be derived by running DEVELOP's `measure_residual` on the same inputs first and pinning what it returns — if develop returns different windows for this construction, pin develop's answer; the test's job is equivalence, not this plan's arithmetic.)
 
 (`_frame` = the file's existing book-frame builder; if it is named differently, use the existing one — do not mint a duplicate. `test_threshold_exact_window_is_not_a_gap` needs the 3599→3600 tail to also stay sub-threshold, hence the 3599 stamp.)
 
@@ -171,6 +192,9 @@ def test_us_round_trip_is_exact():
 def _message_ts(df: pl.DataFrame) -> np.ndarray:
     if df.height == 0:
         return np.empty(0, dtype=np.int64)
+    if df["ts"].null_count():
+        pair = df["symbol"][0] if "symbol" in df.columns else "?"
+        raise CaptureError(f"null ts in the {pair} book stream — refusing to reconcile a frame with missing timestamps")
     raw = df["ts"].to_numpy().view(np.int64)  # Datetime(us, UTC) → datetime64[us] → μs ints, zero-copy
     drops = np.nonzero(np.diff(raw) < 0)[0]
     if drops.size:
@@ -248,6 +272,10 @@ def partition_gaps(
 ```
 
 `find_book_gaps` / `find_unwitnessed_gaps`: keep signatures and full docstrings; bodies become `return partition_gaps(primary, secondary, min_gap_seconds=min_gap_seconds, hour_start=hour_start, hour_end=hour_end)[0]` (resp. `[1]`).
+
+**`measure_residual` is touched too** (spec D3; cold review C1 — it consumes `_message_ts` at its `marks = [t for t in inside_ts if gap.start <= t <= gap.end]` line, which would compare `datetime` against `np.int64` and crash on every gap-carrying hour). Convert at its boundary: where it currently takes `_message_ts(...)` output as datetimes, wrap with `[dt_from_us(u) for u in _message_ts(...)]` — bounded cost, it runs only for hours that carry admitted gaps — and change **nothing else** in its arithmetic: inclusive bounds, threshold semantics, and returned window construction stay byte-identical.
+
+- [ ] **Step 3b: The tests-unchanged rule has exactly two named exceptions.** `test_message_ts_collapses_the_level_rows_of_one_wire_message` (and any sibling that pins `_message_ts`'s return as a `list[datetime]`) is rewritten to the int64 contract — compare via `[dt_from_us(u) for u in out]`. Every OTHER pre-existing test in the file must pass unchanged; a failure elsewhere is a vectorization bug — fix the code, never the test.
 
 - [ ] **Step 4: Run the whole file.** `uv run pytest tests/test_archive_reconcile.py -v` — every pre-existing test passes UNCHANGED (they are the API contract; if one fails, the vectorization is wrong — fix the code, never the test).
 - [ ] **Step 5: Commit.** `git add cli/archive/reconcile.py cli/archive/settle.py tests/test_archive_reconcile.py && git commit -m "feat(archive): int64-us vectorized primary-silence derivation, computed once per pair-hour"`.
@@ -407,7 +435,13 @@ def test_fingerprint_changes_on_size_mtime_new_file_and_absence(tmp_path): ...
     # delete the secondary file → (fp4, complete=False) and fp4 != fp3
 
 def test_load_returns_empty_on_absent_corrupt_and_foreign_salt(tmp_path): ...
-    # absent → {}; write garbage bytes → {}; save with salt A, load with salt B → {}
+    # absent → {}; garbage bytes → {}; valid-JSON NON-OBJECT (`null`, `[]`, `3`) → {} (cold review C5);
+    # valid object with a non-dict "hours" → {}; save with salt A, load with salt B → {}
+
+def test_fingerprint_survives_a_non_enoent_stat_error(tmp_path, monkeypatch): ...
+    # monkeypatch Path.stat to raise OSError(errno.ESTALE) for ONE path → hour_fingerprint returns
+    # (fp, complete=False) instead of raising (cold review C23): the hour becomes uncacheable and the
+    # examination path reports the read error honestly; the cycle never dies in the pre-pass.
 
 def test_save_load_round_trip_atomic(tmp_path): ...
     # save two entries, load, equality; no *.tmp file left behind
@@ -474,7 +508,11 @@ def hour_fingerprint(
                 try:
                     st = path.stat()
                     lines.append(f"{pair}|{kind}|{source}|{st.st_size}|{st.st_mtime_ns}")
-                except FileNotFoundError:
+                except OSError:
+                    # FileNotFoundError is the ordinary absence; ESTALE/EIO from a wobbling NFS mount
+                    # must not kill the whole cycle in the pre-pass — record the path as absent, which
+                    # makes the hour incomplete and UNCACHEABLE, so the examination path reads the
+                    # file itself and reports the error honestly through _fail (spec D4).
                     lines.append(f"ABSENT|{pair}|{kind}|{source}")
                     complete = False
     lines.sort()
@@ -488,10 +526,15 @@ def _cache_path(reconciled_root: Path) -> Path:
 def load_cache(reconciled_root: Path, *, salt: str) -> dict[str, CacheEntry]:
     try:
         payload = json.loads(_cache_path(reconciled_root).read_text())
+        # isinstance, not duck-typing: a JSON-valid scalar (`null`, `3`) reaches .get and would raise
+        # AttributeError — which the except tuple below must ALSO carry, belt and braces, because this
+        # function's whole contract is "never raises" (fail-open to slow, spec D4).
+        if not isinstance(payload, dict) or not isinstance(payload.get("hours"), dict):
+            return {}
         if payload.get("algo") != salt:
             return {}
         return {hour: CacheEntry(**entry) for hour, entry in payload["hours"].items()}
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return {}
 
 
@@ -570,23 +613,39 @@ def test_audit_divergence_drops_cache_and_logs_error(tmp_path, caplog): ...
 
 def test_corrupt_cache_is_a_full_cycle(tmp_path): ...
     # Write garbage into scan-cache.json → cycle runs full (skipped count 0), then rewrites a valid cache.
+
+def test_detect_only_neither_reads_nor_writes_the_cache(tmp_path): ...
+    # Cold review C12 — the poisoning defect this gate kills. Construct a LATE hour with a witnessed
+    # primary gap. (a) A --detect-only cycle: scan-cache.json does NOT exist afterwards. (b) Seed a
+    # valid cache marking that hour skippable, run --detect-only: the hour is still examined (the
+    # would_mint record appears — the cache was ignored). (c) The follow-up --mint cycle MINTS the
+    # hour: a detect-only run can never have caused a --mint cycle to skip a mintable hour.
+```
+
+**Log assertions use the file's own idiom, never `caplog`** (cold review C3): `cli/logging/config.py` sets `propagate=False` on the `zcrypto` logger during the first `CliRunner` invoke, and pytest's `caplog` attaches to non-propagating loggers only at test setup — so capture is order-dependent and a negative assertion ("no divergence logged") can pass vacuously. Monkeypatch `command.logger.error`/`.info` to capture lines (the existing `test_the_verdict_is_recorded…` comment documents this), and assert every skip/audit property **from durable state as well**: `scan-cache.json` entries' `examined_at` advanced for the audited hours and stayed put for the skipped one; the file deleted after divergence.
+
+```python
 ```
 
 Run: FAIL (no skip machinery yet).
 
-- [ ] **Step 2: Implement.** After `failures = 0` add the pre-pass:
+- [ ] **Step 2: Implement.** After `failures = 0` add the pre-pass — **gated on `mint`** (spec D4: the cache exists only in `--mint` mode; a detect-only run neither loads, saves, nor audits it):
 
 ```python
-    salt = scan_cache.algo_salt(min_gap_seconds)
-    cache = scan_cache.load_cache(reconciled_root, salt=salt)
     window = settled_hours(now=now, window_hours=window_hours)
-    fingerprints = {
-        hour.isoformat(): scan_cache.hour_fingerprint(
-            hour, primary_root=primary_root, secondary_root=secondary_root,
-            book_pairs=book_pairs, trade_pairs=trade_pairs,
-        )
-        for hour in window
-    }
+    salt = scan_cache.algo_salt(min_gap_seconds)
+    cache = scan_cache.load_cache(reconciled_root, salt=salt) if mint else {}
+    fingerprints = (
+        {
+            hour.isoformat(): scan_cache.hour_fingerprint(
+                hour, primary_root=primary_root, secondary_root=secondary_root,
+                book_pairs=book_pairs, trade_pairs=trade_pairs,
+            )
+            for hour in window
+        }
+        if mint
+        else {}
+    )
     skippable = [
         iso for iso, (fp, complete) in fingerprints.items()
         if scan_cache.is_skippable(cache.get(iso), fp, complete)
@@ -607,9 +666,11 @@ Change the loop to iterate `for hour in window:` (same list the fingerprints use
         records_before, failures_before = len(records), failures
 ```
 
-At the very bottom of the hour body (after the trades loop, same indent as `hour_end = …`):
+At the very bottom of the hour body (after the trades loop, same indent as `hour_end = …`), gated so a detect-only cycle records nothing:
 
 ```python
+        if not mint:
+            continue  # spec D4: the cache exists only in --mint mode
         fp, complete = fingerprints[hour_iso]
         if hour_iso in audit_hours and (len(records) != records_before or failures != failures_before):
             logger.error(
@@ -631,11 +692,14 @@ At the very bottom of the hour body (after the trades loop, same indent as `hour
 After the loop (before the `totals = _totals(records)` line):
 
 ```python
-    if cache_divergent:
-        scan_cache.delete_cache(reconciled_root)
-    else:
-        scan_cache.save_cache(reconciled_root, new_cache, salt=salt)
+    if mint:  # a detect-only run neither deletes nor writes the deployed cycle's cache (spec D4)
+        if cache_divergent:
+            scan_cache.delete_cache(reconciled_root)
+        else:
+            scan_cache.save_cache(reconciled_root, new_cache, salt=salt)
 ```
+
+(The `if not mint: continue` at the body's end means the hour-level trailing code is the ONE place a top-level `continue` now exists — it sits after everything else in the body, so it skips only the cache bookkeeping it guards. The Step 2 precondition check — no *pre-existing* hour-level `continue` — still stands and must still be verified.)
 
 Extend the completion log line with the two new counts: `… failures=%d skipped=%d audited=%d` (values `len(skip_hours)`, `len(audit_hours & {h.isoformat() for h in window})` — audit_hours is already window-scoped, so `len(audit_hours)`).
 
@@ -650,17 +714,22 @@ Extend the completion log line with the two new counts: `… failures=%d skipped
 **Files:** none committed — scratch only (`$SCRATCH` = the session scratchpad dir). Results go verbatim into the task report, then into T0147's resolution (Task 10).
 
 - [ ] **Step 1: Choose the window.** `WINDOW=72`; verify `2026-08-20T07:00` is inside: it is iff `now - 72h - 2h < 2026-08-20 07:00` — if not (plan executed later than 2026-08-24), widen WINDOW so the four historical dark hours' nearest one is covered, and say so in the report.
+**All runs pass `--mint` and `--textfile`** (spec D6; cold review C13): detect-only would exercise neither the splice/mint/`measure_residual` path nor the exporter — exactly where the change's risk lives. The scratch overlays are throwaway; `--mint` here writes only into `$SCRATCH`.
+
+**Window-drift discipline** (cold review C6/C28): all three runs must START inside the same UTC hour — `date -u` before each, re-run any straggler — and the diff first asserts the runs examined the same first/last hours (read the window from each run's log or ledger extremes). A mismatch there is drift to re-run, never something to normalize away.
+
 - [ ] **Step 2: Develop baseline.**
 
 ```bash
 git worktree add "$SCRATCH/golden-develop" develop
 cd "$SCRATCH/golden-develop" && uv sync
 mkdir -p "$SCRATCH/out-develop"
-time uv run python -m cli archive reconcile /mnt/zhao-crypto/capture-segments /mnt/zhao-crypto/capture-segments-red "$SCRATCH/out-develop" --window-hours 72
+date -u
+time uv run python -m cli archive reconcile /mnt/zhao-crypto/capture-segments /mnt/zhao-crypto/capture-segments-red "$SCRATCH/out-develop" --window-hours 72 --mint --textfile "$SCRATCH/out-develop/reconcile.prom"
 ```
 
-- [ ] **Step 3: Branch, cold + warm.** From the repo root (branch checkout), same command into `$SCRATCH/out-branch` — run it **twice** (cold builds the cache, warm consumes it), `time` both.
-- [ ] **Step 4: Diff.**
+- [ ] **Step 3: Branch, cold + warm.** From the repo root (branch checkout), same command into `$SCRATCH/out-branch` (its own `--textfile`) — run it **twice** (cold builds the cache, warm consumes it), `date -u` + `time` on each.
+- [ ] **Step 4: Diff — ledgers, minted trees, textfiles.**
 
 ```bash
 uv run python - <<'PY'
@@ -675,12 +744,25 @@ def norm(path):
 a = norm("SCRATCH/out-develop/reconcile-ledger.jsonl")
 b = norm("SCRATCH/out-branch/reconcile-ledger.jsonl")
 print("ledger records:", len(a), len(b))
+hours = lambda rs: sorted({json.loads(r)["hour"] for r in rs})
+ha, hb = hours(a), hours(b)
+if ha and hb and (ha[0] != hb[0] or ha[-1] != hb[-1]):
+    print("WINDOW DRIFT:", ha[0], ha[-1], "vs", hb[0], hb[-1], "-- re-run inside one UTC hour"); sys.exit(2)
 sys.exit(0 if a == b else 1)
 PY
 ```
 
-(with `SCRATCH` substituted; non-zero exit = STOP, the vectorization or cache changed a decision — that is a Task 2-6 bug, never something to normalize away). Warm-run check: the warm ledger must equal the cold ledger byte-for-byte (`cmp`), since a second run over unchanged inputs decides nothing new.
-- [ ] **Step 5: Record.** In the report: develop wall time, branch cold, branch warm, record counts, and the dark-hour verdict lines from both logs (must match). Then `git worktree remove "$SCRATCH/golden-develop"`.
+```bash
+# minted parquet trees: byte-identical files at identical paths
+diff <(cd "$SCRATCH/out-develop" && find . -name '*.parquet' -print0 | xargs -0 sha256sum | sort) \
+     <(cd "$SCRATCH/out-branch"  && find . -name '*.parquet' -print0 | xargs -0 sha256sum | sort)
+# textfiles: identical except the two timestamp series, source_lag, and the new gauge
+diff <(grep -vE 'last_success_timestamp_seconds|cycle_duration_seconds|source_lag' "$SCRATCH/out-develop/reconcile.prom") \
+     <(grep -vE 'last_success_timestamp_seconds|cycle_duration_seconds|source_lag' "$SCRATCH/out-branch/reconcile.prom")
+```
+
+(exit 1 from the ledger diff or any `diff` output = STOP, the vectorization or cache changed a decision — that is a Task 2-6 bug, never something to normalize away; exit 2 = window drift, re-run). Warm-run check: the warm ledger must equal the cold ledger byte-for-byte (`cmp`) and the warm minted tree must be unchanged, since a second run over unchanged inputs decides and mints nothing new.
+- [ ] **Step 5: Record.** In the report: develop wall time, branch cold, branch warm, record counts, minted-file counts, and the dark-hour verdict lines from both logs (must match). Then `git worktree remove "$SCRATCH/golden-develop"`.
 
 ---
 
@@ -736,8 +818,8 @@ PY
       receiver: metrics
 ```
 
-- [ ] **Step 2: Runbook.** New `infra/runbooks/ops.md` section (anchor `zcrypto-reconcile-cycle-duration`, same shape as its siblings): *What you are seeing* — the last completed cycle exceeded 1,500 s of its 1,800 s tick. *What it means* — duration tracks the 48 h window's data volume plus the number of non-skipped hours; the skip-cache normally holds steady-state cycles to tens of seconds, so a page here means the cache is being bypassed (look for `scan-cache audit divergence` at ERROR, or a fingerprint churn — an incomplete hour re-examining every cycle) or volume genuinely outgrew the vectorized floor. *What to do* — read the cycle log's `skipped=`/`audited=` counts; `skipped=0` on consecutive cycles means the cache is not engaging (divergence dropped it, or hours are incomplete — check for absent finals); a healthy skip count with high duration means volume — re-derive headroom before the next vol regime and consider the incremental redesign registered in the topic that created this rule. *Retire when* — the rule is absent from `alerts.yaml`, i.e. deliberately removed.
-  Also fix the now-stale sentence added 2026-08-21 in the residual-gap section: replace "and the stamp is written near cycle *start*, so it lags a long cycle's completion" with "and since spec `00097` the stamp is written at cycle *completion*".
+- [ ] **Step 2: Runbook.** New `infra/runbooks/ops.md` section (anchor `zcrypto-reconcile-cycle-duration`, same shape as its siblings): *What you are seeing* — the last completed cycle exceeded 1,500 s of its 1,800 s tick. *What it means* — duration tracks the 48 h window's data volume plus the number of non-skipped hours; the skip-cache normally holds steady-state cycles to tens of seconds, so a page here means the cache is being bypassed (look for `scan-cache audit divergence` at ERROR, or a fingerprint churn — an incomplete hour re-examining every cycle) or volume genuinely outgrew the vectorized floor. *What to do* — read the cycle log's `skipped=`/`audited=` counts; `skipped=0` on consecutive cycles means the cache is not engaging: a `scan-cache audit divergence` ERROR dropped it, hours are incomplete (check for absent finals — a pair permanently removed from capture makes **every** window hour incomplete, a stable absence set with permanent `skipped=0`, and silently disables the whole cache), or a manual ledger/overlay mutation deleted it (which is correct — see below); a healthy skip count with high duration means volume — re-derive headroom before the next vol regime. **A manual mutation of the reconcile ledger or the overlay must delete `scan-cache.json` in the same act** — the next cycle is then deliberately full instead of divergent-then-paged up to ~11 h later when the audit's rotation reaches a poisoned hour. *Retire when* — the rule is absent from `alerts.yaml`, i.e. deliberately removed.
+  Also **rewrite in place** (never append a correction) the residual-gap section's staleness guidance added 2026-08-21: the healthy age of `zcrypto_reconcile_last_success_timestamp_seconds` is one tick (30 min) plus a seconds-scale cycle, the stamp is written at cycle *completion* since spec `00097`, and the 23-minute cycle survives only as the pre-`00097` measurement that motivated the change.
 - [ ] **Step 3: Gates.** `uv run pre-commit run -a` and `uv run pytest tests/test_internal_terms_not_operator_visible.py -q` — green.
 - [ ] **Step 4: Commit.** `git add infra/grafana/alerts.yaml infra/runbooks/ops.md && git commit -m "feat(obs): warn when the reconcile cycle nears its tick"`.
 
@@ -760,6 +842,7 @@ Host-touching steps never go to a subagent (`agent-ops.md`). After the feature P
 - [ ] 3. `docs/reference/fleet-pins.md` on the new branch: ops row → the new digest, rollback operand = the previously-running digest read from the container (`docker inspect --format '{{.Config.Image}}'`), committed BEFORE the converge; converge evidence goes in this commit's MESSAGE.
 - [ ] 4. Check `https://status.kraken.com/api/v2/scheduled-maintenances.json` for a published `WebSocket`/`REST` window (T0145 rule) + sweep open-topics/memo for blockers; present both with the converge request.
 - [ ] 5. Converge: `infra/ansible/scripts/converge.sh --limit zcrypto-ops -e ops_image_digest=sha256:<new> -e liquidations_decision=roll-after` (no `ops_alloy_digest` — `config.alloy` untouched; `daemon.json` untouched). Time it between `:12`/`:42` ticks.
+- [ ] 5b. **The owed liquidations roll** (cold review C14 — `roll-after` repins the compose but the role never restarts it): on the ops host, `docker compose up -d` in `/etc/zcrypto-ops`, then read the running digest **from the container** (`sudo docker inspect --format '{{.Config.Image}}' zcrypto-ops-liquidations`) and confirm it equals the new pin — never trust the compose file; record the read in the pins commit message.
 - [ ] 6. First post-converge cycle: read `cycle_duration_seconds` **by value** (expect a full cache-building cycle, roughly the Task 7 cold time scaled to 48 h). Second cycle: expect the warm O(1) number. `infra/scripts/ops-postverify.sh` green; `(no series)` reads FAIL.
 - [ ] 7. Push the D2 rule from the merged `develop` tree: `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` with the vaulted token per the script header; verify the new rule evaluates against the live sample (state OK, value = the warm duration) — by value, not presence.
 - [ ] 8. T0147 → `resolved` + archive + index move: the resolution records the measured before/after (1,371 s → cold/warm numbers), the golden-equivalence result, the audit design, and the alert uid. No decisions-log entry — engineering, not subject-matter (the `decisions-log.md` gate). No data-catalog change — the scan-cache is operational state, not a dataset.
