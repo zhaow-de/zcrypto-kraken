@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
+
 # An hour is finalized at H+1h and carried to the NAS by the pull cycle that follows; H+2h gives both
 # a full cycle to land, so a settled hour is complete on both mirrors or genuinely missing from them.
 SETTLE_HOURS = 2
@@ -86,6 +88,27 @@ def newest_hour(*scans: dict[str, set[datetime]]) -> datetime | None:
     """The newest final across every scan — the mirror's own freshness, for `source_lag`."""
     hours = [hour for scan in scans for pair_hours in scan.values() for hour in pair_hours]
     return max(hours) if hours else None
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def us_from_dt(moment: datetime) -> int:
+    """Exact microseconds since epoch — integer path only, no float rounding."""
+    delta = moment - _EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+def dt_from_us(us: int) -> datetime:
+    """Exact inverse of `us_from_dt`."""
+    return _EPOCH + timedelta(microseconds=int(us))
+
+
+def us_array(stamps: Iterable[datetime] | np.ndarray) -> np.ndarray:
+    """int64-μs view of `stamps`; ndarray passes through, datetimes convert exactly."""
+    if isinstance(stamps, np.ndarray):
+        return stamps.astype(np.int64, copy=False)
+    return np.fromiter((us_from_dt(s) for s in stamps), dtype=np.int64)
 
 
 @dataclass(frozen=True)
