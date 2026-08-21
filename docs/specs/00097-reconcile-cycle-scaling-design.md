@@ -66,7 +66,13 @@ Every cycle, the **2 least-recently-audited** skippable hours are fully examined
 
 ### D7 — rollout order, and what "resolved" requires
 
-Reviewed branch pushed → CI image build → digest pulled on the ops host → `fleet-pins.md` row updated (converge evidence in that commit's message) → Kraken maintenance-feed check + open-topics/memo blocker sweep → ops converge (`--limit zcrypto-ops`, `-e liquidations_decision=roll-after`, `config.alloy` untouched so no alloy digest) → **first cycle read by value** (expected: full cache-building cycle at roughly the vectorized-only cost, ~1/20 of 1,371 s) → **second cycle read by value** (expected: O(1) steady state, ~10–20 s) → `grafana-push.sh` the D2 rule → verify the rule sees the live sample → T0147 resolved and archived carrying every measurement. `ops-postverify.sh` after the converge as always. T0147 is **not** resolved by merge; it is resolved by the second cycle's measured duration and the alert live against it.
+**The deployed image is built from `develop` (or `main`), never from a feature branch** — so the merge precedes the rollout, and the work ships as two PRs:
+
+1. **The feature PR**: code, tests, alert YAML, runbook, spec + plan — reviewed at the Fable floor, merged into `develop` on the owner's word. It flips T0147 to `partial`, with the rollout + measured resolution registered in the topic as the remaining sub-item (never left in prose).
+2. **Post-merge rollout, attended**: CI builds the develop image → digest pulled on the ops host → `fleet-pins.md` row updated on a fresh branch (converge evidence in that commit's message) → Kraken maintenance-feed check + open-topics/memo blocker sweep → ops converge (`--limit zcrypto-ops`, `-e liquidations_decision=roll-after`, `config.alloy` untouched so no alloy digest) → **first cycle read by value** (expected: full cache-building cycle at roughly the vectorized-only cost, ~1/20 of 1,371 s) → **second cycle read by value** (expected: O(1) steady state, ~10–20 s) → `grafana-push.sh` the D2 rule → verify the rule sees the live sample. `ops-postverify.sh` after the converge as always.
+3. **The closeout PR**: the pins update, T0147 resolved and archived carrying every measurement, and the iterations-history entry — one component: this topic's rollout and closeout.
+
+T0147 is **not** resolved by the feature merge; it is resolved by the second cycle's measured duration and the alert live against it.
 
 ## Out of scope
 

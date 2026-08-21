@@ -743,29 +743,33 @@ PY
 
 ---
 
-### Task 9: Rollout (spec D7) — **ATTENDED, main session only**
+### Task 9: Feature PR — merge precedes rollout (spec D7)
 
-Host-touching steps never go to a subagent (`agent-ops.md`). Sequence, each verified before the next:
+**The deployed image is built from `develop`, never from a feature branch** — so this branch merges first, and the topic goes `partial` at merge, not `resolved`.
 
-- [ ] 1. Whole-branch review (Fable floor — reconcile books permanent loss), trailers, push. CI builds the image for the branch head.
-- [ ] 2. `gh run watch` the image build; read the new digest from the workflow output or `ghcr` manifest — never from memory.
-- [ ] 3. Pull the digest on the ops host (`ssh hp sudo docker pull ghcr.io/zhaow-de/zcrypto-capture@sha256:<new>`).
-- [ ] 4. `docs/reference/fleet-pins.md`: ops row → the new digest, rollback operand = current `6b4c13899653`; converge evidence goes in this commit's MESSAGE.
-- [ ] 5. Check `https://status.kraken.com/api/v2/scheduled-maintenances.json` for a published `WebSocket`/`REST` window (T0145 rule) + sweep open-topics/memo for blockers; present both with the converge request.
-- [ ] 6. Converge: `infra/ansible/scripts/converge.sh --limit zcrypto-ops -e ops_image_digest=sha256:<new> -e liquidations_decision=roll-after` (no `ops_alloy_digest` — `config.alloy` untouched; `daemon.json` untouched). Time it between `:12`/`:42` ticks.
-- [ ] 7. First post-converge cycle: read `cycle_duration_seconds` **by value** (expect a full cache-building cycle, roughly the Task 7 cold time scaled to 48 h). Second cycle: expect the warm O(1) number. `infra/scripts/ops-postverify.sh` green; `(no series)` reads FAIL.
-- [ ] 8. Push the D2 rule: `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` with the vaulted token per the script header; verify the new rule evaluates against the live sample (state OK, value = the warm duration) — by value, not presence.
+- [ ] 1. T0147 → `partial` (`topic-ops` mechanics): `## Done so far` records the telemetry, vectorization, cache, alert YAML, and golden-equivalence result with the Task 7 numbers; `## Suggested next steps` trims to exactly one registered remainder — the attended rollout + measured resolution (Task 10) — so the deferral lives in the topic, never only in prose. Index bullet moves to `### Partially done`.
+- [ ] 2. Whole-branch review (Fable floor — the reconciler books permanent loss), trailers on every commit, push.
+- [ ] 3. PR into `develop` on the user's word (`open-pr` skill); merge on CI green (`merge-pr` gate). The PR body flags the `last_audited`→`examined_at` simplification and the two-PR rollout shape.
 
-### Task 10: Closeout
+### Task 10: Rollout + closeout — **ATTENDED, main session only** (spec D7)
 
-- [ ] T0147 → `resolved` + archive + index move (`topic-ops` mechanics): the resolution records the measured before/after (1,371 s → cold/warm numbers), the golden-equivalence result, the audit design, and the alert uid. No decisions-log entry — engineering, not subject-matter (the `decisions-log.md` gate). No data-catalog change — the scan-cache is operational state, not a dataset.
-- [ ] Append the iterations-history entry (phase 6 file — `iteration-closeout` skill): telemetry, vectorization (with the 60 %/97 % profile), skip-cache + audit, alert, and the golden-equivalence proof. Re-verify every status claim against the full branch log immediately before PR-open (`iterations-history.md`).
-- [ ] PR into `develop` on the user's word (`open-pr` skill).
+Host-touching steps never go to a subagent (`agent-ops.md`). After the feature PR merges, on a fresh branch off `develop` (one component: T0147's rollout and closeout):
+
+- [ ] 1. `gh run watch` the develop image build after the merge; read the new digest from the workflow output or the `ghcr` manifest — never from memory; verify shape (64 hex).
+- [ ] 2. Pull the digest on the ops host (`ssh hp sudo docker pull ghcr.io/zhaow-de/zcrypto-capture@sha256:<new>`).
+- [ ] 3. `docs/reference/fleet-pins.md` on the new branch: ops row → the new digest, rollback operand = the previously-running digest read from the container (`docker inspect --format '{{.Config.Image}}'`), committed BEFORE the converge; converge evidence goes in this commit's MESSAGE.
+- [ ] 4. Check `https://status.kraken.com/api/v2/scheduled-maintenances.json` for a published `WebSocket`/`REST` window (T0145 rule) + sweep open-topics/memo for blockers; present both with the converge request.
+- [ ] 5. Converge: `infra/ansible/scripts/converge.sh --limit zcrypto-ops -e ops_image_digest=sha256:<new> -e liquidations_decision=roll-after` (no `ops_alloy_digest` — `config.alloy` untouched; `daemon.json` untouched). Time it between `:12`/`:42` ticks.
+- [ ] 6. First post-converge cycle: read `cycle_duration_seconds` **by value** (expect a full cache-building cycle, roughly the Task 7 cold time scaled to 48 h). Second cycle: expect the warm O(1) number. `infra/scripts/ops-postverify.sh` green; `(no series)` reads FAIL.
+- [ ] 7. Push the D2 rule from the merged `develop` tree: `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` with the vaulted token per the script header; verify the new rule evaluates against the live sample (state OK, value = the warm duration) — by value, not presence.
+- [ ] 8. T0147 → `resolved` + archive + index move: the resolution records the measured before/after (1,371 s → cold/warm numbers), the golden-equivalence result, the audit design, and the alert uid. No decisions-log entry — engineering, not subject-matter (the `decisions-log.md` gate). No data-catalog change — the scan-cache is operational state, not a dataset.
+- [ ] 9. Append the iterations-history entry (phase 6 file — `iteration-closeout` skill): telemetry, vectorization (with the 60 %/97 % profile), skip-cache + audit, alert, golden-equivalence proof, and the measured rollout numbers. Re-verify every status claim against both branches' full logs immediately before PR-open (`iterations-history.md`).
+- [ ] 10. PR into `develop` on the user's word (`open-pr` skill); merge on green.
 
 ---
 
 ## Self-review (run before committing the plan)
 
-1. **Spec coverage**: D1→Task 1, D2→Task 8+9.8, D3→Tasks 2-4, D4→Tasks 5-6, D5→Tasks 5-6 (audit), D6→Task 7 + per-task tests, D7→Task 9, resolution definition→Task 10. `last_audited`→`examined_at` simplification flagged in Task 5 and for the PR body.
+1. **Spec coverage**: D1→Task 1, D2→Task 8+10.7, D3→Tasks 2-4, D4→Tasks 5-6, D5→Tasks 5-6 (audit), D6→Task 7 + per-task tests, D7→Tasks 9-10 (merge-first: feature PR, then attended rollout+closeout PR), resolution definition→Task 10.8. `last_audited`→`examined_at` simplification flagged in Task 5 and for the PR body.
 2. **Placeholders**: Task 5 Step 1 test bodies are outlined with `...` — deliberate: each names its exact construction and assertion in prose and the fixtures exist; the implementer writes the bodies. Everything else is concrete code.
 3. **Type consistency**: `us_from_dt`/`dt_from_us`/`us_array` defined once in settle.py (Task 2), consumed in Tasks 2-4; `CacheEntry` fields consistent between Tasks 5 and 6; `partition_gaps` signature identical in Tasks 2 and 4.
