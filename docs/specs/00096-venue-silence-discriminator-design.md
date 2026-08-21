@@ -11,7 +11,7 @@ The live ledger carries **four** `both_streams_silent` records — read from `ca
 | 2026-07-13 07:00Z | 2,661.788740 s | 1 | Kraken WS 503, then a capture-side restart clobber — a real capture defect |
 | 2026-07-27 07:00Z | 2,385.847992 s | 1 | correlated silence, cause not separately established |
 | 2026-08-06 07:00Z | 10,588.382751 s | 2 | venue outage — Kraken posted `maintenance` → `cancel_only` → `post_only` → `online` |
-| 2026-08-20 07:00Z | 6,251.349974 s | 2 | venue outage — Kraken posted the same ladder as 08-06 |
+| 2026-08-20 07:00Z | 6,251.349974 s | 2 | venue outage — announced on the WS `status` channel, same ladder as 08-06 |
 
 The two venue events are booked identically to the capture defect. That is the problem.
 
@@ -24,7 +24,7 @@ The counter is monotonic and derived by summing an append-only ledger, so those 
 
 ## The load-bearing measurements
 
-**Venue status alone is not the discriminator, and the reason is the ENDPOINT rather than the venue's silence.** Kraken announced **both** events on its WebSocket `status` channel — the same ladder each time, received on both hosts, counted into `zcrypto_capture_venue_status_total`. (An earlier claim here that 2026-08-20 went unposted came from Kraken's public *status page*, a different source; it does not transfer.) What a reconciler could actually consume is the public `SystemStatus` read — the same endpoint `00088`'s execution gate uses — and that reports **current state only**, so a reconciler running two hours or more behind catches **neither**. The channel that did catch both is received by capture and written nowhere the reconciler can read.
+**Venue status alone is not the discriminator, and the reason is the ENDPOINT rather than the venue's silence.** Kraken announced **both** events on its WebSocket `status` channel — the same ladder each time, received on both hosts, counted into `zcrypto_capture_venue_status_total`. (An earlier claim here that 2026-08-20 went unposted came from Kraken's public *status page*, a different source; it does not transfer.) What a reconciler could actually consume is the public `SystemStatus` read — the same endpoint `00088`'s execution gate uses — and that reports **current state only**, so a reconciler running two hours or more behind catches **neither**. The channel that did catch both is received by capture and written nowhere the reconciler can read. (A third surface *is* readable after the fact — Kraken's `scheduled-maintenances.json`, which published every one of these windows days ahead and retains them — but it is a third-party HTTP feed, and D1 rules that soft telemetry must never gate an append-only ledger. See [[T0145]].)
 
 **Cross-host agreement classifies one of the two known events; venue status is not the missing half, because the reconciler cannot reach it.** Measured by replaying both hours against this design's own rule:
 
@@ -34,7 +34,7 @@ The counter is monotonic and derived by summing an append-only ledger, so those 
 | Public `SystemStatus` read at reconcile time (current-state only) | unreachable | unreachable |
 | Cross-host + D2a | **`undetermined`** — the only interior evidence is one 200-row resubscribe snapshot on BTC/EUR, zero updates | `venue_silent` — 12/12 pairs byte-identical across a 98 s interior span, 90 updates |
 
-So this design classifies **one of the two** known venue events, and D3's default covers the other. That is a weaker claim than "catches both", and it is the true one. The reason venue status cannot close the gap is **not** that the venue was silent — it announced both — but that the only *retroactively readable* form is the public endpoint, which reports current state only while the reconciler runs two hours or more after the fact.
+So this design classifies **one of the two** known venue events, and D3's default covers the other. That is a weaker claim than "catches both", and it is the true one. The reason venue status cannot close the gap is **not** that the venue was silent — it announced both — but that the form the reconciler could consume, the public `SystemStatus` endpoint, reports current state only while the reconciler runs two hours or more after the fact. Kraken's `scheduled-maintenances.json` *is* readable retroactively and did publish every window days ahead, but it is a third-party HTTP surface that D1 keeps out of the booking path ([[T0145]]).
 
 **The rule also refuses to excuse the one historical event that WAS our fault.** 2026-07-13 booked a single window with no interior span, so it reads `undetermined` rather than `venue_silent` — and that hour was a Kraken WS 503 followed by a capture-side restart clobber that lost 270 s capture should have kept. A discriminator that excused it would be worse than none.
 

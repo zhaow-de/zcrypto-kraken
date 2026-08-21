@@ -18,11 +18,11 @@ The reconciler runs at least two hours behind the hour it settles, and Kraken's 
 | --- | --- | --- | --- | --- | --- |
 | A | WebSocket `status` channel | `cli/capture/command.py` — a log line plus `zcrypto_capture_venue_status_total` | only as a Prometheus series or a Loki log line | **announced** | **announced** |
 | B | REST `SystemStatus` | `cli/engine/venue.py`, the execution gate | **no — current state only** | unreachable | unreachable |
-| C | `status.kraken.com` incident page | a human, by eye | n/a | posted | no incident |
+| C | `status.kraken.com` — incident page, and the machine-readable `scheduled-maintenances.json` | a human, by eye; nothing in the repo reads the JSON | **yes** — the maintenance feed retains past entries | posted; maintenance published 48.6 h ahead | no incident posted, but the **same maintenance published 48.7 h ahead** |
 
 [[T0143]] recorded **C** correctly and narrowly. Spec `00096` promoted that into a claim about **A**, and this topic was opened on the resulting asymmetry — that venue status and cross-host agreement each catch what the other misses. They do not. On 2026-08-20 the WS channel carried the same `maintenance` → `cancel_only` → `post_only` ladder as 2026-08-06, on **both** capture hosts, and `Capture · Kraken reports the venue is not online` fired six instances at 07:07–07:16Z. Status did not miss 2026-08-20; the status *page* did, and that is a different source.
 
-So status **dominates** cross-host on the two known episodes rather than complementing it, and there is no "uncovered half" to register. What remains true is narrower: the only *retroactively readable* form of venue status is the public endpoint, which reports current state only — so a reconciler running two hours or more behind still cannot consume it. That residue is what the Resolution below disposes of.
+So status **dominates** cross-host on the two known episodes rather than complementing it, and there is no "uncovered half" to register. What remains true is narrower, and one clause of it was also overstated: the form a reconciler could consume, the public `SystemStatus` endpoint, reports current state only, so a reconciler running two hours or more behind cannot use it. Kraken's `scheduled-maintenances.json` *is* retroactively readable and published every one of these windows days in advance — but it is a third-party HTTP feed, which `00096` D1 keeps out of the booking path for the same reason it kept Prometheus out. That feed is [[T0145]]'s subject, not this topic's. That residue is what the Resolution below disposes of.
 
 ## Findings so far
 
