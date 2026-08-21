@@ -54,7 +54,7 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 
 - **The capture VPSes never reboot themselves** — patches still auto-install; *Capture · reboot pending (attended)* — a Grafana rule paging Slack, not the dead-man domain — fires until you reboot. The ops node still auto-reboots at 02:25. The on-host 21:25 / 22:25 times no longer fire but are kept on purpose — they are the measured slots that already satisfy the Schedule bullet, and the base role's window-collision assert still reads their host_vars, so never delete them as dead config.
 - **Reboot SECONDARY first, then primary** — the same canary order as an image rollout: if the kernel bricks the secondary, the primary is never touched.
-- Schedule: ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation, and on the primary right after a completed engine cycle. Measure from the archive, don't guess.
+- Schedule: ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation, and on the primary right after a completed engine cycle. Measure from the archive, don't guess. **And never inside a published Kraken maintenance window** — the ~83 s reboot gap landing inside one conflates two failure sources exactly where the ledger is least readable; same feed and same 2–6 day publication lag as the converge rule in `.claude/rules/capture-deploys.md`.
 - Expect a ~83 s capture gap; both containers self-restart.
 
 ## Telemetry labels
