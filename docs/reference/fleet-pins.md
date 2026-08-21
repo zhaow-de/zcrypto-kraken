@@ -38,8 +38,9 @@ Reading rules:
 
 - `636012cc00d9` = `sha256:636012cc00d9e3f21ab23dba5454eefe2e252e4152bcdee07da16b8e9335fc4f` — spec `00090` (the rung-1 order path), revision `732598ff`, AVX build; running fleet-wide (both captures and the engine).
 - `99faf16514e3` = `sha256:99faf16514e3ddc30712c8c63fb4892d7e5f3042823b56935cf0617a3cf2ab44` — primary-capture operand; revision `3540b0bb`.
-- `419feafc304f` = `sha256:419feafc304f6a080936ab0cccbe3dd157dd48097851f94eab7b319210d4336e` — ops current; engine and red-capture operand; specs `00094` + `00089`, revision `e0757909`, AVX — **never pin it on the NAS**.
-- `a8cd3a9524eb` = `sha256:a8cd3a9524eb2dd613bbe5f899f1dc8a1282d2d139e0ad1c66e469fb84d49ddb` — ops operand; spec `00087`, revision `392cf8b0`.
+- `06919e5dc50c` = `sha256:06919e5dc50c1eef3525aa272b8a21e441d17fa30bf67a46575ca1d560c4b3be` — ops current; spec `00097` (the reconcile skip-cache), revision `52b12ca1`, AVX.
+- `6b4c13899653` = `sha256:6b4c13899653d4e9300cec8d111cb5c6a8cf94e43a5db64cbcd0b3fa47698bf8` — ops operand; spec `00096`, revision `2c248fe4`.
+- `419feafc304f` = `sha256:419feafc304f6a080936ab0cccbe3dd157dd48097851f94eab7b319210d4336e` — engine and red-capture operand; specs `00094` + `00089`, revision `e0757909`, AVX — **never pin it on the NAS**.
 - `5f890c26237a` = `sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1` — NAS current; the `-compat` build of `e0757909`.
 - `620114511f19` = `sha256:620114511f197c306d6b1c2260b0a12793bb679663517a0626841d0018049a28` — NAS operand.
 - alloy current (all four container hosts): `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308`
