@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import polars as pl
+import pytest
 
 from cli.archive.settle import (
     CAPTURE_DIVERGENT,
@@ -23,7 +25,9 @@ from cli.archive.settle import (
     newest_hour,
     scan_hours,
     settled_hours,
+    us_array,
 )
+from cli.capture.errors import CaptureError
 
 H = datetime(2026, 7, 16, 9, tzinfo=UTC)
 HOUR_END = H + timedelta(hours=1)
@@ -540,3 +544,92 @@ def test_a_healthy_hour_with_no_windows_is_undetermined_and_never_classifies():
     )
     assert verdict.verdict == UNDETERMINED
     assert verdict.interior_updates == 0
+
+
+# --- the int64-microsecond derivation (spec 00097 D3) ---------------------------------------------
+#
+# Both fleet-dark functions now run on int64-microsecond arrays so the reconcile cycle stops scaling
+# with the hour's message count. The datetime path is the equivalence anchor: what any hour DECIDES
+# and BOOKS must be byte-identical to what the list-of-datetimes implementation decided, because the
+# seconds land in `residual_gap_seconds_total` -- monotone, and unwalkbackable.
+
+
+def test_fleet_dark_windows_accepts_us_arrays_identically():
+    stamps = [_at(0), _at(10), _at(600), _at(3600)]
+    as_dt = fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0)
+    as_us = fleet_dark_windows(us_array(stamps), hour_start=H, hour_end=HOUR_END, min_seconds=30.0)
+    assert as_dt == as_us and as_dt  # identical AND non-empty (a vacuous equality proves nothing)
+
+
+def test_containing_dark_window_accepts_us_arrays_identically():
+    stamps = [_at(0), _at(100), _at(700)]
+    window = fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0)[0]
+    a = containing_dark_window(stamps, window, hour_start=H, hour_end=HOUR_END)
+    b = containing_dark_window(us_array(stamps), window, hour_start=H, hour_end=HOUR_END)
+    assert a == b and a is not None
+
+
+# Microsecond widths whose correctly-rounded quotient `us / 1e6` differs in the last bit from the
+# product `us * 1e-6`. 29.7% of random sub-hour widths differ; ZERO whole-second widths do -- and
+# every other construction in this file is whole-second, so nothing else here can see the swap.
+_DIVERGENT_US = (30_000_001, 2_999_999_999, 3_599_999_999)
+
+
+@pytest.mark.parametrize("width_us", _DIVERGENT_US)
+def test_fleet_dark_window_seconds_is_the_microsecond_quotient_not_the_reciprocal_product(width_us):
+    """`diff_us / 1e6`, never `diff_us * 1e-6`: 1e-6 is not exactly representable, so the product is
+    a DIFFERENT float from the quotient the datetime path (`timedelta.total_seconds()`, an integer
+    division by 10**6) produced. These seconds are booked into a monotone counter, so an off-by-one-
+    ulp booking can never be walked back -- and the swap is invisible to every whole-second test."""
+    mark = H + timedelta(microseconds=width_us)
+    window = fleet_dark_windows([mark], hour_start=H, hour_end=HOUR_END, min_seconds=30.0)[0]
+
+    assert (window.start, window.end) == (H, mark)
+    assert window.seconds.hex() == (width_us / 1_000_000).hex()
+    assert window.seconds == (window.end - window.start).total_seconds()
+
+
+@pytest.mark.parametrize("width_us", _DIVERGENT_US)
+def test_containing_dark_window_seconds_is_the_microsecond_quotient_too(width_us):
+    """The same pin on the second `/1e6` in this module -- this one sizes ONE stream's own silence,
+    which is what actually reaches `residual_gap_seconds_total` per stream."""
+    start = H + timedelta(microseconds=1)
+    end = start + timedelta(microseconds=width_us)
+    fleet = DarkWindow(start=start + timedelta(microseconds=10), end=end - timedelta(microseconds=10), seconds=0.0)
+
+    own = containing_dark_window([start, end], fleet, hour_start=H, hour_end=HOUR_END)
+
+    assert (own.start, own.end) == (start, end)
+    assert own.seconds.hex() == (width_us / 1_000_000).hex()
+    assert own.seconds == (own.end - own.start).total_seconds()
+
+
+@pytest.mark.parametrize("width_us", _DIVERGENT_US)
+def test_the_two_input_paths_agree_at_microsecond_resolution(width_us):
+    """The equivalence anchor at the resolution where the two paths COULD differ: whole seconds
+    survive any arithmetic, sub-second widths do not."""
+    stamps = [H + timedelta(microseconds=width_us)]
+    assert fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0) == fleet_dark_windows(
+        us_array(stamps), hour_start=H, hour_end=HOUR_END, min_seconds=30.0
+    )
+
+
+def test_us_array_passes_an_int64_array_through_untouched():
+    arr = np.array([1, 2, 3], dtype=np.int64)
+    out = us_array(arr)
+    assert out is arr  # no defensive copy: callers hand it a fresh array they no longer own
+
+
+def test_us_array_converts_datetimes_exactly():
+    stamps = [H, H + timedelta(microseconds=1), HOUR_END]
+    assert us_array(stamps).tolist() == [1784192400000000, 1784192400000001, 1784196000000000]
+
+
+@pytest.mark.parametrize("dtype", ["datetime64[ns]", "datetime64[us]", "float64", "int32"])
+def test_us_array_refuses_an_ndarray_that_is_not_already_int64_microseconds(dtype):
+    """THE unit trap, the same one `_message_ts` refuses: `astype(np.int64)` on a `datetime64[ns]`
+    array yields NANOSECONDS, which mix with microsecond hour bounds in one `edges` array. Measured
+    consequence of the `ns` direction on the sibling path: a fabricated ~1.78e18 us window anchored
+    in 1970. A caller owes the conversion; guessing it here is how the two scales meet silently."""
+    with pytest.raises(CaptureError, match="int64 microseconds"):
+        us_array(np.array([0, 1], dtype=dtype))
