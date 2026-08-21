@@ -18,6 +18,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from cli.archive import scan_cache
 from cli.archive.mint import already_minted
 from cli.archive.scan_cache import (
     CacheEntry,
@@ -298,19 +299,42 @@ def test_load_returns_empty_on_absent_corrupt_and_foreign_salt(tmp_path):
     assert load_cache(root, salt=algo_salt(1.5, mint=False)) == {}  # ... and so does the mint-mode flip
 
 
-def test_load_survives_a_deeply_nested_corrupt_cache(tmp_path):
-    """`json.loads` raises RecursionError on deep nesting — a RuntimeError, which the obvious
-    except tuple misses. The contract is "never raises", so it is caught."""
+def test_load_survives_a_recursion_error(tmp_path, monkeypatch):
+    """`RecursionError` is a `RuntimeError`, which the obvious except tuple misses. The contract is
+    "never raises", so it is caught.
+
+    The defect is injected rather than provoked by a deeply nested file. Depth-based provocation is
+    environment-dependent — the same nesting that raises on a workstation parses cleanly under
+    `coverage run` in CI, which made the *control* assertion the flaky part of a test whose actual
+    subject is `load_cache`'s except tuple. Injecting the exception pins that tuple deterministically
+    everywhere; `test_load_survives_a_deeply_nested_corrupt_cache` below still exercises the real
+    file shape, without asserting which exception path it takes.
+    """
     root = tmp_path / "reconciled"
     salt = algo_salt(1.5, mint=True)
     save_cache(root, {"2026-07-16T09:00:00+00:00": _entry()}, salt=salt)
     assert load_cache(root, salt=salt) != {}  # control: this cache loads
 
-    nested = "[" * 100_000 + "]" * 100_000
-    (root / "scan-cache.json").write_text(nested)
-    with pytest.raises(RecursionError):  # the defect is real, not hypothetical
-        json.loads(nested)
+    def _boom(*_args, **_kwargs):
+        raise RecursionError("maximum recursion depth exceeded while decoding a JSON array")
+
+    monkeypatch.setattr(scan_cache.json, "loads", _boom)
     assert load_cache(root, salt=salt) == {}  # ... and load_cache absorbs it
+
+
+def test_load_survives_a_deeply_nested_corrupt_cache(tmp_path):
+    """The real file shape, whichever way the parser rejects it: `{}`, and no raise.
+
+    Deliberately asserts no specific exception — see the sibling above for why the depth at which
+    CPython gives up is not a property a test may pin.
+    """
+    root = tmp_path / "reconciled"
+    salt = algo_salt(1.5, mint=True)
+    save_cache(root, {"2026-07-16T09:00:00+00:00": _entry()}, salt=salt)
+    assert load_cache(root, salt=salt) != {}  # control: this cache loads
+
+    (root / "scan-cache.json").write_text("[" * 100_000 + "]" * 100_000)
+    assert load_cache(root, salt=salt) == {}
 
 
 def test_load_drops_a_malformed_entry_and_keeps_the_rest(tmp_path):
