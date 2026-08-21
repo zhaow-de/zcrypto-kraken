@@ -1,10 +1,12 @@
-"""Tests for the trial-43 stage-1 re-derivation (cli/portfolio/record43_book.py).
+"""Tests for the trial-43 stage-1 re-derivation and the 43-vs-44 cost sweep (cli/portfolio/record43_book.py).
 
-The sleeve-weight unit tests run anywhere — they are the always-on cover for the one rule record 44
-does not have (its weights are fixed 1/3, so nothing in `record44_legs` exercises the adaptive
-branch). The end-to-end reproduction needs the canonical data/ohlc-full machine and takes ~2 min
-(the three A2 arms and the two daily sleeves dominate); it pins every stage-1 figure registry row 43
-registered, at the precision the row stores, so a change that silently moves any of them fails here.
+The sleeve-weight, turnover, stress-axis and bisection tests run anywhere — they are the always-on
+cover for the rules record 44 has no analogue for. The data-gated tests need the canonical
+data/ohlc-full machine: the stage-1 reproduction pins every figure registry row 43 registered at the
+precision the row stores, and the sweep pins all four registered cost-stress anchors before any
+swept point is allowed to mean anything, then measures how unstable the 43-vs-44 ordering is across
+the cost axis. Both share one derivation through module-scoped fixtures (~2 min once, not once per
+test; the 1151-point sweep adds about another minute).
 """
 
 from datetime import datetime, timedelta
@@ -15,10 +17,15 @@ from cli.portfolio.record43_book import (
     DATA_ROOT,
     REGISTRY_PATH,
     WEIGHT_WINDOW,
+    bisect_sign_change,
+    crossing_43v44,
     dense_day_index,
     load_union,
+    position_turnover,
+    record44_stress_axis,
     rederive_record43_book,
     sleeve_weights,
+    stressed_ungoverned,
 )
 from cli.registry import TrialRegistry
 
@@ -29,8 +36,8 @@ UNION_BARS = {1440: 4582, 240: 27338}
 EQUAL_THIRDS = (1 / 3, 1 / 3, 1 / 3)
 
 
-def registered_metrics() -> dict:
-    return {r.trial_id: r.metrics for r in TrialRegistry(REGISTRY_PATH).records}[43]
+def registered_metrics(trial_id: int) -> dict:
+    return {r.trial_id: r.metrics for r in TrialRegistry(REGISTRY_PATH).records}[trial_id]
 
 
 def _alternating(amplitude: float, n: int) -> list[float]:
@@ -88,9 +95,39 @@ def test_dense_day_index_compresses_absent_calendar_days():
     assert dense_day_index(h4_ts, 3) == [0, 0, 1]
 
 
-@pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
-def test_record43_stage1_reproduces_the_registered_row():
-    registered = registered_metrics()
+def test_position_turnover_starts_flat_and_charges_the_entry_bar():
+    """Bar 0 pays full entry (prev = 0.0), every later bar the per-asset absolute change."""
+    positions = {"A": [0.2, 0.2, 0.0], "B": [0.0, -0.1, -0.1]}
+
+    assert position_turnover(positions, 3, assets=("A", "B")) == pytest.approx([0.2, 0.1, 0.2])
+
+
+def test_stressed_ungoverned_charges_the_extra_cost_on_the_books_own_turnover():
+    """The registered stress axis: the ×1.0 book's net minus (m-1) x 0.006 per unit of ITS turnover —
+    positions are never rebuilt. The two registered rungs must land on the driver's own literals."""
+    ungoverned = [0.010, -0.020]
+    turnover = [1.0, 2.0]
+
+    assert stressed_ungoverned(ungoverned, turnover, cost_multiplier=1.0) == ungoverned
+    assert stressed_ungoverned(ungoverned, turnover, cost_multiplier=1.5) == [0.010 - 1.0 * 0.003, -0.020 - 2.0 * 0.003]
+    assert stressed_ungoverned(ungoverned, turnover, cost_multiplier=2.0) == [0.010 - 1.0 * 0.006, -0.020 - 2.0 * 0.006]
+
+
+def test_bisect_sign_change_brackets_the_flip_to_the_requested_width():
+    """A jagged step function has no smooth root, so the contract is a BRACKET of the requested width
+    whose ends straddle the flip — not a root-finder's convergence claim."""
+    flip = 1.6180339
+
+    low, high, midpoint = bisect_sign_change(lambda m: 1.0 if m < flip else -1.0, 1.0, 2.0, refine_to=0.001)
+
+    assert high - low <= 0.001
+    assert low < flip < high
+    assert midpoint == pytest.approx((low + high) / 2)
+
+
+@pytest.fixture(scope="module")
+def unions():
+    """The two frozen union grids, loaded once for the whole module, extent-guarded before use."""
     daily_ts, daily_prices = load_union(1440)
     h4_ts, h4_prices = load_union(240)
     for interval, ts in ((1440, daily_ts), (240, h4_ts)):
@@ -98,8 +135,25 @@ def test_record43_stage1_reproduces_the_registered_row():
             f"canonical dataset drifted — STOP: {interval} union has {len(ts)} bars, expected "
             f"{UNION_BARS[interval]}; every record-43 figure below is void until that is explained"
         )
+    return daily_ts, daily_prices, h4_ts, h4_prices
 
-    book = rederive_record43_book(daily_ts, daily_prices, h4_ts, h4_prices)
+
+@pytest.fixture(scope="module")
+def book(unions):
+    daily_ts, daily_prices, h4_ts, h4_prices = unions
+    return rederive_record43_book(daily_ts, daily_prices, h4_ts, h4_prices)
+
+
+@pytest.fixture(scope="module")
+def sweep(unions, book):
+    daily_ts, daily_prices, h4_ts, h4_prices = unions
+    axis44 = record44_stress_axis(daily_ts, daily_prices, h4_ts, h4_prices)
+    return crossing_43v44(book["stress_axis"], axis44)
+
+
+@pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
+def test_record43_stage1_reproduces_the_registered_row(book):
+    registered = registered_metrics(43)
 
     # Integer counts and criterion flags: registered exactly, so no tolerance.
     for key in (
@@ -144,3 +198,61 @@ def test_record43_stage1_reproduces_the_registered_row():
     for stats in qa["weight_stats"]:
         assert stats["max"] - stats["min"] > 1e-6
         assert 0.0 < stats["min"] and stats["max"] < 1.0
+
+
+@pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
+def test_both_books_reproduce_every_registered_cost_stress_anchor(sweep):
+    """The load-bearing validation: no sweep point means anything until BOTH instruments land on all
+    four registered stress figures and both ×1.0 headlines. A miss is a porting defect, never a
+    number to tune."""
+    anchors = sweep["anchors"]
+    for trial_id in (43, 44):
+        registered = registered_metrics(trial_id)
+        assert round(anchors[trial_id][1.0], 4) == registered["ann_sharpe_noc"], trial_id
+        assert round(anchors[trial_id][1.5], 4) == registered["cost_stress_1_5x_sharpe_ann"], trial_id
+        assert round(anchors[trial_id][2.0], 4) == registered["cost_stress_2x_sharpe_ann"], trial_id
+
+    # Record 44's own governed series, re-derived through this module's stress machinery at ×1.0,
+    # must be the builder's — the trial-44 half of the instrument validation.
+    assert sweep["record44_x1_max_abs_diff_vs_builder"] < 1e-12
+
+
+@pytest.mark.skipif(not DATA_ROOT.exists(), reason="canonical dataset not present")
+def test_neither_book_holds_a_durable_lead_across_the_cost_axis(sweep):
+    """Registry-derivable truth, asserted; the census figures inside it are findings, not pins.
+
+    What is pinned: record 44 leads at the ×1.5 rung and record 43 at ×2.0 (both registered), the
+    ordering changes sign between them, and BOTH books still lead somewhere far above the band — so
+    no "beyond ×x it has reversed" reading survives. What is deliberately NOT pinned: the flip
+    count and the last flip's position, which move with the grid's step and ceiling.
+    """
+    registered43, registered44 = registered_metrics(43), registered_metrics(44)
+    assert registered44["cost_stress_1_5x_sharpe_ann"] > registered43["cost_stress_1_5x_sharpe_ann"]
+    assert registered44["cost_stress_2x_sharpe_ann"] < registered43["cost_stress_2x_sharpe_ann"]
+
+    anchors = sweep["anchors"]
+    assert anchors[44][1.0] > anchors[43][1.0]
+    assert anchors[44][1.5] > anchors[43][1.5]
+    assert anchors[44][2.0] < anchors[43][2.0]
+
+    # The sign changes somewhere between the two registered rungs — which is all the registry
+    # discloses, and all this test is entitled to claim about that interval.
+    assert [pair for pair in sweep["flip_brackets"] if 1.5 <= pair[0] and pair[1] <= 2.0]
+
+    # Neither book owns the tail: each still leads at some point above ×2.0, so any durable-reversal
+    # claim would be an artifact of where the sweep stops.
+    assert sweep["lead_counts"][43] > 0 and sweep["lead_counts"][44] > 0
+    assert sweep["highest_lead_multiplier"][43] > 2.0
+    assert sweep["highest_lead_multiplier"][44] > 2.0
+
+    # A claim about the measured execution band is only earned if the sweep covered it, and the band
+    # is not one-sided either.
+    band_low, band_high = sweep["realistic_band"]
+    assert sweep["grid"][0][0] <= band_low and sweep["grid"][-1][0] >= band_high
+    assert sweep["band"]["lead_counts"][43] > 0 and sweep["band"]["lead_counts"][44] > 0
+    assert sweep["band"]["flip_brackets"]
+
+    # The sweep resolves what a coarser grid missed: the step is fine enough that the smallest
+    # counted margin is orders of magnitude above float noise.
+    params = sweep["sweep_parameters"]
+    assert params["step"] <= 0.002 and params["high"] >= 3.0
