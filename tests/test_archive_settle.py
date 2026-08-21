@@ -26,6 +26,7 @@ from cli.archive.settle import (
     scan_hours,
     settled_hours,
     us_array,
+    us_view,
 )
 from cli.capture.errors import CaptureError
 
@@ -633,3 +634,58 @@ def test_us_array_refuses_an_ndarray_that_is_not_already_int64_microseconds(dtyp
     in 1970. A caller owes the conversion; guessing it here is how the two scales meet silently."""
     with pytest.raises(CaptureError, match="int64 microseconds"):
         us_array(np.array([0, 1], dtype=dtype))
+
+
+# --- `us_view`: the column-unit guard the hot loop leans on ---------------------------------------
+#
+# `.view(np.int64)` reads the column's OWN unit, so `us_array` cannot catch a wrong one -- by then
+# the array is already int64. Nothing downstream catches it either: `command.py` books the fleet-dark
+# residual BEFORE the heal block ever hands the same frame to `_message_ts`, so a `ms` column would
+# shrink a real outage 1000x below the threshold and book a fabricated 1970-anchored window into a
+# counter that can never be walked back. This function is the only guard on that path.
+
+
+def _book_ts(offsets: list[float], *, unit: str = "us", tz: str | None = "UTC") -> pl.Series:
+    stamps = [None if o is None else _at(o) for o in offsets]
+    return pl.Series("ts", stamps, dtype=pl.Datetime("us", "UTC")).cast(pl.Datetime(unit, tz))
+
+
+def test_us_view_reads_a_production_shaped_microsecond_column_exactly():
+    """The true positive: the dtype `segment_writer` actually writes, at microsecond resolution."""
+    offsets = [0.0, 10.000001, 599.999999, 3599.999999]
+    out = us_view(_book_ts(offsets))
+    assert out.dtype == np.int64
+    assert out.tolist() == us_array([_at(o) for o in offsets]).tolist()
+
+
+def test_a_microsecond_column_drives_the_same_windows_as_the_datetime_path():
+    """The equivalence anchor at the call site's own granularity: same decision, same booking."""
+    offsets = [0.0, 10.0, 600.0, 3600.0]
+    stamps = [_at(o) for o in offsets]
+    assert fleet_dark_windows(us_view(_book_ts(offsets)), hour_start=H, hour_end=HOUR_END, min_seconds=30.0) == (
+        fleet_dark_windows(stamps, hour_start=H, hour_end=HOUR_END, min_seconds=30.0)
+    )
+
+
+@pytest.mark.parametrize(("unit", "tz"), [("ms", "UTC"), ("ns", "UTC"), ("us", None)])
+def test_us_view_refuses_any_column_that_is_not_microseconds_utc(unit, tz):
+    with pytest.raises(CaptureError, match="not Datetime"):
+        us_view(_book_ts([0.0, 3300.0], unit=unit, tz=tz))
+
+
+def test_a_millisecond_column_would_book_a_healthy_hour_as_wholly_dark():
+    """Why the refusal is typed and not a cast: the `ms` direction does not raise on its own. Its
+    integers are 1000x too small for the microsecond hour bounds, so on THIS path every real stamp
+    falls below `hour_start` and is clamped away -- and a busy hour with one 40 s hole is booked as
+    3600 s of fleet darkness per stream, into a monotone counter that cannot be walked back."""
+    offsets = [float(s) for s in range(0, 3600, 10) if not 600 < s < 640]
+    honest = fleet_dark_windows(us_view(_book_ts(offsets)), hour_start=H, hour_end=HOUR_END, min_seconds=30.0)
+    assert [w.seconds for w in honest] == [40.0]
+
+    raw = _book_ts(offsets, unit="ms").to_numpy().view(np.int64)  # what us_view exists to stop
+    assert [w.seconds for w in fleet_dark_windows(raw, hour_start=H, hour_end=HOUR_END, min_seconds=30.0)] == [3600.0]
+
+
+def test_us_view_refuses_a_null_ts():
+    with pytest.raises(CaptureError, match="null ts"):
+        us_view(_book_ts([0.0, None, 3300.0]))

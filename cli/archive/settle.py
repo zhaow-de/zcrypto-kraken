@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+import polars as pl
 
 from cli.capture.errors import CaptureError
 
@@ -125,6 +126,29 @@ def us_array(stamps: Iterable[datetime] | np.ndarray) -> np.ndarray:
             raise CaptureError(f"stamps ndarray is {stamps.dtype}, not int64 microseconds since epoch")
         return stamps
     return np.fromiter((us_from_dt(s) for s in stamps), dtype=np.int64)
+
+
+def us_view(stamps: pl.Series) -> np.ndarray:
+    """int64-μs view of a book segment's `ts` column, refusing any unit but microseconds.
+
+    `.view(np.int64)` reads the column's OWN unit, so `us_array` cannot catch a wrong one — by then
+    the array is already int64. Nothing downstream catches it either, because the caller books the
+    fleet-dark residual BEFORE the heal path hands the same frame to `_message_ts`.
+
+    The failure shape here is NOT `_message_ts`'s shrunken-gap one: `fleet_dark_windows` CLAMPS to
+    the hour bounds, and a `ms` integer is 1000× too small for a microsecond bound, so every stamp
+    falls BELOW `hour_start` and is discarded — measured, 0 of 360. The hour then reads as wholly
+    dark rather than as a shortened gap, and a healthy, dense hour on three streams books 10800.0 s
+    (3600 s × 3) of fabricated permanent loss into a counter that can never be walked back. This
+    check is the only thing standing between a non-µs column and that booking.
+    """
+    if stamps.dtype != pl.Datetime("us", "UTC"):
+        raise CaptureError(f"book `ts` column is {stamps.dtype}, not Datetime('us', 'UTC') — refusing to reconcile")
+    if stamps.null_count():
+        # A null becomes iNaT in the int64 view — the most negative int64 — fabricating a window that
+        # spans the whole epoch and clamps every real message out of the timeline.
+        raise CaptureError("null ts in a book segment — refusing to reconcile")
+    return stamps.to_numpy().view(np.int64)
 
 
 @dataclass(frozen=True)

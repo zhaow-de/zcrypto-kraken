@@ -24,6 +24,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import polars as pl
 import typer
 
@@ -34,10 +35,9 @@ from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, 
 from cli.archive.reconcile import (
     Block,
     Gap,
-    find_book_gaps,
-    find_unwitnessed_gaps,
     measure_residual,
     overlap_seconds,
+    partition_gaps,
     splice_book,
     union_trades,
 )
@@ -51,6 +51,7 @@ from cli.archive.settle import (
     newest_hour,
     scan_hours,
     settled_hours,
+    us_view,
 )
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
@@ -587,8 +588,8 @@ def reconcile(
 
         # --- load this hour's book streams once: gap detection AND the dual-silence timeline ----
         books: dict[str, dict[str, pl.DataFrame | None]] = {}
-        stamps: list[datetime] = []
-        pair_stamps: dict[str, list[datetime]] = {}  # per stream, BOTH mirrors -- see `containing_dark_window`
+        stamp_parts: list[np.ndarray] = []
+        pair_parts: dict[str, list[np.ndarray]] = {}  # per stream, BOTH mirrors -- see `containing_dark_window`
         broken = False
         for pair in book_pairs:
             frames: dict[str, pl.DataFrame | None] = {}
@@ -599,14 +600,21 @@ def reconcile(
                 try:
                     # `ts` + `type` is all detection needs; the full frame is read only to splice.
                     frames[source] = _read(root, pair, "book", hour, ["ts", "type"])
+                    # INSIDE this try, deliberately: the `fleet_dark_windows` call site below has no
+                    # `try` of its own, so a raise there aborts the whole Typer command -- every
+                    # remaining hour abandoned, no textfile. Here the handler already owns the
+                    # degradation: one hour ledgered `failed`, its booking suppressed, cycle alive.
+                    arr = us_view(frames[source]["ts"])
                 except Exception as exc:  # noqa: BLE001 -- any unreadable segment is an integrity fact
                     _fail(pair, "book", hour, f"unreadable {source} book segment: {exc}")
                     frames[source] = None
                     broken = True
                     continue
-                stamps.extend(frames[source]["ts"].to_list())
-                pair_stamps.setdefault(pair, []).extend(frames[source]["ts"].to_list())
+                stamp_parts.append(arr)
+                pair_parts.setdefault(pair, []).append(arr)
             books[pair] = frames
+        stamps = np.concatenate(stamp_parts) if stamp_parts else np.empty(0, dtype=np.int64)
+        pair_stamps = {p: np.concatenate(parts) for p, parts in pair_parts.items()}
 
         # --- both_streams_silent: unconditional, no witness needed ------------------------------
         # Skipped when a segment failed to read (an honest timeline cannot be built from it) and when
@@ -640,7 +648,9 @@ def reconcile(
                     for w in windows:
                         c = (
                             containing_dark_window(pair_stamps[p], w, hour_start=hour, hour_end=hour_end)
-                            if both_mirrors and pair_stamps.get(p)
+                            # `.size`, never the array's truthiness: `if arr` raises on any array
+                            # wider than one element.
+                            if both_mirrors and pair_stamps.get(p) is not None and pair_stamps[p].size
                             else w
                         )
                         if c is not None and c not in own:
@@ -719,7 +729,9 @@ def reconcile(
                 primary = frames["primary"]
 
             try:
-                gaps = find_book_gaps(
+                # ONE derivation of this pair-hour's primary silence, partitioned into the windows a
+                # secondary update witnessed and those it did not (spec 00097 D3).
+                gaps, blind = partition_gaps(
                     primary,
                     secondary,
                     min_gap_seconds=min_gap_seconds,
@@ -736,34 +748,26 @@ def reconcile(
             # was NOT dark, one pair silent on both mirrors cannot be told from a quiet market,
             # which is the ambiguity the fleet-wide intersection exists to resolve. Before this, the
             # pair with the LARGEST hole of an outage was the one that produced no record at all.
-            if not _decided(pair, "book", hour, "unwitnessed"):
-                blind = find_unwitnessed_gaps(
-                    primary,
-                    secondary,
-                    min_gap_seconds=min_gap_seconds,
-                    hour_start=hour,
-                    hour_end=hour_end,
+            if blind and not _decided(pair, "book", hour, "unwitnessed"):
+                logger.warning(
+                    "archive reconcile: unwitnessed pair=%s hour=%s windows=%d seconds=%.1f "
+                    "-- primary silence no secondary update covers; not healable, not counted",
+                    pair,
+                    hour.isoformat(),
+                    len(blind),
+                    sum(g.seconds for g in blind),
                 )
-                if blind:
-                    logger.warning(
-                        "archive reconcile: unwitnessed pair=%s hour=%s windows=%d seconds=%.1f "
-                        "-- primary silence no secondary update covers; not healable, not counted",
-                        pair,
-                        hour.isoformat(),
-                        len(blind),
-                        sum(g.seconds for g in blind),
-                    )
-                    _ledger(
-                        state="unwitnessed",
-                        pair=pair,
-                        kind="book",
-                        hour=hour.isoformat(),
-                        # No `residual_seconds` key AT ALL, deliberately: `_totals` adds that field
-                        # unconditionally for every non-mint-family state, so a 0.0 would be inert
-                        # only by value. Absent, it is inert by construction -- and a literal 0.0 on
-                        # a record whose windows sum to 208 s also reads as "measured zero loss".
-                        gaps_unwitnessed=[{"start": g.start, "end": g.end, "seconds": g.seconds} for g in blind],
-                    )
+                _ledger(
+                    state="unwitnessed",
+                    pair=pair,
+                    kind="book",
+                    hour=hour.isoformat(),
+                    # No `residual_seconds` key AT ALL, deliberately: `_totals` adds that field
+                    # unconditionally for every non-mint-family state, so a 0.0 would be inert
+                    # only by value. Absent, it is inert by construction -- and a literal 0.0 on
+                    # a record whose windows sum to 208 s also reads as "measured zero loss".
+                    gaps_unwitnessed=[{"start": g.start, "end": g.end, "seconds": g.seconds} for g in blind],
+                )
 
             if not gaps:
                 continue

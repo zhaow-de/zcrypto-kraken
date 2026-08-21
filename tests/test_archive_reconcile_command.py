@@ -540,6 +540,41 @@ def test_a_non_monotonic_source_segment_is_reported_not_sorted(tmp_path, monkeyp
     assert _seg_path(rec, "BTC/EUR", "book", H + timedelta(hours=1)).exists()
 
 
+def test_a_wrong_unit_ts_column_fails_that_hour_instead_of_killing_the_cycle(tmp_path, monkeypatch):
+    """`us_view` guards the fleet-dark timeline, which is built in the per-hour loop with NO
+    enclosing `try` of its own -- so it is called inside the read's, where the existing handler
+    ledgers the failure and suppresses this hour's booking. Raised anywhere else it would abandon
+    every remaining hour of the window and publish nothing: one bad segment, a dead cycle.
+
+    Hour H is WHOLLY `ms`, deliberately. Those integers are 1000x too small for the microsecond hour
+    bounds, so `fleet_dark_windows` clamps every stamp away and a healthy, dense hour reads as
+    entirely dark: with the guard bypassed it books 10800.0 s -- 3600 s x 3 streams -- against a
+    truth of zero. Leave ONE healthy pair in the hour and the timeline stays populated, the bypass
+    books nothing at all, and the over-book assertion below never bites."""
+    pri, sec, rec = _roots(tmp_path)
+    bad = ("ADA/EUR", "BTC/EUR", "ETH/EUR")
+    for pair in bad:
+        ms = _book(pair, H, _dense()).with_columns(pl.col("ts").cast(pl.Datetime("ms", "UTC")))
+        for root in (pri, sec):
+            _write(root, pair, "book", H, ms)
+    _healthy(pri, sec, H + timedelta(hours=1))
+    _plant_primary_gap(pri, sec, H + timedelta(hours=1))
+
+    result = _run([str(pri), str(sec), str(rec), "--mint"], now=LATE, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1
+    # THE discriminating assertion: H is suppressed, never mis-booked. Asserted before the ledger's
+    # shape because a bypass still ledgers the same three failures (from the heal path's
+    # `_message_ts`, a cycle later than this guard) -- only the fabricated booking tells them apart.
+    assert "both_streams_silent" not in _states(rec), "a wholly-ms hour was booked as fleet darkness"
+    failed = [r for r in _ledger(rec) if r["state"] == "failed"]
+    assert [(r["pair"], r["hour"]) for r in failed] == [(p, H.isoformat()) for p in bad]
+    # ...and it fired at the READ, inside its try, not later in the heal path.
+    assert all("book `ts` column is" in r["reason"] for r in failed)
+    # ...and the cycle ran to completion: the next hour was still reconciled and minted.
+    assert _seg_path(rec, "BTC/EUR", "book", H + timedelta(hours=1)).exists()
+
+
 def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
     """An empty mirror (no finals at all) has +Inf lag, and it MUST be spelled the Prometheus way.
 
