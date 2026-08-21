@@ -132,6 +132,10 @@ ______________________________________________________________________
 
 A critical-severity Grafana alert (`Reconciler · residual gap increased (permanent loss)`): `zcrypto_reconcile_residual_gap_seconds_total` increased with no counter reset in the last 24 hours. This is the highest-severity rule in the system.
 
+**One booking keeps this red for 24 hours by construction** — the expression is `increase(...[24h])`, so an hour-H gap booked at the `:12`/`:42` tick after H+2 h holds the alert firing until that tick leaves the window a day later, and every notification in between is the **same** event re-notifying, never evidence of a new one. Whether anything *new* booked is read from the counter's **level**: compare `zcrypto_reconcile_residual_gap_seconds_total` now against the total your triage recorded — flat means no new booking. (The `increase()` value itself reads slightly above the booked seconds — Prometheus extrapolates to the window edges; a ~0.07 % excess is the extrapolation, not a second increment.) Expect resolution at the first evaluation after the booking tick + 24 h; verify it actually resolves then rather than assuming.
+
+**And a flat level is only a clean bill while the writer cycle is alive.** Check the age of `zcrypto_reconcile_last_success_timestamp_seconds`: the stamp is written at cycle **completion**, and a steady-state cycle now runs in seconds, so healthy is one tick interval (30 min) plus a seconds-scale cycle — an age past ~35 min is already worth a look, and a cycle long enough to matter has its own warning ([`zcrypto-reconcile-cycle-duration`](#zcrypto-reconcile-cycle-duration)) well below the 3 h staleness page. The 23-minute cycle measured during the 2026-08-21 vol spike (\[[T0147]\]) is the **pre-`00097`** cost model that motivated the change, not a reading to expect today; before that spec the stamp was written near cycle *start* and mis-stated a long cycle's completion by its whole duration. The cycle also **skips fail-closed** on a stale or unclean NAS `.pull-status` (rc 0, `WARNING: writer cycle SKIPPED` in the unit journal naming the reason — routine for ~2 ticks after the NAS 02:25 reboot); a persistent skip only pages via `zcrypto-reconcile-exporter-stale` at 3 h, so during a triage read the journal, not just the alert list. Unit journals on the ops host need `sudo` — unprivileged `journalctl -u` prints `-- No entries --` plus a hint, which is a permissions artifact, never evidence the unit did not run.
+
 ### What it means
 
 **The counter books the ABSENCE of data, never fault attribution.** It is derived by summing an append-only ledger and is monotonic, so whatever it books is permanent — there is no later correction path short of a deliberate, approved ledger edit. A venue outage lands here exactly the same way a capture failure does: both leave no book data on either host for the window, and the counter cannot on its own tell the two apart. Reading this page as "we lost data" is correct; reading it as "our capture broke" is not, and the discriminator below exists precisely to stop that leap.
@@ -148,3 +152,35 @@ The three record shapes that drive it are `both_streams_silent`, `total_loss`, a
 ### Retire when
 
 Never, while `zcrypto_reconcile_residual_gap_seconds_total` exists — this is the triage path for the system's highest-severity rule.
+
+______________________________________________________________________
+
+<a name="zcrypto-reconcile-cycle-duration"></a>
+
+## zcrypto-reconcile-cycle-duration — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Reconciler · cycle approaching its own tick`): the last completed overlay-writer cycle took more than 1,500 s, against the 1,800 s between its `:12`/`:42` ticks.
+
+### What it means
+
+Cycle duration tracks two things: the data volume in the trailing 48 h window, and how many of those hours were actually examined rather than skipped. A settled hour whose inputs have not changed is skipped on a fingerprint match, which normally holds a steady-state cycle to tens of seconds — so a page here says one of two things. Either **the skip cache is being bypassed** and the cycle is re-deriving the whole window every 30 minutes, or **the volume genuinely outgrew** what the vectorized arithmetic can chew through in a tick.
+
+Nothing is lost yet: at 1,500 s the cycle still finishes inside its tick. Past 1,800 s the timer's next trigger fires against a unit that is still running, systemd **drops** it rather than queueing it, and the booking cadence silently halves — with no other rule below `zcrypto-reconcile-exporter-stale`'s 3 h to say so. That is the outcome this warning exists to stay ahead of, which is why it is a warning and not a page about loss.
+
+### What to do
+
+1. **Read the skip counts first — they are the discriminator.** `zcrypto_reconcile_hours_skipped` is on the same panel as the duration series, and the cycle's own completion log carries `skipped=` and `audited=`. A healthy steady state skips every window hour except the newest few (not yet past the 6 h late deadline, so never cached) and the 2 it audits — roughly 42 of 48. `skipped=` is an **observation** — counted inside the skip branch, so it reports what the loop did rather than what it planned; a plan-derived count once read `1` with the skip disabled. `audited=` is the cycle's **selection**, and those hours are examined by construction (an audit hour is never in the skip set), so the two are not the same kind of claim.
+2. **`skipped=0` on consecutive cycles means the cache is not engaging.** It degrades *silently* — there is no error for most of these — so work the list:
+   - **A `scan-cache audit divergence` ERROR dropped it.** Grep the cycle log for that phrase; it names the hour and fingerprint. One divergence deletes the whole cache deliberately, so the next cycle is full and slow by design. Two in a row is a real finding about the fingerprint model, not a slow cycle.
+   - **A pair was just added.** Expect `skipped=0` for a full window (48 h) *plus* the primary→secondary interval: a new pair is absent from every window hour older than its genesis, and pairs are added to the primary first, so the two hosts disagree for the length of that gap. Self-clearing — confirm the dates line up and wait it out.
+   - **A thin pair published no trades final for some hour.** Legitimate and permanent for that hour: an hour with zero prints writes no file at all. Measured at ~0.16 % of pair-hours — about one hour of a 48 h window — and the count grows as thinner pairs enter the universe, so this is a rising floor rather than a fault.
+   - **Hours are incomplete.** Check which finals are absent. A pair **permanently removed** from capture is the bad shape: every window hour is then missing that pair, the absence set is stable, `skipped=0` is permanent, and the whole cache is disabled with nothing logged. If the removal was intended, the fix is upstream — the pair list, not the cache.
+   - **A manual ledger or overlay mutation deleted it**, which is correct — see below.
+3. **A healthy skip count with a high duration means volume.** The cache is working and the cycle is still slow, so the examined hours themselves are big. Re-derive the headroom (duration against the 1,800 s tick) before the next volatility regime rather than after it, and treat a sustained climb as capacity work.
+4. **A manual mutation of the reconcile ledger or the overlay must delete `<reconciled_root>/scan-cache.json` in the same act.** The cache's fingerprint covers the overlay as well as both mirrors, but a ledger edit is invisible to it — so a correction that leaves the cache in place leaves entries describing a state that no longer exists. The next cycle then skips the very hours the correction was meant to force a re-examination of, and the sampled audit only reaches a given hour after rotating through the window's ~44 cacheable hours two per cycle, twice an hour: **up to ~11 h of divergence before anything pages.** Deleting it makes the next cycle deliberately full instead. The ledger-correction procedure in `infra/nas/README.md` carries this as a step.
+
+### Retire when
+
+`zcrypto-reconcile-cycle-duration` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.

@@ -1044,7 +1044,7 @@
       "id": 201,
       "type": "timeseries",
       "title": "Mirror lag by source & reconciler liveness",
-      "description": "Are both mirrors still producing, and is the reconciler that compares them still running? Lag is per mirror side, so the alert instance names which side went quiet; either side above 3 hours pages after `for: 10m`. One to two hours of lag is the healthy steady state, because a final only commits after its hour closes and the pull is hourly. If it is the SECONDARY side, the fleet has no witness and the next primary gap is permanent. The liveness series is now minus the reconciler's last clean cycle and pages above the same 3 hours after `for: 5m` — the exported file is scraped in place, so a dead reconciler holds its last value forever and only the timestamp reveals it. Same number, two different alerts. Published only by the ops machine. The only per-pair evidence for a lagging mirror is on the capture row above: a per-pair write count does not exist.",
+      "description": "Are both mirrors still producing, and is the reconciler that compares them still running? Lag is per mirror side, so the alert instance names which side went quiet; either side above 3 hours pages after `for: 10m`. One to two hours of lag is the healthy steady state, because a final only commits after its hour closes and the pull is hourly. If it is the SECONDARY side, the fleet has no witness and the next primary gap is permanent. The liveness series is now minus the reconciler's last clean cycle and pages above the same 3 hours after `for: 5m` — the exported file is scraped in place, so a dead reconciler holds its last value forever and only the timestamp reveals it. Same number, two different alerts. Cycle duration is how long that last clean cycle took, start to publish. It does not add to the liveness age above — the stamp is written at completion, so consecutive publishes stay one tick apart no matter how long a cycle runs. What a long cycle threatens is cadence: the tick is every 30 minutes, so a duration approaching that means the next trigger fires against a still-running unit and is dropped, halving the booking rate — the red line on the duration series at 1,500 s is where that warning fires. The skipped-hours series is a COUNT, not seconds (its own axis unit), and it is the first thing to read beside a slow cycle: a settled window hour whose inputs have not changed is skipped rather than re-examined, so a steady zero means every hour is being re-examined and the duration will keep tracking the window's data volume. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-cycle-duration. Published only by the ops machine. The only per-pair evidence for a lagging mirror is on the capture row above: a per-pair write count does not exist.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1073,6 +1073,24 @@
           "expr": "time() - zcrypto_reconcile_last_success_timestamp_seconds{host=\"ops\"}",
           "refId": "B",
           "legendFormat": "reconciler last clean cycle age"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_cycle_duration_seconds{host=\"ops\"}",
+          "refId": "C",
+          "legendFormat": "cycle duration"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_reconcile_hours_skipped{host=\"ops\"}",
+          "refId": "D",
+          "legendFormat": "window hours skipped (count, not seconds)"
         }
       ],
       "fieldConfig": {
@@ -1151,6 +1169,48 @@
                     }
                   ]
                 }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1500
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
               }
             ]
           }

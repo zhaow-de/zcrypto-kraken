@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -7,14 +8,17 @@ from cli.archive.reconcile import (
     Gap,
     _inside,
     _message_ts,
+    _primary_silence,
     find_book_gaps,
     find_unwitnessed_gaps,
     measure_residual,
     overlap_seconds,
+    partition_gaps,
     secondary_covers,
     splice_book,
     union_trades,
 )
+from cli.archive.settle import dt_from_us, us_from_dt
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA
 
@@ -401,7 +405,7 @@ def test_message_ts_collapses_the_level_rows_of_one_wire_message():
     # One Kraken message carries many book levels: many ROWS, one `ts`. Gap detection counts
     # messages, not rows -- three levels of one message are not three messages.
     frame = _book([(0, "update"), (0, "update"), (0, "update"), (120, "update"), (120, "update")])
-    assert _message_ts(frame) == [H, H + timedelta(seconds=120)]
+    assert [dt_from_us(u) for u in _message_ts(frame)] == [H, H + timedelta(seconds=120)]
 
 
 def test_out_of_order_timestamps_raise_instead_of_corrupting_silently():
@@ -616,3 +620,121 @@ def test_a_non_monotonic_secondary_is_refused_by_both_detectors():
     for finder in (find_book_gaps, find_unwitnessed_gaps):
         with pytest.raises(CaptureError, match="non-monotonic"):
             finder(primary, backwards, min_gap_seconds=30.0, hour_start=H, hour_end=HOUR_END)
+
+
+# --- spec 00097 D3: the silence derivation runs on int64-microsecond arrays, once per pair-hour ---
+
+
+def test_message_ts_returns_int64_microseconds_deduped_in_order():
+    df = _book([(0.0, "snapshot"), (1.5, "update"), (1.5, "update"), (7.25, "update")])
+    out = _message_ts(df)
+    assert out.dtype == np.int64
+    assert [dt_from_us(u) for u in out] == [H, H + timedelta(seconds=1.5), H + timedelta(seconds=7.25)]
+
+
+def test_message_ts_non_monotonic_error_is_verbatim():
+    df = _book([(5.0, "update"), (0.0, "update")])
+    with pytest.raises(CaptureError, match=r"is followed by .*sorting is forbidden"):
+        _message_ts(df)
+
+
+def test_partition_gaps_partitions_every_silence_window():
+    primary = _book([(0.0, "update"), (100.0, "update")])  # one 100 s silence, 0->100
+    secondary = _book([(50.0, "update")])  # witnesses it
+    witnessed, blind = partition_gaps(primary, secondary, min_gap_seconds=30.0, hour_start=H, hour_end=HOUR_END)
+    assert [(g.start, g.end) for g in witnessed] == [(H, H + timedelta(seconds=100))]
+    # the tail 100->3600 has no witness inside it
+    assert [(g.start, g.end) for g in blind] == [(H + timedelta(seconds=100), HOUR_END)]
+    assert find_book_gaps(primary, secondary, min_gap_seconds=30.0, hour_start=H, hour_end=HOUR_END) == witnessed
+    assert find_unwitnessed_gaps(primary, secondary, min_gap_seconds=30.0, hour_start=H, hour_end=HOUR_END) == blind
+
+
+def test_threshold_exact_window_is_not_a_gap():
+    # Messages every 30 s across the WHOLE hour: every window -- including the 3570->3600 tail --
+    # is exactly 30.0 s, and STRICTLY greater is the contract on both sides of the vectorization.
+    primary = _book([(float(s), "update") for s in range(0, 3600, 30)])
+    gaps = _primary_silence(primary, 30.0, H, HOUR_END)
+    assert gaps == []
+
+
+def test_us_round_trip_is_exact():
+    moments = [H + timedelta(microseconds=n) for n in (0, 1, 999_999, 123_456_789)]
+    assert [dt_from_us(us_from_dt(m)) for m in moments] == moments
+
+
+def test_gap_seconds_is_bit_identical_to_the_datetime_arithmetic_it_replaced():
+    """The binding rule of the vectorization: `diff_us / 1e6`, never `diff_us * 1e-6`.
+
+    1e-6 is not exactly representable, so the multiply rounds twice and moves the result for about
+    30% of microsecond widths -- a 3599.999999 s tail window becomes 3599.9999989999997. That is not
+    cosmetic. Traced through `_book_entry`, the moved value reaches `claimed_seconds`,
+    `healed_seconds` (`claimed - unfilled`) and every `gaps_healed[].seconds` written to the JSONL,
+    and through them the `healed_seconds` and `healable_seconds` counters. It does NOT reach
+    `residual_seconds`: `measure_residual` recomputes from `(hi - lo).total_seconds()` on exact
+    `dt_from_us` datetimes, so the monotonic residual counter is out of this blast radius.
+
+    Every OTHER test in this file uses whole-second offsets, where the two idioms agree bit-for-bit,
+    so nothing else here can see the difference -- which is exactly why this pin has to exist.
+    """
+    # The primary records one message 1 us into the hour, then dies: a 3599.999999 s tail gap.
+    tail = _rows("BTC/EUR", [(H + timedelta(microseconds=1), "update")])
+    # ... and the same, plus a message 30.000002 s in: a just-over-threshold 30.000001 s interior.
+    interior = _rows("BTC/EUR", [(H + timedelta(microseconds=us), "update") for us in (1, 30_000_002)])
+
+    for frame in (tail, interior):
+        for gap in _primary_silence(frame, 30.0, H, HOUR_END):
+            assert gap.seconds == (gap.end - gap.start).total_seconds(), (
+                f"{gap.seconds!r} is not the float `timedelta.total_seconds()` gives for {gap.start} .. {gap.end}"
+            )
+
+    # The same rule read the way an operator reads it out of the ledger.
+    assert [repr(g.seconds) for g in _primary_silence(tail, 30.0, H, HOUR_END)] == ["3599.999999"]
+    assert [repr(g.seconds) for g in _primary_silence(interior, 30.0, H, HOUR_END)] == ["30.000001", "3569.999998"]
+
+
+def test_message_ts_refuses_a_null_ts():
+    # On develop a null `ts` reaching `_primary_silence` raises a bare `TypeError` (NoneType minus
+    # datetime), and via the SECONDARY -- whose `_message_ts` return the finders discard, calling it
+    # for its monotonic check alone -- it raises nothing at all and the hour reconciles silently.
+    # Neither is acceptable here: as an int64 view a null is iNaT, the most negative int64, which
+    # fabricates a gap spanning the epoch and clamps the real tail silence out of the timeline.
+    df = _book([(0.0, "update")]).with_columns(pl.lit(None, dtype=pl.Datetime("us", "UTC")).alias("ts"))
+    with pytest.raises(CaptureError, match="null ts"):
+        _message_ts(df)
+
+
+def test_message_ts_refuses_a_ts_column_whose_unit_is_not_microseconds():
+    """Both wrong units are refused, because with the guard removed they fail in OPPOSITE ways.
+
+    The int64 view reads the column's own unit as microseconds while `hour_start`/`hour_end` go
+    through `us_from_dt` and are always microseconds, so `edges` mixes two scales. Measured on this
+    exact 0 s/3300 s frame with the guard disabled:
+
+      * `ns` -- the first window is ~1.78e18 us and `dt_from_us` raises `OverflowError: date value
+        out of range`. Untyped, so `command.py`'s `except CaptureError` at the gap call site does not
+        catch it and the whole cycle dies instead of one hour being ledgered `failed`.
+      * `ms` -- nothing raises. The real 3300 s outage reads as 3.3 s and falls silently under the
+        threshold, never booked; meanwhile a fabricated 1782411804.3 s gap starting 1970-01-21
+        reaches `splice_book` and the ledger. Strictly worse than the crash.
+    """
+    for unit in ("ns", "ms"):
+        wrong = _book([(0.0, "update"), (3300.0, "update")]).with_columns(pl.col("ts").cast(pl.Datetime(unit, "UTC")))
+        with pytest.raises(CaptureError, match="not Datetime in microseconds"):
+            _message_ts(wrong)
+    # ... and the true positive: the production dtype passes.
+    assert _message_ts(_book([(0.0, "update"), (3300.0, "update")])).size == 2
+
+
+def test_measure_residual_still_measures_after_the_message_ts_change():
+    # measure_residual consumes _message_ts (cold review C1): pin that a witnessed gap's residual
+    # arithmetic survives the int64 change byte-identically. The windows below are what DEVELOP
+    # returns for these exact inputs.
+    gap = Gap(start=H, end=H + timedelta(seconds=100), seconds=100.0, start_is_primary_message=False, end_is_primary_message=True)
+    minted = _book([(50.0, "update")])
+    residual = measure_residual([gap], minted, min_gap_seconds=30.0)
+    assert [(r.start, r.end) for r in residual] == [
+        (H, H + timedelta(seconds=50)),
+        (H + timedelta(seconds=50), H + timedelta(seconds=100)),
+    ]
+    assert [r.seconds for r in residual] == [50.0, 50.0]
+    assert [(r.start_is_primary_message, r.end_is_primary_message) for r in residual] == [(False, False), (False, True)]

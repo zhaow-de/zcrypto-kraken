@@ -24,6 +24,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
+import polars as pl
+
+from cli.capture.errors import CaptureError
+
 # An hour is finalized at H+1h and carried to the NAS by the pull cycle that follows; H+2h gives both
 # a full cycle to land, so a settled hour is complete on both mirrors or genuinely missing from them.
 SETTLE_HOURS = 2
@@ -88,6 +93,64 @@ def newest_hour(*scans: dict[str, set[datetime]]) -> datetime | None:
     return max(hours) if hours else None
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def us_from_dt(moment: datetime) -> int:
+    """Exact microseconds since epoch — integer path only, no float rounding."""
+    delta = moment - _EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+def dt_from_us(us: int) -> datetime:
+    """Exact inverse of `us_from_dt`."""
+    return _EPOCH + timedelta(microseconds=int(us))
+
+
+def us_array(stamps: Iterable[datetime] | np.ndarray) -> np.ndarray:
+    """int64-μs view of `stamps`; an int64-μs ndarray passes through, datetimes convert exactly.
+
+    An ndarray must ALREADY hold microseconds since epoch; any other dtype is refused rather than
+    cast — the same two-scale trap `_message_ts` refuses on the sibling path. `astype(np.int64)` on a
+    `datetime64[ns]` array yields NANOSECONDS, and those then sit in one `edges` array beside hour
+    bounds that are always microseconds: measured there, the `ns` direction overflows `dt_from_us`
+    while the `ms` direction shrinks a real 3300 s outage to 3.3 s and books a fabricated gap anchored
+    in 1970 — silently, into a counter that can never be walked back. The exact conversion is the
+    caller's (`Series.to_numpy().view(np.int64)` on a `Datetime(us)` column), so guessing it here is
+    how the two scales meet.
+
+    No defensive copy: an int64 array is returned as given. Every caller builds a fresh one.
+    """
+    if isinstance(stamps, np.ndarray):
+        if stamps.dtype != np.int64:
+            raise CaptureError(f"stamps ndarray is {stamps.dtype}, not int64 microseconds since epoch")
+        return stamps
+    return np.fromiter((us_from_dt(s) for s in stamps), dtype=np.int64)
+
+
+def us_view(stamps: pl.Series) -> np.ndarray:
+    """int64-μs view of a book segment's `ts` column, refusing any unit but microseconds.
+
+    `.view(np.int64)` reads the column's OWN unit, so `us_array` cannot catch a wrong one — by then
+    the array is already int64. Nothing downstream catches it either, because the caller books the
+    fleet-dark residual BEFORE the heal path hands the same frame to `_message_ts`.
+
+    The failure shape here is NOT `_message_ts`'s shrunken-gap one: `fleet_dark_windows` CLAMPS to
+    the hour bounds, and a `ms` integer is 1000× too small for a microsecond bound, so every stamp
+    falls BELOW `hour_start` and is discarded — measured, 0 of 360. The hour then reads as wholly
+    dark rather than as a shortened gap, and a healthy, dense hour on three streams books 10800.0 s
+    (3600 s × 3) of fabricated permanent loss into a counter that can never be walked back. This
+    check is the only thing standing between a non-µs column and that booking.
+    """
+    if stamps.dtype != pl.Datetime("us", "UTC"):
+        raise CaptureError(f"book `ts` column is {stamps.dtype}, not Datetime('us', 'UTC') — refusing to reconcile")
+    if stamps.null_count():
+        # A null becomes iNaT in the int64 view — the most negative int64 — fabricating a window that
+        # spans the whole epoch and clamps every real message out of the timeline.
+        raise CaptureError("null ts in a book segment — refusing to reconcile")
+    return stamps.to_numpy().view(np.int64)
+
+
 @dataclass(frozen=True)
 class DarkWindow:
     """A window in which the whole fleet, on both hosts, recorded nothing at all."""
@@ -98,7 +161,7 @@ class DarkWindow:
 
 
 def fleet_dark_windows(
-    stamps: Iterable[datetime], *, hour_start: datetime, hour_end: datetime, min_seconds: float
+    stamps: Iterable[datetime] | np.ndarray, *, hour_start: datetime, hour_end: datetime, min_seconds: float
 ) -> list[DarkWindow]:
     """Windows in which NOTHING was recorded — no pair, on either host.
 
@@ -117,20 +180,22 @@ def fleet_dark_windows(
     outside the bounds (a late event that leaked in from an adjacent hour) are clamped away rather
     than allowed to fabricate a negative-length window.
     """
-    inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
-    edges = [hour_start, *inside, hour_end]
-    windows = [
-        DarkWindow(start=a, end=b, seconds=(b - a).total_seconds())
-        for a, b in zip(edges, edges[1:], strict=False)
-        # STRICTLY greater, matching `find_book_gaps`: a window of exactly the threshold is not a
-        # gap on the way in, so booking it as residual here would be loss that was never healable.
-        if (b - a).total_seconds() > min_seconds
-    ]
-    return windows
+    arr = us_array(stamps)
+    lo, hi = us_from_dt(hour_start), us_from_dt(hour_end)
+    inside = np.unique(arr[(arr >= lo) & (arr <= hi)])  # sorted + deduped == sorted(set(...)), bounds inclusive as before
+    edges = np.concatenate(([lo], inside, [hi]))
+    # `/ 1e6`, never `* 1e-6`: the reciprocal is not exactly representable, so the product differs
+    # from this quotient in ~30% of microsecond widths — and `timedelta.total_seconds()`, which this
+    # must stay byte-identical to, is an integer division by 10**6.
+    seconds = np.diff(edges).astype(np.float64) / 1e6
+    # STRICTLY greater, matching `find_book_gaps`: a window of exactly the threshold is not a
+    # gap on the way in, so booking it as residual here would be loss that was never healable.
+    idx = np.nonzero(seconds > min_seconds)[0]
+    return [DarkWindow(start=dt_from_us(edges[i]), end=dt_from_us(edges[i + 1]), seconds=float(seconds[i])) for i in idx]
 
 
 def containing_dark_window(
-    stamps: Iterable[datetime], window: DarkWindow, *, hour_start: datetime, hour_end: datetime
+    stamps: Iterable[datetime] | np.ndarray, window: DarkWindow, *, hour_start: datetime, hour_end: datetime
 ) -> DarkWindow | None:
     """ONE stream's own silence window containing `window` — the fleet-dark intersection.
 
@@ -167,11 +232,29 @@ def containing_dark_window(
     # measured silence distribution above. Closing it costs an H-1 segment read per pair on every
     # fleet-dark hour. Re-measure the share before changing this:
     # infra/runbooks/capture.md#cross-hour-straddle
-    inside = sorted({stamp for stamp in stamps if hour_start <= stamp <= hour_end})
-    edges = [hour_start, *inside, hour_end]
-    for a, b in zip(edges, edges[1:], strict=False):
-        if a <= window.start and window.end <= b:
-            return DarkWindow(start=a, end=b, seconds=(b - a).total_seconds())
+    arr = us_array(stamps)
+    lo, hi = us_from_dt(hour_start), us_from_dt(hour_end)
+    inside = np.unique(arr[(arr >= lo) & (arr <= hi)])
+    edges = np.concatenate(([lo], inside, [hi]))
+    ws, we = us_from_dt(window.start), us_from_dt(window.end)
+    # Consecutive edges partition the hour, so for a POSITIVE-width window only the interval
+    # bracketing `window.start` can hold it: any earlier one ends at or before `ws`, any later one
+    # starts after it. That interval's left edge is the LAST edge <= `ws`, which is what
+    # `side="right"` picks — including when `ws` equals an interior stamp, where it lands on the
+    # interval that STARTS there. Equivalent to the linear scan this replaced for every positive-width
+    # window, measured over 25,358 constructions with zero divergences.
+    #
+    # Scoped deliberately: a ZERO-width or REVERSED window genuinely differs. On a zero-width one the
+    # scan took the interval ENDING at that edge and this takes the one STARTING there; at `hour_end`
+    # the scan returned a window where this returns None. Neither is reachable — `fleet_dark_windows`
+    # emits only `seconds > min_seconds` — and the sole theoretical route is a negative
+    # `--min-gap-seconds`, which nothing lower-bounds. Fix that bound, not this, if it ever matters.
+    i = int(np.searchsorted(edges, ws, side="right")) - 1
+    if i < 0 or i + 1 >= edges.size:
+        return None
+    a, b = int(edges[i]), int(edges[i + 1])
+    if a <= ws and we <= b:
+        return DarkWindow(start=dt_from_us(a), end=dt_from_us(b), seconds=(b - a) / 1e6)  # `/ 1e6`: see `fleet_dark_windows`
     return None
 
 

@@ -24,20 +24,21 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import polars as pl
 import typer
 
 from cli.archive import replay as replay_mod
+from cli.archive import scan_cache
 from cli.archive.checkpoint import CheckpointWriteError
 from cli.archive.mint import already_minted, ledger_append, mint_hour
 from cli.archive.pull import VerifyResult, prune_stale_parts, pull_lag_seconds, verify_tree
 from cli.archive.reconcile import (
     Block,
     Gap,
-    find_book_gaps,
-    find_unwitnessed_gaps,
     measure_residual,
     overlap_seconds,
+    partition_gaps,
     splice_book,
     union_trades,
 )
@@ -51,6 +52,7 @@ from cli.archive.settle import (
     newest_hour,
     scan_hours,
     settled_hours,
+    us_view,
 )
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA
@@ -356,7 +358,15 @@ def _lag(scans: dict[str, dict[str, set[datetime]]], *, now: datetime) -> float:
     return math.inf if lag is None else lag
 
 
-def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags: dict[str, float]) -> None:
+def _write_textfile(
+    path: Path,
+    *,
+    now: datetime,
+    ended: datetime,
+    totals: dict[str, float],
+    lags: dict[str, float],
+    hours_skipped: int,
+) -> None:
     """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one is
     scraped as garbage. Temp in the SAME directory (so the rename is a same-filesystem `os.replace`),
     then rename over the destination -- a scrape sees the old file or the new one, never half of one.
@@ -384,7 +394,13 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "last_success_timestamp_seconds",
         "gauge",
         "Unix time of the last cycle that completed without an integrity failure.",
-        [("", now.timestamp())],
+        [("", ended.timestamp())],
+    )
+    _emit(
+        "cycle_duration_seconds",
+        "gauge",
+        "Wall-clock seconds the last completed reconcile cycle took, start to publish.",
+        [("", (ended - now).total_seconds())],
     )
     _emit(
         "source_lag_seconds",
@@ -452,6 +468,18 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "gauge",
         "Records in the append-only reconcile ledger this cycle summed its totals from.",
         [("", totals["ledger_records"])],
+    )
+    _emit(
+        "hours_skipped",
+        "gauge",
+        "Window hours this cycle skipped on an unchanged fingerprint instead of re-examining. Zero in "
+        "detect-only, and zero for one cycle after anything that invalidates the cache: a change to the "
+        "examination algorithm or to the minimum-gap threshold, a divergence the sampled audit caught, a "
+        "manual delete, or a file it could not read. A restart does NOT invalidate it -- the cache is a "
+        "file in the overlay tree, keyed on neither the process nor the image. So a steady zero means the "
+        "skip cache is not engaging -- it degrades silently, and this is the only reading of it outside "
+        "the cycle's own log.",
+        [("", float(hours_skipped))],
     )
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -527,6 +555,47 @@ def reconcile(
     seen = {(r.get("pair"), r.get("kind"), r.get("hour"), r.get("state")) for r in records}
     failures = 0
 
+    # --- the settled-hour skip cache (spec 00097 D4/D5) -------------------------------------------
+    # MINT-ONLY, and twice over: every load/save/audit below is gated on `mint`, AND `mint` is baked
+    # into the salt as an independent second guard. A detect-only run's verdicts are not the deployed
+    # cycle's, so one must never be able to make a minting cycle skip an hour it owes a heal.
+    window = settled_hours(now=now, window_hours=window_hours)  # ONE list, shared with the loop below
+    salt = scan_cache.algo_salt(min_gap_seconds, mint=mint)
+    cache = scan_cache.load_cache(reconciled_root, salt=salt) if mint else {}
+    fingerprints = (
+        {
+            hour.isoformat(): scan_cache.hour_fingerprint(
+                hour,
+                scans=scans,
+                primary_root=primary_root,
+                secondary_root=secondary_root,
+                reconciled_root=reconciled_root,
+                book_pairs=book_pairs,
+                trade_pairs=trade_pairs,
+            )
+            for hour in window
+        }
+        if mint
+        else {}
+    )
+    skippable = [
+        iso
+        for iso, (fingerprint, complete) in fingerprints.items()
+        if scan_cache.is_skippable(cache.get(iso), fingerprint, complete)
+    ]
+    # Inside the gate like its siblings, though `skippable` is already empty without `fingerprints`:
+    # spec D4 says a detect-only run neither loads, saves, fingerprints NOR audits, and a reader
+    # should not have to re-derive that this call is inert rather than read it from the code.
+    audit_hours = set(scan_cache.pick_audit_hours(skippable, cache)) if mint else set()  # window-scoped
+    skip_hours = set(skippable) - audit_hours
+    new_cache: dict[str, scan_cache.CacheEntry] = {}
+    cache_divergent = False
+    # OBSERVED, never `len(skip_hours)`: that count is the loop's PLAN, computed before it runs, and a
+    # plan reads exactly the same whether the loop honoured it or not (with the skip branch disabled it
+    # still said one hour was skipped). The gauge and the log line below are what the triage in
+    # `infra/runbooks/ops.md#zcrypto-reconcile-cycle-duration` reads, so both count the branch itself.
+    hours_skipped = 0
+
     def _ledger(**record) -> None:
         key = (record["pair"], record["kind"], record["hour"], record["state"])
         if key in seen:  # already decided in an earlier cycle -- re-appending would double every total
@@ -554,7 +623,13 @@ def reconcile(
     # them each cycle would re-fire the ERROR-log alert every hour for two days about a gap the operator
     # already knows about and can do nothing about. A page that repeats until it is ignored is worse than
     # no page. The ledger remains the durable record; the log is the announcement.
-    for hour in settled_hours(now=now, window_hours=window_hours):
+    for hour in window:
+        hour_iso = hour.isoformat()
+        if hour_iso in skip_hours:
+            new_cache[hour_iso] = cache[hour_iso]  # carried forward untouched -- `examined_at` must NOT move
+            hours_skipped += 1
+            continue
+        records_before, failures_before = len(records), failures
         hour_end = hour + timedelta(hours=1)
         late = is_late(hour, now=now)
 
@@ -581,8 +656,8 @@ def reconcile(
 
         # --- load this hour's book streams once: gap detection AND the dual-silence timeline ----
         books: dict[str, dict[str, pl.DataFrame | None]] = {}
-        stamps: list[datetime] = []
-        pair_stamps: dict[str, list[datetime]] = {}  # per stream, BOTH mirrors -- see `containing_dark_window`
+        stamp_parts: list[np.ndarray] = []
+        pair_parts: dict[str, list[np.ndarray]] = {}  # per stream, BOTH mirrors -- see `containing_dark_window`
         broken = False
         for pair in book_pairs:
             frames: dict[str, pl.DataFrame | None] = {}
@@ -593,14 +668,21 @@ def reconcile(
                 try:
                     # `ts` + `type` is all detection needs; the full frame is read only to splice.
                     frames[source] = _read(root, pair, "book", hour, ["ts", "type"])
+                    # INSIDE this try, deliberately: the `fleet_dark_windows` call site below has no
+                    # `try` of its own, so a raise there aborts the whole Typer command -- every
+                    # remaining hour abandoned, no textfile. Here the handler already owns the
+                    # degradation: one hour ledgered `failed`, its booking suppressed, cycle alive.
+                    arr = us_view(frames[source]["ts"])
                 except Exception as exc:  # noqa: BLE001 -- any unreadable segment is an integrity fact
                     _fail(pair, "book", hour, f"unreadable {source} book segment: {exc}")
                     frames[source] = None
                     broken = True
                     continue
-                stamps.extend(frames[source]["ts"].to_list())
-                pair_stamps.setdefault(pair, []).extend(frames[source]["ts"].to_list())
+                stamp_parts.append(arr)
+                pair_parts.setdefault(pair, []).append(arr)
             books[pair] = frames
+        stamps = np.concatenate(stamp_parts) if stamp_parts else np.empty(0, dtype=np.int64)
+        pair_stamps = {p: np.concatenate(parts) for p, parts in pair_parts.items()}
 
         # --- both_streams_silent: unconditional, no witness needed ------------------------------
         # Skipped when a segment failed to read (an honest timeline cannot be built from it) and when
@@ -634,7 +716,9 @@ def reconcile(
                     for w in windows:
                         c = (
                             containing_dark_window(pair_stamps[p], w, hour_start=hour, hour_end=hour_end)
-                            if both_mirrors and pair_stamps.get(p)
+                            # `.size`, never the array's truthiness: `if arr` raises on any array
+                            # wider than one element.
+                            if both_mirrors and pair_stamps.get(p) is not None and pair_stamps[p].size
                             else w
                         )
                         if c is not None and c not in own:
@@ -713,7 +797,9 @@ def reconcile(
                 primary = frames["primary"]
 
             try:
-                gaps = find_book_gaps(
+                # ONE derivation of this pair-hour's primary silence, partitioned into the windows a
+                # secondary update witnessed and those it did not (spec 00097 D3).
+                gaps, blind = partition_gaps(
                     primary,
                     secondary,
                     min_gap_seconds=min_gap_seconds,
@@ -730,34 +816,26 @@ def reconcile(
             # was NOT dark, one pair silent on both mirrors cannot be told from a quiet market,
             # which is the ambiguity the fleet-wide intersection exists to resolve. Before this, the
             # pair with the LARGEST hole of an outage was the one that produced no record at all.
-            if not _decided(pair, "book", hour, "unwitnessed"):
-                blind = find_unwitnessed_gaps(
-                    primary,
-                    secondary,
-                    min_gap_seconds=min_gap_seconds,
-                    hour_start=hour,
-                    hour_end=hour_end,
+            if blind and not _decided(pair, "book", hour, "unwitnessed"):
+                logger.warning(
+                    "archive reconcile: unwitnessed pair=%s hour=%s windows=%d seconds=%.1f "
+                    "-- primary silence no secondary update covers; not healable, not counted",
+                    pair,
+                    hour.isoformat(),
+                    len(blind),
+                    sum(g.seconds for g in blind),
                 )
-                if blind:
-                    logger.warning(
-                        "archive reconcile: unwitnessed pair=%s hour=%s windows=%d seconds=%.1f "
-                        "-- primary silence no secondary update covers; not healable, not counted",
-                        pair,
-                        hour.isoformat(),
-                        len(blind),
-                        sum(g.seconds for g in blind),
-                    )
-                    _ledger(
-                        state="unwitnessed",
-                        pair=pair,
-                        kind="book",
-                        hour=hour.isoformat(),
-                        # No `residual_seconds` key AT ALL, deliberately: `_totals` adds that field
-                        # unconditionally for every non-mint-family state, so a 0.0 would be inert
-                        # only by value. Absent, it is inert by construction -- and a literal 0.0 on
-                        # a record whose windows sum to 208 s also reads as "measured zero loss".
-                        gaps_unwitnessed=[{"start": g.start, "end": g.end, "seconds": g.seconds} for g in blind],
-                    )
+                _ledger(
+                    state="unwitnessed",
+                    pair=pair,
+                    kind="book",
+                    hour=hour.isoformat(),
+                    # No `residual_seconds` key AT ALL, deliberately: `_totals` adds that field
+                    # unconditionally for every non-mint-family state, so a 0.0 would be inert
+                    # only by value. Absent, it is inert by construction -- and a literal 0.0 on
+                    # a record whose windows sum to 208 s also reads as "measured zero loss".
+                    gaps_unwitnessed=[{"start": g.start, "end": g.end, "seconds": g.seconds} for g in blind],
+                )
 
             if not gaps:
                 continue
@@ -889,9 +967,54 @@ def reconcile(
             )
             _ledger(state="minted", **entry)
 
+        # --- skip-cache bookkeeping: this hour was EXAMINED, in full -----------------------------
+        # The one top-level `continue` in this body sits below, after every decision above it.
+        if not mint:
+            continue  # spec D4: the cache exists only in --mint mode
+        fingerprint, complete = fingerprints[hour_iso]
+        changed = len(records) != records_before or failures != failures_before
+        # The audit's whole job: an hour the cache called settled, re-examined in full, decided
+        # something after all. Checked BEFORE the "never cache a changed hour" bail below -- in the
+        # other order the record half of this condition is unreachable, and records are the loud
+        # half (only a `_fail` that dedupes against `seen` moves `failures` without them).
+        if hour_iso in audit_hours and changed:
+            logger.error(
+                "archive reconcile: scan-cache audit divergence hour=%s fingerprint=%s -- the fingerprint "
+                "model failed somewhere, dropping the whole cache",
+                hour_iso,
+                fingerprint,
+            )
+            cache_divergent = True
+        if len(records) != records_before:
+            # Never cache an hour THIS cycle changed. The stored fingerprint is the PRE-pass one, so a
+            # minting cycle would otherwise store the pre-mint state -- byte-identical to what a
+            # hand-repair restores, letting the repair's re-mint be skipped. That is the complete
+            # characterization: mirror mtimes are monotone, so every other skew re-examines next
+            # cycle; only the overlay can be reverted to an earlier byte-identical state, and only a
+            # record-appending cycle writes it.
+            continue
+        new_cache[hour_iso] = scan_cache.CacheEntry(
+            fingerprint=fingerprint,
+            examined_at=now.isoformat(),
+            late_at_exam=late,
+            failures=failures - failures_before,
+            complete=complete,
+        )
+
+    if mint:  # a detect-only run neither deletes nor writes the deployed cycle's cache (spec D4)
+        if cache_divergent:
+            # `delete_cache` RAISES where `save_cache` swallows -- deliberately asymmetric, do not
+            # "fix" it. A failed save is fail-OPEN: no cache, the next cycle runs full and slow. A
+            # swallowed delete is fail-CLOSED-WRONG: the caller believes the cache is gone, the stale
+            # file survives under the same salt, and the next cycle honours stale skips.
+            scan_cache.delete_cache(reconciled_root)
+        else:
+            scan_cache.save_cache(reconciled_root, new_cache, salt=salt)
+
     totals = _totals(records)
     logger.info(
-        "reconcile complete mode=%s window_h=%d spliced=%d union=%d healed_s=%.1f residual_s=%.1f failures=%d",
+        "reconcile complete mode=%s window_h=%d spliced=%d union=%d healed_s=%.1f residual_s=%.1f "
+        "failures=%d skipped=%d audited=%d",
         "mint" if mint else "detect-only",
         window_hours,
         int(totals["spliced_hours"]),
@@ -899,6 +1022,8 @@ def reconcile(
         totals["healed_seconds"],
         totals["residual_seconds"],
         failures,
+        hours_skipped,
+        len(audit_hours),
     )
     if failures:
         # No textfile on a failed cycle: `last_success_timestamp` freezes and the exporter-stale rule
@@ -909,7 +1034,7 @@ def reconcile(
     if textfile is not None:
         lags = {source: _lag(scan, now=now) for source, scan in scans.items()}
         try:
-            _write_textfile(textfile, now=now, totals=totals, lags=lags)
+            _write_textfile(textfile, now=now, ended=_utc_now(), totals=totals, lags=lags, hours_skipped=hours_skipped)
         except OSError as exc:
             logger.error("archive reconcile: could not publish the textfile path=%s: %s", textfile, exc)
             raise typer.Exit(1) from exc

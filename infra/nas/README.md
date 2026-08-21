@@ -156,15 +156,19 @@ open("/tmp/ledger.new", "w").write("".join(json.dumps(r) + "\n" for r in keep))
 print(f"dropped {len(dropped)}, kept {len(keep)}")
 PY
 sudo cp /tmp/ledger.new "$L" && sudo chown zcrypto-data:zcrypto-data "$L" && sudo chmod 0664 "$L" && sudo rm -f /tmp/ledger.new
+# 4. drop the skip cache IN THE SAME ACT — its entries describe a ledger state that no longer exists:
+sudo rm -f "$(dirname "$L")/scan-cache.json"
 ```
 
 (`zcrypto-data:zcrypto-data` is the writer uid on the ops node since spec 00057; a NAS-side copy is `zcrypto-data:zcrypto` — the NAS user was renamed `zcrypto → zcrypto-data`, the group `zcrypto` kept.)
 
 Rules: keep **one record per line** (`_load_ledger` raises `CaptureError` on a malformed line, which fails the next cycle loudly); never truncate to shrink the file (that resets every counter — see [[T0044]] for the compaction design that preserves the totals); and confirm the two alert rules return to Normal within a window after the reset ages out.
 
+**Any mutation of the ledger, or of the overlay tree, deletes `scan-cache.json` in the same act** (step 4 above) — this applies to a hand-removed minted parquet just as much as to a ledger edit. The cycle skips a settled hour whose fingerprint is unchanged, and while that fingerprint covers the overlay's own files, a ledger edit is invisible to it: leave the cache and the next cycle skips precisely the hours the correction meant to force a re-examination of. Nothing pages on that immediately — the sampled audit rotates two hours per cycle through the window's ~44 cacheable hours, twice an hour, so the divergence can sit for **~11 h** before it is caught and the whole cache is dropped. Deleting it makes the next cycle deliberately full instead; the cost is one slow cycle. Triage from the other end is [`zcrypto-reconcile-cycle-duration`](../runbooks/ops.md#zcrypto-reconcile-cycle-duration).
+
 Backup rules ([[T0057]]):
 
-- **The backup never goes inside `capture-reconciled/`.** The tree carries data + manifests + the ledger, **nothing else** — it is replicated into custody, so any extra file is copied to every consumer forever, and a single permission mismatch on one stray file fails the entire tree's rsync (exit 23). That is exactly what the 2026-07-14 correction's in-place `.bak` did to the ops→NAS channel on 2026-07-16. Write the backup to a `ledger-corrections/` dir beside the stack/data dirs on the writer host (outside the rrsync-pinned overlay root), as in step 1 above.
+- **The backup never goes inside `capture-reconciled/`.** The tree carries data + manifests + the ledger, plus exactly one sidecar the writer itself authors — `scan-cache.json`, spec `00097`'s settled-hour skip cache — and **nothing a hand ever puts there**. It is replicated into custody, so any extra file is copied to every consumer forever, and a single unreadable stray file fails the entire tree's rsync (exit 23). That is exactly what the 2026-07-14 correction's in-place `.bak` did to the ops→NAS channel on 2026-07-16: `sudo cp` left it root-owned and unreadable by the pull identity. The sidecar cannot repeat that, and for reasons worth stating rather than assuming: the reconcile cycle writes it with the same process and umask that appends the ledger beside it, so owner and mode match that file exactly; the pull is `rsync -a --chmod=D0775,F0664`, which forces 0664 on arrival regardless; and the tree's integrity walks enumerate `*.parquet` only (`verify_tree`, `prune_stale_parts`), so it is neither hashed as a missing final nor pruned as a stray part. A hand-placed file has none of those three properties, which is why this rule is about hands and not about file counts. Write the backup to a `ledger-corrections/` dir beside the stack/data dirs on the writer host (outside the rrsync-pinned overlay root), as in step 1 above.
 - **Commit the correction's diff to the repo as the durable record** — the removed line(s) verbatim, the backup's hash/size/line count, and why — so the evidence outlives any on-host cleanup. Worked example: `ledger-correction-20260714-link-eur.md` beside this file.
 
 ## Alloy telemetry stack (spec 00049 Role B, Task 3)

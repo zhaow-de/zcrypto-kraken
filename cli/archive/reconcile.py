@@ -18,8 +18,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import numpy as np
 import polars as pl
 
+from cli.archive.settle import dt_from_us, us_from_dt
 from cli.capture.errors import CaptureError
 
 
@@ -57,8 +59,15 @@ def _inside(gap: Gap) -> pl.Expr:
     return lo & hi
 
 
-def _message_ts(df: pl.DataFrame) -> list[datetime]:
+def _pair_label(df: pl.DataFrame) -> str:
+    """The stream's symbol, for an error message — an ad-hoc frame need not carry the column."""
+    return df["symbol"][0] if "symbol" in df.columns else "?"
+
+
+def _message_ts(df: pl.DataFrame) -> np.ndarray:
     """One entry per wire message, in ARRIVAL order: many rows share a `ts` (one row per book level).
+
+    Returns int64 microseconds since epoch (spec 00097 D3); `dt_from_us` is the exact inverse.
 
     REQUIRES `ts` to be non-decreasing, and says so loudly: out-of-order input would otherwise
     fabricate one wide window that swallows the interleaved messages, and the splice would drop their
@@ -68,23 +77,42 @@ def _message_ts(df: pl.DataFrame) -> list[datetime]:
     assertion should never fire — which is exactly what makes it worth having.
 
     The check runs on the RAW row order, before dedup: an exact-duplicate stamp reappearing after a
-    strictly newer one (raw `[0, 5, 0]`) is out of order, but `unique(maintain_order=True)` would
-    collapse it to `[0, 5]` first — which looks monotone. Checking the deduped list can't see that.
+    strictly newer one (raw `[0, 5, 0]`) is out of order, but dropping equal neighbours would collapse
+    it to `[0, 5]` first — which looks monotone. Checking the deduped list can't see that.
 
-    `maintain_order=True` is load-bearing: plain `.unique()` does not preserve order.
+    Dropping equal NEIGHBOURS is the dedup, and it is exactly `unique(maintain_order=True)` only
+    because the sequence has just been proven non-decreasing.
     """
     if df.height == 0:
-        return []
-    raw: list[datetime] = df["ts"].to_list()
-    for previous, current in zip(raw, raw[1:], strict=False):
-        if current < previous:
-            pair = df["symbol"][0] if "symbol" in df.columns else "?"
-            raise CaptureError(
-                f"non-monotonic ts in the {pair} book stream: {previous.isoformat()} is followed by "
-                f"{current.isoformat()}. Refusing to reconcile — sorting is forbidden (L2 rows carry "
-                f"absolute quantities), so the input itself must be fixed."
-            )
-    return df.select(pl.col("ts").unique(maintain_order=True)).to_series().to_list()
+        return np.empty(0, dtype=np.int64)
+    stamps = df["ts"]
+    if stamps.null_count():
+        # A null becomes iNaT in the int64 view — the most negative int64 — which would fabricate a
+        # window spanning the whole epoch and clamp a real message out of the timeline, silently.
+        raise CaptureError(f"null ts in the {_pair_label(df)} book stream — refusing to reconcile a frame with missing timestamps")
+    if getattr(stamps.dtype, "time_unit", None) != "us":
+        # The int64 view reads the column's OWN unit as microseconds while the hour bounds always
+        # arrive as microseconds, so any other unit mixes two scales in one `edges` array — and the
+        # two directions fail differently, both unacceptably. Measured on a 0 s/3300 s frame:
+        # `ns` overflows (first window ~1.78e18 µs) and `dt_from_us` raises an untyped
+        # `OverflowError` that escapes the caller's `except CaptureError` and kills the whole cycle;
+        # `ms` does NOT raise — the real 3300 s outage reads as 3.3 s, falls under the threshold and
+        # is never booked, while a fabricated 1782411804.3 s gap anchored in 1970 reaches the splice
+        # and the ledger. Silent corruption is the worse of the two, so refuse both, typed.
+        raise CaptureError(f"ts in the {_pair_label(df)} book stream is {stamps.dtype}, not Datetime in microseconds")
+    raw = stamps.to_numpy().view(np.int64)  # Datetime(us, UTC) → datetime64[us] → μs ints, zero-copy
+    drops = np.nonzero(np.diff(raw) < 0)[0]
+    if drops.size:
+        i = int(drops[0])
+        raise CaptureError(
+            f"non-monotonic ts in the {_pair_label(df)} book stream: {dt_from_us(raw[i]).isoformat()} is followed by "
+            f"{dt_from_us(raw[i + 1]).isoformat()}. Refusing to reconcile — sorting is forbidden (L2 rows carry "
+            f"absolute quantities), so the input itself must be fixed."
+        )
+    keep = np.empty(raw.shape, dtype=bool)
+    keep[0] = True
+    np.not_equal(raw[1:], raw[:-1], out=keep[1:])
+    return raw[keep]
 
 
 def secondary_covers(secondary: pl.DataFrame, gap: Gap) -> bool:
@@ -161,10 +189,7 @@ def find_book_gaps(
     Both edge windows obey the same threshold and the same secondary-witness rule as an interior gap;
     their outer boundary is the hour boundary, which is nobody's wire message (see `Gap`).
     """
-    _validate_hour_bounds(hour_start, hour_end)
-    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
-    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
-    return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if secondary_covers(secondary, gap)]
+    return partition_gaps(primary, secondary, min_gap_seconds=min_gap_seconds, hour_start=hour_start, hour_end=hour_end)[0]
 
 
 def find_unwitnessed_gaps(
@@ -185,10 +210,7 @@ def find_unwitnessed_gaps(
     `update`.) A snapshot is full state, never market activity, so it still may not witness; the
     remedy is to REPORT the window, not to relax what counts as a witness.
     """
-    _validate_hour_bounds(hour_start, hour_end)
-    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
-    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
-    return [gap for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end) if not secondary_covers(secondary, gap)]
+    return partition_gaps(primary, secondary, min_gap_seconds=min_gap_seconds, hour_start=hour_start, hour_end=hour_end)[1]
 
 
 def _primary_silence(primary: pl.DataFrame, min_gap_seconds: float, hour_start: datetime, hour_end: datetime) -> list[Gap]:
@@ -196,8 +218,8 @@ def _primary_silence(primary: pl.DataFrame, min_gap_seconds: float, hour_start: 
     _validate_hour_bounds(hour_start, hour_end)
     _validate_rows_within_hour(primary, "primary", hour_start, hour_end)
 
-    pri_ts = _message_ts(primary)
-    if not pri_ts:
+    pri = _message_ts(primary)
+    if pri.size == 0:
         # No primary message exists to pair against, so the whole hour is one gap whose boundaries
         # belong to neither side. A file with zero messages is total loss, not quiescence, so
         # `min_gap_seconds` does not apply to it.
@@ -211,25 +233,46 @@ def _primary_silence(primary: pl.DataFrame, min_gap_seconds: float, hour_start: 
             )
         ]
 
-    edges: list[tuple[datetime, bool]] = [(hour_start, False)]
-    edges += [(ts, True) for ts in pri_ts]
-    edges.append((hour_end, False))
-
-    gaps: list[Gap] = []
-    for (a, a_is_pri), (b, b_is_pri) in zip(edges, edges[1:], strict=False):
-        seconds = (b - a).total_seconds()
-        if seconds <= min_gap_seconds:  # silence must be STRICTLY greater than the threshold
-            continue
-        gaps.append(
-            Gap(
-                start=a,
-                end=b,
-                seconds=seconds,
-                start_is_primary_message=a_is_pri,
-                end_is_primary_message=b_is_pri,
-            )
+    edges = np.concatenate(([us_from_dt(hour_start)], pri, [us_from_dt(hour_end)]))
+    seconds = np.diff(edges).astype(np.float64) / 1e6  # identical float to total_seconds()
+    # STRICTLY greater. `int(i)` is load-bearing: a numpy index makes the flags below `np.bool_`,
+    # which is not `is True` and serializes as a quoted string in the ledger.
+    idx = [int(i) for i in np.nonzero(seconds > min_gap_seconds)[0]]
+    last = edges.size - 1
+    return [
+        Gap(
+            start=dt_from_us(edges[i]),
+            end=dt_from_us(edges[i + 1]),
+            seconds=float(seconds[i]),
+            # Only the two outer edges are hour boundaries; every interior edge is a primary message.
+            start_is_primary_message=(i != 0),
+            end_is_primary_message=(i + 1 != last),
         )
-    return gaps
+        for i in idx
+    ]
+
+
+def partition_gaps(
+    primary: pl.DataFrame,
+    secondary: pl.DataFrame,
+    *,
+    min_gap_seconds: float,
+    hour_start: datetime,
+    hour_end: datetime,
+) -> tuple[list[Gap], list[Gap]]:
+    """Both halves of the primary-silence partition in ONE derivation: (witnessed, unwitnessed).
+
+    `find_book_gaps` and `find_unwitnessed_gaps` are thin views over this — spec 00097 D3 collapses
+    what used to be two independent derivations of the same silence windows per pair-hour.
+    """
+    _validate_hour_bounds(hour_start, hour_end)
+    _validate_rows_within_hour(secondary, "secondary", hour_start, hour_end)
+    _message_ts(secondary)  # for its check alone: raises on non-decreasing `ts` (see its docstring)
+    witnessed: list[Gap] = []
+    blind: list[Gap] = []
+    for gap in _primary_silence(primary, min_gap_seconds, hour_start, hour_end):
+        (witnessed if secondary_covers(secondary, gap) else blind).append(gap)
+    return witnessed, blind
 
 
 @dataclass(frozen=True)
@@ -279,7 +322,9 @@ def measure_residual(gaps: list[Gap], spliced: pl.DataFrame, *, min_gap_seconds:
     """
     if not gaps:
         return []
-    inside_ts = _message_ts(spliced) if spliced.height else []
+    # Back to datetimes at this boundary and nowhere else: the arithmetic below stays byte-identical,
+    # and the cost is bounded — this runs only for the hours that carry an admitted gap.
+    inside_ts = [dt_from_us(u) for u in _message_ts(spliced)] if spliced.height else []
     residual: list[Gap] = []
     for gap in gaps:
         marks = [t for t in inside_ts if gap.start <= t <= gap.end]
