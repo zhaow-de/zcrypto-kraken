@@ -351,6 +351,7 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
     series = _series(out)
     assert set(series) == {
         "zcrypto_reconcile_last_success_timestamp_seconds",
+        "zcrypto_reconcile_cycle_duration_seconds",
         'zcrypto_reconcile_source_lag_seconds{source="primary"}',
         'zcrypto_reconcile_source_lag_seconds{source="secondary"}',
         "zcrypto_reconcile_spliced_hours_total",
@@ -379,6 +380,48 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
     assert series['zcrypto_reconcile_source_lag_seconds{source="primary"}'] == 7200.0
     assert series['zcrypto_reconcile_source_lag_seconds{source="secondary"}'] == 7200.0
     assert list(out.parent.iterdir()) == [out]  # no .tmp left behind
+
+
+def test_textfile_reports_cycle_duration_and_stamps_completion(tmp_path):
+    start = datetime(2026, 8, 21, 8, 12, 15, tzinfo=UTC)
+    ended = datetime(2026, 8, 21, 8, 35, 6, tzinfo=UTC)
+    out = tmp_path / "reconcile.prom"
+    command._write_textfile(out, now=start, ended=ended, totals=command._totals([]), lags={})
+    text = out.read_text()
+    assert "# TYPE zcrypto_reconcile_cycle_duration_seconds gauge" in text
+    assert "zcrypto_reconcile_cycle_duration_seconds 1371.0" in text
+    # the success stamp is the END of the cycle, not its start (spec 00097 D1)
+    assert f"zcrypto_reconcile_last_success_timestamp_seconds {ended.timestamp()}" in text
+    assert f"zcrypto_reconcile_last_success_timestamp_seconds {start.timestamp()}" not in text
+
+
+def test_the_cli_stamps_the_clock_read_at_the_END_of_the_cycle(tmp_path, monkeypatch):
+    """The end stamp must be a SECOND clock read, taken after the work — not the start value relabelled.
+
+    The test above calls `_write_textfile` directly with two explicit stamps, so it cannot see what
+    `reconcile()` actually passes. Every other CLI test fakes `_utc_now` as a constant, which makes
+    `ended == now` and lets a regression to `ended=now` at the call site ship green — and that
+    regression IS the measured defect (a cycle stamping 08:12:16 while it completed 08:35:06). So this
+    fake returns a SEQUENCE: `reconcile()` reads the clock exactly twice, and the second read must be
+    the one that reaches the stamp.
+    """
+    pri, sec, rec = _roots(tmp_path)
+    _healthy(pri, sec, H)
+    out = tmp_path / "reconcile.prom"
+    ended = SETTLED + timedelta(seconds=1371)
+    reads = iter((SETTLED, ended))
+    monkeypatch.setattr(command, "_utc_now", lambda: next(reads))
+
+    result = CliRunner().invoke(app, ["archive", "reconcile", str(pri), str(sec), str(rec), "--textfile", str(out)])
+
+    assert result.exit_code == 0
+    series = _series(out)
+    assert series["zcrypto_reconcile_last_success_timestamp_seconds"] == ended.timestamp()
+    assert series["zcrypto_reconcile_last_success_timestamp_seconds"] != SETTLED.timestamp()
+    assert series["zcrypto_reconcile_cycle_duration_seconds"] == 1371.0
+    # `now` still drives the lag arithmetic: the start read, not the end one. Both mirrors hold hour H
+    # and SETTLED is H+2h, so a lag measured from `ended` would read 1371 s higher.
+    assert series['zcrypto_reconcile_source_lag_seconds{source="primary"}'] == 7200.0
 
 
 def test_a_half_written_textfile_is_never_published(tmp_path, monkeypatch):
@@ -515,6 +558,7 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
     _write_textfile(
         out,
         now=SETTLED,
+        ended=SETTLED,
         totals=dict.fromkeys(
             (
                 "spliced_hours",
@@ -565,7 +609,7 @@ def test_textfile_publishes_the_ledger_record_count(tmp_path):
         0.0,
     )
     totals["ledger_records"] = 4211
-    _write_textfile(out, now=SETTLED, totals=totals, lags={"primary": 0.0, "secondary": 0.0})
+    _write_textfile(out, now=SETTLED, ended=SETTLED, totals=totals, lags={"primary": 0.0, "secondary": 0.0})
     body = out.read_text()
 
     assert "# TYPE zcrypto_reconcile_ledger_records gauge" in body

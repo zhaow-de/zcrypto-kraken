@@ -356,7 +356,7 @@ def _lag(scans: dict[str, dict[str, set[datetime]]], *, now: datetime) -> float:
     return math.inf if lag is None else lag
 
 
-def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags: dict[str, float]) -> None:
+def _write_textfile(path: Path, *, now: datetime, ended: datetime, totals: dict[str, float], lags: dict[str, float]) -> None:
     """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one is
     scraped as garbage. Temp in the SAME directory (so the rename is a same-filesystem `os.replace`),
     then rename over the destination -- a scrape sees the old file or the new one, never half of one.
@@ -384,7 +384,13 @@ def _write_textfile(path: Path, *, now: datetime, totals: dict[str, float], lags
         "last_success_timestamp_seconds",
         "gauge",
         "Unix time of the last cycle that completed without an integrity failure.",
-        [("", now.timestamp())],
+        [("", ended.timestamp())],
+    )
+    _emit(
+        "cycle_duration_seconds",
+        "gauge",
+        "Wall-clock seconds the last completed reconcile cycle took, start to publish.",
+        [("", (ended - now).total_seconds())],
     )
     _emit(
         "source_lag_seconds",
@@ -909,7 +915,7 @@ def reconcile(
     if textfile is not None:
         lags = {source: _lag(scan, now=now) for source, scan in scans.items()}
         try:
-            _write_textfile(textfile, now=now, totals=totals, lags=lags)
+            _write_textfile(textfile, now=now, ended=_utc_now(), totals=totals, lags=lags)
         except OSError as exc:
             logger.error("archive reconcile: could not publish the textfile path=%s: %s", textfile, exc)
             raise typer.Exit(1) from exc

@@ -147,16 +147,26 @@ NAS_LEGACY_ADMITTED = [
 ]
 # Names assembled at runtime never appear as literals, so the scan cannot derive them. cli/archive/
 # command.py builds every reconcile series as f"zcrypto_reconcile_{name}", which yields only the
-# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the ten real
+# meaningless stem below -- and `zcrypto_reconcile_.*` admits that stem vacuously while the twelve real
 # names are absent from the candidate set entirely. They are fed to BOTH the union guard and the
 # per-host OPS list: the union bar alone would not catch the realistic drift, since narrowing the
 # wildcard on ops -- the host that actually publishes them -- still leaves NAS's copy satisfying the
 # union. A reviewer measured that: ops-only narrowing flagged 0 of 9.
 INTERPOLATED_METRIC_NAMES = [
-    # Verified against cli/archive/command.py's `_emit` call sites, not assumed: all ten, including
-    # last_success_timestamp_seconds, which the scan only ever picked up because an unrelated comment
-    # in archive-pull.sh.j2 happens to spell it out -- accidental coverage, not derivation.
+    # Verified by counting `_emit` call sites in cli/archive/command.py, not by trusting the previous
+    # count: all twelve. Includes last_success_timestamp_seconds, which the scan only ever picked up
+    # because an unrelated comment in archive-pull.sh.j2 happens to spell it out -- accidental
+    # coverage, not derivation.
     "zcrypto_reconcile_last_success_timestamp_seconds",
+    # spec 00097: alert-bearing (the cycle-duration rule). Admitted today only by the same
+    # `zcrypto_reconcile_.*` wildcard, so narrowing it must fail here rather than silently
+    # NoData-ing the rule -- which renders identically to a healthy cycle.
+    "zcrypto_reconcile_cycle_duration_seconds",
+    # spec 00096: was missing from this list until 2026-08-21 and reached the bar by NO path -- the
+    # name appears nowhere under _SOURCE_GLOBS, so the scan cannot derive it either. It is where the
+    # residual-gap alert summary sends triage, so a narrowed wildcard would have blanked the metric
+    # the operator is told to open, during the page that tells them to.
+    "zcrypto_reconcile_dark_episode_seconds_total",
     "zcrypto_reconcile_source_lag_seconds",
     "zcrypto_reconcile_healed_gap_seconds_total",
     "zcrypto_reconcile_healable_gap_seconds_total",
