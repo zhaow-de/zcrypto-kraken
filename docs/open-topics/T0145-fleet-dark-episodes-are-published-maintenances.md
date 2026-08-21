@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: now — measured, not predicted. Every `both_streams_silent` record in the live ledger matches a "Kraken Website and API Maintenance" entry in `https://status.kraken.com/api/v2/scheduled-maintenances.json`, each published 2–6 days ahead. Nothing in this repo reads that feed. Discharged when the scheduling guidance names it and a converge has been placed using it.
+status: partial
+ripe_when: the next converge or attended reboot is planned — the guidance now names the feed, so the remaining half discharges the first time a window is actually read before scheduling one. No new measurement is owed; the check is `https://status.kraken.com/api/v2/scheduled-maintenances.json` filtered to entries carrying `WebSocket` or `REST` in `components`.
 ---
 
 # Every fleet-dark episode was a Kraken maintenance published days in advance
@@ -33,9 +33,17 @@ Two consequences follow, and the second is the valuable one:
 - Kraken's WS `status` ladder (`maintenance` → `cancel_only` → `post_only` → `online`) is the *same* event seen from a second angle, with zero lead time. The two sources agree and neither was being used for scheduling.
 - Alert `activeAt` lags frame receipt by the rule's `for: 5m`, so the six 2026-08-20 instances at 07:07–07:16Z correspond to frames from ~07:02.
 
+## Done so far
+
+- **The feed was read and the finding is recorded** — all four `both_streams_silent` episodes match a published "Kraken Website and API Maintenance" entry (components include REST and WebSocket), created 48–145 h ahead, capture going dark 1.1–4.3 s after each published start. The table above is that measurement.
+- **The scheduling exclusion has landed on both operating surfaces**, which was this topic's concrete payoff:
+  - `.claude/rules/capture-deploys.md`, `## Deploys` — never converge inside a published window, with the component filter, the biweekly 07:01–07:16 UTC cadence, and the trap that entries appear only 2–6 days ahead so an empty feed a week out is not evidence the window is clear.
+  - `docs/reference/fleet.md`, the reboot `Schedule:` line — the same exclusion, because the ~83 s reboot gap creates the identical conflation. Stated where a reboot is actually planned rather than only in the converge rule.
+- **Engine converges were already immune and are left alone** — their window is the 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), so 07:01 can never fall inside one. Capture, ops and reboots had no time constraint at all; those are the real exposure.
+- **Checked at the time of writing (2026-08-21T06:43Z): no upcoming `Website and API` window is published.** The last was 2026-08-20; on the biweekly cadence the next is ~2026-09-03 and should appear 2–6 days before it.
+
 ## Suggested next steps
 
-- **Autonomous, and worth doing first:** fetch the feed and list every future `Website and API` entry. That is the converge-scheduling calendar, available now, and it costs one HTTP GET.
-- **Add the exclusion to the scheduling guidance** in `.claude/rules/capture-deploys.md`, beside the existing "measured book-traffic trough" constraint: check `scheduled-maintenances.json` before placing a converge, and keep out of any published `Website and API` window. One clause, no machinery.
-- **Then decide whether anything should poll it.** Weigh honestly against `00096` D1's ruling: a third-party HTTP feed is soft telemetry and must never gate the append-only ledger. Scheduling and operator triage are different consumers from booking, and only the first two are safe. A cheap first form is a note in the runbook, not a service.
+- **Read the feed when the next converge or reboot is scheduled.** That is the whole remainder, and it is what discharges this topic — the guidance exists, but a rule nobody has yet executed is unproven.
+- **Then decide whether anything should poll it.** Weigh honestly against `00096` D1: a third-party HTTP feed is soft telemetry and must never gate the append-only ledger. Scheduling and operator triage are different consumers from booking, and only those two are safe. A note in the runbook is the cheap first form; a service is not obviously warranted for a check run a handful of times a month.
 - **Do NOT build a time-of-day alert.** It would fire on the calendar rather than on the event.
