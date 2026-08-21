@@ -25,6 +25,7 @@ Our capture goes dark **1.1–4.3 s** after each published start. The cadence is
 Two consequences follow, and the second is the valuable one:
 
 - **Scheduling.** A capture re-pin, engine converge or panel regeneration landing inside a maintenance window conflates two failure sources exactly where the ledger is least readable. The fleet restarts hosts on a schedule we choose, and the venue publishes its schedule days ahead — there is no reason for the two to collide.
+- **The downstream cost is now measured, not assumed.** [[T0146]] counted what these windows actually do to the L2 panel: a venue-dark window is carried forward as a **frozen book** on the 1 s grid, **173.2 fabricated rows per pair** for 2026-07-27 and **852.2** for 2026-08-06. Those rows are not a hole a consumer can see — they are plausible-looking prices, and every mean computed over the window silently includes them unless the reader filters `stale_seconds > 30`. So a converge placed inside one of these windows does not merely muddy an incident: it lands during the only hours whose panel data is fabricated.
 - **Advance classification.** [[T0105]] dropped the pre-drain because the WS `effectiveTime` gave **zero** lead time, and [[T0143]]/`00096` reasoned throughout as though no advance signal existed. That reasoning was about the wrong source. A feed with 2–6 days' notice means a fleet-dark window can be *expected* rather than diagnosed — and an expected gap is a very different operational object from a surprise one.
 
 ## Findings so far
@@ -41,6 +42,8 @@ Two consequences follow, and the second is the valuable one:
   - `docs/reference/fleet.md`, the reboot `Schedule:` line — the same exclusion, because the ~83 s reboot gap creates the identical conflation. Stated where a reboot is actually planned rather than only in the converge rule.
 - **Engine converges were already immune and are left alone** — their window is the 4-hourly inter-cycle gap (00/04/08/12/16/20 UTC), so 07:01 can never fall inside one. Capture, ops and reboots had no time constraint at all; those are the real exposure.
 - **Checked at the time of writing (2026-08-21T06:43Z): no upcoming `Website and API` window is published.** The last was 2026-08-20; on the biweekly cadence the next is ~2026-09-03 and should appear 2–6 days before it.
+
+- **What has already landed on `develop` from this finding** (via the [[T0146]] PR, 2026-08-21, not this topic's own branch): the hygiene map now carries a row for **all three** in-era venue episodes — 2026-07-27 was missing until then — each naming its published window and citing this topic; and the archived [[T0146]] records that 2026-07-27 was *announced* rather than an unannounced WS restart, correcting [[T0101]]'s filing. This topic's own scheduling changes are on a separate branch and are **not** on `develop` yet — see the memo for that branch's state.
 
 ## Suggested next steps
 
