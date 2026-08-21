@@ -8,7 +8,12 @@ exclude = [
     # not spare it. This entry guards ruff ONLY: pre-commit's top-level `exclude:` is still
     # required and is the sole guard against every other hook — with it removed, trailing-whitespace
     # rewrites this file (measured 2026-07-24).
-    "infra/nas/rrsync"
+    "infra/nas/rrsync",
+    # Recovered verbatim from a session transcript's Write/Edit records (T0148) — these ARE the
+    # scratchpad runners that produced registry rows 43/44, and their value is that the bytes are
+    # the originals. A reformat destroys exactly that. Same guard split as rrsync above: this
+    # covers ruff only, pre-commit's top-level `exclude:` covers every other hook.
+    "docs/reference/trial43-recovered-runners/*"
 ]
 
 [format]
