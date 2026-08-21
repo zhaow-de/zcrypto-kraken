@@ -21,11 +21,11 @@ The stakes are bounded and worth stating plainly: the caveat's *conclusion* — 
 ## Findings so far
 
 - **Verified from repo state alone**: the committed window bounds, the caveat's text, and the 2026-07-27 ledger record. No host access needed to reproduce any of it.
-- The 2026-07-27 episode is one of the two *unannounced* WS-service-restart events ([[T0101]]), which is likely why it was missed — it produced no venue-status alert to notice, unlike 2026-08-06.
+- The 2026-07-27 episode raised **no venue-status alert**, which is likely why it was missed — unlike 2026-08-06. [[T0101]] filed it as an *unannounced* WS service restart; [[T0145]] later showed it was published 145.1 h ahead like the others, so it was announced on the status feed and merely unnoticed here.
 - The `stale_seconds` column [[T0104]] added is what lets a consumer filter fabricated rows; the caveat predates nothing, it simply counted one event.
 
 - **Measured exhaustively from the panel, not inferred**: counting rows with `stale_seconds > 30` across all 365 window-hours × 12 pairs (4,380 files, none missing), **exactly two** hours carry any frozen row — 2026-07-27 07Z (2,078 rows, 173.2/pair) and 2026-08-06 07Z (10,226 rows, 852.2/pair), totalling 1,025.3 per pair, **0.0780 %** of the window.
-- **The disclosed percentage was accidentally right and wrongly attributed.** The caveat's "~1,020 s is 0.078 %" came from the venue's announced 17-minute span for 2026-08-06; measured against the frozen rows the panel actually holds, that interval alone is 852.2 s (0.0649 %) and it is the **pair** of intervals that sums to 0.078 %.
+- **The disclosed percentage was accidentally right and wrongly attributed.** The caveat's "~1,020 s is 0.078 %" came from the venue's **reported status-ladder** span for 2026-08-06 (`maintenance` 07:01:02 → `online` 07:18:18) — not its *announced* window, which was 900 s ([[T0145]]); measured against the frozen rows the panel actually holds, that interval alone is 852.2 s (0.0649 %) and it is the **pair** of intervals that sums to 0.078 %.
 - Both intervals are Kraken maintenances beginning within seconds of 07:01 UTC, published days ahead ([[T0145]]) — which is also why 2026-07-27 raised no venue alert to notice at the time.
 
 ## Resolution
