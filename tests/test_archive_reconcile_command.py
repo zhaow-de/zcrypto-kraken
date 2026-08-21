@@ -371,6 +371,7 @@ def test_the_textfile_carries_every_series_and_is_written_atomically(tmp_path, m
         'zcrypto_reconcile_trade_deficit_rows_total{host="secondary"}',
         "zcrypto_reconcile_trade_dedup_rows_total",
         "zcrypto_reconcile_ledger_records",
+        "zcrypto_reconcile_hours_skipped",
     }
     assert series["zcrypto_reconcile_last_success_timestamp_seconds"] == SETTLED.timestamp()
     assert series["zcrypto_reconcile_spliced_hours_total"] == 1.0
@@ -388,7 +389,7 @@ def test_textfile_reports_cycle_duration_and_stamps_completion(tmp_path):
     start = datetime(2026, 8, 21, 8, 12, 15, tzinfo=UTC)
     ended = datetime(2026, 8, 21, 8, 35, 6, tzinfo=UTC)
     out = tmp_path / "reconcile.prom"
-    command._write_textfile(out, now=start, ended=ended, totals=command._totals([]), lags={})
+    command._write_textfile(out, now=start, ended=ended, totals=command._totals([]), lags={}, hours_skipped=0)
     text = out.read_text()
     assert "# TYPE zcrypto_reconcile_cycle_duration_seconds gauge" in text
     assert "zcrypto_reconcile_cycle_duration_seconds 1371.0" in text
@@ -614,6 +615,7 @@ def test_infinite_source_lag_is_emitted_as_prometheus_plus_inf(tmp_path):
             0.0,
         ),
         lags={"primary": math.inf, "secondary": 100.0},
+        hours_skipped=0,
     )
     text = out.read_text()
 
@@ -646,7 +648,7 @@ def test_textfile_publishes_the_ledger_record_count(tmp_path):
         0.0,
     )
     totals["ledger_records"] = 4211
-    _write_textfile(out, now=SETTLED, ended=SETTLED, totals=totals, lags={"primary": 0.0, "secondary": 0.0})
+    _write_textfile(out, now=SETTLED, ended=SETTLED, totals=totals, lags={"primary": 0.0, "secondary": 0.0}, hours_skipped=0)
     body = out.read_text()
 
     assert "# TYPE zcrypto_reconcile_ledger_records gauge" in body
@@ -1507,6 +1509,36 @@ def test_detect_only_neither_reads_nor_writes_the_cache(tmp_path, monkeypatch):
     assert _seg_path(rec, "BTC/EUR", "book", H).exists()
     assert "minted" in _states(rec)
     assert picks == [1]  # the true positive: a minting cycle DOES audit, so the zeros above are real
+
+
+def test_the_skip_gauge_counts_what_the_loop_did_not_what_it_planned(tmp_path, monkeypatch):
+    """The cache degrades SILENTLY -- `complete` demands every tree-wide pair on both mirrors, so a
+    pair dropped from capture drives the skip rate to zero permanently with no error. This gauge is
+    the only Prometheus-side observable of that, and it is incremented INSIDE the skip branch, never
+    published from `len(skip_hours)`: with the skip branch disabled, the plan-derived count still
+    reads 1, so a gauge carrying that arithmetic would report an engaged cache while every hour was
+    in fact re-examined -- exactly the reading the runbook's `skipped=0` triage exists to trust."""
+    pri, sec, rec = _roots(tmp_path)
+    _three_healthy_hours(pri, sec)
+    first, second = tmp_path / "first.prom", tmp_path / "second.prom"
+
+    args = [str(pri), str(sec), str(rec), "--mint"]
+    assert _run([*args, "--textfile", str(first)], now=N1, monkeypatch=monkeypatch).exit_code == 0
+    assert _series(first)["zcrypto_reconcile_hours_skipped"] == 0.0  # no cache yet: nothing to skip
+
+    assert _run([*args, "--textfile", str(second)], now=N2, monkeypatch=monkeypatch).exit_code == 0
+    assert _series(second)["zcrypto_reconcile_hours_skipped"] == 1.0  # 3 skippable - 2 audited
+
+
+def test_a_detect_only_cycle_publishes_the_skip_gauge_at_zero(tmp_path, monkeypatch):
+    """Every mode publishes it. An omitted series is NoData, which on the board is indistinguishable
+    from a cycle that never ran -- and a detect-only run legitimately skips nothing (spec D4)."""
+    pri, sec, rec = _roots(tmp_path)
+    _three_healthy_hours(pri, sec)
+    out = tmp_path / "detect.prom"
+
+    assert _run([str(pri), str(sec), str(rec), "--textfile", str(out)], now=N1, monkeypatch=monkeypatch).exit_code == 0
+    assert _series(out)["zcrypto_reconcile_hours_skipped"] == 0.0
 
 
 def test_the_audited_hours_rotate_across_cycles(tmp_path, monkeypatch):

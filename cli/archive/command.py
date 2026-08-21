@@ -358,7 +358,15 @@ def _lag(scans: dict[str, dict[str, set[datetime]]], *, now: datetime) -> float:
     return math.inf if lag is None else lag
 
 
-def _write_textfile(path: Path, *, now: datetime, ended: datetime, totals: dict[str, float], lags: dict[str, float]) -> None:
+def _write_textfile(
+    path: Path,
+    *,
+    now: datetime,
+    ended: datetime,
+    totals: dict[str, float],
+    lags: dict[str, float],
+    hours_skipped: int,
+) -> None:
     """Publish `reconcile.prom` atomically: a textfile is scraped in place, so a half-written one is
     scraped as garbage. Temp in the SAME directory (so the rename is a same-filesystem `os.replace`),
     then rename over the destination -- a scrape sees the old file or the new one, never half of one.
@@ -460,6 +468,18 @@ def _write_textfile(path: Path, *, now: datetime, ended: datetime, totals: dict[
         "gauge",
         "Records in the append-only reconcile ledger this cycle summed its totals from.",
         [("", totals["ledger_records"])],
+    )
+    _emit(
+        "hours_skipped",
+        "gauge",
+        "Window hours this cycle skipped on an unchanged fingerprint instead of re-examining. Zero in "
+        "detect-only, and zero for one cycle after anything that invalidates the cache: a change to the "
+        "examination algorithm or to the minimum-gap threshold, a divergence the sampled audit caught, a "
+        "manual delete, or a file it could not read. A restart does NOT invalidate it -- the cache is a "
+        "file in the overlay tree, keyed on neither the process nor the image. So a steady zero means the "
+        "skip cache is not engaging -- it degrades silently, and this is the only reading of it outside "
+        "the cycle's own log.",
+        [("", float(hours_skipped))],
     )
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -570,6 +590,11 @@ def reconcile(
     skip_hours = set(skippable) - audit_hours
     new_cache: dict[str, scan_cache.CacheEntry] = {}
     cache_divergent = False
+    # OBSERVED, never `len(skip_hours)`: that count is the loop's PLAN, computed before it runs, and a
+    # plan reads exactly the same whether the loop honoured it or not (with the skip branch disabled it
+    # still said one hour was skipped). The gauge and the log line below are what the triage in
+    # `infra/runbooks/ops.md#zcrypto-reconcile-cycle-duration` reads, so both count the branch itself.
+    hours_skipped = 0
 
     def _ledger(**record) -> None:
         key = (record["pair"], record["kind"], record["hour"], record["state"])
@@ -602,6 +627,7 @@ def reconcile(
         hour_iso = hour.isoformat()
         if hour_iso in skip_hours:
             new_cache[hour_iso] = cache[hour_iso]  # carried forward untouched -- `examined_at` must NOT move
+            hours_skipped += 1
             continue
         records_before, failures_before = len(records), failures
         hour_end = hour + timedelta(hours=1)
@@ -996,7 +1022,7 @@ def reconcile(
         totals["healed_seconds"],
         totals["residual_seconds"],
         failures,
-        len(skip_hours),
+        hours_skipped,
         len(audit_hours),
     )
     if failures:
@@ -1008,7 +1034,7 @@ def reconcile(
     if textfile is not None:
         lags = {source: _lag(scan, now=now) for source, scan in scans.items()}
         try:
-            _write_textfile(textfile, now=now, ended=_utc_now(), totals=totals, lags=lags)
+            _write_textfile(textfile, now=now, ended=_utc_now(), totals=totals, lags=lags, hours_skipped=hours_skipped)
         except OSError as exc:
             logger.error("archive reconcile: could not publish the textfile path=%s: %s", textfile, exc)
             raise typer.Exit(1) from exc

@@ -1129,6 +1129,49 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-reconcile-cycle-duration
+    title: "Reconciler · cycle approaching its own tick"
+    ruleGroup: zcrypto-reconciler
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The overlay-writer runs every 30 min; a cycle at 1500 s is 83% of that interval. Past 1800 s
+      # the timer's trigger fires against a still-activating unit and is DROPPED, so the cadence
+      # silently halves -- and nothing else pages below the exporter-stale rule's 3 h. This gauge is
+      # published by the cycle itself, so absence is that rule's page, not this one's (noDataState OK).
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: zcrypto_reconcile_cycle_duration_seconds
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [1500]}
+    noDataState: OK  # absence = exporter/cycle gone = zcrypto-reconcile-exporter-stale's page; double-paging one failure helps nobody
+    execErrState: Alerting
+    for: 0s  # one slow cycle is already the signal -- the gauge only updates twice an hour
+    annotations:
+      summary: "A reconcile cycle took over 1500 s against its 1800 s half-hourly tick. Past the tick the timer's next trigger is silently dropped and the booking cadence halves. Usually market-volume growth in the 48 h window. The linked panel charts the duration trend beside the count of window hours the cycle skipped -- that count is the discriminator: a healthy one means volume, a steady zero means the skip cache stopped engaging. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-cycle-duration"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "201"
+      unit: "seconds the last completed cycle took"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-reconcile-residual-gap
     title: "Reconciler · residual gap increased (permanent loss)"
     ruleGroup: zcrypto-reconciler
