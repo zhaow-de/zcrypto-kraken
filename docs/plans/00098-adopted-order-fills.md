@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **The own-topic path is byte-untouched**: `on_order_event`, `_on_order_event`, `_trip_on_fill`, `_on_detached_event` keep their existing behaviour for own-strategy events; every pre-existing test in `tests/test_engine_executor.py` and `tests/test_engine_node.py` passes UNTOUCHED (an edited pre-existing test is a defect).
+- **The own-topic path is byte-untouched**: `on_order_event`, `_on_order_event`, `_trip_on_fill`, `_on_detached_event` keep their existing behaviour for own-strategy events. **No pre-existing assertion is weakened, and exactly three pre-existing test surfaces are deliberately edited, red-first** (cold review F1/F6 — the blanket untouched rule was unsatisfiable): (1) `test_engine_node.py::test_no_module_widens_the_engines_order_event_stream` bans the literal text `msgbus` in every `cli/**/*.py` — widen it BEFORE the code change with an allowlist admitting exactly `cli/engine/node.py` for `msgbus` (keep `external_order_claims` banned everywhere, `msgbus` banned in every other cli file), and re-prove the widened guard by planting `msgbus` in `executor.py` and seeing red; (2) `test_engine_node.py`'s `_exec_stub` (a SimpleNamespace with no `msgbus`) gains a recording msgbus stub — the executor-wired `on_start` would otherwise raise `AttributeError` — and that stub is the vehicle for the new subscription assertions; (3) the `test_engine_executor.py:~2104` docstring stating the unobservability as standing fact is rewritten to the new truth. Every other pre-existing test passes untouched; any further edit is a defect.
 - **`external_order_claims` stays unset** — grep proves no occurrence outside comments/docs after the change.
 - **An unmatched external event must never reach `_trip_on_fill`, any row write, or any cancel** — this is the scope property; it gets its own test and its own mutation proof.
 - `cli/engine/executor.py` does not import nautilus beyond its existing two lines — event dispatch stays duck-typed on `type(event).__name__`, matching the file's idiom. The topic string lives in `node.py` (which already imports nautilus).
@@ -23,7 +23,7 @@
 - `cli/engine/command.py` — `_ExecutionMetrics` gains the external-events counter (Task 1).
 - `cli/engine/executor.py` — `_inc_external` helper + `on_external_order_event`/`_on_external_event` (Tasks 1–2), `_adopt_resting_orders` docstring rewrite (Task 5).
 - `cli/engine/node.py` — subscription + forwarder + class-docstring extension (Task 3).
-- `roles/capture/files/config.alloy` keep-regex + `tests/test_infra_alloy_series.py` + `infra/grafana/engine-dashboard.json` (Task 4).
+- `infra/ansible/roles/capture/files/config.alloy` keep-regex + `tests/test_infra_alloy_series.py` + `infra/grafana/engine-dashboard.json` (Task 4).
 - `infra/runbooks/engine.md` arm step + `docs/research/14.phase6-decisions.md` (Task 5).
 - Closeout: T0142 + index + memo + `docs/iterations-history-phase6.md` (Task 6).
 
@@ -42,7 +42,7 @@ def test_external_events_counter_preregisters_both_dispositions(...):
     # both label children exist at 0 before any event; inc_external moves exactly one
 ```
 
-Plus extend whatever existing test pins `_EXEC_ORDER_OUTCOMES`-style tuples against executor call sites to also pin `_EXEC_EXTERNAL_DISPOSITIONS` against `_inc_external`'s call sites (Task 2 adds them — at this point the pin asserts the tuple exists and the counter registers; the call-site half goes red-then-green across Task 2).
+The tuple-exists and counter-registers pins land here; the call-site half of the pin (`_EXEC_EXTERNAL_DISPOSITIONS` against `_inc_external`'s call sites) lands in **Task 2 Step 1** with the call sites themselves (cold review F7 — a red pin cannot ride through Task 1's green commit gate).
 
 - [ ] **Step 2: Implement.** In `_ExecutionMetrics.__init__`:
 
@@ -149,9 +149,10 @@ def test_external_handler_never_raises_into_the_event_loop(...):
             self._attached.pop(client_order_id, None)
 ```
 
-with `_EXTERNAL_TERMINAL_STATES` a module-level dict mapping `OrderCanceled`/`OrderExpired`/`OrderRejected` to the ledger's **existing** state names — derive them by reading `validate_exec_record`'s accepted states and the `_inc_order` outcome names; never invent a new string (the exec-record validator and the metrics pin will both refuse).
+with `_EXTERNAL_TERMINAL_STATES = {"OrderCanceled": "canceled", "OrderExpired": "venue_canceled", "OrderRejected": "rejected"}` — ruled by the cold review from `validate_exec_record`'s existing names: on this path `canceled` makes no we-requested claim (the dominant real source is the adopt pass's or a trip's own cancel, whose ack now arrives matched — say so in a docstring sentence), expiry is the venue's own doing, and `OrderCancelRejected` deliberately stays out of the map (event append, row stays attached). **Two additions to the matched-fill branch**: after `_on_detached_event`, when `row["filled_qty"]` has reached `_ordered_qty(row) - _OVERFILL_TOLERANCE`, mark the row `"filled"` via `update_submitted_row(state="filled")`, `_inc_order("filled")`, and pop from `_attached` — nautilus publishes no terminal event after a resting order's final fill, so without this the row reads open forever. And one added assertion: the adopt pass's own cancel acks now CLOSE their rows (state `canceled`), which previously stayed open on every future scan.
 
-- [ ] **Step 3: Run the file** — new tests green, **every pre-existing test untouched and green**. **Step 4: Mutation proof** (worktree; assert `cli.__file__`; read which assertion fires): (a) remove the unmatched early-return → the scope-property test must fail on the trip/row assertions; (b) swap the delegation order (detached before trip) → the overfill test must fail. **Step 5: Commit** `feat(engine): external-topic events reach adopted rows through a disposition filter`.
+- [ ] **Step 2b: One docstring sentence for the active-intent credit** (cold review F8): `_on_detached_event`'s credit of a running intent is inert for adopted rows because `plan_refusals` refuses any `plan_id` already in `ledgered_plan_ids`, scanned over the same two-UTC-day window as `open_submitted_rows` — a running plan can never share a plan_id with a row adopted at startup. The boundary: `_attached` outlives that window, so a process running ≥2 days past the adopted boundary could accept a reused plan_id. Name the dedupe and its two-day boundary where the credit happens; no code change.
+- [ ] **Step 3: Run the file** — new tests green, pre-existing green per the re-scoped constraint. **Step 4: Mutation proof** (worktree; assert `cli.__file__`; read which assertion fires): (a) remove the unmatched early-return → the scope-property test must fail on the trip/row assertions; (b) swap the delegation order (detached before trip) → caught by the **clean full fill** test, not the overfill one (cold review F5: the overfill assertions all still pass under the swap) — so the clean-fill test MUST use a fill that completes the ledgered quantity and assert no trip, and the overfill test additionally asserts **exactly one** fill event in `row["events"]` (the swap double-journals). **Step 5: Commit** `feat(engine): external-topic events reach adopted rows through a disposition filter`.
 
 ---
 
@@ -192,7 +193,7 @@ and the class docstring extended: the claim list is still empty and the own-topi
 
 ### Task 4: The metric's lifecycle surfaces
 
-**Files:** Modify `roles/capture/files/config.alloy` (the keep-regex — add `zcrypto_exec_external_events_total` beside the other `zcrypto_exec_*` families), `tests/test_infra_alloy_series.py` (the engine section's hand-pinned list + any count comments — count the names yourself; that comment has been wrong three times), `infra/grafana/engine-dashboard.json` (a target on whichever panel carries the exec counters; the charted-family guard names the panel when it goes red).
+**Files:** Modify `infra/ansible/roles/capture/files/config.alloy` (the keep-regex — add `zcrypto_exec_external_events_total` beside the other `zcrypto_exec_*` families), `tests/test_infra_alloy_series.py` (the engine section's hand-pinned list + any count comments — count the names yourself; that comment has been wrong three times), `infra/grafana/engine-dashboard.json` (a target on whichever panel carries the exec counters; the charted-family guard names the panel when it goes red).
 
 - [ ] Red-first: run `uv run pytest tests/test_dashboards_cover_metrics.py tests/test_infra_alloy_series.py -q` after Task 1's counter exists — the charted-family guard must go red naming the new family; fix forward from there. Commit `feat(obs): admit and chart the external-events family`. **Deploy note for the closeout, verbatim from the spec: the engine converge that ships this must run `--tags capture,engine` with both currently-running digests — the keep-regex lives in the capture role.**
 
@@ -202,7 +203,7 @@ and the class docstring extended: the claim list is still empty and the own-topi
 
 **Files:** `cli/engine/executor.py` (`_adopt_resting_orders` docstring — the paragraph stating the unobservability), `infra/runbooks/engine.md` (the arm step's read-venue-truth paragraph), `docs/research/14.phase6-decisions.md` (the `[iter-]` entry: D1's choice against the topic's three candidates, options + `(Decision: N)` per the `iteration-closeout` format).
 
-- [ ] Rewrite both prose surfaces **in place** to the new truth: adopted-order fills append to their rows and move counters through the external-topic subscription; a matched overfill trips exactly as before; the hand settle remains invisible to the trip *by the filter, not by accident*, and is now counted (`zcrypto_exec_external_events_total{disposition="unmatched"}`). Sweep for the CLAIM (variants: "never reaches this handler", "unobservable", "reconciled only as venue truth", "read such an order from venue truth") across `cli/engine/`, `infra/runbooks/`, `docs/` — every live carrier moves; point-in-time records are named, not edited. Commit `docs(engine): the adopted-order surfaces say what is now true`.
+- [ ] Rewrite both prose surfaces **in place** to the new truth: adopted-order fills append to their rows and move counters through the external-topic subscription; a matched overfill trips exactly as before; the hand settle remains invisible to the trip *by the filter, not by accident*, and is now counted (`zcrypto_exec_external_events_total{disposition="unmatched"}`). Sweep for the CLAIM (variants: "never reaches this handler", "unobservable", "reconciled only as venue truth", "read such an order from venue truth", "no such fill actually arrives") across `cli/engine/`, `infra/runbooks/`, `docs/`, **and `tests/`** (cold review F6: `test_engine_executor.py:~2104`'s docstring states the unobservability as standing fact) — every live carrier moves; point-in-time records are named, not edited. Commit `docs(engine): the adopted-order surfaces say what is now true`.
 
 ---
 

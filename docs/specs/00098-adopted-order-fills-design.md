@@ -10,7 +10,7 @@ Verified against the installed library (read, not assumed), 2026-08-22:
 - `engine.pyx:1414-1416` — the fill path ends in `publish_c(topic=_get_order_events_topic(fill.strategy_id), msg=fill)`, **unconditionally**: no special case drops the publish for `EXTERNAL`. A fill on a reconciled external order therefore does publish on `events.order.EXTERNAL`; today it merely has no subscriber.
 - `model/identifiers.pyx:776` — `EXTERNAL_STRATEGY_ID = StrategyId("EXTERNAL")`, with `is_external()` as the predicate.
 - `common/actor.pyx:187,761` — `self.msgbus` is a public attribute on every registered `Actor`; a `Strategy` may subscribe to any topic.
-- The adopt pass already matches `cache.orders_open()` orders to ledger rows by `client_order_id` and attaches them (`executor.py::_adopt_resting_orders`) — so client-order-id continuity across restart-reconciliation is an observed property of the running system, not an assumption.
+- Client-order-id continuity across restart-reconciliation is **supported but not yet production-observed** (no order has ever been submitted; the probe window has not run). The installed source: the adapter submits our full id, and reconciliation prefers `report.client_order_id`, falls back to venue-order-id lookup, and otherwise mints a UUID4 id (`live/execution_engine.py:3109-3141`). The venue's echo of `cl_ord_id` across sessions is the one unproven link — and its failure direction is safe: a UUID-minted id matches no ledger row, so the adopt pass cancels the order and its events land unmatched — scope intact, feature inert. The first armed-window restart is where continuity gets its live proof.
 
 ## Decisions
 
@@ -25,8 +25,8 @@ Verified against the installed library (read, not assumed), 2026-08-22:
 
 Matching is against `self._attached` — the ledger-vouched rows the adopt pass re-attached. For a **matched** event:
 
-- `OrderFilled` → overfill check first, exactly as `_trip_on_fill` does for own orders: a fill taking `filled_qty` past the ledgered ordered quantity (beyond `_OVERFILL_TOLERANCE`) records the fill (`_record_trip_fill` semantics — the fill happened; no-fill-without-a-record has no divergence exemption) and **trips the kill switch**. A ledgered adopted row is this engine's own pre-restart order; divergence on it is the same class the existing per-order trip guards, and tripping on matched rows only is what keeps the scope property intact. A clean fill appends to the row (`update_submitted_row`), credits `row["filled_qty"]`, and publishes counters via `_publish_fill`.
-- Terminal events (`OrderCanceled`, `OrderExpired`, plus the venue's terminal rejections) → row state update via the existing payload idiom, and the entry leaves `_attached`.
+- `OrderFilled` → overfill check first, exactly as `_trip_on_fill` does for own orders: a fill taking `filled_qty` past the ledgered ordered quantity (beyond `_OVERFILL_TOLERANCE`) records the fill (`_record_trip_fill` semantics — the fill happened; no-fill-without-a-record has no divergence exemption) and **trips the kill switch**. A ledgered adopted row is this engine's own pre-restart order; divergence on it is the same class the existing per-order trip guards, and tripping on matched rows only is what keeps the scope property intact. A clean fill appends to the row (`update_submitted_row`), credits `row["filled_qty"]`, and publishes counters via `_publish_fill`; when it completes the ledgered quantity (within `_OVERFILL_TOLERANCE` — the external path has no active intent to borrow a lot step from), the row is additionally marked `"filled"`, `_inc_order("filled")` counts the completion, and tracking ends — nautilus publishes no separate terminal event after a resting order's final fill, so without this the row reads open forever.
+- Terminal events → row state update via the existing payload idiom, and the entry leaves `_attached`. The mapping is ruled here, from `validate_exec_record`'s existing names: `OrderCanceled → "canceled"` (on this path the name makes **no we-requested claim** — the dominant real source is a cancel this very process sent from the adopt pass or a trip, whose ack now arrives matched; `venue_canceled` would be false for those), `OrderExpired → "venue_canceled"` (expiry is the venue's own doing), `OrderRejected → "rejected"`. `OrderCancelRejected` stays out of the map: event append, row stays attached. A side effect worth its own assertion: the adopt pass's cancel acks now **close** their rows, which previously stayed open forever and re-read as possibly-live on every future scan.
 - Other events (`OrderAccepted` re-acks etc.) → row event append only.
 
 ### D3 — unmatched external events are counted and logged, never acted on
@@ -35,7 +35,7 @@ Matching is against `self._attached` — the ledger-vouched rows the adopt pass 
 
 ### D4 — lifecycle and wiring
 
-Subscription established once, where the strategy's own handlers are wired (`node.py` / executor start), against the topic string derived from `StrategyId("EXTERNAL")` through the same format the engine uses. The handler is defensive in the `on_order_event` idiom: wrapped, logging on internal failure, never raising into the event loop. Rows removed from `_attached` on terminal events from either path. No new venue calls anywhere.
+Subscription established once, where the strategy's own handlers are wired (`node.py` / executor start), against the topic string derived from `StrategyId("EXTERNAL")` through the same format the engine uses. The handler is defensive in the `on_order_event` idiom: wrapped, logging on internal failure, never raising into the event loop. **Only the external handler removes a matched row on its terminal events; the own path deliberately keeps terminal rows attached** — a late fill after a cancel ack must land as a detached append, and popping at the ack would send that fill to `_trip_on_fill`'s no-attachment branch and latch the kill on a routine late fill (the existing `test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission` pins exactly this). No new venue calls anywhere.
 
 ### D5 — resolution is at merge; the deploy rides the standing converge cadence
 
@@ -45,7 +45,7 @@ The engine is live but **disarmed** (`exec_armed` renders `false`): submission h
 
 - `executor.py::_adopt_resting_orders` docstring — currently states the unobservability as standing fact, with the T0142 pointer. Rewritten to describe the subscription path.
 - `infra/runbooks/engine.md`'s arm step — the paragraph telling the operator to read an adopted order from venue truth. Rewritten: fills now append to the row; the hand settle remains invisible to the engine by design and is *counted*, not acted on.
-- `node.py`'s scoping comment — extended as in D1.
+- `node.py`'s scoping comment — extended as in D1. **And the structural guard that enforces the scoping**: `tests/test_engine_node.py::test_no_module_widens_the_engines_order_event_stream` bans the literal text `msgbus` in every `cli/**/*.py`. It is widened **red-first, before the code change** (the widen-the-guard-before-migration rule): an allowlist admits exactly `cli/engine/node.py` for `msgbus` — `external_order_claims` stays banned everywhere, `msgbus` stays banned in every other `cli` file — and the widened guard is re-proven by planting `msgbus` in `executor.py` and seeing red.
 - The decisions-log entry (phase 6) records D1's choice against the topic's three original candidates.
 
 ## Verification
