@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderStatus, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.model.orders.base import Order
 
 import cli.engine.execledger as execledger_module
@@ -2586,15 +2587,29 @@ def _reconciling_executor(
     return _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY)), client, earlier
 
 
-def test_a_sub_tolerance_difference_between_ledger_and_venue_is_reconciled_silently(tmp_path):
+@pytest.mark.parametrize(
+    "ledgered, venue",
+    [
+        (0.0004, 0.0004 + executor_module._OVERFILL_TOLERANCE / 10),  # venue ahead by an ulp
+        # LEDGER ahead: a clean three-fill restart, where the sum of per-fill floats exceeds the
+        # venue's one exactly-rounded figure. Without the negative dead-band this LATCHES THE KILL
+        # SWITCH AT BOOT, on a restart where nothing whatever is wrong.
+        (0.0003 + 0.0004 + 0.0005, float(Quantity.from_str("0.00120000"))),
+    ],
+)
+def test_a_sub_tolerance_difference_between_ledger_and_venue_is_reconciled_silently(tmp_path, ledgered, venue):
     """The dead-band, and the arm that must produce NOTHING. The ledgered figure is a sum of
     per-fill floats and the venue's is one exactly-rounded `float(Quantity)`, so a clean multi-fill
     restart differs by ulps -- a repair arm without the dead-band journals a phantom repair and
     shouts a WARNING on every healthy restart. An exact-equality construction would not catch that,
-    which is why the two figures here differ by a tenth of the tolerance rather than by zero."""
-    ex, _client, earlier = _reconciling_executor(
-        tmp_path, ledgered_filled=0.0004, venue_filled=0.0004 + executor_module._OVERFILL_TOLERANCE / 10
-    )
+    which is why the two figures here differ by a tenth of the tolerance rather than by zero.
+
+    BOTH SIGNS are pinned, because only one of them is survivable to get wrong. The venue-ahead case
+    costs a phantom repair; the LEDGER-ahead case is the ordinary shape of a healthy multi-fill
+    restart -- three BTC fills summed in Python float exceed the venue's rounded total in 59 of 343
+    realistic combinations -- and the arm it reaches when the dead-band is one-sided is `_trip_kill`,
+    which latches at boot and cannot be cleared by any code."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, ledgered_filled=ledgered, venue_filled=venue)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
 
@@ -2603,9 +2618,10 @@ def test_a_sub_tolerance_difference_between_ledger_and_venue_is_reconciled_silen
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["events"] == []  # no event
-    assert row["filled_qty"] == 0.0004 and row["state"] == "accepted"  # no state write, no quantity moved
+    assert row["filled_qty"] == ledgered and row["state"] == "accepted"  # no state write, no quantity moved
     assert [r.getMessage() for r in records if "reconcil" in r.getMessage()] == []  # and no log
     assert metrics.orders == []
+    assert not _kill_file(tmp_path).exists()
 
 
 def test_a_positive_reconciliation_delta_is_journaled_as_a_repair_and_mirrored(tmp_path):
