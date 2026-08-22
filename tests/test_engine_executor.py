@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -9,9 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from nautilus_trader.model.enums import LiquiditySide, OrderSide, TimeInForce
+from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderStatus, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.orders.base import Order
 
+import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -144,12 +147,13 @@ class StubCache:
     """Duck-types the Cache accessors `venue_state_from_cache` and the executor call, matching
     their real signatures. `raises=True` is the no-venue-truth construction."""
 
-    def __init__(self, *, instruments=None, balances=None, positions=None, open_orders=None, raises=False):
+    def __init__(self, *, instruments=None, balances=None, positions=None, open_orders=None, closed_orders=None, raises=False):
         self._instruments = _all_instruments() if instruments is None else instruments
         self._balances = {"ZEUR": 1000.0} if balances is None else balances
         self._positions = positions or {}
         self._closed: dict[str, list] = {}
         self._open_orders = open_orders or []
+        self._closed_orders = closed_orders or []
         self._raises = raises
 
     def instrument(self, instrument_id):
@@ -195,6 +199,13 @@ class StubCache:
 
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
+
+    def orders(self, *, venue=None, **kwargs):
+        """The WIDE read the startup reconciliation takes -- the installed `Cache.orders` filters
+        the full order index, so it serves closed orders alongside open ones, and a closed one is
+        by definition absent from `orders_open`. A stub answering only the open half would hand
+        every closed-while-down test the empty population the pre-D7 pass saw."""
+        return list(self._open_orders) + list(self._closed_orders)
 
     def account_for_venue(self, *, venue=None, **kwargs):
         balances = {_FakeCurrency(code=code): value for code, value in self._balances.items()}
@@ -364,10 +375,32 @@ def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = 
     )
 
 
-def _open_order(client_order_id, *, is_reduce_only=False):
+def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0):
     """A resting order as reconciliation adopts it. `is_reduce_only` is present because the real
-    adopted report carries it -- and the startup pass must be seen NOT to consult it."""
-    return SimpleNamespace(client_order_id=client_order_id, is_reduce_only=is_reduce_only)
+    adopted report carries it -- and the startup pass must be seen NOT to consult it. `filled_qty`
+    and `is_open`/`status` are what the startup reconciliation reads: the real `Order` carries the
+    quantity applied to it during reconciliation, and its own open predicate is what the pass now
+    derives the resting population from."""
+    return SimpleNamespace(
+        client_order_id=client_order_id,
+        is_reduce_only=is_reduce_only,
+        filled_qty=filled_qty,
+        is_open=True,
+        status=OrderStatus.ACCEPTED,
+    )
+
+
+def _closed_order(client_order_id, status, *, filled_qty=0.0):
+    """The order reconciliation leaves behind for one that reached a terminal state while this
+    process was down. It is absent from `orders_open` entirely, which is exactly what made it
+    invisible to the pass before the wide read."""
+    return SimpleNamespace(
+        client_order_id=client_order_id,
+        is_reduce_only=False,
+        filled_qty=filled_qty,
+        is_open=False,
+        status=status,
+    )
 
 
 def _submitted_row(tmp_path: Path, client_order_id: str, *, reduce_only: bool, when: datetime = NOW, index: int = 0) -> dict:
@@ -2157,18 +2190,21 @@ def test_a_late_fill_on_a_superseded_order_shrinks_the_next_resubmission(tmp_pat
 
 
 class _FlakyOrdersCache(StubCache):
-    """`orders_open` raises the first time and answers the second -- the transient a startup pass
-    must survive rather than latch through."""
+    """`orders` raises the first time and answers the second -- the transient a startup pass must
+    survive rather than latch through. It is `orders`, not `orders_open`, because that is the read
+    the pass now takes FIRST and the only one it takes at all: aimed at the other accessor this
+    class would raise nowhere the pass can see, and its test would prove the retry against a read
+    that never happens."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.calls = 0
 
-    def orders_open(self, *, venue=None, **kwargs):
+    def orders(self, *, venue=None, **kwargs):
         self.calls += 1
         if self.calls == 1:
             raise RuntimeError("the cache is not populated yet")
-        return super().orders_open(venue=venue, **kwargs)
+        return super().orders(venue=venue, **kwargs)
 
 
 def test_a_startup_canceled_orders_fill_and_cancel_ack_still_land_in_its_row(tmp_path):
@@ -2193,7 +2229,7 @@ def test_a_startup_canceled_orders_fill_and_cancel_ack_still_land_in_its_row(tmp
     assert row["state"] == "accepted"  # no state claim: this process is not tracking that lifecycle
 
 
-def test_a_raising_open_orders_read_leaves_the_startup_pass_able_to_run_again(tmp_path):
+def test_a_raising_orders_read_leaves_the_startup_pass_able_to_run_again(tmp_path):
     """Latching the pass on a read that classified NOTHING would leave every previous-process order
     resting unclassified for the life of the process. Nothing was canceled on that branch, so the
     retry cannot double-cancel."""
@@ -2236,9 +2272,10 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
 
 
 @contextmanager
-def _executor_errors():
-    """The executor logger's own ERROR records, for the test that must see a swallowed failure
-    LOGGED rather than merely swallowed. Deliberately not `caplog`, blind here for the two reasons
+def _executor_errors(level=logging.ERROR):
+    """The executor logger's own records at `level` and above, for the tests that must see a
+    swallowed failure LOGGED rather than merely swallowed -- and, at WARNING, for the one that must
+    see NOTHING logged. Deliberately not `caplog`, blind here for the two reasons
     `_the_tick_backstop_never_fires` documents: a root logger the CLI tests have detached, and
     phase-scoped records."""
     records: list[logging.LogRecord] = []
@@ -2248,7 +2285,7 @@ def _executor_errors():
             records.append(record)
 
     log = logging.getLogger("zcrypto.engine.executor")
-    handler = _Collect(level=logging.ERROR)
+    handler = _Collect(level=level)
     previous_level = log.level
     log.setLevel(logging.DEBUG)
     log.addHandler(handler)
@@ -2485,6 +2522,319 @@ def test_the_external_handler_logs_and_continues_when_the_ledger_write_raises(tm
     assert records[0].exc_info is not None  # logger.exception, so the traceback is in the record
     assert metrics.external == ["matched"]
     assert not _kill_file(tmp_path).exists()
+
+
+# --- D7: the startup pass reconciles each row against venue truth (spec 00098) -------------------
+
+
+def _reconciling_executor(
+    tmp_path,
+    *,
+    venue_filled,
+    ledgered_filled=0.0,
+    closed_status=None,
+    client_order_id="O-attached",
+    reduce_only=True,
+):
+    """A previous process's ledgered row plus the cache order reconciliation left behind for it,
+    with the two quantities set independently -- which is the whole point: the delta between them is
+    what the startup sweep exists to read. `closed_status` builds the closed-while-down shape, where
+    the order is absent from `orders_open` and reachable only through the wide read.
+
+    The executor is returned BEFORE the first tick, so a test can install its metrics hooks first --
+    the completion counter fires inside `on_timer`, and hooks installed after it would record
+    nothing while every assertion still read green."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, client_order_id, reduce_only=reduce_only, when=earlier)
+    if ledgered_filled:
+        update_submitted_row(tmp_path / "journal", _boundary(earlier), client_order_id, add_filled_qty=ledgered_filled)
+    if closed_status is None:
+        cache = StubCache(open_orders=[_open_order(client_order_id, filled_qty=venue_filled)])
+    else:
+        cache = StubCache(closed_orders=[_closed_order(client_order_id, closed_status, filled_qty=venue_filled)])
+    client = StubClient(cache)
+    return _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY)), client, earlier
+
+
+def test_a_sub_tolerance_difference_between_ledger_and_venue_is_reconciled_silently(tmp_path):
+    """The dead-band, and the arm that must produce NOTHING. The ledgered figure is a sum of
+    per-fill floats and the venue's is one exactly-rounded `float(Quantity)`, so a clean multi-fill
+    restart differs by ulps -- a repair arm without the dead-band journals a phantom repair and
+    shouts a WARNING on every healthy restart. An exact-equality construction would not catch that,
+    which is why the two figures here differ by a tenth of the tolerance rather than by zero."""
+    ex, _client, earlier = _reconciling_executor(
+        tmp_path, ledgered_filled=0.0004, venue_filled=0.0004 + executor_module._OVERFILL_TOLERANCE / 10
+    )
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    with _executor_errors(logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["events"] == []  # no event
+    assert row["filled_qty"] == 0.0004 and row["state"] == "accepted"  # no state write, no quantity moved
+    assert [r.getMessage() for r in records if "reconcil" in r.getMessage()] == []  # and no log
+    assert metrics.orders == []
+
+
+def test_a_positive_reconciliation_delta_is_journaled_as_a_repair_and_mirrored(tmp_path):
+    """The down-window fill, recovered. The quantity is resident in the reconciled order's own
+    `filled_qty` because the engine applies the fill and publishes it in one synchronous body -- the
+    publish reached no subscriber, the quantity survived. It is journaled as a REPAIR, not a fill:
+    there is no per-fill detail and no fee behind it, and a fills increment with no fee would make
+    the two counters disagree in a way the row cannot explain."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0004)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.0004
+    assert row["state"] == "accepted"  # short of the ledgered 0.001: still working, no state claim
+    assert [e["event"] for e in row["events"]] == ["reconciled"]
+    assert row["events"][0]["qty"] == 0.0004 and row["events"][0]["venue_filled_qty"] == 0.0004
+    assert ex._attached["O-attached"][1]["filled_qty"] == 0.0004  # the mirror: the trip base moved
+    assert metrics.fills == [] and metrics.orders == []  # a repair is not a fill
+
+
+def test_a_reconciliation_delta_that_completes_the_row_closes_it_and_counts_it_once(tmp_path):
+    """A repair restoring the quantity and still leaving the row reading open is the defect the
+    completion write exists to prevent -- the row would re-read as possibly-live on every future
+    scan. The mirrored `state` is load-bearing too: `_on_external_event`'s once-only guard reads it,
+    so a stale mirror would let a later fill re-count the completion."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.001)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.001 and row["state"] == "filled"
+    assert ex._attached["O-attached"][1]["state"] == "filled"
+    assert metrics.orders == ["filled"]  # exactly once, for one completed order
+
+
+def test_a_venue_quantity_past_the_ledgered_order_trips_after_the_repair_is_journaled(tmp_path, kill_trip_expected):
+    """The overshoot arm. The repair is journaled FIRST and the switch latches second: the fill
+    happened at the venue, and no-fill-without-a-record has no divergence exemption. The trip's own
+    cancel and the classification pass both pull the order, because a latched kill file is exactly
+    the state that leaves nothing working at the venue."""
+    overfilled = 0.001 + 2 * executor_module._OVERFILL_TOLERANCE
+    ex, client, earlier = _reconciling_executor(tmp_path, venue_filled=overfilled)
+
+    ex.on_timer(NOW)
+
+    assert _kill_file(tmp_path).exists()
+    assert "O-attached" in _kill_file(tmp_path).read_text()
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e["event"] for e in row["events"]] == ["reconciled"]  # journaled before the trip
+    assert row["filled_qty"] == overfilled
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached", "O-attached"]
+
+
+def test_a_ledger_ahead_of_the_venue_trips_and_names_both_figures(tmp_path, kill_trip_expected):
+    """The dangerous direction: the ledger claims more filled than the venue reports, which makes
+    the engine believe it reduced more than it did. Clamping it to zero would swallow exactly that
+    signal, so the arm exists to trip -- and the reason carries BOTH figures, because an operator
+    reading it mid-incident cannot get the venue's number from anywhere else in this process."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, ledgered_filled=0.0006, venue_filled=0.0002)
+
+    ex.on_timer(NOW)
+
+    reason = _kill_file(tmp_path).read_text()
+    assert "0.0006" in reason and "0.0002" in reason and "O-attached" in reason
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["events"] == [] and row["filled_qty"] == 0.0006  # nothing was written down for it
+
+
+def test_an_order_that_closed_while_the_process_was_down_is_repaired_and_given_its_terminal_state(tmp_path):
+    """The window the pre-D7 early return could not reach at all: `orders_open` is EMPTY, so the
+    pass used to return before reading a single row, and this order's row kept a stale quantity and
+    an open state forever. Reached now through the wide read, it is repaired AND closed, and its row
+    is attached -- so a late duplicate event for it lands matched rather than counted as a settle."""
+    ex, client, earlier = _reconciling_executor(tmp_path, venue_filled=0.001, closed_status=OrderStatus.FILLED)
+    assert client.cache.orders_open() == []  # the construction: nothing is resting
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.001
+    assert [e["event"] for e in row["events"]] == ["reconciled"]
+    assert row["state"] == "filled"
+    assert "O-attached" in ex._attached
+    assert client.canceled == []  # nothing resting to classify, and a closed order is never cancelled
+    assert metrics.orders == ["filled"]
+
+
+def test_a_cancel_that_landed_while_the_process_was_down_closes_its_row_without_a_repair(tmp_path):
+    """The commonest closed-while-down shape, and the one a naive `if delta == 0: continue` skips
+    forever: an order canceled with zero fills has no delta at all, so the terminal write has to be
+    independent of all four comparison arms. `canceled` makes no we-requested claim here -- nothing
+    at startup can tell a venue cancel from one the previous process sent."""
+    ex, client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0, closed_status=OrderStatus.CANCELED)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["events"] == []  # no repair: there was no delta
+    assert row["state"] == "canceled"  # and the row is closed anyway
+    assert row["filled_qty"] == 0.0
+    assert "O-attached" in ex._attached
+    assert metrics.orders == []  # a terminal state moves no order-outcome counter, as on the D2 path
+    assert client.canceled == []
+
+
+def test_the_startup_terminal_map_is_total_over_the_librarys_own_closed_statuses():
+    """Totality against the installed library rather than against a hand-written list: an order
+    status the map does not carry leaves a closed order's row open forever, and the failure is
+    silent. The closed set lives in `Order.is_closed_c`, compiled and unreachable from Python, so
+    its own property docstring -- the list the library maintains and a version bump would move -- is
+    the domain. The parse is asserted non-empty first: a docstring reformat must fail loudly here
+    rather than hand this test an empty set to trivially satisfy."""
+    documented = re.findall(r"``([A-Z_]+)``", Order.is_closed.__doc__ or "")
+    assert len(documented) >= 5
+    closed = {getattr(OrderStatus, name) for name in documented}
+
+    assert set(executor_module._ADOPTED_TERMINAL_STATES) == closed
+    assert set(executor_module._ADOPTED_TERMINAL_STATES.values()) <= execledger_module._ROW_STATES
+
+
+def test_a_repair_then_an_external_fill_for_the_remainder_completes_the_row_exactly_once(tmp_path):
+    """D7 meeting D1, the sequence where a mis-mirror costs money. The sweep repairs the down-window
+    partial and the subscription delivers the remainder: the row must read the full ledgered
+    quantity, state `filled`, counted once, with no trip. Unmirrored, the repair never moves the
+    trip base and the completion never fires; double-mirrored, this fill overshoots and false-kills.
+    Both are invisible to a test that only reads the STORED row."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0004)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex.on_timer(NOW)
+    assert metrics.orders == []  # 0.0004 of 0.001: nothing completed yet
+
+    ex.on_external_order_event(_fill("O-attached", 0.0006))
+
+    assert not _kill_file(tmp_path).exists()
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == pytest.approx(0.001)
+    assert row["state"] == "filled"
+    assert [e.get("event") for e in row["events"]] == ["reconciled", "fill"]
+    assert metrics.orders == ["filled"]
+
+
+def test_a_later_fill_on_a_row_a_repair_completed_trips_the_overfill_arm(tmp_path, kill_trip_expected):
+    """The mirror of the sequence above, and what proves the repair moved the TRIP BASE rather than
+    merely a stored number: once the sweep has completed the row, the next fill is an overfill and
+    must latch. Without the mirror this fill would read as the row's first 0.0002 and pass."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.001)
+    ex.on_timer(NOW)
+    assert not _kill_file(tmp_path).exists()
+
+    ex.on_external_order_event(_fill("O-attached", 0.0002))
+
+    assert _kill_file(tmp_path).exists()
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e.get("event") for e in row["events"]] == ["reconciled", "fill"]  # the tripping fill is recorded
+    assert row["filled_qty"] == pytest.approx(0.0012)
+
+
+def test_a_repair_that_cannot_be_journaled_still_leaves_the_resting_opener_canceled(tmp_path, monkeypatch):
+    """The sweep introduces raising calls the pass never had, and `_adopted` is set before it -- so
+    an escape would leave a previous process's resting opener working at the venue, uncanceled and
+    unattached, for the life of this process. The write is wrapped where it is made, so it logs and
+    classifies anyway. Guard-proving: WHICH log line fired is read, not just that one did."""
+    ex, client, _earlier = _reconciling_executor(tmp_path, venue_filled=0.0004, client_order_id="O-opener", reduce_only=False)
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _raise)
+    with _executor_errors(logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]
+    assert [r.getMessage() for r in records] == ["the repair for adopted order O-opener could not be journaled"]
+    assert records[0].exc_info is not None
+
+
+def test_a_row_the_sweep_cannot_read_at_all_is_logged_and_the_pass_classifies_anyway(tmp_path):
+    """The per-row wrapper's own proof, kept separate from the ledger-write one now that each write
+    is wrapped where it is made: this failure is upstream of every write, in the read of the venue's
+    own quantity, so only the outer wrapper can catch it. Delete that wrapper and the classification
+    pass dies here, leaving the opener working at the venue."""
+    ex, client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0004, client_order_id="O-opener", reduce_only=False)
+    ex._client.cache._open_orders[0].filled_qty = "not a quantity"
+
+    with _executor_errors(logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]
+    assert [r.getMessage() for r in records] == ["adopted row O-opener could not be reconciled against the venue"]
+    assert _record(tmp_path, earlier)["submitted"][0]["events"] == []  # nothing was written from an unreadable figure
+
+
+def test_a_ledger_that_cannot_be_written_never_costs_the_overshoot_trip(tmp_path, monkeypatch, kill_trip_expected):
+    """A ledger failure may never cost the trip -- `_record_trip_fill`'s ruling, and the reason its
+    own `try` is scoped to the write alone. The repair write comes FIRST on this arm, so a wrapper
+    spanning both would let a read-only journal swallow the latch: one CRITICAL logged, no kill file,
+    and the gate then reads normal over a live venue-vs-ledger divergence. The in-process quantity is
+    credited either way, since it tracks what filled rather than what could be written down."""
+    overfilled = 0.001 + 2 * executor_module._OVERFILL_TOLERANCE
+    ex, _client, _earlier = _reconciling_executor(tmp_path, venue_filled=overfilled)
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _raise)
+    with _executor_errors(logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    assert _kill_file(tmp_path).exists()
+    assert "O-attached" in _kill_file(tmp_path).read_text()
+    assert "the repair for adopted order O-attached could not be journaled" in [r.getMessage() for r in records]
+    assert ex._attached["O-attached"][1]["filled_qty"] == overfilled
+
+
+def test_a_ledger_that_cannot_be_written_never_costs_the_closed_orders_negative_delta_trip(
+    tmp_path, monkeypatch, kill_trip_expected
+):
+    """The same ruling on the arm where the preceding write is the TERMINAL one rather than a repair
+    -- a closed order whose row claims more filled than the venue reports. The negative arm journals
+    nothing itself, so nothing but the state write stands between this divergence and the latch, and
+    a wrapper spanning both would swallow exactly the dangerous direction."""
+    ex, _client, _earlier = _reconciling_executor(
+        tmp_path, ledgered_filled=0.0006, venue_filled=0.0002, closed_status=OrderStatus.CANCELED
+    )
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _raise)
+    with _executor_errors(logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    reason = _kill_file(tmp_path).read_text()
+    assert "0.0006" in reason and "0.0002" in reason
+    assert "the startup state for adopted row O-attached could not be journaled" in [r.getMessage() for r in records]
+
+
+def test_a_second_tick_after_the_startup_pass_reconciles_nothing_further(tmp_path):
+    """Idempotence is structural: the pass runs once per process, reads each order's `filled_qty`
+    exactly once, and journals a difference -- so a repeat tick has no second delta to find. A sweep
+    that re-ran would append the same repair again on every tick."""
+    ex, _client, earlier = _reconciling_executor(tmp_path, venue_filled=0.0004)
+
+    ex.on_timer(NOW)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e["event"] for e in row["events"]] == ["reconciled"]
+    assert row["filled_qty"] == 0.0004
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------
