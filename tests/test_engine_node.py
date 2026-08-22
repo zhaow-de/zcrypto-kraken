@@ -612,7 +612,9 @@ def test_the_strategy_claims_no_external_orders(tmp_path):
 # 00098 D1) -- a SECOND, filtered stream whose handler acts only on rows the engine's ledger vouches
 # for. A count rather than a path, because a file-level allowlist admits any further reach inside
 # the same file: one more `self.msgbus.subscribe` there, on a wildcard topic, would route EVERY
-# strategy's order events into the filter and nothing would say so.
+# strategy's order events into the filter and nothing would say so. What it counts is TEXT, not bus
+# reaches -- an alias (`bus = self.msgbus`) fans out from one occurrence -- so the wiring assertions
+# below, which pin the subscribed set exactly, are the other half of this guard, not a duplicate.
 _ORDER_STREAM_WIDENERS = {
     "external_order_claims": {},
     "msgbus": {"cli/engine/node.py": 1},
@@ -757,6 +759,14 @@ def test_node_config_mirrors_iter_079_probe_shape(tmp_path):
     # as would the adapter's own "USDT" default. Pinned so neither an upstream default change nor
     # a plausible-looking "EUR" correction can silently empty spot position reporting.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
+    # The two exec-engine knobs the adopted-order path rests on. `filter_unclaimed_external_orders`
+    # is the quiet one: flipped, reconciliation returns None for VENUE-tagged unclaimed orders, so
+    # the adopted order never enters the cache -- the startup pass neither attaches nor cancels a
+    # previous process's resting order, the kill sweep cannot reach it, and nothing logs above
+    # WARNING. The stub-cache tests cannot see it (they never run reconciliation), so the pin is
+    # the only guard, and it is aimed at a future upstream default flip.
+    assert config.exec_engine.reconciliation is True
+    assert config.exec_engine.filter_unclaimed_external_orders is False
 
 
 def test_node_config_has_no_exec_client_by_default(tmp_path):

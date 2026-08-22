@@ -284,9 +284,14 @@ def _node_config(config: EngineConfig) -> TradingNodeConfig:
     return TradingNodeConfig(
         trader_id=_TRADER_ID,
         logging=LoggingConfig(log_level="INFO"),
-        # Explicit (it is the library default) because the iter-079 memo names reconciliation as
-        # part of the verified harness shape — live exactly when exec_enabled flips on at deployment.
-        exec_engine=LiveExecEngineConfig(reconciliation=True),
+        # Both explicit (both are library defaults) because both are load-bearing here.
+        # Reconciliation: the iter-079 memo names it part of the verified harness shape — live
+        # exactly when exec_enabled flips on at deployment. filter_unclaimed_external_orders:
+        # filtering would drop VENUE-tagged unclaimed orders out of the cache entirely, so the
+        # startup pass would neither attach nor CANCEL a previous process's resting order, the
+        # kill switch's cancel sweep could not reach it either, and the whole external-events
+        # path would go dark without one ERROR anywhere. Pinned by the config-shape test.
+        exec_engine=LiveExecEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False),
         data_clients={KRAKEN: KrakenDataClientConfig(instrument_provider=InstrumentProviderConfig(load_all=True))},
         exec_clients=exec_clients,
     )
