@@ -215,6 +215,28 @@ and the class docstring extended: the claim list is still empty and the own-topi
 
 ---
 
+### Task 7: The adopt pass reconciles against venue truth (spec D7 -- added after the whole-branch review)
+
+**Files:** Modify `cli/engine/executor.py` (`_adopt_resting_orders` only -- its body, untouched by this branch until now), `tests/test_engine_executor.py` (new tests + the existing adopt fixtures' stub cache).
+
+**Interfaces:** consumes `_OVERFILL_TOLERANCE`, `_ordered_qty`, `_mirror_row_fill`, `_trip_kill`, `_inc_order`, `update_submitted_row`, `_EXTERNAL_TERMINAL_STATES`'s vocabulary. Produces no new public name.
+
+- [ ] **Step 1: Read the installed source before writing anything.** Confirm from `.venv/lib/python3.14/site-packages/nautilus_trader/`: (a) `Cache.orders(venue=...)` returns closed orders as well as open ones -- name the signature you read; (b) how an order's terminal status is read from the object (the accessor and the enum's spelling), since the row's terminal state is mapped from it; (c) that `Order.filled_qty` is a `Quantity` and `float()` of it is exact for the venue's own quantities. Record all three in the report. If (a) is false, STOP and report -- the closed-while-down sweep has no source and the task's shape changes.
+- [ ] **Step 2: Write the failing tests FIRST**, one per D7 disposition, against the existing adopt fixtures (`tests/test_engine_executor.py`'s stub cache -- extend it to answer `orders(venue=...)` alongside `orders_open`, and give its order objects a settable `filled_qty`):
+  - positive delta journals: row ordered 0.001, ledgered `filled_qty` 0.0, cache order `filled_qty` 0.0004 -> after `on_timer`, the stored row reads 0.0004, carries a reconciliation event naming the delta, and `_attached`'s in-memory row mirrors it.
+  - a delta that COMPLETES: cache order `filled_qty` == ordered -> row state `filled`, `_inc_order("filled")` counted exactly once.
+  - a delta that OVERSHOOTS: cache order `filled_qty` above ordered + tolerance -> kill latched, and the repair still journaled (no-record-without-the-fill).
+  - NEGATIVE delta: ledgered `filled_qty` above the cache order's -> kill latched.
+  - closed-while-down: `orders_open` returns EMPTY, `orders` returns one CLOSED order matching an open row -> row repaired AND given its terminal state; this is the case that proves the early return moved.
+  - idempotence: a second `on_timer` after `_adopted` changes nothing (no second append).
+  - untouched: a row whose `filled_qty` already equals the cache order's gets NO write at all (the common clean restart must stay silent).
+- [ ] **Step 3: Run them and read WHICH assertion fails** on each -- a test that fails for a missing stub method has proven nothing yet.
+- [ ] **Step 4: Implement in `_adopt_resting_orders`.** Order of operations: read the wide order list (failure -> the existing critical-log-and-return, `_adopted` NOT set); set `_adopted`; read rows; **reconcile sweep**; then the existing classification loop over the resting list only, unchanged. The `if not resting: return` early-out MOVES to after the sweep -- the closed-while-down case has no resting orders by definition. Keep every existing log line and cancel behaviour byte-identical.
+- [ ] **Step 5: Green, then the guard proofs.** Run the new tests plus the whole adopt/trip suite. Then, via `infra/scripts/mutate-probe.sh` (one at a time, reading WHICH assertion fires): delete the mirror -> the trip-base test bites; clamp the negative delta to zero -> the negative-delta test bites; leave the early return where it was -> the closed-while-down test bites.
+- [ ] **Step 6: Docstring + commit.** `_adopt_resting_orders`' docstring gains the reconcile paragraph (it currently states the D1 story as the whole story). Commit `feat(engine): the adopt pass reconciles each row against venue truth`.
+
+---
+
 ### Task 6: Closeout — **the orchestrator's, not a subagent's**
 
 - [ ] T0142 → `resolved` + archive + index (topic-ops mechanics; the `ripe_when` never fired — resolved by owner fiat ahead of ripeness, say so); memo updated; iterations-history entry (the two-machine claim discipline: every number from the tests, none invented).
