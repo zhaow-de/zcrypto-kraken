@@ -103,7 +103,9 @@ The pipeline is in good shape for the strategy already researched (1d/4h) but ha
 
 **A new defect this surfaced, worth its own attention.** `docs/research/12.phase5-system-spec-runbook.md` states `45275ebe = sha256(daily manifest ‖ 4h manifest)`. Read literally as those two digests it **does not reproduce** across ~100 tested forms. So a committed doc states a recipe that does not verify — it is describing semantics, not an executable rule, and a forward-fix must not treat it as one.
 
-## Suggested next steps (dedicated rounds — pick when ripe; split into own specs when taken)
+## Suggested next steps
+
+_Dedicated rounds — pick when ripe; split into own specs when taken._
 
 - **Fine-cadence reach round — the ingest half only.** Ingest the 2026 Q2 (+ early Q3) OHLCVT dumps to extend the frozen canonicals past 2026-03-31 and to supply the 1h/15m history inside Q2 that no other source can. Ripe when those dumps publish (absent 2026-08-10). The materializer half is done — see `## Done so far`; its settle-vs-heal-complete question, which [[T0066]] bound this round to answer, was answered by measurement rather than by copying the panel's shape.
 - **Already tracked — do NOT duplicate here:** durability + catalog rewrite → **OPS-6 / spec 00056 (done, iter-103)**; deployable doc drift → **[[T0063]] (resolved 2026-07-19)**; deployable out-of-sample validation → **[[T0064]]**.
