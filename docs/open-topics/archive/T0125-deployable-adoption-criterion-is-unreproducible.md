@@ -8,7 +8,7 @@ status: resolved
 
 Registry record **44** is the deployable. Its registered verdict is not "beats the benchmark" — it is **ADOPT *vs incumbent trial 43***, recorded in the row itself as "1.5609 ≥ 1.5366". That comparison is the criterion the live book's selection actually rests on.
 
-Trial 43 cannot be rebuilt. Discovered 2026-08-03 while working [[T0090]], which had registered the re-read of that ordering as a *"cheap, autonomous"* next step:
+Trial 43 could not be rebuilt from anything in version control — and on 2026-08-21 its original runners were recovered from a session transcript and verified ([[T0148]]); the paragraphs below are the 2026-08-03 finding as it stood, correct about git and the filesystem, wrong about the transcripts nobody had checked. Discovered 2026-08-03 while working [[T0090]], which had registered the re-read of that ordering as a *"cheap, autonomous"* next step:
 
 - `git log --all -S"adaptive" -- cli/` returns **nothing** — the sleeve-level adaptive weighting was never committed, on any branch.
 - Both trials' `run_ref` name **scratchpad** scripts: trial 43 → `iter-080 trial43/crossfreq_run.py + crossfreq_stage2.py + stage1b_verify.py (scratchpad)`, trial 44 → `iter-081 trial43/trial44_run.py + trial44_write.py (scratchpad)`. Scratchpads are session-scoped; these are gone.
@@ -18,7 +18,7 @@ The asymmetry is the whole point: **trial 44 IS reproducible from committed code
 
 ## Why this matters
 
-**Any question that reaches back through the ADOPT comparison is permanently unanswerable.** Not merely expensive — unanswerable, because the instrument does not exist and cannot be recovered. The concrete one already blocked: T0090 measured that the record's cost basis moves ±30–40 % on the maker-vs-taker decision, and the registry row itself discloses that at ×2.0 the 43-vs-44 ordering **reverses** (1.2106 vs 1.2400). Nobody can check where in the maker-taker range that reversal begins, because half the comparison is gone.
+**Any question that reaches back through the ADOPT comparison was, as ruled here, unanswerable — the instrument did not exist anywhere consulted.** (It was later recovered from a session transcript and behaviourally verified on two machines; [[T0148]] owns that recovery and the re-opened measurement. The re-grounding below neither anticipated nor depends on it.) The concrete one already blocked: T0090 measured that the record's cost basis moves ±30–40 % on the maker-vs-taker decision, and the registry row itself discloses that at ×2.0 the 43-vs-44 ordering **reverses** (1.2106 vs 1.2400). Nobody can check where in the maker-taker range that reversal begins, because half the comparison is gone.
 
 **It is the [[T0065]] failure class, arrived at the worst possible place.** T0065's reproducibility round registered that "record 1 is not reproducible from committed code + manifest alone". That was a research record. This is the **deployable** — the one that takes real capital — and the specific thing that is unreproducible is its selection criterion.
 
@@ -44,7 +44,7 @@ The asymmetry is the whole point: **trial 44 IS reproducible from committed code
 
 **Ruled 2026-08-03 (owner): RE-GROUND the go/no-go on the benchmark-relative basis, and re-derive the remaining legs so the whole basis is measured rather than registry-asserted.** Both were done the same day.
 
-**The re-grounding.** Record 44's registered verdict is ADOPT *vs incumbent trial 43*, and that comparison is gone for good. But it was never the only thing holding the record up: record 44 also carries **benchmark-relative** legs, and those are reproducible. §12 now states that the gate rests on them. What the missing incumbent removes is the answer to *why this candidate rather than that one*; what it does not touch is *whether this candidate clears the bar* — and the second is what the gate reads.
+**The re-grounding.** Record 44's registered verdict is ADOPT *vs incumbent trial 43*, and at ruling time that comparison was gone from everywhere anyone had looked (it was later recovered — [[T0148]] — which changes nothing about this re-grounding). But it was never the only thing holding the record up: record 44 also carries **benchmark-relative** legs, and those are reproducible. §12 now states that the gate rests on them. What the missing incumbent removes is the answer to *why this candidate rather than that one*; what it does not touch is *whether this candidate clears the bar* — and the second is what the gate reads.
 
 **The whole kill bar is now MEASURED, not asserted** — re-derived end to end from committed code, with the instrument validated before any leg counted:
 
@@ -70,8 +70,8 @@ Cost-stress (×1.5 → 1.3029, ×2.0 → 1.2106) was reproduced the same day in 
 
 **Two details spec `00038` never pinned are recorded in `cli/portfolio/record44_legs.py`** (recovered by re-derivation, each proved discriminating by mutation): the SPA grid's headline cell is `(mean_block 30, seed 42)`, whose full and decisive readings became `spa_p_full`/`spa_p_decisive` — which is why no `spa_grid_b30_s42` key exists; and the worst-slice test runs on the **governed net over full history**, year taken from each bar's **close** stamp.
 
-**What remains permanently lost, stated plainly:** the counterfactual. Nobody can ever re-read the 43-vs-44 ordering, including at the taker end where the registry itself discloses that the ordering reverses at ×2.0. The re-grounding does not recover that — it makes the gate not depend on it.
+**What this ruling treated as permanently lost turned out not to be.** On 2026-08-21 the scratchpad runners behind rows 43 and 44 were recovered verbatim from the iter-080/081 session transcript — read four minutes before the tooling's retention prune destroyed it — and the stage-1 driver reproduces row 43's registered figures exactly, on two independent machines ([[T0148]]). Trial 43's construction is now maintained code — `cli/portfolio/record43_book.py` with tests, exactly as `record44_legs.py` is record 44's — with the recovered original bytes reachable in git history. The 43-vs-44 re-read, including the maker–taker reversal point, was taken there on 2026-08-21: swept at a 0.002 step over \[×0.70, ×3.00\] the ordering changes sign 117 times, and neither book holds a durable lead anywhere in that range — both still lead within 0.01 of the ceiling. The counterfactual, in other words, does not discriminate at any cost basis. **The re-grounding above stands on its own merits and is not re-coupled to it**: the gate reads the benchmark-relative basis, exactly as ruled.
 
 ## Suggested next steps
 
-_(none — resolved. The forward guard is built (`dbe27e0b`), the go/no-go is re-grounded on a reproducible basis, and every leg of that basis is re-derived and committed. The lost counterfactual is not recoverable and is recorded as such.)_
+_(none — resolved. The forward guard is built (`dbe27e0b`), the go/no-go is re-grounded on a reproducible basis, and every leg of that basis is re-derived and committed. The counterfactual this ruling recorded as unrecoverable was later recovered and verified — [[T0148]] owns it — with the re-grounding unaffected.)_
