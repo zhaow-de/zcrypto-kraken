@@ -94,7 +94,15 @@ def test_external_terminal_event_closes_the_row_and_ends_tracking(...):
 
 def test_external_handler_never_raises_into_the_event_loop(...):
     # monkeypatch update_submitted_row to raise; deliver a matched fill; assert logged, no raise
+
+def test_external_dispositions_are_pinned_against_their_call_sites(...):
+    # the F7 pin, landing here WITH the call sites: mirror how _EXEC_ORDER_OUTCOMES is derived
+    # from _inc_order("...") call-site scanning, for _inc_external; also add the
+    # "pinned against that module's own call sites" clause to the tuple's comment (Task 1
+    # deliberately omitted it while it would have been false)
 ```
+
+- [ ] **Step 1b: The test fakes follow the contract** — `tests/test_engine_executor.py`'s hand-rolled metrics fakes (incl. `_RaisingMetrics`) gain `inc_external`; without it, `_inc_external`'s swallow turns a wiring regression into a silently-vacuous assertion (Task 1's review named the direction). One of Task 2's unmatched-path tests must assert the UNMATCHED label moved — that call site also closes the reviewer's probe E (a helper ignoring its argument currently survives).
 
 - [ ] **Step 2: Implement:**
 
@@ -195,7 +203,7 @@ and the class docstring extended: the claim list is still empty and the own-topi
 
 **Files:** Modify `infra/ansible/roles/capture/files/config.alloy` (the keep-regex — add `zcrypto_exec_external_events_total` beside the other `zcrypto_exec_*` families), `tests/test_infra_alloy_series.py` (the engine section's hand-pinned list + any count comments — count the names yourself; that comment has been wrong three times), `infra/grafana/engine-dashboard.json` (a target on whichever panel carries the exec counters; the charted-family guard names the panel when it goes red).
 
-- [ ] Red-first: run `uv run pytest tests/test_dashboards_cover_metrics.py tests/test_infra_alloy_series.py -q` after Task 1's counter exists — the charted-family guard must go red naming the new family; fix forward from there. Commit `feat(obs): admit and chart the external-events family`. **Deploy note for the closeout, verbatim from the spec: the engine converge that ships this must run `--tags capture,engine` with both currently-running digests — the keep-regex lives in the capture role.**
+- [ ] Red-first: after Task 1's counter exists there are **three** expected reds, not two (Task 1's review proved the third): the charted-family guard, the alloy admission test, and `tests/test_infra_alert_rules.py::test_every_fault_signal_metric_is_watched_by_a_rule[zcrypto_exec_external_events_total]` — that test derives fault signals from the capture keep-regex minus `NOT_A_FAULT_SIGNAL`, so the moment the family joins the regex it demands an alert rule or a reasoned exclusion. The ruling: add a `NOT_A_FAULT_SIGNAL` entry beside the other exec instruments, reusing their attended-window-instrument reasoning — this counter is a forensic instrument, not a fault signal; a nonzero unmatched count is information, not a page. Fix all three forward from red. Commit `feat(obs): admit and chart the external-events family`. **Deploy note for the closeout, verbatim from the spec: the engine converge that ships this must run `--tags capture,engine` with both currently-running digests — the keep-regex lives in the capture role.**
 
 ---
 
