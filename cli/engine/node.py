@@ -157,9 +157,10 @@ class ShadowStrategy(Strategy):
     `events.order.EXTERNAL` is ADDITIONALLY subscribed (spec 00098 D1), and neither half of that
     scoping moves. The claim list stays empty, so the own topic still carries only orders this
     engine submitted and the unknown-order trip still runs only there. The new topic reaches
-    `_on_external_order_event` -> the executor's disposition filter, which acts only on the resting
-    orders the adopt pass re-attached from this engine's OWN ledger -- everything else it counts,
-    logs, and drops before any row write, cancel, or trip arithmetic. So the hand settle remains
+    `_on_external_order_event` -> the executor's disposition filter, which acts only on the orders
+    this engine's own ledger vouches for -- the rows the adopt pass re-attached and this session's
+    own submissions -- and everything else it counts, logs, and drops before any row write, cancel,
+    or trip arithmetic. So the hand settle remains
     structurally unable to reach the trip: it matches no ledgered row, and no widening of the claim
     list is what admits it. tests/test_engine_node.py pins each of these.
     """

@@ -385,9 +385,10 @@ class RecordingExecutor:
 
 class RecordingMsgBus:
     """The strategy's `self.msgbus` at the wiring seam: records every (topic, handler) pair the
-    strategy subscribed. A real nautilus MessageBus is only reachable after a registration this
-    suite never performs -- the library-boundary test below constructs a real one directly instead,
-    so this stub carries no assumption about the bus's own behaviour, only about what we ask of it."""
+    strategy subscribed. Deliberately a stub and not the real bus, so these wiring tests carry no
+    assumption about the bus's own behaviour, only about what we ask of it -- the two
+    library-boundary tests below use a REAL MessageBus (one constructed directly, one reached
+    through an actual nautilus registration) to pin the parts a stub cannot speak for."""
 
     def __init__(self):
         self.subscriptions: list[tuple[str, object]] = []
@@ -604,32 +605,36 @@ def test_the_strategy_claims_no_external_orders(tmp_path):
         assert strategy.config.external_order_claims is None
 
 
-# Each banned text mapped to the cli/ paths deliberately allowed to carry it.
+# Each banned text mapped to the cli/ paths deliberately allowed to carry it, and HOW MANY times.
 # `external_order_claims`: allowed NOWHERE. A claim is what would route the account owner's own
 # hand-placed settling fills onto the strategy's OWN order topic and straight into the trip.
-# `msgbus`: allowed in exactly node.py, for the `events.order.EXTERNAL` subscription (spec 00098 D1)
-# -- a SECOND, filtered stream whose handler acts only on rows the engine's ledger vouches for. The
-# allowlist is the whole point of the widening: reaching the raw bus anywhere else is still the
-# unreviewed act this guard exists to catch.
+# `msgbus`: allowed exactly ONCE, in node.py, for the `events.order.EXTERNAL` subscription (spec
+# 00098 D1) -- a SECOND, filtered stream whose handler acts only on rows the engine's ledger vouches
+# for. A count rather than a path, because a file-level allowlist admits any further reach inside
+# the same file: one more `self.msgbus.subscribe` there, on a wildcard topic, would route EVERY
+# strategy's order events into the filter and nothing would say so.
 _ORDER_STREAM_WIDENERS = {
-    "external_order_claims": (),
-    "msgbus": ("cli/engine/node.py",),
+    "external_order_claims": {},
+    "msgbus": {"cli/engine/node.py": 1},
 }
 
 
 def test_no_module_widens_the_engines_order_event_stream():
     """The structural half of the same property, as a text walk (the D4 pin's shape): nothing under
     cli/ may claim external orders, nor reach past the strategy's own subscription onto the raw
-    message bus outside the one allowlisted file. Text, not imports -- a reference in a comment is
-    one a refactor can activate."""
+    message bus beyond the one allowlisted occurrence. Text, not imports -- a reference in a comment
+    is one a refactor can activate. The allowance is a COUNT, so a second reach inside the
+    allowlisted file is an offender like any other; and the walk asserts it found the tree at all,
+    since `Path("cli").rglob` off-root yields nothing and would pass everything."""
     offenders = []
-    for path in sorted(Path("cli").rglob("*.py")):
+    files = sorted(Path("cli").rglob("*.py"))
+    assert len(files) > 100, f"the walk found only {len(files)} files -- vacuous"
+    for path in files:
         text = path.read_text()
-        offenders.extend(
-            f"{path.as_posix()}: {name}"
-            for name, allowed in _ORDER_STREAM_WIDENERS.items()
-            if name in text and path.as_posix() not in allowed
-        )
+        for name, allowed in _ORDER_STREAM_WIDENERS.items():
+            n = text.count(name)
+            if n > allowed.get(path.as_posix(), 0):
+                offenders.append(f"{path.as_posix()}: {name} x{n}")
     assert offenders == []
 
 
@@ -692,6 +697,46 @@ def test_the_external_topic_string_matches_the_installed_engines_format():
     # derivation under test, not a second copy of our literal.
     bus.publish(topic=f"events.order.{fill.strategy_id}", msg=fill)
     assert received == [fill]
+
+
+def test_a_really_registered_strategy_subscribes_the_external_topic_the_library_itself_derives(tmp_path):
+    """The other half of that boundary. Every other `on_start` test here drives a stub, so
+    `self.msgbus` existing at `on_start` is read off the library's source rather than observed: this
+    one performs the nautilus registration the suite otherwise never performs and reads the REAL bus
+    back. Two properties, both of which a stub cannot carry: our (topic, handler) pair is actually
+    installed on the bus, and the topic we build is the one the LIBRARY's own register-time
+    subscription derives -- the strategy's own order topic with its id swapped for `EXTERNAL`. A
+    changed `events.order.` prefix therefore fails here, where comparing our f-string to a literal
+    would pass."""
+    from nautilus_trader.cache.cache import Cache
+    from nautilus_trader.common.component import MessageBus, TestClock
+    from nautilus_trader.model.identifiers import TraderId
+    from nautilus_trader.portfolio import Portfolio
+
+    executor = RecordingExecutor()
+    strategy = ShadowStrategy(
+        _config(tmp_path),
+        run_cycle_fn=lambda cycle_ts, *, config, venue_state=None: None,
+        clock=lambda: B08 + timedelta(minutes=5),
+        executor_factory=lambda s: executor,
+    )
+    trader_id = TraderId("SHADOW-001")
+    clock = TestClock()
+    bus = MessageBus(trader_id=trader_id, clock=clock)
+    cache = Cache()
+    strategy.register(trader_id, Portfolio(bus, cache, clock), bus, cache, clock)
+    # The registration is what puts `self.msgbus` there: without it on_start raises AttributeError
+    # on the subscribe line. (The startup cycle's snapshot logs one contained EngineError -- the
+    # Cache holds no instruments -- which is by design and not what this test reads.)
+    strategy.on_start()
+
+    subs = bus.subscriptions()
+    assert (node._EXTERNAL_ORDER_TOPIC, strategy._on_external_order_event) in [(s.topic, s.handler) for s in subs]
+    # The topic taken from the library's OWN subscription rather than restated: `Strategy.register`
+    # subscribes `handle_event` to this strategy's order topic, and ours is that topic with the id
+    # replaced by the external one.
+    own = {s.topic for s in subs if s.handler == strategy.handle_event}
+    assert node._EXTERNAL_ORDER_TOPIC in {t.replace(str(strategy.id), "EXTERNAL") for t in own}
 
 
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------

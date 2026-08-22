@@ -1158,11 +1158,16 @@ class ProbeExecutor:
         anywhere. Returns True when one fired, and the caller then drops the event: the plan is gone
         and nothing further may be decided from a fill that should not exist.
 
-        The unknown-order trip is STRATEGY-SCOPED, and that scoping is what makes it safe to have at
-        all: only this engine's own strategy's order events arrive here, so a sanctioned
-        account-external fill -- the owner settling a position by hand in the venue's UI, mid-probe
-        -- structurally never reaches this check and stays what it is, venue truth for reconciliation
-        to read. An account-wide listener would latch the kill switch on the probe's own final act.
+        The unknown-order trip only ever sees fills the engine's own ledger vouches for, and that is
+        what makes it safe to have at all: a sanctioned account-external fill -- the owner settling a
+        position by hand in the venue's UI, mid-probe -- must never reach this check, and stay what
+        it is, venue truth for reconciliation to read. Latching the kill switch on the probe's own
+        final act is the failure this scoping exists to prevent. Two paths reach here and each keeps
+        that scoping its own way: `on_order_event` carries only the strategy's own order topic, whose
+        events are by construction this engine's submissions; `_on_external_event` carries the
+        `events.order.EXTERNAL` topic, which is account-wide, and it is that method's unmatched
+        early-return -- no `_attached` row, so counted, logged, and dropped -- that keeps the hand
+        settle away from here. Delete that early-return and this trip becomes account-wide.
 
         Per-order before per-intent, because when both are true the per-order one is the more
         specific fact: it names the one order that did it, where the cross-order sum would send an
