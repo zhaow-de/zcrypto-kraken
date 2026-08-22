@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the mid-order reconciliation test needs a live 6b order round-trip to exist; the attended-reboot skill needs the T0081/T0084 skill family to be built
+ripe_when: a live 6b order round-trip exists, so a reboot can be staged mid-order-submission.
 ---
 
 # Unattended-upgrades auto-reboot policy for the live VPS
@@ -28,7 +28,7 @@ The capture/engine VPS runs `unattended-upgrades` configured to **auto-reboot at
 
 **The human ops decision is made: option (b) — attended reboots, capture VPSes only.** `zcrypto` and `zcrypto-red` get `Automatic-Reboot "false"`; ops keeps auto-reboot at 02:25 (its poller has recovered cleanly historically, and this keeps the standing manual duty minimal); the NAS is DSM — outside this regime either way. Security patches still auto-install; only the reboot becomes manual. Decided in the 2026-07-23 grooming session; **recorded now, executed later** — the flip rides its own small converge after `chore/topics-grooming` and PR #191 merge, never a rollout converge (one change at a time keeps rollout verification attributable).
 
-**Skill placement (asked and answered): a separate skill, not part of [[T0084]]'s rollout skill** — by T0084's own T0081-isolation precedent: different trigger (kernel flag vs new code), different procedure (no digest, no pre-staging, no bake), different failure mode (kernel doesn't come back vs bad application code). What they share is the post-disruption verification **tail** — factor T0084's healthcheck/abort/rollback checklist into a common reference both skills load when the skill family gets built.
+**Skill placement — asked, answered, and then OVERTAKEN by how the work actually landed (2026-08-22).** The ruling here was: a separate skill, not part of [[T0084]]'s rollout skill, by T0084's own T0081-isolation precedent — different trigger (kernel flag vs new code), different procedure (no digest, no pre-staging, no bake). That reasoning still holds against *folding it into* T0084. What it did not anticipate is that no skill was the right shape at all: the guidance shipped as operating-surface text in `docs/reference/fleet.md` § Reboots, including the verify-by-outcome checks. See the disposition under `## Done so far` below; nothing here is owed.
 
 The process the flip must come with (attended mode creates a new gap — a reboot flag nobody notices — so the harness is part of the decision, not an optional extra):
 
@@ -38,6 +38,8 @@ The process the flip must come with (attended mode creates a new gap — a reboo
 4. **Verify** — the shared checklist (T0084's runbook) plus the reboot-specific expectations: ~83 s capture gap is the measured norm (2026-07-11), containers self-restart via `restart: unless-stopped` + the systemd units.
 
 ## Done so far — the flip and its detector (2026-07-26)
+
+**The attended-reboot guidance shipped as operating-surface text, not as a skill (decided 2026-08-22, owner-approved).** This topic had asked for it as a sibling of [[T0081]]/[[T0084]]; both of those resolved and both skills exist, so that precondition fired. The work landed in a different shape: `docs/reference/fleet.md` § Reboots carries the whole discipline — secondary-before-primary canary order, the schedule constraints (≥1 h from any 4h bar boundary, off the hour, primary in the measured book-traffic trough, ≥1 h host separation, right after a completed engine cycle), the expected ~83 s capture gap, the alert that pages until the reboot happens, and — added in the same change, because this sub-item explicitly asked for it and § Reboots did not yet carry it — the verify-by-outcome checks a reboot owes. A skill was the wrong shape: `zcrypto-bump-alloy` and `zcrypto-captures-rollout` wrap multi-host rollouts with canary ordering and verification, whereas a reboot is a single attended act with no staging, no digest and no bake — its whole procedure is when to go and what to read afterwards, which is five bullets of reference text, not a skill. Same disposition the iter-140 probe-checklist items took: operating-surface text, not a registration.
 
 **The flip is live on both capture VPSes.** `Automatic-Reboot "false"`, verified on-host; `zcrypto-ops` still reads `"true"` at 02:25, untouched, because the role default preserves today's behaviour and only `group_vars/capture_host` overrides it. Patches still auto-install. Delivered by spec `00071`.
 
@@ -52,4 +54,3 @@ The process the flip must come with (attended mode creates a new gap — a reboo
 ## Suggested next steps
 
 - **(autonomous — a 6b requirement, still open) Confirm order-state reconciliation survives a reboot _mid-order-submission_.** The day-1 proof covers only the **shadow / data-only** cycle (exec disabled, no live orders); a reboot landing during a live 6b order round-trip is a distinct, untested path — [[T0018]].
-- **(when the skill family gets built)** The attended-reboot skill as a sibling of [[T0081]]/[[T0084]], sharing the post-disruption verification checklist as a common reference.

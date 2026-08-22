@@ -56,6 +56,7 @@ What runs where: host roles, data paths, mounts, replication, telemetry endpoint
 - **Reboot SECONDARY first, then primary** — the same canary order as an image rollout: if the kernel bricks the secondary, the primary is never touched.
 - Schedule: ≥ 1 h from any 4h bar boundary, off the hour boundary, primary in the measured book-traffic trough, ≥ 1 h host separation, and on the primary right after a completed engine cycle. Measure from the archive, don't guess. **And never inside a published Kraken maintenance window** — the ~83 s reboot gap landing inside one conflates two failure sources exactly where the ledger is least readable; same feed and same 2–6 day publication lag as the converge rule in `.claude/rules/capture-deploys.md`.
 - Expect a ~83 s capture gap; both containers self-restart.
+- **Verify by outcome before touching the next host** — the same checks a converge owes, which is why the reboot does not carry its own: every book stream's next `<HH>.parquet` begins at `:00:00.0x`, the NAS archive-pull loop's next pull reports `failed=0`, and `infra/scripts/continuity.py` on a PULLED copy shows no new truncated hours. On the primary, additionally: the next `cycle-<HH>.json` lands with `completed_at` inside `[B, B+30 min]`, and the restart marker is the container's `.State.StartedAt`, never the reboot command's return time.
 
 ## Telemetry labels
 
