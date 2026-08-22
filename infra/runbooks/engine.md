@@ -278,7 +278,7 @@ PY
 
    **This is also the one thing that can latch the kill switch at boot, before any plan is picked up.** Two divergences trip it, and they leave different evidence. **The venue reporting more filled than the row was ever submitted for** writes the repair into the row first and latches second, so the row carries a `reconciled` event and the kill file names both quantities. **The ledger claiming more filled than the venue reports** — the dangerous direction, since it means the engine believes it reduced more than it did — writes **nothing** into the row and latches immediately: there is no repair to make, and inventing one would erase the very figure that is in dispute. Do not read an unchanged row as evidence nothing happened; `sudo cat /var/lib/zcrypto-engine/exec/kill` names the order and both quantities in either case, and it is the only place the venue's figure is recorded on that direction. **One false-fire path is worth knowing before you touch a resting order in the Kraken web UI**: `editOrder` is cancel-replace, not an in-place amend — it produces a *different* order, and a replacement echoing the same client order id presents zero fills against a row that has them, which is exactly the ledger-ahead-of-the-venue trip. It would latch at the next restart rather than when you clicked, with nothing in the UI hinting at it, and the row it latched over will look untouched. `amendOrder` is in-place and does not have this shape.
 
-   **An event on that stream belonging to no ledgered row — your own hand settle in the Kraken UI is the one that matters — is counted under `zcrypto_exec_external_events_total{disposition="unmatched"}` and logged, and acted on nowhere**: no row write, no fill or order counter, no cancel, and no fill-time trip. That is the filter working as designed, not a gap: the settle is now visible in forensics instead of leaving no trace here at all, and it stays clear of the fill-time trips because it matches no ledgered row — which changes nothing about the position-reconciliation trip described under the settle preconditions below, whose input is the venue's position rather than an order event.
+   **An event on that stream belonging to no ledgered row — your own hand settle in the Kraken UI is the one that matters — is counted under `zcrypto_exec_external_events_total{disposition="unmatched"}` and logged, and acted on nowhere**: no row write, no fill or order counter, no cancel, and no fill-time trip. That is the filter working as designed, not a gap. What it does NOT settle is whether a hand settle produces an order event at all: the engine publishes reconciled orders' events unconditionally, but whether Kraken's settle-position act emits one on the adapter's streams has never been measured — so the counter is the instrument that will answer it at the first settle, not the answer. Read it then (step 6 below queries it): a rise means the settle reached this process as an order event and was correctly ignored; a flat counter means it did not, which is worth recording either way. It stays clear of the fill-time trips because it matches no ledgered row — which changes nothing about the position-reconciliation trip described under the settle preconditions below, whose input is the venue's position rather than an order event.
 
 5. **The owner clears the hold**: `sudo rm /var/lib/zcrypto-engine/exec/restart-hold`. Gate read → `level=none`, `reasons=arm_file_absent`.
 
@@ -375,6 +375,8 @@ The engine cannot do this — its adapter has no settle-position order type at a
 
 **The consequence of settling early — which is why those are preconditions and not advice.** One of the engine's automatic kill trips is deliberately **not** scoped to the engine's own orders: after an intent reaches a terminal state, the executor compares the venue's position in **that intent's instrument** against what its own fills account for, and trips on any difference larger than one lot step. A hand settle is, by construction, position movement the engine's fills do not account for — so a settle landing while an intent on the same symbol is running **can** trip it. It is not a certainty: the comparison is per-instrument, so a settle beside a *different* symbol's intent reaches it not at all, and whether a hand-placed settle propagates into the engine's position view in the first place is itself unproven on the installed adapter. That unpredictability is the point — you cannot reason your way to which side you will land on mid-window. And a trip is not recoverable inside one: the kill file latches, resting orders are canceled, every further intent is refused, the `zcrypto-engine-exec-kill-tripped` alert pages, and nothing continues until a human reads and deletes `/var/lib/zcrypto-engine/exec/kill`. Waiting for the close intent to be terminal with nothing in flight is what removes the question entirely — the preconditions are the protection here, not the trip.
 
+**Step 4b — record whether the settle propagated, before you move on.** The preconditions above route *around* the question of whether a hand-placed settle reaches the engine's position view, deliberately — but the window is the only place it can be observed, and observing it costs one read. After the settle, read the next `venue-<HH>.json`'s `positions` for the settled instrument and the engine's `zcrypto_exec_position` for it, and write both into the probe's decisions-log entry alongside the `unmatched` reading from step 6: propagated, did not, or the record could not tell. Nothing downstream depends on the answer — that is what the preconditions bought — so a surprising result is information, not a stop.
+
 **Step 5 — read the disposal quantity out of the ledger export.** Export the ledger again after the settle and read the BTC amount the settle credited. That figure — not a balance the engine reports, not an estimate — is the disposal plan's `qty`: whether a hand-placed settle propagates live into the engine's balance view is unproven, and a plan-carried quantity removes the dependency entirely. Floor it to the leg's lot step, which `probe-plan --check` prints; the check refuses a `qty` that is not a multiple of that step, and rounding **up** would put the sell over the balance.
 
 **Step 6 — the disposal plan: the engine sells the residual spot BTC, so the probe ends flat.** Again one intent in its own plan envelope:
@@ -402,19 +404,29 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 #### 6. Verify by outcome — the window is not closed until every line here reads true
 
 1. **Every intent has a terminal outcome and every order has a terminal state**, from the ledger read: each plan entry `accepted` with empty reasons, each intent carrying an outcome, each order row a terminal `state`.
+
 2. **Every fill carries its fee and its liquidity side**: each `fill` line shows `fee` with a `fee_currency`, and `liquidity` reading the word `maker` or `taker` — never a number.
+
 3. **Two rollover rows per position** in the Kraken ledger export.
+
 4. **The settle and then the disposal are visible in venue truth, read from the venue record written after the disarm converge's restart** — that restart is what forces the fresh account read, and it is the verified path. Take the restart time from `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine`, wait for the next 4-hourly boundary to write its record, then run the venue-truth read and confirm `snapshot_at` is later than that restart time. A record written before the restart is corroboration, never the gate.
+
 5. **The probe ends flat**: that record's `positions` carries **twelve** entries — one per basket leg, always, flat or not — and every one of them reads `0.0`. Count the keys and read the values: an absent key is not the flat state (a leg missing from the map means the snapshot never measured it, which is a fault to chase), and a non-zero value is not flat however small it looks. Its `balances` are EUR only, with any BTC remainder below the leg's `ordermin` (terminal dust, not a position).
+
 6. **The execution families are live in Grafana Cloud, read by value** from the workstation — a number in every case, never `(no series)`:
+
    ```
    uv run python infra/scripts/grafana-query.py \
      'zcrypto_exec_orders_total{host="zcrypto"}' \
      'zcrypto_exec_fills_total{host="zcrypto"}' \
      'zcrypto_exec_fees_eur_total{host="zcrypto"}' \
      'zcrypto_exec_position{host="zcrypto"}' \
-     'zcrypto_exec_realized_pnl_eur{host="zcrypto"}'
+     'zcrypto_exec_realized_pnl_eur{host="zcrypto"}' \
+     'zcrypto_exec_external_events_total{host="zcrypto"}'
    ```
+
+   The last one is the only family here whose **zero is a reading rather than a gap**: both dispositions are registered at startup, so `matched` and `unmatched` must both be present, and `(no series)` on it means the capture keep-regex did not ship rather than that nothing happened. Record `unmatched`'s value against the settle taken in step 4 — that is the measurement of whether a hand settle reaches this process as an order event at all.
+
 7. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
 
 ### Retire when
