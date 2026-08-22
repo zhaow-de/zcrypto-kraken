@@ -345,6 +345,15 @@ rules:
     notification_settings:
       receiver: metrics
 
+  # If you are here to add SCRAPE-level engine liveness (`up{job="engine_app"}`), scope it
+  # `host="zcrypto"` or derive the host from `engine_host`. The capture role renders ONE
+  # config.alloy to BOTH capture hosts, so `engine_app` is scraped on zcrypto-red too, where no
+  # engine runs and nothing listens on 9102: `up{job="engine_app",host="zcrypto-red"}` has read 0
+  # for every sample of its life (measured 336/336 hourly points over 30 days, 2026-08-22). An
+  # unscoped rule therefore pages forever on the secondary. Deliberately no such rule exists today
+  # -- engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-dead, and the
+  # healthchecks.io dead-man switch, and the scrape-level signal would add detection latency
+  # nothing currently needs. Revisit only if arming stops being episodic.
   - uid: zcrypto-engine-cycle-stale
     title: "Engine · cycles have stopped"
     ruleGroup: zcrypto-gate

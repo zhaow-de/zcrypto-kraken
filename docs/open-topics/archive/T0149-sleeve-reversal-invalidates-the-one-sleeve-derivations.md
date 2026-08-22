@@ -32,37 +32,48 @@ The placeability consequence is the one that could surprise in either direction:
 
 **Resolved 2026-08-22, the same day the transition landed, by measuring all three items rather than scaling them.** The instrument was validated before any new figure was trusted: `zcrypto engine accum-replay` over the registered window (2026-07-11 → 2026-08-02, the 2026-07-07 minimums snapshot the figures rest on) reproduces [T0116](T0116-stage6b-subphasing-amendment.md)'s registered band at €1,000 — **51.1 / 115.7 bps** against its recorded 51.2 / 115.7, with three of its four weekly means identical to the decimal (94.5 / 50.3 / 68.0; W31 reads 31.1 against 32.4 on two extra cycles this window catches).
 
-### The drift band, re-derived — and T0116's stated direction of staleness is falsified
+### The drift band, re-derived — and the initialisation sensitivity that nearly fooled it
 
-Re-run over 2026-08-15 → 2026-08-22 (46 cycles, the current minimums snapshot):
+Three runs at €1,000, and the difference between the first two is itself the finding:
 
-| NAV | placed | median bps | p95 bps | registered (one-sleeve) |
+| basis | n | median bps | p95 bps | placed |
 | --- | --- | --- | --- | --- |
-| €1,000 | 12/46 | **95.0** | **168.1** | 51.2 / 115.7 |
-| €2,500 | 20/46 | 6.8 | 58.3 | 11.6 / 30.9 |
-| €5,000 | 19/46 | 6.8 | 23.7 | 6.2 / 14.2 |
-| €10,000 | 21/46 | 2.0 | 12.7 | 4.3 / 8.9 |
+| standalone replay starting 2026-08-15 | 46 | 95.0 | 168.1 | 12/46 |
+| **the same 46 cycles, state carried from 07-11** | 46 | **53.9** | **146.3** | 11/46 |
+| registered window, same continuous run | 138 | 51.1 | 114.0 | — |
+| T0116's registered figures | 136 | 51.2 | 115.7 | — |
 
-**The band got WIDER at rung 3's own size — ×1.86 at the median and ×1.45 at p95** — and p95 worsened at every NAV. T0116 reasoned the opposite: *"a bigger book shrinks the relative floor, so a band left stale from today's one-sleeve ×0.5 state is too **wide**"*, with the danger being that degraded execution passes a gate it should not. Measured, the book roughly doubled and the floor grew, because the larger target moves still do not clear `ordermin` and so land in the drift instead of in an order. The stale band is therefore too **narrow**, and its failure direction is the safe one — it would fail execution that is actually fine, not pass execution that is not.
+`accumulation_payload` carries `held_qty` across cycles and **initialises it to zero at the window's first cycle**. Starting at 08-15 — the lowest-gross stretch in the journal — leaves legs that cannot be established from flat never closing their gap, so a standalone run carries a persistent additive offset that never decays. A live book is never flat; it is in the carried state. **The carried figures are therefore the ones a gate reading today would face, and the standalone pair overstates the floor.**
 
-One consequence worth stating plainly: the pre-registered 10 bps band is now unmet at p95 even at **€10,000** (12.7), where T0116 recorded it as just meetable at 8.9.
+**What survives the correction: the p95 widened ×1.28 (114.0 → 146.3). The median did not meaningfully move (51.1 → 53.9, ×1.05).** T0116 pinned **p95** as the gate's statistic — the edge is "the p95 of the per-cycle drift floor against that week's mean drift" — so the contradiction lands exactly where it matters, and only there.
 
-**What this window cannot support**, stated rather than glossed: it spans both the one-sleeve state at its raised gross and only four three-sleeve cycles, so it separates neither. A clean three-sleeve band needs T0116's own basis — **≥3 complete ISO weeks** in the new state — and the numbers above are the current *combined* floor, which is what a gate reading today would face.
+**The direction of staleness T0116 predicted is contradicted at p95, but its mechanism was right and mine was wrong.** T0116 reasoned that a bigger book shrinks the relative floor, so a stale band would be too *wide* and would pass execution it should fail. The first draft of this resolution claimed the opposite mechanism — that larger target moves "still miss `ordermin` and land in drift". That is refuted by the placement counts in the very same window: placement **rises** with gross (21 % of cycles over the registered window, 39 % over 08-19..08-21, 50 % on 08-22; on the engine's own book, 14 intended orders cleared both floors across 08-19..08-21 against zero across 08-15..08-18). T0116's mechanism visibly operates. What fails is the *inference* from it: the residual floor is not monotone in book size, because each asset's gap is bounded by a roughly fixed EUR amount (`ordermin × close`) that it saturates toward as the book grows. So the stale band is too **narrow at p95**, and its failure direction is the safe one — it fails execution that is actually fine rather than passing execution that is not.
 
-### Placeability, re-measured per leg — unchanged, and the binding floor was misidentified
+One consequence worth stating plainly: at the carried p95 the pre-registered 10 bps band remains unmet at every NAV measured, as it was before.
+
+**What this window cannot support**, stated rather than glossed: it spans the one-sleeve state at both low and raised gross plus only four three-sleeve cycles, and its own median book gross is **2.312 %** — *below* the registered window's 5.297 %, not double it. The doubling belongs to the last 22 cycles alone. A clean three-sleeve band needs T0116's own basis, **≥3 complete ISO weeks** in the new state.
+
+*(Percentile note: 146.3 is linear-interpolated over the 46 sliced cycles; a nearest-rank reading of the same data gives 148.1. The median and the placed count are identical either way.)*
+
+### Placeability, re-measured per leg — driven by target-move size, not by the composition, and the binding floor was misidentified
 
 Read from the engine's **own intended orders** in the journal (`orders.jsonl`), not re-derived:
 
+Swept over the **whole journal** — all 1,572 intended orders in all 256 journaled cycles, against the current snapshot: **63 orders (4.0 %) clear both floors, in 44 of 256 cycles.** Placement is not zero and it is not stable; it tracks the size of the target moves.
+
 | cycle | state | total intended | placeable |
 | --- | --- | --- | --- |
-| 2026-08-21 00:00 | one sleeve | €1.7368 | **0 of 10** |
-| 2026-08-21 20:00 | one sleeve | €0.2709 | **0 of 10** |
+| 2026-08-19 16:00 | one sleeve | €56.9080 | 5 of 10 |
+| 2026-08-20 00:00 | one sleeve | €21.3159 | 3 of 10 |
+| 2026-08-21 00:00 | one sleeve | €1.7368 | 0 of 10 |
+| 2026-08-21 20:00 | one sleeve | €0.2709 | 0 of 10 |
 | 2026-08-22 00:00 | three sleeves (the step) | €16.3490 | **0 of 10** |
-| 2026-08-22 12:00 | three sleeves | €1.7037 | **0 of 10** |
+| 2026-08-22 04:00 | three sleeves | €9.1254 | 0 of 10 |
+| 2026-08-22 12:00 | three sleeves | €1.7037 | 0 of 10 |
 
-**`ordermin`, not `costmin`, is what binds** — by one to two orders of magnitude — and neither T0116's chain nor this topic's own framing said so: `costmin` is €0.45 across all ten EUR legs, while `ordermin` is a base-unit floor (BTC 5e-05, DOGE 50, ADA 20). At the transition cycle seven of ten legs cleared `costmin` and **none** cleared `ordermin`.
+**`ordermin`, not `costmin`, is what binds** — by one to two orders of magnitude — and neither T0116's chain nor this topic's own framing said so: `costmin` is €0.45 across all ten EUR legs, while `ordermin` is a base-unit floor (BTC 5e-05, DOGE 50, ADA 20). At the transition cycle **nine** of ten legs cleared `costmin` — only DOGE at €0.1947 missed it — and **none** cleared `ordermin`.
 
-The transition cycle is the closest approach ever measured: the one-off rebalancing burst as two sleeves took position made it ~10× a normal cycle, and **BTC reached 4.7911331e-05 against a 5e-05 floor — 95.8 % of the way**. By the next cycle order sizes were back to their pre-transition magnitude.
+The transition cycle placed nothing, and its nearest miss was **BTC at 4.7911331e-05 against a 5e-05 floor, 95.8 %** — striking to look at, but **not a record**: the journal-wide maximum is **ETH/EUR at 749.2 % of its floor on 2026-08-19 16:00**, three days earlier and with one sleeve live. That cycle placed five of ten. The step's €16.35 is the fifth largest of the 28 cycles from 08-18 to 08-22, not an outlier, and the two cycles after it (€9.13, €7.19) stayed well above the €0.27–1.74 the first draft of this section called "normal" — that baseline was the two smallest cycles of one day.
 
 **The direction this topic originally speculated is refuted.** It said more sleeves at unchanged gross would spread exposure across more instruments and push individual notionals *down*. The leg count did not change: **ten legs carried non-zero weight before and after** (the two `/BTC` legs are structurally zero either way), so the new sleeves' exposure landed on the same instruments, and the step made orders larger, not smaller.
 

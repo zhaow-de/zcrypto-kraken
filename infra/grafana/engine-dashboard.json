@@ -989,7 +989,7 @@
       "id": 33,
       "type": "timeseries",
       "title": "Book-level intent — net vs gross target weight",
-      "description": "The quantitative consequence the composition alert warns about. A dormant sleeve re-arming roughly triples gross and invalidates the drift band derived under the previous composition, and this is the line on which that is measurable; the distance between net and gross is the book's directional lean. **Intended weights, not held.** Nothing alerts on either line, so neither carries a bar. Published only by the trading engine on the capture primary.",
+      "description": "The quantitative consequence the composition alert warns about. A dormant sleeve re-arming changes what the book IS; it does not by itself tell you gross moved (measured 2026-08-22: the count went 1 to 3 while the book rose x1.15, then fell below its starting point) and invalidates the drift band derived under the previous composition, and this is the line on which that is measurable; the distance between net and gross is the book's directional lean. **Intended weights, not held.** Nothing alerts on either line, so neither carries a bar. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
