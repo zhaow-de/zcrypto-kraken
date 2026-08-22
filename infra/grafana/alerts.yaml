@@ -344,6 +344,13 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+      # An ANNOUNCEMENT, not a fault -- the runbook opens with "Nothing is broken". Without this it
+      # inherits the default repeat and re-notifies every 4 h across the whole 26 h window: the
+      # 2026-08-22 composition change produced SIX pages for ONE event, which is how a channel gets
+      # ignored. Set to the rule's own window, so the announcement arrives once and repeats only if
+      # the condition still holds a full window later -- which can only mean the book changed
+      # AGAIN, and that is worth a second page.
+      repeat_interval: 26h
 
   # If you are here to add SCRAPE-level engine liveness (`up{job="engine_app"}`), scope it
   # `host="zcrypto"` or derive the host from `engine_host`. The capture role renders ONE
