@@ -1514,6 +1514,43 @@ def test_a_fee_the_caller_could_not_denominate_in_eur_counts_the_fill_but_not_th
     assert registry.get_sample_value("zcrypto_exec_fees_eur_total") == 0.0
 
 
+def test_external_events_counter_preregisters_both_dispositions():
+    """`unmatched` is the disposition that carries the signal, and it is the one whose ZERO has to be
+    a measured fact from the first scrape: an event the engine counted and ignored is the only trace
+    a fill on an order this engine's ledger does not vouch for ever leaves. A series that springs
+    into existence at the first such event reads identically to a scrape gap right up to the moment
+    it matters, and gives `rate()` no baseline to measure the step against. Both children therefore
+    exist at 0 before anything happens, and an event moves EXACTLY one of them -- a helper that
+    incremented both, or the wrong one, would report a matched adoption as an unvouched stranger."""
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    assert command._EXEC_EXTERNAL_DISPOSITIONS == ("matched", "unmatched")
+    before = {s.labels["disposition"]: s.value for s in _families(registry)["zcrypto_exec_external_events_total"].samples}
+    assert before == dict.fromkeys(command._EXEC_EXTERNAL_DISPOSITIONS, 0.0)
+
+    metrics.inc_external("unmatched")
+
+    after = {s.labels["disposition"]: s.value for s in _families(registry)["zcrypto_exec_external_events_total"].samples}
+    assert after == {"matched": 0.0, "unmatched": 1.0}
+
+
+def test_inc_external_routes_to_the_installed_metrics_and_is_a_noop_without_one():
+    """The executor-side half of the plumbing, `_inc_order`'s contract exactly: unset (a one-shot
+    subcommand, or any test that installs no hooks) it must be a silent no-op rather than an
+    AttributeError on the live trade path, and installed it must reach the SAME counter the
+    exporter serves."""
+    assert executor_module._metrics is None  # no hooks installed -- the default the guard protects
+    executor_module._inc_external("matched")  # must not raise
+
+    registry = CollectorRegistry()
+    executor_module.set_executor_hooks(metrics=command._ExecutionMetrics(registry))
+    executor_module._inc_external("matched")
+
+    assert registry.get_sample_value("zcrypto_exec_external_events_total", {"disposition": "matched"}) == 1.0
+    assert registry.get_sample_value("zcrypto_exec_external_events_total", {"disposition": "unmatched"}) == 0.0
+
+
 # --- the D5 ordering: a failing ledger writer starves the heartbeat -----------------------------
 
 ALERTS_YAML = Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml"

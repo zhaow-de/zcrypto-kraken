@@ -111,9 +111,9 @@ _metrics = None
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
     called `(verdict, evaluated_at=...)` after EVERY gate evaluation, `metrics` is an object with
-    `inc_order(outcome)`, `inc_fill(liquidity, fee_eur)`, `set_position(symbol, qty)` and
-    `set_realized(value)` (`command._ExecutionMetrics`). Neither can affect an order -- both are
-    wrapped."""
+    `inc_order(outcome)`, `inc_external(disposition)`, `inc_fill(liquidity, fee_eur)`,
+    `set_position(symbol, qty)` and `set_realized(value)` (`command._ExecutionMetrics`). Neither can
+    affect an order -- both are wrapped."""
     global _publish_verdict, _metrics
     _publish_verdict = publish_verdict
     _metrics = metrics
@@ -133,6 +133,15 @@ def _inc_order(outcome: str) -> None:
         return
     try:
         _metrics.inc_order(outcome)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _inc_external(disposition: str) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.inc_external(disposition)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
 
