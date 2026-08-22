@@ -331,9 +331,12 @@ rules:
     annotations:
       summary: >-
         The engine's sleeve composition changed — a dormant sleeve armed, or an active one went flat.
-        Portfolio gross moves materially with the number of active sleeves, so re-derive the drift band
-        and re-read order placeability before the next go-live gate reads either of them. Read
-        zcrypto_engine_sleeve_gross to see which sleeve moved.
+        Nothing is broken: this announces a change in what the book IS. It does NOT tell you gross
+        moved — each sleeve's gross is its own and they can move in opposite directions (measured
+        2026-08-22: the count went 1 to 3 while the book rose x1.15 and then fell below where it
+        started). Re-derive the drift band and re-read order placeability before the next go-live
+        gate reads either of them, and measure the gross rather than inferring it from the count.
+        Read zcrypto_engine_sleeve_gross to see which sleeve moved.
         Runbook: infra/runbooks/engine.md#zcrypto-engine-sleeve-count-changed
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "31"
@@ -345,12 +348,16 @@ rules:
     notification_settings:
       receiver: metrics
       # An ANNOUNCEMENT, not a fault -- the runbook opens with "Nothing is broken". Without this it
-      # inherits the default repeat and re-notifies every 4 h across the whole 26 h window: the
-      # 2026-08-22 composition change produced SIX pages for ONE event, which is how a channel gets
-      # ignored. Set to the rule's own window, so the announcement arrives once and repeats only if
-      # the condition still holds a full window later -- which can only mean the book changed
-      # AGAIN, and that is worth a second page.
-      repeat_interval: 26h
+      # inherits the default repeat and re-notifies every 4 h across the whole 26 h window, so ONE
+      # composition change pages about seven times, which is how a channel gets ignored.
+      #
+      # 12h, not the full 26h window, and the reason is a trade worth stating: a SECOND composition
+      # step does not mint a new alert instance -- the labels are identical and the count lives in
+      # an annotation, invisible to Alertmanager's dedup -- so the repeat interval IS the detection
+      # latency for a second step. 26h would have silenced this rule for a whole window; 12h caps
+      # one event at three pages while bounding that latency at half a window. Raising it further
+      # needs a distinguishing label so a second step mints its own instance.
+      repeat_interval: 12h
 
   # If you are here to add SCRAPE-level engine liveness (`up{job="engine_app"}`), scope it
   # `host="zcrypto"` or derive the host from `engine_host`. The capture role renders ONE
