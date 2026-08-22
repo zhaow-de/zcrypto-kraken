@@ -1646,9 +1646,16 @@ class ProbeExecutor:
         reason = getattr(event, "reason", None)
         if reason is not None:
             payload["reason"] = str(reason)
-        boundary, _row = attached
+        boundary, row = attached
         terminal_state = _EXTERNAL_TERMINAL_STATES.get(name)
+        if row.get("state") == "filled":
+            # A completed row is never demoted by a later or replayed terminal ack: the fills that
+            # completed it happened and `_inc_order("filled")` already counted them, and the venue
+            # can legitimately cancel the REMAINDER of an order whose ledgered quantity is full.
+            terminal_state = None
         update_submitted_row(self._journal_dir, boundary, client_order_id, state=terminal_state, event=payload)
+        if terminal_state is not None:
+            row["state"] = terminal_state  # the mirror the completion guard and D7 both read
 
     def _publish_fill(self, event) -> None:
         """The live view of the fill that just went into the ledger row -- same event, same numbers.

@@ -2485,6 +2485,36 @@ def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_r
     assert not _kill_file(tmp_path).exists()
 
 
+def test_a_terminal_ack_after_the_completing_fill_never_demotes_the_row(tmp_path):
+    """The row is COMPLETE, and no later terminal ack may un-say that. Completion is inferred from
+    the LEDGERED quantity, so a venue order can outlive it and be canceled afterwards -- the adopt
+    pass cancels a non-reducer adopted opener, the order fills its ledgered quantity in the race, and
+    the pass's OWN cancel ack arrives matched. An unconditional terminal write there rewrites
+    `state` to `canceled` on a row whose `filled_qty` is full and whose completion
+    `zcrypto_exec_orders_total{outcome="filled"}` has already counted -- and the row is terminal, so
+    it never re-attaches and the misstatement is permanent. That is exactly the counter-vs-record
+    disagreement `_publish_fill`'s docstring forbids, on the losing side it names.
+
+    Replayed acks reach here too, so this is not only a race: `engine.pyx` applies a non-fill event,
+    ignores the `InvalidStateTrigger` return, and publishes unconditionally -- the duplicate-fill and
+    overfill guards that protect fills do not cover terminal events."""
+    ex, _client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex.on_external_order_event(_fill("O-attached", 0.001))  # completes the ledgered quantity
+    assert metrics.orders == ["filled"]
+
+    ex.on_external_order_event(_named("OrderCanceled", client_order_id="O-attached"))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled"  # the completion stands; `canceled` here would be a lie
+    assert row["filled_qty"] == pytest.approx(0.001)
+    assert [e.get("event") or e.get("type") for e in row["events"]] == ["fill", "OrderCanceled"]  # still evidence
+    assert metrics.orders == ["filled"]  # counted once, and the record never contradicts it
+    assert ex._attached["O-attached"][1]["state"] == "filled"  # the mirror the guard itself reads
+    assert not _kill_file(tmp_path).exists()
+
+
 def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_row(tmp_path):
     """The venue positively says the cancel did NOT take, so the order may still rest: the event is
     evidence, the row keeps its open state, and the entry stays attached for the fill that can still
