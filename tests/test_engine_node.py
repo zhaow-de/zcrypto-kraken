@@ -614,7 +614,8 @@ def test_the_strategy_claims_no_external_orders(tmp_path):
 # the same file: one more `self.msgbus.subscribe` there, on a wildcard topic, would route EVERY
 # strategy's order events into the filter and nothing would say so. What it counts is TEXT, not bus
 # reaches -- an alias (`bus = self.msgbus`) fans out from one occurrence -- so the wiring assertions
-# below, which pin the subscribed set exactly, are the other half of this guard, not a duplicate.
+# EARLIER in this file, which pin the subscribed set by exact equality, are the other half of this
+# guard rather than a duplicate of it.
 _ORDER_STREAM_WIDENERS = {
     "external_order_claims": {},
     "msgbus": {"cli/engine/node.py": 1},

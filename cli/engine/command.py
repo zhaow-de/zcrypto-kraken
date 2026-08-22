@@ -645,7 +645,8 @@ class _ExecutionMetrics:
             "zcrypto_exec_external_events_total",
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
-            "means it belonged to no such order and was counted and ignored.",
+            "means it belonged to no such order and was acted on nowhere -- the account owner's own "
+            "hand settle, or equally activity nobody sanctioned.",
             ["disposition"],
             registry=registry,
         )
