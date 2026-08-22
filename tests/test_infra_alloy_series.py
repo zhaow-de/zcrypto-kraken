@@ -108,6 +108,12 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_fees_eur_total",
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
+    # The external-events counter is pinned on the same grounds and one more: it is the only
+    # observable of a restart adoption doing anything at all, and its `unmatched` label is the
+    # forensic trace of an event belonging to no vouched-for order. Dropped from the keep-regex it
+    # would read as a restart during which no external event ever arrived -- indistinguishable from
+    # the adoption working, in the one window an operator opens the board to check it.
+    "zcrypto_exec_external_events_total",
     "zcrypto_engine_limit_bound_total",
     # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
     # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,
