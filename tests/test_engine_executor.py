@@ -2109,10 +2109,12 @@ def test_a_post_restart_fill_on_a_re_attached_order_lands_in_its_own_boundarys_r
     appender must write the row's OWN boundary -- the row lives in the 08:00 record, four hours
     behind the tick that adopted it.
 
-    The event is injected DIRECTLY, which is the whole scope of the claim: on the live engine a
-    reconciled venue order is assigned the EXTERNAL strategy id and its events publish on a topic
-    this strategy is not subscribed to, so no such fill actually arrives here after a restart
-    (T0142). What this pins is the appender, not the delivery."""
+    The event is injected DIRECTLY into the own-topic handler, which is the whole scope of the
+    claim: what this pins is the appender and its boundary arithmetic, not the delivery. On the live
+    engine a reconciled venue order is assigned the EXTERNAL strategy id and its fills arrive on
+    `events.order.EXTERNAL` instead -- subscribed, matched against the re-attached rows, and handed
+    to this same appender at the end of it. That route is pinned by its own tests, here and in
+    tests/test_engine_node.py."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
     client = StubClient(StubCache(open_orders=[_open_order("O-attached")]))
