@@ -8,7 +8,8 @@ confusion at worst — the triggering example was a systemd unit announcing itse
 `zcrypto shadow engine (Phase 6a soak)`.
 
 - **In scope** — systemd `Description=`, CLI `--help`, CLI runtime output, Prometheus metric HELP
-  text, Grafana alert summaries and panel titles/descriptions, compose interpolation errors, README.
+  text, Grafana alert summaries and panel titles/descriptions/legends, compose interpolation errors,
+  README.
 - **Out of scope** — source comments, docstrings, `docs/`, commit messages. Cleansing those would
   destroy traceability for zero operator benefit.
 - **Log lines are deliberately out of scope.** They are the primary debugging surface and whoever
@@ -196,7 +197,9 @@ def _dashboard_texts() -> list[tuple[str, str, str]]:
 
     def walk(node, where, name):
         if isinstance(node, dict):
-            for key in ("title", "description", "content"):
+            # `legendFormat` renders beside every series on the panel — as operator-visible as the
+            # title above it, and it was unscanned until a token planted in one shipped unguarded.
+            for key in ("title", "description", "content", "legendFormat"):
                 if isinstance(node.get(key), str):
                     out.append((name, f"{where}.{key}", node[key]))
             for k, v in node.items():
@@ -212,7 +215,7 @@ def _dashboard_texts() -> list[tuple[str, str, str]]:
 
 
 def test_grafana_dashboard_text_carries_no_internal_vocabulary():
-    """Panel titles, descriptions and text panels are the operator's actual UI."""
+    """Panel titles, descriptions, series legends and text panels are the operator's actual UI."""
     found = [(f, where, hits) for f, where, text in _dashboard_texts() if (hits := _leaks(text))]
     assert not found, "\n".join(f"{f} {where} leaks {hits}" for f, where, hits in found)
 
