@@ -38,8 +38,13 @@ there is no substituted series to compare against.
 The original bytes stay reachable in git history — the deletion commit sits on top of the recovery,
 and this repo merges with merge commits. Retrieve them by PATH, which is stable across rebases:
 
-    git log --all --diff-filter=A -- 'docs/reference/trial43-recovered-runners/*'
+    git log --all --full-history --diff-filter=A -- 'docs/reference/trial43-recovered-runners/*'
     git show <that-commit>:docs/reference/trial43-recovered-runners/<file>
+
+`--full-history` is load-bearing, not decoration: without it git's default history simplification
+prunes the add-commit once the path is absent from the tip tree, the command prints NOTHING, and a
+reader concludes the bytes are gone. Verified on merged develop — the plain form returns empty, this
+form returns the recovery commit. Check what you retrieve against the sha256s below.
 
 sha256 of the five recovered ORIGINALS (the authenticity anchor now that they are not in HEAD):
 

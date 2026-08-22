@@ -210,6 +210,17 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_fees_eur_total",
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
+    # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
+    # order filling, which is the feature working, and `unmatched` says an order event belonging to
+    # no order this engine's ledger vouches for arrived and was acted on nowhere. It does NOT
+    # inherit the attended-window reasoning unexamined -- the siblings above move only when THIS
+    # engine acts, i.e. inside a window by construction, while `unmatched` can move on a third
+    # party's action at any hour (the sanctioned hand settle, but equally activity nobody
+    # sanctioned). It is excluded here because no rule should ship with it yet: the family has never been
+    # recorded in production, and a rule pushed before its metric's first sample pages a spurious
+    # no-data alert. Revisit once a live baseline exists -- the candidate is `unmatched` rising
+    # while `zcrypto_exec_armed` is 0, the one condition no human is positioned to see.
+    "zcrypto_exec_external_events_total",
     # A level-shift detail read on the board: the §10 whole-book limits binding is the limits doing
     # their job, not a fault. What would be a fault -- the book they shape going somewhere it should
     # not -- is the intent-side gauges' business, not this counter's.

@@ -608,6 +608,11 @@ _EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "
 # neither silently counting it as taker nor letting a third label appear at runtime is acceptable
 # when the maker-vs-taker split is the number this ladder exists to measure.
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
+# Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that
+# module's own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an
+# order event arriving on the external strategy topic that belongs to no order this engine's ledger
+# vouches for is counted and ignored, and this counter is the only trace it leaves.
+_EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
 
 
 class _ExecutionMetrics:
@@ -636,13 +641,27 @@ class _ExecutionMetrics:
             "zcrypto_exec_position", "Net position quantity by symbol, in base units.", ["symbol"], registry=registry
         )
         self.realized_pnl = Gauge("zcrypto_exec_realized_pnl_eur", "Realized profit and loss, in EUR.", registry=registry)
+        self.external_events = Counter(
+            "zcrypto_exec_external_events_total",
+            "Order events arriving on the external strategy topic, by disposition: matched means the "
+            "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
+            "means it belonged to no such order and was acted on nowhere -- the account owner's own "
+            "hand settle, or equally activity nobody sanctioned.",
+            ["disposition"],
+            registry=registry,
+        )
         for outcome in _EXEC_ORDER_OUTCOMES:
             self.orders.labels(outcome=outcome)
         for liquidity in _EXEC_LIQUIDITY_SIDES:
             self.fills.labels(liquidity=liquidity)
+        for disposition in _EXEC_EXTERNAL_DISPOSITIONS:
+            self.external_events.labels(disposition=disposition)
 
     def inc_order(self, outcome: str) -> None:
         self.orders.labels(outcome=outcome).inc()
+
+    def inc_external(self, disposition: str) -> None:
+        self.external_events.labels(disposition=disposition).inc()
 
     def inc_fill(self, liquidity: str, fee_eur: float | None) -> None:
         """`fee_eur is None` means the caller could not denominate the commission in EUR. The fill

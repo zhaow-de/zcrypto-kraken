@@ -1812,8 +1812,8 @@
     {
       "id": 61,
       "type": "timeseries",
-      "title": "Orders by outcome",
-      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue_canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), or ambiguous (the venue outcome could not be established). No alert reads this panel directly. Published only by the trading engine on the capture primary.",
+      "title": "Orders by outcome, and external order events",
+      "description": "Orders the executor submitted to the venue, split by what happened to each: submitted, accepted, rejected, venue_canceled (the exchange canceled it), canceled (we canceled it), filled, refused (the engine declined to submit it), or ambiguous (the venue outcome could not be established). The two `external event` series count order events arriving for orders this engine did not submit in this process: matched means the event belonged to an order adopted at restart that the engine ledger vouches for; unmatched means it belonged to no such order and was counted and acted on nowhere. Unmatched is not restart-specific and not by itself benign: it counts ANY order event this engine's ledger does not vouch for — the account owner's own hand settle in the venue UI, and equally activity nobody sanctioned. A rise you cannot attribute to something you did is worth investigating. Note also that a restart-adopted order completing counts under filled with no submitted behind it, because these counters reset with the process that submitted them. No alert reads this panel directly. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1833,6 +1833,15 @@
           "expr": "zcrypto_exec_orders_total{host=~\"$host\"}",
           "refId": "A",
           "legendFormat": "{{outcome}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_external_events_total{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "external event · {{disposition}}"
         }
       ],
       "fieldConfig": {

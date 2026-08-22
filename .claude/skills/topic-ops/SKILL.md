@@ -13,7 +13,7 @@ The file mechanics for `docs/open-topics/` — when-and-whether rules live ambie
 `docs/open-topics/T<NNNN>-<slug>.md`:
 
 - `<NNNN>` is a 4-digit zero-padded counter. Next serial = one above the highest existing serial across **both** `docs/open-topics/` **and `docs/open-topics/archive/`** (the `README.md` is excluded from the count) — so an archived (resolved) topic's serial is never reused. The counter is **independent** of `docs/specs/` and `docs/plans/` — open topics have their own sequence starting at `0000`.
-- **A serial claimed by unmerged work on another branch is taken.** Check the branches, not just the two directories (`git log --all --diff-filter=A --name-only -- 'docs/open-topics/T*.md'`), and skip it — a gap is free, a collision at merge is not.
+- **A serial claimed by unmerged work on another branch is taken.** Check the branches, not just the two directories (`git log --all --full-history --diff-filter=A --name-only -- 'docs/open-topics/T*.md'` — `--full-history` is load-bearing when this query is run standalone: default simplification prunes add-commits of topics later moved to `archive/`, whose serials the two-directory scan above already covers; the flag keeps the query complete on its own), and skip it — a gap is free, a collision at merge is not.
 - `<slug>` is the kebab-case topic title.
 
 ## Required file shape
