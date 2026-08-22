@@ -285,8 +285,12 @@ rules:
     # T0124: the deployable combines three sleeves at fixed 1/3 weights, and two of them (B, A1)
     # have held exactly zero for months -- correct behaviour for long-only sleeves in a sustained
     # downtrend, but it means the live book is structurally a ONE-sleeve book at a sixth of that
-    # sleeve's gross. The reversal is the event: B or A1 re-arming roughly TRIPLES gross, moves the
-    # placeability arithmetic, and invalidates the drift band derived under the one-sleeve state.
+    # sleeve's gross. The reversal is the event: it moves the placeability arithmetic and
+    # invalidates the drift band derived under the one-sleeve state. This comment used to predict
+    # that re-arming "roughly TRIPLES gross"; the 2026-08-22 transition falsified it -- the count
+    # went 1 -> 3 while book gross rose only x1.15, then fell below its starting point, because
+    # A2's own gross dropped as B and A1 armed. The composition change is the event; the gross
+    # change is a separate measurement (docs/reference/sleeve-composition-ledger.md).
     # Nothing observed the original transition -- it was found ~9 months later by a measurement
     # iteration that happened to decompose the book. This rule exists so the next one is announced.
     #
