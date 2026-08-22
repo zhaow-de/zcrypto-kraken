@@ -614,8 +614,10 @@ def run_cycle(
     result = build_crossfreq_system_fast(model_daily, model_daily_ts, model_h4, model_h4_ts)
     targets = _expand_to_basket({base: series[result.n_periods] for base, series in result.final_targets.items()})
     # The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
-    # is actually carrying exposure. Two have been flat for months, so a re-arming roughly triples
-    # gross -- the occupancy gauges exist so that is announced rather than discovered.
+    # is actually carrying exposure. Two were flat for months; the occupancy gauges exist so a re-arming is
+    # announced rather than discovered nine months later. They do NOT tell you gross moved: measured at the
+    # 2026-08-22 reversal, the count went 1 -> 3 while the final book rose only x1.15 and then fell below its
+    # starting point, because the incumbent sleeve's own gross dropped as the other two armed.
     sleeve_gross = {
         name: sum(abs(book[asset][result.n_periods]) for asset in book) for name, book in result.sleeve_positions.items()
     }

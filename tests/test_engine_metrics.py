@@ -492,7 +492,8 @@ def test_a_failed_cycle_leaves_the_last_target_weights_standing():
 # --- command.py: sleeve occupancy (T0124's rung-3 precondition) ------------------------------------
 # The deployable combines three sleeves at fixed 1/3 weights and two of them have been flat for
 # months. Nothing observed that, and nothing would observe them RE-ARMING either -- which roughly
-# triples portfolio gross. These two series make the composition, and any change to it, visible.
+# moves portfolio gross by an amount only measurement can give. These two series make the composition, and any
+# change to it, visible; they do not by themselves say what the gross did.
 
 SLEEVE_GROSS = {"B": 0.0, "A1": 0.0, "A2": 0.32}
 

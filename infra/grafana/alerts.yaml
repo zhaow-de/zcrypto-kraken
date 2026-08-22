@@ -285,8 +285,12 @@ rules:
     # T0124: the deployable combines three sleeves at fixed 1/3 weights, and two of them (B, A1)
     # have held exactly zero for months -- correct behaviour for long-only sleeves in a sustained
     # downtrend, but it means the live book is structurally a ONE-sleeve book at a sixth of that
-    # sleeve's gross. The reversal is the event: B or A1 re-arming roughly TRIPLES gross, moves the
-    # placeability arithmetic, and invalidates the drift band derived under the one-sleeve state.
+    # sleeve's gross. The reversal is the event: it moves the placeability arithmetic and
+    # invalidates the drift band derived under the one-sleeve state. This comment used to predict
+    # that re-arming "roughly TRIPLES gross"; the 2026-08-22 transition falsified it -- the count
+    # went 1 -> 3 while book gross rose only x1.15, then fell below its starting point, because
+    # A2's own gross dropped as B and A1 armed. The composition change is the event; the gross
+    # change is a separate measurement (docs/reference/sleeve-composition-ledger.md).
     # Nothing observed the original transition -- it was found ~9 months later by a measurement
     # iteration that happened to decompose the book. This rule exists so the next one is announced.
     #
@@ -327,9 +331,12 @@ rules:
     annotations:
       summary: >-
         The engine's sleeve composition changed — a dormant sleeve armed, or an active one went flat.
-        Portfolio gross moves materially with the number of active sleeves, so re-derive the drift band
-        and re-read order placeability before the next go-live gate reads either of them. Read
-        zcrypto_engine_sleeve_gross to see which sleeve moved.
+        Nothing is broken: this announces a change in what the book IS. It does NOT tell you gross
+        moved — each sleeve's gross is its own and they can move in opposite directions (measured
+        2026-08-22: the count went 1 to 3 while the book rose x1.15 and then fell below where it
+        started). Re-derive the drift band and re-read order placeability before the next go-live
+        gate reads either of them, and measure the gross rather than inferring it from the count.
+        Read zcrypto_engine_sleeve_gross to see which sleeve moved.
         Runbook: infra/runbooks/engine.md#zcrypto-engine-sleeve-count-changed
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "31"
@@ -340,7 +347,27 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+      # An ANNOUNCEMENT, not a fault -- the runbook opens with "Nothing is broken". Without this it
+      # inherits the default repeat and re-notifies every 4 h across the whole 26 h window, so ONE
+      # composition change pages about seven times, which is how a channel gets ignored.
+      #
+      # 12h, not the full 26h window, and the reason is a trade worth stating: a SECOND composition
+      # step does not mint a new alert instance -- the labels are identical and the count lives in
+      # an annotation, invisible to Alertmanager's dedup -- so the repeat interval IS the detection
+      # latency for a second step. 26h would have silenced this rule for a whole window; 12h caps
+      # one event at three pages while bounding that latency at half a window. Raising it further
+      # needs a distinguishing label so a second step mints its own instance.
+      repeat_interval: 12h
 
+  # If you are here to add SCRAPE-level engine liveness (`up{job="engine_app"}`), scope it
+  # `host="zcrypto"` or derive the host from `engine_host`. The capture role renders ONE
+  # config.alloy to BOTH capture hosts, so `engine_app` is scraped on zcrypto-red too, where no
+  # engine runs and nothing listens on 9102: `up{job="engine_app",host="zcrypto-red"}` has read 0
+  # for every sample of its life (measured 336/336 hourly points over 30 days, 2026-08-22). An
+  # unscoped rule therefore pages forever on the secondary. Deliberately no such rule exists today
+  # -- engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-dead, and the
+  # healthchecks.io dead-man switch, and the scrape-level signal would add detection latency
+  # nothing currently needs. Revisit only if arming stops being episodic.
   - uid: zcrypto-engine-cycle-stale
     title: "Engine · cycles have stopped"
     ruleGroup: zcrypto-gate
