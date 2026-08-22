@@ -368,6 +368,7 @@ class RecordingExecutor:
         self.timers: list[datetime] = []
         self.quotes: list[object] = []
         self.events: list[object] = []
+        self.external_events: list[object] = []
 
     def on_timer(self, now):
         self.timers.append(now)
@@ -378,6 +379,22 @@ class RecordingExecutor:
     def on_order_event(self, event):
         self.events.append(event)
 
+    def on_external_order_event(self, event):
+        self.external_events.append(event)
+
+
+class RecordingMsgBus:
+    """The strategy's `self.msgbus` at the wiring seam: records every (topic, handler) pair the
+    strategy subscribed. A real nautilus MessageBus is only reachable after a registration this
+    suite never performs -- the library-boundary test below constructs a real one directly instead,
+    so this stub carries no assumption about the bus's own behaviour, only about what we ask of it."""
+
+    def __init__(self):
+        self.subscriptions: list[tuple[str, object]] = []
+
+    def subscribe(self, topic, handler):
+        self.subscriptions.append((topic, handler))
+
 
 def _exec_stub(config, clock, *, executor_factory=None, executor=None):
     """A ShadowStrategy stand-in driven through the unbound methods (the house pattern of
@@ -385,6 +402,7 @@ def _exec_stub(config, clock, *, executor_factory=None, executor=None):
     nautilus registration this suite never performs."""
     stub = types.SimpleNamespace(
         clock=clock,
+        msgbus=RecordingMsgBus(),
         _engine_config=config,
         _now=lambda: B08 + timedelta(minutes=5),
         _run_cycle_fn=lambda cycle_ts, *, config, venue_state=None: None,
@@ -396,6 +414,7 @@ def _exec_stub(config, clock, *, executor_factory=None, executor=None):
     stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
     stub._on_cycle_alert = functools.partial(ShadowStrategy._on_cycle_alert, stub)
     stub._on_exec_tick = functools.partial(ShadowStrategy._on_exec_tick, stub)
+    stub._on_external_order_event = functools.partial(ShadowStrategy._on_external_order_event, stub)
     return stub
 
 
@@ -435,12 +454,39 @@ def test_on_start_builds_the_executor_and_registers_the_exec_tick(tmp_path):
     assert node._TICK_SECONDS == _TICK_SECONDS
 
 
+def test_on_start_subscribes_the_external_order_topic_and_the_handler_reaches_the_filter(tmp_path):
+    # The second, filtered order stream (spec 00098 D1): exactly ONE subscription, to exactly the
+    # external strategy's order topic, whose handler lands on the executor's disposition filter --
+    # never on on_order_event, whose unknown-order trip must keep seeing only the strategy's own
+    # orders.
+    executor = RecordingExecutor()
+    stub = _exec_stub(_config(tmp_path), FakeClock(), executor_factory=lambda strategy: executor)
+    ShadowStrategy.on_start(stub)
+
+    assert stub.msgbus.subscriptions == [(node._EXTERNAL_ORDER_TOPIC, stub._on_external_order_event)]
+    ((_topic, handler),) = stub.msgbus.subscriptions
+    sentinel = object()
+    handler(sentinel)
+    assert executor.external_events == [sentinel]
+    # and nothing leaked onto the own-order path the trip reads.
+    assert executor.events == []
+
+
 def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
     clock = FakeClock()
     stub = _exec_stub(_config(tmp_path), clock)
     ShadowStrategy.on_start(stub)
     assert clock.timers == []
     assert stub._executor is None
+
+
+def test_on_start_subscribes_nothing_without_a_factory(tmp_path):
+    # The subscription is wired with the executor, not with the strategy: a construction that wires
+    # no executor reaches the message bus not at all, so every non-production ShadowStrategy stays
+    # the pure timer-arithmetic object it was.
+    stub = _exec_stub(_config(tmp_path), FakeClock())
+    ShadowStrategy.on_start(stub)
+    assert stub.msgbus.subscriptions == []
 
 
 def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
@@ -460,6 +506,22 @@ def test_quote_and_order_event_forwarders_pass_the_object_through(tmp_path):
     strategy.on_order_event(event)
     assert executor.quotes == [tick]
     assert executor.events == [event]
+
+
+def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unwired(tmp_path):
+    # The fourth forwarder, in the shape of the other three: object through, and a no-op rather than
+    # an AttributeError when no executor was wired (the bus can deliver before/without one only in
+    # constructions that never subscribe, but the forwarder must not be the thing that finds out).
+    strategy = ShadowStrategy(_config(tmp_path))
+    strategy._on_external_order_event(object())
+
+    executor = RecordingExecutor()
+    strategy._executor = executor
+    event = object()
+    strategy._on_external_order_event(event)
+    assert executor.external_events == [event]
+    # The filter is a SEPARATE entry point: nothing arrived on the own-order path the trip reads.
+    assert executor.events == []
 
 
 def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_path):
@@ -542,18 +604,94 @@ def test_the_strategy_claims_no_external_orders(tmp_path):
         assert strategy.config.external_order_claims is None
 
 
-_ORDER_STREAM_WIDENERS = ("external_order_claims", "msgbus")
+# Each banned text mapped to the cli/ paths deliberately allowed to carry it.
+# `external_order_claims`: allowed NOWHERE. A claim is what would route the account owner's own
+# hand-placed settling fills onto the strategy's OWN order topic and straight into the trip.
+# `msgbus`: allowed in exactly node.py, for the `events.order.EXTERNAL` subscription (spec 00098 D1)
+# -- a SECOND, filtered stream whose handler acts only on rows the engine's ledger vouches for. The
+# allowlist is the whole point of the widening: reaching the raw bus anywhere else is still the
+# unreviewed act this guard exists to catch.
+_ORDER_STREAM_WIDENERS = {
+    "external_order_claims": (),
+    "msgbus": ("cli/engine/node.py",),
+}
 
 
 def test_no_module_widens_the_engines_order_event_stream():
     """The structural half of the same property, as a text walk (the D4 pin's shape): nothing under
-    cli/ may claim external orders or reach past the strategy's own subscription onto the raw message
-    bus. Text, not imports -- a reference in a comment is one a refactor can activate."""
+    cli/ may claim external orders, nor reach past the strategy's own subscription onto the raw
+    message bus outside the one allowlisted file. Text, not imports -- a reference in a comment is
+    one a refactor can activate."""
     offenders = []
     for path in sorted(Path("cli").rglob("*.py")):
         text = path.read_text()
-        offenders.extend(f"{path.as_posix()}: {name}" for name in _ORDER_STREAM_WIDENERS if name in text)
+        offenders.extend(
+            f"{path.as_posix()}: {name}"
+            for name, allowed in _ORDER_STREAM_WIDENERS.items()
+            if name in text and path.as_posix() not in allowed
+        )
     assert offenders == []
+
+
+def test_the_external_topic_string_matches_the_installed_engines_format():
+    """The library boundary, proven with a REAL message bus rather than a mock of our own
+    assumption: nautilus reconciles a venue-resting order this process did not submit under
+    `StrategyId("EXTERNAL")` and publishes its events on `f"events.order.{strategy_id}"`
+    (execution/engine.pyx `_get_order_events_topic`). `_EXTERNAL_ORDER_TOPIC` is that string, and
+    the whole feature is silent -- no exception, no log, just an unsubscribed topic -- if it ever
+    stops being. This is therefore the tripwire for the pending nautilus bump: a renamed topic or a
+    renamed external strategy id fails HERE, not in production."""
+    from nautilus_trader.common.component import MessageBus, TestClock
+    from nautilus_trader.core.uuid import UUID4
+    from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderType
+    from nautilus_trader.model.events import OrderFilled
+    from nautilus_trader.model.identifiers import (
+        AccountId,
+        ClientOrderId,
+        InstrumentId,
+        StrategyId,
+        TradeId,
+        TraderId,
+        VenueOrderId,
+    )
+    from nautilus_trader.model.objects import Currency, Money, Price, Quantity
+
+    external = StrategyId("EXTERNAL")
+    # The library still calls this exact id external -- the predicate reconciliation routes on.
+    assert external.is_external()
+    assert node._EXTERNAL_ORDER_TOPIC == "events.order.EXTERNAL"
+
+    trader_id = TraderId("SHADOW-001")
+    bus = MessageBus(trader_id=trader_id, clock=TestClock())
+    received: list[object] = []
+    bus.subscribe(topic=node._EXTERNAL_ORDER_TOPIC, handler=received.append)
+
+    eur = Currency.from_str("EUR")
+    fill = OrderFilled(
+        trader_id=trader_id,
+        strategy_id=external,
+        instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"),
+        client_order_id=ClientOrderId("SHADOW-001-0-1"),
+        venue_order_id=VenueOrderId("OABCDE-12345-67890"),
+        account_id=AccountId("KRAKEN-001"),
+        trade_id=TradeId("TFGHIJ-12345-67890"),
+        position_id=None,
+        order_side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        last_qty=Quantity.from_str("0.00100000"),
+        last_px=Price.from_str("30000.0"),
+        currency=eur,
+        commission=Money(0.012, eur),
+        liquidity_side=LiquiditySide.MAKER,
+        event_id=UUID4(),
+        ts_event=0,
+        ts_init=0,
+        reconciliation=True,
+    )
+    # Published through the engine's OWN f-string shape, off the event's own strategy_id -- the
+    # derivation under test, not a second copy of our literal.
+    bus.publish(topic=f"events.order.{fill.strategy_id}", msg=fill)
+    assert received == [fill]
 
 
 # --- build_shadow_node (assembled, never run; node.build() is offline) --------------------------

@@ -19,6 +19,7 @@ from nautilus_trader.adapters.kraken.factories import KrakenLiveDataClientFactor
 from nautilus_trader.config import InstrumentProviderConfig, LiveExecEngineConfig, LoggingConfig, TradingNodeConfig
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import AccountType
+from nautilus_trader.model.identifiers import StrategyId
 from nautilus_trader.trading.strategy import Strategy
 
 from cli.config import EngineConfig
@@ -39,6 +40,11 @@ _TRADER_ID = "SHADOW-001"
 # at on_start time; tests/test_engine_node.py pins the two equal.
 _TICK_SECONDS = 5.0
 _EXEC_TIMER_NAME = "exec-probe-tick"
+# The topic nautilus publishes a reconciled order's events on. Built the way the execution engine
+# builds it -- a StrategyId through the same f-string -- rather than spelled as a literal, so a
+# library rename surfaces in tests/test_engine_node.py's library-boundary test instead of as an
+# unsubscribed topic and total silence in production.
+_EXTERNAL_ORDER_TOPIC = f"events.order.{StrategyId('EXTERNAL')}"
 
 
 def _utc_now() -> datetime:
@@ -139,14 +145,23 @@ class ShadowStrategy(Strategy):
     invoking the cycle core. The logic lives in the pure module functions (on_start_logic /
     on_alert_logic); run_cycle_fn and clock are injectable for tests.
 
-    The three executor forwarders below are the ONLY inputs the order path has, and each carries
+    The four executor forwarders below are the ONLY inputs the order path has, and each carries
     exactly what nautilus routes to this strategy. `on_order_event` in particular is the
     `events.order.<this strategy's id>` subscription `Strategy.register` installs, and this class
     passes no `StrategyConfig`, so the strategy's external-order claim list stays empty: an order
     the engine did not submit -- the account owner settling a position by hand mid-probe -- keeps
-    nautilus's `EXTERNAL` strategy id and structurally never arrives here. That scoping is the
-    precondition the executor's unknown-order kill trip rests on; widening it would latch the kill
-    switch on a sanctioned act. tests/test_engine_node.py pins both halves.
+    nautilus's `EXTERNAL` strategy id and structurally never arrives on that topic. That scoping is
+    the precondition the executor's unknown-order kill trip rests on; widening it would latch the
+    kill switch on a sanctioned act.
+
+    `events.order.EXTERNAL` is ADDITIONALLY subscribed (spec 00098 D1), and neither half of that
+    scoping moves. The claim list stays empty, so the own topic still carries only orders this
+    engine submitted and the unknown-order trip still runs only there. The new topic reaches
+    `_on_external_order_event` -> the executor's disposition filter, which acts only on the resting
+    orders the adopt pass re-attached from this engine's OWN ledger -- everything else it counts,
+    logs, and drops before any row write, cancel, or trip arithmetic. So the hand settle remains
+    structurally unable to reach the trip: it matches no ledgered row, and no widening of the claim
+    list is what admits it. tests/test_engine_node.py pins each of these.
     """
 
     def __init__(
@@ -194,6 +209,10 @@ class ShadowStrategy(Strategy):
             # obligation and must be seeded even if the executor's construction were to raise.
             self._executor = self._executor_factory(self)
             self.clock.set_timer(_EXEC_TIMER_NAME, timedelta(seconds=_TICK_SECONDS), callback=self._on_exec_tick)
+            # The second order stream (spec 00098 D1). Wired WITH the executor, never with the
+            # strategy: the filter that scopes this topic is the executor's, so a construction that
+            # has no executor must not be subscribed to it either.
+            self.msgbus.subscribe(topic=_EXTERNAL_ORDER_TOPIC, handler=self._on_external_order_event)
 
     def _on_cycle_alert(self, event) -> None:
         on_alert_logic(
@@ -204,7 +223,7 @@ class ShadowStrategy(Strategy):
             snapshot_fn=self._snapshot_venue_state,
         )
 
-    # --- the probe executor's three inputs -----------------------------------------------------
+    # --- the probe executor's four inputs ------------------------------------------------------
 
     def _on_exec_tick(self, event) -> None:
         if self._executor is not None:
@@ -217,6 +236,10 @@ class ShadowStrategy(Strategy):
     def on_order_event(self, event) -> None:
         if self._executor is not None:
             self._executor.on_order_event(event)
+
+    def _on_external_order_event(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_external_order_event(event)
 
 
 def _node_config(config: EngineConfig) -> TradingNodeConfig:
