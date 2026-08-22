@@ -79,6 +79,11 @@ _OVERFILL_TOLERANCE = 1e-12
 _TRIPPED_REFUSAL = "the kill switch tripped in this process"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
+# What a terminal event on an ADOPTED order's row writes as its state, taken from
+# `execledger._ROW_STATES`' existing names rather than minting one. `OrderCancelRejected` is
+# deliberately absent: the venue positively says the cancel did NOT take, so the order may still
+# rest and the row has to keep pointing at a possibly-live order.
+_EXTERNAL_TERMINAL_STATES = {"OrderCanceled": "canceled", "OrderExpired": "venue_canceled", "OrderRejected": "rejected"}
 
 _H4 = 4
 
@@ -1391,6 +1396,81 @@ class ProbeExecutor:
             return
         self._reprice(active)
 
+    def on_external_order_event(self, event) -> None:
+        try:
+            self._on_external_event(event)
+        except Exception:
+            # Bookkeeping on an adopted order, never a submission: log and continue (the
+            # on_order_event idiom).
+            logger.exception("executor external-order-event handling raised -- continuing")
+
+    def _on_external_event(self, event) -> None:
+        """Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this
+        process adopted at startup, filtered by disposition BEFORE anything else runs.
+
+        Matched (the ledger vouches for the order): delegate into the existing pipeline --
+        `_trip_on_fill` FIRST, exactly as the own-topic path does, so a matched overfill trips the
+        kill with the same arithmetic; a clean fill lands in `_on_detached_event`, which already
+        appends the row by the order's own boundary, mirrors the quantity, and publishes counters.
+        A fill completing the ledgered quantity additionally writes the row's state `filled` --
+        nautilus publishes no terminal event after a resting order's final fill, so without that the
+        row would read open forever -- and terminal events write theirs from
+        `_EXTERNAL_TERMINAL_STATES`. `canceled` there makes no we-requested claim: the dominant real
+        source on this path is a cancel THIS process sent -- from the adopt pass, or from a trip --
+        whose ack now arrives matched, and `venue_canceled` would be false for exactly those.
+
+        What NEITHER of those does is end tracking: no path here pops `_attached`, exactly as the own
+        path does not. `ownTrades` and `openOrders` are separate Kraken WS channels with no
+        cross-stream ordering guarantee, so a fill can arrive after the terminal ack or after the
+        completing fill -- and an entry popped at either point would send it to the unmatched branch
+        to be counted and never journaled, breaking no-fill-without-a-record on the one path built to
+        restore it. Retained, that fill journals as a detached append when it fits inside the
+        ledgered quantity and latches the overfill trip when it does not: the own path's semantics,
+        on both paths.
+
+        Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and
+        NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
+        is what keeps the unknown-order trip scoped while this subscription exists at all.
+        """
+        client_order_id = str(getattr(event, "client_order_id", ""))
+        attached = self._attached.get(client_order_id)
+        name = type(event).__name__
+        if attached is None:
+            _inc_external("unmatched")
+            logger.info(
+                "external order event ignored: %s for %s on %s -- no ledgered adopted row",
+                name,
+                client_order_id,
+                getattr(event, "instrument_id", "?"),
+            )
+            return
+        _inc_external("matched")
+        if name == "OrderFilled":
+            if self._trip_on_fill(event):
+                return
+            self._on_detached_event(client_order_id, event)
+            # `_on_detached_event` mirrored the fill into the attached row, so this reads the
+            # post-fill total. The unpack stays inside each branch deliberately: the early return
+            # above is meant to be the ONLY thing between an unmatched event and this pipeline, and
+            # a hoisted unpack would quietly become a second one.
+            boundary, row = attached
+            # Guarded on the MIRRORED state so the completion fires once: a further fill on a
+            # completed row is an overfill, and `_trip_on_fill` above has already latched for it.
+            # A row whose ledgered qty is unreadable reads 0.0 and never arrives here at all --
+            # its first fill trips there too.
+            if row.get("state") != "filled" and row["filled_qty"] >= _ordered_qty(row) - _OVERFILL_TOLERANCE:
+                update_submitted_row(self._journal_dir, boundary, client_order_id, state="filled")
+                row["state"] = "filled"
+                _inc_order("filled")
+            return
+        payload = {"type": name, "at": self._now().isoformat()}
+        reason = getattr(event, "reason", None)
+        if reason is not None:
+            payload["reason"] = str(reason)
+        boundary, _row = attached
+        terminal_state = _EXTERNAL_TERMINAL_STATES.get(name)
+        update_submitted_row(self._journal_dir, boundary, client_order_id, state=terminal_state, event=payload)
+
     def _publish_fill(self, event) -> None:
         """The live view of the fill that just went into the ledger row -- same event, same numbers.
 
@@ -1480,6 +1560,14 @@ class ProbeExecutor:
         resubmission is sized against it. Without that the remainder over-asks by exactly the
         dropped quantity. Journal first, count second: a fill this process could not record is not
         one it may account for.
+
+        That credit is inert for a row the startup pass ADOPTED, and deliberately so: `_claims`
+        needs the row's `plan_id` to be the running plan's, while `plan_refusals` refuses any
+        `plan_id` already in `ledgered_plan_ids` -- scanned over the same two-UTC-day window
+        `open_submitted_rows` re-attaches from, so a plan accepted today cannot share a plan_id
+        with a row adopted from that window. The boundary is that `_attached` outlives the window:
+        a process still running two days past an adopted row's boundary could accept a plan reusing
+        its plan_id, and that fill would then be credited to the running intent.
         """
         attached = self._attached.get(client_order_id)
         if attached is None:

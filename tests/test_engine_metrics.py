@@ -1535,6 +1535,16 @@ def test_external_events_counter_preregisters_both_dispositions():
     assert after == {"matched": 0.0, "unmatched": 1.0}
 
 
+def test_the_external_disposition_labels_cover_every_disposition_the_executor_can_emit():
+    """DERIVED from the executor's own call sites, the sibling outcome pin's reasoning exactly: a
+    disposition the executor emits and this label set omits still publishes -- as an unadmitted,
+    unpanelled series nobody watches -- and `unmatched` is the one whose entire purpose is to be
+    watched. The tuple could only be hand-listed correctly once; this is what keeps it correct."""
+    emitted = set(re.findall(r'_inc_external\("([a-z_]+)"\)', Path(executor_module.__file__).read_text()))
+    assert len(emitted) >= 2, f"the call-site scan found only {sorted(emitted)} -- this guard would pass vacuously"
+    assert emitted == set(command._EXEC_EXTERNAL_DISPOSITIONS)
+
+
 def test_inc_external_routes_to_the_installed_metrics_and_is_a_noop_without_one():
     """The executor-side half of the plumbing, `_inc_order`'s contract exactly: unset (a one-shot
     subcommand, or any test that installs no hooks) it must be a silent no-op rather than an

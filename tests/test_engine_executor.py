@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import namedtuple
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -557,9 +558,13 @@ class RecordingMetrics:
         self.fills = []
         self.positions = []
         self.realized = []
+        self.external = []
 
     def inc_order(self, outcome):
         self.orders.append(outcome)
+
+    def inc_external(self, disposition):
+        self.external.append(disposition)
 
     def inc_fill(self, liquidity, fee_eur):
         self.fills.append((liquidity, fee_eur))
@@ -1297,6 +1302,9 @@ def test_a_raising_fill_metrics_hook_never_costs_the_fill_its_row(tmp_path):
 
     class _RaisingMetrics:
         def inc_order(self, outcome):
+            raise RuntimeError("registry is gone")
+
+        def inc_external(self, disposition):
             raise RuntimeError("registry is gone")
 
         def inc_fill(self, liquidity, fee_eur):
@@ -2220,6 +2228,261 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
     # Attached either way (cancel is a request, not an outcome), so the ack lands in the row.
     ex.on_order_event(_named("OrderCanceled", client_order_id="O-attached"))
     assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]
+
+
+# --- the external topic: an adopted order's own events (spec 00098) ------------------------------
+
+
+@contextmanager
+def _executor_errors():
+    """The executor logger's own ERROR records, for the test that must see a swallowed failure
+    LOGGED rather than merely swallowed. Deliberately not `caplog`, blind here for the two reasons
+    `_the_tick_backstop_never_fires` documents: a root logger the CLI tests have detached, and
+    phase-scoped records."""
+    records: list[logging.LogRecord] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    log = logging.getLogger("zcrypto.engine.executor")
+    handler = _Collect(level=logging.ERROR)
+    previous_level = log.level
+    log.setLevel(logging.DEBUG)
+    log.addHandler(handler)
+    try:
+        yield records
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(previous_level)
+
+
+def _adopted_executor(tmp_path, *, client_order_id="O-attached", reduce_only=True):
+    """A previous process's resting order, adopted by the startup pass and attached to its OWN
+    boundary's row four hours back -- the only state the external topic's matched path is reachable
+    from. The trailing assert is the point: a construction that attached nothing would hand every
+    test below the unmatched path's green instead."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, client_order_id, reduce_only=reduce_only, when=earlier)
+    client = StubClient(StubCache(open_orders=[_open_order(client_order_id)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex.on_timer(NOW)
+    assert client_order_id in ex._attached
+    return ex, client, earlier
+
+
+def test_an_external_fill_completing_an_adopted_order_appends_counts_and_closes_the_row(tmp_path):
+    """The matched clean path end to end -- and the pin on the DELEGATION ORDER, which nothing else
+    catches: the trip runs FIRST, so this fill (exactly the ledgered quantity) is measured against a
+    row not yet credited with it. Swap the two and the mirrored quantity is counted twice, latching
+    the kill switch on a perfectly healthy final fill.
+
+    The row's STATE closes here because nautilus publishes no terminal event after a resting order's
+    last fill -- without that it would read open forever and re-attach on every future scan. The
+    entry itself stays attached: neither path ever pops, so a fill racing the close still journals."""
+    ex, client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    client.cache.move_position("BTC/EUR", -0.001)  # the venue moves the Cache first, then publishes
+
+    ex.on_external_order_event(_fill("O-attached", 0.001))
+
+    assert not _kill_file(tmp_path).exists()
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.001
+    assert [e["event"] for e in row["events"]] == ["fill"]
+    assert row["events"][0]["px"] == 30000.0 and row["events"][0]["qty"] == 0.001
+    assert row["state"] == "filled"
+    assert "O-attached" in ex._attached  # retained: a racing fill must still find its row
+    assert metrics.external == ["matched"]
+    assert metrics.orders == ["filled"]
+    assert metrics.fills == [("maker", 0.012)] and metrics.positions == [("BTC/EUR", -0.001)]
+
+
+def test_a_partial_external_fill_leaves_the_adopted_row_open_and_attached(tmp_path):
+    """The completion rule's other direction, without which a rule that closed the row on ANY fill
+    would ship green: a fill short of the ledgered quantity makes no state claim and keeps the entry
+    attached -- the remainder is still working at the venue, and its own fill needs this same row and
+    this same overfill bound. The pair also exercises the tolerance across two float additions,
+    which is the only reason the second fill completes rather than reading an ulp short."""
+    ex, _client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_external_order_event(_fill("O-attached", 0.0004))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "accepted" and row["filled_qty"] == 0.0004
+    assert "O-attached" in ex._attached
+    assert metrics.orders == []  # nothing completed, so no outcome is counted
+
+    ex.on_external_order_event(_fill("O-attached", 0.0006))  # the remainder
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled" and row["filled_qty"] == pytest.approx(0.001)
+    assert "O-attached" in ex._attached  # completed, still retained -- neither path pops
+    assert metrics.orders == ["filled"]
+    assert metrics.external == ["matched", "matched"]
+
+
+def test_a_fill_beyond_a_completed_adopted_orders_quantity_trips_like_any_other_overfill(tmp_path, kill_trip_expected):
+    """The symmetry the retained row buys. A completed row keeps its attachment, so a further fill
+    reaches `_trip_on_fill` and latches on the overfill arm -- the same verdict an own order's
+    post-completion fill gets. Popping at completion would have made this fill unmatched instead:
+    counted, logged, and never journaled, which is a divergence answered with a metric increment."""
+    ex, _client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex.on_external_order_event(_fill("O-attached", 0.001))  # completes the ledgered quantity
+    assert not _kill_file(tmp_path).exists()
+
+    ex.on_external_order_event(_fill("O-attached", 0.0002))  # and then one more
+
+    assert _kill_file(tmp_path).exists()
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e["event"] for e in row["events"]] == ["fill", "fill"]  # the tripping fill is recorded
+    assert row["filled_qty"] == pytest.approx(0.0012)
+    assert metrics.external == ["matched", "matched"]  # matched both times, never unmatched
+
+
+def test_a_dust_fill_on_a_completed_adopted_row_is_journaled_without_recounting_the_completion(tmp_path):
+    """The completion write fires ONCE. A fill under `_OVERFILL_TOLERANCE` does not trip (that is
+    what the tolerance is for), so it reaches the completion branch a second time -- and an unguarded
+    branch would re-write the state and count a second `filled` outcome for one order, inflating the
+    outcome counter against a row that completed once. The fill itself is still journaled."""
+    ex, _client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex.on_external_order_event(_fill("O-attached", 0.001))
+    assert metrics.orders == ["filled"]
+
+    ex.on_external_order_event(_fill("O-attached", executor_module._OVERFILL_TOLERANCE / 10))
+
+    assert not _kill_file(tmp_path).exists()
+    assert metrics.orders == ["filled"]  # once, for one completed order
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled"
+    assert [e["event"] for e in row["events"]] == ["fill", "fill"]  # no fill goes unrecorded
+    assert "O-attached" in ex._attached
+
+
+def test_an_external_event_the_ledger_does_not_vouch_for_reaches_nothing_at_all(tmp_path):
+    """The operator's hand settle, and the whole reason this subscription is safe to have: an event
+    on the external topic naming an order no ledgered row vouches for is COUNTED and ignored -- no
+    trip, no row write anywhere, no cancel. The unknown-order trip stays scoped to this strategy's
+    own topic, where every order arriving IS one this engine submitted."""
+    ex, client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_external_order_event(_fill("O-the-owners-own-hand", 0.5))
+
+    assert not _kill_file(tmp_path).exists()
+    assert client.canceled == []  # nothing was pulled off the venue for it either
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.0 and row["events"] == []  # the adopted row is untouched
+    assert not exec_record_path(tmp_path / "journal", _boundary(NOW)).exists()  # and no new record
+    assert metrics.external == ["unmatched"]  # the disposition that carries the whole signal
+    assert metrics.fills == [] and metrics.orders == []
+
+
+def test_an_external_overfill_on_an_adopted_row_trips_the_kill_and_still_journals_the_fill(tmp_path, kill_trip_expected):
+    """A matched row is this engine's own pre-restart order, so a fill past what the ledger says it
+    was submitted for is the same divergence the own-topic per-order trip guards. The fill still
+    gets its forensic row -- no-fill-without-a-record has no divergence exemption -- and gets it
+    EXACTLY ONCE: a second fill event here would mean the row append ran before the trip."""
+    ex, client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    overfill = 0.001 + 2 * executor_module._OVERFILL_TOLERANCE
+
+    ex.on_external_order_event(_fill("O-attached", overfill))
+
+    assert _kill_file(tmp_path).exists()
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-attached"]  # the trip pulls it
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e["event"] for e in row["events"]] == ["fill"]
+    assert row["filled_qty"] == overfill
+    assert metrics.external == ["matched"]
+
+
+@pytest.mark.parametrize(
+    "event_name, expected_state",
+    [("OrderCanceled", "canceled"), ("OrderExpired", "venue_canceled"), ("OrderRejected", "rejected")],
+)
+def test_an_external_terminal_event_closes_the_row_but_keeps_it_attached_for_a_racing_fill(tmp_path, event_name, expected_state):
+    """The ruled map, written from `validate_exec_record`'s own state names -- no new state string is
+    minted here, and `_store` would refuse one anyway. `canceled` makes no we-requested claim on this
+    path, which is why the adopt pass's OWN cancel acks may wear it, and that those acks now CLOSE
+    their rows (they used to stay open and re-read as possibly-live on every future scan) is the side
+    effect worth its own assertion.
+
+    The row's STATE closes; the ATTACHMENT does not. `ownTrades` and `openOrders` are separate Kraken
+    WS channels with no cross-stream ordering guarantee, so a fill can land after the terminal ack --
+    and popping here would send it to the unmatched branch to be counted and never journaled, which
+    is the no-fill-without-a-record invariant broken on the very path built to restore it. Retained,
+    it journals as a detached append exactly as an own order's late fill does."""
+    ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
+    assert [str(o.client_order_id) for o in client.canceled] == ["O-opener"]  # the pass's own cancel
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_external_order_event(_named(event_name, client_order_id="O-opener"))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == expected_state
+    assert [e["type"] for e in row["events"]] == [event_name]
+    assert row["filled_qty"] == 0.0
+    assert "O-opener" in ex._attached
+
+    ex.on_external_order_event(_fill("O-opener", 0.0004))  # the fill that raced the ack
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e.get("event") or e.get("type") for e in row["events"]] == [event_name, "fill"]
+    assert row["filled_qty"] == 0.0004  # journaled, not counted-and-dropped
+    assert row["state"] == expected_state  # the detached append makes no state claim of its own
+    assert metrics.external == ["matched", "matched"]  # never `unmatched`: the row is still vouched
+    assert metrics.fills == [("maker", 0.012)]
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_row(tmp_path):
+    """The venue positively says the cancel did NOT take, so the order may still rest: the event is
+    evidence, the row keeps its open state, and the entry stays attached for the fill that can still
+    arrive. Deliberately out of the terminal map for exactly that reason."""
+    ex, _client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    ex.on_external_order_event(_named("OrderCancelRejected", client_order_id="O-attached", reason="EOrder:Unknown order"))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "accepted"
+    assert row["events"] == [{"type": "OrderCancelRejected", "at": NOW.isoformat(), "reason": "EOrder:Unknown order"}]
+    assert "O-attached" in ex._attached
+    assert metrics.external == ["matched"]
+
+
+def test_the_external_handler_logs_and_continues_when_the_ledger_write_raises(tmp_path, monkeypatch):
+    """A msgbus handler's raise is the event loop's problem, not this process's to take -- so the one
+    thing on this path that touches disk is made to fail and the handler must swallow it, loudly.
+    Guard-proving: the failure is constructed, and WHICH log line fired is read, not just that one
+    did."""
+    ex, _client, _earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(executor_module, "update_submitted_row", _raise)
+    with _executor_errors() as records:
+        ex.on_external_order_event(_fill("O-attached", 0.0004))
+
+    assert [r.getMessage() for r in records] == ["executor external-order-event handling raised -- continuing"]
+    assert records[0].exc_info is not None  # logger.exception, so the traceback is in the record
+    assert metrics.external == ["matched"]
+    assert not _kill_file(tmp_path).exists()
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------

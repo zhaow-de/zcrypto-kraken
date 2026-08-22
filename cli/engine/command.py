@@ -608,10 +608,10 @@ _EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "
 # neither silently counting it as taker nor letting a third label appear at runtime is acceptable
 # when the maker-vs-taker split is the number this ladder exists to measure.
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
-# Every disposition `cli/engine/executor.py`'s `_inc_external` can emit. `unmatched` is the
-# load-bearing one: an order event arriving on the external strategy topic that belongs to no order
-# this engine's ledger vouches for is counted and ignored, and this counter is the only trace it
-# leaves.
+# Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that
+# module's own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an
+# order event arriving on the external strategy topic that belongs to no order this engine's ledger
+# vouches for is counted and ignored, and this counter is the only trace it leaves.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
 
 
