@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -3223,6 +3224,7 @@ _TRACK_BASES = tuple(_TRACK_CLOSES)
 _OPENING = _TRACK_LEAD + timedelta(hours=4)  # the journal's oldest boundary carries NO fill
 _BUILD_OUT = _TRACK_LEAD + timedelta(hours=16)
 _IN_WEEK = _TRACK_MONDAY + timedelta(hours=40)  # 2026-09-08 16:00, boundary 10 of the week
+_MINT_AT = _OPENING + timedelta(hours=4)  # the boundary a live engine dates itself at: the next one
 
 # Asymmetric by construction: ten different sizes, one sell, and BTC arriving in two slices at two
 # different boundaries -- so a reader that ignored the boundary a fill was filed under, or summed
@@ -3253,6 +3255,14 @@ _BREACH_FILLS = {
 }
 # The same shortfall with NOTHING filled inside the week: started, quiet, and fully measured.
 _QUIET_FILLS = {b: rows for b, rows in _BREACH_FILLS.items() if b != _IN_WEEK}
+# The same book, opened a day earlier, so the day-dir holding the opening slice can be deleted
+# WHOLE -- which is the only cut `zcrypto-engine-journal-prune.sh` actually makes. What survives is
+# a day whose 00:00 boundary is quiet and whose 16:00 carries the build-out.
+_EARLY_OPENING = _TRACK_MONDAY - timedelta(days=2) + timedelta(hours=4)
+_PRUNABLE_FILLS = {
+    _EARLY_OPENING: [("BTC/EUR", "buy", 0.00042)],
+    _BUILD_OUT: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
+}
 # ~5500 bps: only two legs were ever opened. Started (so it is not the never-traded case) and
 # violently outside any band, so a partial week that was scored would be unmistakable.
 _PARTIAL_FILLS = {_OPENING: [("BTC/EUR", "buy", 0.00332), ("ETH/EUR", "buy", 0.0468)]}
@@ -3338,16 +3348,32 @@ def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, 
     return journal
 
 
-def _tracking_executor(tmp_path, *, band=_TRACK_BAND, armed=True, clock=None, gate=None):
+def _tracking_executor(tmp_path, *, band=_TRACK_BAND, armed=True, clock=None, gate=None, at=_TRACK_EVAL):
+    # The clock sits just past the boundary being scored, as the live one does: the alert fires at
+    # `boundary + settle delay`, and the birth recorder reads the journal "through now".
     config = _config(tmp_path, exec_armed=armed, tracking_band_bps=band, shadow_nav_eur=_TRACK_NAV)
-    return _executor(tmp_path, config=config, clock=clock, gate=gate)
+    return _executor(tmp_path, config=config, clock=clock or (lambda: at + timedelta(minutes=2)), gate=gate)
 
 
-def _tracking_states(tmp_path, boundary=_TRACK_EVAL, **kwargs):
-    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states)."""
+def _mint_birth(tmp_path, at=_MINT_AT, **kwargs):
+    """Run the boundary the live engine would have DATED ITSELF at -- the first one after its first
+    fill. Every fixture below is a journal the engine lived through boundary by boundary, so a test
+    that jumped straight to the scoring boundary a week later would be asking the recorder to date a
+    week-old fill, which is the one thing it refuses."""
+    _tracking_executor(tmp_path, at=at, **kwargs).on_boundary(at)
+
+
+def _tracking_states(tmp_path, boundary=_TRACK_EVAL, mint_at=_MINT_AT, **kwargs):
+    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states).
+
+    `mint_at=None` is the engine that never witnessed its own first fill -- no record, and whatever
+    the journal still holds is all it has."""
+    set_executor_hooks()  # the mint is setup, not the measurement -- it publishes into nobody's list
+    if mint_at is not None:
+        _mint_birth(tmp_path, at=mint_at, **kwargs)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
-    _tracking_executor(tmp_path, **kwargs).on_boundary(boundary)
+    _tracking_executor(tmp_path, at=boundary, **kwargs).on_boundary(boundary)
     return _kill_file(tmp_path).exists(), metrics.tracking
 
 
@@ -3357,6 +3383,7 @@ def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_fil
     `_evaluate` on the tick path is gated behind that absent plan file, so a trip hooked there
     could not fire here -- and the kill file has no other producer in this construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    _mint_birth(tmp_path)
     assert not _plan_path(tmp_path).exists()
     executor = _tracking_executor(tmp_path)
     strategy = SimpleNamespace(
@@ -3528,13 +3555,14 @@ def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_ex
     re-derives the same breaching week and must leave the first reason exactly as it found it: that
     text, with its timestamp, is what the operator reads to know when the engine stopped."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    _mint_birth(tmp_path)
     _tracking_executor(tmp_path).on_boundary(_TRACK_EVAL)
     first = _kill_file(tmp_path).read_text()
 
     # A REAL gate over the latched tree -- `_gate()` asserts FULL and a kill file makes it `none`,
     # which is exactly the state a restart into a tripped engine starts in.
     gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=_venue_reader())
-    later = _tracking_executor(tmp_path, clock=lambda: NOW + timedelta(days=30), gate=gate)
+    later = _tracking_executor(tmp_path, clock=lambda: _TRACK_EVAL + timedelta(days=30), gate=gate)
     later.on_boundary(_TRACK_EVAL + timedelta(hours=4))
 
     assert _kill_file(tmp_path).read_text() == first
@@ -3555,3 +3583,105 @@ def test_the_idle_tick_never_evaluates_tracking(tmp_path):
 
     assert not _kill_file(tmp_path).exists()
     assert gate.calls == 0  # the idle path reads nothing at all
+
+
+# The ramp an operator arming exactly ON a week boundary produces: the first slice lands at the
+# week's own first boundary, the rest ten boundaries in. 8748 bps a cycle until the book is built,
+# 46.35 after -- a 2118.2 bps week, which is the WEEK THE SERIES STARTED IN wearing a settled
+# week's clothes.
+_BOUNDARY_RAMP_FILLS = {
+    _TRACK_MONDAY: [("BTC/EUR", "buy", 0.00042)],
+    _IN_WEEK: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
+}
+
+
+def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
+    """The retention prune turns the true positive into a latched false kill, and this is that
+    construction: the HEALTHY fixture -- 46.35 bps, the week that must pass -- with the two oldest
+    boundaries deleted exactly as `zcrypto-engine-journal-prune.sh` deletes day-dirs at 60 days.
+    The opening slice goes with them, `held` is short by it, and the same journal reads 298.4 bps
+    against the 120 bps band.
+
+    Nothing on disk distinguishes that from a real breach, and asking "does the oldest surviving
+    boundary carry a fill" cannot tell them apart -- it passes whenever the prune happens to cut at
+    a quiet boundary. The birth record answers the question actually being asked."""
+    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
+    healthy, healthy_states = _tracking_states(tmp_path)
+    assert not healthy and healthy_states == [executor_module._TRACKING_WITHIN_BAND]
+    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
+    assert birth.read_text().strip() == _OPENING.isoformat()
+
+    # Cut per BOUNDARY, which is the granularity the check itself works at -- not a replica of the
+    # prune, which removes whole day-dirs. The shape a real prune produces is the same one: a first
+    # fill late on day D, and a quiet 00:00 on D+1 left as the oldest survivor. The sibling test
+    # below builds exactly that, with the whole day-dir deleted.
+    for boundary in (_TRACK_LEAD, _OPENING):
+        for prefix in ("cycle", "exec"):
+            (journal / f"{boundary:%Y-%m-%d}" / f"{prefix}-{boundary:%H}.json").unlink()
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+    # Write-once: the record still names the fill that is no longer on disk, which is the whole of
+    # what it knows and the only reason the refusal above is possible.
+    assert birth.read_text().strip() == _OPENING.isoformat()
+
+
+def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
+    """A first fill exactly ON Monday 00:00 -- what arming at a week boundary produces -- is still
+    the week the series started in, and its ramp is still in the mean: 2118.2 bps against a 120 bps
+    band. A strictly-interior test (`>`) scores it and latches the kill file on an engine that was
+    doing exactly what it was told."""
+    _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
+    """The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks
+    a row's KEY SET and that `events` is a list, never an event's contents -- so a fill event
+    missing `px` passes every ledger check and `KeyError`s inside `extract_fills`, which is not an
+    EngineError and escapes the refusal arm.
+
+    Two properties, and the second is why the catch publishes: a measurement may never take the
+    engine down, and it may never leave the previous verdict standing on the board either -- a trip
+    that has stopped working would otherwise read exactly like one that keeps passing."""
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    path = journal / f"{_BUILD_OUT:%Y-%m-%d}" / f"exec-{_BUILD_OUT:%H}.json"
+    doc = read_exec_record(path)
+    del doc["submitted"][0]["events"][0]["px"]
+    path.write_text(json.dumps(doc))
+    execledger_module.validate_exec_record(doc)  # the ledger's own checks still pass it
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
+    """The missing-file path, which is NOT the same event as "the series has not started".
+
+    The recorder is gated on the record being absent, so an engine that lost it -- a rebuilt state
+    directory, a restore -- runs the mint against whatever the journal still holds. Here the whole
+    day-dir carrying the opening slice is gone, exactly as `zcrypto-engine-journal-prune.sh`
+    deletes it, and the day that survives opens on a QUIET 00:00: the "oldest boundary carries no
+    fill" evidence is satisfied perfectly, and the earliest surviving fill would be minted as a
+    birth it never was. The scorer would then agree with its own reconstruction and latch the kill
+    file at 298.4 bps on an engine that tracked its targets the whole time.
+
+    What stops it is that a birth is something a boundary WITNESSES, hours after the fill -- so a
+    candidate a week old is refused, and the trip refuses permanently and loudly instead of
+    latching. Nothing is written: an engine that cannot date itself must not invent a date."""
+    journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
+    shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
+
+    tripped, states = _tracking_states(tmp_path, mint_at=None)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+    assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()

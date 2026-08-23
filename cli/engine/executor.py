@@ -82,6 +82,16 @@ _OVERFILL_TOLERANCE = 1e-12
 # What the in-process backstop journals when it refuses. The kill FILE is the durable latch and the
 # gate's own input; this is what is left when the file could not be written, and it says so.
 _TRIPPED_REFUSAL = "the kill switch tripped in this process"
+# The write-once record of when this engine's realized series began, in the control-file directory
+# beside the arm and kill files. Named HERE and not in `execgate` because it is not a gate input:
+# nothing about it can permit or refuse an order. It exists because `held` is cumulative from the
+# first fill ever while the journal prune deletes whole day-dirs at a fixed retention -- so once the
+# day holding the first fill ages out, the journal alone can no longer tell "this engine has always
+# tracked its targets" from "everything it bought before the horizon was deleted", and those two
+# read as 46 bps and 298 bps against the same 120 bps band. Write-once, and only ever read to
+# DISAGREE and refuse: unlike a rolling checkpoint, a stale value here cannot reinforce itself into
+# a wrong `held`, it can only stop a week from being scored.
+FIRST_FILL_FILE = "first-fill"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 # What a terminal event on an ADOPTED order's row writes as its state, taken from
@@ -118,6 +128,13 @@ _MODEL_BASES = frozenset(symbol.split("/")[0] for symbol in BASKET if symbol.end
 # What the tracking trip publishes about the most recently closed week. The alphabet starts at 1 on
 # purpose: this gauge is registered on first use, and a 0 -- eager or accidental -- would render as
 # a legitimate reading on the board rather than as the absence it is.
+# How stale a candidate may be and still be minted as this engine's birth. On the healthy path the
+# record lands at the FIRST boundary after the first fill -- hours, not days -- so anything much
+# older is a reconstruction from whatever the journal still holds. An order of magnitude under the
+# journal's 60-day retention, so a fill old enough for its own head to have been pruned can never
+# fall inside it; an order over the 4-hourly cadence, so a converge window or a weekend outage
+# still mints normally.
+_BIRTH_MINT_WINDOW = timedelta(days=7)
 _TRACKING_DISARMED = 1
 _TRACKING_UNSCORED = 2
 _TRACKING_WITHIN_BAND = 3
@@ -1335,9 +1352,86 @@ class ProbeExecutor:
         exception from the cycle with one from a measurement.
         """
         try:
+            self._record_series_birth()
             self._evaluate_tracking(boundary)
         except Exception:
-            logger.exception("the weekly tracking evaluation raised -- the order path is unaffected")
+            # Publishes, rather than falling silent: an escape here leaves the last verdict standing
+            # on the board, so a trip that has stopped working reads exactly like one that keeps
+            # passing. Same opening phrase as every other refusal, so ONE grep finds them all --
+            # this one carries a traceback under it. The metrics hook is itself exception-guarded.
+            logger.exception("the most recently closed week is not scored: the evaluation itself raised")
+            _set_tracking_state(_TRACKING_UNSCORED)
+
+    def _record_series_birth(self) -> None:
+        """Write the first-fill birth record, once, at the first boundary that can WITNESS the
+        series beginning -- and never again.
+
+        Run on EVERY boundary, disarmed included, and that is the point: it must be written while
+        the journal's head is still intact, which is a property of when the engine first FILLS, not
+        of when an operator chooses to set a band. An engine that armed a band months into trading
+        would otherwise date itself off an already-pruned journal and take the short `held` for the
+        truth.
+
+        TWO preconditions, and the second is not redundant. The first -- a journal whose oldest
+        boundary carries no fill -- is the same evidence the pruned-head check uses, and it is the
+        one this method is gated on being able to ask honestly. But the gate above is
+        `path.exists()`, which is "no record yet", NOT "the series has not started": whenever the
+        file is absent while fills already exist -- it was lost, or the state directory was rebuilt
+        -- this runs against a journal whose head may be long gone, and a prune that happened to cut
+        at a QUIET boundary satisfies the first precondition perfectly. The scorer would then agree
+        with a record that is a reconstruction, and the false kill this whole file exists to prevent
+        comes back through the missing-file path.
+
+        So the second: on the healthy path the record lands at the first boundary AFTER the first
+        fill, hours later. A candidate older than `_BIRTH_MINT_WINDOW` is therefore not a birth
+        anyone witnessed, it is the earliest fill that happens to have survived, and minting it is
+        the one move that can end in a latched kill file. Refusing turns that into a permanent,
+        loud refusal instead -- the honest residual, since the position it would need is not on this
+        host at all.
+
+        Best-effort in both directions: a failure to read or write leaves no record, and the scorer
+        then refuses rather than guessing. Nothing here can raise into the caller's scoring pass.
+        """
+        path = exec_dir(self._state_dir) / FIRST_FILL_FILE
+        if path.exists():
+            return
+        try:
+            docs = exec_records_through(self._journal_dir, self._now())
+            fills, _notes = extract_fills([docs[b] for b in sorted(docs)])
+            first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+            oldest = min(docs, default=None)
+            if first_fill is None or oldest is None or first_fill <= oldest:
+                return
+            if self._now() - first_fill > _BIRTH_MINT_WINDOW:
+                logger.warning(
+                    "this engine has no record of when its realized series began and the earliest fill "
+                    "the journal still holds is %s, too old to be that beginning -- no week will be "
+                    "scored until a human establishes what was held before it",
+                    first_fill.isoformat(),
+                )
+                return
+            # Written through a temporary sibling: the reader above is gated on the file EXISTING,
+            # so a crash mid-write would leave a truncated record nothing ever repairs -- and the
+            # only recovery would be deleting it, which is exactly the reconstruction path this
+            # method refuses to take later in life.
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(".tmp")
+            tmp_path.write_text(f"{first_fill.isoformat()}\n")
+            os.replace(tmp_path, path)
+        except Exception:
+            logger.warning("this engine's realized series could not be dated this boundary", exc_info=True)
+            return
+        logger.info("recorded the realized series' first fill at %s", first_fill.isoformat())
+
+    def _series_birth(self) -> datetime | None:
+        """What the birth record says, or None when there is none this process can read."""
+        try:
+            return datetime.fromisoformat((exec_dir(self._state_dir) / FIRST_FILL_FILE).read_text().strip())
+        except FileNotFoundError:
+            return None
+        except OSError, ValueError:
+            logger.warning("the realized series' birth record is unreadable", exc_info=True)
+            return None
 
     def _refuse_tracking(self, reason: str) -> None:
         """No verdict this boundary. Published as its own state so an operator can tell a week that
@@ -1418,22 +1512,35 @@ class ProbeExecutor:
         if first_fill is None:
             self._refuse_tracking("no model-leg fill has been journaled yet -- the realized series has not started")
             return
-        if first_fill <= min(cycles):
+        birth = self._series_birth()
+        if birth != first_fill:
+            # NOT "does the oldest surviving boundary carry a fill". That question passes whenever
+            # the prune happens to have cut at a quiet boundary, and then `held` silently omits
+            # everything bought before the horizon: the true positive's own fixture reads 298.4 bps
+            # against a 120 bps band and latches the kill file on a perfectly healthy engine. The
+            # birth record answers the question that is actually being asked -- is the head of this
+            # series still on disk -- and when it is not, there is nothing to score with, ever
+            # again, because those fills are gone from this host. That refusal is permanent by
+            # design and loud; see the runbook.
             self._refuse_tracking(
-                f"the first journaled fill sits on {first_fill.isoformat()}, the oldest boundary the "
-                "journal still holds -- an earlier position may have been pruned away with its records"
+                f"the journal's earliest fill is {first_fill.isoformat()} but this engine's realized "
+                f"series began at {birth.isoformat() if birth is not None else '(no record)'} -- the "
+                "position bought before that is not on this host, so no week can be scored against it"
             )
             return
-        if first_fill > week_start:
-            # The week the series STARTED in is not comparable to a settled one, whichever way it
-            # is read: its pre-fill cycles hold a book the engine had not bought yet, so counting
-            # them averages a full 10000 bps a cycle into the mean, while dropping them -- which is
+        if first_fill >= week_start:
+            # `>=`, never `>`: a first fill landing exactly ON the Monday boundary -- what an
+            # operator arming at a week boundary produces -- would otherwise leave the week
+            # containing it fully scored, ramp and all, which is the one week D10 excludes by name.
+            # The week the series STARTED in is not comparable to a settled one whichever way it is
+            # read: its pre-fill cycles hold a book the engine had not bought yet, so counting them
+            # averages a full 10000 bps a cycle into the mean, while dropping them -- which is
             # exactly what the span below does -- scores a fraction of a week under a whole week's
             # name. A week entirely before the first fill is not measured at all, and takes the
             # same exit.
             self._refuse_tracking(
-                f"the realized series starts at {first_fill.isoformat()}, after {label} began -- "
-                "a week that straddles the first fill is measurable on only the part that follows it"
+                f"the realized series starts at {first_fill.isoformat()}, at or after {label} began "
+                "-- the week the series starts in is measurable on only the part that follows it"
             )
             return
 
@@ -1441,6 +1548,13 @@ class ProbeExecutor:
         # nothing to `held`, and requiring them to be priceable would make every artifact written
         # before `closes` existed refuse a week it cannot affect.
         stages = [_stage(cycles[b]) for b in sorted(cycles) if first_fill <= b <= last]
+        # NAV is read LIVE and is not journaled per cycle, while it sets both halves of the
+        # comparison (a target is `weight * nav / close`, and the drift is divided by `nav`). So a
+        # `shadow_nav_eur` converge re-scores weeks that closed under the OLD value against the new
+        # one -- halving it roughly doubles every reading of a week nobody traded differently. The
+        # runbook's arming section therefore requires the band disarmed across any NAV change;
+        # journalling NAV on the cycle record is the real fix and belongs to the next schema
+        # widening, beside `closes`.
         rows = realized_drift(stages, fills, self._config.shadow_nav_eur)["cycles"]
         scored = set(week)
         # The straddle refusal above is what guarantees every one of the week's boundaries is in the
