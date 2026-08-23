@@ -260,9 +260,31 @@ PY
 #### 1. Pre-probe — before anything touches the host
 
 1. **Sweep for blockers, and present the result together with the arming request.** Read `### Open` and `### Partially done` in `docs/open-topics/README.md`, and grep `docs/memo.local.md` for anything in flight against the engine. "Ready" without the sweep is not ready.
-2. **Confirm the deployed code is the code you tested.** The engine row in `docs/reference/fleet-pins.md` records the digest running on `zcrypto` and the revision it was built from. Confirm the running digest matches — `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine` — and that your working tree is at that revision. Then run the two guards that catch a drift between the committed cost floors / ratified basket and what the venue reports: `uv run pytest tests/test_costmin_drift.py tests/test_basket_concordance.py` → expect `2 passed`. A failure means the floors or the basket have moved since that image was built; stop, do not arm.
-3. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
-4. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
+
+2. **Confirm the deployed code is the code you tested.** The engine row in `docs/reference/fleet-pins.md` records the digest running on `zcrypto` and the revision it was built from. Confirm the running digest matches — `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine` — and that your working tree is at that revision. Then run the two guards that catch a drift between the committed cost floors / ratified basket and what the venue reports: `uv run pytest tests/test_costmin_drift.py tests/test_basket_concordance.py` → expect `2 passed`. A failure means the floors or the basket have moved since that image was built; stop, do not arm. **`1 passed, 1 skipped` is NOT a pass** — the drift test skips itself when no refdata snapshot is present under the gitignored data root, so run this in a tree that has one; a skipped drift guard reads green and has checked nothing. Add `-rs` if you want the skip reason spelled out.
+
+3. **STOP unless the engine's nautilus version has its own order-semantics verification.** The adapter's margin/short/post-only and reconciliation semantics were verified by hand, against real orders, on **1.230.0** — `docs/research/14.phase6-adapter-verification-1.230.0.md`. That verification describes the version it ran on and no other: a bump may change fill, cancel, post-only or reconciliation behaviour without changing anything this repo's tests can see, because the tests never place an order. So the fresh ~€0.20 zero-fill + round-trip pass is a precondition of **arming**, not of merging a bump — the repo may sit on a newer version indefinitely while disarmed, and this is the step where that debt comes due.
+
+   Read the version the engine is actually running (scope the exec to this one command — the container carries the live trade key):
+
+   ```
+   sudo docker exec zcrypto-engine python -c "import nautilus_trader; print(nautilus_trader.__version__)"
+   ```
+
+   Then confirm a `docs/research/` verification doc exists for **exactly that version** and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new verification doc — the harness is `infra/scripts/kraken-order-semantics-probe.py` and the attended procedure is [`order-semantics-verification.md`](order-semantics-verification.md). Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
+
+   **This step is enforced mechanically in TWO places, and they are complementary — do not delete either as duplicative of the other.** Both read the same committed record, `cli/engine/order-semantics-verified.json` (it lives under `cli/` because the engine image copies only that directory, so a record under `infra/` would be unreachable from the running engine):
+
+   - **The converge** — the engine Ansible role refuses a converge that would render `exec_armed = true` on a version absent from the record. Bypass `-e arming_override="<reason>"`, reason-required, like `canary_override` and `pins_override`.
+   - **The arming** — the execution gate refuses at runtime when the *running* interpreter's `nautilus_trader` is absent from the record: `level=none`, `reasons=…,nautilus_unverified`, journaled into `exec-<HH>.json` like every other reason.
+
+   Neither subsumes the other. Arming takes two keys, and the arm file is placed by hand long after any converge — so a host that converged armed on a verified version and later took a newer image would pass the converge assert and still be arming an unverified adapter; the gate catches exactly that. Conversely the gate cannot stop a converge from *rendering* an armed config. If either fires it is telling you what this step says; do not override it to get a probe window started.
+
+   **For 1.231.0 the re-run HAS happened**: attended 2026-08-23, PASS on all six probes, recorded in `docs/research/14.phase6-adapter-verification-1.231.0.md`, and the version is in the record — so both guards now clear it and the engine may be armed on 1.231.0. The cost was EUR 0.16 and the account's own balance moved 99.84 → 99.68, confirming it from venue truth. The next bump owes its own pass: the harness is `infra/scripts/kraken-order-semantics-probe.py` and the procedure is [`order-semantics-verification.md`](order-semantics-verification.md).
+
+4. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
+
+5. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
 
 #### 2. Arm — two keys, in this order
 
@@ -292,7 +314,7 @@ PY
 
 5. **The owner clears the hold**: `sudo rm /var/lib/zcrypto-engine/exec/restart-hold`. Gate read → `level=none`, `reasons=arm_file_absent`.
 
-6. **The owner creates the arm file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=full`, `reasons=-`. If `venue_not_online` shows up instead, Kraken itself is not `online` — wait it out, since nothing can be submitted until it is. The engine is now armed, and the `zcrypto-engine-exec-armed-too-long` alert above will page if the window outlives six hours — that is the rule working, not a fault.
+6. **The owner creates the arm file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=full`, `reasons=-`. A `nautilus_unverified` here instead means the running version has no recorded order-semantics pass and pre-probe step 3 was skipped — stop and go back to it; the gate is refusing on purpose and no control file will clear it. If `venue_not_online` shows up instead, Kraken itself is not `online` — wait it out, since nothing can be submitted until it is. The engine is now armed, and the `zcrypto-engine-exec-armed-too-long` alert above will page if the window outlives six hours — that is the rule working, not a fault.
 
 #### 3. Drill before money — both drills green before any funded plan
 

@@ -47,6 +47,10 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`engine-probe-window`](engine.md#engine-probe-window) — PROCEDURE: the attended live-order probe window, and the only sanctioned way to run one. Nothing fires this; you open it deliberately, and real money moves.
 - [`engine-tracking-band`](engine.md#engine-tracking-band) — PROCEDURE: the weekly tracking-error trip — what its verdict tile is saying, and what has to be true before a band is set. Nothing fires this; a breach pages through the kill-switch alert above.
 
+### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
+
+- [`order-semantics-verification`](order-semantics-verification.md#order-semantics-verification) — PROCEDURE: the attended ~EUR 0.20 six-probe pass a nautilus bump owes before the engine may be armed on it. Nothing fires this; you run it deliberately, and real money moves.
+
 ### [`reference-data.md`](reference-data.md) — facts a third party owns
 
 - [`refdata-sweep-due`](reference-data.md#refdata-sweep-due) — SCHEDULED REMINDER: the Kraken reference-data re-confirmation sweep is due. Nothing is wrong.

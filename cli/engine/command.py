@@ -9,6 +9,7 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import math
 import os
@@ -997,6 +998,23 @@ def run() -> None:
     from cli.engine.node import build_shadow_node
 
     node = build_shadow_node(config)
+    # The build registered nautilus's asyncio SIGABRT handler, which installs CPython's own no-op C
+    # handler over faulthandler's -- so a native abort (a Rust panic in the adapter, say) would kill
+    # the engine with exit 134 and NOTHING on stderr. Re-arm so the next one arrives with a stack.
+    # `disable()` first is load-bearing: `enable()` returns early when faulthandler already considers
+    # itself enabled, and would then leave the clobbered handler in place.
+    # `file=2` rather than the default `sys.stderr` for two reasons. A fatal-signal dump is written
+    # from a signal handler and must reach the process's real stderr -- fd 2, which here is docker's
+    # log stream -- not whatever object happens to occupy `sys.stderr`. And the default form RAISES
+    # when that object has no `fileno()`: since `disable()` has already run by then, the engine would
+    # start with faulthandler switched OFF, strictly worse than never having re-armed. An fd needs no
+    # `fileno()`, so this form cannot fail that way and needs no exception handling.
+    # Accepted trade: faulthandler's handler replaces asyncio's for the fatal five (SIGSEGV/SIGFPE/
+    # SIGABRT/SIGBUS/SIGILL), so an EXTERNALLY delivered SIGABRT now dumps and dies instead of taking
+    # nautilus's graceful `node.stop()` path. SIGTERM and SIGINT are untouched, so `docker stop` and
+    # Ctrl-C still shut down cleanly; nothing in this fleet sends SIGABRT to the engine.
+    faulthandler.disable()
+    faulthandler.enable(file=2)
     watchdog = _start_watchdog(node)
     logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
     try:

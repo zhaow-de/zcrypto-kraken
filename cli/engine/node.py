@@ -2,7 +2,7 @@
 restart-inside-a-passable-window startup rule, the ShadowStrategy that owns only timer arithmetic
 (schedule the next alert FIRST, then invoke the cycle core -- a hung or raising cycle can never
 stall the alert chain), and the production-shape TradingNode assembly mirroring the iter-079
-verified adapter configuration (docs/research/14.phase6-adapter-verification.md SS Harness). No
+verified adapter configuration (docs/research/14.phase6-adapter-verification-1.230.0.md SS Harness). No
 catch-up: a boundary whose window has lapsed is a missed cycle, recorded by the journal's absence
 and honestly scored by the gate. Pure UTC throughout -- DST is structurally irrelevant.
 """

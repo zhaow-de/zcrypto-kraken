@@ -283,6 +283,75 @@
     and (pins_override | default('') | string | length > 8)
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
+# --- 1b. The arming backstop. Arming the engine on a nautilus version whose attended
+# order-semantics pass has not run was, until now, prevented only by prose in a runbook — the
+# mechanical guard that used to catch it (the version pin making a bump PR CI-red) stopped applying
+# the moment the bump was allowed to land ahead of the re-run. This restores a machine check at the
+# only moment that matters: the converge that would actually arm the engine.
+#
+# The arming intent is read from the TREE's own template, because that is where arming is expressed
+# (the runbook has the operator flip `exec_armed = false` -> `true` there; there is deliberately no
+# -e override for the value itself). The test is inverted on purpose: the converge counts as
+# DISARMED only when the template carries the literal `exec_armed = false`. Anything else — `true`,
+# or a Jinja expression whose value this role cannot know at assert time — counts as ARMED and must
+# clear the gate. Fail-closed, so a future templating of that line cannot silently make the guard
+# inert.
+- name: arming backstop — read the tree's arming intent, nautilus pin, and verified-version record
+  ansible.builtin.set_fact:
+    engine_config_template_text: "{{ lookup('file', role_path ~ '/templates/zcrypto.toml.j2') }}"
+    engine_pyproject_text: "{{ lookup('file', playbook_dir ~ '/../../pyproject.toml') }}"
+    engine_verified_nautilus: "{{ (lookup('file', playbook_dir ~ '/../../cli/engine/order-semantics-verified.json') | from_json).verified_nautilus_versions | default([]) }}"
+
+# An unparseable pin yields '' from the join, and '' is in no list, so it REFUSES — the same
+# fail-closed direction as the disarmed test above.
+#
+# The record is SHAPE-CHECKED before `in` is allowed to see it, and that is not defensive padding:
+# Jinja's `in` is SUBSTRING containment on a string and KEY containment on a mapping, so a record
+# whose list degraded to "1.230.0, 1.232.0" would VOUCH for the unverified 1.232.0, and a bare
+# "1.230.0" would vouch for the prefix "1.230". Both measured through this repo's templar harness.
+# Anything that is not a proper sequence collapses to [], which vouches for nothing — this guard's
+# contract is "cannot vouch => refuse", and a malformed record is exactly a cannot-vouch.
+# The SAME ternary guards the fail_msg: `join` raises on a null or scalar record, and a Jinja
+# TypeError in place of the diagnostic would leave the operator with no idea why the converge
+# refused — the task fails either way, but only one of those two outcomes is readable.
+- name: arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run
+  ansible.builtin.assert:
+    that: >-
+      (engine_config_template_text | regex_search('(?m)^exec_armed\s*=\s*false\s*$') is not none)
+      or ((engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('')) in
+          (engine_verified_nautilus if (engine_verified_nautilus is sequence
+          and engine_verified_nautilus is not string
+          and engine_verified_nautilus is not mapping
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []))
+      or ((arming_override | default('') | string | length > 8)
+          and (arming_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      This converge renders the engine ARMED on nautilus-trader
+      {{ engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('') | default('(unparseable pin)', true) }},
+      whose attended ~EUR 0.20 order-semantics pass has not been recorded in
+      cli/engine/order-semantics-verified.json (recorded:
+      {{ (engine_verified_nautilus if (engine_verified_nautilus is sequence
+          and engine_verified_nautilus is not string
+          and engine_verified_nautilus is not mapping
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []) | join(', ') | default('(the record is not a list -- nothing is verified)', true) }}).
+      The adapter's margin/short/post-only and reconciliation behaviour is native and no test here
+      places an order, so this version's order path is unmeasured. Run the probes, write the
+      docs/research/ verification doc, add the version to that record — or pass
+      -e arming_override="<why this cannot wait>" (a reason, not a flag).
+
+- name: arming override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "arming_override accepted: {{ arming_override }}"
+  when: >-
+    not (engine_config_template_text | regex_search('(?m)^exec_armed\s*=\s*false\s*$') is not none)
+    and not ((engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('')) in
+        (engine_verified_nautilus if (engine_verified_nautilus is sequence
+          and engine_verified_nautilus is not string
+          and engine_verified_nautilus is not mapping
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []))
+    and (arming_override | default('') | string | length > 8)
+    and (arming_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 # --- 2. The zcrypto-engine service account — created by this role itself, deliberately unlike
 # zcrypto-data (which the base role creates on capture hosts; renamed from kraken-capture, spec
 # 00057): in-role creation keeps `--tags engine` self-sufficient on first deploy.
