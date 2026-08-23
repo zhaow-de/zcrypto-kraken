@@ -225,10 +225,15 @@ def test_the_success_record_journals_the_forming_row_closes(tmp_path, monkeypatc
 
 
 def test_a_missing_forming_row_close_fails_the_cycle(tmp_path, monkeypatch):
-    """A cycle that cannot price its own forming row is refused rather than journaled with a hole --
-    the refusal replay_cycle's stage rebuild already makes, moved to where the book is still
-    untraded. Constructed at the contraction seam: after the staleness check every EUR leg carries
-    the boundary stamp, so nothing a store fixture can express reaches this arm."""
+    """A cycle that cannot price its own forming row is refused rather than journaled with a hole.
+
+    This refusal is NEW on the trade path -- it is not one the gate already makes. `replay_cycle`
+    extracts no closes at all, so such a cycle replays and passes the gate cleanly; only
+    `feeders.replay_stages`, the workstation reports path, refuses the same input today. Do not
+    read this guard as dead code duplicating a check downstream: nothing downstream makes it.
+
+    Constructed at the contraction seam: after the staleness check every EUR leg carries the
+    boundary stamp, so nothing a store fixture can express reaches this arm."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
     real = cycle.select_model_inputs
 
