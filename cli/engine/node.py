@@ -216,13 +216,24 @@ class ShadowStrategy(Strategy):
             self.msgbus.subscribe(topic=_EXTERNAL_ORDER_TOPIC, handler=self._on_external_order_event)
 
     def _on_cycle_alert(self, event) -> None:
-        on_alert_logic(
-            boundary=self._next_cycle_ts,
-            config=self._engine_config,
-            schedule_alert=self._schedule_alert,
-            run_cycle_fn=self._run_cycle_fn,
-            snapshot_fn=self._snapshot_venue_state,
-        )
+        # Read BEFORE on_alert_logic, whose FIRST act is schedule_alert -- which overwrites this
+        # field with the FOLLOWING boundary. Read after, the executor would score the wrong week.
+        boundary = self._next_cycle_ts
+        try:
+            on_alert_logic(
+                boundary=boundary,
+                config=self._engine_config,
+                schedule_alert=self._schedule_alert,
+                run_cycle_fn=self._run_cycle_fn,
+                snapshot_fn=self._snapshot_venue_state,
+            )
+        finally:
+            # The weekly tracking-error trip's ONLY call site (spec 00091 component C), in a
+            # `finally` so a boundary whose cycle raised is still scored -- and after the cycle, so
+            # the boundary it reads has already journaled. `on_boundary` carries its own total
+            # catch, so it can neither raise onto the alert chain nor replace an in-flight exception.
+            if self._executor is not None:
+                self._executor.on_boundary(boundary)
 
     # --- the probe executor's four inputs ------------------------------------------------------
 

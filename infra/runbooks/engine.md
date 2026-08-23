@@ -446,8 +446,53 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
    The last one is the only family here whose **zero is a reading rather than a gap**: both dispositions are registered at startup, so `matched` and `unmatched` must both be present, and `(no series)` on it means the capture keep-regex did not ship rather than that nothing happened. Record `unmatched`'s value against the settle taken in step 4 — that is the measurement of whether a hand settle reaches this process as an order event at all.
 
-7. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
+7. **Count the journaled gate level across the window's exec records**, on the engine host: `for f in /var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/exec-*.json; do python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['level'])" "$f"; done | sort | uniq -c`. This is the input the weekly tracking-error trip takes its eligibility from, and it is the one reading no other step produces. Every record written outside a window reads `none` — as all 66 of them did before the first window — so what this measures is whether an ARMED window actually journals `full`. If it does not, the restart hold was left set through the window, and the trip is structurally inert even once armed: see `engine-tracking-band` below, and do not set a band until this reads `full`.
+
+8. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
 
 ### Retire when
 
 `cli/engine/executor.py` no longer picks a plan file up out of the state directory's `exec/` — check with `grep -n PLAN_FILENAME cli/engine/executor.py`, and a run that finds nothing is the signal. At that point the continuous loop that replaces attended probe windows has landed, and this procedure with it.
+
+______________________________________________________________________
+
+<a name="engine-tracking-band"></a>
+
+## engine-tracking-band — PROCEDURE
+
+### What you are seeing
+
+You are deciding whether to arm the engine's weekly tracking-error trip, or you are looking at the **Weekly tracking error — last verdict** tile on the engine board and want to know what it is telling you. **Nothing has fired**: if the trip had latched, `zcrypto-engine-exec-kill-tripped` would have paged and that section above is the one to work.
+
+### What it means
+
+At every 4-hourly boundary — after the cycle has journaled, and reading nothing but the journal — the engine scores the **most recently closed ISO week**: what its cycles targeted, against what its own fills say it actually held, as a mean drift in bps of NAV. If that mean exceeds the configured band, the engine latches the kill file, cancels everything resting and refuses every further order until a human clears it.
+
+It exists for the failure no other guard can see: an engine that has quietly **stopped placing orders**. Every other execution guard sits behind an operator-authored plan file, so none of them can fire in a window where nothing is being submitted at all — while the targets keep moving and the book keeps standing still.
+
+Four things about it are worth knowing before you touch anything:
+
+- **It ships disarmed and stays that way until a band is set.** `tracking_band_bps` is absent from `[zcrypto.engine]`, and with no band nothing can be exceeded. The tile reads `DISARMED`; that is the correct resting state, not a fault.
+- **It carries no state of its own.** There is no checkpoint, no marker file. The week is re-derived from the journal every four hours, so a fill journaled late — filed under the boundary its ORDER was filed under, days after the fact — is folded in at the next boundary rather than lost.
+- **It refuses far more often than it decides.** A week short of its 42 boundaries, a week that spent any boundary below the `full` gate level, the week the fill series started in, a week whose records do not carry the prices they were traded at, and a journal whose oldest boundary already carries a fill are all `NOT SCORED`. Each is a deliberate refusal: refusing costs a week of coverage, guessing halts live trading.
+- **It has no alert rule of its own, deliberately.** The only value that is a fault — the band breached — latches the kill file, and `zcrypto-engine-exec-kill-tripped` already pages on exactly that. A rule here would double-page one event and would page on nothing else.
+
+### What to do
+
+**If the tile reads `OUTSIDE BAND`** — the kill file is latched and the alert has already paged. Work `zcrypto-engine-exec-kill-tripped` above. `sudo cat /var/lib/zcrypto-engine/exec/kill` names the week, the mean it measured and the band it was measured against; that text is the only record of why the engine stopped, so read it before removing anything. The engine will not re-score while the file is present, so the first reason stays exactly as it was written.
+
+**If the tile reads `NOT SCORED` and you expected a verdict** — the reason is in the engine log, one line per boundary: `sudo docker logs --since 5h zcrypto-engine | grep 'not scored'` (a bare `--since HH:MM` does not parse; pass a duration or a full timestamp, and confirm the log lines you got are non-empty before reading anything into a quiet grep).
+
+**If the tile is absent entirely** — no boundary has been scored since this process started, or the family is not shipping. Read it by value from the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_tracking_state{host="zcrypto"}'`. `(no series)` after a boundary has passed is a keep-regex failure, not a quiet engine.
+
+**To arm it** — three preconditions, in this order, and none of them is optional:
+
+1. **A window has journaled `full`.** Run the count in the probe-window procedure's verify step above. Every exec record written outside an armed window reads `level: "none"`, and the restart hold is written at every engine start and cleared only by hand — so a week spent held reads as fully armed while the engine never traded, which is exactly the state that would latch the kill file on a healthy engine. A week the engine could actually trade must be able to show 42 records reading `full`; if it cannot, the hold-clearing step is what changes, before any band is set.
+2. **A band exists that real weeks have been measured against.** `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day> --until <last day>` on the workstation prints each week's realized mean beside the floor the venue's own minimums impose. The band is a number chosen from those readings and recorded in `docs/research/14.phase6-decisions.md`, never one invented here.
+3. **The band is deployed as config.** `tracking_band_bps` is read from `[zcrypto.engine]` in the rendered `/opt/zcrypto-engine/zcrypto.toml`; the engine role's template does not render the key today, so arming means adding it there — one line, reviewed like the `exec_armed` line beside it — and converging inside a 4-hourly inter-cycle gap. Verify by outcome at the next boundary: the tile moves off `DISARMED`, and `grafana-query.py` reads a number rather than `(no series)`.
+
+**To disarm it** — remove the key and converge. Nothing else clears it; the disarmed state is the absent key.
+
+### Retire when
+
+`tracking_band_bps` is absent from `cli/config.py` — i.e. the trip was replaced rather than merely disarmed.

@@ -380,3 +380,4 @@ Optional table tuning the `zcrypto engine` shadow node. Every key has a built-in
 | `exec_enabled` | `false` | Attach the Kraken execution client to the node. Keep `false` off the VPS — the trade key is IP-bound, so local runs are keyless. |
 | `exec_max_plan_notional_eur` | `100.0` | The total-notional cap a probe plan may carry — the blast-radius bound. |
 | `settle_delay_secs` | `90` | Seconds after each 4h boundary before the cycle's first store refresh, letting the venue commit the boundary candle. |
+| `tracking_band_bps` | *(unset)* | The band, in bps of NAV, the engine's own weekly tracking error may not exceed. At every 4h boundary the most recently closed ISO week is re-derived from the journal — what its cycles targeted against what its fills say it held — and a mean drift beyond this band latches the execution kill switch. **Unset ships it disarmed**: with no band nothing can be exceeded, and no week can ever trip it. |

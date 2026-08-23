@@ -369,6 +369,10 @@ class RecordingExecutor:
         self.quotes: list[object] = []
         self.events: list[object] = []
         self.external_events: list[object] = []
+        self.boundaries: list[datetime] = []
+
+    def on_boundary(self, boundary):
+        self.boundaries.append(boundary)
 
     def on_timer(self, now):
         self.timers.append(now)
@@ -850,3 +854,54 @@ def test_build_shadow_node_without_exec_client(tmp_path):
 
 def test_build_shadow_node_with_exec_client_when_enabled(tmp_path):
     assert _node_build_facts(tmp_path, exec_enabled=True)["exec_clients"] == ["KRAKEN"]
+
+
+def test_the_cycle_alert_hands_the_executor_the_boundary_it_fired_for(tmp_path):
+    """`on_alert_logic`'s FIRST act is schedule_alert, which overwrites `_next_cycle_ts` with the
+    FOLLOWING boundary -- so the value the executor is given has to be read before that call, not
+    after it. Read after, the weekly tracking trip would score its week off a boundary the cycle
+    behind this alert never ran.
+
+    Order matters too: the executor is told AFTER the cycle, so the boundary it reads has already
+    journaled its record."""
+    executor = RecordingExecutor()
+    stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
+    stub._next_cycle_ts = B12
+
+    stub._on_cycle_alert(None)
+
+    assert executor.boundaries == [B12]
+    assert stub._next_cycle_ts == B12 + timedelta(hours=4)  # the chain moved on, as it must
+
+
+def test_the_executor_is_told_the_boundary_even_when_the_alert_logic_raises(tmp_path):
+    """The call sits in a `finally`: a boundary whose alert chain broke is still a boundary the
+    engine lived through, and the trip's whole point is to fire when the ordinary path is not
+    working. The original exception must survive unchanged -- `on_boundary` carries its own total
+    catch, so nothing from a measurement can replace it."""
+    executor = RecordingExecutor()
+    stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
+    stub._next_cycle_ts = B12
+
+    def boom(boundary, alert_time):
+        raise RuntimeError("the alert chain broke")
+
+    stub._schedule_alert = boom
+    with pytest.raises(RuntimeError, match="the alert chain broke"):
+        stub._on_cycle_alert(None)
+
+    assert executor.boundaries == [B12]
+
+
+def test_a_strategy_with_no_executor_still_takes_the_alert(tmp_path):
+    """The default construction wires no executor at all, and every forwarder stays inert -- the
+    alert chain is the engine's research obligation and must not depend on one existing."""
+    events: list = []
+    schedule_alert, run_fn = _recorders(events)
+    strategy = ShadowStrategy(_config(tmp_path), run_cycle_fn=run_fn, clock=lambda: B08 + timedelta(minutes=5))
+    strategy._schedule_alert = schedule_alert
+    strategy._next_cycle_ts = B12
+
+    strategy._on_cycle_alert(None)
+
+    assert [e[0] for e in events] == ["schedule", "run"]

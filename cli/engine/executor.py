@@ -38,14 +38,19 @@ from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict
 from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
+    exec_records_through,
     ledgered_intent_keys,
     ledgered_plan_ids,
     open_submitted_rows,
     update_plan_intent,
     update_submitted_row,
 )
+from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+from cli.engine.journal import CycleRecord, from_json
 from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.store import BASKET
+from cli.engine.tracking import extract_fills, realized_drift
 from cli.engine.venueledger import read_venue_record, validate_venue_record
 from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
 from cli.logging import get_logger
@@ -101,6 +106,22 @@ _ADOPTED_TERMINAL_STATES = {
 }
 
 _H4 = 4
+# What a complete ISO week holds -- derived, not the literal 42, so the two halves of the sentence
+# cannot drift apart.
+_WEEK_BOUNDARIES = 7 * (24 // _H4)
+# The MODEL's key space: the ten EUR bases. `final_targets` is symbol-keyed TWELVE (the two /BTC
+# legs ride in it at 0.0) while a journaled `closes` is base-keyed TEN, so a record's targets are
+# contracted to these before any drift arithmetic -- `drift_bps` indexes closes by the key it finds
+# in the targets, and handed the raw record it raises KeyError on the first /EUR symbol. Taken from
+# BASKET so this and `tracking.extract_fills` are provably the same ten.
+_MODEL_BASES = frozenset(symbol.split("/")[0] for symbol in BASKET if symbol.endswith("/EUR"))
+# What the tracking trip publishes about the most recently closed week. The alphabet starts at 1 on
+# purpose: this gauge is registered on first use, and a 0 -- eager or accidental -- would render as
+# a legitimate reading on the board rather than as the absence it is.
+_TRACKING_DISARMED = 1
+_TRACKING_UNSCORED = 2
+_TRACKING_WITHIN_BAND = 3
+_TRACKING_BREACHED = 4
 
 _VENUE = Venue("KRAKEN")
 # The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
@@ -158,6 +179,15 @@ def _inc_external(disposition: str) -> None:
         return
     try:
         _metrics.inc_external(disposition)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_tracking_state(state: int) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_tracking_state(state)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
 
@@ -304,6 +334,62 @@ def _newest_venue_balances(journal_dir: Path) -> dict:
         if newest is None or cycle_ts > newest[0]:
             newest = (cycle_ts, doc)
     return {} if newest is None else dict(newest[1]["state"]["balances"])
+
+
+def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime, CycleRecord]:
+    """Every success record stamped at or before `until`, keyed by the boundary it names.
+
+    Keyed by the record's OWN `cycle_ts`, not by its path, because that is the stamp
+    `tracking.extract_fills` gives a fill and `realized_drift` matches the two on: a record filed
+    under a path that disagrees with its content must miss rather than silently pair a fill with a
+    different cycle's targets.
+
+    Sidecars are `failed-cycle-<HH>.json` and this glob never sees them -- a boundary the engine
+    failed has no targets to compare anything against, and it reads here as the absence it is.
+    """
+    out: dict[datetime, CycleRecord] = {}
+    for path in sorted(Path(journal_dir).glob("*/cycle-*.json")):
+        record = from_json(path.read_text())
+        if record.cycle_ts <= until:
+            out[record.cycle_ts] = record
+    return out
+
+
+def _stage(record: CycleRecord) -> CycleStages:
+    """One journaled cycle as the shape `tracking.realized_drift` reads.
+
+    Only `cycle_ts`, `final` and `closes` are read there; the remaining fields are structural and
+    carry no meaning for this caller -- the alternative, a private per-cycle drift loop here, is the
+    one thing this must not be: the number a human bands and the number the engine trips on have to
+    come from the same function.
+
+    Raises when the record cannot be turned into a comparable stage. Both refusals are the
+    fail-CLOSED direction of a fail-open trap: a missing `closes` (every artifact written before the
+    key existed) cannot be reconstructed afterwards and a guessed price moves every leg at once,
+    while a leg missing from `final_targets` contributes NO drift, so a book that dropped one reads
+    better than it is.
+    """
+    targets = {symbol.split("/")[0]: weight for symbol, weight in record.final_targets.items() if symbol.endswith("/EUR")}
+    if set(targets) != _MODEL_BASES:
+        raise EngineError(
+            f"the cycle record for {record.cycle_ts.isoformat()} carries targets for "
+            f"{sorted(targets)}, not the model's {sorted(_MODEL_BASES)}"
+        )
+    if record.closes is None or not _MODEL_BASES <= set(record.closes):
+        raise EngineError(
+            f"the cycle record for {record.cycle_ts.isoformat()} does not journal the closes it "
+            "priced every model leg at, and a close cannot be recovered after the fact"
+        )
+    return CycleStages(
+        cycle_ts=record.cycle_ts,
+        sleeve_positions={},
+        combined={},
+        capped={},
+        final=targets,
+        multiplier=1.0,
+        closes=dict(record.closes),
+        cap_bound=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -1232,6 +1318,144 @@ class ProbeExecutor:
             # No retry and no fallback: the order may still rest, and the intent stays in
             # `cancelling` -- an open ledger row for reconciliation, and no further order.
             logger.critical("cancel of %s raised -- the order may still rest at the venue", active.client_order_id, exc_info=True)
+
+    # --- the weekly tracking-error trip ----------------------------------------------------------
+
+    def on_boundary(self, boundary: datetime) -> None:
+        """The 4-hourly boundary alert's one call into the executor, made after that boundary's
+        cycle has journaled.
+
+        THE call site, and the whole reason this is not on the timer: every `_evaluate` on the tick
+        path sits behind an operator-written plan file, so a trip hooked there could only fire while
+        a plan was running -- never in the stopped-placing state it exists to catch. The alert chain
+        reads neither the plan file nor the venue, and it fires whether or not anything is trading.
+
+        Wrapped whole, and the wrapping is not defensive habit: the caller invokes this from a
+        `finally`, so a raise here would either reach the alert chain or REPLACE an in-flight
+        exception from the cycle with one from a measurement.
+        """
+        try:
+            self._evaluate_tracking(boundary)
+        except Exception:
+            logger.exception("the weekly tracking evaluation raised -- the order path is unaffected")
+
+    def _refuse_tracking(self, reason: str) -> None:
+        """No verdict this boundary. Published as its own state so an operator can tell a week that
+        was measured and passed from one nothing could score."""
+        logger.warning("the most recently closed week is not scored: %s", reason)
+        _set_tracking_state(_TRACKING_UNSCORED)
+
+    def _evaluate_tracking(self, boundary: datetime) -> None:
+        """Score the most recently CLOSED ISO week and latch the kill switch when its realized mean
+        drift exceeds the configured band.
+
+        Carries no durable state whatsoever: the week is re-derived from immutable journal artifacts
+        at every boundary, and idempotence comes from the kill file plus `_kill_tripped`. A
+        checkpoint would be strictly worse -- `update_submitted_row` files a fill under the boundary
+        its ORDER was filed under, so a fill can land in an already-scored boundary days later,
+        which a checkpoint loses permanently and a re-derivation folds in at the next boundary.
+
+        Eligibility is each boundary's JOURNALED level, never live config: `restart_hold` is written
+        unconditionally at every engine start and cleared only by hand, so a week spent under it
+        reads as fully armed while the engine never traded -- `held` frozen, targets moving, and the
+        kill file latched on a perfectly healthy engine. The journaled level is the one field that
+        reduces arm file, kill file, restart hold, config and venue status together.
+
+        Every other exit is a refusal, never a guess: a week short of its full boundary count, a
+        week whose first fill falls inside it, a week the journal cannot price, and a span whose
+        oldest boundary already carries a fill (the prune may have taken the position that explains
+        it) all decline to decide. Refusing costs a week of coverage; guessing halts live trading.
+        """
+        band = self._config.tracking_band_bps
+        if band is None:
+            _set_tracking_state(_TRACKING_DISARMED)  # ships disarmed: with no band nothing can be exceeded
+            return
+        if not self._config.exec_armed:
+            self._refuse_tracking("order submission is not armed in this engine's config")
+            return
+        if self._kill_tripped or (exec_dir(self._state_dir) / KILL_FILE).exists():
+            # The latch is the idempotence. Re-deriving here would rewrite the FIRST reason -- the
+            # one that explains why the engine stopped -- with a restatement of it hours later.
+            self._refuse_tracking("the kill switch is already latched")
+            return
+        try:
+            self._score_closed_week(_aware_utc(boundary), band)
+        except EngineError as exc:
+            # Every refusal this arithmetic can raise (a hole in the cycle span, a fill on a symbol
+            # outside the basket, a record that cannot be priced) is a reason not to decide -- not a
+            # reason to take the engine's telemetry down with a traceback every four hours.
+            self._refuse_tracking(str(exc))
+
+    def _score_closed_week(self, boundary: datetime, band: float) -> None:
+        week_end = (boundary - timedelta(days=boundary.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = week_end - timedelta(days=7)
+        last = week_end - timedelta(hours=_H4)
+        label = f"{week_start.isocalendar().year}-W{week_start.isocalendar().week:02d}"
+        expected = [week_start + timedelta(hours=_H4 * i) for i in range(_WEEK_BOUNDARIES)]
+
+        # Everything through the week's last boundary, never just the week: `held` is cumulative
+        # from the first fill ever, so a week-scoped read would report the book bought earlier as
+        # drift it never had.
+        exec_docs = exec_records_through(self._journal_dir, last)
+        cycles = _cycle_records_through(self._journal_dir, last)
+        week = [b for b in expected if b in exec_docs and b in cycles]
+        if len(week) < _WEEK_BOUNDARIES:
+            self._refuse_tracking(
+                f"{label} has {len(week)} of the {_WEEK_BOUNDARIES} boundaries a complete week holds -- "
+                "a week the engine did not live through is not comparable to one it did"
+            )
+            return
+        held_back = [b for b in week if exec_docs[b]["level"] != GateLevel.FULL]
+        if held_back:
+            self._refuse_tracking(
+                f"{label} spent {len(held_back)} of its {_WEEK_BOUNDARIES} boundaries below the full "
+                f"level (first at {held_back[0].isoformat()}) -- the engine was not free to trade it"
+            )
+            return
+
+        fills, _notes = extract_fills([exec_docs[b] for b in sorted(exec_docs)])
+        first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+        if first_fill is None:
+            self._refuse_tracking("no model-leg fill has been journaled yet -- the realized series has not started")
+            return
+        if first_fill <= min(cycles):
+            self._refuse_tracking(
+                f"the first journaled fill sits on {first_fill.isoformat()}, the oldest boundary the "
+                "journal still holds -- an earlier position may have been pruned away with its records"
+            )
+            return
+        if first_fill > week_start:
+            # The week the series STARTED in is not comparable to a settled one, whichever way it
+            # is read: its pre-fill cycles hold a book the engine had not bought yet, so counting
+            # them averages a full 10000 bps a cycle into the mean, while dropping them -- which is
+            # exactly what the span below does -- scores a fraction of a week under a whole week's
+            # name. A week entirely before the first fill is not measured at all, and takes the
+            # same exit.
+            self._refuse_tracking(
+                f"the realized series starts at {first_fill.isoformat()}, after {label} began -- "
+                "a week that straddles the first fill is measurable on only the part that follows it"
+            )
+            return
+
+        # The span starts at the first fill, not at the journal's start: earlier cycles contribute
+        # nothing to `held`, and requiring them to be priceable would make every artifact written
+        # before `closes` existed refuse a week it cannot affect.
+        stages = [_stage(cycles[b]) for b in sorted(cycles) if first_fill <= b <= last]
+        rows = realized_drift(stages, fills, self._config.shadow_nav_eur)["cycles"]
+        scored = set(week)
+        # The straddle refusal above is what guarantees every one of the week's boundaries is in the
+        # span, and so what makes this a mean over the WHOLE week rather than over its tail.
+        values = [row["drift_bps"] for row in rows if datetime.fromisoformat(row["cycle_ts"]) in scored]
+        mean = sum(values) / len(values)
+        logger.info("%s tracked %.1f bps of NAV across %d cycles, against a %.1f bps band", label, mean, len(values), band)
+        if mean > band:
+            _set_tracking_state(_TRACKING_BREACHED)
+            self._trip_kill(
+                f"{label} tracked {mean:.1f} bps of NAV across its {len(values)} cycles, outside the "
+                f"{band:.1f} bps band this engine is allowed to drift from its targets"
+            )
+            return
+        _set_tracking_state(_TRACKING_WITHIN_BAND)
 
     # --- the kill switch -----------------------------------------------------------------------
 

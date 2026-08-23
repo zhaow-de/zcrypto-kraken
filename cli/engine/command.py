@@ -643,6 +643,7 @@ class _ExecutionMetrics:
     """
 
     def __init__(self, registry) -> None:
+        self._registry = registry
         self.orders = Counter("zcrypto_exec_orders_total", "Executor orders by outcome.", ["outcome"], registry=registry)
         self.fills = Counter("zcrypto_exec_fills_total", "Order fills by liquidity side.", ["liquidity"], registry=registry)
         self.fees = Counter("zcrypto_exec_fees_eur_total", "Trading fees paid, in EUR.", registry=registry)
@@ -659,6 +660,12 @@ class _ExecutionMetrics:
             ["disposition"],
             registry=registry,
         )
+        # The weekly tracking-error verdict, registered on FIRST USE for
+        # `_ExecGauges.last_evaluation`'s reason and one of its own: every value it can take means
+        # something, and a series that existed before the first boundary was scored could only
+        # publish a code outside that alphabet -- a 0 that renders as a legitimate reading rather
+        # than as the "nothing has been scored yet" it would actually be.
+        self.tracking_state: Gauge | None = None
         for outcome in _EXEC_ORDER_OUTCOMES:
             self.orders.labels(outcome=outcome)
         for liquidity in _EXEC_LIQUIDITY_SIDES:
@@ -685,6 +692,20 @@ class _ExecutionMetrics:
 
     def set_realized(self, value: float) -> None:
         self.realized_pnl.set(value)
+
+    def set_tracking_state(self, state: int) -> None:
+        """What the last 4-hourly boundary decided about the most recently closed week. The help
+        text carries the whole alphabet because this gauge is read on a board, where a bare number
+        means nothing -- and every code it lists is one the executor can really publish."""
+        if self.tracking_state is None:
+            self.tracking_state = Gauge(
+                "zcrypto_exec_tracking_state",
+                "The most recently closed week's tracking-error verdict: 1 = no band is configured, "
+                "so nothing is measured against one; 2 = the week could not be scored; 3 = the week's "
+                "mean drift is inside the band; 4 = it is outside the band and the kill switch latched.",
+                registry=self._registry,
+            )
+        self.tracking_state.set(state)
 
 
 class _VenueGauges:
