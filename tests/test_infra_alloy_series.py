@@ -114,6 +114,11 @@ ENGINE_APP_SERIES = [
     # would read as a restart during which no external event ever arrived -- indistinguishable from
     # the adoption working, in the one window an operator opens the board to check it.
     "zcrypto_exec_external_events_total",
+    # The weekly tracking-error verdict, pinned on the same grounds and one more: it is the ONLY
+    # rendering of a trip that is meant to sit disarmed for months. Dropped from the keep-regex, a
+    # disarmed trip and a trip that was never deployed at all read identically -- and there is no
+    # rule to notice, by design (tests/test_infra_alert_rules.py's NOT_A_FAULT_SIGNAL entry).
+    "zcrypto_exec_tracking_state",
     "zcrypto_engine_limit_bound_total",
     # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
     # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,

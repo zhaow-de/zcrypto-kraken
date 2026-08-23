@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 6b produces its first weeks of paired live-vs-simulation cycles (real fills) — that is the only input the underperformance bound can be derived from, and it cannot be estimated from shadow data, where nothing fills. The DD floor is already ratified and needs no trigger
+ripe_when: 6b produces its first weeks of paired live-vs-simulation cycles with real fills
 ---
 
 # §12's "Ongoing" register is prose-only — kill criteria, revalidation, decay tests

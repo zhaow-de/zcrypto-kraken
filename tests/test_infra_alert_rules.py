@@ -221,6 +221,13 @@ NOT_A_FAULT_SIGNAL = {
     # no-data alert. Revisit once a live baseline exists -- the candidate is `unmatched` rising
     # while `zcrypto_exec_armed` is 0, the one condition no human is positioned to see.
     "zcrypto_exec_external_events_total",
+    # The weekly tracking-error verdict. NO rule, deliberately and not by omission: the only value
+    # that is a fault -- the band breached -- latches the kill file, and `zcrypto-engine-exec-kill-
+    # tripped` already pages on exactly that. A second rule here would double-page the one event and
+    # would page on nothing else, since `not scored` is a refusal to decide (a week short of its
+    # boundaries, a week held below the full level, the week the series started in) and `disarmed`
+    # is the resting state of an engine that has never been given a band.
+    "zcrypto_exec_tracking_state",
     # A level-shift detail read on the board: the §10 whole-book limits binding is the limits doing
     # their job, not a fault. What would be a fault -- the book they shape going somewhere it should
     # not -- is the intent-side gauges' business, not this counter's.

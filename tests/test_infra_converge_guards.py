@@ -5,6 +5,7 @@ never a re-implementation of the logic. `load_task` reads the committed YAML; a 
 expression is edited drifts here immediately.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -704,6 +705,183 @@ def test_engine_parity_when_references_the_correct_probe_register_name():
     tasks = load_tasks(ENGINE)
     guard = find_task(tasks, "engine canary parity — refuse an engine re-pin the secondary has not baked")
     assert "engine_secondary_digest_probe" in guard["when"]
+
+
+# --- the arming backstop. The one guard here whose subject is real money rather than a digest: it
+# refuses a converge that would render the engine ARMED on a nautilus version whose attended
+# order-semantics pass has not run. Fixtures are the REAL committed files wherever the guard reads
+# one, so a drift between the record, the pin and the template fails here rather than at the host.
+ARMING = "arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run"
+ARMING_REASON = "venue incident replay, re-run booked for the same day"
+
+DISARMED_TEMPLATE = "exec_enabled = true\nexec_armed = false\nshadow_nav_eur = 1000\n"
+ARMED_TEMPLATE = "exec_enabled = true\nexec_armed = true\nshadow_nav_eur = 1000\n"
+# The fail-closed third case: neither literal, because the value became a Jinja expression.
+TEMPLATED_ARMED = "exec_enabled = true\nexec_armed = {{ engine_exec_armed }}\nshadow_nav_eur = 1000\n"
+
+VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.230.0",\n]\n'
+UNVERIFIED_PIN_VERSION = "1.231.0"
+UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.231.0",\n]\n'
+NO_PIN = 'dependencies = [\n    "polars==1.0.0",\n]\n'
+# A pin that is a PREFIX of the recorded version. This is the only shape that exercises Jinja's
+# substring containment in the direction that used to vouch: "1.230" IS in "1.230.0".
+PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
+RECORD = ["1.230.0"]
+_UNSET = object()  # so a test can pass record=None and mean it
+
+
+@pytest.mark.parametrize(
+    ("record", "why"),
+    [
+        # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
+        # comma-joined string VOUCHES for a version it never verified -- measured: this exact shape
+        # passed an armed converge on 1.231.0 before the shape check landed.
+        ("1.230.0, 1.231.0", "a comma-joined string"),
+        # ...and KEY containment on a mapping, which vouches the same way.
+        ({"1.231.0": "note"}, "a mapping keyed by version"),
+        (None, "null"),
+        (42, "a scalar that is not even a sequence"),
+        # A MIXED list passes every structural test -- proper sequence, not a string, not a
+        # mapping -- so without an element-type check the Jinja half vouched for the real version
+        # in it while cli.engine.execgate collapsed the same record to the empty set and refused
+        # everything. Measured, not theorised: the composed system still failed closed, but the
+        # two guards disagreed about one record, which three surfaces claim is impossible.
+        # The pin must be IN the list, or the assert refuses because it is absent and the case
+        # proves nothing about the shape check. With it present beside a non-string, an unguarded
+        # ternary vouches and a guarded one refuses -- which is the only difference under test.
+        ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
+        ("", "an empty string"),
+    ],
+)
+def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(record, why):
+    """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse.
+
+    Without the shape check the assert fails OPEN on these: `in` against a string or a mapping is
+    containment, not membership, so the guard would vouch for an unverified version. The Python
+    half (cli/engine/execgate) rejects the same shapes via isinstance, so the two agree.
+    """
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, record=record)
+    assert not truthy(assert_that(task), variables), why
+
+
+def test_arming_backstop_refuses_a_pin_that_is_only_a_PREFIX_of_a_string_record():
+    """The one case that pins substring containment in the direction that actually failed open.
+
+    A bare string record against an UNVERIFIED pin is not evidence: "1.231.0" is not a substring of
+    "1.230.0", so it refuses under the committed expression, under a string-check-removed mutant,
+    and under the original unfixed expression alike. Only a pin that is a PREFIX of the recorded
+    version discriminates -- measured, `"1.230" in "1.230.0"` is True, so before the shape check
+    this exact input passed an ARMED converge on a version nobody ever verified.
+    """
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record="1.230.0")
+    assert not truthy(assert_that(task), variables)
+    # ...and the same prefix pin against a PROPER list record refuses too, on plain non-membership.
+    assert not truthy(assert_that(task), _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record=["1.230.0"]))
+
+
+def test_a_malformed_record_still_leaves_a_disarmed_converge_alone():
+    """Inertness survives the shape check: a broken record must not block the disarmed converges
+    the fleet actually runs -- only an ARMED one is ever refused on it."""
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(DISARMED_TEMPLATE, UNVERIFIED_PIN, record="1.230.0, 1.231.0")
+    assert truthy(assert_that(task), variables)
+
+
+def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSET) -> dict:
+    return {
+        "engine_config_template_text": template,
+        "engine_pyproject_text": pyproject,
+        "engine_verified_nautilus": RECORD if record is _UNSET else record,
+        "arming_override": override,
+    }
+
+
+@pytest.mark.parametrize(
+    ("template", "pyproject", "expected", "why"),
+    [
+        # INERT on every converge the fleet actually runs today: disarmed, so the version is not
+        # even consulted. This must hold or every converge from now on needs an override.
+        (DISARMED_TEMPLATE, UNVERIFIED_PIN, True, "disarmed on an unverified version"),
+        (DISARMED_TEMPLATE, VERIFIED_PIN, True, "disarmed on a verified version"),
+        (DISARMED_TEMPLATE, NO_PIN, True, "disarmed with no nautilus pin at all"),
+        # THE CONSTRUCTED DEFECT: an armed converge on a version absent from the record. (1.231.0
+        # is verified in the REAL record since 2026-08-23; here RECORD is the synthetic ['1.230.0'].)
+        (ARMED_TEMPLATE, UNVERIFIED_PIN, False, "armed on an unverified version"),
+        # TRUE POSITIVE: a healthy armed converge on a verified version must PASS, or the guard
+        # refuses every legitimate probe window and would simply be routed around.
+        (ARMED_TEMPLATE, VERIFIED_PIN, True, "armed on a verified version"),
+        # Fail-closed on inputs the guard cannot read: a templated arming value counts as armed,
+        # and an unparseable pin is in no record.
+        (TEMPLATED_ARMED, UNVERIFIED_PIN, False, "arming value templated away from the literal"),
+        (TEMPLATED_ARMED, VERIFIED_PIN, True, "templated arming is still fine on a verified version"),
+        (ARMED_TEMPLATE, NO_PIN, False, "armed with an unparseable pin"),
+    ],
+)
+def test_arming_backstop_semantics(template, pyproject, expected, why):
+    task = find_task(load_tasks(ENGINE), ARMING)
+    assert truthy(assert_that(task), _arming_vars(template, pyproject)) is expected, why
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [("", False), ("short", False), ("true", False), ("yes", False), (ARMING_REASON, True)],
+)
+def test_arming_backstop_override_demands_a_reason(override, expected):
+    """A bare flag must not open this gate -- the override has to carry a why, like its siblings."""
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=override)
+    assert truthy(assert_that(task), variables) is expected
+
+
+@pytest.mark.parametrize(
+    ("template", "pyproject", "override", "expected"),
+    [
+        (ARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, True),  # overrode something -> echo the why
+        (ARMED_TEMPLATE, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
+        (ARMED_TEMPLATE, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
+        (DISARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, False),  # disarmed -> nothing was overridden
+    ],
+)
+def test_arming_override_echo_fires_only_on_an_accepted_override(template, pyproject, override, expected):
+    task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
+    assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
+
+
+def test_arming_backstop_reads_the_real_committed_files():
+    """The fixtures above are synthetic; this pins the guard to the tree it will actually read.
+
+    Both directions are proved from the REAL role, template and pyproject, with the membership
+    list fed state-agnostically: the true positive gets the pinned version present, the bite gets
+    it absent. That is deliberate. "The repo may sit on a bumped version indefinitely while
+    disarmed" is a blessed state, so a test that asserted the pin IS recorded would go red for the
+    whole legitimate interim between a bump landing and its attended pass running -- pressuring
+    whoever met it into either editing the record early or routing around a red test. Whether the
+    pass has run is the RECORD's business, not this test's; this test only proves the guard reads
+    the real files and still bites.
+    """
+    record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
+    versions = record["verified_nautilus_versions"]
+    pin = re.search(r'nautilus-trader==([^"\s]+)', (REPO / "pyproject.toml").read_text()).group(1)
+    template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
+
+    assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
+    assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
+    task = find_task(load_tasks(ENGINE), ARMING)
+    armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
+    base = {
+        "engine_config_template_text": armed,
+        "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
+        "arming_override": "",
+    }
+    # TRUE POSITIVE: a recorded version must NOT be refused. Fed `versions + [pin]` rather than
+    # `versions` so this half holds in the interim where the bump has landed and its pass has not.
+    assert truthy(assert_that(task), {**base, "engine_verified_nautilus": [*versions, pin]}), (
+        "the guard refuses an armed converge on a version the record lists as verified"
+    )
+    # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
+    assert not truthy(assert_that(task), {**base, "engine_verified_nautilus": [v for v in versions if v != pin]})
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.

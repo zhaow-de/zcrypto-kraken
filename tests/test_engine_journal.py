@@ -2,6 +2,7 @@
 None -> NaN encoding, to_json/from_json round-trip, and validate_record's schema + snapshot-
 boundary (no-peek) invariant checks. No dataset access -- everything here is synthetic."""
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -401,3 +402,98 @@ def test_v1_snapshot_pair_symbol_key_refused():
     )
     with pytest.raises(EngineJournalError, match="snapshot pair"):
         validate_record(record)
+
+
+# --- closes: the forming row's 4h close per model base -------------------------------------------
+
+# closes is BASE-keyed over the TEN /EUR legs the model sees; final_targets is SYMBOL-keyed over the
+# TWELVE-symbol basket. The two key spaces sit side by side in one record and never merge -- the
+# model did not widen at schema 2, so closes stays base-keyed in both schemas.
+_EUR_BASES = ("ADA", "AVAX", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC", "SOL", "XRP")
+_BASKET_TARGETS = {f"{base}/EUR": 0.05 for base in _EUR_BASES} | {"ETH/BTC": 0.0, "SOL/BTC": 0.0}
+
+
+def _ten_eur_closes() -> dict[str, float]:
+    return {base: 100.0 * (i + 1) for i, base in enumerate(_EUR_BASES)}
+
+
+def _record(**overrides) -> CycleRecord:
+    """A v2 record carrying the full twelve-symbol final_targets -- the shape run_cycle writes."""
+    fields = {"final_targets": dict(_BASKET_TARGETS)}
+    fields.update(overrides)
+    return _valid_record_v2(**fields)
+
+
+def test_the_record_round_trips_its_closes():
+    rec = _record(closes={"BTC": 50000.0, "ETH": 3000.0})
+    assert from_json(to_json(rec)).closes == {"BTC": 50000.0, "ETH": 3000.0}
+
+
+def test_closes_are_base_keyed_ten_and_positive():
+    art = json.loads(to_json(_record(closes=_ten_eur_closes())))
+    assert set(art["closes"]) == {s.split("/")[0] for s in art["final_targets"] if s.endswith("/EUR")}
+    assert "BTC" in art["closes"] and "BTC/EUR" not in art["closes"]
+    assert all(isinstance(v, float) and v > 0 for v in art["closes"].values())
+    validate_record(_record(closes=_ten_eur_closes()))  # and the production shape validates
+
+
+def test_an_artifact_without_closes_still_loads():
+    # The records already on disk have no closes key. A reader that raised on them would take the
+    # tracking report down over its own upgrade -- this IS the readers-before-writer guarantee.
+    payload = json.loads(to_json(_record(closes=_ten_eur_closes())))
+    del payload["closes"]
+    assert from_json(json.dumps(payload)).closes is None
+
+
+@pytest.mark.parametrize("corrupt", [[1, 2, 3], 50000.0, "BTC", True])
+def test_a_corrupt_closes_is_refused_at_load_not_left_to_validate_record(corrupt):
+    # from_json's callers do not all call validate_record (the soak/report loaders read a record
+    # straight off disk), so a truncated artifact whose closes is a list or a scalar must fail HERE.
+    # dict() is the same coercion final_targets already gets, one line above.
+    payload = json.loads(to_json(_record(closes=_ten_eur_closes())))
+    payload["closes"] = corrupt
+    with pytest.raises(EngineJournalError):
+        from_json(json.dumps(payload))
+
+
+def test_a_record_without_closes_still_validates():
+    validate_record(_record())  # absence is legal; every record written before this key existed
+
+
+def test_to_json_omits_closes_when_absent():
+    # Omission, not '"closes": null' -- a record that predates the key must re-serialize
+    # byte-identically (test_v1_golden_round_trips_byte_identically is that pin), and an
+    # absent-vs-null distinction would be a second dialect for every reader to carry.
+    assert "closes" not in json.loads(to_json(_record()))
+
+
+def test_validate_record_refuses_a_pair_keyed_closes():
+    # validate_record takes a CycleRecord, not a payload dict -- construct it directly.
+    with pytest.raises(EngineJournalError, match="closes"):
+        validate_record(_record(closes={"BTC/EUR": 50000.0}))
+
+
+def test_v1_closes_stay_base_keyed_too():
+    # The base keying is NOT schema-conditional: the model's key space never widened, so a v1
+    # record's closes are refused for a symbol key on exactly the same terms as a v2's.
+    with pytest.raises(EngineJournalError, match="closes"):
+        validate_record(_valid_record(closes={"BTC/EUR": 50000.0}))
+
+
+@pytest.mark.parametrize(
+    "closes",
+    [
+        {},  # present-but-empty is a writer bug, not "no closes" -- that is None
+        "not a dict",
+        {"": 50000.0},
+        {"BTC": 0.0},  # a zero close divides in the drift arithmetic downstream
+        {"BTC": -1.0},
+        {"BTC": float("nan")},
+        {"BTC": float("inf")},
+        {"BTC": True},
+        {"BTC": "50000.0"},
+    ],
+)
+def test_closes_violations(closes):
+    with pytest.raises(EngineJournalError, match="closes"):
+        validate_record(_record(closes=closes))

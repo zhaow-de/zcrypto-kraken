@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a consumer needs to read manifests generically. Spec `00086` is NOT one and no longer waits on this — its provenance identity is computed from file bytes, and its only manifest touch is a vouched-hash cross-check that walks any JSON shape without extracting structure. So the trigger is "someone proposes a generic manifest reader again", and the answer should be "normalise first" — two attempts at such a consumer have now failed nine cold-review rounds — the first squarely against this heterogeneity, the second narrowed to an allowlist and still stopped by judgement rather than convergence. Also ripe if a manifest writer is being touched for another reason and the change could cheaply carry a shared shape
+ripe_when: a generic manifest reader is proposed again, or a manifest writer is being changed for another reason
 ---
 
 # The manifest writers have no contract, so nothing can read them generically
@@ -40,6 +40,8 @@ So nothing is blocked on this today, and that is precisely the risk: the zoo is 
 - The table above, read from the writers themselves rather than from the files, so it reflects what will be emitted next time rather than what happened to be on disk.
 - The holdout manifest is **not ours to normalise** — it is produced by an external freeze process. Any contract has to either accommodate it or explicitly exclude it.
 - Nothing currently reads manifests generically. `cli/data/rebuild.py` reads specific ones; `cli/data/sync.py::_verify_new_files` verifies per-series hashes at ingest; and `cli/registry/observed.py` collects vouched hashes for a cross-check that walks any JSON shape without extracting structure — deliberately not a generic reader, and it treats a vouch-nothing manifest as inert rather than failing. So there is no live breakage — this is a latent cost, payable on the next generic consumer.
+
+- **Two attempts at a generic manifest consumer have now failed nine cold-review rounds** — the first squarely against this heterogeneity, the second narrowed to an allowlist and still stopped by judgement rather than convergence. When the trigger fires the answer should be **normalise first**, not read generically. Spec `00086` is NOT such a consumer and no longer waits on this: its provenance identity is computed from file bytes, and its only manifest touch is a vouched-hash cross-check that walks any JSON shape without extracting structure.
 
 ## Suggested next steps
 

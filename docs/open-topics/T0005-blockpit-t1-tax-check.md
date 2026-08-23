@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: Stage 6b (tiny-live) starts — run the T1 depot connection alongside the §11 T2 probe window (re-deferred by spec 00039, iter-079)
+ripe_when: Stage 6b (tiny-live) starts
 ---
 
 # Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)

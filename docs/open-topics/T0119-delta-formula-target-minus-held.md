@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: spec `00092` (rung-3 accumulation) is picked up — `docs/specs/00092-*.md` exists; or earlier if any executor path computes a rebalance delta as `target − held`.
+ripe_when: spec `00092` is picked up, or any executor path computes a rebalance delta as `target − held`
 ---
 
 # The delta formula: `target − actually held`, not `target − previously journaled intent`

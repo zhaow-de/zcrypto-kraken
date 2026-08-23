@@ -12,6 +12,19 @@ from cli.engine.venue import VenueStatus
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
 
 
+_VERIFIED_VERSION = "1.230.0"  # in cli/engine/order-semantics-verified.json
+
+
+# Every test below is about some OTHER gate input -- control files, the venue reader, clock skew.
+# The running-nautilus input is held VERIFIED for them so it contributes no reason; if it were left
+# to the real interpreter, this file would be asserting against whatever version happens to be
+# installed, and it would flip wholesale on the next bump. The tests that are ABOUT that input
+# override this fixture explicitly and are grouped at the end of the file.
+@pytest.fixture(autouse=True)
+def _nautilus_verified(monkeypatch):
+    monkeypatch.setattr("cli.engine.execgate._installed_nautilus_version", lambda: _VERIFIED_VERSION)
+
+
 def _venue(status="online", ok=True):
     def reader(*, now, opener=None):
         return VenueStatus(status=status, ok=ok, observed_at=now)
@@ -425,3 +438,140 @@ def test_nothing_in_the_gate_clears_the_restart_hold(tmp_path):
     for _ in range(5):
         assert gate.evaluate(NOW).level == GateLevel.REDUCE_ONLY
     assert (exec_dir(tmp_path) / RESTART_HOLD_FILE).exists()
+
+
+# --- the running-nautilus input: the arming half of the order-semantics backstop ----------------
+# The Ansible role refuses a CONVERGE that renders exec_armed=true on a version whose attended
+# order-semantics pass has not run; this input refuses the ARMING. Both are needed: arming takes two
+# keys and the arm file is placed by hand long after any converge, so a host that converged armed on
+# a verified version and later took a newer image would otherwise arm on an unverified adapter.
+
+
+def _gate_on_version(tmp_path: Path, version: str) -> ExecutionGate:
+    """All-clear control files, so the ONLY thing that can refuse is the version input."""
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / ARM_FILE).touch()
+    return ExecutionGate(
+        armed_in_config=True,
+        state_dir=tmp_path,
+        venue_reader=_venue(),
+        nautilus_version_reader=lambda: version,
+    )
+
+
+def test_an_unverified_running_nautilus_refuses_a_fully_armed_gate(tmp_path):
+    """The constructed defect: both arming keys present, venue online, nothing held -- and the
+    running adapter's order semantics have never been verified. Must refuse."""
+    verdict = _gate_on_version(tmp_path, "1.232.0").evaluate(NOW)
+
+    assert verdict.level == GateLevel.NONE
+    assert "nautilus_unverified" in verdict.reasons
+    assert verdict.inputs["nautilus_version"] == "1.232.0"
+    assert verdict.inputs["nautilus_verified"] is False
+
+
+def test_a_verified_running_nautilus_does_not_refuse_a_fully_armed_gate(tmp_path):
+    """The true positive. A guard that refuses everything is as useless as one that refuses
+    nothing -- on a recorded version this input must contribute no reason at all."""
+    verdict = _gate_on_version(tmp_path, _VERIFIED_VERSION).evaluate(NOW)
+
+    assert verdict.level == GateLevel.FULL
+    assert verdict.reasons == ()
+    assert verdict.inputs["nautilus_verified"] is True
+
+
+def test_the_version_input_is_inert_while_the_engine_rests_disarmed(tmp_path):
+    """The property that had to hold before this could ship: it must not perturb the resting
+    state. Disarmed, the level is already NONE and the reported reasons keep naming every
+    condition -- the new one joins them rather than replacing or reordering the others.
+    """
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / RESTART_HOLD_FILE).touch()  # the deployed resting shape: no arm file, hold latched
+    gate = ExecutionGate(
+        armed_in_config=False,
+        state_dir=tmp_path,
+        venue_reader=_venue(),
+        nautilus_version_reader=lambda: _VERIFIED_VERSION,
+    )
+
+    verdict = gate.evaluate(NOW)
+
+    assert verdict.level == GateLevel.NONE
+    assert verdict.reasons == ("config_not_armed", "arm_file_absent", "restart_hold")
+
+
+@pytest.mark.parametrize("version", ["", "1.230", "1.230.0.post1", " 1.230.0", "1.2300"])
+def test_a_version_that_is_not_exactly_recorded_refuses(tmp_path, version):
+    """Exact-match membership, not a prefix or a substring: a near-miss is an unverified adapter."""
+    verdict = _gate_on_version(tmp_path, version).evaluate(NOW)
+
+    assert verdict.level == GateLevel.NONE
+    assert "nautilus_unverified" in verdict.reasons
+
+
+def test_a_raising_version_reader_refuses_rather_than_propagating(tmp_path):
+    """Same direction as the venue reader: at a submission site an unhandled exception is not a
+    refusal, it has no safe direction."""
+
+    def boom():
+        raise RuntimeError("no adapter")
+
+    verdict = _gate_on_version(tmp_path, "unused").evaluate(NOW)  # sanity: the helper itself works
+    assert "nautilus_unverified" in verdict.reasons
+
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=_venue(), nautilus_version_reader=boom)
+    assert "nautilus_unverified" in gate.evaluate(NOW).reasons
+
+
+@pytest.mark.parametrize(
+    ("content", "why"),
+    [
+        (None, "absent"),
+        ("{not json at all", "malformed"),
+        ('{"verified_nautilus_versions": "1.230.0"}', "a string where a list belongs"),
+        ('{"verified_nautilus_versions": [1230]}', "a non-string entry"),
+        ('{"verified_nautilus_versions": ["1.230.0", 1231]}', "a MIXED list -- a real version beside a non-string"),
+        ("{}", "the key missing entirely"),
+    ],
+)
+def test_an_unusable_record_fails_closed_to_the_empty_set(tmp_path, monkeypatch, content, why):
+    """A record that cannot be read cannot SHOW any version was verified, so it must yield the
+    EMPTY set and refuse everything.
+
+    Asserting the set itself, not merely that one version is refused: a mutation that failed open
+    to some arbitrary non-empty set SURVIVED the weaker form of this test, because the version it
+    happened to contain was not the one being probed.
+    """
+    from cli.engine.execgate import _verified_nautilus_versions
+
+    record = tmp_path / "record.json"
+    if content is not None:
+        record.write_text(content)
+    monkeypatch.setattr("cli.engine.execgate._VERIFIED_RECORD", record)
+
+    assert _verified_nautilus_versions() == frozenset(), why
+    # ...and every version is refused through the gate, including the one really recorded.
+    for version in (_VERIFIED_VERSION, "1.231.0", "1.232.0", ""):
+        verdict = _gate_on_version(tmp_path, version).evaluate(NOW)
+        assert verdict.level == GateLevel.NONE
+        assert "nautilus_unverified" in verdict.reasons
+
+
+def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
+    """Single-sourced by construction: one file, two readers. If this record is ever duplicated
+    under infra/, this test is where the divergence shows up."""
+    from cli.engine.execgate import _VERIFIED_RECORD, _verified_nautilus_versions
+
+    repo = Path(__file__).resolve().parents[1]
+    assert _VERIFIED_RECORD == repo / "cli" / "engine" / "order-semantics-verified.json"
+    assert not (repo / "infra" / "ansible" / "order-semantics-verified.yml").exists()
+    role = (repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text()
+    assert "cli/engine/order-semantics-verified.json" in role
+    assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0"}), (
+        "the record changed. If an attended order-semantics pass really ran, update this "
+        "deliberately alongside the new docs/research/ verification doc -- and sweep the other "
+        "homes of 'that version is unverified', enumerated in infra/runbooks/"
+        "order-semantics-verification.md's write-up step, including this file"
+    )

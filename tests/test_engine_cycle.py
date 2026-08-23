@@ -203,6 +203,86 @@ def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):
         assert (config.journal_dir / entry.path).exists()
 
 
+# --- the journaled forming-row closes ------------------------------------------------------------
+
+
+def test_the_success_record_journals_the_forming_row_closes(tmp_path, monkeypatch):
+    """The artifact carries the 4h close each model base was priced at, so realized drift is
+    measurable at a boundary without replaying the cycle (a replay is minutes, not seconds)."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    record = from_json(result.record_path.read_text())
+    validate_record(record)
+    # BASE-keyed over the TEN /EUR legs -- never the twelve symbols final_targets carries.
+    assert set(record.closes) == {s.split("/")[0] for s in EUR_SYMBOLS}
+    assert set(record.final_targets) == set(ASSETS)
+    # The LAST 4h close: _series_rows walks _base(symbol) + i over range(N_H4), so the forming row
+    # is _base + 5. The first 4h close is _base + 0 and the last DAILY close is _base + 3 -- the two
+    # wrong series this pins away from, both of which a base-keyed ten-entry dict would also satisfy.
+    assert record.closes == {s.split("/")[0]: _base(s) + (N_H4 - 1) for s in EUR_SYMBOLS}
+
+
+def test_a_missing_forming_row_close_fails_the_cycle(tmp_path, monkeypatch):
+    """A cycle that cannot price its own forming row is refused rather than journaled with a hole.
+
+    This refusal is NEW on the trade path -- it is not one the gate already makes. `replay_cycle`
+    extracts no closes at all, so such a cycle replays and passes the gate cleanly; only
+    `feeders.replay_stages`, the workstation reports path, refuses the same input today. Do not
+    read this guard as dead code duplicating a check downstream: nothing downstream makes it.
+
+    Constructed at the contraction seam: after the staleness check every EUR leg carries the
+    boundary stamp, so nothing a store fixture can express reaches this arm."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    real = cycle.select_model_inputs
+
+    def holed(series):
+        ts, prices = real(series)
+        return ts, prices | {"BTC": prices["BTC"][:-1] + [None]}
+
+    monkeypatch.setattr(cycle, "select_model_inputs", holed)
+
+    with pytest.raises(EngineError, match="forming row"):
+        run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    day_dir = config.journal_dir / "2026-07-10"
+    assert not (day_dir / "cycle-08.json").exists()
+    # Refused BEFORE the orders are appended: an orders.jsonl with no record behind it is a book the
+    # engine believes it moved and cannot account for.
+    assert not (day_dir / "orders.jsonl").exists()
+
+
+@pytest.mark.parametrize("bad", [-5.0, 0.0, float("nan"), float("inf")])
+def test_an_unusable_forming_row_close_fails_the_cycle_before_the_orders(tmp_path, monkeypatch, bad):
+    """The early guard is a SUPERSET of validate_record's closes checks, and must be. validate_record
+    runs on the CycleRecord -- after _append_orders has written orders.jsonl -- so a close caught
+    only there leaves an orders block with no cycle-<HH>.json behind it, which the next boundary's
+    _previous_success globs straight past. The orders.jsonl assertion is what separates the two: a
+    guard narrowed back to `value is None` still raises (validate_record's EngineJournalError IS an
+    EngineError), it just raises too late."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    real = cycle.select_model_inputs
+
+    def spoiled(series):
+        ts, prices = real(series)
+        return ts, prices | {"BTC": prices["BTC"][:-1] + [bad]}
+
+    monkeypatch.setattr(cycle, "select_model_inputs", spoiled)
+
+    with pytest.raises(EngineError) as excinfo:
+        run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    # The FILE assertions come first, deliberately. A `match=` on the raises() would short-circuit
+    # here and mask them: validate_record's own refusal is an EngineJournalError, which IS an
+    # EngineError, so a narrowed guard still raises -- it just raises after orders.jsonl is on disk.
+    # Asserting the artifacts before the message is what makes lateness the thing that fails.
+    day_dir = config.journal_dir / "2026-07-10"
+    assert not (day_dir / "orders.jsonl").exists()
+    assert not (day_dir / "cycle-08.json").exists()
+    assert "forming row" in str(excinfo.value)
+
+
 # --- the limit-bound verdict ---------------------------------------------------------------------
 
 

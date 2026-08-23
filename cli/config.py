@@ -42,6 +42,10 @@ class EngineConfig:
     # The total-notional cap a probe plan may carry — the blast-radius bound.
     exec_max_plan_notional_eur: float = 100.0
     settle_delay_secs: int = 90
+    # The weekly tracking-error trip's band, in bps of NAV. UNSET ships the trip disarmed: with no
+    # band there is nothing to exceed, so no closed week can ever latch the kill switch. Set it only
+    # once a live armed window has shown the engine's own weeks read the way the report says.
+    tracking_band_bps: float | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +140,16 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ConfigError(f"[{CONFIG_TABLE}.engine].exec_max_plan_notional_eur in {config_path} must be a positive number")
         overrides["exec_max_plan_notional_eur"] = float(value)
+
+    if "tracking_band_bps" in raw:
+        value = raw["tracking_band_bps"]
+        # `exec_max_plan_notional_eur`'s arm exactly, and for the mirror-image reason: this number
+        # is compared as `mean > band`, so a nan band answers False to every week ever measured and
+        # disarms the trip while looking configured, and inf does the same in the open. A zero or
+        # negative band is the opposite failure — it trips on the first week scored.
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ConfigError(f"[{CONFIG_TABLE}.engine].tracking_band_bps in {config_path} must be a positive number")
+        overrides["tracking_band_bps"] = float(value)
 
     if "settle_delay_secs" in raw:
         value = raw["settle_delay_secs"]

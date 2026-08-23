@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,6 +13,37 @@ KILL_FILE = "kill"
 RESTART_HOLD_FILE = "restart-hold"
 
 _EXEC_SUBDIR = "exec"
+
+# The committed record of nautilus versions whose attended order-semantics pass actually ran. It
+# lives beside this module rather than under infra/ because the engine image copies only cli/ --
+# a record the running engine cannot read is no gate at all. The engine Ansible role reads this
+# SAME file from the controller tree, so the two guards can never disagree about what is verified.
+_VERIFIED_RECORD = Path(__file__).with_name("order-semantics-verified.json")
+
+
+def _verified_nautilus_versions() -> frozenset[str]:
+    """Read the record. Fails CLOSED to the empty set: an unreadable or malformed record means we
+    cannot show a version was verified, and the gate must then refuse rather than assume."""
+    try:
+        loaded = json.loads(_VERIFIED_RECORD.read_text())["verified_nautilus_versions"]
+    except Exception:  # noqa: BLE001 -- any failure to read the record must refuse, never propagate
+        return frozenset()
+    if not isinstance(loaded, list) or not all(isinstance(v, str) for v in loaded):
+        return frozenset()
+    return frozenset(loaded)
+
+
+def _installed_nautilus_version() -> str:
+    """The version the RUNNING interpreter would trade with -- the only one that matters here; the
+    pyproject pin is what the Ansible backstop checks, and the two can differ on a host whose image
+    predates the pin. Imported lazily: nautilus costs ~1 s and `zcrypto --help` must never pay it
+    (no gate is constructed on that path). Fails CLOSED to '' -- in no record, so refused."""
+    try:
+        import nautilus_trader
+
+        return str(nautilus_trader.__version__)
+    except Exception:  # noqa: BLE001 -- an unimportable adapter is not a version we can verify
+        return ""
 
 
 class GateLevel:
@@ -59,12 +91,17 @@ class ExecutionGate:
         state_dir: Path,
         venue_reader=read_system_status,
         snapshot_max_age_seconds: float = 30.0,
+        nautilus_version_reader=None,
     ) -> None:
         self._armed_in_config = armed_in_config
         self._dir = exec_dir(state_dir)
         self._venue_reader = venue_reader
         self._max_age = snapshot_max_age_seconds
         self._snapshot: VenueStatus | None = None
+        # Held as None rather than defaulting to the function object, so the module global is
+        # looked up when it is USED. A default argument binds at def time, which would make the
+        # resolver unpatchable for tests that are about some other gate input entirely.
+        self._nautilus_version_reader = nautilus_version_reader
 
     def _present(self, name: str, *, fail_open: bool) -> bool:
         """Presence of one control file. The arm file fails closed by reading ABSENT on any
@@ -136,6 +173,18 @@ class ExecutionGate:
         kill = self._present(KILL_FILE, fail_open=True)
         hold = self._present(RESTART_HOLD_FILE, fail_open=True)
         venue = self._venue(now)
+        # The second half of the arming backstop. The Ansible role refuses a CONVERGE that would
+        # render exec_armed=true on a version whose attended order-semantics pass has not run; this
+        # refuses the ARMING itself. Neither subsumes the other -- arming takes two keys, and the
+        # arm file is placed by hand long after any converge, so a host that converged armed on a
+        # verified version and later took a newer image would otherwise arm on an unverified
+        # adapter with nothing objecting. Do not delete one as duplicative of the other.
+        reader = self._nautilus_version_reader or _installed_nautilus_version
+        try:
+            running_nautilus = str(reader() or "")
+        except Exception:  # noqa: BLE001 -- a raising reader must refuse, never propagate
+            running_nautilus = ""
+        nautilus_verified = running_nautilus in _verified_nautilus_versions()
         # Unclamped on purpose: a negative age (the venue reading is dated AFTER `now`) is an
         # anomaly an operator needs to see, not a value to floor away to a reassuring 0.0.
         age = (now - venue.observed_at).total_seconds()
@@ -157,6 +206,9 @@ class ExecutionGate:
         if not venue.ok:
             reasons.append("venue_not_online")
             level = GateLevel.NONE
+        if not nautilus_verified:
+            reasons.append("nautilus_unverified")
+            level = GateLevel.NONE
         if hold:
             reasons.append("restart_hold")
             if level != GateLevel.NONE:
@@ -172,6 +224,8 @@ class ExecutionGate:
                 "restart_hold": hold,
                 "venue_status": venue.status,
                 "venue_snapshot_age_seconds": age,
+                "nautilus_version": running_nautilus,
+                "nautilus_verified": nautilus_verified,
             },
         )
 

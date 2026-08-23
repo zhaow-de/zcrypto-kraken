@@ -9,6 +9,7 @@ import functools
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import types
@@ -369,6 +370,10 @@ class RecordingExecutor:
         self.quotes: list[object] = []
         self.events: list[object] = []
         self.external_events: list[object] = []
+        self.boundaries: list[datetime] = []
+
+    def on_boundary(self, boundary):
+        self.boundaries.append(boundary)
 
     def on_timer(self, now):
         self.timers.append(now)
@@ -776,17 +781,23 @@ def test_node_config_has_no_exec_client_by_default(tmp_path):
     assert list(config.data_clients) == ["KRAKEN"]
 
 
-# The node is assembled in a CHILD interpreter, and the child never disposes it. Two reasons, both
-# about teardown rather than about what is asserted:
-#   - TradingNode.dispose() on a never-run node closes the event loop as its LAST act, while the
-#     adapter's Rust machinery is still unwinding on its own threads (measurable: the io_uring
-#     poller thread the build starts outlives dispose() by ~0.5 s). That race is inside the library,
-#     unreachable from here, and when it goes wrong it SIGABRTs the whole pytest process -- 27 green
-#     tests and no traceback, because the abort comes off a non-Python thread.
+# The node is assembled in a CHILD interpreter, and the child never disposes it. Upstream prescribes
+# one TradingNode per process, and the measured reason is the Rust logger rather than any teardown
+# race (the earlier io_uring/non-Python-thread account was wrong on every point; see T0115):
+#   - The kernel calls init_logging() only `if not is_logging_initialized()` and holds the returned
+#     LogGuard. Under a stdlib event loop, dispose() -> loop.close() drops the signal handlers that
+#     were the last reference to the kernel, so the guard is collected: is_logging_initialized()
+#     goes False on 1.230.0 while the Rust `log` crate's global logger stays set, and the NEXT
+#     node's init_logging() panics at crates/common/src/ffi/logging.rs and SIGABRTs the process.
+#     So dispose() is the enabler and the abort lands in the following TradingNode.__init__.
+#   - Under uvloop -- which nautilus selects whenever "pytest" not in sys.modules, i.e. always in
+#     production -- the guard measurably does NOT drop, and `zcrypto engine run` builds one node per
+#     process regardless. The trap is reachable only from a multi-node pytest process: here.
 #   - Process exit releases strictly more than dispose() would, and os._exit skips interpreter
-#     finalization, so no Rust drop runs while anything else is live. Production never takes this
-#     path anyway: a node that was actually run stops its loop instead of closing it.
-# A native abort in the child can therefore only fail these two tests, never the suite.
+#     finalization, so no Rust drop runs while anything else is live.
+# A native abort in the child can therefore only fail these two tests, never the suite. It also
+# arrives mute unless faulthandler is re-armed after the build -- see the abort-diagnosability test
+# below, which is what makes such an abort readable rather than a bare exit 134.
 _BUILD_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
@@ -850,3 +861,123 @@ def test_build_shadow_node_without_exec_client(tmp_path):
 
 def test_build_shadow_node_with_exec_client_when_enabled(tmp_path):
     assert _node_build_facts(tmp_path, exec_enabled=True)["exec_clients"] == ["KRAKEN"]
+
+
+# --- abort diagnosability (T0115) ---------------------------------------------------------------
+
+# Building the node registers nautilus's asyncio signal handling, which includes SIGABRT
+# (`loop.add_signal_handler(SIGABRT, ...)`). asyncio installs CPython's own no-op C handler for it,
+# which REPLACES faulthandler's -- so from that moment a native abort kills the process with no
+# output whatsoever, which is why T0115's SIGABRT was investigated for a month with no stack to read.
+# Re-arming faulthandler after the build restores the dump; `cli/engine/command.py` does exactly
+# that on the live engine, and the parameters below are the measurement that justifies its shape.
+# Asserting on `signal.getsignal(SIGABRT)` instead would prove NOTHING -- it reads identical on both
+# sides, because faulthandler installs its handler below CPython's cache of Python-level handlers.
+_ABORT_PROBE = """
+import faulthandler, os, sys
+
+pre_armed, build, mode = sys.argv[1] == "1", sys.argv[2] == "1", sys.argv[3]
+if pre_armed:
+    faulthandler.enable()
+if build:
+    import asyncio, tempfile
+    from pathlib import Path
+
+    from cli.config import EngineConfig
+    from cli.engine import build_shadow_node
+
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_shadow_node(
+            EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=False)
+        )
+if mode == "rearm":
+    faulthandler.disable()
+    faulthandler.enable()
+elif mode == "enable-only":
+    faulthandler.enable()
+os.abort()
+"""
+
+
+@pytest.mark.parametrize(
+    ("args", "dumps"),
+    [
+        # The true positive: no node build, so nothing has clobbered anything and the dump must
+        # appear. Without this arm, every silent result below could be a probe that never armed.
+        pytest.param(("1", "0", "none"), True, id="unclobbered-faulthandler-really-dumps"),
+        # The clobber itself: the same armed faulthandler goes mute once the node is built.
+        pytest.param(("1", "1", "none"), False, id="the-node-build-clobbers-an-armed-faulthandler"),
+        # Why `disable()` is load-bearing: `enable()` returns early when faulthandler already
+        # considers itself enabled, so on its own it cannot reinstall the handler asyncio replaced.
+        pytest.param(("1", "1", "enable-only"), False, id="enable-alone-cannot-undo-the-clobber"),
+        # Production before the re-arm landed: exit 134 and nothing else.
+        pytest.param(("0", "1", "none"), False, id="engine-run-without-the-re-arm-is-mute"),
+        # Production after it: the shape `cli/engine/command.py` runs.
+        pytest.param(("0", "1", "rearm"), True, id="engine-run-with-the-re-arm-dumps"),
+    ],
+)
+def test_a_native_abort_after_a_node_build_is_readable_only_once_faulthandler_is_re_armed(args, dumps):
+    env = os.environ.copy()
+    env.pop("KRAKEN_SPOT_API_KEY", None)
+    env.pop("KRAKEN_SPOT_API_SECRET", None)
+    result = subprocess.run([sys.executable, "-c", _ABORT_PROBE, *args], capture_output=True, timeout=120, env=env)
+
+    # Every arm must actually reach os.abort(); a child that died some other way tested nothing.
+    assert result.returncode == -signal.SIGABRT, f"exit={result.returncode} stderr={result.stderr[:2000]!r}"
+    assert (b"Fatal Python error: Aborted" in result.stderr) is dumps, f"stderr={result.stderr[:2000]!r}"
+    if not dumps:
+        # The symptom exactly as production and CI showed it: a signal death with an empty stderr.
+        assert result.stderr == b"", f"expected a silent abort, got stderr={result.stderr[:2000]!r}"
+
+
+def test_the_cycle_alert_hands_the_executor_the_boundary_it_fired_for(tmp_path):
+    """`on_alert_logic`'s FIRST act is schedule_alert, which overwrites `_next_cycle_ts` with the
+    FOLLOWING boundary -- so the value the executor is given has to be read before that call, not
+    after it. Read after, the weekly tracking trip would score its week off a boundary the cycle
+    behind this alert never ran.
+
+    Order matters too: the executor is told AFTER the cycle, so the boundary it reads has already
+    journaled its record."""
+    executor = RecordingExecutor()
+    stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
+    stub._next_cycle_ts = B12
+
+    stub._on_cycle_alert(None)
+
+    assert executor.boundaries == [B12]
+    assert stub._next_cycle_ts == B12 + timedelta(hours=4)  # the chain moved on, as it must
+
+
+def test_the_executor_is_told_the_boundary_even_when_the_alert_logic_raises(tmp_path):
+    """The call sits in a `finally`: a boundary whose alert chain broke is still a boundary the
+    engine lived through, and the trip's whole point is to fire when the ordinary path is not
+    working. The original exception must survive unchanged -- `on_boundary` carries its own total
+    catch, so nothing from a measurement can replace it."""
+    executor = RecordingExecutor()
+    stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
+    stub._next_cycle_ts = B12
+
+    def boom(boundary, alert_time):
+        raise RuntimeError("the alert chain broke")
+
+    stub._schedule_alert = boom
+    with pytest.raises(RuntimeError, match="the alert chain broke"):
+        stub._on_cycle_alert(None)
+
+    assert executor.boundaries == [B12]
+
+
+def test_a_strategy_with_no_executor_still_takes_the_alert(tmp_path):
+    """The default construction wires no executor at all, and every forwarder stays inert -- the
+    alert chain is the engine's research obligation and must not depend on one existing."""
+    events: list = []
+    schedule_alert, run_fn = _recorders(events)
+    strategy = ShadowStrategy(_config(tmp_path), run_cycle_fn=run_fn, clock=lambda: B08 + timedelta(minutes=5))
+    strategy._schedule_alert = schedule_alert
+    strategy._next_cycle_ts = B12
+
+    strategy._on_cycle_alert(None)
+
+    assert [e[0] for e in events] == ["schedule", "run"]

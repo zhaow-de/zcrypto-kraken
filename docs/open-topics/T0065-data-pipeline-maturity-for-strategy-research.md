@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: **the Q2/Q3 OHLCVT ingest is the only round left, and it is external-clock work** — ripe when Kraken publishes those dumps (verified absent 2026-08-10: the newest 2026 dump on the NAS is Q1). Nothing autonomous remains: REACH's REST leg landed 2026-07-23 and its live-trades→bars materializer landed 2026-08-10 (see `## Done so far`). The 1h early-promotion window closed unmet and was consciously dropped; 1h for 2026-06-23 → 07-08 waits for Q3 like 15m does. Q2 remains hard-required for fine-grain history inside its own quarter — 1h across 04-01 → 06-22 and 15m across 04-01 → 06-30 have no other source, since REST cannot reach back that far and the tape starts 2026-07-08.
+ripe_when: Kraken publishes the 2026 Q2/Q3 OHLCVT dumps
 ---
 
 # Data-pipeline maturity for strategy research — assessment + dedicated-round backlog
@@ -70,6 +70,8 @@ The pipeline is in good shape for the strategy already researched (1d/4h) but ha
 - **A hard deadline this created, and it may already be unmeetable.** The 1h segment can only be *promoted* to continuous once an intervening dump closes the gap — i.e. after the Q2 ingest. But the 1h REST window keeps receding: once the canonical tail is 2026-06-30 (post-Q2), a ≥6-bar seam requires the promotion run to happen **before ~2026-07-30**. Q2 is expected "late next week", so **the window between Q2 landing and the 1h seam closing may be empty**. If it is, 1h for 2026-06-23 → 07-08 waits for Q3 in October — which is exactly why the segment was captured now rather than deferred to the Q2 round.
 
 - **15m is out of reach and stays that way.** The 15m REST window spans only ~7.5 days, so it stopped reaching 2026-07-08 on that date. 2026-07-01 → 07-08 at 15m is recoverable **only** from the Q3 dump (~October), or not at all. It sits after the frozen canonical's 2026-03-31 end, so it does not touch any trial sample — it is a seam to mark when extending forward, not a blocker.
+
+- **The 1h early-promotion window closed UNMET and was consciously dropped.** 1h for 2026-06-23 → 07-08 now waits for Q3 exactly as 15m does. Q2 stays hard-required for fine-grain history inside its own quarter: 1h across 04-01 → 06-22 and 15m across 04-01 → 06-30 have no other source, since REST cannot reach back that far and the tape starts 2026-07-08. Verified absent 2026-08-10 and again 2026-08-23 — the newest 2026 dump on the NAS is Q1.
 
 ## Findings — the execution-reproducibility gap, measured 2026-08-08
 

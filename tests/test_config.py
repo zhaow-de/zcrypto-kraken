@@ -218,6 +218,31 @@ def test_exec_max_plan_notional_eur_rejects_a_non_number_non_positive_or_bool(tm
             load_config(cfg_path)
 
 
+def test_tracking_band_bps_is_unset_by_default(tmp_path):
+    """The tracking-error trip ships DISARMED: an absent key is None, and None never trips. The
+    default is what a fresh deployment gets, so it is the one value this must pin."""
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text("[zcrypto.engine]\nexec_armed = true\n")
+    assert load_config(cfg_path).engine.tracking_band_bps is None
+
+
+def test_tracking_band_bps_reads_a_set_value(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    cfg_path.write_text("[zcrypto.engine]\ntracking_band_bps = 120\n")
+    assert load_config(cfg_path).engine.tracking_band_bps == 120.0
+
+
+def test_tracking_band_bps_rejects_a_non_number_non_positive_or_bool(tmp_path):
+    cfg_path = tmp_path / "zcrypto.toml"
+    # `exec_max_plan_notional_eur`'s reasoning, in the opposite direction: nan defeats every
+    # `mean > band` comparison (always False) and silently disarms the trip, inf does the same
+    # explicitly, and zero or a negative band would trip on the first week ever scored.
+    for bad in ('"nope"', "0", "-1.0", "true", "nan", "inf"):
+        cfg_path.write_text(f"[zcrypto.engine]\ntracking_band_bps = {bad}\n")
+        with pytest.raises(ConfigError, match="must be a positive number"):
+            load_config(cfg_path)
+
+
 def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     """The blast-radius bound must appear in a converge diff, exactly like exec_armed."""
     text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()

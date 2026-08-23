@@ -1797,6 +1797,90 @@
       }
     },
     {
+      "id": 57,
+      "type": "stat",
+      "title": "Weekly tracking error — last verdict",
+      "description": "What the engine decided about the most recently closed week, re-derived at every 4-hourly boundary from the journal alone. DISARMED means no band is configured, so nothing is measured against one -- the resting state, and the state to confirm after a deploy that was not meant to arm anything. NOT SCORED means the week could not be judged: short of its full 42 boundaries, spent below the full gate level, straddling the first fill ever, or missing the prices it was traded at -- all deliberate refusals, never a pass. WITHIN BAND is the healthy reading. OUTSIDE BAND means the week's mean drift from target exceeded the band and the kill switch has latched, which pages through the kill-switch alert beside it rather than through a rule of its own. The series is absent until the first boundary after a start, because before that there is no verdict to state. Runbook: infra/runbooks/engine.md#engine-tracking-band. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 60
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_tracking_state{host=\"zcrypto\"}",
+          "refId": "A",
+          "legendFormat": "tracking verdict",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "DISARMED",
+                  "color": "text",
+                  "index": 0
+                },
+                "2": {
+                  "text": "NOT SCORED",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "3": {
+                  "text": "WITHIN BAND",
+                  "color": "green",
+                  "index": 2
+                },
+                "4": {
+                  "text": "OUTSIDE BAND",
+                  "color": "red",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "NO WEEK SCORED YET"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
       "id": 60,
       "type": "row",
       "title": "Execution — what actually happened at the venue",
@@ -1806,7 +1890,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 65
       }
     },
     {
@@ -1822,7 +1906,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 66
       },
       "targets": [
         {
@@ -1889,7 +1973,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 66
       },
       "targets": [
         {
@@ -1947,7 +2031,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 67
+        "y": 72
       },
       "targets": [
         {
@@ -2005,7 +2089,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 67
+        "y": 72
       },
       "targets": [
         {
@@ -2063,7 +2147,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 78
       },
       "targets": [
         {
@@ -2121,7 +2205,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 78
       },
       "targets": [
         {
@@ -2176,7 +2260,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 79
+        "y": 84
       }
     },
     {
@@ -2192,7 +2276,7 @@
         "h": 6,
         "w": 8,
         "x": 0,
-        "y": 80
+        "y": 85
       },
       "targets": [
         {
@@ -2254,7 +2338,7 @@
         "h": 6,
         "w": 8,
         "x": 8,
-        "y": 80
+        "y": 85
       },
       "targets": [
         {
@@ -2321,7 +2405,7 @@
         "h": 6,
         "w": 8,
         "x": 16,
-        "y": 80
+        "y": 85
       },
       "targets": [
         {

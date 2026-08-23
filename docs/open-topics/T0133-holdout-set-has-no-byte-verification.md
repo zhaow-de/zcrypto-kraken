@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: `data/ohlc-holdout-*` is next re-frozen or a second holdout is cut — that is the moment the freeze process can cheaply emit per-series `sha256`. Also ripe if [[T0064]]'s out-of-sample work moves from accepted-once to repeated evaluation, since a re-run against silently altered holdout bytes is the failure this guards.
+ripe_when: "`data/ohlc-holdout-*` is re-frozen, a second holdout is cut, or [[T0064]]'s out-of-sample work moves to repeated evaluation"
 ---
 
 # The holdout set is the one canonical dataset with no byte verification
@@ -24,6 +24,8 @@ Three further bounds on `_verify_new_files`, worth stating so its coverage is no
 - Measured 2026-08-08: `ohlc-full` and `ohlc-15m` expose per-series `sha256` (36 and 12 leaves); `derivatives-funding` exposes them per symbol; `ohlc-holdout-2026-07-10` exposes none.
 - The holdout manifest is produced by an **external freeze process this repo does not write** ([[T0132]]), so the fix is not a one-line writer change here.
 - The set is frozen and small — 10 series, 30,032 rows, `2013-09-10 00:00:00+00:00` → `2026-07-09 00:00:00+00:00` — so a repo-side hash sidecar is cheap if the freeze cannot be changed.
+
+- **Why the re-freeze is the cheap moment.** That is when the freeze process can emit per-series `sha256` for free, rather than paying a separate pass later. It is also ripe if [[T0064]]'s out-of-sample work moves from accepted-once to repeated evaluation, since a re-run against silently altered holdout bytes is exactly the failure this guards against.
 
 ## Suggested next steps
 

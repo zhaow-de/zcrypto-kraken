@@ -2,12 +2,13 @@
 function, and the pure FX term (spec 00089, widened by spec 00094).
 
 `INSTRUMENT_IDS` is derived from `cli.engine.store.BASKET` -- all twelve symbols the engine
-trades (ten `/EUR` pairs plus `ETH/BTC`/`SOL/BTC`). Probed against the installed nautilus-trader
-Kraken adapter's `normalize_spot_symbol` (`nautilus_kraken::common::parse`): it renames Kraken's
+trades (ten `/EUR` pairs plus `ETH/BTC`/`SOL/BTC`). Probed against nautilus-trader 1.230.0's
+Kraken adapter `normalize_spot_symbol` (`nautilus_kraken::common::parse`): it renames Kraken's
 legacy `XBT`/`XDG` codes to `BTC`/`DOGE` before building the InstrumentId, and it STRIPS the venue
 alias regardless of which currency is the quote -- so `ETH/BTC`'s InstrumentId is
 `ETH/BTC.KRAKEN`, never an XBT form, even though the venue's own pair *key* on the wire is
-`XETHXXBT` (`cli.engine.store.PAIR_KEYS["ETH/BTC"]`).
+`XETHXXBT` (`cli.engine.store.PAIR_KEYS["ETH/BTC"]`). Nothing re-checks this agreement on a bump --
+the tests pin the dict below, not the adapter's parse -- so re-probe it when the pin moves.
 
 `COSTMIN` is why costmin does NOT flow through `cli.engine.venuestate.venue_state_from_cache`'s
 Cache read the way `ordermin`/`lot_step`/`tick_size` do -- see the constant's own comment (D5a).
@@ -37,6 +38,13 @@ from decimal import Decimal
 from cli.engine.store import BASKET
 
 INSTRUMENT_IDS: dict[str, str] = {symbol: f"{symbol}.KRAKEN" for symbol in BASKET}
+
+# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
+# balances carry `EUR`, the asset/instrument-quote surfaces the classic `ZEUR`); anything else is a
+# different currency and is never summed into a EUR total. It lives on this shared leaf rather than
+# in `executor.py` so a reader of the journal can import it without importing the order path --
+# `executor.py` imports from here, so the reverse direction is a circular import at engine start.
+EUR_CODES = ("EUR", "ZEUR")
 
 # Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
 # Kraken adapter never maps Kraken's `costmin` onto `min_notional` -- the Cache instrument always

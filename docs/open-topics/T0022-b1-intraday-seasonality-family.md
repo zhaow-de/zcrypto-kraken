@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a genuinely new B1 hypothesis (not a conditioning overlay on the A2 book — trials 45+46 attributed that class out) is pre-registered, or the human expands/closes the shared B budget
+ripe_when: a genuinely new B1 hypothesis is pre-registered, or the owner expands or closes the shared B budget
 ---
 
 # B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)

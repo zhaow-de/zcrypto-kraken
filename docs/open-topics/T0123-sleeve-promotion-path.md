@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a post-deploy alpha family reaches an ADOPT verdict in the trial registry — the first candidate that would actually need to enter the live book (until then there is nothing to promote and the design would be against zero examples)
+ripe_when: an alpha family reaches an ADOPT verdict in the trial registry after deployment
 ---
 
 # How a newly validated sleeve enters the live book

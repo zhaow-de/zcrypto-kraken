@@ -9,6 +9,7 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import math
 import os
@@ -29,8 +30,15 @@ from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, 
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
-from cli.engine.execledger import ledgered_plan_ids, write_exec_record
-from cli.engine.feeders import accumulation_report, decompose_report, load_minimums
+from cli.engine.execledger import ledgered_plan_ids, read_exec_record, validate_exec_record, write_exec_record
+from cli.engine.feeders import (
+    CycleStages,
+    accumulation_payload,
+    accumulation_report,
+    decompose_report,
+    load_minimums,
+    replay_stages,
+)
 from cli.engine.gate_cache import (
     GateCache,
     due_for_reverification,
@@ -45,10 +53,12 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, seed_store
+from cli.engine.tracking import Fill, cost_blend, extract_fills, read_ledger_export, reconcile_ledger, weekly_tracking
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 logger = get_logger("engine.command")
 
@@ -634,6 +644,7 @@ class _ExecutionMetrics:
     """
 
     def __init__(self, registry) -> None:
+        self._registry = registry
         self.orders = Counter("zcrypto_exec_orders_total", "Executor orders by outcome.", ["outcome"], registry=registry)
         self.fills = Counter("zcrypto_exec_fills_total", "Order fills by liquidity side.", ["liquidity"], registry=registry)
         self.fees = Counter("zcrypto_exec_fees_eur_total", "Trading fees paid, in EUR.", registry=registry)
@@ -650,6 +661,12 @@ class _ExecutionMetrics:
             ["disposition"],
             registry=registry,
         )
+        # The weekly tracking-error verdict, registered on FIRST USE for
+        # `_ExecGauges.last_evaluation`'s reason and one of its own: every value it can take means
+        # something, and a series that existed before the first boundary was scored could only
+        # publish a code outside that alphabet -- a 0 that renders as a legitimate reading rather
+        # than as the "nothing has been scored yet" it would actually be.
+        self.tracking_state: Gauge | None = None
         for outcome in _EXEC_ORDER_OUTCOMES:
             self.orders.labels(outcome=outcome)
         for liquidity in _EXEC_LIQUIDITY_SIDES:
@@ -676,6 +693,20 @@ class _ExecutionMetrics:
 
     def set_realized(self, value: float) -> None:
         self.realized_pnl.set(value)
+
+    def set_tracking_state(self, state: int) -> None:
+        """What the last 4-hourly boundary decided about the most recently closed week. The help
+        text carries the whole alphabet because this gauge is read on a board, where a bare number
+        means nothing -- and every code it lists is one the executor can really publish."""
+        if self.tracking_state is None:
+            self.tracking_state = Gauge(
+                "zcrypto_exec_tracking_state",
+                "The most recently closed week's tracking-error verdict: 1 = no band is configured, "
+                "so nothing is measured against one; 2 = the week could not be scored; 3 = the week's "
+                "mean drift is inside the band; 4 = it is outside the band and the kill switch latched.",
+                registry=self._registry,
+            )
+        self.tracking_state.set(state)
 
 
 class _VenueGauges:
@@ -967,6 +998,23 @@ def run() -> None:
     from cli.engine.node import build_shadow_node
 
     node = build_shadow_node(config)
+    # The build registered nautilus's asyncio SIGABRT handler, which installs CPython's own no-op C
+    # handler over faulthandler's -- so a native abort (a Rust panic in the adapter, say) would kill
+    # the engine with exit 134 and NOTHING on stderr. Re-arm so the next one arrives with a stack.
+    # `disable()` first is load-bearing: `enable()` returns early when faulthandler already considers
+    # itself enabled, and would then leave the clobbered handler in place.
+    # `file=2` rather than the default `sys.stderr` for two reasons. A fatal-signal dump is written
+    # from a signal handler and must reach the process's real stderr -- fd 2, which here is docker's
+    # log stream -- not whatever object happens to occupy `sys.stderr`. And the default form RAISES
+    # when that object has no `fileno()`: since `disable()` has already run by then, the engine would
+    # start with faulthandler switched OFF, strictly worse than never having re-armed. An fd needs no
+    # `fileno()`, so this form cannot fail that way and needs no exception handling.
+    # Accepted trade: faulthandler's handler replaces asyncio's for the fatal five (SIGSEGV/SIGFPE/
+    # SIGABRT/SIGBUS/SIGILL), so an EXTERNALLY delivered SIGABRT now dumps and dies instead of taking
+    # nautilus's graceful `node.stop()` path. SIGTERM and SIGINT are untouched, so `docker stop` and
+    # Ctrl-C still shut down cleanly; nothing in this fleet sends SIGABRT to the engine.
+    faulthandler.disable()
+    faulthandler.enable(file=2)
     watchdog = _start_watchdog(node)
     logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
     try:
@@ -1366,7 +1414,8 @@ def _payload_json(payload: dict) -> str:
     cancellation ratio, which must not masquerade as 1.0 -- and `json.dumps` writes it as the bare
     token `NaN`, which the JSON grammar has no room for and most non-Python parsers reject outright;
     emitting invalid JSON from a `--json` flag is worse than losing the NaN/None distinction, and
-    nothing else in either payload is ever None, so `null` reads unambiguously as "not a number".
+    the only other None either payload carries is an absent whole block (`reconciliation`, when no
+    ledger export was given), so `null` on a number reads unambiguously as "not a number".
     The drift payload is also keyed by NAV, a float: the key spelling is written here and pinned by
     a test rather than left to `json.dumps`' internal coercion, and the numeric NAVs stay
     recoverable from the payload's own `navs` list and each row's `nav` field."""
@@ -1386,12 +1435,14 @@ def _payload_json(payload: dict) -> str:
 
 
 def _emit_report(text: str, payload: dict, *, as_json: bool) -> None:
-    """Print the report, then exit non-zero if any record failed to replay.
+    """Print the report, then exit non-zero if anything in it failed -- `n_failed` is the count.
 
     A failed replay means one of the two identity guards fired -- the recomputed stages no longer
     match the builder, or the rebuild no longer matches what the engine actually traded -- so the
-    aggregates above it describe a smaller window than was asked for. The failures are named in the
-    rendered text and in the payload; the exit code is what a script notices."""
+    aggregates above it describe a smaller window than was asked for. A caller may count other
+    failures of the same weight (the tracking report adds a ledger reconciliation that did not
+    reconcile). Every one is named in the rendered text and in the payload; the exit code is what a
+    script notices."""
     typer.echo(_payload_json(payload) if as_json else text)
     if payload["n_failed"]:
         raise typer.Exit(code=1)
@@ -1472,6 +1523,390 @@ def accum_replay(
     except EngineError as exc:
         raise _abort(str(exc)) from exc
     _emit_report(text, payload, as_json=json_out)
+
+
+# --- the weekly tracking comparison: what the book held against the floor, and what it cost -------
+
+
+def _window_exec_records(journal_root: Path, since: str | None, until: str | None) -> list[dict]:
+    """Every journaled execution record in the same inclusive UTC day window `_window_records` uses.
+
+    An unreadable or schema-invalid record ABORTS rather than being skipped, for a sharper reason
+    than the cycle records': the fills it carries move `held` for every LATER cycle, so dropping one
+    quietly overstates the drift of the whole remaining window."""
+    since_day = _parse_day(since, "--since")
+    until_day = _parse_day(until, "--until")
+    out: list[dict] = []
+    for boundary, path in _journal_artifacts(journal_root, "*", "exec-*.json"):
+        if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
+            continue
+        try:
+            doc = read_exec_record(path)
+            validate_exec_record(doc)
+        except (OSError, ValueError, EngineJournalError) as exc:
+            raise _abort(
+                f"unreadable execution record {path}: {exc} -- its fills move the position every later cycle "
+                "is measured against, so skipping it would overstate the drift of the rest of the window; "
+                "repair the record or exclude its day with --since/--until"
+            ) from exc
+        out.append(doc)
+    return out
+
+
+def _parse_gate_from(raw: str | None) -> str | None:
+    """Validate `--gate-from` as a fixed-width ISO week label, or abort naming the form.
+
+    Fixed width is load-bearing, not cosmetic: `rung_by_week` is built by comparing week labels as
+    STRINGS, and `YYYY-Www` orders lexicographically exactly as it orders chronologically. A
+    one-digit week would silently sort `2026-W9` after `2026-W10` and hand the wrong weeks a rung.
+    """
+    if raw is None:
+        return None
+    year, sep, week = raw.partition("-W")
+    if not (len(year) == 4 and year.isdigit() and sep and len(week) == 2 and week.isdigit() and 1 <= int(week) <= 53):
+        raise _abort(f"--gate-from {raw!r} is not an ISO week of the form YYYY-Www, e.g. 2026-W29")
+    return raw
+
+
+def _rung_by_week(stages: list[CycleStages], gate_from: str | None) -> dict[str, int]:
+    """Every window week labelled rung 3 from `gate_from` onward, rung 2 before it.
+
+    Absent the flag this is EMPTY, and `weekly_tracking` decides nothing -- the safe direction. The
+    operator names the boundary; nothing here guesses it from the data, because the first week that
+    counts is a decision about the deployment, not a property of the journal.
+    """
+    if gate_from is None:
+        return {}
+    labels = {f"{s.cycle_ts.isocalendar().year}-W{s.cycle_ts.isocalendar().week:02d}" for s in stages}
+    return {label: (3 if label >= gate_from else 2) for label in labels}
+
+
+def _simulated_fills(stages: list[CycleStages], floor_cycles: list[dict], minimums: dict[str, tuple[float, float]]) -> list[Fill]:
+    """The drift floor's own placements, dressed as fills at the journaled close.
+
+    The true-positive for the whole realized half. With zero journaled fills, every refusal in the
+    tracking module is indistinguishable from a guard that always refuses, and a report that runs
+    end to end proves only that it ran.
+
+    Fees are MODELLED at the builder's own maker rate, so the fee-per-side this produces is the
+    current one by construction -- real-shaped, never a recalibration input, which is why the report
+    labels the run and says so beside the number.
+    """
+    cfg = CrossfreqSystemConfig()
+    held: dict[str, float] = {}
+    out: list[Fill] = []
+    for stage, row in zip(sorted(stages, key=lambda s: s.cycle_ts), floor_cycles, strict=True):
+        for asset, target in row["target_qty"].items():
+            delta = target - held.get(asset, 0.0)
+            ordermin_base, costmin = minimums[asset]
+            close = stage.closes[asset]
+            # The floor policy's own two independent gates, and its own assignment (`= target`,
+            # never `+= delta`), so the simulated book tracks `accumulation_payload`'s held exactly.
+            if abs(delta) < ordermin_base or abs(delta) * close < costmin:
+                continue
+            held[asset] = target
+            out.append(
+                Fill(
+                    boundary=stage.cycle_ts,
+                    at=stage.cycle_ts,
+                    base=asset,
+                    side="buy" if delta > 0 else "sell",
+                    qty=abs(delta),
+                    px=close,
+                    fee=cfg.fee_per_side * abs(delta) * close,
+                    liquidity="MAKER",  # the ladder places maker-first
+                    # Unmistakable for a venue trade id, which matters because a ledger
+                    # reconciliation matches on exactly this field.
+                    trade_id=f"simulated:{asset}:{stage.cycle_ts.isoformat()}",
+                )
+            )
+    return out
+
+
+def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
+    """The realized blend, with the PROPOSAL withdrawn when the ledger did not reconcile.
+
+    The measurement stays -- the maker/taker split and the realized rate are what the operator
+    investigates with, and withholding them helps nobody. `proposed_fee_per_side` is different: it is
+    the one number this whole comparison exists to feed into a config, and a `--json` consumer reads
+    it straight out without ever looking at `n_failed`. A rate computed over a book the
+    reconciliation has just declared incomplete must not be there to read.
+
+    `basis` carries the reason, in the PAYLOAD rather than only in the rendered text -- the same
+    reason `cost_blend` spells its three no-rate branches out at source instead of at whatever
+    renders them."""
+    cost = cost_blend(fills)
+    if reconciliation is None or reconciliation["status"] != "FAILED":
+        return cost
+    return {
+        **cost,
+        "proposed_fee_per_side": None,
+        "basis": f"{len(reconciliation['unmatched'])} ledger trade row(s) matched no journaled fill -- no rate "
+        "proposed over a book the ledger could not reconcile",
+    }
+
+
+def _tracking_cell(value: float | None) -> str:
+    """A drift cell: `no data` for a week whose realized series never started, `n/a` for a NaN."""
+    if value is None:
+        return f"{'no data':>11}"
+    return f"{'n/a':>11}" if math.isnan(value) else f"{value:11.1f}"
+
+
+def _tracking_note(week: dict) -> str:
+    """Why a week carries no verdict, spelled out.
+
+    `weekly_tracking` marks a week that straddles the first fill only by ELIMINATION -- complete,
+    on the deciding rung, and still not gate-eligible -- and an operator should not have to infer
+    that from three flags. The branches are exhaustive because `gate_eligible` is exactly
+    `complete and rung == 3 and not straddles`; each one below eliminates a conjunct, so what
+    reaches the straddle branch can only be straddling."""
+    if not week["complete"]:
+        return "partial week"
+    if week["rung"] is None:
+        return "no gate boundary -- pass --gate-from"
+    if week["rung"] != 3:
+        return "before the gate boundary"
+    if not week["gate_eligible"]:
+        return "straddles the first fill"
+    if week["realized_mean_bps"] is None:
+        return "no realized data yet"
+    return ""
+
+
+def _render_tracking(payload: dict) -> str:
+    """The weekly comparison, the window-wide floor, and the realized cost blend."""
+    tracking, floor, cost = payload["tracking"], payload["floor"], payload["cost"]
+    lines = [
+        "Weekly tracking error: what the book actually held, against the drift floor the venue's minimums impose",
+        f"Venue minimums read {payload['minimums_fetched_at']} -- these floors move, so a band quoted from an "
+        "older table is stale, not conservative.",
+        f"Portfolio size {payload['nav']:,.0f} EUR, held constant across the window.",
+    ]
+    if payload["simulated"]:
+        lines += [
+            "",
+            "SIMULATED FILLS -- the realized half below is the floor policy's own placements at each journaled "
+            "close, not trading that happened. Every number is real-shaped and none of it is real.",
+        ]
+    if len(payload["schema_versions"]) > 1:
+        lines += [
+            "",
+            f"This window straddles a journal schema change (record schema {', '.join(str(v) for v in payload['schema_versions'])}): "
+            "the older records key their targets by asset, the newer ones by traded symbol. Both replay, and the "
+            "comparison below is in one key space -- but a week spanning the change mixes two recording regimes.",
+        ]
+
+    header = f"{'week':<10} {'cycles':>7} {'floor_p95':>11} {'real_mean':>11} {'within':>7}  note"
+    lines += [
+        "",
+        "Per ISO week (bps of NAV): the floor's p95 over that week's cycles against the realized mean.",
+        "",
+        header,
+        "-" * len(header),
+    ]
+    for week in tracking["weeks"]:
+        within = "-" if week["within_band"] is None else ("yes" if week["within_band"] else "NO")
+        lines.append(
+            f"{week['iso_week']:<10} {week['cycles']:>7} {_tracking_cell(week['floor_p95_bps'])} "
+            f"{_tracking_cell(week['realized_mean_bps'])} {within:>7}  {_tracking_note(week)}"
+        )
+    lines += [
+        "-" * len(header),
+        f"Verdict: {tracking['verdict']} at {payload['nav']:,.0f} EUR -- "
+        f"{tracking['complete_gate_eligible_weeks']} decided week(s); a verdict needs at least 3, and a week is "
+        "decided only when it is complete, sits on or after the gate boundary, and does not straddle the first fill.",
+    ]
+    if payload["gate_from"] is None:
+        lines.append(
+            "No gate boundary was named, so NOTHING above is decided whatever the numbers say -- pass "
+            "--gate-from <YYYY-Www> naming the first week that counts. Every week's floor p95 and realized "
+            "mean above are measured and unaffected by this."
+        )
+    else:
+        lines.append(f"Gate boundary: weeks from {payload['gate_from']} onward count; earlier weeks are measured only.")
+    lines += [
+        "",
+        f"Across the whole window, {payload['n_cycles']} cycles: floor median {_tracking_cell(floor['median_drift_bps']).strip()} bps, "
+        f"floor p95 {_tracking_cell(floor['p95_drift_bps']).strip()} bps, placed on {floor['n_placed']} of them.",
+    ]
+
+    def rate(value: float | None) -> str:
+        return "no data" if value is None else f"{10_000 * value:.1f} bps"
+
+    lines += [
+        "",
+        "Realized cost, weighted by notional:",
+        f"  fills {cost['n_fills']} ({cost['n_priced']} priced)",
+        f"  maker {_share(cost['maker_share'])} / taker {_share(cost['taker_share'])} -- of the PRICEABLE book only; a "
+        "fill the venue gave no side for is counted but has no side to split.",
+        f"  fee per side: realized {rate(cost['realized_fee_per_side'])}, currently assumed "
+        f"{rate(cost['current_fee_per_side'])} (plus {rate(cost['current_spread_per_side'])} of spread, priced separately)",
+        f"  per fill: min {rate(cost['per_fill_min'])}, median {rate(cost['per_fill_median'])}, max {rate(cost['per_fill_max'])}",
+        f"  basis: {cost['basis']}",
+    ]
+    if payload["simulated"]:
+        lines.append("  the fees above are modelled at the assumed maker rate, so this blend cannot recalibrate anything.")
+
+    reconciliation = payload["reconciliation"]
+    if reconciliation is not None:
+        lines += [
+            "",
+            f"Ledger export: {reconciliation['status']} -- {reconciliation['n_rows']} row(s) read, of which "
+            f"{reconciliation['matched']} ledger trade row(s) matched a journaled fill.",
+        ]
+        if payload["simulated"]:
+            lines.append(
+                "  SIMULATED FILLS were compared against a real export, so every ledger trade row below is unmatched "
+                "by construction -- a modelled fill carries no venue trade id. Nothing in this block is a finding."
+            )
+        lines.append(
+            f"  rollover fees {reconciliation['rollover_fees_eur']:,.2f} EUR -- charged against the POSITION rather "
+            "than against a fill, so no execution record carries them and the blend above omits them."
+        )
+        if reconciliation["ignored"]:
+            lines.append(
+                "  row types this reader places nowhere: "
+                + ", ".join(f"{kind} {count}" for kind, count in sorted(reconciliation["ignored"].items()))
+                + " -- counted, never matched. A margin position writes rows sharing its trade's id, and what those "
+                "mean is settled against a real export rather than guessed here."
+            )
+        if reconciliation["unmatched"]:
+            lines += [
+                "  The account traded what this journal does not know about. Every id below is a venue trade with no "
+                "journaled fill behind it, so the cost above is measured over an incomplete book:",
+            ] + [f"    {refid}" for refid in reconciliation["unmatched"]]
+
+    if payload["notes"]:
+        lines += ["", "Notes that disabled part of the report:"] + [f"  {note}" for note in payload["notes"]]
+    # Gated on `failures`, never on `n_failed`: the latter also carries a failed ledger
+    # reconciliation, which is not a cycle and would be announced here as one.
+    if payload["failures"]:
+        lines += ["", f"Cycles failed to replay: {len(payload['failures'])} (excluded from every number above)"]
+        lines += [f"  {f['cycle_ts']}  {f['error']}" for f in payload["failures"]]
+    return "\n".join(lines)
+
+
+def _share(value: float | None) -> str:
+    return "no data" if value is None else f"{100 * value:.1f}%"
+
+
+@engine_app.command(name="tracking-report")
+def tracking_report(
+    journal_dir: Optional[Path] = typer.Option(
+        None, "--journal-dir", help="Journal root to read instead of the configured journal_dir (e.g. a pulled VPS journal)."
+    ),
+    since: Optional[str] = typer.Option(None, "--since", help="Only cycles on or after this UTC day (YYYY-MM-DD)."),
+    until: Optional[str] = typer.Option(None, "--until", help="Only cycles on or before this UTC day (YYYY-MM-DD)."),
+    minimums: Optional[Path] = typer.Option(
+        None,
+        "--minimums",
+        help=f"Venue reference-data snapshot the per-asset order minimums are read from. Defaults to the newest "
+        f"{_REFDATA_GLOB} under the configured data dir's snapshots/ directory.",
+    ),
+    nav: Optional[float] = typer.Option(
+        None,
+        "--nav",
+        help="Portfolio size in EUR to compare at. Single-valued, unlike accum-replay's sweep: this command issues "
+        "one verdict, and the sibling's list starts at a size whose floor is far wider than the ratified basis, "
+        "so a bare run there could only ever read too kindly. Defaults to the configured shadow portfolio size, "
+        "which is also the size the engine itself trips at.",
+    ),
+    gate_from: Optional[str] = typer.Option(
+        None,
+        "--gate-from",
+        metavar="YYYY-Www",
+        help="The first ISO week that counts toward the verdict (e.g. 2026-W29); earlier weeks are measured but "
+        "never decided. Absent, NO week is decided -- eligibility fails closed, because a week nobody has "
+        "declared in-scope must not be able to produce a pass.",
+    ),
+    simulated_fills: bool = typer.Option(
+        False,
+        "--simulated-fills",
+        help="Replace the journaled fills with the drift floor's own modelled placements, so the whole comparison "
+        "can be exercised before any real fill exists. Every figure it produces is labelled and none of it is real.",
+    ),
+    ledger_export: Optional[Path] = typer.Option(
+        None,
+        "--ledger-export",
+        help="A Kraken ledger export (CSV, from History -> Export -> Ledgers) to reconcile the window's fills "
+        "against. It is the only place a margin position's rollover fee appears -- the venue charges it against "
+        "the POSITION, so no fill carries it and a cost basis built from fills alone omits it. Absent, the report "
+        "simply omits the reconciliation: the export is a hand-made artifact and most runs will not have one.",
+    ),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the full payload as JSON on stdout instead of the tables. A non-finite value is emitted as null.",
+    ),
+) -> None:
+    """Compare each ISO week's realized drift against the venue-minimum floor, and reprice the cost."""
+    config = _load_engine_config()
+    journal_root = journal_dir if journal_dir is not None else config.journal_dir
+    records = _window_records(journal_root, since, until)
+    minimums_path = _resolve_minimums(minimums)
+    try:
+        floors, fetched_at = load_minimums(minimums_path)
+    except (OSError, KeyError, TypeError, ValueError, EngineError) as exc:
+        raise _abort(f"could not read the venue order minimums from {minimums_path}: {exc}") from exc
+    # `shadow_nav_eur`, never DEFAULT_NAVS[0]: component C trips at the configured size, so taking any
+    # other default here would band the human at one NAV while the engine trips at another.
+    nav_value = nav if nav is not None else config.shadow_nav_eur
+    gate_week = _parse_gate_from(gate_from)
+
+    reader = _snapshot_reader(journal_root)
+    stages: list[CycleStages] = []
+    failures: list[dict] = []
+    for record in sorted(records, key=lambda r: r.cycle_ts):
+        try:
+            stages.append(replay_stages(record, reader))
+        except EngineError as exc:
+            failures.append({"cycle_ts": record.cycle_ts.isoformat(), "error": str(exc)})
+
+    notes: list[str] = []
+    # Both halves are inside one catch. `accumulation_report` DROPS a record whose replay raises and
+    # counts it -- but a fill journaled under that dropped boundary then orphans, and
+    # `realized_drift` refuses rather than silently overstating every later cycle. That refusal must
+    # surface as this module's clean one-line exit, not as a traceback.
+    try:
+        floor = accumulation_payload(stages, floors, [nav_value])["by_nav"][nav_value]
+        if simulated_fills:
+            fills = _simulated_fills(stages, floor["cycles"], floors)
+        else:
+            fills, notes = extract_fills(_window_exec_records(journal_root, since, until))
+        tracking = weekly_tracking(stages, fills, floors, nav_value, rung_by_week=_rung_by_week(stages, gate_week))
+    except EngineError as exc:
+        raise _abort(str(exc)) from exc
+
+    # Absent an export there is nothing to reconcile against, and most runs will not have one. An
+    # export whose HEADER cannot be mapped aborts, unlike an unmatched row: nothing was read, so
+    # there is no reconciliation to report either way.
+    reconciliation = None
+    if ledger_export is not None:
+        try:
+            reconciliation = reconcile_ledger(read_ledger_export(ledger_export), fills)
+        except (OSError, EngineError) as exc:
+            raise _abort(f"could not read the ledger export {ledger_export}: {exc}") from exc
+
+    payload = {
+        "nav": nav_value,
+        "gate_from": gate_week,
+        "n_cycles": len(stages),
+        "tracking": tracking,
+        "floor": floor,
+        "cost": _cost_over(fills, reconciliation),
+        "reconciliation": reconciliation,
+        "schema_versions": sorted({record.schema_version for record in records}),
+        "simulated": simulated_fills,
+        "minimums_fetched_at": fetched_at,
+        "notes": notes,
+        # A failed reconciliation joins the exit-code count: the report is printed in full either
+        # way, and the exit code is the only thing a script reading this notices. It stays OUT of
+        # `failures`, which is the per-cycle replay list.
+        "n_failed": len(failures) + (1 if reconciliation is not None and reconciliation["status"] == "FAILED" else 0),
+        "failures": failures,
+    }
+    _emit_report(_render_tracking(payload), payload, as_json=json_out)
 
 
 @engine_app.command(name="exec-status")

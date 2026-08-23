@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: `zcrypto_reconcile_ledger_records` reaches ~250000. It read 73 on 2026-08-05, so the trigger sits ~3400x today's ledger — the scale at which parsing the whole file every cycle moves from microseconds into the second range and the append-only-forever design becomes worth revisiting. Below it the O(ledger) scan cannot credibly threaten the `source-lag` / `exporter-stale` thresholds it is measured against. One Grafana query against a series that is now live, via `infra/scripts/grafana-query.py`. The correction-marker leg is DONE (see `## Done so far`), and the scan-slowdown leg was already RELIEVED by spec 00054 moving the scan off the Atom onto the ops node's i7 (2026-07-16) — which is why the surviving trigger is ledger SIZE and not cycle time: at registration no reconcile cycle-duration series existed to trigger on (spec `00097` has since added `zcrypto_reconcile_cycle_duration_seconds`, but ledger SIZE remains the right trigger — duration now measures the skip-cache, not the ledger scan)
+ripe_when: "`zcrypto_reconcile_ledger_records` reaches 250,000"
 ---
 
 # Correcting the reconcile ledger resets the Prometheus counters
@@ -22,6 +22,8 @@ Two `increase()`-based alert rules read these counters: `Reconciler · residual 
 - **Already mitigated in the rules** (commit for spec 00050 task 11): both rules now gate on `... and resets(<counter>[<window>]) == 0`, so a correction (which shows up as a reset) is silenced for one window while a genuine, monotone loss still fires. The residual comment in `infra/grafana/alerts.yaml` documents the exact tradeoff: a real loss in the *same* window as a correction is delayed until the reset ages out — rare, bounded, and visible on the dashboard panel regardless.
 - The correction itself was done by hand (a one-off Python filter that dropped exactly the matching record, asserted `len(dropped) == 1`, preserved valid JSONL, and backed the original up verbatim as `reconcile-ledger.jsonl.bak-<ts>`). There was no committed procedure at the time — it was reconstructed from first principles under time pressure — and that gap is what the runbook recorded under `## Done so far` closed.
 - Related property of the same append-only-forever design: `_load_ledger` + `_totals` scan the entire ledger every cycle, so both are O(ledger size). There is no rotation or pruning (unlike the 14-day raw-mirror retention). Over the deployment's life this slowly erodes the reconcile cycle's headroom against the `source-lag` / `exporter-stale` thresholds.
+
+- **Why the trigger is ledger SIZE at ~250,000 records, and not cycle time.** At 73 records (2026-08-05) the threshold sat ~3,400x the live ledger: the scale at which parsing the whole file every cycle moves from microseconds into the second range and append-only-forever becomes worth revisiting. Below it the O(ledger) scan cannot credibly threaten the `source-lag` / `exporter-stale` thresholds it is measured against. At registration no reconcile cycle-duration series existed to trigger on; spec `00097` has since added `zcrypto_reconcile_cycle_duration_seconds`, but that now measures the skip-cache rather than the ledger scan, so SIZE remains the right trigger.
 
 ## Done so far
 

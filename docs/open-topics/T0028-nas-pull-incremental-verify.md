@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: the NAS capture archive grows large enough that one hourly `verify_tree` sweep approaches the pull interval (est. onset ~8–9 months in at ~250 GB, cliff ~1.7 years at ~600 GB — corrected from the original ~1–2 months, which rested on T0003's 20×-wrong ~10 GB/day fill figure; the sweep walks BOTH pulled mirrors, growing ~0.96 GB/day combined per spec 00050), or an attended optimization window before then
+ripe_when: one hourly `verify_tree` sweep approaches the pull interval
 ---
 
 # Role A NAS pull re-hashes the whole archive every cycle
