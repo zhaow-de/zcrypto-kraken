@@ -1054,6 +1054,8 @@ def test_the_idle_tick_never_evaluates_tracking(...)                      # on_t
 **Files:**
 - Modify: `infra/runbooks/engine.md`, `docs/open-topics/T0018-phase6-build-sequence.md`, `docs/open-topics/T0090-*.md`, `docs/research/14.phase6-decisions.md`, `docs/iterations-history-phase6.md`
 
+- [ ] **Step 0: `--gate-from` takes the operator's word and validates nothing.** A week outside the window is accepted silently — safe in the fail-closed direction, since a wrong week decides fewer weeks rather than more, but a typo goes unremarked. The first counting week is a fact about the deployment, not about the journal, so the flag is right not to guess it — the runbook says which week to pass and how to confirm it landed (the report echoes the boundary and the count of decided weeks). One sentence in the probe-window procedure.
+
 - [ ] **Step 1: The probe-window procedure gains the weekly reading** — the command, the ISO week to pass, and what an unproducible week means (a refusal to record, never a zero to shrug at). **This is what makes the absent timer safe** (spec D2): there is no scheduled run, so the procedure is the only thing that compels the reading.
 
 - [ ] **Step 2: The sleeve-composition alert's step 3 gains the realized half** — it currently names only `accum-replay`, which is the floor half.
