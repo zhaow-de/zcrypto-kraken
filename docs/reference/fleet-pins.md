@@ -12,7 +12,7 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (verified resident at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; carries the keep-regex admitting `zcrypto_exec_external_events_total`, which has no producer until the engine leg ships | 2026-08-23 09:25:29 | `636012cc00d9` (2026-08-20) |
+| capture | zcrypto | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6` | 2026-08-23 09:25:29 | `636012cc00d9` (2026-08-20) |
 | capture | zcrypto-red | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; **canary — this host's passed bake gates the engine re-pin** | 2026-08-22 22:00:39 | `636012cc00d9` (2026-08-18) |
 | engine | zcrypto | `03d4cf1b8df7` — spec `00098`, revision `f54431a6`; adopted-order fills now reach their rows and `zcrypto_exec_external_events_total`. Still **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-23 10:21:03 | `636012cc00d9` (2026-08-19) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
@@ -38,11 +38,9 @@ Reading rules:
 
 - `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0, the current pin on all four hosts.
 - `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1, the rollback operand; resident on both capture hosts.
-- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`; also carries `zcrypto_exec_external_events_total` in the capture keep-regex — now deployed on BOTH capture hosts, so the engine leg no longer needs `--tags capture`; verify that family by VALUE at the first scrape after the engine takes this digest, where `(no series)` IS a failure (today it is correctly absent: no producer).
+- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`; also carries `zcrypto_exec_external_events_total` in the capture keep-regex; deployed on both capture hosts and on the engine, so `(no series)` for that family IS a failure.
 - `636012cc00d9` = `sha256:636012cc00d9e3f21ab23dba5454eefe2e252e4152bcdee07da16b8e9335fc4f` — spec `00090` (the rung-1 order path), revision `732598ff`, AVX build; running fleet-wide (both captures and the engine).
 - `06919e5dc50c` = `sha256:06919e5dc50c1eef3525aa272b8a21e441d17fa30bf67a46575ca1d560c4b3be` — ops current; spec `00097` (the reconcile skip-cache), revision `52b12ca1`, AVX.
 - `6b4c13899653` = `sha256:6b4c13899653d4e9300cec8d111cb5c6a8cf94e43a5db64cbcd0b3fa47698bf8` — ops operand; spec `00096`, revision `2c248fe4`.
 - `5f890c26237a` = `sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1` — NAS current; the `-compat` build of `e0757909`.
 - `620114511f19` = `sha256:620114511f197c306d6b1c2260b0a12793bb679663517a0626841d0018049a28` — NAS operand.
-- alloy current (all four container hosts): `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308`
-- alloy operand (all four): `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b`
