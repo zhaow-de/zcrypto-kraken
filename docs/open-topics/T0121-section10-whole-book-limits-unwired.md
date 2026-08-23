@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: `zcrypto engine decompose`'s rendered table is touched for any reason, or a limit is first observed binding on a live cycle (`zcrypto_engine_limit_bound_total` moves off zero) — the remaining sub-item is the decompose table's missing `limited` stage, which only misreads once a limit can actually bind
+ripe_when: "`zcrypto_engine_limit_bound_total` moves off zero, or `zcrypto engine decompose`'s rendered table is touched for any reason"
 ---
 
 # Three of §10's four whole-book limits have no caller

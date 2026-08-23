@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: B1 split out to T0022 (iter-086); B2 ripe NOW and C3 ripe since iter-072; B4-legs/B3 additionally need the §10 portfolio-limits code first; C1 after weeks of captured L2 (T0003); C2 after a tick catalog exists (dropped in T0012's resolution — re-open it as its own topic when C2 goes live)
+ripe_when: per family — B2 and C3 are RIPE NOW and consciously re-deferred (see `## Done so far`); B4-legs and B3 need the §10 portfolio-limits code; C1 needs weeks of captured L2
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue
@@ -22,6 +22,8 @@ Buckets B (intraday band) and C (long shots) are where the master plan's residua
 ## Done so far
 
 - **B1 split out (iter-086)**: the family opened as its own topic [T0022](T0022-b1-intraday-seasonality-family.md) with spec/plan `00045` — per this umbrella's own split rule. The umbrella's remainder is B2/B3/B4 and C1–C3.
+
+- **B2 and C3 are ripe and deliberately NOT picked up (re-deferred 2026-08-23, owner's call).** B2's sourcing has been unblocked since 2026-07-24 and C3 since iter-072, so neither waits on anything technical. The reason is contention, not readiness: the active front is the Phase-6b go-live run-up ([[T0085]]), and opening an alpha family competes with it for the same attention while the live path is being armed. Re-evaluate once go-live is settled — this is a decision, not an oversight, and it is recorded here so the ripe state stops reading as a miss.
 
 ## Standing prerequisites for any short-carrying or levered family (registered here because this topic's families fire them)
 

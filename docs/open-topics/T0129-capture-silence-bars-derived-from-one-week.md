@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a read of `count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` returns ≥ ~42000 on both capture hosts — a genuinely full 30-day window (43200 samples at one per 60 s, less scrape misses). One Grafana query against data already being collected, run by `infra/scripts/grafana-query.py`. At the 2026-08-05 derivation it returned 10435 / 10838, so the trigger sits ~23 days out from then — but it is measured rather than dated, so a capture outage or a gauge re-ship pushes it back on its own.
+ripe_when: "`count_over_time(zcrypto_capture_seconds_since_last_book_message[30d])` reads >= 42000 on both capture hosts"
 ---
 
 # Both capture silence bars are derived from one week of data, not thirty days
@@ -25,6 +25,8 @@ The rules sit on the unbackfillable capture path, where both error directions co
 - **The binding natural per-pair maximum is the primary's, not the secondary's.** Excluding the event day (`max_over_time(…[6d])`): primary AVAX/EUR **12.068981 s**, above the secondary's worst of ETH/BTC **11.125801 s**. It matches the 12.196 s worst natural intra-hour spacing `BOOK_STALENESS_SECONDS` records in `cli/capture/command.py`.
 - **Daily min-by-host maxima over the whole life** (primary): 30.261266 (07-29), then 2.6418, 1.013259, 0.18049, 1.068947, 4.328992, 10.380023. Every day but the event day sits between 0.18 s and 10.4 s.
 - **What 30 s is in the daemon, since the per-pair bar's warrant leans on it**: `_staleness_loop` calls `monitor.start_silence` and nothing else — no resubscribe, no reconnect. `_desync_recovery_loop` (the only path that resubscribes or forces a reconnect) skips every pair whose book is not `desynced`, and `gap_monitor.is_healthy()` deliberately ignores silence, so a silent-but-synced stream does not even withhold the dead-man ping. It never self-heals at any age.
+
+- **Why the threshold is ~42,000 samples.** A genuinely full 30-day window is 43,200 samples at one per 60 s, less scrape misses. At the 2026-08-05 derivation the query returned 10,435 / 10,838; on 2026-08-23 it reads 20,188 on both hosts, so it is tracking as designed. It is measured rather than dated on purpose — a capture outage or a gauge re-ship pushes it back on its own.
 
 ## Suggested next steps
 

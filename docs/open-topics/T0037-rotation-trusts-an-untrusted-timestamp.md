@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the core residual is FIXED (cross-stream quorum with wall-clamped witnesses, iter shipped); the two accepted residuals below are each ripe only if ever OBSERVED in production — (a) two independent streams each taking a guard-passing bogus stamp inside the same hour's closing MAX_TS_AHEAD window, (b) a clock leading >5 min AND a bogus stamp landing together
+ripe_when: either accepted residual is OBSERVED in production — (a) two independent streams each taking a guard-passing bogus stamp inside one hour's closing `MAX_TS_AHEAD` window, or (b) a clock leading by more than 5 min
 ---
 
 # Hour rotation trusts an untrusted timestamp, so one bad stamp closes the hour early

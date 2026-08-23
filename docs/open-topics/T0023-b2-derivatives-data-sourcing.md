@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the B2 (derivatives-positioning) family is picked for an iteration — sourcing is fully unblocked (funding backfilled iter-090; **OI substrate DELIVERED 2026-07-24** — tooling, the full 2020→present backfill, promotion to canonical `data/derivatives-oi/`, the hub push and the catalog entry are all done (PR #201); liquidations accruing live via the Coinalyze poller since 2026-07-15, the Binance WS recorder shelved geo-fenced), so **only the B2 harness remains as autonomous pre-work**
+ripe_when: the B2 derivatives-positioning family is picked for an iteration
 ---
 
 # B2 derivatives-positioning data sourcing (funding / OI / liquidations)

@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: a capture-schema change that stores raw wire-format price/qty strings is on the table (itself gated on a capture image re-pin — canary + clean-run embargo, see T0032), or an OPS-3 continuity-replay run surfaces a discrepancy the structural check cannot localize without the CRC
+ripe_when: a capture-schema change storing raw wire-format price/qty strings is proposed, or a continuity-replay run surfaces a discrepancy the structural check cannot localise
 ---
 
 # Byte-exact CRC re-derivation from the archive needs raw-string price/qty

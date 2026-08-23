@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: per sub-item — arm64 re-enable: before the final go-live, never on go-live day; OS/apt upgrade + reboot round: before that; nautilus engine converge: once a 1.231.0 engine image exists and its digest has baked as capture on the secondary; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed
+ripe_when: "per sub-item — arm64 re-enable: before the final go-live, never on go-live day; OS/apt upgrade + reboot round: before that; nautilus engine converge: once a 1.231.0 engine image exists and its digest has baked as capture on the secondary; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
 ---
 
 # Final pre-go-live steps — arm64 re-enable, the OS upgrade + reboot round, the `nautilus_trader` bump, and the credential rotation round
