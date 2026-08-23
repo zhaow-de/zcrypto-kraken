@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: spec `00092` builds the CONTINUOUS order loop — `00090`'s executor did not fire this trigger and the re-defer is deliberate (its reconciliation is post-terminal and startup-time, so it defines no standing call rate to budget against); the remaining sub-item is the discrepancy-polling intervals, whose values are a share of a request budget only a continuous call pattern fixes
+ripe_when: spec `00092`'s continuous order loop is built
 ---
 
 # Engine config gaps that only bite when orders flow

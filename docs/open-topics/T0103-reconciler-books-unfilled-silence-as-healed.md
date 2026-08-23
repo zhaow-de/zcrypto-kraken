@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: `increase(zcrypto_reconcile_healable_gap_seconds_total[1d])` reads non-zero on at least three distinct days.
+ripe_when: "`increase(zcrypto_reconcile_healable_gap_seconds_total[1d])` reads non-zero on at least three distinct days."
 ---
 
 # The reconciler books unfilled silence as healed, and double-counts it as permanent loss
