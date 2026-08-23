@@ -525,15 +525,37 @@ def test_a_raising_version_reader_refuses_rather_than_propagating(tmp_path):
     assert "nautilus_unverified" in gate.evaluate(NOW).reasons
 
 
-def test_an_unreadable_record_refuses_every_version(tmp_path, monkeypatch):
-    """The record failing closed to the empty set. An unreadable record cannot SHOW a version was
-    verified, so it must refuse -- not fall back to permitting."""
-    monkeypatch.setattr("cli.engine.execgate._VERIFIED_RECORD", tmp_path / "does-not-exist.json")
+@pytest.mark.parametrize(
+    ("content", "why"),
+    [
+        (None, "absent"),
+        ("{not json at all", "malformed"),
+        ('{"verified_nautilus_versions": "1.230.0"}', "a string where a list belongs"),
+        ('{"verified_nautilus_versions": [1230]}', "a non-string entry"),
+        ("{}", "the key missing entirely"),
+    ],
+)
+def test_an_unusable_record_fails_closed_to_the_empty_set(tmp_path, monkeypatch, content, why):
+    """A record that cannot be read cannot SHOW any version was verified, so it must yield the
+    EMPTY set and refuse everything.
 
-    verdict = _gate_on_version(tmp_path, _VERIFIED_VERSION).evaluate(NOW)
+    Asserting the set itself, not merely that one version is refused: a mutation that failed open
+    to some arbitrary non-empty set SURVIVED the weaker form of this test, because the version it
+    happened to contain was not the one being probed.
+    """
+    from cli.engine.execgate import _verified_nautilus_versions
 
-    assert verdict.level == GateLevel.NONE
-    assert "nautilus_unverified" in verdict.reasons
+    record = tmp_path / "record.json"
+    if content is not None:
+        record.write_text(content)
+    monkeypatch.setattr("cli.engine.execgate._VERIFIED_RECORD", record)
+
+    assert _verified_nautilus_versions() == frozenset(), why
+    # ...and every version is refused through the gate, including the one really recorded.
+    for version in (_VERIFIED_VERSION, "1.231.0", ""):
+        verdict = _gate_on_version(tmp_path, version).evaluate(NOW)
+        assert verdict.level == GateLevel.NONE
+        assert "nautilus_unverified" in verdict.reasons
 
 
 def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
