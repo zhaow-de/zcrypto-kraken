@@ -30,7 +30,10 @@
 - **`liquidity` is stored UPPERCASE** — `executor._liquidity` writes `"MAKER"` / `"TAKER"` / `"NO_LIQUIDITY_SIDE"` because `str()` on the pinned `LiquiditySide` `IntFlag` yields `"1"`. Match the stored casing: a lowercase-only match aborts every real fill while every lowercase fixture passes.
 - **`NO_LIQUIDITY_SIDE` is counted but unpriced, never an abort** (spec D5). Only a value the enum cannot name at all — `"1"` — aborts.
 - **The euro has two spellings**: `("EUR", "ZEUR")`. Never test `== "EUR"`.
-- **Partial ISO weeks carry no verdict**, and are marked. The gate needs ≥3 complete weeks. **Rung-2 weeks are measured but not gate-eligible.**
+- **Partial ISO weeks carry no verdict**, and are marked. The gate needs ≥3 complete weeks.
+- **The rung default FAILS CLOSED: no week is gate-eligible until the operator names the boundary.** Spec D3: *"the boundary is supplied by the operator and defaults to nothing is gate-eligible — the safe direction."* An earlier draft of this plan encoded the opposite (`rung != 2`, so an absent rung read as eligible) and its own test asserted the resulting `pass` — so the defect was specified, implemented, and then locked in by a test. The condition is `rung == 3`, and the operator supplies the cut-over with `--gate-from <YYYY-Www>`, naming the first rung-3 ISO week; the window's weeks before it are rung 2.
+- **Fail-closed is useless without a named remedy** (`agent-ops.md`: a recorded footgun names the safe alternative in the same sentence). With no `--gate-from`, the report still prints every week's floor p95 and realized mean, and says explicitly why nothing decided — otherwise `insufficient-data` is indistinguishable from "not enough weeks yet".
+- **The comparison NAV is single-valued and defaults to `config.shadow_nav_eur`.** `DEFAULT_NAVS` starts at 500, and at €500 the floor is ~2.2× wider than the ratified €1,000 curve (median 147.0 / p95 209.2 against 51.2 / 115.7) — so a bare run could only ever produce a false **pass**, never a false fail, on a live-trading gate. `shadow_nav_eur` is also the NAV component C trips at, which is what makes the spec's "the number a human bands cannot drift from the number the engine trips on" true of the NAV and not just of `drift_bps`. The sibling `accum-replay` sweeps five NAVs because it explores a curve; this command issues one verdict.
 - **"No data" means the realized series never started** — never "this week was quiet" (spec D10).
 - **A week STRADDLING the first fill is measured but not gate-eligible**, for the same reason a partial week is not: its mean is not comparable to a full week's. Measured on a 42-cycle week whose first fill lands at cycle 21, the twenty pre-fill cycles each contribute the full 10000 bps and the week reads 4761.9 bps — so the FIRST week of live trading would be systematically biased toward `fail`, in exactly the go/no-go window this report exists for. Report the number, exclude it from the verdict.
 - **A degenerate fixture proves nothing about a comparison.** Any fixture where the floor and the realized side are both exactly 0.0 leaves `<=` vs `>=` unpinned — the single arithmetic the gate rests on. Every band comparison needs a fixture where the two sides DIFFER, and the suite needs a case that reaches the `fail` verdict.
@@ -411,16 +414,27 @@ def test_three_complete_weeks_within_band_read_pass():
     # The only test that reaches a `pass` verdict -- without it the _GATE_MIN_WEEKS probe has
     # nothing to fail against, since every other fixture yields insufficient-data either way.
     stages = _full_week("2026-08-31") + _full_week("2026-09-07") + _full_week("2026-09-14")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    rungs = {"2026-W36": 3, "2026-W37": 3, "2026-W38": 3}
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week=rungs)
     assert out["complete_gate_eligible_weeks"] == 3
     assert out["verdict"] == "pass"
+
+def test_with_no_rung_boundary_nothing_is_gate_eligible():
+    # THE SAFE DIRECTION, and the one an earlier draft inverted: absent operator input, a
+    # complete week must NOT count toward the verdict.
+    stages = _full_week("2026-08-31")
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    wk = out["weeks"][0]
+    assert wk["complete"] is True and wk["gate_eligible"] is False
+    assert wk["floor_p95_bps"] is not None and wk["realized_mean_bps"] is not None
+    assert out["complete_gate_eligible_weeks"] == 0 and out["verdict"] == "insufficient-data"
 
 def test_a_rung_2_week_is_measured_but_not_gate_eligible():
     # Given a FILL, so the exclusion is what makes it ineligible -- without one this test would
     # pass with the rung-2 rule entirely removed.
     stages = _full_week("2026-08-31")
     out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0,
-                          rung_by_week={"2026-W36": 2})
+                          rung_by_week={"2026-W36": 2})  # explicitly rung 2, not merely absent
     wk = out["weeks"][0]
     assert wk["complete"] is True, "a partial week would be ineligible whatever the rung rule"
     assert wk["rung"] == 2 and wk["gate_eligible"] is False
@@ -523,7 +537,7 @@ def weekly_tracking(stages, fills, minimums, nav, *, rung_by_week=None) -> dict:
         label = _iso_label(key)
         complete = not fw["partial"]
         rung = rung_by_week.get(label)
-        gate_eligible = complete and rung != 2
+        gate_eligible = complete and rung == 3
         # Started, not "had a fill this week".
         started = first_fill is not None and any(
             s.cycle_ts >= first_fill for s in ordered if _iso_key(s.cycle_ts) == key)
@@ -688,7 +702,10 @@ def cost_blend(fills: list[Fill]) -> dict:
 - Test: `tests/test_engine_tracking.py`
 
 **Interfaces:**
-- Produces: `zcrypto engine tracking-report [--journal-dir PATH] [--since ISO] [--until ISO] [--nav FLOAT (repeatable)] [--minimums PATH] [--ledger-export PATH] [--simulated-fills] [--json]`.
+- Produces: `zcrypto engine tracking-report [--journal-dir PATH] [--since ISO] [--until ISO] [--nav FLOAT] [--gate-from YYYY-Www] [--minimums PATH] [--ledger-export PATH] [--simulated-fills] [--json]`.
+- **`--nav` is SINGLE-VALUED and defaults to `config.shadow_nav_eur`** — not repeatable, and not `DEFAULT_NAVS[0]`. The sibling sweeps five NAVs because it explores a curve; this command issues one verdict, and at €500 the floor is ~2.2× the ratified €1,000 basis, so a bare run could only ever produce a false **pass**. Repeatability was never load-bearing here — the flag-parity concern was about a near-miss NAME (`--journal-dir`, not `--journal`). Also drop the silent-discard footgun: `--nav 1000 --nav 5000` currently throws 5000 away with no message.
+- **`--gate-from YYYY-Www` names the first rung-3 ISO week**, and builds `rung_by_week = {label: 3 if label >= gate_from else 2}` over the window's weeks. Absent, nothing is gate-eligible and the renderer says so by name.
+- **The `Verdict:` line carries the NAV.** It is the one sentence anyone quotes into a decision record, and it currently carries no basis at all.
 - **Payload shape** (the tests assert these keys, so they are part of the interface, not an implementation detail):
 
 ```python
@@ -798,7 +815,18 @@ def test_a_simulated_run_is_labelled_as_simulated(real_journal_fixture):
 
 - [ ] **Step 6: `README.md` `## Usage`** gains the subcommand and every flag, same commit.
 
-- [ ] **Step 7: Commit.** `feat(engine): tracking-report, with the replay-as-fills true-positive`
+- [ ] **Step 7: Prove the two fail-open defaults are closed.** Neither had a test, which is exactly why neither was caught:
+  - a run with **no** `--nav` asserts the compared basis is `shadow_nav_eur` (every existing test passes `--nav 1000`, so the default is unexercised);
+  - a run with **no** `--gate-from` yields `insufficient-data`, decides zero weeks, and prints the line naming the flag;
+  - a run **with** `--gate-from` decides its weeks — which also proves the flag is wired, since nothing does today.
+
+- [ ] **Step 8: Exercise the failure path.** `n_failed`/`failures` is new code that no test reaches: an implementation hardcoding `"n_failed": 0` passes every test in the file while the README promises the `decompose` behaviour. Corrupt one `cycle-*.json`'s content-hash inside a copy of `mixed_schema_fixture`; assert exit 1, `n_failed == 1`, and the offending cycle named in stdout.
+
+- [ ] **Step 9: Move what does not need the mount into CI.** Four of the nine CLI tests bind to the 126-cycle real-journal replay while asserting nothing that needs real data — writes-nothing, the minimums stamp, the single-schema negative, and the simulated label. Rebind them to the mount-free `mixed_schema_fixture` (2 cycles): it drops roughly a third of the workstation suite cost **and** moves four assertions from skipped-in-CI into CI. Only three tests genuinely need the mount. Then correct CLAUDE.md's suite-cost figure, which the measured 21:48 has made stale.
+
+- [ ] **Step 10: Two small assertions the author's own standard implies.** A negative for the simulated banner (no test runs without `--simulated-fills` and asserts its absence, so `if True:` survives), and the simulated fee's VALUE: `payload["cost"]["realized_fee_per_side"] == approx(payload["cost"]["current_fee_per_side"])` — true by construction, and it catches a fee model that silently drifts off the constant.
+
+- [ ] **Step 11: Commit.** `feat(engine): tracking-report, with the replay-as-fills true-positive`
 
 ---
 
