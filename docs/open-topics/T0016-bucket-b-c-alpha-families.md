@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: per family — B2 and C3 are RIPE NOW and consciously re-deferred (see `## Done so far`); B4-legs and B3 need the §10 portfolio-limits code; C1 needs weeks of captured L2
+ripe_when: "per family — B2 and C3: go-live is settled (both are otherwise ripe; re-deferred 2026-08-23, see `## Done so far`); B4-legs and B3: the §10 portfolio-limits code lands; C2: a tick catalog exists; C1: weeks of captured L2 exist"
 ---
 
 # Bucket-B/C alpha families — the un-started remainder of the §5 queue

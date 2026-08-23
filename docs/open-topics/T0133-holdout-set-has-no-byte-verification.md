@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "`data/ohlc-holdout-*` is re-frozen, or a second holdout is cut"
+ripe_when: "`data/ohlc-holdout-*` is re-frozen, a second holdout is cut, or [[T0064]]'s out-of-sample work moves to repeated evaluation"
 ---
 
 # The holdout set is the one canonical dataset with no byte verification
