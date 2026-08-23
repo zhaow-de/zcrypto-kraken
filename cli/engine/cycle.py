@@ -17,6 +17,7 @@ gate replay and the soak's loaders import them from here.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.request
@@ -571,11 +572,12 @@ def run_cycle(
     <YYYY-MM-DD>/snapshots/cycle-<HH>/, manifest paths relative to journal_dir, hashes via the one
     shared snapshot_content_hash. 4. select_model_inputs contracts to the ten EUR legs on their own
     calendar -> build_crossfreq_system_fast (default config) -> the newest-row targets ->
-    _expand_to_basket back onto the twelve symbols, the two /BTC legs at exactly 0.0. 5. Intended
-    orders vs the most recent successful record's targets (symbol-normalized whatever schema wrote
-    them), appended to the day's orders.jsonl. 6. The CycleRecord at the current SCHEMA_VERSION,
-    validated before write, at <YYYY-MM-DD>/cycle-<HH>.json -- carries NO venue field; the full
-    snapshot lives only in venue-<HH>.json.
+    _expand_to_basket back onto the twelve symbols, the two /BTC legs at exactly 0.0; the ten bases'
+    forming-row closes come off that same contraction for the record, and a missing one raises.
+    5. Intended orders vs the most recent successful record's targets (symbol-normalized whatever
+    schema wrote them), appended to the day's orders.jsonl. 6. The CycleRecord at the current
+    SCHEMA_VERSION, validated before write, at <YYYY-MM-DD>/cycle-<HH>.json -- carries NO venue
+    field; the full snapshot lives only in venue-<HH>.json.
 
     cycle_ts must be aware and on the 4h UTC grid (normalized to UTC; naive raises EngineError), and
     the injected clock must return aware datetimes. A store data-integrity failure (refresh_store's
@@ -611,6 +613,42 @@ def run_cycle(
     #    above, so the replay reading the journaled snapshots reaches the builder with this grid.
     model_daily_ts, model_daily = select_model_inputs({s: raw_series[(s, 1440)] for s in PAIR_KEYS})
     model_h4_ts, model_h4 = select_model_inputs({s: raw_series[(s, 240)] for s in PAIR_KEYS})
+    # The forming row's close per model base, journaled onto the record below so drift is measurable
+    # at a boundary without replaying the cycle.
+    #
+    # This introduces a NEW refusal onto the trade path -- it does not relocate an existing one. The
+    # gate's `replay_cycle` extracts no closes at all, so a cycle with an unusable forming close
+    # replays and passes cleanly; only `feeders.replay_stages` refuses, and that is the reports path,
+    # on a workstation where a refusal costs nothing. Four reasons the new refusal is right:
+    #   * The condition is CORRUPT STORE DATA, not the delisted tail `_dummy_close` tolerates. The
+    #     staleness check above has already pinned every leg's ts[-1] == cycle_ts - 4h, so a null
+    #     here is a null at a stamp that provably exists -- the builder's tolerance applied to a
+    #     condition it was not written for.
+    #   * The old code already killed most such cycles anyway, just later and by accident:
+    #     `_append_orders` computes `abs(notional) / price` and raises TypeError on a None price
+    #     INSIDE the loop, so orders.jsonl was never written. The real behaviour delta is only the
+    #     sub-case where the un-priceable asset happens to have exactly zero delta.
+    #   * The construction is WHOLE-BOOK -- basket vol target, governor, whole-book limits -- so one
+    #     leg's silently-zeroed forming return moves all twelve targets. There is no "eleven good
+    #     legs" outcome to preserve.
+    #   * The failure is loud and recoverable: `node._invoke_cycle` catches it and leaves the
+    #     boundary journal-absent WITH NO SIDECAR, which is exactly the state `startup_action`
+    #     re-runs inside [B, B+25 min]; `_ping_healthcheck(True)` never fires, so the dead-man
+    #     surfaces it either way.
+    #
+    # The refusal set is a SUPERSET of validate_record's closes checks, deliberately. Those run at
+    # the CycleRecord below -- after _append_orders has already written orders.jsonl -- so a
+    # negative or non-finite close caught only there produces the precise state this placement
+    # exists to prevent: an orders block with no cycle-<HH>.json behind it, which the next
+    # boundary's `_previous_success` silently globs past.
+    model_closes = {}
+    for base, series in model_h4.items():
+        value = series[-1]
+        if value is None or not math.isfinite(value) or value <= 0:
+            raise EngineError(
+                f"the forming row's close is missing or unusable for asset={base!r} at cycle_ts={cycle_ts}: {value!r}"
+            )
+        model_closes[base] = float(value)
     result = build_crossfreq_system_fast(model_daily, model_daily_ts, model_h4, model_h4_ts)
     targets = _expand_to_basket({base: series[result.n_periods] for base, series in result.final_targets.items()})
     # The book's sleeve composition at the same forming row: which of the three fixed-1/3 sleeves
@@ -649,6 +687,7 @@ def run_cycle(
         completed_at=completed_at,
         code_version=_code_version(),
         builder_path="fast",
+        closes=model_closes,
     )
     validate_record(record)
     record_path = day_dir / f"cycle-{cycle_ts:%H}.json"

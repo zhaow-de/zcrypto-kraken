@@ -39,7 +39,14 @@ from cli.engine.store import BASKET
 
 INSTRUMENT_IDS: dict[str, str] = {symbol: f"{symbol}.KRAKEN" for symbol in BASKET}
 
-# Committed, not read live (spec 00089 D5a, measured on nautilus-trader 1.230.0): that
+# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
+# balances carry `EUR`, the asset/instrument-quote surfaces the classic `ZEUR`); anything else is a
+# different currency and is never summed into a EUR total. It lives on this shared leaf rather than
+# in `executor.py` so a reader of the journal can import it without importing the order path --
+# `executor.py` imports from here, so the reverse direction is a circular import at engine start.
+EUR_CODES = ("EUR", "ZEUR")
+
+# Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
 # Kraken adapter never maps Kraken's `costmin` onto `min_notional` -- the Cache instrument always
 # reads it back None (loopback-probed through the compiled parser, cli/engine/venuestate.py). The
 # engine host also carries no refdata snapshot (only /var/lib/zcrypto-engine and the config file

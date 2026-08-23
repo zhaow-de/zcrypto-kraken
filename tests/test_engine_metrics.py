@@ -1714,3 +1714,34 @@ def test_a_raising_execution_metrics_seed_never_prevents_the_engine_from_startin
     assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
     # The families still exist -- the seed failed, not the registration.
     assert registry.get_sample_value("zcrypto_exec_orders_total", {"outcome": "refused"}) == 0.0
+
+
+def test_the_tracking_state_series_is_absent_until_a_week_has_been_scored():
+    """`last_evaluation`'s reasoning, one gauge over: before the first boundary alert there is no
+    verdict to state, and an eagerly-registered 0 is not "nothing yet" on a board -- it is a code
+    outside the alphabet, rendering as a legitimate reading of a trip nobody has run."""
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    assert "zcrypto_exec_tracking_state" not in _families(registry)
+
+    metrics.set_tracking_state(3)
+    assert registry.get_sample_value("zcrypto_exec_tracking_state") == 3.0
+    metrics.set_tracking_state(4)
+    assert registry.get_sample_value("zcrypto_exec_tracking_state") == 4.0
+
+
+def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_every_code():
+    """DERIVED from the executor's own constants, the order-outcome pin's reasoning: a code the
+    executor publishes and the help text does not describe is a number on a board with no meaning,
+    and a 0 among them is the one value that reads as a measurement when it is an absence."""
+    source = Path(executor_module.__file__).read_text()
+    emitted = {int(v) for v in re.findall(r"^_TRACKING_[A-Z_]+ = (\d+)$", source, re.MULTILINE)}
+    assert len(emitted) >= 4, f"the constant scan found only {sorted(emitted)} -- this guard would pass vacuously"
+    assert 0 not in emitted
+
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+    metrics.set_tracking_state(sorted(emitted)[0])
+    documentation = _families(registry)["zcrypto_exec_tracking_state"].documentation
+    assert {int(code) for code in re.findall(r"(\d+) = ", documentation)} == emitted
