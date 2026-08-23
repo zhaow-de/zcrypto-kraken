@@ -82,7 +82,7 @@ uv add --dev <pkg>      # add new dev deps
 
 Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
-The `uv run pytest` suite runs in ~40 seconds without the data-dependent regression tests, ~7 minutes with them (they run when `data/ohlc-full` is present, else skip) — run it in full, or target a single test with `uv run pytest path::test` while iterating.
+The `uv run pytest` suite runs in ~19 minutes with both local data sources present — run it in full, or target a single test with `uv run pytest path::test` while iterating. Two families skip when their source is absent, as it is in CI: the regression tests need `data/ohlc-full`, and three `engine tracking-report` end-to-end tests need the engine-journal mount and cost ~7 minutes of the total (the rest of that file runs in ~11 seconds).
 
 ## Conventions
 
