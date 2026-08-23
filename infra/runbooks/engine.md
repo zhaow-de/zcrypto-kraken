@@ -410,7 +410,23 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
 2. **Every fill carries its fee and its liquidity side**: each `fill` line shows `fee` with a `fee_currency`, and `liquidity` reading the word `maker` or `taker` — never a number.
 
-3. **Two rollover rows per position** in the Kraken ledger export.
+3. **Two rollover rows per position** in the Kraken ledger export — read by hand, and then read again by the standing reader **in the same session, while the hand read still exists**. From the workstation, against a pulled copy of the engine journal:
+
+   ```
+   uv run zcrypto engine tracking-report \
+     --journal-dir <pulled journal> --since <first window day> --until <last window day> \
+     --ledger-export <the export>.csv
+   ```
+
+   **The comparison, and the only one that can qualify this reader**: its `rollover fees` figure must equal the total you just read by hand. A standing reader that has never once agreed with the hand read it replaces is unverified, and this window is the only place the two figures exist side by side — record both in the probe's decisions-log entry, equal or not.
+
+   This is also the first real export the reader has ever seen, so it is where three shipped assumptions get settled. Record what you find for each, in the same entry:
+
+   - **`rollover fees 0.00` against a nonzero hand read means the charge lives in `amount`, not `fee`.** The reader sums the `fee` column; which column a real rollover row carries the charge in was never verified, and this by-value comparison is exactly what catches it. A zero here is a finding about the reader, not about the window.
+   - **Only `trade` rows are matched today.** Read the export's distinct `type` values (`cut -d, -f4 <the export>.csv | sort -u`, allowing for quoting). The `row types this reader places nowhere:` line names every type it consumed nothing from and how many — `margin` above all, which a margin position writes carrying the *same* `refid` as its trade. If `margin` appears, the match widens; that decision is yours to record here, not the reader's to guess.
+   - **A venue repair guarantees an unmatched id, and that `FAILED` is honest.** A `reconciled` event carries no venue trade id, so the journal gives it a synthetic one that no ledger row can ever match. So the block does **not** have to read `ok`: read the named ids against the window's own repairs first. What must be true is that every unmatched id is *explained* — a repair, or account activity you performed by hand — and that none of them is a trade nobody can account for. That last case is the one thing this comparison exists to catch, and it is a stop.
+
+   Two reading notes. The block prints how many rows it read at all, so an export that produced nothing cannot read as a window that contained nothing. And do **not** run this with `--simulated-fills`: modelled fills carry no venue trade id, so every real ledger row is unmatched by construction — the command says so, and the block means nothing in that mode.
 
 4. **The settle and then the disposal are visible in venue truth, read from the venue record written after the disarm converge's restart** — that restart is what forces the fresh account read, and it is the verified path. Take the restart time from `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine`, wait for the next 4-hourly boundary to write its record, then run the venue-truth read and confirm `snapshot_at` is later than that restart time. A record written before the restart is corroboration, never the gate.
 

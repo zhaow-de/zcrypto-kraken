@@ -1,14 +1,17 @@
 """The realized half of the weekly tracking comparison: what the ledger says actually happened.
 
-Pure. Reads a journal already on disk and returns numbers; writes nothing, reaches no venue. The
+Pure. Reads a journal already on disk -- and the venue ledger the owner exports by hand -- and
+returns numbers; writes nothing, reaches no venue and needs no API key. The
 refusals are the point -- a tracking number nobody can stand behind is worse than none, because it
 will be read as a gate input.
 """
 
 from __future__ import annotations
 
+import csv
 import math
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import NamedTuple
 
 from cli.engine.errors import EngineError
@@ -365,4 +368,135 @@ def cost_blend(fills: list[Fill]) -> dict:
         "current_spread_per_side": cfg.spread_per_side,
         "proposed_fee_per_side": realized,
         "basis": basis,
+    }
+
+
+class LedgerRow(NamedTuple):
+    txid: str
+    refid: str  # the venue trade id a `trade` row belongs to -- what `Fill.trade_id` carries
+    at: datetime
+    type: str
+    asset: str
+    amount: float
+    fee: float
+
+
+# The columns this reader USES, not the whole documented header (`txid,refid,time,type,subtype,
+# aclass,asset,amount,fee,balance`): a venue that ADDS a column must not break the read, while one
+# that drops a column the arithmetic depends on must.
+_LEDGER_COLUMNS = ("txid", "refid", "time", "type", "asset", "amount", "fee")
+# Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so anything outside it is
+# reported rather than passed over. Failing the reconciliation on a deposit would make every real
+# export FAILED at once and the signal worthless; assuming the same of an unknown type would hide it.
+_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer"})
+
+
+def read_ledger_export(path: Path) -> list[LedgerRow]:
+    """The owner's hand-exported Kraken ledger CSV, read by HEADER NAME rather than by position.
+
+    Header-driven and REFUSING, never defaulting: the export's format is an assumption until a real
+    one has been read, and a missing column silently defaulted parses into plausible nonsense --
+    a rollover total that is confidently zero reads exactly like a window with no rollovers.
+
+    The export writes no offset, and the venue stamps it UTC; a naive datetime here would raise the
+    first time anything compared it against the journal's aware boundaries.
+
+    `utf-8-sig`, never plain `utf-8`: an Excel "CSV UTF-8" round-trip prefixes a BOM, and the
+    runbook has the owner opening this very file by hand. Decoded as plain utf-8 the BOM glues
+    itself to the first column name, and the refusal then reads "has no txid column -- its header
+    reads txid", telling the operator the column both is and is not there. Plain utf-8 input decodes
+    identically under `utf-8-sig`, so nothing else changes.
+
+    Every decode and parse sits inside ONE catch, the header read included: the caller catches this
+    module's error and OSError, so anything else -- a `UnicodeDecodeError` out of the very first
+    read, a NUL byte out of the csv module -- reaches the operator as a traceback instead of as the
+    one-line refusal every other bad export gets.
+    """
+    row_no = 0  # 0 while the header is being read; the first data row is 1
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            header = reader.fieldnames or []
+            missing = [column for column in _LEDGER_COLUMNS if column not in header]
+            if missing:
+                raise EngineError(
+                    f"the ledger export {path} has no {', '.join(missing)} column -- its header reads "
+                    f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting: this reader's "
+                    "arithmetic is keyed on those names, and a defaulted column parses into a plausible number"
+                )
+            rows: list[LedgerRow] = []
+            # A row ordinal, not a physical line number: a quoted field may carry a newline, after
+            # which the two drift and a line number sends the operator to the wrong place.
+            for row_no, raw in enumerate(reader, start=1):
+                at = datetime.fromisoformat(raw["time"])
+                rows.append(
+                    LedgerRow(
+                        raw["txid"],
+                        raw["refid"],
+                        at if at.tzinfo is not None else at.replace(tzinfo=UTC),
+                        raw["type"],
+                        raw["asset"],
+                        float(raw["amount"]),
+                        float(raw["fee"]),
+                    )
+                )
+    except (TypeError, ValueError, csv.Error) as exc:
+        where = "its header" if row_no == 0 else f"data row {row_no}, or just after it"
+        raise EngineError(f"the ledger export {path} is unreadable at {where}: {exc}") from exc
+    return rows
+
+
+def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
+    """The venue's own ledger against the engine's journal: the rollover cost, and what went unmatched.
+
+    Rollover is why this exists. The venue charges it against the POSITION rather than against a
+    fill, so it appears in no execution record at all and a cost basis built from fills alone omits
+    it entirely.
+
+    Only rows whose `asset` is a euro are summed into a euro total -- `EUR_CODES`, because the venue
+    spells the euro two ways and a hand-written `== "EUR"` drops every ZEUR row silently.
+
+    An unmatched `trade` row FAILS the reconciliation: it is account activity the engine's record
+    does not know about, which is the one thing this comparison exists to detect, so every such id
+    is NAMED rather than counted. Failing the reconciliation is not failing the run -- the caller
+    still prints the drift half, because denying the operator the numbers they need to investigate
+    with is the wrong proportion.
+
+    `matched` counts ROWS, not fills: one venue trade writes one ledger row per asset leg, so a
+    single fill legitimately matches two.
+
+    A row this reader places NOWHERE is counted by type in `ignored` rather than passed over. Only
+    `trade` rows are matched today, and `margin` -- which a margin position writes carrying the SAME
+    refid as its trade -- is exactly the type the first real export will be full of, because the
+    first activity this reader is aimed at is a margin probe. Consuming it would guess semantics
+    nobody has verified; accepting it silently would hide a whole class of row precisely where the
+    reader is first used. So the count is surfaced and the operator decides whether the match widens.
+
+    `n_rows` is every row read. Without it "read 0 rows" and "read 400 rows, none of them trades"
+    are the same clean bill -- the confidently-zero failure this reader's refusals exist to prevent,
+    moved from a missing column to a missing body.
+    """
+    journaled = {f.trade_id for f in fills}
+    matched = 0
+    unmatched: list[str] = []
+    ignored: dict[str, int] = {}
+    rollover_fees_eur = 0.0
+    for row in rows:
+        if row.type == "rollover":
+            if row.asset in EUR_CODES:
+                rollover_fees_eur += row.fee
+        elif row.type == "trade":
+            if row.refid in journaled:
+                matched += 1
+            elif row.refid not in unmatched:
+                unmatched.append(row.refid)
+        elif row.type not in _NO_FILL_LEDGER_TYPES:
+            ignored[row.type] = ignored.get(row.type, 0) + 1
+    return {
+        "status": "FAILED" if unmatched else "ok",
+        "n_rows": len(rows),
+        "matched": matched,
+        "rollover_fees_eur": rollover_fees_eur,
+        "unmatched": unmatched,
+        "ignored": ignored,
     }

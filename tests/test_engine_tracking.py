@@ -28,7 +28,15 @@ from cli.config import load_config
 from cli.engine.errors import EngineError
 from cli.engine.feeders import CycleStages
 from cli.engine.journal import to_json
-from cli.engine.tracking import Fill, cost_blend, extract_fills, realized_drift, weekly_tracking
+from cli.engine.tracking import (
+    Fill,
+    cost_blend,
+    extract_fills,
+    read_ledger_export,
+    realized_drift,
+    reconcile_ledger,
+    weekly_tracking,
+)
 from cli.ohlc.dataset import write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from tests import basket_fixture
@@ -577,6 +585,176 @@ def test_priced_fills_carrying_no_notional_say_so_rather_than_claiming_none_were
     assert "carry no notional" in out["basis"]
 
 
+# --- the owner's ledger export: the rollover cost, and the reconciliation --------------------------
+
+_HEADER = "txid,refid,time,type,subtype,aclass,asset,amount,fee,balance"
+
+
+def _export(tmp_path, rows, header=_HEADER):
+    p = tmp_path / "ledgers.csv"
+    p.write_text(header + "\n" + "\n".join(rows) + "\n")
+    return p
+
+
+def _lfill(trade_id="T-1"):
+    b = datetime.fromisoformat("2026-08-31T00:00:00+00:00")
+    return Fill(b, b, "BTC", "buy", 0.001, 50000.0, 0.05, "MAKER", trade_id)
+
+
+def test_a_missing_column_is_refused_by_name(tmp_path):
+    p = _export(tmp_path, [], header="txid,time,type,asset,amount")
+    with pytest.raises(EngineError, match="fee"):
+        read_ledger_export(p)
+
+
+def test_a_row_is_read_into_its_own_fields(tmp_path):
+    p = _export(tmp_path, ['"L1","R1","2026-08-31 04:05:06","rollover","","currency","ZEUR","-0.12","0.13","900.0"'])
+    (row,) = read_ledger_export(p)
+    assert (row.txid, row.refid, row.type, row.asset) == ("L1", "R1", "rollover", "ZEUR")
+    # The export writes no offset; the venue stamps it UTC, and a naive datetime beside the
+    # journal's aware boundaries is a comparison that raises the first time anyone tries it.
+    assert row.at == datetime(2026, 8, 31, 4, 5, 6, tzinfo=UTC)
+    assert (row.amount, row.fee) == pytest.approx((-0.12, 0.13))
+
+
+def test_rollover_rows_are_summed_as_a_cost_in_both_spellings_of_the_euro(tmp_path):
+    # The rows carry DIFFERENT amounts and fees on purpose: with `-amount == fee` on every row, an
+    # implementation summing the balance movement is indistinguishable from one summing the fee.
+    # And BOTH euro spellings appear, so neither hand-written `== "ZEUR"` nor `== "EUR"` survives --
+    # with one spelling only, whichever half the fixture omits is untested.
+    p = _export(
+        tmp_path,
+        [
+            '"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"',
+            '"L2","R2","2026-08-31 04:00:00","rollover","","currency","ZEUR","-7.50","0.30","892.5"',
+            '"L3","R3","2026-08-31 08:00:00","rollover","","currency","EUR","-1.25","0.05","891.2"',
+        ],
+    )
+    out = reconcile_ledger(read_ledger_export(p), [])
+    assert out["rollover_fees_eur"] == pytest.approx(0.47)
+
+
+def test_a_non_euro_rollover_is_not_summed_into_a_euro_total(tmp_path):
+    p = _export(tmp_path, ['"L1","R1","2026-08-31 00:00:00","rollover","","currency","XXBT","-0.0001","0.0001","1.0"'])
+    out = reconcile_ledger(read_ledger_export(p), [])
+    assert out["rollover_fees_eur"] == pytest.approx(0.0)
+
+
+def test_a_trade_row_matching_no_journaled_fill_FAILS_the_reconciliation(tmp_path):
+    # The account did something the engine's record does not know about -- the one thing this
+    # component exists to detect. Named, never averaged away.
+    p = _export(tmp_path, ['"L2","T-UNKNOWN","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"'])
+    out = reconcile_ledger(read_ledger_export(p), [])
+    assert out["status"] == "FAILED" and out["unmatched"] == ["T-UNKNOWN"]
+
+
+def test_a_trade_row_matching_a_journaled_fill_reconciles(tmp_path):
+    p = _export(tmp_path, ['"L3","T-1","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"'])
+    out = reconcile_ledger(read_ledger_export(p), [_lfill("T-1")])
+    assert out["status"] == "ok" and out["matched"] == 1 and out["unmatched"] == []
+
+
+def test_an_unmatched_trade_row_does_not_hide_a_matched_one(tmp_path):
+    # Both halves of the count in one export: a reader that stopped at the first unmatched row, or
+    # one that counted every trade row as matched, passes each single-row test above.
+    p = _export(
+        tmp_path,
+        [
+            '"L3","T-1","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"',
+            '"L4","T-UNKNOWN","2026-08-31 00:00:00","trade","","currency","ZEUR","-20.0","0.02","830.0"',
+            '"L5","T-1","2026-08-31 00:00:00","trade","","currency","XXBT","0.001","0.0","0.001"',
+        ],
+    )
+    out = reconcile_ledger(read_ledger_export(p), [_lfill("T-1")])
+    # Two rows carry T-1: a venue trade writes one ledger row per asset leg, so `matched` counts
+    # ROWS and both legs of the known trade are accounted for.
+    assert out["status"] == "FAILED" and out["matched"] == 2 and out["unmatched"] == ["T-UNKNOWN"]
+
+
+def test_a_non_trade_non_rollover_row_is_neither_matched_nor_unmatched(tmp_path):
+    # A deposit has no fill behind it by construction; failing the reconciliation on one would make
+    # every real export FAILED and the signal worthless. It is on the known-irrelevant list, so it
+    # is not reported as a type this reader could not place either.
+    p = _export(tmp_path, ['"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1350.0"'])
+    out = reconcile_ledger(read_ledger_export(p), [])
+    assert out["status"] == "ok" and out["matched"] == 0 and out["unmatched"] == []
+    assert out["ignored"] == {}
+
+
+def test_a_row_type_this_reader_places_nowhere_is_counted_by_type(tmp_path):
+    # `margin` is the one that matters: a margin position writes rows carrying the SAME refid as its
+    # trade, and the first export this reader will ever see is a margin export. Consuming it would
+    # guess semantics nobody has verified; accepting it silently would hide a whole class of row
+    # exactly where the reader is first used. So it is counted and named.
+    p = _export(
+        tmp_path,
+        [
+            '"L7","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-2.0","0.0","848.0"',
+            '"L8","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-3.0","0.0","845.0"',
+            '"L9","S1","2026-08-31 04:00:00","settled","","currency","XXBT","0.001","0.0","0.001"',
+            '"LA","Q1","2026-08-31 04:00:00","withdrawal","","currency","ZEUR","-10.0","0.0","835.0"',
+        ],
+    )
+    out = reconcile_ledger(read_ledger_export(p), [])
+    assert out["ignored"] == {"margin": 2, "settled": 1}  # the withdrawal is known-irrelevant
+    assert out["status"] == "ok" and out["matched"] == 0 and out["unmatched"] == []
+
+
+def test_a_header_only_export_says_it_read_no_rows(tmp_path):
+    # Otherwise "read 0 rows" and "read 400 rows, none of them trades" are the same clean bill: a
+    # rollover total that is confidently zero reads exactly like a window with no rollovers.
+    empty = reconcile_ledger(read_ledger_export(_export(tmp_path, [])), [])
+    assert empty["n_rows"] == 0 and empty["status"] == "ok" and empty["rollover_fees_eur"] == pytest.approx(0.0)
+
+
+def test_the_row_count_is_every_row_read_not_only_the_consumed_ones(tmp_path):
+    p = _export(
+        tmp_path,
+        [
+            '"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"',
+            '"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1400.0"',
+            '"L7","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-2.0","0.0","1398.0"',
+        ],
+    )
+    assert reconcile_ledger(read_ledger_export(p), [])["n_rows"] == 3
+
+
+def test_a_byte_order_mark_does_not_hide_the_first_column(tmp_path):
+    # An Excel "CSV UTF-8" round-trip adds one, and the runbook has the owner opening this very file
+    # by hand. Read as plain utf-8 the refusal reads "has no txid column -- its header reads txid",
+    # which tells the operator the column both is and is not there.
+    p = tmp_path / "ledgers.csv"
+    p.write_bytes(
+        b"\xef\xbb\xbf"
+        + (_HEADER + "\n" + '"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"\n').encode()
+    )
+    (row,) = read_ledger_export(p)
+    assert row.txid == "L1"
+
+
+def test_a_header_that_drops_a_column_this_reader_never_uses_is_accepted(tmp_path):
+    # Only the columns the arithmetic is keyed on are required. A reader demanding all ten documented
+    # columns refuses an export it could read perfectly, and every other test here passes either way.
+    p = _export(
+        tmp_path,
+        ['"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12"'],
+        header="txid,refid,time,type,subtype,aclass,asset,amount,fee",
+    )
+    assert reconcile_ledger(read_ledger_export(p), [])["rollover_fees_eur"] == pytest.approx(0.12)
+
+
+def test_an_undecodable_byte_is_refused_as_this_modules_error_not_a_traceback(tmp_path):
+    # The command catches EngineError and OSError only, so a UnicodeDecodeError escaping this reader
+    # reaches the operator as a traceback rather than as the one-line refusal every other bad export
+    # gets.
+    p = tmp_path / "ledgers.csv"
+    p.write_bytes(
+        (_HEADER + "\n").encode() + b'"L1","R1","2026-08-31 00:00:00","rollover","","currency","\xff\xfe","-0.12","0.12","900.0"\n'
+    )
+    with pytest.raises(EngineError, match="ledger export"):
+        read_ledger_export(p)
+
+
 # --- the command ---------------------------------------------------------------------------------
 
 runner = CliRunner()
@@ -883,3 +1061,81 @@ def test_a_run_without_simulated_fills_is_not_labelled_simulated(mixed_schema_fi
     assert run.exit_code == 0, run.stdout
     assert "simulated" not in run.stdout.lower()
     assert json.loads(_invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--json")).stdout)["simulated"] is False
+
+
+def test_a_failed_reconciliation_makes_the_command_exit_non_zero(tmp_path, mixed_schema_fixture):
+    p = _export(tmp_path, ['"L2","T-UNKNOWN","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"'])
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
+    assert run.exit_code != 0, run.stdout  # no script may read a failed reconciliation as a pass
+    assert "T-UNKNOWN" in run.stdout  # every unmatched id named, not merely tallied
+    # The drift half still prints: denying the operator the numbers they need to investigate with is
+    # the wrong proportion, and the replay itself did not fail.
+    assert "Verdict:" in run.stdout and "failed to replay" not in run.stdout
+
+
+def test_a_failed_reconciliation_withdraws_the_proposed_rate_from_the_payload(tmp_path, mixed_schema_fixture):
+    # The fail-OPEN direction, and the only one that reaches a config: a `--json` consumer reads
+    # `cost.proposed_fee_per_side` without ever looking at `n_failed`, so a rate computed over a book
+    # the reconciliation just declared incomplete must not be there to read. The MEASUREMENT stays --
+    # the operator still needs it to investigate with.
+    p = _export(tmp_path, ['"L2","T-UNKNOWN","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"'])
+    argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p), "--json")
+    cost = json.loads(_invoke(mixed_schema_fixture, argv).stdout)["cost"]
+    assert cost["proposed_fee_per_side"] is None
+    assert cost["realized_fee_per_side"] is not None
+    assert "1" in cost["basis"] and "no rate proposed" in cost["basis"]  # the unmatched count, named
+
+
+def test_an_export_that_reconciles_reports_the_rollover_cost_and_exits_zero(tmp_path, mixed_schema_fixture):
+    # The negative the FAILED tests need: a block that always failed, or a proposal always withdrawn,
+    # would pass both tests above.
+    p = _export(tmp_path, ['"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"'])
+    argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
+    run = _invoke(mixed_schema_fixture, argv)
+    assert run.exit_code == 0, run.stdout
+    payload = json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)
+    assert payload["reconciliation"]["status"] == "ok"
+    assert payload["reconciliation"]["rollover_fees_eur"] == pytest.approx(0.12)
+    assert payload["cost"]["proposed_fee_per_side"] is not None
+    # The cost a fill can never carry is printed, and so is how much was read to find it.
+    assert "0.12" in run.stdout and "1 row(s) read" in run.stdout
+
+
+def test_a_row_type_the_reader_places_nowhere_is_named_in_the_report(tmp_path, mixed_schema_fixture):
+    # Carried in the payload AND printed: the operator reading the rendered block is the one who has
+    # to decide whether the match widens, and a count only a `--json` consumer sees is invisible.
+    p = _export(tmp_path, ['"L7","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-2.0","0.0","848.0"'])
+    argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
+    run = _invoke(mixed_schema_fixture, argv)
+    assert run.exit_code == 0, run.stdout
+    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"margin": 1}
+    assert "margin 1" in run.stdout
+
+
+def test_a_simulated_run_says_its_reconciliation_cannot_mean_anything(tmp_path, mixed_schema_fixture):
+    # `--simulated-fills` + `--ledger-export` is a guaranteed FAILED: the modelled fills carry no
+    # venue trade id, so every real ledger trade row is unmatched by construction.
+    p = _export(tmp_path, ['"L2","T-UNKNOWN","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"'])
+    simulated = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
+    real = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--ledger-export", str(p)))
+    assert "by construction" in simulated.stdout
+    # The negative: on a real run the same export is a genuine finding, and an unconditional
+    # disclaimer would explain the one alarm this component exists to raise away.
+    assert "by construction" not in real.stdout and real.exit_code != 0
+
+
+def test_without_an_export_the_report_omits_the_reconciliation(mixed_schema_fixture):
+    # Most runs have no export -- it is an attended artifact -- so its absence omits the block
+    # rather than refusing the run.
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--json"))
+    assert run.exit_code == 0, run.stdout
+    assert json.loads(run.stdout)["reconciliation"] is None
+
+
+def test_an_export_whose_header_cannot_be_mapped_aborts_the_command(tmp_path, mixed_schema_fixture):
+    # A header the reader cannot map yields no rows at all, so there is nothing to reconcile and
+    # nothing to report -- unlike an unmatched row, which fails only the reconciliation.
+    p = _export(tmp_path, [], header="txid,time,type,asset,amount")
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
+    assert run.exit_code != 0
+    assert "fee" in run.stdout

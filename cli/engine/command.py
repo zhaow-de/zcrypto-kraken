@@ -52,7 +52,7 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, seed_store
-from cli.engine.tracking import Fill, cost_blend, extract_fills, weekly_tracking
+from cli.engine.tracking import Fill, cost_blend, extract_fills, read_ledger_export, reconcile_ledger, weekly_tracking
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
@@ -1375,7 +1375,8 @@ def _payload_json(payload: dict) -> str:
     cancellation ratio, which must not masquerade as 1.0 -- and `json.dumps` writes it as the bare
     token `NaN`, which the JSON grammar has no room for and most non-Python parsers reject outright;
     emitting invalid JSON from a `--json` flag is worse than losing the NaN/None distinction, and
-    nothing else in either payload is ever None, so `null` reads unambiguously as "not a number".
+    the only other None either payload carries is an absent whole block (`reconciliation`, when no
+    ledger export was given), so `null` on a number reads unambiguously as "not a number".
     The drift payload is also keyed by NAV, a float: the key spelling is written here and pinned by
     a test rather than left to `json.dumps`' internal coercion, and the numeric NAVs stay
     recoverable from the payload's own `navs` list and each row's `nav` field."""
@@ -1395,12 +1396,14 @@ def _payload_json(payload: dict) -> str:
 
 
 def _emit_report(text: str, payload: dict, *, as_json: bool) -> None:
-    """Print the report, then exit non-zero if any record failed to replay.
+    """Print the report, then exit non-zero if anything in it failed -- `n_failed` is the count.
 
     A failed replay means one of the two identity guards fired -- the recomputed stages no longer
     match the builder, or the rebuild no longer matches what the engine actually traded -- so the
-    aggregates above it describe a smaller window than was asked for. The failures are named in the
-    rendered text and in the payload; the exit code is what a script notices."""
+    aggregates above it describe a smaller window than was asked for. A caller may count other
+    failures of the same weight (the tracking report adds a ledger reconciliation that did not
+    reconcile). Every one is named in the rendered text and in the payload; the exit code is what a
+    script notices."""
     typer.echo(_payload_json(payload) if as_json else text)
     if payload["n_failed"]:
         raise typer.Exit(code=1)
@@ -1581,6 +1584,29 @@ def _simulated_fills(stages: list[CycleStages], floor_cycles: list[dict], minimu
     return out
 
 
+def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
+    """The realized blend, with the PROPOSAL withdrawn when the ledger did not reconcile.
+
+    The measurement stays -- the maker/taker split and the realized rate are what the operator
+    investigates with, and withholding them helps nobody. `proposed_fee_per_side` is different: it is
+    the one number this whole comparison exists to feed into a config, and a `--json` consumer reads
+    it straight out without ever looking at `n_failed`. A rate computed over a book the
+    reconciliation has just declared incomplete must not be there to read.
+
+    `basis` carries the reason, in the PAYLOAD rather than only in the rendered text -- the same
+    reason `cost_blend` spells its three no-rate branches out at source instead of at whatever
+    renders them."""
+    cost = cost_blend(fills)
+    if reconciliation is None or reconciliation["status"] != "FAILED":
+        return cost
+    return {
+        **cost,
+        "proposed_fee_per_side": None,
+        "basis": f"{len(reconciliation['unmatched'])} ledger trade row(s) matched no journaled fill -- no rate "
+        "proposed over a book the ledger could not reconcile",
+    }
+
+
 def _tracking_cell(value: float | None) -> str:
     """A drift cell: `no data` for a week whose realized series never started, `n/a` for a NaN."""
     if value is None:
@@ -1683,10 +1709,41 @@ def _render_tracking(payload: dict) -> str:
     if payload["simulated"]:
         lines.append("  the fees above are modelled at the assumed maker rate, so this blend cannot recalibrate anything.")
 
+    reconciliation = payload["reconciliation"]
+    if reconciliation is not None:
+        lines += [
+            "",
+            f"Ledger export: {reconciliation['status']} -- {reconciliation['n_rows']} row(s) read, of which "
+            f"{reconciliation['matched']} ledger trade row(s) matched a journaled fill.",
+        ]
+        if payload["simulated"]:
+            lines.append(
+                "  SIMULATED FILLS were compared against a real export, so every ledger trade row below is unmatched "
+                "by construction -- a modelled fill carries no venue trade id. Nothing in this block is a finding."
+            )
+        lines.append(
+            f"  rollover fees {reconciliation['rollover_fees_eur']:,.2f} EUR -- charged against the POSITION rather "
+            "than against a fill, so no execution record carries them and the blend above omits them."
+        )
+        if reconciliation["ignored"]:
+            lines.append(
+                "  row types this reader places nowhere: "
+                + ", ".join(f"{kind} {count}" for kind, count in sorted(reconciliation["ignored"].items()))
+                + " -- counted, never matched. A margin position writes rows sharing its trade's id, and what those "
+                "mean is settled against a real export rather than guessed here."
+            )
+        if reconciliation["unmatched"]:
+            lines += [
+                "  The account traded what this journal does not know about. Every id below is a venue trade with no "
+                "journaled fill behind it, so the cost above is measured over an incomplete book:",
+            ] + [f"    {refid}" for refid in reconciliation["unmatched"]]
+
     if payload["notes"]:
         lines += ["", "Notes that disabled part of the report:"] + [f"  {note}" for note in payload["notes"]]
-    if payload["n_failed"]:
-        lines += ["", f"Cycles failed to replay: {payload['n_failed']} (excluded from every number above)"]
+    # Gated on `failures`, never on `n_failed`: the latter also carries a failed ledger
+    # reconciliation, which is not a cycle and would be announced here as one.
+    if payload["failures"]:
+        lines += ["", f"Cycles failed to replay: {len(payload['failures'])} (excluded from every number above)"]
         lines += [f"  {f['cycle_ts']}  {f['error']}" for f in payload["failures"]]
     return "\n".join(lines)
 
@@ -1729,6 +1786,14 @@ def tracking_report(
         "--simulated-fills",
         help="Replace the journaled fills with the drift floor's own modelled placements, so the whole comparison "
         "can be exercised before any real fill exists. Every figure it produces is labelled and none of it is real.",
+    ),
+    ledger_export: Optional[Path] = typer.Option(
+        None,
+        "--ledger-export",
+        help="A Kraken ledger export (CSV, from History -> Export -> Ledgers) to reconcile the window's fills "
+        "against. It is the only place a margin position's rollover fee appears -- the venue charges it against "
+        "the POSITION, so no fill carries it and a cost basis built from fills alone omits it. Absent, the report "
+        "simply omits the reconciliation: the export is a hand-made artifact and most runs will not have one.",
     ),
     json_out: bool = typer.Option(
         False,
@@ -1774,21 +1839,32 @@ def tracking_report(
     except EngineError as exc:
         raise _abort(str(exc)) from exc
 
+    # Absent an export there is nothing to reconcile against, and most runs will not have one. An
+    # export whose HEADER cannot be mapped aborts, unlike an unmatched row: nothing was read, so
+    # there is no reconciliation to report either way.
+    reconciliation = None
+    if ledger_export is not None:
+        try:
+            reconciliation = reconcile_ledger(read_ledger_export(ledger_export), fills)
+        except (OSError, EngineError) as exc:
+            raise _abort(f"could not read the ledger export {ledger_export}: {exc}") from exc
+
     payload = {
         "nav": nav_value,
         "gate_from": gate_week,
         "n_cycles": len(stages),
         "tracking": tracking,
         "floor": floor,
-        "cost": cost_blend(fills),
-        # Populated once a ledger export can be read; absent one there is nothing to reconcile
-        # against, and most runs will not have one.
-        "reconciliation": None,
+        "cost": _cost_over(fills, reconciliation),
+        "reconciliation": reconciliation,
         "schema_versions": sorted({record.schema_version for record in records}),
         "simulated": simulated_fills,
         "minimums_fetched_at": fetched_at,
         "notes": notes,
-        "n_failed": len(failures),
+        # A failed reconciliation joins the exit-code count: the report is printed in full either
+        # way, and the exit code is the only thing a script reading this notices. It stays OUT of
+        # `failures`, which is the per-cycle replay list.
+        "n_failed": len(failures) + (1 if reconciliation is not None and reconciliation["status"] == "FAILED" else 0),
         "failures": failures,
     }
     _emit_report(_render_tracking(payload), payload, as_json=json_out)
