@@ -41,6 +41,19 @@ NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 # --- the sizing seam (Task 4) -------------------------------------------------------------------
 
 
+_VERIFIED_VERSION = "1.230.0"  # in cli/engine/order-semantics-verified.json
+
+
+# Every test below is about some OTHER gate input -- control files, the venue reader, clock skew.
+# The running-nautilus input is held VERIFIED for them so it contributes no reason; if it were left
+# to the real interpreter, this file would be asserting against whatever version happens to be
+# installed, and it would flip wholesale on the next bump. The tests that are ABOUT that input
+# override this fixture explicitly and are grouped at the end of the file.
+@pytest.fixture(autouse=True)
+def _nautilus_verified(monkeypatch):
+    monkeypatch.setattr("cli.engine.execgate._installed_nautilus_version", lambda: _VERIFIED_VERSION)
+
+
 def _constraints(**overrides):
     base = dict(
         symbol="BTC/EUR",

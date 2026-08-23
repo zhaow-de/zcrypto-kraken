@@ -266,7 +266,12 @@ PY
 
    Then confirm a `docs/research/` verification doc exists for **exactly that version** and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new verification doc. Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
 
-   **This step is also enforced mechanically, so you should never be the only thing standing here.** `infra/ansible/order-semantics-verified.yml` lists the versions whose attended pass has actually happened, and the engine role refuses a converge that would render `exec_armed = true` on a version absent from it — bypass `-e arming_override="<reason>"`, reason-required, like `canary_override` and `pins_override`. If that assert fires, it is telling you exactly what this step says; do not override it to get a probe window started.
+   **This step is enforced mechanically in TWO places, and they are complementary — do not delete either as duplicative of the other.** Both read the same committed record, `cli/engine/order-semantics-verified.json` (it lives under `cli/` because the engine image copies only that directory, so a record under `infra/` would be unreachable from the running engine):
+
+   - **The converge** — the engine Ansible role refuses a converge that would render `exec_armed = true` on a version absent from the record. Bypass `-e arming_override="<reason>"`, reason-required, like `canary_override` and `pins_override`.
+   - **The arming** — the execution gate refuses at runtime when the *running* interpreter's `nautilus_trader` is absent from the record: `level=none`, `reasons=…,nautilus_unverified`, journaled into `exec-<HH>.json` like every other reason.
+
+   Neither subsumes the other. Arming takes two keys, and the arm file is placed by hand long after any converge — so a host that converged armed on a verified version and later took a newer image would pass the converge assert and still be arming an unverified adapter; the gate catches exactly that. Conversely the gate cannot stop a converge from *rendering* an armed config. If either fires it is telling you what this step says; do not override it to get a probe window started.
 
    **As of the 1.231.0 bump, no such doc exists: the re-run is OWED and the engine must not be armed on 1.231.0 until it has happened.** 1.231.0 also brings new TLS-destructor machinery in the same failure class as the logger fault that bump resolved, so this is real verification work rather than a formality. When it does happen, add the version to that record and sweep the other homes of this claim — the checklist is in the go-live topic's bump sub-item.
 
@@ -302,7 +307,7 @@ PY
 
 5. **The owner clears the hold**: `sudo rm /var/lib/zcrypto-engine/exec/restart-hold`. Gate read → `level=none`, `reasons=arm_file_absent`.
 
-6. **The owner creates the arm file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=full`, `reasons=-`. If `venue_not_online` shows up instead, Kraken itself is not `online` — wait it out, since nothing can be submitted until it is. The engine is now armed, and the `zcrypto-engine-exec-armed-too-long` alert above will page if the window outlives six hours — that is the rule working, not a fault.
+6. **The owner creates the arm file**: `sudo touch /var/lib/zcrypto-engine/exec/armed`. Gate read → `level=full`, `reasons=-`. A `nautilus_unverified` here instead means the running version has no recorded order-semantics pass and pre-probe step 3 was skipped — stop and go back to it; the gate is refusing on purpose and no control file will clear it. If `venue_not_online` shows up instead, Kraken itself is not `online` — wait it out, since nothing can be submitted until it is. The engine is now armed, and the `zcrypto-engine-exec-armed-too-long` alert above will page if the window outlives six hours — that is the rule working, not a fault.
 
 #### 3. Drill before money — both drills green before any funded plan
 

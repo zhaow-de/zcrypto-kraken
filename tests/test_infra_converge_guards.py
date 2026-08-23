@@ -5,6 +5,7 @@ never a re-implementation of the logic. `load_task` reads the committed YAML; a 
 expression is edited drifts here immediately.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -789,7 +790,7 @@ def test_arming_backstop_reads_the_real_committed_files():
     Today that means: the record holds 1.230.0 and NOT the pinned 1.231.0, and the template is
     disarmed -- so the guard is inert now and bites the moment someone flips the template.
     """
-    record = yaml.safe_load((ANSIBLE / "order-semantics-verified.yml").read_text())
+    record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
     versions = record["verified_nautilus_versions"]
     pin = re.search(r'nautilus-trader==([^"\s]+)', (REPO / "pyproject.toml").read_text()).group(1)
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
