@@ -28,12 +28,17 @@ READING THE RESULT.
   * `guard-drop`  -- DIRTY means the defect is present (1.230.0's shape: the second init aborts).
     `second-init RAISES` means upstream turned it into a catchable `RuntimeError` (1.231.0's
     shape): no longer fatal, still no second logger. `second-init CLEAN` means a second
-    `init_logging()` now succeeds -- the fence's premise is gone and the fence can be reconsidered.
+    `init_logging()` now succeeds outright.
   * `stdlib-node` -- the pytest-shaped arrangement (two nodes, one process, stdlib loop). DIRTY
-    here is what killed CI, and is the fence's whole reason to exist.
+    here is what killed CI, and is what the fence was built against.
   * `uvloop-node` -- the production-shaped arrangement. `zcrypto engine run` builds exactly one node
     per process, so it never even reaches a second build; this arm proves the weaker claim that a
     second build would survive anyway. DIRTY here would mean production is genuinely at risk.
+
+Keep the two questions apart when reading the summary: whether the process still ABORTS (what killed
+CI, and what the fence was built against) and whether a second logger is PERMITTED. 1.231.0 answers
+no to the first and still no to the second -- the abort is gone, a second init still raises. A clean
+run is therefore NOT licence to build two nodes in one process; the fence stays as posture.
 
 Record the version probed either way.
 """
@@ -141,12 +146,25 @@ def main() -> int:
         print("VERDICT: DIRTY IN PRODUCTION SHAPE — the guard now drops under uvloop too. This is no longer")
         print("         a test-only trap; escalate before merging the bump.")
         return 1
-    if "second-init CLEAN" in guard.stdout and stdlib_verdict == "clean":
-        print("VERDICT: FIXED UPSTREAM — a second init_logging() succeeds and two nodes coexist in one")
-        print("         process. The one-node-per-process fence can be reconsidered on this version.")
+    # Two DIFFERENT questions, and collapsing them is how this verdict misleads. (a) Does the
+    # process still ABORT? That is what killed CI and what the fence was built against. (b) Does a
+    # second init_logging() actually succeed? Upstream may keep refusing it forever and still have
+    # fixed (a) by raising instead of panicking -- which is exactly what 1.231.0 does.
+    aborts = "dirty" in (guard_verdict, stdlib_verdict, uvloop_verdict)
+    second_logger = "second-init CLEAN" in guard.stdout
+    if not aborts and stdlib_verdict == "clean":
+        print("VERDICT: THE ABORT IS GONE on this version — two nodes coexist in one process and no arm")
+        print("         died on a signal.", end=" ")
+        if second_logger:
+            print("A second init_logging() now succeeds outright.")
+        else:
+            print("A second init_logging() is still REFUSED, but with a")
+            print("         catchable exception rather than a panic — survivable, not permitted.")
+        print("         The fence is no longer load-bearing for survival; keep it as the one-node-per-process")
+        print("         posture upstream prescribes, and do not read this as licence to build two.")
         return 0
-    print("VERDICT: the trap is still present upstream (see arm 1) and still confined to the multi-node,")
-    print("         stdlib-loop arrangement. Keep the fence. Record the version probed.")
+    print("VERDICT: the abort is still reachable (see the DIRTY arm above) and still confined to the")
+    print("         multi-node, stdlib-loop arrangement. Keep the fence. Record the version probed.")
     return 0
 
 

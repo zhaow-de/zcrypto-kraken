@@ -253,9 +253,24 @@ PY
 #### 1. Pre-probe — before anything touches the host
 
 1. **Sweep for blockers, and present the result together with the arming request.** Read `### Open` and `### Partially done` in `docs/open-topics/README.md`, and grep `docs/memo.local.md` for anything in flight against the engine. "Ready" without the sweep is not ready.
+
 2. **Confirm the deployed code is the code you tested.** The engine row in `docs/reference/fleet-pins.md` records the digest running on `zcrypto` and the revision it was built from. Confirm the running digest matches — `sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine` — and that your working tree is at that revision. Then run the two guards that catch a drift between the committed cost floors / ratified basket and what the venue reports: `uv run pytest tests/test_costmin_drift.py tests/test_basket_concordance.py` → expect `2 passed`. A failure means the floors or the basket have moved since that image was built; stop, do not arm.
-3. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
-4. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
+
+3. **STOP unless the engine's nautilus version has its own order-semantics verification.** The adapter's margin/short/post-only and reconciliation semantics were verified by hand, against real orders, on **1.230.0** — `docs/research/14.phase6-adapter-verification.md`. That verification describes the version it ran on and no other: a bump may change fill, cancel, post-only or reconciliation behaviour without changing anything this repo's tests can see, because the tests never place an order. So the fresh ~€0.20 zero-fill + round-trip pass is a precondition of **arming**, not of merging a bump — the repo may sit on a newer version indefinitely while disarmed, and this is the step where that debt comes due.
+
+   Read the version the engine is actually running (scope the exec to this one command — the container carries the live trade key):
+
+   ```
+   sudo docker exec zcrypto-engine python -c "import nautilus_trader; print(nautilus_trader.__version__)"
+   ```
+
+   Then confirm a `docs/research/` verification doc exists for **exactly that version** and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new verification doc. Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
+
+   **As of the 1.231.0 bump, no such doc exists: the re-run is OWED and the engine must not be armed on 1.231.0 until it has happened.** 1.231.0 also brings new TLS-destructor machinery in the same failure class as the logger fault that bump resolved, so this is real verification work rather than a formality.
+
+4. **Confirm funding covers the plan, by hand, before the tooling does it for you.** Take the free EUR balance from the venue-truth read — the live balances spell that key **`EUR`** (measured: `{'EUR': 99.84}`), not `ZEUR`; the engine still tries `ZEUR` first because the adapter's instrument-quote surface does spell the euro that way, so both keys are read and whichever the record carries is used. The plan's total `notional_eur` must be at or under `exec_max_plan_notional_eur` in `/opt/zcrypto-engine/zcrypto.toml` (rendered `100.0`), and `sum(notional ÷ leverage) × 2.5` over the margin intents must fit under that free balance. `probe-plan --check` recomputes both below and refuses on either — this step is so you learn it before the window, not during it.
+
+5. **Only the account owner authors and places a plan.** A plan file the owner did not place does not exist to this process.
 
 #### 2. Arm — two keys, in this order
 
