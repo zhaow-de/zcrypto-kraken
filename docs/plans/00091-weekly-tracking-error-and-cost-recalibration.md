@@ -779,6 +779,11 @@ def test_a_simulated_run_is_labelled_as_simulated(real_journal_fixture):
     assert "simulated" in result.stdout.lower()
 ```
 
+**Two things Task 2 hands this task, registered here rather than left in a task report:**
+
+- **`realized_drift` hard-aborts on an orphaned fill, and this command must decide what that means.** `accumulation_report` DROPS a record whose `replay_stages` raises, names it in `failures` and counts it in `n_failed` — but a fill journaled under that dropped boundary then orphans, and `realized_drift` raises `EngineError`, replacing that designed degradation with a hard abort of the whole report. It is masked under `--simulated-fills` (the fills derive from the surviving stages) and bites at rung 1 with real fills. Wrap the `weekly_tracking` call in the same `except EngineError → _abort` pattern `decompose` already uses, so a replay failure still yields a named, counted, exit-1 report rather than a stack trace.
+- **A straddling week is distinguishable only by elimination.** Its row reads `complete: True, rung: None, gate_eligible: False`, and a reader must infer why. The renderer decides knowingly: either label it in the text, or state in this task's report that eliminating is sufficient. Do not leave the choice implicit.
+
 - [ ] **Step 2: Run and read WHICH assertion fails.** Expected: `No such command 'tracking-report'`.
 
 - [ ] **Step 3: Implement the Typer command**, following `accum_replay`'s structure (same inputs, same helpers): resolve journal, `_window_records`, `_snapshot_reader`, `replay_stages` per record, `load_minimums`, then `weekly_tracking` + `cost_blend` (+ `reconcile_ledger` when `--ledger-export` is given), then `_emit_report` with a payload carrying `n_failed`. Quote the venue-minimums snapshot stamp as `accum-replay` does.
