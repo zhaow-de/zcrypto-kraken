@@ -9,6 +9,7 @@ command bodies that need it -- `zcrypto --help` must never pay the nautilus impo
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import math
 import os
@@ -967,6 +968,16 @@ def run() -> None:
     from cli.engine.node import build_shadow_node
 
     node = build_shadow_node(config)
+    # The build registered nautilus's asyncio SIGABRT handler, which installs CPython's own no-op C
+    # handler over faulthandler's -- so a native abort (a Rust panic in the adapter, say) would kill
+    # the engine with exit 134 and NOTHING on stderr. Re-arm so the next one arrives with a stack.
+    # `disable()` first is load-bearing: `enable()` returns early when faulthandler already considers
+    # itself enabled, and would then leave the clobbered handler in place.
+    faulthandler.disable()
+    try:
+        faulthandler.enable()
+    except OSError, ValueError:  # a stderr with no fileno -- a diagnostic must never block the start
+        logger.debug("faulthandler re-arm skipped: stderr has no file descriptor")
     watchdog = _start_watchdog(node)
     logger.info("shadow node starting (exec_enabled=%s, journal_dir=%s)", config.exec_enabled, config.journal_dir)
     try:

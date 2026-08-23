@@ -4,6 +4,7 @@ no live node. `run`'s fail-fast checks and watchdog are exercised against a stub
 synchronous timer; nautilus lazy-import stays a subprocess check at the bottom; the attended soak
 is the live smoke."""
 
+import io
 import json
 import re
 import subprocess
@@ -770,6 +771,47 @@ def test_run_logs_the_effective_config_line(tmp_path, monkeypatch):
     assert result.exit_code == 0, out
     assert f"engine run: exec_enabled=False, store_dir={tmp_path / 'store'}, journal_dir={tmp_path / 'journal'}" in out
     assert exits == []
+
+
+def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, monkeypatch):
+    """Building the node registers nautilus's asyncio SIGABRT handler, which installs CPython's own
+    no-op C handler over faulthandler's -- after which a native abort prints nothing at all. Both
+    calls and their order are pinned: the re-arm must follow the build (before it, there is nothing
+    to undo), and `disable()` must precede `enable()` (`enable()` returns early when faulthandler
+    already considers itself enabled, so on its own it cannot reinstall the clobbered handler).
+    `tests/test_engine_node.py` measures the underlying library behaviour this rests on."""
+    _run_env(monkeypatch, tmp_path, is_running=True)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "cli.engine.node.build_shadow_node",
+        lambda config: (calls.append("build"), _fake_node(True))[1],
+    )
+    monkeypatch.setattr(
+        command,
+        "faulthandler",
+        types.SimpleNamespace(disable=lambda: calls.append("disable"), enable=lambda: calls.append("enable")),
+    )
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 0, _output(result)
+    assert calls == ["build", "disable", "enable"]
+
+
+def test_run_starts_even_when_the_faulthandler_re_arm_cannot_take(tmp_path, monkeypatch):
+    """`faulthandler.enable()` raises when `sys.stderr` has no file descriptor. The re-arm is a
+    diagnostic aid and must never be able to stop the engine from starting -- so the raise is
+    swallowed rather than propagated out of `engine run`."""
+
+    def _no_fileno():
+        raise io.UnsupportedOperation("fileno")
+
+    _run_env(monkeypatch, tmp_path, is_running=True)
+    monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=_no_fileno))
+
+    result = runner.invoke(app, ["engine", "run"])
+
+    assert result.exit_code == 0, _output(result)
 
 
 def test_run_watchdog_force_exits_when_the_trader_never_runs(tmp_path, monkeypatch):
