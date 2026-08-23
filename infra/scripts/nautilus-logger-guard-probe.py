@@ -163,8 +163,13 @@ def main() -> int:
         print("         The fence is no longer load-bearing for survival; keep it as the one-node-per-process")
         print("         posture upstream prescribes, and do not read this as licence to build two.")
         return 0
-    print("VERDICT: the abort is still reachable (see the DIRTY arm above) and still confined to the")
-    print("         multi-node, stdlib-loop arrangement. Keep the fence. Record the version probed.")
+    dirty = [
+        n
+        for n, v in (("guard-drop", guard_verdict), ("stdlib-node", stdlib_verdict), ("uvloop-node", uvloop_verdict))
+        if v == "dirty"
+    ]
+    print(f"VERDICT: the abort is still reachable on this version — DIRTY in: {', '.join(dirty)}.")
+    print("         Keep the fence. Record the version probed.")
     return 0
 
 

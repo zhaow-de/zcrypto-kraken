@@ -706,6 +706,113 @@ def test_engine_parity_when_references_the_correct_probe_register_name():
     assert "engine_secondary_digest_probe" in guard["when"]
 
 
+# --- the arming backstop. The one guard here whose subject is real money rather than a digest: it
+# refuses a converge that would render the engine ARMED on a nautilus version whose attended
+# order-semantics pass has not run. Fixtures are the REAL committed files wherever the guard reads
+# one, so a drift between the record, the pin and the template fails here rather than at the host.
+ARMING = "arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run"
+ARMING_REASON = "venue incident replay, re-run booked for the same day"
+
+DISARMED_TEMPLATE = "exec_enabled = true\nexec_armed = false\nshadow_nav_eur = 1000\n"
+ARMED_TEMPLATE = "exec_enabled = true\nexec_armed = true\nshadow_nav_eur = 1000\n"
+# The fail-closed third case: neither literal, because the value became a Jinja expression.
+TEMPLATED_ARMED = "exec_enabled = true\nexec_armed = {{ engine_exec_armed }}\nshadow_nav_eur = 1000\n"
+
+VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.230.0",\n]\n'
+UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.231.0",\n]\n'
+NO_PIN = 'dependencies = [\n    "polars==1.0.0",\n]\n'
+RECORD = ["1.230.0"]
+
+
+def _arming_vars(template: str, pyproject: str, override: str = "", record=None) -> dict:
+    return {
+        "engine_config_template_text": template,
+        "engine_pyproject_text": pyproject,
+        "engine_verified_nautilus": RECORD if record is None else record,
+        "arming_override": override,
+    }
+
+
+@pytest.mark.parametrize(
+    ("template", "pyproject", "expected", "why"),
+    [
+        # INERT on every converge the fleet actually runs today: disarmed, so the version is not
+        # even consulted. This must hold or every converge from now on needs an override.
+        (DISARMED_TEMPLATE, UNVERIFIED_PIN, True, "disarmed on an unverified version"),
+        (DISARMED_TEMPLATE, VERIFIED_PIN, True, "disarmed on a verified version"),
+        (DISARMED_TEMPLATE, NO_PIN, True, "disarmed with no nautilus pin at all"),
+        # THE CONSTRUCTED DEFECT: the first armed converge while 1.231.0 is unverified.
+        (ARMED_TEMPLATE, UNVERIFIED_PIN, False, "armed on an unverified version"),
+        # TRUE POSITIVE: a healthy armed converge on a verified version must PASS, or the guard
+        # refuses every legitimate probe window and would simply be routed around.
+        (ARMED_TEMPLATE, VERIFIED_PIN, True, "armed on a verified version"),
+        # Fail-closed on inputs the guard cannot read: a templated arming value counts as armed,
+        # and an unparseable pin is in no record.
+        (TEMPLATED_ARMED, UNVERIFIED_PIN, False, "arming value templated away from the literal"),
+        (TEMPLATED_ARMED, VERIFIED_PIN, True, "templated arming is still fine on a verified version"),
+        (ARMED_TEMPLATE, NO_PIN, False, "armed with an unparseable pin"),
+    ],
+)
+def test_arming_backstop_semantics(template, pyproject, expected, why):
+    task = find_task(load_tasks(ENGINE), ARMING)
+    assert truthy(assert_that(task), _arming_vars(template, pyproject)) is expected, why
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [("", False), ("short", False), ("true", False), ("yes", False), (ARMING_REASON, True)],
+)
+def test_arming_backstop_override_demands_a_reason(override, expected):
+    """A bare flag must not open this gate -- the override has to carry a why, like its siblings."""
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=override)
+    assert truthy(assert_that(task), variables) is expected
+
+
+@pytest.mark.parametrize(
+    ("template", "pyproject", "override", "expected"),
+    [
+        (ARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, True),  # overrode something -> echo the why
+        (ARMED_TEMPLATE, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
+        (ARMED_TEMPLATE, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
+        (DISARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, False),  # disarmed -> nothing was overridden
+    ],
+)
+def test_arming_override_echo_fires_only_on_an_accepted_override(template, pyproject, override, expected):
+    task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
+    assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
+
+
+def test_arming_backstop_reads_the_real_committed_files():
+    """The fixtures above are synthetic; this pins the guard to the tree it will actually read.
+
+    Today that means: the record holds 1.230.0 and NOT the pinned 1.231.0, and the template is
+    disarmed -- so the guard is inert now and bites the moment someone flips the template.
+    """
+    record = yaml.safe_load((ANSIBLE / "order-semantics-verified.yml").read_text())
+    versions = record["verified_nautilus_versions"]
+    pin = re.search(r'nautilus-trader==([^"\s]+)', (REPO / "pyproject.toml").read_text()).group(1)
+    template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
+
+    assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
+    assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
+    assert pin not in versions, (
+        f"pyproject pins {pin}, which the record now lists as verified -- if its attended "
+        f"order-semantics pass really ran, this test should be updated deliberately alongside "
+        f"the new docs/research/ verification doc"
+    )
+    # And the guard, fed exactly those real values, refuses an armed converge.
+    task = find_task(load_tasks(ENGINE), ARMING)
+    armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
+    variables = {
+        "engine_config_template_text": armed,
+        "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
+        "engine_verified_nautilus": versions,
+        "arming_override": "",
+    }
+    assert not truthy(assert_that(task), variables)
+
+
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
 # The ops role's own convention (roles/ops/defaults/main.yml: ops_image_digest has NO default) is
 # that a digestless config/alloy-only converge SKIPS every image-consuming task -- so each guard
