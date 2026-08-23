@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: a capture-schema change storing raw wire-format price/qty strings is proposed, or a continuity-replay run surfaces a discrepancy the structural check cannot localise
+status: resolved
 ---
 
 # Byte-exact CRC re-derivation from the archive needs raw-string price/qty
@@ -28,7 +27,21 @@ Per the owner's call, OPS-3 (spec 00051) does **not** wait on this. It ships:
 
 The **richer, byte-exact CRC book-replay is deferred to this topic** — it is precisely what the raw-string schema change below unblocks.
 
+## Resolution
+
+**Consciously DROPPED 2026-08-23 on the owner's ruling at the grooming — the completeness gap is accepted, not denied.**
+
+The topic's own text demanded "a decision, not indefinite parking", and this is that decision. The cost side is a schema migration on the **unbackfillable live capture stream**: two extra string columns in `BOOK_SCHEMA`, the raw WS strings threaded through `_handle_book_message`, larger segments forever after, and a gated capture re-pin to ship it. The benefit side is byte-exact CRC re-attestation for post-change, top-10-depth data only — older float-only segments keep the structural check regardless, so the gap never closes retroactively.
+
+What settled it is that the cheaper path has held. The OPS-3 continuity-replay shipped **without** CRC re-derivation on 2026-07-15 and has run since; in the intervening weeks no discrepancy has appeared that the structural check could not localise — which was the exact condition this topic named for revisiting. Paying a live-stream schema change for an attestation nothing has yet needed is the wrong trade against a path whose whole premise is that the data is irreplaceable.
+
+**The gap remains true and remains documented**: the archive stores price/qty as `Float64`, Kraken's CRC is computed over raw wire strings whose trailing zeros are load-bearing, and so a re-derived CRC cannot be compared to the stored `checksum`. That is accepted as a known limit of the archive, not a defect awaiting repair. If a future continuity-replay run ever does surface a discrepancy it cannot localise, the right move is a **new** topic carrying that observation — not a revival of this one, whose premise would then have changed.
+
+*(Kept for the record: the build path, had it been pursued, was `price_str`/`qty_str` in `BOOK_SCHEMA` with the raw strings threaded through `_handle_book_message`, and `cli/archive/replay.py` extended to re-derive and compare when the columns are present. Never a standalone live restart.)*
+
 ## Suggested next steps
 
-- Decide whether byte-exact CRC re-attestation is worth a capture-schema change. Weigh: it only strengthens attestation for post-change, top-10-depth data, at the cost of a schema migration on the live stream and larger segments (two string columns). The OPS-3 minimal check + verified-path may be sufficient — revisit if a continuity-replay run ever surfaces a discrepancy it cannot localize.
-- If pursued: add `price_str`/`qty_str` to `BOOK_SCHEMA`, thread the raw WS strings through `_handle_book_message` (they arrive as `Decimal` via `parse_float=Decimal`; keep the original string), and **extend OPS-3's `cli/archive/replay.py`** to re-derive and compare the CRC when the columns are present (older float-only segments keep the structural-only check). Ship on the next gated capture re-pin, never a standalone live restart.
+**None — superseded by the Resolution above.** Both steps below are kept as the record of the path NOT taken, so a future reader can see what the drop cost rather than re-deriving it:
+
+- ~~Decide whether byte-exact CRC re-attestation is worth a capture-schema change.~~ Decided 2026-08-23: no.
+- ~~If pursued: add `price_str`/`qty_str` to `BOOK_SCHEMA`, thread the raw WS strings through `_handle_book_message` (they arrive as `Decimal` via `parse_float=Decimal`; keep the original string), and extend `cli/archive/replay.py` to re-derive and compare the CRC when the columns are present (older float-only segments keep the structural-only check). Ship on the next gated capture re-pin, never a standalone live restart.~~ This remains the correct build path if the decision is ever revisited under a changed premise — via a new topic, not a revival of this one.

@@ -155,6 +155,68 @@ Never, while `zcrypto_reconcile_residual_gap_seconds_total` exists — this is t
 
 ______________________________________________________________________
 
+<a name="zcrypto-reconcile-healable-gap-rate"></a>
+
+## zcrypto-reconcile-healable-gap-rate — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Reconciler · primary gap rate high (degrading host)`). Nothing was lost: every gap this counts **was covered by the secondary**. The signal is that the primary needed a lot of covering.
+
+**Read the threshold correctly or you will mis-triage it.** The expression divides by the live pair count before comparing — `increase(zcrypto_reconcile_healable_gap_seconds_total[24h]) / scalar(count(count by (pair) (zcrypto_capture_book_desynced)))` against `gt [600]` — so it fires on **600 s of healable silence per pair**, not 600 pair-seconds in total. At twelve live pairs that is 7,200 pair-seconds. Comparing a ledger total straight to 600 overstates the reading by the pair count, and the divisor is what makes the summary's "more than 10 minutes" literally true.
+
+### What it means
+
+The primary was silent, and the secondary had genuine `update` rows inside that silence, so the splice repaired it. Redundancy did its job. A host that repeatedly needs this much repair is **degrading** — that is the condition worth acting on, not the individual hours.
+
+The counter is denominated in primary silence deliberately: a correlated outage where both mirrors go dark is not the primary degrading, and those seconds belong to `zcrypto_reconcile_residual_gap_seconds_total` instead.
+
+### What to do
+
+1. **Read the ledger's `would_mint` / `minted` records for the window** — `/var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl` on `zcrypto-ops`. Look for a pattern: one bad hour is weather, the same pair or the same hour-of-day repeating is the primary degrading.
+2. **Check the primary's own health before blaming the feed** — capture container `RestartCount`, its `/metrics`, and whether the hours cluster around a converge or a reboot.
+3. **A one-off spike after a deliberate event is not a finding.** The 2026-07-17 drill stopped the primary on purpose and booked 15,509 s; a staged event is not evidence of degradation.
+
+### Retire when
+
+`zcrypto_reconcile_healable_gap_seconds_total` stops existing, or the rule is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="healable-threshold-rederivation-due"></a>
+
+## healable-threshold-rederivation-due — SCHEDULED REMINDER
+
+### What you are seeing
+
+A message in Slack `#zcrypto` prompting a re-read of the healable-gap-rate threshold. It is not an alert — **nothing is wrong**. Like `refdata-sweep-due`, it is a calendar trigger with no metric behind it.
+
+### What it means
+
+The `gt [600]` threshold above is **provisional**: it was set before enough steady-state history existed to fit it, and the fit is still owed. Two facts bound what it should become — at twelve pairs the two post-fix events measured **44.5440 s and 41.2144 s per pair**, i.e. 7.4 % and 6.9 % of the threshold, so real events have come nowhere near it.
+
+### What to do
+
+1. **Count the qualifying days from the LEDGER, never from Grafana Cloud.** Cloud retains ~14 days; every event so far predates its window, so a `[90d]` selector there returns zero over a series it has never seen move — the reading that once wrongly licensed dropping this work.
+
+   ```
+   ssh hp "sudo cat /var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"
+   ```
+
+   Sum per day with the **production expression** from `cli/archive/command.py` — `float(d.get("claimed_seconds") or d.get("healed_seconds") or 0.0)` — and confirm your total equals the live gauge before trusting the per-day split. A parse that misses the `healed_seconds` fallback totals wrong and mis-attributes days.
+
+2. **Count only days AFTER the 2026-07-28 counter fix.** Earlier values are not fittable: 2026-07-17 was a staged drill, and 2026-07-27's value is 96.4112 % fiction — that overstatement is what the fix corrected.
+
+3. **Fewer than three qualifying days ⇒ do nothing except re-arm.** Schedule the next reminder in `#zcrypto` — the following month, matching `refdata-sweep-due`'s cadence — and stop. Fitting from one or two points is the intuition-wearing-a-table this threshold already suffered from once.
+
+4. **Three or more ⇒ the re-derivation is due, and it is real work** — fit the threshold, push it with `infra/grafana/alerts.yaml`, verify the pushed rule by reading it back from the provisioning API rather than trusting an exit code. Open a `T<NNNN>` for it if it needs a decision; this runbook holds the trigger, not the backlog.
+
+### Retire when
+
+The threshold has been re-derived from steady-state history and pushed live, or `zcrypto-reconcile-healable-gap-rate` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
 <a name="zcrypto-reconcile-cycle-duration"></a>
 
 ## zcrypto-reconcile-cycle-duration — ALERT

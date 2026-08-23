@@ -34,6 +34,8 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-ops-tapebars-permanent-gap`](ops.md#zcrypto-ops-tapebars-permanent-gap) — ALERT: a settled day was never published and has now fallen outside the re-scan window.
 - [`zcrypto-ops-tapebars-not-advancing`](ops.md#zcrypto-ops-tapebars-not-advancing) — ALERT: no new day has been published for more than 48 hours.
 - [`zcrypto-reconcile-residual-gap`](ops.md#zcrypto-reconcile-residual-gap) — ALERT: permanent, unrecoverable L2 loss booked to the reconcile ledger — the highest-severity rule in the system.
+- [`zcrypto-reconcile-healable-gap-rate`](ops.md#zcrypto-reconcile-healable-gap-rate) — ALERT: the primary needed heavy covering by the secondary. Nothing was lost; a host needing this much repair is degrading. Its threshold is per-pair, not a total — read it wrong and you mis-triage.
+- [`healable-threshold-rederivation-due`](ops.md#healable-threshold-rederivation-due) — SCHEDULED REMINDER: the healable-gap-rate threshold is provisional and its fit is still owed. Nothing is wrong. Count qualifying days from the ops ledger, never from Grafana Cloud.
 - [`zcrypto-reconcile-cycle-duration`](ops.md#zcrypto-reconcile-cycle-duration) — ALERT: the overlay-writer cycle is approaching the interval between its own ticks, past which the next trigger is dropped and the booking cadence halves.
 
 ### [`engine.md`](engine.md) — the trading engine and its order path
