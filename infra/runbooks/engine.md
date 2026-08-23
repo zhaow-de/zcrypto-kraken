@@ -30,12 +30,19 @@ Two things this alert deliberately does **not** do. It does not fire when the en
 ### What to do
 
 1. **Identify which sleeve moved, and in which direction.** `uv run python infra/scripts/grafana-query.py 'zcrypto_engine_sleeve_gross'` — one value per `sleeve` label. Compare against `zcrypto_engine_active_sleeves` over the last few days to see when the step landed. A single 4h cycle's blip and a sustained re-arming are different events; do not act on one cycle.
+
 2. **Do not restart, converge, or "fix" anything.** The engine is behaving exactly as designed — the sleeve's own signal turned on or off. There is no failure here to recover from, and a restart changes nothing about the composition.
+
 3. **Re-derive the numbers that were sized against the old composition** before the next go-live decision reads them: the model-consistency band the gate compares realized performance against, and the expected order notionals versus the venue minimums. Both were derived under the previous sleeve count and neither updates itself. The command is `uv run zcrypto engine accum-replay --journal-dir <journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD> --nav 1000 --minimums <newest kraken-refdata-*.json>`, and three things decide whether its answer is usable:
+
    - **Run it over a window that starts well before the composition changed, and slice**, or run it standalone and know what you are getting: the replay initialises held quantity to zero at its FIRST cycle, so a window starting in a low-gross stretch carries an additive offset that never decays. A live book is never flat.
    - **A band the gate can rest on needs ≥3 COMPLETE ISO weeks in the new composition** — that is the basis the gate's edge is defined on. Anything shorter is the current combined floor, useful for reading today and not for ratifying.
    - **Re-check the minimums stamp in the same pass** and quote which snapshot you used; Kraken moves those without notice.
+
+   **That command is the FLOOR half only — read the realized half beside it, or you have re-derived one side of a comparison.** `accum-replay` measures what the venue's minimums make unavoidable; what the engine actually held is `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD>`, which prints both halves per complete ISO week at one NAV. The two cannot drift apart by construction — both compute the same drift function, and it is the same one the engine's own weekly trip evaluates. Until the engine has journaled fills the realized column reads *no data*, and that is the honest answer for a series that has not started, never a zero to average in.
+
 4. **Record the transition durably** — date, which sleeve, the gross before and after — as a new row in `docs/reference/sleeve-composition-ledger.md`, which exists for exactly this and carries the read recipe. This alert ages out within a day and is not a record. The book's composition history is what a later gate reading depends on, and the last such transition went unrecorded for months precisely because nothing announced it.
+
 5. **If the count went DOWN to one or zero**, treat it as information, not an emergency: a long-only sleeve going flat in a downtrend is the risk control working. Zero active sleeves means a flat book — no exposure, no turnover — which is a legitimate state and not a reason to intervene.
 
 ### Retire when
@@ -449,7 +456,20 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
 7. **Count the journaled gate level across the window's exec records**, on the engine host: `for f in /var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/exec-*.json; do python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['level'])" "$f"; done | sort | uniq -c`. This is the input the weekly tracking-error trip takes its eligibility from, and it is the one reading no other step produces. Every record written outside a window reads `none` — as all 66 of them did before the first window — so what this measures is whether an ARMED window actually journals `full`. If it does not, the restart hold was left set through the window, and the trip is structurally inert even once armed: see `engine-tracking-band` below, and do not set a band until this reads `full`.
 
-8. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
+8. **Take the week's tracking reading, and record what it produced even when that is nothing.** Nothing schedules this — there is no timer and no unit behind the command, deliberately, so this step *is* the cadence: a window that closes without it leaves no missing artifact for anyone to notice later. From the workstation, against a pulled copy of the journal:
+
+   ```
+   uv run zcrypto engine tracking-report \
+     --journal-dir <pulled journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD> \
+     --gate-from <YYYY-Www>
+   ```
+
+   - **`--gate-from` is not optional in practice.** Without it NOTHING is decided whatever the numbers say — every week is measured and none is eligible, which the report states by name in its own footer. The week to pass is the first ISO week whose cycles ran under continuous arming, i.e. a fact about the deployment rather than about the journal, which is why the flag asks instead of guessing.
+   - **Confirm the boundary landed, because nothing validates it for you.** A week outside the window is accepted silently — safe in the fail-closed direction, since a wrong week decides fewer weeks and never more, but unremarked. The report echoes `Gate boundary: weeks from <YYYY-Www> onward count`, notes every week it placed before that boundary, and states in its verdict line how many weeks it decided — read all three against what you intended.
+   - **A week the report cannot produce is a refusal to record, never a zero to shrug at.** A partial ISO week, a week before the boundary, and a week with no journaled fills each print as measured-but-not-decided or as *no data* — the series not having started is not the same reading as a week of perfect tracking. Write the week labels and their reasons into the probe's decisions-log entry beside the numbers; that record is the only evidence the reading was taken at all.
+   - **Today every week reads *no data* and the cost half answers that there are no euro-denominated fills.** That is the correct output before the first fills exist, and recording it is what makes the first real reading comparable to something.
+
+9. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
 
 ### Retire when
 
