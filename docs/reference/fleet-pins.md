@@ -12,8 +12,8 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (verified resident at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `636012cc00d9` — spec `00090`, revision `732598ff` | 2026-08-20 05:21:51 | `99faf16514e3` (2026-07-29) |
-| capture | zcrypto-red | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; **canary — this host's bake gates the primary capture AND the engine re-pin**, gate opens 2026-08-23 02:00Z | 2026-08-22 22:00:39 | `636012cc00d9` (2026-08-18) |
+| capture | zcrypto | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; carries the keep-regex admitting `zcrypto_exec_external_events_total`, which has no producer until the engine leg ships | 2026-08-23 09:25:29 | `636012cc00d9` (2026-08-20) |
+| capture | zcrypto-red | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; **canary — this host's passed bake gates the engine re-pin** | 2026-08-22 22:00:39 | `636012cc00d9` (2026-08-18) |
 | engine | zcrypto | `636012cc00d9` — same build, **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-19 21:27:23 | `419feafc304f` (2026-08-16) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
 | ops (timers + liquidations) | zcrypto-ops | `06919e5dc50c` — spec `00097` (the reconcile cycle stops scaling with volume), revision `52b12ca1`; the liquidations container roll is always a separate act — see Standing constraints | 2026-08-21 18:03:00 | `6b4c13899653` (2026-08-20) |
@@ -36,7 +36,7 @@ Reading rules:
 
 ## Full digests — current pins and their operands only; everything older is in this file's git log
 
-- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`; also carries `zcrypto_exec_external_events_total` in the capture keep-regex, so the engine leg that ships it must converge `--tags capture,engine`.
+- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`; also carries `zcrypto_exec_external_events_total` in the capture keep-regex — now deployed on BOTH capture hosts, so the engine leg no longer needs `--tags capture`; verify that family by VALUE at the first scrape after the engine takes this digest, where `(no series)` IS a failure (today it is correctly absent: no producer).
 - `636012cc00d9` = `sha256:636012cc00d9e3f21ab23dba5454eefe2e252e4152bcdee07da16b8e9335fc4f` — spec `00090` (the rung-1 order path), revision `732598ff`, AVX build; running fleet-wide (both captures and the engine).
 - `99faf16514e3` = `sha256:99faf16514e3ddc30712c8c63fb4892d7e5f3042823b56935cf0617a3cf2ab44` — primary-capture operand; revision `3540b0bb`.
 - `06919e5dc50c` = `sha256:06919e5dc50c1eef3525aa272b8a21e441d17fa30bf67a46575ca1d560c4b3be` — ops current; spec `00097` (the reconcile skip-cache), revision `52b12ca1`, AVX.
