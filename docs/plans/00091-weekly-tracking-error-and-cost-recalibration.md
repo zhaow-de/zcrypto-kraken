@@ -908,11 +908,10 @@ def test_a_failed_reconciliation_makes_the_command_exit_non_zero(tmp_path, real_
 
 - [ ] **Step 6: Prove the refusals bite.** Drop the required-column check → the missing-column test fails; make an unmatched row a warning → the FAILED test fails; drop the asset filter → the non-euro rollover test fails.
 
-- [ ] **Step 7: The probe checklist gains the comparison, and TWO named assumptions to settle against the first real export.** Both are unverifiable until an export exists, and neither may live only in a task report:
-  1. **Only `type == "trade"` rows are matched.** Kraken also writes `margin` (and `settled`) rows for margin activity, carrying the same `refid`. A margin trade the engine has no record of would be invisible to the reconciliation unless a `trade` row also exists — which is the precise failure this component is for. Read the first export's distinct `type` values and widen the match if `margin` appears.
-  2. **`rollover_fees_eur` sums the `fee` column.** Whether a real rollover row carries the charge there or in `amount` is unverified. Read one real rollover row and confirm which column holds it.
-
-- [ ] **Step 7: The probe checklist gains the comparison.** `infra/runbooks/engine.md`'s probe-window procedure already has the owner exporting the ledger. Add the step that runs the reader against that export **once while the hand-read still exists**, and compares the two — a standing reader that never agreed with the hand-read it replaced has not been verified.
+- [ ] **Step 7: The probe checklist gains the comparison.** `infra/runbooks/engine.md`'s probe-window procedure already has the owner exporting the ledger. Add the step that runs the reader against that export **once while the hand-read still exists**, and compares the two — a standing reader that never agreed with the hand-read it replaced has not been verified. **In the runbook itself, not here** — an unchecked box in a completed plan is not an operating surface. The same runbook line carries the two assumptions this reader ships with, so the operator settles them against the first real export:
+  1. **Only `type == "trade"` rows are matched today.** Kraken also writes `margin` and `settled` rows carrying the same `refid`. Read the first export's distinct `type` values; if `margin` appears, the match widens.
+  2. **`rollover_fees_eur` sums the `fee` column.** If a real rollover row carries the charge in `amount` instead, the reader prints `0.00` against a nonzero hand read — which is exactly what the hand-read comparison catches, by value.
+  3. **A venue repair guarantees an unmatched id**, because `extract_fills` gives a `reconciled` event a synthetic `trade_id`. That is an honest FAILED (the engine has no venue trade id for it), not a defect — so the line must not say the block "must read `ok`" unconditionally.
 
 - [ ] **Step 8: Commit.** `feat(engine): the standing ledger-export reader, refusing an export it cannot map`
 
