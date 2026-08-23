@@ -7,10 +7,12 @@ will be read as a gate input.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import NamedTuple
 
 from cli.engine.errors import EngineError
+from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload
 from cli.engine.instruments import EUR_CODES
 from cli.engine.store import BASKET
 from cli.logging import get_logger
@@ -25,6 +27,8 @@ _SIDES = frozenset({"buy", "sell"})
 # The MODEL's universe is the ten EUR legs (cycle._MODEL_SYMBOLS). The two /BTC legs are real
 # basket symbols with no model target, so they map to base None: excluded from drift, counted.
 _BASE_BY_SYMBOL = {s: (s.split("/")[0] if s.endswith("/EUR") else None) for s in BASKET}
+# Weeks that must be decided before the comparison carries a verdict at all.
+_GATE_MIN_WEEKS = 3
 
 
 class Fill(NamedTuple):
@@ -140,3 +144,155 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                     )
                 )
     return out, notes
+
+
+def _iso_key(dt: datetime) -> tuple[int, int]:
+    iso = dt.isocalendar()
+    return (iso.year, iso.week)
+
+
+def _iso_label(key: tuple[int, int]) -> str:
+    return f"{key[0]}-W{key[1]:02d}"
+
+
+def drift_bps(final: dict[str, float], closes: dict[str, float], held: dict[str, float], nav: float) -> float:
+    """One cycle's drift, in bps of NAV, from plain dicts.
+
+    THE shared core: component A calls it from replayed stages, component C from journaled
+    artifacts. No CycleStages, no venue minimums, no accumulation_payload -- component C runs on
+    the engine host, which carries no refdata snapshot, so anything needing `load_minimums` cannot
+    run there at all. One implementation, two callers: the number a human bands and the number the
+    engine trips on cannot drift apart.
+    """
+    drift_eur = 0.0
+    for a, weight in final.items():
+        close = closes[a]
+        drift_eur += abs((weight * nav) / close - held.get(a, 0.0)) * close
+    return drift_eur / nav * 10_000
+
+
+def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> dict:
+    """Per-cycle drift with `held` taken from REAL fills instead of the modelled policy.
+
+    `held` is SIGNED BASE UNITS: a sell that booked as a buy would double the apparent position
+    and silently halve the measured drift. Fills are applied by the BOUNDARY their row was
+    journaled under, so a fill arriving minutes after boundary N counts at N -- the decision that
+    produced it -- rather than at N+1.
+    """
+    if not math.isfinite(nav) or nav <= 0:
+        raise EngineError(f"NAV must be finite and positive, got {nav!r} -- a negative one signs every drift_bps")
+    ordered = sorted(stages, key=lambda s: s.cycle_ts)
+    by_boundary: dict[datetime, list[Fill]] = {}
+    for f in fills:
+        if f.base is None:  # a /BTC leg: no model target, so no drift contribution
+            continue
+        by_boundary.setdefault(f.boundary, []).append(f)
+    # A fill whose boundary carries no stage never enters `held`, overstating drift for every later
+    # cycle -- silently, and on component C that is a spurious kill-file trip. The two ways it
+    # happens need different answers from the operator, so they are refused separately:
+    #   * INSIDE the cycle span -- a hole. `accumulation_report` drops a record whose
+    #     `replay_stages` raises, names it in `failures` and counts it in `n_failed`; a fill
+    #     journaled under that boundary lands here. Widening the window cannot help.
+    #   * OUTSIDE it -- a truncated window. A fill BEFORE the first cycle holds a position the
+    #     first cycle already carries, so it is refused rather than dropped; one after the last
+    #     cycle is harmless, but telling them apart needs a span the caller chose, not one this
+    #     function guesses. Widening the window is the fix.
+    # Compared as datetime INSTANTS, never as isoformat strings: `+02:00` and `+00:00` spellings of
+    # one instant are equal to `by_boundary`'s lookup and unequal as text, so a string difference
+    # would refuse a fill the loop below goes on to apply.
+    orphans = sorted(set(by_boundary) - {s.cycle_ts for s in ordered})
+    if orphans:
+        span = (ordered[0].cycle_ts, ordered[-1].cycle_ts) if ordered else None
+        inside = [b for b in orphans if span is not None and span[0] <= b <= span[1]]
+        if inside:
+            raise EngineError(
+                f"{len(inside)} fill boundary(ies) fall INSIDE the cycle span but match no cycle "
+                f"({[b.isoformat() for b in inside[:3]]}) -- a hole, not a truncation: a cycle whose "
+                "replay failed was dropped, and widening the window cannot recover its position"
+            )
+        raise EngineError(
+            f"{len(orphans)} fill boundary(ies) fall OUTSIDE the cycle span "
+            f"({[b.isoformat() for b in orphans[:3]]}) -- a truncated window: widen it rather than "
+            "report a drift that omits their position"
+        )
+    held: dict[str, float] = {}
+    rows: list[dict] = []
+    for s in ordered:
+        for f in by_boundary.get(s.cycle_ts, []):
+            held[f.base] = held.get(f.base, 0.0) + (f.qty if f.side == "buy" else -f.qty)
+        bps = drift_bps(s.final, s.closes, held, nav)
+        rows.append({"cycle_ts": s.cycle_ts.isoformat(), "drift_bps": bps, "drift_eur": bps / 10_000 * nav})
+    values = [r["drift_bps"] for r in rows]
+    # NaN on an empty window, never None: `_median`/`_p95` already answer that way, and
+    # `feeders._bps` -- the renderer this feeds -- branches on `math.isnan` and raises TypeError on
+    # None. One convention for "nothing to average" across both halves of the report.
+    return {
+        "cycles": rows,
+        "median_drift_bps": _median(values),
+        "p95_drift_bps": _p95(values),
+        "n_fills": len(fills),
+    }
+
+
+def weekly_tracking(
+    stages: list[CycleStages],
+    fills: list[Fill],
+    minimums: dict[str, tuple[float, float]],
+    nav: float,
+    *,
+    rung_by_week: dict[str, int] | None = None,
+) -> dict:
+    """That week's floor p95 against that week's realized MEAN drift.
+
+    The edge is ratified, not chosen here: on the data the band was derived from a median edge
+    fails two of four weeks while a p95 edge passes all four.
+
+    "No data" means the realized series NEVER STARTED -- not that a week was quiet. A week with
+    no fills but a non-zero `held` is fully measured, and is precisely the week a tracking-error
+    trip exists to catch.
+    """
+    rung_by_week = rung_by_week or {}
+    ordered = sorted(stages, key=lambda s: s.cycle_ts)
+    floor = accumulation_payload(ordered, minimums, [nav])["by_nav"][nav]
+    real = realized_drift(ordered, fills, nav)
+    floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}
+    real_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, real["cycles"])}
+    floor_cycles: dict[tuple[int, int], list[float]] = {}
+    for stage, row in zip(ordered, floor["cycles"], strict=True):
+        floor_cycles.setdefault(_iso_key(stage.cycle_ts), []).append(row["drift_bps"])
+    first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+
+    weeks: list[dict] = []
+    for key, fw in sorted(floor_weeks.items()):
+        label = _iso_label(key)
+        complete = not fw["partial"]
+        rung = rung_by_week.get(label)
+        week_cycles = [s.cycle_ts for s in ordered if _iso_key(s.cycle_ts) == key]
+        # Started, not "had a fill this week".
+        started = first_fill is not None and any(t >= first_fill for t in week_cycles)
+        # A week holding cycles on BOTH sides of the first fill averages a cycle-level series over a
+        # week-level flag: every pre-fill cycle contributes an undeployed book at the full 10000 bps,
+        # so the FIRST week of live trading reads near half that and would be biased toward `fail`.
+        # Ruled the same way a partial week is: the mean is not comparable to a settled week's, so
+        # it is measured and reported, and excluded from the verdict.
+        straddles = started and any(t < first_fill for t in week_cycles)
+        gate_eligible = complete and rung != 2 and not straddles
+        realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
+        floor_p95 = _p95(floor_cycles[key])
+        weeks.append(
+            {
+                "iso_week": label,
+                "cycles": fw["n_cycles"],
+                "complete": complete,
+                "rung": rung,
+                "gate_eligible": gate_eligible,
+                "floor_p95_bps": floor_p95,
+                "realized_mean_bps": realized_mean,
+                "within_band": (realized_mean <= floor_p95) if (gate_eligible and realized_mean is not None) else None,
+            }
+        )
+    decided = [w for w in weeks if w["within_band"] is not None]
+    verdict = (
+        "insufficient-data" if len(decided) < _GATE_MIN_WEEKS else "pass" if all(w["within_band"] for w in decided) else "fail"
+    )
+    return {"weeks": weeks, "complete_gate_eligible_weeks": len(decided), "verdict": verdict}
