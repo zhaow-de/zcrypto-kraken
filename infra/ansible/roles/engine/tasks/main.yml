@@ -321,7 +321,8 @@
       or ((engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('')) in
           (engine_verified_nautilus if (engine_verified_nautilus is sequence
           and engine_verified_nautilus is not string
-          and engine_verified_nautilus is not mapping) else []))
+          and engine_verified_nautilus is not mapping
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []))
       or ((arming_override | default('') | string | length > 8)
           and (arming_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
     fail_msg: >-
@@ -331,7 +332,8 @@
       cli/engine/order-semantics-verified.json (recorded:
       {{ (engine_verified_nautilus if (engine_verified_nautilus is sequence
           and engine_verified_nautilus is not string
-          and engine_verified_nautilus is not mapping) else []) | join(', ') | default('(the record is not a list -- nothing is verified)', true) }}).
+          and engine_verified_nautilus is not mapping
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []) | join(', ') | default('(the record is not a list -- nothing is verified)', true) }}).
       The adapter's margin/short/post-only and reconciliation behaviour is native and no test here
       places an order, so this version's order path is unmeasured. Run the probes, write the
       docs/research/ verification doc, add the version to that record — or pass
@@ -345,7 +347,8 @@
     and not ((engine_pyproject_text | regex_search('nautilus-trader==([^"\s]+)', '\1') | default([], true) | join('')) in
         (engine_verified_nautilus if (engine_verified_nautilus is sequence
           and engine_verified_nautilus is not string
-          and engine_verified_nautilus is not mapping) else []))
+          and engine_verified_nautilus is not mapping
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []))
     and (arming_override | default('') | string | length > 8)
     and (arming_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 

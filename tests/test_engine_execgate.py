@@ -532,6 +532,7 @@ def test_a_raising_version_reader_refuses_rather_than_propagating(tmp_path):
         ("{not json at all", "malformed"),
         ('{"verified_nautilus_versions": "1.230.0"}', "a string where a list belongs"),
         ('{"verified_nautilus_versions": [1230]}', "a non-string entry"),
+        ('{"verified_nautilus_versions": ["1.230.0", 1231]}', "a MIXED list -- a real version beside a non-string"),
         ("{}", "the key missing entirely"),
     ],
 )

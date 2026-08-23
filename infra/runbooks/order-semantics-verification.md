@@ -90,7 +90,7 @@ the go/no-go.
 
 ______________________________________________________________________
 
-## 2. Environment — the 1.231.0 interpreter
+## 2. Environment — the interpreter under test
 
 Run from a tree whose lockfile already carries the version under test — the bump branch itself, so the harness binds the exact interpreter the engine will run:
 

@@ -720,6 +720,7 @@ ARMED_TEMPLATE = "exec_enabled = true\nexec_armed = true\nshadow_nav_eur = 1000\
 TEMPLATED_ARMED = "exec_enabled = true\nexec_armed = {{ engine_exec_armed }}\nshadow_nav_eur = 1000\n"
 
 VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.230.0",\n]\n'
+UNVERIFIED_PIN_VERSION = "1.231.0"
 UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.231.0",\n]\n'
 NO_PIN = 'dependencies = [\n    "polars==1.0.0",\n]\n'
 # A pin that is a PREFIX of the recorded version. This is the only shape that exercises Jinja's
@@ -740,6 +741,15 @@ _UNSET = object()  # so a test can pass record=None and mean it
         ({"1.231.0": "note"}, "a mapping keyed by version"),
         (None, "null"),
         (42, "a scalar that is not even a sequence"),
+        # A MIXED list passes every structural test -- proper sequence, not a string, not a
+        # mapping -- so without an element-type check the Jinja half vouched for the real version
+        # in it while cli.engine.execgate collapsed the same record to the empty set and refused
+        # everything. Measured, not theorised: the composed system still failed closed, but the
+        # two guards disagreed about one record, which three surfaces claim is impossible.
+        # The pin must be IN the list, or the assert refuses because it is absent and the case
+        # proves nothing about the shape check. With it present beside a non-string, an unguarded
+        # ternary vouches and a guarded one refuses -- which is the only difference under test.
+        ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
         ("", "an empty string"),
     ],
 )

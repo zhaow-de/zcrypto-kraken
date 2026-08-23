@@ -1089,6 +1089,11 @@ class Harness:
             f"open positions {len(positions)}; balances {balances}"
         )
         verdict = VERDICT_PASS
+        if not forced:
+            # The venue re-read did not happen, so "nothing is open" is this process's cache
+            # talking. Never a PASS -- that is "we failed to ask" wearing a clean answer.
+            verdict = VERDICT_REVIEW
+            self.state.notes.append("probe 6: the forced venue re-read FAILED -- this reads the cache, not the venue")
         if ours:
             verdict = VERDICT_FAIL
             self.state.notes.append(f"probe 6: {len(ours)} of OUR orders are still open -- cancel them by hand")
@@ -1353,7 +1358,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--expect-nautilus", default=EXPECTED_NAUTILUS, help=f"required nautilus-trader version (default: {EXPECTED_NAUTILUS})"
     )
     p.add_argument("--allow-version-mismatch", action="store_true", help="run against a different nautilus version anyway")
-    p.add_argument("--evidence-dir", default=".", help="where the evidence JSON is written (default: cwd; never the repo tree)")
+    p.add_argument(
+        "--evidence-dir",
+        default=".",
+        help="where the evidence JSON is written (default: cwd -- pass a path outside the repo, or run from one)",
+    )
     p.add_argument("--selftest", action="store_true", help="run the pure-logic rail tests and exit; no network, no credentials")
     return p
 
