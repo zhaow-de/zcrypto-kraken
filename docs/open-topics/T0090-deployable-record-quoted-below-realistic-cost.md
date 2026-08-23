@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: rung 1 produces real fills — the maker-first ruling is made and the reader that takes the measurement shipped in iter-145, so what remains is running it over a window that contains fills and re-pricing against what it reports. The quoted baseline stays a RANGE (0.51–0.91 conditional) until that measurement exists; no further estimate improves it
+ripe_when: rung 1 produces real fills
 ---
 
 # The record's cost assumption is a headroom guess whose direction depends on an unmade execution decision
