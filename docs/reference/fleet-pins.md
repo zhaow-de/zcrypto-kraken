@@ -12,9 +12,9 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (verified resident at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `636012cc00d9` — spec `00090`, revision `732598ff` | 2026-08-20 05:21:51 | `99faf16514e3` (2026-07-29) |
-| capture | zcrypto-red | `636012cc00d9` — same build; this host's bake gated the engine re-pin | 2026-08-18 14:07:41 | `419feafc304f` (2026-08-15) |
-| engine | zcrypto | `636012cc00d9` — same build, **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-19 21:27:23 | `419feafc304f` (2026-08-16) |
+| capture | zcrypto | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6` | 2026-08-23 09:25:29 | `636012cc00d9` (2026-08-20) |
+| capture | zcrypto-red | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; **canary — this host's bake gates the engine re-pin; that bake's event gate passed but its RSS residual came back UNDETERMINED (one step, no control) and the gate was closed early on the owner's call — [[T0151]]** | 2026-08-22 22:00:39 | `636012cc00d9` (2026-08-18) |
+| engine | zcrypto | `03d4cf1b8df7` — spec `00098`, revision `f54431a6`; adopted-order fills now reach their rows and `zcrypto_exec_external_events_total`. Still **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-23 10:21:03 | `636012cc00d9` (2026-08-19) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
 | ops (timers + liquidations) | zcrypto-ops | `06919e5dc50c` — spec `00097` (the reconcile cycle stops scaling with volume), revision `52b12ca1`; the liquidations container roll is always a separate act — see Standing constraints | 2026-08-21 18:03:00 | `6b4c13899653` (2026-08-20) |
 | archive-pull | nas | `5f890c26237a` — the `-compat` build of `e0757909`; repo pin `nas_capture_image` (`infra/ansible/host_vars/nas/vars.yml`), the one surface whose pin is a committed file | 2026-08-15 13:40:38 | `620114511f19` (2026-07-17) |
@@ -36,12 +36,11 @@ Reading rules:
 
 ## Full digests — current pins and their operands only; everything older is in this file's git log
 
+- `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0, the current pin on all four hosts.
+- `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1, the rollback operand; resident on both capture hosts.
+- `03d4cf1b8df7` = `sha256:03d4cf1b8df7e26b05aca7a3346d05c6c58498238d2c615ba904fd39e5fbc1f9` — spec `00098` (the adopted-order disposition filter and D7's adopt-time venue-truth reconcile), revision `f54431a6`; also carries `zcrypto_exec_external_events_total` in the capture keep-regex; deployed on both capture hosts and on the engine, so `(no series)` for that family IS a failure.
 - `636012cc00d9` = `sha256:636012cc00d9e3f21ab23dba5454eefe2e252e4152bcdee07da16b8e9335fc4f` — spec `00090` (the rung-1 order path), revision `732598ff`, AVX build; running fleet-wide (both captures and the engine).
-- `99faf16514e3` = `sha256:99faf16514e3ddc30712c8c63fb4892d7e5f3042823b56935cf0617a3cf2ab44` — primary-capture operand; revision `3540b0bb`.
 - `06919e5dc50c` = `sha256:06919e5dc50c1eef3525aa272b8a21e441d17fa30bf67a46575ca1d560c4b3be` — ops current; spec `00097` (the reconcile skip-cache), revision `52b12ca1`, AVX.
 - `6b4c13899653` = `sha256:6b4c13899653d4e9300cec8d111cb5c6a8cf94e43a5db64cbcd0b3fa47698bf8` — ops operand; spec `00096`, revision `2c248fe4`.
-- `419feafc304f` = `sha256:419feafc304f6a080936ab0cccbe3dd157dd48097851f94eab7b319210d4336e` — engine and red-capture operand; specs `00094` + `00089`, revision `e0757909`, AVX — **never pin it on the NAS**.
 - `5f890c26237a` = `sha256:5f890c26237af99ad37ae1b7fe884c4d33476d285774be90cc8c909b3ed049a1` — NAS current; the `-compat` build of `e0757909`.
 - `620114511f19` = `sha256:620114511f197c306d6b1c2260b0a12793bb679663517a0626841d0018049a28` — NAS operand.
-- alloy current (all four container hosts): `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308`
-- alloy operand (all four): `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b`
