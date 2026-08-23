@@ -60,7 +60,7 @@ If the rebase produces conflicts:
 
 #### 2b. Local validation
 
-Run in this order; stop on the first failure (so the auto-fix step in 2c knows what to attack):
+Run in this order; stop on the first failure (so the auto-fix step in 2c knows what to attack). **This local full run stays, and is not the duplicate `CLAUDE.md` retires** — a lockfile change reaches every test, including the data-gated ones CI cannot run at all:
 
 ```bash
 uv run ruff check
