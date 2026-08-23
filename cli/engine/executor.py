@@ -44,7 +44,7 @@ from cli.engine.execledger import (
     update_plan_intent,
     update_submitted_row,
 )
-from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.venueledger import read_venue_record, validate_venue_record
 from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
@@ -103,10 +103,6 @@ _ADOPTED_TERMINAL_STATES = {
 _H4 = 4
 
 _VENUE = Venue("KRAKEN")
-# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
-# balances carry `EUR`, the asset/instrument-quote surfaces the classic `ZEUR`); anything else is a
-# different currency and is never summed into a EUR total.
-_EUR_CODES = ("EUR", "ZEUR")
 # The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
 # out, so a member the library adds is admitted automatically. Plain ints, and the test is
 # `isinstance(side, int) and int(side) in ...`: a set membership on the enum member itself would
@@ -203,7 +199,7 @@ def _fee_eur(commission) -> float | None:
     needs the BTC/EUR close (`cli.engine.instruments.fx_eur_notional`, the one proven conversion),
     which no fill event carries -- so the honest answer here is "not a EUR fee", logged."""
     code = getattr(getattr(commission, "currency", None), "code", None)
-    if code not in _EUR_CODES:
+    if code not in EUR_CODES:
         logger.warning("fill commission is denominated in %s, not EUR -- it is left out of the EUR fee total", code)
         return None
     return float(commission)
@@ -1715,7 +1711,7 @@ class ProbeExecutor:
                 if pnl is None:
                     continue
                 code = getattr(getattr(pnl, "currency", None), "code", None)
-                if code not in _EUR_CODES:
+                if code not in EUR_CODES:
                     logger.warning(
                         "realized pnl on %s is denominated in %s, not EUR -- it is left out of the EUR total",
                         instrument_id,
