@@ -2,6 +2,7 @@ import json
 import math
 import shutil
 import types
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -201,6 +202,57 @@ def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):
         assert not Path(entry.path).is_absolute()  # relative to journal_dir
         assert entry.path.startswith("2026-07-10/snapshots/cycle-08/")
         assert (config.journal_dir / entry.path).exists()
+
+
+# --- the journaled NAV and position (T0150) -------------------------------------------------------
+
+
+def test_the_success_record_journals_the_nav_it_priced_against(tmp_path, monkeypatch):
+    """NAV sets BOTH halves of drift -- a target is `weight * nav / close` and the drift divides by
+    nav -- so a week scored later must use the NAV that was live when it traded, not whatever the
+    config says at scoring time."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    record = from_json(result.record_path.read_text())
+    validate_record(record)
+    assert record.nav == config.shadow_nav_eur
+
+
+def test_the_success_record_journals_a_base_keyed_position_from_venue_state(tmp_path, monkeypatch):
+    """`held` is the real book, so it comes from the venue read, not the model. BASE-keyed over the
+    /EUR legs -- the model's key space, the same narrowing `closes` gets -- while VenueState itself
+    is SYMBOL-keyed."""
+    from cli.engine.venuestate import VenueState
+
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    vs = VenueState(
+        snapshot_at=CYCLE_TS,
+        instruments={},
+        positions={"BTC/EUR": 0.5, "ETH/EUR": -2.0, "ETH/BTC": 9.0},
+        balances={"EUR": 100.0},
+    )
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=vs)
+
+    record = from_json(result.record_path.read_text())
+    validate_record(record)
+    # ETH/BTC is dropped: it is not in the model's key space, and folding it into "ETH" would
+    # double-count the same base under two quotes.
+    assert record.held == {"BTC": 0.5, "ETH": -2.0}
+
+
+def test_a_cycle_without_a_venue_read_journals_no_position(tmp_path, monkeypatch):
+    """`venue_state` is None whenever the snapshot raised -- the node logs and proceeds. Absence is
+    the honest answer; a zeroed book would read as FLAT, which is a real position and not the same
+    as unknown."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    record = from_json(result.record_path.read_text())
+    assert record.held is None
 
 
 # --- the journaled forming-row closes ------------------------------------------------------------
@@ -806,7 +858,18 @@ def test_targets_are_identical_with_and_without_venue_state(tmp_path, monkeypatc
     assert none_result.status == adversarial_result.status == "success"
     assert none_result.targets == adversarial_result.targets == TARGETS
     assert none_result.orders == adversarial_result.orders
-    assert none_result.record_path.read_bytes() == adversarial_result.record_path.read_bytes()
+
+    # `held` is the ONE venue-derived field the cycle record carries (T0150), so a raw byte compare
+    # of the two artifacts can no longer be the pin -- it would fail for the one difference that is
+    # supposed to exist. Narrowed rather than dropped: the position is asserted to have been
+    # journaled from the adversarial read, and then neutralised so the REST of the record is still
+    # compared byte-for-byte through the real serializer. Everything the venue must not touch is
+    # still pinned exactly as before.
+    none_record = from_json(none_result.record_path.read_text())
+    adversarial_record = from_json(adversarial_result.record_path.read_text())
+    assert none_record.held is None
+    assert adversarial_record.held == {a.split("/")[0]: 1_000.0 for a in ASSETS if a.endswith("/EUR")}
+    assert to_json(replace(none_record, held=None)) == to_json(replace(adversarial_record, held=None))
 
     assert none_result.venue is None
     assert adversarial_result.venue == {

@@ -688,6 +688,19 @@ def run_cycle(
         code_version=_code_version(),
         builder_path="fast",
         closes=model_closes,
+        # T0150: the other two terms a drift measurement needs. NAV is journaled because it sets
+        # BOTH halves -- a target is `weight * nav / close` and the drift divides by nav -- so a
+        # week scored after a `shadow_nav_eur` change would otherwise be re-scored against a
+        # denominator nobody traded under. `held` is the venue's real book, narrowed to the model's
+        # BASE key space over the /EUR legs (VenueState is symbol-keyed, and folding a /BTC leg in
+        # would double-count that base). None when the venue read failed: absence is the honest
+        # answer, where a zeroed book would read as FLAT, which is a real position.
+        nav=config.shadow_nav_eur,
+        held=(
+            None
+            if venue_state is None
+            else {symbol.split("/")[0]: qty for symbol, qty in venue_state.positions.items() if symbol.endswith("/EUR")}
+        ),
     )
     validate_record(record)
     record_path = day_dir / f"cycle-{cycle_ts:%H}.json"

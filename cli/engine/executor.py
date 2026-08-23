@@ -406,6 +406,9 @@ def _stage(record: CycleRecord) -> CycleStages:
         multiplier=1.0,
         closes=dict(record.closes),
         cap_bound=False,
+        # Carried through so the boundary scores each cycle under the NAV it actually priced
+        # against (T0150). None for records written before the key existed.
+        nav=record.nav,
     )
 
 

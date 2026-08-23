@@ -40,6 +40,9 @@ class CycleStages:
     multiplier: float
     closes: dict[str, float]  # the 4h close used for the forming row, per asset
     cap_bound: bool
+    # The NAV this cycle priced against, when the record journaled one (T0150). None on every
+    # record written before the key existed; `realized_drift` falls back to the caller's scalar.
+    nav: float | None = None
 
 
 def stage_grosses(sleeve_positions: dict[str, dict[str, float]]) -> dict[str, float]:

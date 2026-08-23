@@ -64,6 +64,8 @@ class CycleRecord:
     code_version: str
     builder_path: str
     closes: dict[str, float] | None = None
+    nav: float | None = None
+    held: dict[str, float] | None = None
 
 
 def _epoch_seconds(ts: datetime) -> int:
@@ -165,6 +167,26 @@ def validate_record(record: CycleRecord) -> None:
     # must keep validating. Present-but-empty is a writer bug, not absence -- absence is None. The
     # base-key check is NOT schema-conditional: closes lives in the model's key space, which never
     # widened. Zero and negative are refused because a close is a price and divides downstream.
+    # nav and held are the other two terms a drift measurement needs (T0150). Both are optional for
+    # the same reason closes is: absent on every record written before the keys existed.
+    if record.nav is not None:
+        if isinstance(record.nav, bool) or not isinstance(record.nav, (int, float)):
+            raise EngineJournalError(f"nav must be a number when present, got {record.nav!r}")
+        if not math.isfinite(record.nav) or record.nav <= 0:
+            # NAV sets BOTH halves of drift -- a target is `weight * nav / close` and the drift
+            # divides by nav -- so a zero divides by zero and a negative signs every reading.
+            raise EngineJournalError(f"nav must be finite and positive when present, got {record.nav!r}")
+    if record.held is not None:
+        if not isinstance(record.held, dict):
+            raise EngineJournalError("held must be a dict[str, float] when present")
+        for asset, value in record.held.items():
+            if not isinstance(asset, str) or not asset:
+                raise EngineJournalError(f"held key must be a non-empty str, got {asset!r}")
+            if "/" in asset:
+                raise EngineJournalError(f"held key must be a base key (no '/'), got {asset!r}")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                # Zero and negative are both real books (flat, and short); only non-numbers are not.
+                raise EngineJournalError(f"held[{asset!r}] must be a finite number, got {value!r}")
     if record.closes is not None:
         if not isinstance(record.closes, dict) or not record.closes:
             raise EngineJournalError("closes must be a non-empty dict[str, float] when present")
@@ -229,6 +251,10 @@ def to_json(record: CycleRecord) -> str:
     # dialect every reader has to carry.
     if record.closes is not None:
         payload["closes"] = dict(record.closes)
+    if record.nav is not None:
+        payload["nav"] = record.nav
+    if record.held is not None:
+        payload["held"] = dict(record.held)
     return json.dumps(payload, sort_keys=True)
 
 
@@ -267,6 +293,8 @@ def from_json(s: str) -> CycleRecord:
             # closes is a list or a scalar raises here rather than loading clean -- several callers
             # read a record without ever calling validate_record.
             closes=dict(raw) if (raw := payload.get("closes")) is not None else None,
+            nav=payload.get("nav"),
+            held=dict(rawh) if (rawh := payload.get("held")) is not None else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise EngineJournalError(f"journal JSON is missing or misshapes a required key: {exc}") from exc
