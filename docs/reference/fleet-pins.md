@@ -14,7 +14,7 @@ Reading rules:
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; carries the keep-regex admitting `zcrypto_exec_external_events_total`, which has no producer until the engine leg ships | 2026-08-23 09:25:29 | `636012cc00d9` (2026-08-20) |
 | capture | zcrypto-red | `03d4cf1b8df7` — spec `00098` (adopted orders' fills observable), revision `f54431a6`; **canary — this host's passed bake gates the engine re-pin** | 2026-08-22 22:00:39 | `636012cc00d9` (2026-08-18) |
-| engine | zcrypto | `636012cc00d9` — same build, **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-19 21:27:23 | `419feafc304f` (2026-08-16) |
+| engine | zcrypto | `03d4cf1b8df7` — spec `00098`, revision `f54431a6`; adopted-order fills now reach their rows and `zcrypto_exec_external_events_total`. Still **DISARMED**: `exec_armed` renders false, no arm file; arming is the probe checklist's separate owner-worded act | 2026-08-23 10:21:03 | `636012cc00d9` (2026-08-19) |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` (v1.18.0, published 2026-07-20) | 2026-07-27 | `4f6ddc56ffdc` (v1.17.1) |
 | ops (timers + liquidations) | zcrypto-ops | `06919e5dc50c` — spec `00097` (the reconcile cycle stops scaling with volume), revision `52b12ca1`; the liquidations container roll is always a separate act — see Standing constraints | 2026-08-21 18:03:00 | `6b4c13899653` (2026-08-20) |
 | archive-pull | nas | `5f890c26237a` — the `-compat` build of `e0757909`; repo pin `nas_capture_image` (`infra/ansible/host_vars/nas/vars.yml`), the one surface whose pin is a committed file | 2026-08-15 13:40:38 | `620114511f19` (2026-07-17) |
