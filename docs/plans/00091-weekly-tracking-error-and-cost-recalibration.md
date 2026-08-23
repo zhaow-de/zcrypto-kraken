@@ -32,7 +32,7 @@
 - **Partial ISO weeks carry no verdict**, and are marked. The gate needs ≥3 complete weeks. **Rung-2 weeks are measured but not gate-eligible.**
 - **"No data" means the realized series never started** — never "this week was quiet" (spec D10).
 - Every command flag documented in `README.md` `## Usage` in the same change (`readme-usage.md`).
-- Loggers are `get_logger("engine.tracking")`. Match `cli/engine/feeders.py`'s docstring register: state WHY, name the failure the code prevents.
+- Loggers are `get_logger("engine.tracking")` from `cli.logging` (a package — there is no `cli.logging_setup`). Match `cli/engine/feeders.py`'s docstring register: state WHY, name the failure the code prevents.
 - **No internal traceability vocabulary on operator-visible surfaces** (`operator-facing-text.md`); `tests/test_internal_terms_not_operator_visible.py` enforces it.
 - **Findings discovered mid-implementation are resolved in this branch** — fold them onto the surface that owns them, or drop them with the reasoning written down. Do not open a new `T<NNNN>` topic.
 
@@ -195,7 +195,7 @@ from typing import NamedTuple
 from cli.engine.errors import EngineError
 from cli.engine.instruments import EUR_CODES
 from cli.engine.store import BASKET
-from cli.logging_setup import get_logger
+from cli.logging import get_logger
 
 logger = get_logger("engine.tracking")
 
@@ -302,8 +302,11 @@ from cli.engine.tracking import Fill, realized_drift, weekly_tracking
 _MINIMUMS = {"BTC": (0.00005, 0.45)}
 
 def _stage(ts, *, weight=1.0, close=50000.0):
-    return CycleStages(cycle_ts=datetime.fromisoformat(ts), final={"BTC": weight},
-                       closes={"BTC": close})
+    # CycleStages is a frozen dataclass with EIGHT required fields and no defaults; supplying
+    # three raises TypeError at construction, before any assertion is reached.
+    return CycleStages(cycle_ts=datetime.fromisoformat(ts), sleeve_positions={}, combined={},
+                       capped={}, final={"BTC": weight}, multiplier=1.0,
+                       closes={"BTC": close}, cap_bound=False)
 
 def _mk(boundary, qty, side="buy", px=50000.0):
     b = datetime.fromisoformat(boundary)
@@ -337,6 +340,12 @@ def test_a_fill_is_attributed_to_its_own_boundary_not_a_later_one():
     out = realized_drift(stages, [_mk("2026-08-31T04:00:00+00:00", 0.02)], 1000.0)
     assert out["cycles"][0]["drift_bps"] == pytest.approx(10000.0)  # nothing held yet
     assert out["cycles"][1]["drift_bps"] == pytest.approx(0.0)
+
+def test_a_fill_whose_boundary_has_no_cycle_is_refused_not_dropped():
+    # Dropping it would overstate drift for every later cycle with no note and no refusal.
+    with pytest.raises(EngineError, match="match no cycle"):
+        realized_drift([_stage("2026-08-31T00:00:00+00:00")],
+                       [_mk("2026-08-31T04:00:00+00:00", 0.02)], 1000.0)
 
 def test_a_fill_on_a_btc_quoted_leg_is_skipped_rather_than_inflating_a_base():
     b = datetime.fromisoformat("2026-08-31T00:00:00+00:00")
@@ -378,7 +387,7 @@ def test_a_rung_2_week_is_measured_but_not_gate_eligible():
 
 - [ ] **Step 2: Run and read WHICH assertion fails.** The nine new tests fail on `ImportError`; Task 1's ten still pass.
 
-- [ ] **Step 3: Implement.** Add to the module header: `import math`, and `from cli.engine.feeders import _CYCLES_PER_FULL_WEEK, _median, _p95, _weekly_drift, accumulation_payload`. Import `_median` too — the floor half uses it and it drops NaN, so `statistics.median` here would be the second convention the comment warns against.
+- [ ] **Step 3: Implement.** Add to the module header: `import math`, `from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload`. Import `_median` — the floor half uses it and it drops NaN, so `statistics.median` here would be a second convention. Do **not** import `_CYCLES_PER_FULL_WEEK`: completeness reaches this code only through `_weekly_drift`'s `partial` flag, so it has exactly one definition and a direct import would be unused (`ruff.toml` selects `I` only, so nothing in the gate would catch it).
 
 ```python
 def _iso_key(dt: datetime) -> tuple[int, int]:
@@ -406,6 +415,15 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
         if f.base is None:      # a /BTC leg: no model target, so no drift contribution
             continue
         by_boundary.setdefault(f.boundary, []).append(f)
+    # A fill whose boundary journaled no cycle artifact (a failed cycle writes only a sidecar) or
+    # that falls outside the window would never enter `held`, overstating drift for every later
+    # cycle -- silently, and on component C that is a spurious kill-file trip.
+    orphans = sorted({b.isoformat() for b in by_boundary} - {s.cycle_ts.isoformat() for s in ordered})
+    if orphans:
+        raise EngineError(
+            f"{len(orphans)} fill boundary(ies) match no cycle in the window ({orphans[:3]}...) -- "
+            "refusing to report a drift that silently omits their position"
+        )
     held: dict[str, float] = {}
     rows: list[dict] = []
     for s in ordered:
@@ -465,11 +483,21 @@ def weekly_tracking(stages, fills, minimums, nav, *, rung_by_week=None) -> dict:
     return {"weeks": weeks, "complete_gate_eligible_weeks": len(decided), "verdict": verdict}
 ```
 
-with `_GATE_MIN_WEEKS = 3` beside the other module constants. `_CYCLES_PER_FULL_WEEK` reaches the code only through `_weekly_drift`'s `partial` flag, so completeness has exactly one definition — do not import it separately.
+with `_GATE_MIN_WEEKS = 3` beside the other module constants.
 
 - [ ] **Step 4: Run to green.** → 19 passed.
 
-- [ ] **Step 5: Prove the arms bite, naming the assertion that must fire.** Via `mutate-probe.sh`: make the accumulation unsigned (`+ f.qty` always) → the round-trip test fails; apply fills by `f.at <= s.cycle_ts` → the attribution test fails; stop skipping `base is None` → the `/BTC` test fails; replace `started` with "has a fill this week" → the quiet-week test fails; set `_GATE_MIN_WEEKS = 1` → the partial-week verdict test fails; drop `rung != 2` → the rung-2 test fails.
+- [ ] **Step 5: Prove the arms bite, naming the assertion that must fire.** Three of these need a fixture built for them, or the mutation is unobservable — build the fixture first, then probe:
+
+| mutation | test that must fail | why the fixture matters |
+| --- | --- | --- |
+| unsigned accumulation (`+ f.qty` always) | the round-trip test | — |
+| apply fills by `f.at <= s.cycle_ts` | the attribution test | **needs a fill whose `at` falls past the next boundary** — every `_mk` fixture sets `at == boundary`, so the mutation is invisible against them. That skew IS the defect being guarded. |
+| stop skipping `base is None` | the `/BTC` test | — |
+| `started` → "has a fill this week" | the quiet-week test | — |
+| `_GATE_MIN_WEEKS = 1` | a verdict test | **needs a three-complete-week fixture that must read `pass`** — in the partial-week test `decided == []`, so `0 < 1` still yields `insufficient-data` and the assertion holds either way. |
+| drop `rung != 2` | the rung-2 test | **needs 42 stages inside one ISO week** — a one-stage fixture is `partial`, so `gate_eligible` is already False and the rung rule never runs. |
+| drop the orphan-boundary refusal | the orphan test | — |
 
 - [ ] **Step 6: Commit.** `feat(engine): realized weekly drift -- signed, boundary-attributed, quiet weeks measured`
 
@@ -513,6 +541,9 @@ def test_realized_fee_per_side_is_fees_over_priced_notional():
 def test_unpriced_fills_are_counted_but_excluded_from_the_rate():
     out = cost_blend([_cf(fee=0.1), _cf(fee=None)])
     assert (out["n_fills"], out["n_priced"]) == (2, 1)
+    # The RATE is what the mutation moves: dividing by gross (200) instead of priced notional
+    # (100) halves it, and a count-only assertion cannot see that.
+    assert out["realized_fee_per_side"] == pytest.approx(0.001)
 
 def test_no_priced_fills_proposes_nothing_rather_than_zero():
     out = cost_blend([_cf(fee=None)])
@@ -535,7 +566,7 @@ def test_the_dispersion_is_a_spread_not_a_deviation():
 
 - [ ] **Step 2: Run and read WHICH assertion fails.** Expected: `ImportError` on `cost_blend`.
 
-- [ ] **Step 3: Implement.**
+- [ ] **Step 3: Implement.** Add `from cli.portfolio.crossfreq_system import CrossfreqSystemConfig` to the module header — the code below constructs it, and only the test imported it before.
 
 ```python
 def cost_blend(fills: list[Fill]) -> dict:
@@ -607,6 +638,7 @@ def cost_blend(fills: list[Fill]) -> dict:
 **The two fixtures, specified.** `--simulated-fills` needs journaled snapshot **parquets** (`_snapshot_reader` resolves `journal_dir / entry.path` and raises when absent), so neither fixture can be synthesised JSON alone:
 - `real_journal_fixture` — a session-scoped fixture that copies a bounded slice of `/mnt/zhao-crypto/engine-journal` (three complete ISO weeks plus their referenced snapshot parquets) into `tmp_path_factory`. It **skips** when the mount is absent: `pytest.skip("engine journal mount not present")`.
 - `short_journal_fixture` — the same, sliced to one partial week.
+- `mixed_schema_fixture` — a two-record tree built in `tmp_path`, one `schema_version: 1` record and one `schema_version: 2`, with their snapshot parquets. Mount-free, so it runs in CI.
 - **CI has no mount, so these skip there.** What still covers D6 in CI: Tasks 1–3's fixture tests and their mutate-probes, which are mount-free. The end-to-end true-positive is a workstation gate, run in Step 5 and recorded in the closeout — state this in the test module's docstring so a green CI run is not misread as having exercised it.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -656,11 +688,20 @@ def test_a_window_straddling_the_schema_bump_says_so(mixed_schema_fixture):
     result = runner.invoke(app, ["engine", "tracking-report", "--journal-dir",
                                  str(mixed_schema_fixture), "--simulated-fills", "--nav", "1000"])
     assert "schema" in result.stdout.lower()
+
+def test_a_simulated_run_is_labelled_as_simulated(real_journal_fixture):
+    # Spec D6: the number is real-shaped but not real. An unlabelled one read in the go/no-go
+    # window is the whole hazard.
+    result = runner.invoke(app, ["engine", "tracking-report", "--journal-dir",
+                                 str(real_journal_fixture), "--simulated-fills", "--nav", "1000"])
+    assert "simulated" in result.stdout.lower()
 ```
 
 - [ ] **Step 2: Run and read WHICH assertion fails.** Expected: `No such command 'tracking-report'`.
 
 - [ ] **Step 3: Implement the Typer command**, following `accum_replay`'s structure (same inputs, same helpers): resolve journal, `_window_records`, `_snapshot_reader`, `replay_stages` per record, `load_minimums`, then `weekly_tracking` + `cost_blend` (+ `reconcile_ledger` when `--ledger-export` is given), then `_emit_report` with a payload carrying `n_failed`. Quote the venue-minimums snapshot stamp as `accum-replay` does.
+
+  Two output lines the tests above pin, and neither falls out of the arithmetic — write them deliberately: **the schema straddle** (collect the distinct `schema_version` values across the window's records; when more than one, say so in the text and carry the set in the payload) and **the simulated label** (when `--simulated-fills` is set, the text says the fills are simulated and the payload carries the flag).
 
 - [ ] **Step 4: Run to green.**
 
