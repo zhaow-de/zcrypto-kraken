@@ -32,6 +32,8 @@
 - **The euro has two spellings**: `("EUR", "ZEUR")`. Never test `== "EUR"`.
 - **Partial ISO weeks carry no verdict**, and are marked. The gate needs ≥3 complete weeks. **Rung-2 weeks are measured but not gate-eligible.**
 - **"No data" means the realized series never started** — never "this week was quiet" (spec D10).
+- **A week STRADDLING the first fill is measured but not gate-eligible**, for the same reason a partial week is not: its mean is not comparable to a full week's. Measured on a 42-cycle week whose first fill lands at cycle 21, the twenty pre-fill cycles each contribute the full 10000 bps and the week reads 4761.9 bps — so the FIRST week of live trading would be systematically biased toward `fail`, in exactly the go/no-go window this report exists for. Report the number, exclude it from the verdict.
+- **A degenerate fixture proves nothing about a comparison.** Any fixture where the floor and the realized side are both exactly 0.0 leaves `<=` vs `>=` unpinned — the single arithmetic the gate rests on. Every band comparison needs a fixture where the two sides DIFFER, and the suite needs a case that reaches the `fail` verdict.
 - Every command flag documented in `README.md` `## Usage` in the same change (`readme-usage.md`).
 - Loggers are `get_logger("engine.tracking")` from `cli.logging` (a package — there is no `cli.logging_setup`). Match `cli/engine/feeders.py`'s docstring register: state WHY, name the failure the code prevents.
 - **No internal traceability vocabulary on operator-visible surfaces** (`operator-facing-text.md`); `tests/test_internal_terms_not_operator_visible.py` enforces it.
@@ -943,6 +945,7 @@ def test_validate_record_refuses_a_pair_keyed_closes():
 - Test: `tests/test_config.py`, `tests/test_engine_execledger.py`, `tests/test_engine_executor.py`
 
 **Interfaces:**
+- **Requirement inherited from Task 2's review:** `drift_bps` raises a bare `KeyError` when `closes` lacks an asset present in `final`. On component A that is unreachable — `replay_stages` builds both over the same asset set and raises `EngineError` first — but on THIS path the inputs are journaled artifacts that can disagree, so component C must check `set(final) <= set(closes)` and refuse the week rather than propagate a `KeyError`. The refusal is owed here, not in `drift_bps`, which would otherwise be guarding a door with no caller.
 - Consumes: `tracking.drift_bps` (Task 2's shared core — plain dicts), `tracking.extract_fills`, the journaled `closes` (Task 6), `EngineConfig.shadow_nav_eur`, `self._trip_kill(reason)`.
 - Produces: `EngineConfig.tracking_band_bps: float | None`; `execledger.exec_records_for_week(journal_dir, iso_key)`; `executor._evaluate_tracking_band(now)`; a rendered gauge.
 
