@@ -13,6 +13,17 @@ def test_pinned_version():
     assert nautilus_trader.__version__ == "1.231.0"
 
 
+def test_the_gates_version_reader_reports_the_really_installed_version():
+    """The production reader's only direct true-positive. Every gate test injects a reader or
+    patches this function, so an always-'' implementation -- a renamed attribute, a swallowed
+    import error -- would ship green while making the arming gate refuse unconditionally. Asserted
+    here because this module already imports nautilus_trader and pays the cost anyway."""
+    from cli.engine.execgate import _installed_nautilus_version
+
+    assert _installed_nautilus_version() == nautilus_trader.__version__
+    assert _installed_nautilus_version() != ""
+
+
 def test_kraken_adapter_config_and_factories_import():
     assert KrakenDataClientConfig is not None
     assert KrakenExecClientConfig is not None

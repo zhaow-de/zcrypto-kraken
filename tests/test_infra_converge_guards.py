@@ -722,14 +722,68 @@ TEMPLATED_ARMED = "exec_enabled = true\nexec_armed = {{ engine_exec_armed }}\nsh
 VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.230.0",\n]\n'
 UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader==1.231.0",\n]\n'
 NO_PIN = 'dependencies = [\n    "polars==1.0.0",\n]\n'
+# A pin that is a PREFIX of the recorded version. This is the only shape that exercises Jinja's
+# substring containment in the direction that used to vouch: "1.230" IS in "1.230.0".
+PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
 RECORD = ["1.230.0"]
+_UNSET = object()  # so a test can pass record=None and mean it
 
 
-def _arming_vars(template: str, pyproject: str, override: str = "", record=None) -> dict:
+@pytest.mark.parametrize(
+    ("record", "why"),
+    [
+        # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
+        # comma-joined string VOUCHES for a version it never verified -- measured: this exact shape
+        # passed an armed converge on 1.231.0 before the shape check landed.
+        ("1.230.0, 1.231.0", "a comma-joined string"),
+        # ...and KEY containment on a mapping, which vouches the same way.
+        ({"1.231.0": "note"}, "a mapping keyed by version"),
+        (None, "null"),
+        (42, "a scalar that is not even a sequence"),
+        ("", "an empty string"),
+    ],
+)
+def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(record, why):
+    """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse.
+
+    Without the shape check the assert fails OPEN on these: `in` against a string or a mapping is
+    containment, not membership, so the guard would vouch for an unverified version. The Python
+    half (cli/engine/execgate) rejects the same shapes via isinstance, so the two agree.
+    """
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, record=record)
+    assert not truthy(assert_that(task), variables), why
+
+
+def test_arming_backstop_refuses_a_pin_that_is_only_a_PREFIX_of_a_string_record():
+    """The one case that pins substring containment in the direction that actually failed open.
+
+    A bare string record against an UNVERIFIED pin is not evidence: "1.231.0" is not a substring of
+    "1.230.0", so it refuses under the committed expression, under a string-check-removed mutant,
+    and under the original unfixed expression alike. Only a pin that is a PREFIX of the recorded
+    version discriminates -- measured, `"1.230" in "1.230.0"` is True, so before the shape check
+    this exact input passed an ARMED converge on a version nobody ever verified.
+    """
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record="1.230.0")
+    assert not truthy(assert_that(task), variables)
+    # ...and the same prefix pin against a PROPER list record refuses too, on plain non-membership.
+    assert not truthy(assert_that(task), _arming_vars(ARMED_TEMPLATE, PREFIX_PIN, record=["1.230.0"]))
+
+
+def test_a_malformed_record_still_leaves_a_disarmed_converge_alone():
+    """Inertness survives the shape check: a broken record must not block the disarmed converges
+    the fleet actually runs -- only an ARMED one is ever refused on it."""
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(DISARMED_TEMPLATE, UNVERIFIED_PIN, record="1.230.0, 1.231.0")
+    assert truthy(assert_that(task), variables)
+
+
+def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSET) -> dict:
     return {
         "engine_config_template_text": template,
         "engine_pyproject_text": pyproject,
-        "engine_verified_nautilus": RECORD if record is None else record,
+        "engine_verified_nautilus": RECORD if record is _UNSET else record,
         "arming_override": override,
     }
 
