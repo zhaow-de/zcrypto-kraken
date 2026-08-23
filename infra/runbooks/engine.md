@@ -264,7 +264,7 @@ PY
    sudo docker exec zcrypto-engine python -c "import nautilus_trader; print(nautilus_trader.__version__)"
    ```
 
-   Then confirm a `docs/research/` verification doc exists for **exactly that version** and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new verification doc. Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
+   Then confirm a `docs/research/` verification doc exists for **exactly that version** and records a PASS. If none does, **do not arm**: run the order-semantics probes on that version first and write them up in a new verification doc — the harness is `infra/scripts/kraken-order-semantics-probe.py` and the attended procedure is [`order-semantics-verification.md`](order-semantics-verification.md). Never reason that the previous version's PASS "probably still holds" — that is the whole reason this gate exists.
 
    **This step is enforced mechanically in TWO places, and they are complementary — do not delete either as duplicative of the other.** Both read the same committed record, `cli/engine/order-semantics-verified.json` (it lives under `cli/` because the engine image copies only that directory, so a record under `infra/` would be unreachable from the running engine):
 

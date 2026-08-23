@@ -46,6 +46,10 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 - [`zcrypto-venue-snapshot-stale`](engine.md#zcrypto-venue-snapshot-stale) — ALERT: no successful venue-truth snapshot has landed in over five hours.
 - [`engine-probe-window`](engine.md#engine-probe-window) — PROCEDURE: the attended live-order probe window, and the only sanctioned way to run one. Nothing fires this; you open it deliberately, and real money moves.
 
+### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
+
+- [`order-semantics-verification`](order-semantics-verification.md#5-the-run) — PROCEDURE: the attended ~EUR 0.20 six-probe pass a nautilus bump owes before the engine may be armed on it. Nothing fires this; you run it deliberately, and real money moves.
+
 ### [`reference-data.md`](reference-data.md) — facts a third party owns
 
 - [`refdata-sweep-due`](reference-data.md#refdata-sweep-due) — SCHEDULED REMINDER: the Kraken reference-data re-confirmation sweep is due. Nothing is wrong.
