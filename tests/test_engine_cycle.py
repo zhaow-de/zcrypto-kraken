@@ -243,6 +243,31 @@ def test_the_success_record_journals_a_base_keyed_position_from_venue_state(tmp_
     assert record.held == {"BTC": 0.5, "ETH": -2.0}
 
 
+def test_a_non_finite_venue_quantity_journals_no_position_rather_than_failing_the_record(tmp_path, monkeypatch):
+    """A non-finite quantity must not reach the record, and must not take the cycle down with it.
+
+    `validate_record` runs AFTER `_append_orders`, so a value that only fails there would leave an
+    orders block with no `cycle-<HH>.json` behind it -- which the next boundary's `_previous_success`
+    silently globs past. Venue truth never blocks the cycle: absence is the honest answer.
+    """
+    from cli.engine.venuestate import VenueState
+
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    vs = VenueState(
+        snapshot_at=CYCLE_TS,
+        instruments={},
+        positions={"BTC/EUR": float("nan"), "ETH/EUR": -2.0},
+        balances={"EUR": 100.0},
+    )
+
+    result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock(), venue_state=vs)
+
+    # The cycle still succeeded -- a record exists, and it validates.
+    record = from_json(result.record_path.read_text())
+    validate_record(record)
+    assert record.held is None
+
+
 def test_a_cycle_without_a_venue_read_journals_no_position(tmp_path, monkeypatch):
     """`venue_state` is None whenever the snapshot raised -- the node logs and proceeds. Absence is
     the honest answer; a zeroed book would read as FLAT, which is a real position and not the same

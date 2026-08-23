@@ -212,6 +212,10 @@ def replay_stages(record: CycleRecord, reader: Reader, *, config: CrossfreqSyste
         multiplier=multiplier,
         closes=closes,
         cap_bound=any(abs(capped[a] - combined[a]) > 1e-15 for a in c.assets),
+        # Carried for the same reason `executor._stage` carries it: the number a human bands and
+        # the number the engine trips on must come from the same NAV. Omitting it here would band
+        # the report at the LIVE value while the trip scored the journaled one.
+        nav=record.nav,
     )
 
 

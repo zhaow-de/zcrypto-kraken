@@ -846,6 +846,22 @@ def test_replay_stages_rebuilds_a_schema_2_record_and_stays_base_keyed():
     assert all(record.final_targets[leg] == 0.0 for leg in BASKET if not leg.endswith("/EUR"))
 
 
+def test_replay_stages_carries_the_records_journaled_nav():
+    """The REPORT path must score a cycle under the same NAV the engine's trip does.
+
+    `executor._stage` and `replay_stages` are the two producers of `CycleStages`, and they feed the
+    same `realized_drift`. If only one carries `nav`, a `shadow_nav_eur` change bands the human off
+    the weekly report at the LIVE value while the engine trips at the journaled one -- the exact
+    divergence `drift_bps`'s docstring says the shared core exists to prevent.
+    """
+    from dataclasses import replace
+
+    record, reader, _ = _v2_record_and_reader()
+    assert replay_stages(replace(record, nav=1234.5), reader).nav == 1234.5
+    # A record written before the widening carries no NAV; the caller's scalar is the fallback.
+    assert replay_stages(replace(record, nav=None), reader).nav is None
+
+
 def test_decompose_and_accum_replay_survive_a_schema_2_record():
     """Both feeder reports, end to end on a v2 record. Before the contraction landed, the builder
     raised PortfolioError here -- and because that is not an EngineError, `n_failed` would never

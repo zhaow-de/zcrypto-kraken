@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: every cycle record inside the 60-day journal retention carries a journaled `held` — i.e. the retention horizon has passed the deploy of the widening
+ripe_when: the oldest cycle record in the engine journal postdates the deploy of the `held` widening — read the oldest `cycle-<HH>.json` on the engine host and compare against that converge; the 60-day retention makes this arrive on its own
 ---
 
 # The cycle record carries `closes` but not the NAV or the position the drift was computed against
@@ -47,6 +47,8 @@ Both were found by construction, not argument: the pruned-head case made spec `0
 
 **What remains is the position half's CONSUMPTION, and it is gated on time rather than on work.**
 
+- **Decide first what a `held=None` cycle means to the consumer, because that case never goes away.** A venue read can fail at any boundary, and the writer journals no book rather than a zeroed one (a zeroed book reads as FLAT, which is a real position). So the consumer cannot simply require the field — it needs a defined behaviour for a hole in the middle of an otherwise journaled week, and "fall back to fill accumulation for that cycle" is not one, since accumulation is cumulative and cannot be restarted mid-week. Refusing the week is the honest candidate; settle it before writing the consumption.
 - Make the trip read the journaled `held` instead of accumulating fills, then retire the birth record, the mint recency bound, and the oldest-boundary refusal — all three exist only to detect a truncated fill history, which a journaled position removes the need for entirely.
 - **This cannot be done at the widening, and the reason is the straddle.** A week scored shortly after deploy can span cycles written before it, which carry no `held`; a scorer reading the journaled value for some cycles and accumulating fills for others would mix two position sources inside one week. The change becomes safe only once every record inside the 60-day retention carries the field — that is the `ripe_when`, and it is a clock, not a task.
+- **Re-true the runbook's arming section IN THE DEPLOY that ships this, not before.** `infra/runbooks/engine.md` requires the band disarmed across any `shadow_nav_eur` change; that instruction is still CORRECT while the engine runs an image without the per-cycle NAV, and an operator who reads a re-trued runbook against the old image would skip a disarm that is still owed. The code comment it cited has already been re-trued, since it describes the code it sits in.
 - Until then the three guards stay live and correct: they convert a truncated fill history into a loud refusal rather than a false kill, which is exactly what is still needed while some cycles have no journaled position.

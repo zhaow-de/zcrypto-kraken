@@ -500,6 +500,18 @@ def test_validate_record_refuses_a_non_positive_nav():
             validate_record(_record(nav=bad))
 
 
+def test_from_json_type_guards_nav_at_read_time():
+    """`closes` and `held` are coerced at READ time because several callers read a record without
+    ever calling `validate_record`. `nav` needs the same guard, and `bool` is the case a plain
+    isinstance check misses: `True` is an `int`, `isfinite(True)` is True, and it is > 0 -- so a
+    corrupted `"nav": true` would clear every downstream check and score the cycle at NAV=1."""
+    payload = json.loads(to_json(_record(nav=1000.0)))
+    for bad in (True, "1000", [1000]):
+        payload["nav"] = bad
+        with pytest.raises(EngineJournalError, match="nav"):
+            from_json(json.dumps(payload))
+
+
 def test_validate_record_refuses_a_pair_keyed_held():
     # held is SIGNED BASE UNITS in the model's key space, exactly like closes.
     with pytest.raises(EngineJournalError, match="held"):

@@ -115,7 +115,10 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
     if "shadow_nav_eur" in raw:
         value = raw["shadow_nav_eur"]
         # bool is a subclass of int — reject it explicitly.
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        # `nan`/`inf` are valid TOML floats and `nan <= 0` is False, so finiteness needs its own
+        # check -- otherwise the value only fails at the cycle record's validation, after the
+        # cycle has already appended its orders.
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ConfigError(f"[{CONFIG_TABLE}.engine].shadow_nav_eur in {config_path} must be a positive number")
         overrides["shadow_nav_eur"] = float(value)
 

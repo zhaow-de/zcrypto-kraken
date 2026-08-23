@@ -68,6 +68,18 @@ class CycleRecord:
     held: dict[str, float] | None = None
 
 
+def _as_positive_float(value: object) -> float:
+    """Coerce a journaled `nav` at READ time, not only at validate time: several callers read a
+    record without ever calling `validate_record`, and a bool passes every isinstance check an int
+    does -- `"nav": true` would otherwise score a whole cycle at NAV=1."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise EngineJournalError(f"nav must be a number, got {value!r}")
+    out = float(value)
+    if not math.isfinite(out) or out <= 0:
+        raise EngineJournalError(f"nav must be finite and positive, got {value!r}")
+    return out
+
+
 def _epoch_seconds(ts: datetime) -> int:
     """Whole-second UTC epoch time for a bar-start stamp. A naive datetime is treated as already-UTC
     (this repo's bar-timestamp convention); an aware one is converted to UTC first."""
@@ -293,7 +305,7 @@ def from_json(s: str) -> CycleRecord:
             # closes is a list or a scalar raises here rather than loading clean -- several callers
             # read a record without ever calling validate_record.
             closes=dict(raw) if (raw := payload.get("closes")) is not None else None,
-            nav=payload.get("nav"),
+            nav=None if (rawn := payload.get("nav")) is None else _as_positive_float(rawn),
             held=dict(rawh) if (rawh := payload.get("held")) is not None else None,
         )
     except (KeyError, TypeError, ValueError) as exc:

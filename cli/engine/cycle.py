@@ -510,6 +510,30 @@ def _record_venue_state(config: EngineConfig, cycle_ts: datetime, venue_state: V
     }
 
 
+def _narrow_held(venue_state: VenueState | None) -> dict[str, float] | None:
+    """The venue's book narrowed to the model's BASE key space over the /EUR legs.
+
+    None whenever the venue cannot supply a usable book -- a failed read, or a non-finite quantity.
+    Absence is the honest answer there; a zeroed book would read as FLAT, which is a real position.
+    A non-finite quantity must not become a journaled value: `validate_record` runs AFTER
+    `_append_orders`, so refusing it there would leave an orders block with no cycle record behind
+    it -- and venue truth never blocks the cycle.
+    """
+    if venue_state is None:
+        return None
+    held = {}
+    for symbol, qty in venue_state.positions.items():
+        if not symbol.endswith("/EUR"):
+            # A /BTC leg's base is already carried by that base's /EUR leg; folding it in
+            # would double-count.
+            continue
+        if not math.isfinite(qty):
+            logger.warning("run_cycle: venue position for %s is not finite (%r) -- journaling no held book", symbol, qty)
+            return None
+        held[symbol.split("/")[0]] = qty
+    return held
+
+
 def _failed(
     day_dir: Path,
     cycle_ts: datetime,
@@ -696,11 +720,7 @@ def run_cycle(
         # would double-count that base). None when the venue read failed: absence is the honest
         # answer, where a zeroed book would read as FLAT, which is a real position.
         nav=config.shadow_nav_eur,
-        held=(
-            None
-            if venue_state is None
-            else {symbol.split("/")[0]: qty for symbol, qty in venue_state.positions.items() if symbol.endswith("/EUR")}
-        ),
+        held=_narrow_held(venue_state),
     )
     validate_record(record)
     record_path = day_dir / f"cycle-{cycle_ts:%H}.json"
