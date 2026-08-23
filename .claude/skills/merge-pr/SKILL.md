@@ -59,9 +59,17 @@ if d.get("mergeStateStatus") == "BLOCKED":
     fails.append("mergeStateStatus=BLOCKED (branch protection: a required review or required check is unsatisfied)")
 if d.get("reviewDecision") == "CHANGES_REQUESTED":
     fails.append("reviewDecision=CHANGES_REQUESTED (a reviewer requested changes)")
-bad = [c for c in rollup if (c.get("conclusion") or c.get("state") or "").upper() in ("FAILURE","ERROR","CANCELLED","TIMED_OUT","STARTUP_FAILURE")]
+_DONE = ("SUCCESS","NEUTRAL","SKIPPED")
+_BAD = ("FAILURE","ERROR","CANCELLED","TIMED_OUT","STARTUP_FAILURE")
+_state = lambda c: (c.get("conclusion") or c.get("state") or "").upper()
+bad = [c for c in rollup if _state(c) in _BAD]
 if bad:
     fails.append(str(len(bad)) + " CI check(s) failing")
+pending = [c for c in rollup if _state(c) not in _DONE + _BAD]
+if pending:
+    fails.append(str(len(pending)) + " CI check(s) still running — wait; nothing else blocks a merge on pending")
+if not rollup:
+    fails.append("no CI checks reported yet — wait for coverage.yml to register")
 if "- [ ]" in body:
     fails.append("PR description has unchecked checklist item(s) (- [ ])")
 if fails:
@@ -79,7 +87,7 @@ What each gate covers:
 2. **`mergeable == "MERGEABLE"`** — GitHub computed a clean (conflict-free) merge. `CONFLICTING` is a hard stop; `UNKNOWN` means GitHub is still computing — wait a few seconds and re-run (the gate refuses it).
 3. **`mergeStateStatus != "BLOCKED"`** — `BLOCKED` means branch protection is unsatisfied (required review missing or a required check failing). `CLEAN`, `UNSTABLE`, `BEHIND`, and `HAS_HOOKS` are all fine for a merge commit (being behind `develop` is reconciled by the merge; non-required checks don't block).
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` is null and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
-5. **No failing CI** — any `statusCheckRollup` entry in a failing state stops the merge. This repo's `coverage.yml` runs the test suite on **`pull_request` into `develop`/`main`** (only — there is no `push` trigger, so no redundant post-merge run), so a PR **does** report a "Test coverage" check (pytest + a Coveralls upload). Wait for it to finish and be green before merging: the gate above flags a *failing* check but does **not** yet block on a *still-running* one, so don't merge while it is in progress.
+5. **No failing and no still-running CI** — the gate blocks both, and blocking on *pending* is load-bearing rather than fussy: `develop` carries **no required status checks and no rulesets**, so GitHub itself will merge a PR whose CI is red or unfinished. This evaluator is the only gate. `coverage.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. That matters more since the pre-PR local full run was retired (`CLAUDE.md`): CI is now the only place the whole suite runs.
 6. **Checklist complete** — the PR description has no unchecked `- [ ]` task-list items (GitHub does not enforce these, so the gate parses the body).
 
 **If any gate fails:** report which one and why, ask the user to resolve it manually (update the branch, fix CI, get the review, check the boxes), then **STOP**. Do not merge.

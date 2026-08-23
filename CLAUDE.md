@@ -82,7 +82,11 @@ uv add --dev <pkg>      # add new dev deps
 
 Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
-The `uv run pytest` suite runs in ~19 minutes with both local data sources present — run it in full, or target a single test with `uv run pytest path::test` while iterating. Two families skip when their source is absent, as it is in CI: the regression tests need `data/ohlc-full`, and three `engine tracking-report` end-to-end tests need the engine-journal mount and cost ~7 minutes of the total (the rest of that file runs in ~11 seconds).
+**The pre-PR full-suite run is CI's — do not duplicate it locally.** `.github/workflows/coverage.yml` runs the whole suite on every PR into `develop` and a failing suite fails that check. Locally run the tests the diff can reach, targeting one with `uv run pytest path::test` while iterating. The full run takes ~19 minutes with both local data sources present.
+
+**Except what CI cannot run, which is not a short list.** ~24 tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard, sits on the live trade path, and skips in CI.
+
+**A change to `uv.lock`, `pyproject.toml` or a `conftest.py` reaches everything** — run the suite in full for those.
 
 ## Conventions
 
