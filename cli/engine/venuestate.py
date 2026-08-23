@@ -17,7 +17,7 @@ Two-layer failure design, deliberate:
   failure instead of discarding the whole snapshot (positions and balances on the other eleven
   legs stay evidence).
 
-`costmin` is NOT Cache-supplied at all (spec 00089 D5a, measured): probed against the installed
+`costmin` is NOT Cache-supplied at all (spec 00089 D5a, measured): probed against the
 nautilus-trader 1.230.0 Kraken adapter (`KrakenSpotHttpClient.request_instruments`,
 loopback-served canned `AssetPairs`), the compiled Rust parser reads `ordermin`/`tick_size` into
 `min_quantity`/`price_increment` correctly but never maps `costmin` into `min_notional` -- it
@@ -31,7 +31,7 @@ constant that failed all twelve legs on the first cycle would hold D6's alert re
 exact T0135 failure D2 exists to avoid).
 
 Instrument attribute names and the Position/Account surfaces are probe-confirmed, not guessed
-(nautilus-trader 1.230.0, installed): `Cache.instrument(InstrumentId) -> Instrument | None`,
+(measured on nautilus-trader 1.230.0): `Cache.instrument(InstrumentId) -> Instrument | None`,
 `Cache.positions_open(instrument_id=...) -> list[Position]` (`[]` when flat, not an error),
 `Cache.account_for_venue(venue=...) -> Account | None`. `CurrencyPair` carries `min_quantity`,
 `size_increment`, `price_increment` (all `Quantity`/`Price`, `float()`-able, or `None`).

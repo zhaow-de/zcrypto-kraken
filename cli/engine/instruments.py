@@ -38,7 +38,7 @@ from cli.engine.store import BASKET
 
 INSTRUMENT_IDS: dict[str, str] = {symbol: f"{symbol}.KRAKEN" for symbol in BASKET}
 
-# Committed, not read live (spec 00089 D5a, measured): the installed nautilus-trader 1.230.0
+# Committed, not read live (spec 00089 D5a, measured on nautilus-trader 1.230.0): that
 # Kraken adapter never maps Kraken's `costmin` onto `min_notional` -- the Cache instrument always
 # reads it back None (loopback-probed through the compiled parser, cli/engine/venuestate.py). The
 # engine host also carries no refdata snapshot (only /var/lib/zcrypto-engine and the config file
