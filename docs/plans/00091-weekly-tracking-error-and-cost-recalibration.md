@@ -26,6 +26,7 @@
 - **A fill is attributed to the boundary its submitted row was journaled under**, never by comparing its wall-clock stamp to a boundary (spec D3, post-decision attribution).
 - **The two `/BTC` legs are EXCLUDED from the drift half, and counted in the output.** `cycle._MODEL_SYMBOLS = tuple(s for s in BASKET if s.endswith("/EUR"))`, so `select_model_inputs` DROPS `ETH/BTC` and `SOL/BTC`; the model's targets are ten EUR bases, and folding a `/BTC` fill into `held["ETH"]` inflates held against a target that never included it.
 - **One key space per run.** Floors and targets are keyed by **base** (`"BTC"`); a journaled intent's `symbol` is a **pair** (`"BTC/EUR"`). Map pair → base once, at the reader's edge.
+- **A `reconciled` repair is real position change and MUST reach `held`.** `executor._reconcile_adopted_rows` journals `{"event": "reconciled", "qty": delta, "venue_filled_qty": …}` with `add_filled_qty=delta` — base quantity that filled at the venue while this process was down. It is not a fill (no `px`, no fee, deliberately) but it moves the position, so skipping it makes `held` under-report by exactly the repaired amount, silently, in a module whose contract is that a number nobody can stand behind is worse than none. It becomes a `Fill` with `px=None` and `fee=None`, signed by the row's `intent["side"]` like any other, and a note records it. **`px` is therefore `float | None`**, and anything computing notional skips px-less fills.
 - **`liquidity` is stored UPPERCASE** — `executor._liquidity` writes `"MAKER"` / `"TAKER"` / `"NO_LIQUIDITY_SIDE"` because `str()` on the pinned `LiquiditySide` `IntFlag` yields `"1"`. Match the stored casing: a lowercase-only match aborts every real fill while every lowercase fixture passes.
 - **`NO_LIQUIDITY_SIDE` is counted but unpriced, never an abort** (spec D5). Only a value the enum cannot name at all — `"1"` — aborts.
 - **The euro has two spellings**: `("EUR", "ZEUR")`. Never test `== "EUR"`.
@@ -88,9 +89,9 @@
 **Why the constant moves first.** `tracking.py` needs the euro spellings and `executor.py` will import `tracking` in Task 7. `executor.py` has all imports at module top and defines `_EUR_CODES` at line 109, so a direct `from cli.engine.executor import _EUR_CODES` is a hard circular import — `ImportError: cannot import name … from partially initialized module`, at engine start, on the live trade path. `instruments.py` is already a shared leaf (it imports only `store`, and `executor.py` line 47 already imports from it), and venue-spelling constants are exactly what it holds. **Do not** paper this over with a function-local import inside the executor: a deferred import on the trade path converts a start-time failure into a first-trip failure.
 
 **Interfaces:**
-- Produces: `instruments.EUR_CODES = ("EUR", "ZEUR")`; `tracking.Fill` (NamedTuple: `boundary: datetime`, `at: datetime`, `base: str`, `side: str`, `qty: float`, `px: float`, `fee: float | None`, `liquidity: str`, `trade_id: str`) and `tracking.extract_fills(records) -> tuple[list[Fill], list[str]]`.
+- Produces: `instruments.EUR_CODES = ("EUR", "ZEUR")`; `tracking.Fill` (NamedTuple: `boundary: datetime`, `at: datetime`, `base: str | None`, `side: str`, `qty: float`, `px: float | None`, `fee: float | None`, `liquidity: str`, `trade_id: str`) and `tracking.extract_fills(records) -> tuple[list[Fill], list[str]]`.
 
-- [ ] **Step 1: Move the constant.** Add `EUR_CODES = ("EUR", "ZEUR")` to `cli/engine/instruments.py` with the existing comment about Kraken's two spellings; in `cli/engine/executor.py` import it (`from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, …`), delete the local definition, and update both use sites (`_fee_eur` and the fill-payload path). Run `uv run pytest tests/test_engine_executor.py -q` — it must stay green; this is a pure move.
+- [ ] **Step 1: Move the constant.** Add `EUR_CODES = ("EUR", "ZEUR")` to `cli/engine/instruments.py` with the existing comment about Kraken's two spellings; in `cli/engine/executor.py` import it (`from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, …`), delete the local definition, and update both use sites — `_fee_eur`, and the realized-PnL loop over `position.realized_pnl` (NOT the fill-payload path: `_fill_payload` reaches the codes only indirectly, through `_fee_eur`). Grep for the exact count before and after. Run `uv run pytest tests/test_engine_executor.py -q` — it must stay green; this is a pure move.
 
 - [ ] **Step 2: Write the failing tests.**
 
@@ -637,13 +638,17 @@ def cost_blend(fills: list[Fill]) -> dict:
     Prices the FEE term only. `spread_per_side` is a separate, deliberately-kept term.
     """
     cfg = CrossfreqSystemConfig()
-    priced = [f for f in fills if f.fee is not None]
+    # A repair has no price by construction, so it is neither priced nor notional -- multiplying
+    # by its None px would raise, and counting it at zero would deflate the blend.
+    priced = [f for f in fills if f.fee is not None and f.px is not None]
     notional: dict[str, float] = {}
     for f in fills:
+        if f.px is None:
+            continue
         notional[f.liquidity] = notional.get(f.liquidity, 0.0) + abs(f.qty) * f.px
     maker, taker = notional.get("MAKER", 0.0), notional.get("TAKER", 0.0)
     gross = maker + taker
-    priced_notional = sum(abs(f.qty) * f.px for f in priced)
+    priced_notional = sum(abs(f.qty) * f.px for f in priced)  # every `priced` fill has a px
     per_fill = sorted(f.fee / (abs(f.qty) * f.px) for f in priced if f.qty and f.px)
     realized = (sum(f.fee for f in priced) / priced_notional) if priced_notional > 0 else None
     basis = (f"{len(priced)} euro-denominated fill(s) over {priced_notional:,.2f} EUR of notional"
