@@ -571,6 +571,6 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
     assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0"}), (
         "the record changed. If an attended order-semantics pass really ran, update this "
         "deliberately alongside the new docs/research/ verification doc -- and sweep the other "
-        "homes of 'only 1.230.0 is verified' named in the go-live topic's bump sub-item "
-        "(docs/open-topics/T0085-final-pre-golive-steps.md), including this file"
+        "homes of 'that version is unverified', enumerated in infra/runbooks/"
+        "order-semantics-verification.md's write-up step, including this file"
     )

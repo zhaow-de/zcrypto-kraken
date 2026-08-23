@@ -842,11 +842,14 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
 def test_arming_backstop_reads_the_real_committed_files():
     """The fixtures above are synthetic; this pins the guard to the tree it will actually read.
 
-    Today that means: the record holds 1.230.0 AND the pinned 1.231.0, whose attended pass ran on
-    2026-08-23 -- so against the real tree the guard now ALLOWS an armed converge on the pinned
-    version. That makes the true positive the load-bearing half here, and the bite is re-proved
-    against a record with the pinned version removed, so this test still fails if the guard ever
-    stops refusing.
+    Both directions are proved from the REAL role, template and pyproject, with the membership
+    list fed state-agnostically: the true positive gets the pinned version present, the bite gets
+    it absent. That is deliberate. "The repo may sit on a bumped version indefinitely while
+    disarmed" is a blessed state, so a test that asserted the pin IS recorded would go red for the
+    whole legitimate interim between a bump landing and its attended pass running -- pressuring
+    whoever met it into either editing the record early or routing around a red test. Whether the
+    pass has run is the RECORD's business, not this test's; this test only proves the guard reads
+    the real files and still bites.
     """
     record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
     versions = record["verified_nautilus_versions"]
@@ -855,11 +858,6 @@ def test_arming_backstop_reads_the_real_committed_files():
 
     assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
     assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
-    assert pin in versions, (
-        f"pyproject pins {pin} but the record does not list it -- no attended order-semantics "
-        f"pass has run for that version, so arming must stay refused. Never add it here without "
-        f"the docs/research/ verification doc recording its PASS."
-    )
     task = find_task(load_tasks(ENGINE), ARMING)
     armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
     base = {
@@ -867,8 +865,9 @@ def test_arming_backstop_reads_the_real_committed_files():
         "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
         "arming_override": "",
     }
-    # TRUE POSITIVE: the pinned version's pass really ran, so an armed converge is not refused.
-    assert truthy(assert_that(task), {**base, "engine_verified_nautilus": versions}), (
+    # TRUE POSITIVE: a recorded version must NOT be refused. Fed `versions + [pin]` rather than
+    # `versions` so this half holds in the interim where the bump has landed and its pass has not.
+    assert truthy(assert_that(task), {**base, "engine_verified_nautilus": [*versions, pin]}), (
         "the guard refuses an armed converge on a version the record lists as verified"
     )
     # THE BITE, against the real files: drop the pinned version and the guard must refuse again.

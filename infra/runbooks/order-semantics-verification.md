@@ -3,9 +3,11 @@
 <a name="order-semantics-verification"></a>
 
 Attended operator procedure for `infra/scripts/kraken-order-semantics-probe.py`, the six-probe protocol re-run demanded by the
-memo's **Version re-check rule** ("Any version bump must re-run the order-semantics probes … before
-the engine trades on the new version; until then the bump PR stays unmerged" —
-`docs/research/14.phase6-adapter-verification-1.230.0.md`). It is owed at **every** nautilus-trader bump, before the engine may be armed on the new version.
+memo's **Version re-check rule** ("a fresh ~€0.20 zero-fill + round-trip pass must re-run the
+order-semantics probes before the engine trades on the new version" —
+`docs/research/14.phase6-adapter-verification-1.230.0.md`). Nothing trades until the engine is armed by
+hand, so it gates **arming**, not merging: the repo may sit on a bumped version indefinitely while
+disarmed. It is owed at **every** nautilus-trader bump, before the engine may be armed on that version.
 
 **This places real orders on a live Kraken account.** Every step below runs in the main session, by
 hand, in order. Nothing here belongs in a subagent: host- and credential-touching steps die at the
@@ -319,7 +321,9 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 `kraken-order-semantics-probe.py` prints the table under
 `PROBE RESULTS -- paste these rows into this version's docs/research/ verification doc`, and writes
 `evidence-<stamp>.json` into `--evidence-dir` (default: the cwd) with the full event stream, every planned order, and every
-client order id. Paste the table; keep the JSON in the session scratchpad as the 2026-07-10 run did
+client order id. **Then sweep the homes of "<version> is unverified" in the SAME change**, or the next reader meets a contradiction — the act that satisfies the predicate updates none of the others: (1) add the version to `cli/engine/order-semantics-verified.json`, which clears BOTH guards at once since they share it; (2) the arming step in `engine.md`; (3) the previous version's `docs/research/` record; (4) the comment in `tests/test_nautilus_adapter.py`; (5) `tests/test_engine_execgate.py`, which pins the record's exact contents. The last two FAIL deliberately at step (1) and are the tripwire that routes the rest.
+
+Paste the table; keep the JSON in the session scratchpad as the 2026-07-10 run did
 ("the raw evidence JSONs are preserved in the session scratchpad").
 
 The memo update must state the version the verification now binds to, and anything the harness
