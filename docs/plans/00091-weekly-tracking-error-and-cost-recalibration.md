@@ -374,19 +374,58 @@ def test_before_any_fill_the_series_has_not_started():
     out = weekly_tracking([_stage("2026-08-31T00:00:00+00:00")], [], _MINIMUMS, 1000.0)
     assert out["weeks"][0]["realized_mean_bps"] is None
 
+def _full_week(monday="2026-08-31", **kw):
+    # 42 stages = 6 boundaries x 7 days, so `partial` is False and the rung rule is the ONLY
+    # thing that can make the week ineligible. A one-stage week is partial and would pass this
+    # test with the rung rule deleted.
+    day = date.fromisoformat(monday)
+    return [_stage(f"{day + timedelta(days=d)}T{h:02d}:00:00+00:00", **kw)
+            for d in range(7) for h in (0, 4, 8, 12, 16, 20)]
+
+def _tracking_fills(stages, nav=1000.0):
+    # A fill at every boundary that exactly meets that cycle's target -> realized drift 0.
+    out = []
+    for st in stages:
+        held = (nav * st.final["BTC"]) / st.closes["BTC"]
+        prev = sum(f.qty if f.side == "buy" else -f.qty for f in out)
+        delta = held - prev
+        if delta:
+            out.append(Fill(st.cycle_ts, st.cycle_ts, "BTC", "buy" if delta > 0 else "sell",
+                            abs(delta), st.closes["BTC"], 0.05, "MAKER", f"T-{st.cycle_ts}"))
+    return out
+
+def test_a_fill_whose_at_is_skewed_past_the_next_boundary_still_counts_at_its_own():
+    # Every other fixture sets at == boundary, which makes the "attribute by wall clock"
+    # mutation unobservable. This skew IS the defect being guarded.
+    b = datetime.fromisoformat("2026-08-31T00:00:00+00:00")
+    late = Fill(b, datetime.fromisoformat("2026-08-31T05:30:00+00:00"), "BTC", "buy",
+                0.02, 50000.0, 0.05, "MAKER", "T-late")
+    stages = [_stage("2026-08-31T00:00:00+00:00"), _stage("2026-08-31T04:00:00+00:00")]
+    out = realized_drift(stages, [late], 1000.0)
+    assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+
+def test_three_complete_weeks_within_band_read_pass():
+    # The only test that reaches a `pass` verdict -- without it the _GATE_MIN_WEEKS probe has
+    # nothing to fail against, since every other fixture yields insufficient-data either way.
+    stages = _full_week("2026-08-31") + _full_week("2026-09-07") + _full_week("2026-09-14")
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    assert out["complete_gate_eligible_weeks"] == 3
+    assert out["verdict"] == "pass"
+
 def test_a_rung_2_week_is_measured_but_not_gate_eligible():
     # Given a FILL, so the exclusion is what makes it ineligible -- without one this test would
     # pass with the rung-2 rule entirely removed.
-    out = weekly_tracking([_stage("2026-08-31T00:00:00+00:00")],
-                          [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0,
+    stages = _full_week("2026-08-31")
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0,
                           rung_by_week={"2026-W36": 2})
     wk = out["weeks"][0]
+    assert wk["complete"] is True, "a partial week would be ineligible whatever the rung rule"
     assert wk["rung"] == 2 and wk["gate_eligible"] is False
     assert wk["floor_p95_bps"] is not None
     assert out["complete_gate_eligible_weeks"] == 0
 ```
 
-- [ ] **Step 2: Run and read WHICH assertion fails.** The nine new tests fail on `ImportError`; Task 1's ten still pass.
+- [ ] **Step 2: Run and read WHICH assertion fails.** The thirteen new tests fail on `ImportError`; Task 1's ten still pass.
 
 - [ ] **Step 3: Implement.** Add to the module header: `import math`, `from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload`. Import `_median` — the floor half uses it and it drops NaN, so `statistics.median` here would be a second convention. Do **not** import `_CYCLES_PER_FULL_WEEK`: completeness reaches this code only through `_weekly_drift`'s `partial` flag, so it has exactly one definition and a direct import would be unused (`ruff.toml` selects `I` only, so nothing in the gate would catch it).
 
@@ -500,7 +539,7 @@ def weekly_tracking(stages, fills, minimums, nav, *, rung_by_week=None) -> dict:
 
 with `_GATE_MIN_WEEKS = 3` beside the other module constants.
 
-- [ ] **Step 4: Run to green.** → 19 passed.
+- [ ] **Step 4: Run to green.** → 23 passed.
 
 - [ ] **Step 5: Prove the arms bite, naming the assertion that must fire.** Three of these need a fixture built for them, or the mutation is unobservable — build the fixture first, then probe:
 
@@ -627,7 +666,7 @@ def cost_blend(fills: list[Fill]) -> dict:
 
 `notional` is built with `.get`, not a fixed two-key dict — `NO_LIQUIDITY_SIDE` is a legal value and a fixed dict would `KeyError` on it.
 
-- [ ] **Step 4: Run to green.** → 25 passed.
+- [ ] **Step 4: Run to green.** → 29 passed.
 
 - [ ] **Step 5: Prove the arms bite.** Weight by `len()` → the notional test fails; divide by `gross` instead of `priced_notional` → the unpriced test fails; return `0.0` when nothing is priced → the no-proposal test fails; read `builder.spot_fee_per_side` → the fee-term test fails.
 
@@ -643,6 +682,23 @@ def cost_blend(fills: list[Fill]) -> dict:
 
 **Interfaces:**
 - Produces: `zcrypto engine tracking-report [--journal-dir PATH] [--since ISO] [--until ISO] [--nav FLOAT (repeatable)] [--minimums PATH] [--ledger-export PATH] [--simulated-fills] [--json]`.
+- **Payload shape** (the tests assert these keys, so they are part of the interface, not an implementation detail):
+
+```python
+{
+  "tracking": weekly_tracking(stages, fills, minimums, nav, rung_by_week=…),   # weeks, verdict
+  "floor":    accumulation_payload(stages, minimums, [nav])["by_nav"][nav],    # window-wide p95
+  "cost":     cost_blend(fills),
+  "reconciliation": reconcile_ledger(...) or None,   # None when --ledger-export is absent
+  "schema_versions": [1, 2],                          # the distinct versions in the window
+  "simulated": bool,                                  # True under --simulated-fills
+  "n_failed": int,                                    # records that failed to replay, plus a
+                                                      # FAILED reconciliation -- `_emit_report`
+                                                      # raises typer.Exit(1) when truthy
+}
+```
+
+  `"floor"` is `accumulation_payload`'s per-NAV block **verbatim** — that block carries the window-wide `p95_drift_bps` comparable to `accum-replay`'s `by_nav["1000.0"]["p95_drift_bps"]`. `weekly_tracking`'s per-week `_p95` is a different quantity and will not match.
 
 **Flags match the sibling `accum-replay` exactly** — `--journal-dir`, and `--nav` repeatable with the same default list. A near-miss flag name on a sibling command is a papercut the operator hits in the go/no-go window.
 
@@ -651,7 +707,8 @@ def cost_blend(fills: list[Fill]) -> dict:
 **`--simulated-fills` is the true-positive, not a convenience.** Zero journaled fills exist, so without it every refusal in Tasks 1–3 could be an always-refusing guard shipping green. It takes `accumulation_payload`'s modelled placements as the fill source at the journaled close, labelled `"MAKER"` (the ladder is maker-first).
 
 **The two fixtures, specified.** `--simulated-fills` needs journaled snapshot **parquets** (`_snapshot_reader` resolves `journal_dir / entry.path` and raises when absent), so neither fixture can be synthesised JSON alone:
-- `real_journal_fixture` — a session-scoped fixture that copies a bounded slice of `/mnt/zhao-crypto/engine-journal` (three complete ISO weeks plus their referenced snapshot parquets) into `tmp_path_factory`. It **skips** when the mount is absent: `pytest.skip("engine journal mount not present")`.
+- `real_journal_fixture` — a session-scoped fixture that copies a bounded slice of `/mnt/zhao-crypto/engine-journal` (three complete ISO weeks plus their referenced snapshot parquets) into `tmp_path_factory`, **and a refdata snapshot alongside it**. It **skips** when the mount is absent: `pytest.skip("engine journal mount not present")`.
+- **Every invocation passes `--minimums` explicitly** (Tasks 4 and 5, all six). With it absent, `_resolve_minimums(None)` globs the refdata pattern under the *configured data dir*, so the tests would silently depend on the developer's own `data/snapshots` rather than on the fixture — and `test_the_command_writes_nothing` diffs mtimes only inside the fixture, so a write outside it would be invisible.
 - `short_journal_fixture` — the same, sliced to one partial week.
 - `mixed_schema_fixture` — a two-record tree built in `tmp_path`, one `schema_version: 1` record and one `schema_version: 2`, with their snapshot parquets. Mount-free, so it runs in CI.
 - **CI has no mount, so these skip there.** What still covers D6 in CI: Tasks 1–3's fixture tests and their mutate-probes, which are mount-free. The end-to-end true-positive is a workstation gate, run in Step 5 and recorded in the closeout — state this in the test module's docstring so a green CI run is not misread as having exercised it.
@@ -667,7 +724,10 @@ def test_simulated_fills_produce_a_non_degenerate_report(real_journal_fixture):
     payload = json.loads(result.stdout)
     weeks = payload["tracking"]["weeks"]
     assert weeks, "the replay produced no weeks at all"
-    assert any(w["floor_p95_bps"] > 0 for w in weeks), "a silently zeroed pipeline would pass 'it ran'"
+    # `_p95` returns NaN on an empty list and `_payload_json` maps non-finite floats to null,
+    # so a bare `> 0` would raise TypeError -- a red exit proving nothing about the pipeline.
+    assert any(isinstance(w["floor_p95_bps"], (int, float)) and w["floor_p95_bps"] > 0
+               for w in weeks), "a silently zeroed pipeline would pass 'it ran'"
 
 def test_the_floor_figures_match_accum_replay_for_the_same_window(real_journal_fixture):
     # One implementation, two callers -- and the two paths genuinely differ (accum-replay goes
