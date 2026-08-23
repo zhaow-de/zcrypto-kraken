@@ -5,7 +5,8 @@ import pytest
 
 from cli.engine.errors import EngineError
 from cli.engine.feeders import CycleStages
-from cli.engine.tracking import Fill, extract_fills, realized_drift, weekly_tracking
+from cli.engine.tracking import Fill, cost_blend, extract_fills, realized_drift, weekly_tracking
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 _BOUNDARY = "2026-09-01T00:00:00+00:00"
 
@@ -435,3 +436,96 @@ def test_a_rung_2_week_is_measured_but_not_gate_eligible():
     assert wk["rung"] == 2 and wk["gate_eligible"] is False
     assert wk["floor_p95_bps"] is not None
     assert out["complete_gate_eligible_weeks"] == 0
+
+
+def _cf(liquidity="MAKER", qty=1.0, px=100.0, fee=0.1, base="BTC"):
+    b = datetime.fromisoformat("2026-08-31T00:00:00+00:00")
+    return Fill(b, b, base, "buy", qty, px, fee, liquidity, "T-1")
+
+
+def test_the_blend_is_share_of_NOTIONAL_not_a_count_of_fills():
+    # One large taker fill beside nine tiny maker ones is a taker-heavy book; a count-weighted
+    # blend would call it 90% maker and under-price the cost.
+    #
+    # The two sides are deliberately heterogeneous in PRICE as well as quantity: at a shared px
+    # every fixture makes `abs(qty) * px` and `abs(qty)` yield the identical share, so a uniform
+    # one cannot tell notional-weighting from QUANTITY-weighting -- the likelier error across a
+    # basket whose prices span BTC to DOGE. Here notional reads 0.99108 and quantity 0.01099.
+    out = cost_blend([_cf("TAKER", qty=1.0, px=10000.0)] + [_cf("MAKER", qty=10.0, px=1.0) for _ in range(9)])
+    assert out["taker_share"] > 0.98
+    # Asserted, not assumed: without this the two shares could be the same number.
+    assert out["maker_share"] == pytest.approx(1 - out["taker_share"])
+
+
+def test_realized_fee_per_side_is_fees_over_priced_notional():
+    out = cost_blend([_cf(qty=1.0, px=100.0, fee=0.25)])
+    assert out["realized_fee_per_side"] == pytest.approx(0.0025)
+
+
+def test_unpriced_fills_are_counted_but_excluded_from_the_rate():
+    out = cost_blend([_cf(fee=0.1), _cf(fee=None)])
+    assert (out["n_fills"], out["n_priced"]) == (2, 1)
+    # The RATE is what the mutation moves: dividing by gross (200) instead of priced notional
+    # (100) halves it, and a count-only assertion cannot see that.
+    assert out["realized_fee_per_side"] == pytest.approx(0.001)
+
+
+def test_no_priced_fills_proposes_nothing_rather_than_zero():
+    out = cost_blend([_cf(fee=None)])
+    assert out["realized_fee_per_side"] is None and out["proposed_fee_per_side"] is None
+    assert "no euro-denominated fills" in out["basis"]
+
+
+def test_it_prices_the_fee_term_and_leaves_the_spread_alone():
+    out = cost_blend([_cf(qty=1.0, px=100.0, fee=0.25)])
+    cfg = CrossfreqSystemConfig()
+    assert out["current_fee_per_side"] == cfg.fee_per_side == 0.0040
+    assert out["current_spread_per_side"] == cfg.spread_per_side == 0.0020
+    assert out["proposed_fee_per_side"] == pytest.approx(0.0025)
+
+
+def test_the_dispersion_is_a_spread_not_a_deviation():
+    out = cost_blend([_cf(qty=1.0, px=100.0, fee=f) for f in (0.1, 0.2, 0.6)])
+    assert (out["per_fill_min"], out["per_fill_median"], out["per_fill_max"]) == (
+        pytest.approx(0.001),
+        pytest.approx(0.002),
+        pytest.approx(0.006),
+    )
+    assert "std" not in out and "stdev" not in out
+
+
+def test_an_unpriceable_side_is_left_out_of_the_blends_denominator():
+    # A NO_LIQUIDITY_SIDE fill nine times the maker's size. It is real trading and it is counted,
+    # but it carries no side to attribute, so putting its notional in `gross` would make BOTH
+    # shares understate the book they claim to split: maker reads 1.0 here, 0.1 if it is included.
+    out = cost_blend([_cf(qty=1.0, px=100.0), _cf("NO_LIQUIDITY_SIDE", qty=9.0, px=100.0, fee=None)])
+    assert out["n_fills"] == 2
+    assert out["maker_share"] == pytest.approx(1.0)
+    assert out["taker_share"] == pytest.approx(0.0)
+
+
+def test_a_repair_carries_no_price_and_is_skipped_rather_than_multiplied():
+    # The shape `extract_fills` emits for a venue repair: px None, fee None. Reaching it without
+    # the guard is `abs(qty) * None` -- a TypeError that takes the whole report down on the first
+    # repair in a real window.
+    out = cost_blend([_cf(qty=1.0, px=100.0, fee=0.1), _cf("NO_LIQUIDITY_SIDE", qty=5.0, px=None, fee=None)])
+    assert (out["n_fills"], out["n_priced"]) == (2, 1)
+    assert out["maker_share"] == pytest.approx(1.0)
+    assert out["realized_fee_per_side"] == pytest.approx(0.001)
+
+
+def test_a_zero_notional_fill_does_not_inflate_the_headline_rate():
+    # Its fee in the numerator with no notional in the denominator doubles the headline while the
+    # dispersion -- which already drops it -- still reads 0.001, so one payload contradicts itself.
+    out = cost_blend([_cf(qty=0.0, fee=0.1), _cf(qty=1.0, fee=0.1)])
+    assert out["realized_fee_per_side"] == pytest.approx(0.001)
+    assert out["realized_fee_per_side"] == pytest.approx(out["per_fill_median"])
+
+
+def test_priced_fills_carrying_no_notional_say_so_rather_than_claiming_none_were_priced():
+    # `basis` is a payload key `--json` consumers read straight out, so the sentence has to be true
+    # at source: these fills WERE euro-denominated, they just cannot carry a rate.
+    out = cost_blend([_cf(qty=0.0, fee=0.1)])
+    assert out["n_priced"] == 1
+    assert out["proposed_fee_per_side"] is None
+    assert "carry no notional" in out["basis"]

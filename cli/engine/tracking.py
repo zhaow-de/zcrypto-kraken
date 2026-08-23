@@ -16,6 +16,7 @@ from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumu
 from cli.engine.instruments import EUR_CODES
 from cli.engine.store import BASKET
 from cli.logging import get_logger
+from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 logger = get_logger("engine.tracking")
 
@@ -296,3 +297,64 @@ def weekly_tracking(
         "insufficient-data" if len(decided) < _GATE_MIN_WEEKS else "pass" if all(w["within_band"] for w in decided) else "fail"
     )
     return {"weeks": weeks, "complete_gate_eligible_weeks": len(decided), "verdict": verdict}
+
+
+def cost_blend(fills: list[Fill]) -> dict:
+    """The realized maker/taker blend and the fee-per-side it implies.
+
+    Weighted by NOTIONAL, never by fill count: one large taker fill beside nine tiny maker ones
+    is a taker-heavy book, and a count-weighted blend would under-price the cost the whole
+    portfolio is evaluated against.
+
+    Unpriced fills are COUNTED but not PRICED -- leaving their notional in the denominator while
+    dropping their fee from the numerator would silently deflate the rate. With nothing priced the
+    answer is None: a proposal of 0.0 reads as "trading is free" to whoever ratifies it.
+
+    Prices the FEE term only. `spread_per_side` is a separate, deliberately-kept term: the builder
+    seam is fed their SUM (`cost_per_side`), so proposing a fee-only rate against that sum would
+    silently delete the spread.
+    """
+    cfg = CrossfreqSystemConfig()
+    # A repair has no price by construction, so it is neither priced nor notional -- multiplying
+    # by its None px would raise, and counting it at zero would deflate the blend.
+    priced = [f for f in fills if f.fee is not None and f.px is not None]
+    notional: dict[str, float] = {}
+    for f in fills:
+        if f.px is None:
+            continue
+        # `.get`, not a fixed two-key dict: NO_LIQUIDITY_SIDE is a legal value the venue yields, and
+        # a fixed dict would KeyError on it.
+        notional[f.liquidity] = notional.get(f.liquidity, 0.0) + abs(f.qty) * f.px
+    maker, taker = notional.get("MAKER", 0.0), notional.get("TAKER", 0.0)
+    gross = maker + taker
+    priced_notional = sum(abs(f.qty) * f.px for f in priced)  # every `priced` fill has a px
+    per_fill = sorted(f.fee / (abs(f.qty) * f.px) for f in priced if f.qty and f.px)
+    # The numerator carries the same `if f.qty and f.px` filter as `per_fill`: a fee with no
+    # notional behind it inflates the headline rate while the dispersion already drops it, so one
+    # payload would contradict itself.
+    realized = (sum(f.fee for f in priced if f.qty and f.px) / priced_notional) if priced_notional > 0 else None
+    # Three branches, not two. "No euro-denominated fills" is false of a window whose priced fills
+    # simply carry no notional, and `basis` is a payload key read straight out of `--json`, so the
+    # sentence has to be true here rather than at whatever renders it.
+    if not priced:
+        basis = "no euro-denominated fills in the window -- no rate proposed"
+    elif realized is None:
+        basis = f"{len(priced)} euro-denominated fill(s) carry no notional -- no rate proposed"
+    else:
+        basis = f"{len(priced)} euro-denominated fill(s) over {priced_notional:,.2f} EUR of notional"
+    return {
+        "n_fills": len(fills),
+        "n_priced": len(priced),
+        "maker_share": (maker / gross) if gross > 0 else None,
+        "taker_share": (taker / gross) if gross > 0 else None,
+        "realized_fee_per_side": realized,
+        # min/median/max, never a standard deviation: a handful of probe-scale fills cannot support
+        # a parametric dispersion, and quoting one would dress up a sample of tens.
+        "per_fill_min": per_fill[0] if per_fill else None,
+        "per_fill_median": _median(per_fill) if per_fill else None,
+        "per_fill_max": per_fill[-1] if per_fill else None,
+        "current_fee_per_side": cfg.fee_per_side,
+        "current_spread_per_side": cfg.spread_per_side,
+        "proposed_fee_per_side": realized,
+        "basis": basis,
+    }
