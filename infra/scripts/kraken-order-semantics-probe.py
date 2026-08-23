@@ -1498,7 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"!! node.dispose raised: {exc!r}")
 
     print("\n" + "=" * 78)
-    print("PROBE RESULTS -- paste these rows into docs/research/14.phase6-adapter-verification.md")
+    print("PROBE RESULTS -- paste these rows into this version's docs/research/ verification doc")
     print("=" * 78)
     print(render_table(state.results))
 

@@ -796,7 +796,8 @@ def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSE
         (DISARMED_TEMPLATE, UNVERIFIED_PIN, True, "disarmed on an unverified version"),
         (DISARMED_TEMPLATE, VERIFIED_PIN, True, "disarmed on a verified version"),
         (DISARMED_TEMPLATE, NO_PIN, True, "disarmed with no nautilus pin at all"),
-        # THE CONSTRUCTED DEFECT: the first armed converge while 1.231.0 is unverified.
+        # THE CONSTRUCTED DEFECT: an armed converge on a version absent from the record. (1.231.0
+        # is verified in the REAL record since 2026-08-23; here RECORD is the synthetic ['1.230.0'].)
         (ARMED_TEMPLATE, UNVERIFIED_PIN, False, "armed on an unverified version"),
         # TRUE POSITIVE: a healthy armed converge on a verified version must PASS, or the guard
         # refuses every legitimate probe window and would simply be routed around.
@@ -841,8 +842,11 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
 def test_arming_backstop_reads_the_real_committed_files():
     """The fixtures above are synthetic; this pins the guard to the tree it will actually read.
 
-    Today that means: the record holds 1.230.0 and NOT the pinned 1.231.0, and the template is
-    disarmed -- so the guard is inert now and bites the moment someone flips the template.
+    Today that means: the record holds 1.230.0 AND the pinned 1.231.0, whose attended pass ran on
+    2026-08-23 -- so against the real tree the guard now ALLOWS an armed converge on the pinned
+    version. That makes the true positive the load-bearing half here, and the bite is re-proved
+    against a record with the pinned version removed, so this test still fails if the guard ever
+    stops refusing.
     """
     record = json.loads((REPO / "cli" / "engine" / "order-semantics-verified.json").read_text())
     versions = record["verified_nautilus_versions"]
@@ -851,21 +855,24 @@ def test_arming_backstop_reads_the_real_committed_files():
 
     assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
     assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
-    assert pin not in versions, (
-        f"pyproject pins {pin}, which the record now lists as verified -- if its attended "
-        f"order-semantics pass really ran, this test should be updated deliberately alongside "
-        f"the new docs/research/ verification doc"
+    assert pin in versions, (
+        f"pyproject pins {pin} but the record does not list it -- no attended order-semantics "
+        f"pass has run for that version, so arming must stay refused. Never add it here without "
+        f"the docs/research/ verification doc recording its PASS."
     )
-    # And the guard, fed exactly those real values, refuses an armed converge.
     task = find_task(load_tasks(ENGINE), ARMING)
     armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
-    variables = {
+    base = {
         "engine_config_template_text": armed,
         "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
-        "engine_verified_nautilus": versions,
         "arming_override": "",
     }
-    assert not truthy(assert_that(task), variables)
+    # TRUE POSITIVE: the pinned version's pass really ran, so an armed converge is not refused.
+    assert truthy(assert_that(task), {**base, "engine_verified_nautilus": versions}), (
+        "the guard refuses an armed converge on a version the record lists as verified"
+    )
+    # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
+    assert not truthy(assert_that(task), {**base, "engine_verified_nautilus": [v for v in versions if v != pin]})
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.

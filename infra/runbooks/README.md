@@ -48,7 +48,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 ### [`order-semantics-verification.md`](order-semantics-verification.md) — the adapter's order semantics on a new nautilus version
 
-- [`order-semantics-verification`](order-semantics-verification.md#5-the-run) — PROCEDURE: the attended ~EUR 0.20 six-probe pass a nautilus bump owes before the engine may be armed on it. Nothing fires this; you run it deliberately, and real money moves.
+- [`order-semantics-verification`](order-semantics-verification.md#order-semantics-verification) — PROCEDURE: the attended ~EUR 0.20 six-probe pass a nautilus bump owes before the engine may be armed on it. Nothing fires this; you run it deliberately, and real money moves.
 
 ### [`reference-data.md`](reference-data.md) — facts a third party owns
 

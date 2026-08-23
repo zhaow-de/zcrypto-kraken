@@ -1,9 +1,11 @@
 # Order-semantics verification runbook
 
+<a name="order-semantics-verification"></a>
+
 Attended operator procedure for `infra/scripts/kraken-order-semantics-probe.py`, the six-probe protocol re-run demanded by the
 memo's **Version re-check rule** ("Any version bump must re-run the order-semantics probes … before
 the engine trades on the new version; until then the bump PR stays unmerged" —
-`docs/research/14.phase6-adapter-verification.md`). It is owed at **every** nautilus-trader bump, before the engine may be armed on the new version.
+`docs/research/14.phase6-adapter-verification-1.230.0.md`). It is owed at **every** nautilus-trader bump, before the engine may be armed on the new version.
 
 **This places real orders on a live Kraken account.** Every step below runs in the main session, by
 hand, in order. Nothing here belongs in a subagent: host- and credential-touching steps die at the
@@ -315,7 +317,7 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 ### 7.4 Write it up
 
 `kraken-order-semantics-probe.py` prints the table under
-`PROBE RESULTS -- paste these rows into docs/research/14.phase6-adapter-verification.md`, and writes
+`PROBE RESULTS -- paste these rows into this version's docs/research/ verification doc`, and writes
 `evidence-<stamp>.json` into `--evidence-dir` (default: the cwd) with the full event stream, every planned order, and every
 client order id. Paste the table; keep the JSON in the session scratchpad as the 2026-07-10 run did
 ("the raw evidence JSONs are preserved in the session scratchpad").

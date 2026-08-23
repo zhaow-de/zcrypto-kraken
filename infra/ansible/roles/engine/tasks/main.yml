@@ -307,7 +307,7 @@
 #
 # The record is SHAPE-CHECKED before `in` is allowed to see it, and that is not defensive padding:
 # Jinja's `in` is SUBSTRING containment on a string and KEY containment on a mapping, so a record
-# whose list degraded to "1.230.0, 1.231.0" would VOUCH for the unverified 1.231.0, and a bare
+# whose list degraded to "1.230.0, 1.232.0" would VOUCH for the unverified 1.232.0, and a bare
 # "1.230.0" would vouch for the prefix "1.230". Both measured through this repo's templar harness.
 # Anything that is not a proper sequence collapses to [], which vouches for nothing — this guard's
 # contract is "cannot vouch => refuse", and a malformed record is exactly a cannot-vouch.

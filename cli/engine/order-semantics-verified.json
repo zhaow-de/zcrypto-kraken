@@ -4,10 +4,11 @@
   "_why_it_lives_under_cli": "The engine image copies only cli/ (infra/docker/Dockerfile), so a record under infra/ is unreachable from the running engine. It sits here so BOTH readers can use the same file; the Ansible role reaches it from the controller's repo tree.",
   "_never": "Never add a version without the docs/research/ verification doc that records its PASS.",
   "verified_nautilus_versions": [
-    "1.230.0"
+    "1.230.0",
+    "1.231.0"
   ],
   "_notes": {
-    "1.230.0": "docs/research/14.phase6-adapter-verification.md -- PASS on all six probes, attended 2026-07-10.",
-    "1.231.0": "DELIBERATELY ABSENT -- the repo pins it, the re-run has NOT happened, and the engine must not trade on it until a new docs/research/ verification doc records that it did."
+    "1.230.0": "docs/research/14.phase6-adapter-verification-1.230.0.md -- PASS on all six probes, attended 2026-07-10.",
+    "1.231.0": "docs/research/14.phase6-adapter-verification-1.231.0.md -- PASS on all six probes, attended 2026-08-23. Cost EUR 0.16 (two EUR 0.08 commissions + EUR 0.00093 spread); balance 99.84 -> 99.68 confirms it from venue truth. Post-only protection unchanged: accepted then venue-canceled, no OrderRejected."
   }
 }

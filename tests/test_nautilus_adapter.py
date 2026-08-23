@@ -4,12 +4,14 @@ from nautilus_trader.adapters.kraken.factories import KrakenLiveDataClientFactor
 
 
 def test_pinned_version():
-    # Pin is deliberate: docs/research/14.phase6-adapter-verification.md verifies the Kraken
+    # Pin is deliberate: docs/research/14.phase6-adapter-verification-1.230.0.md verifies the Kraken
     # adapter against 1.230.0, and a bump must still force a conscious re-verification
     # (see docs/specs/00039-phase6-kickoff-design.md). What moved is WHEN that re-verification
-    # is owed: the attended ~EUR 0.20 order-semantics pass is now a precondition of ARMING the
-    # engine on this version, not of merging the bump. It has NOT run for 1.231.0 -- the arming
-    # checklist in infra/runbooks/engine.md is where that obligation is enforced.
+    # is owed: the attended ~EUR 0.20 order-semantics pass is a precondition of ARMING the engine
+    # on this version, not of merging the bump. For 1.231.0 it RAN on 2026-08-23 --
+    # docs/research/14.phase6-adapter-verification-1.231.0.md, PASS on all six probes -- and the
+    # version is recorded in cli/engine/order-semantics-verified.json, which both arming guards
+    # read. The next bump owes its own pass; infra/runbooks/order-semantics-verification.md.
     assert nautilus_trader.__version__ == "1.231.0"
 
 

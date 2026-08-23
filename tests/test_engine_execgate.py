@@ -463,11 +463,11 @@ def _gate_on_version(tmp_path: Path, version: str) -> ExecutionGate:
 def test_an_unverified_running_nautilus_refuses_a_fully_armed_gate(tmp_path):
     """The constructed defect: both arming keys present, venue online, nothing held -- and the
     running adapter's order semantics have never been verified. Must refuse."""
-    verdict = _gate_on_version(tmp_path, "1.231.0").evaluate(NOW)
+    verdict = _gate_on_version(tmp_path, "1.232.0").evaluate(NOW)
 
     assert verdict.level == GateLevel.NONE
     assert "nautilus_unverified" in verdict.reasons
-    assert verdict.inputs["nautilus_version"] == "1.231.0"
+    assert verdict.inputs["nautilus_version"] == "1.232.0"
     assert verdict.inputs["nautilus_verified"] is False
 
 
@@ -552,7 +552,7 @@ def test_an_unusable_record_fails_closed_to_the_empty_set(tmp_path, monkeypatch,
 
     assert _verified_nautilus_versions() == frozenset(), why
     # ...and every version is refused through the gate, including the one really recorded.
-    for version in (_VERIFIED_VERSION, "1.231.0", ""):
+    for version in (_VERIFIED_VERSION, "1.231.0", "1.232.0", ""):
         verdict = _gate_on_version(tmp_path, version).evaluate(NOW)
         assert verdict.level == GateLevel.NONE
         assert "nautilus_unverified" in verdict.reasons
@@ -568,7 +568,7 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
     assert not (repo / "infra" / "ansible" / "order-semantics-verified.yml").exists()
     role = (repo / "infra" / "ansible" / "roles" / "engine" / "tasks" / "main.yml").read_text()
     assert "cli/engine/order-semantics-verified.json" in role
-    assert _verified_nautilus_versions() == frozenset({"1.230.0"}), (
+    assert _verified_nautilus_versions() == frozenset({"1.230.0", "1.231.0"}), (
         "the record changed. If an attended order-semantics pass really ran, update this "
         "deliberately alongside the new docs/research/ verification doc -- and sweep the other "
         "homes of 'only 1.230.0 is verified' named in the go-live topic's bump sub-item "
