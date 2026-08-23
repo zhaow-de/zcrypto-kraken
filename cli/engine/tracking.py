@@ -251,6 +251,11 @@ def weekly_tracking(
     "No data" means the realized series NEVER STARTED -- not that a week was quiet. A week with
     no fills but a non-zero `held` is fully measured, and is precisely the week a tracking-error
     trip exists to catch.
+
+    `rung_by_week` FAILS CLOSED: eligibility requires an explicit rung 3, so a caller that supplies
+    nothing decides nothing. The measurement half is untouched either way -- every week still
+    carries its floor p95 and its realized mean -- because withholding the verdict is the safe
+    direction while withholding the numbers is merely unhelpful.
     """
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
@@ -277,7 +282,10 @@ def weekly_tracking(
         # Ruled the same way a partial week is: the mean is not comparable to a settled week's, so
         # it is measured and reported, and excluded from the verdict.
         straddles = started and any(t < first_fill for t in week_cycles)
-        gate_eligible = complete and rung != 2 and not straddles
+        # `rung == 3`, never `rung != 2`: an absent rung must read INELIGIBLE. The inverted
+        # form reads a window nobody has classified as fully gate-eligible, which is a false
+        # `pass` on a live-trading gate and never a false `fail`.
+        gate_eligible = complete and rung == 3 and not straddles
         realized_mean = real_weeks[key]["mean_drift_bps"] if started else None
         floor_p95 = _p95(floor_cycles[key])
         weeks.append(

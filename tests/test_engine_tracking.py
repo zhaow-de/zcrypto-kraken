@@ -1,12 +1,37 @@
+"""The tracking module's arithmetic, and the `engine tracking-report` end-to-end true-positive.
+
+The end-to-end tests read `/mnt/zhao-crypto/engine-journal` and SKIP when that mount is absent --
+which it is in CI, so **a green CI run has not exercised the command against real journaled
+evidence**. What still covers the arithmetic there is this file's mount-free unit tests and the
+mount-free `mixed_schema_fixture` CLI tests; the real-journal end-to-end run is a workstation gate,
+run by hand and recorded at closeout.
+
+Replaying three complete ISO weeks means 126 cycles through the real builder (~3 minutes), so each
+distinct command line is invoked ONCE at session scope and the tests read that single run rather
+than re-invoking. The runs are read-only, so sharing them costs no isolation.
+"""
+
+import json
 import math
-from datetime import date, datetime, timedelta
+import shutil
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import NamedTuple
 
+import polars as pl
 import pytest
+from typer.testing import CliRunner
 
+from cli.__main__ import app
+from cli.config import load_config
 from cli.engine.errors import EngineError
 from cli.engine.feeders import CycleStages
+from cli.engine.journal import to_json
 from cli.engine.tracking import Fill, cost_blend, extract_fills, realized_drift, weekly_tracking
+from cli.ohlc.dataset import write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
+from tests import basket_fixture
 
 _BOUNDARY = "2026-09-01T00:00:00+00:00"
 
@@ -312,6 +337,12 @@ def _full_week(monday="2026-08-31", **kw):
     return [_stage(f"{day + timedelta(days=d)}T{h:02d}:00:00+00:00", **kw) for d in range(7) for h in (0, 4, 8, 12, 16, 20)]
 
 
+# Eligibility fails closed, so every band/verdict fixture must DECLARE its weeks rung 3 -- the
+# rung rule is not what those tests are about, and leaving it absent would make each of them pass
+# for the wrong reason (nothing decided at all).
+_RUNGS = {"2026-W36": 3, "2026-W37": 3, "2026-W38": 3}
+
+
 def _tracking_fills(stages, nav=1000.0):
     # A fill at every boundary that exactly meets that cycle's target -> realized drift 0.
     out = []
@@ -350,7 +381,7 @@ def test_three_complete_weeks_within_band_read_pass():
     # The only test that reaches a `pass` verdict -- without it the _GATE_MIN_WEEKS probe has
     # nothing to fail against, since every other fixture yields insufficient-data either way.
     stages = _full_week("2026-08-31") + _full_week("2026-09-07") + _full_week("2026-09-14")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
     assert out["complete_gate_eligible_weeks"] == 3
     assert out["verdict"] == "pass"
 
@@ -360,7 +391,7 @@ def test_two_complete_weeks_are_not_enough_for_a_verdict():
     # two in-band weeks read `pass` on less evidence than the gate requires, and no other fixture
     # notices: every remaining one has `decided == []`, which is short of any threshold.
     stages = _full_week("2026-08-31") + _full_week("2026-09-07")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
     assert out["complete_gate_eligible_weeks"] == 2
     assert out["verdict"] == "insufficient-data"
 
@@ -384,7 +415,7 @@ def test_a_realized_mean_strictly_inside_the_floor_band_reads_pass():
     # A single 1e-9 BTC fill against a 2e-7 target leaves the realized side at 0.0995 bps -- inside
     # a 0.1 floor, and inside it strictly. `<=` reads True here and `>=` reads False, which is the
     # only thing in the suite that pins which way the band comparison runs.
-    out = weekly_tracking(_light_weeks(), [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0)
+    out = weekly_tracking(_light_weeks(), [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
     wk = out["weeks"][0]
     assert wk["floor_p95_bps"] == pytest.approx(0.1)
     assert wk["realized_mean_bps"] == pytest.approx(0.0995)
@@ -395,7 +426,7 @@ def test_a_realized_mean_strictly_inside_the_floor_band_reads_pass():
 def test_a_realized_mean_outside_the_floor_band_reads_fail():
     # The only fixture that reaches `fail`. Same non-placing 0.1 bps floor; a 0.02 BTC fill against a
     # 2e-7 target leaves the book vastly over-deployed at 9999.9 bps.
-    out = weekly_tracking(_light_weeks(), [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0)
+    out = weekly_tracking(_light_weeks(), [_mk("2026-08-31T00:00:00+00:00", 0.02)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
     assert out["weeks"][0]["realized_mean_bps"] == pytest.approx(9999.9)
     assert all(w["within_band"] is False for w in out["weeks"])
     assert out["verdict"] == "fail"
@@ -405,7 +436,7 @@ def test_the_bands_edge_is_the_floors_p95_not_its_median():
     # The realized mean lands at 0.1638 -- inside the p95 edge at 1.0, outside a median edge at 0.1 --
     # so the two statistics return opposite verdicts on identical data.
     stages = _uneven_week("2026-08-31") + _uneven_week("2026-09-07") + _uneven_week("2026-09-14")
-    out = weekly_tracking(stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0)
+    out = weekly_tracking(stages, [_mk("2026-08-31T00:00:00+00:00", 1e-9)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
     wk = out["weeks"][0]
     assert wk["floor_p95_bps"] == pytest.approx(1.0)
     assert wk["realized_mean_bps"] == pytest.approx(0.1637857142857143)
@@ -418,19 +449,34 @@ def test_a_week_straddling_the_first_fill_is_measured_but_not_gate_eligible():
     # tracking, and it would bias the first live week toward `fail`. Ruled like a partial week:
     # reported, excluded from the verdict. `complete` is True, so only the straddle rule can do it.
     stages = _full_week("2026-08-31")
-    out = weekly_tracking(stages, [_mk(stages[20].cycle_ts.isoformat(), 0.02)], _MINIMUMS, 1000.0)
+    out = weekly_tracking(stages, [_mk(stages[20].cycle_ts.isoformat(), 0.02)], _MINIMUMS, 1000.0, rung_by_week=_RUNGS)
     wk = out["weeks"][0]
-    assert wk["complete"] is True and wk["rung"] is None
+    # rung 3 AND complete, so the straddle rule is the only remaining way to make it ineligible.
+    assert wk["complete"] is True and wk["rung"] == 3
     assert wk["realized_mean_bps"] == pytest.approx(4761.9047619047615)
     assert wk["gate_eligible"] is False and wk["within_band"] is None
     assert out["complete_gate_eligible_weeks"] == 0
+
+
+def test_with_no_rung_boundary_nothing_is_gate_eligible():
+    # THE SAFE DIRECTION, and the one an earlier draft inverted: absent operator input, a complete
+    # week must NOT count toward the verdict. The measurement half still runs -- withholding the
+    # verdict is safe, withholding the numbers is merely unhelpful.
+    stages = _full_week("2026-08-31")
+    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0)
+    wk = out["weeks"][0]
+    assert wk["complete"] is True and wk["rung"] is None and wk["gate_eligible"] is False
+    assert wk["floor_p95_bps"] is not None and wk["realized_mean_bps"] is not None
+    assert out["complete_gate_eligible_weeks"] == 0 and out["verdict"] == "insufficient-data"
 
 
 def test_a_rung_2_week_is_measured_but_not_gate_eligible():
     # Given a FILL, so the exclusion is what makes it ineligible -- without one this test would
     # pass with the rung-2 rule entirely removed.
     stages = _full_week("2026-08-31")
-    out = weekly_tracking(stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week={"2026-W36": 2})
+    out = weekly_tracking(
+        stages, _tracking_fills(stages), _MINIMUMS, 1000.0, rung_by_week={"2026-W36": 2}
+    )  # explicitly 2, not absent
     wk = out["weeks"][0]
     assert wk["complete"] is True, "a partial week would be ineligible whatever the rung rule"
     assert wk["rung"] == 2 and wk["gate_eligible"] is False
@@ -529,3 +575,311 @@ def test_priced_fills_carrying_no_notional_say_so_rather_than_claiming_none_were
     assert out["n_priced"] == 1
     assert out["proposed_fee_per_side"] is None
     assert "carry no notional" in out["basis"]
+
+
+# --- the command ---------------------------------------------------------------------------------
+
+runner = CliRunner()
+
+_JOURNAL_MOUNT = Path("/mnt/zhao-crypto/engine-journal")
+_REFDATA = Path(__file__).resolve().parents[1] / "data" / "snapshots" / "kraken-refdata-20260804T104009Z.json"
+# 2026-W29..W31, 42 cycles each: the shortest real slice that can decide a verdict at all (three
+# complete gate-eligible weeks is the floor `weekly_tracking` refuses below).
+_COMPLETE_WEEKS = ("2026-07-13", "2026-08-02")
+_FIRST_COMPLETE_WEEK = "2026-W29"
+# 2026-W28 -- the journal's own first, partial week (12 cycles).
+_PARTIAL_WEEK = ("2026-07-11", "2026-07-12")
+_SYNTH_TS = basket_fixture.CYCLE_TS
+# A Monday 00:00, so 42 consecutive 4h boundaries are exactly one COMPLETE ISO week -- the
+# smallest window in which a week can be gate-eligible at all, and mount-free, so the
+# fail-closed proof runs in CI rather than only where the journal is mounted.
+_SYNTH_WEEK_START = datetime(2026, 7, 13, tzinfo=UTC)
+_SYNTH_WEEK = "2026-W29"
+_MODEL_BASES = tuple(CrossfreqSystemConfig().assets)
+
+
+class _Slice(NamedTuple):
+    """A journal slice and the venue snapshot the run reads its minimums from.
+
+    `root` holds BOTH, and every mtime diff is taken over it: with `--minimums` pointing outside the
+    tree the diff walks, a write to the snapshot would be invisible to the writes-nothing test.
+    """
+
+    root: Path
+    journal: Path
+    minimums: Path
+
+
+def _copy_slice(root: Path, first: str, last: str) -> _Slice:
+    """Copy the mount's day directories in `[first, last]` -- records and the snapshot parquets they
+    reference -- plus a refdata snapshot, into a scratch tree. Never writes to the mount."""
+    if not _JOURNAL_MOUNT.is_dir():
+        pytest.skip("engine journal mount not present")
+    if not _REFDATA.exists():
+        pytest.skip("gitignored refdata snapshot absent")
+    journal = root / "journal"
+    journal.mkdir(parents=True)
+    for day in sorted(p for p in _JOURNAL_MOUNT.iterdir() if p.is_dir() and first <= p.name <= last):
+        shutil.copytree(day, journal / day.name)
+    minimums = root / _REFDATA.name
+    shutil.copy2(_REFDATA, minimums)
+    return _Slice(root, journal, minimums)
+
+
+def _synth_slice(root: Path, schema_versions: tuple[int, ...], *, start: datetime | None = None) -> _Slice:
+    """A mount-free journal of one record per entry in `schema_versions`, on consecutive boundaries.
+
+    Built from `tests.basket_fixture`'s REAL builds, so every record genuinely replays: a fixture
+    whose records all failed to replay would run the renderer over an empty report and could not
+    tell a working pipeline from a broken one. Two cycles replay in about a second, so everything
+    that does not actually need real journaled evidence is tested here and runs in CI.
+    """
+    journal = root / "journal"
+    for offset, schema_version in enumerate(schema_versions):
+        cycle_ts = (start or _SYNTH_TS) + timedelta(hours=4 * offset)
+        grids = basket_fixture.grids(cycle_ts)
+        record = basket_fixture.record(grids, schema_version=schema_version, cycle_ts=cycle_ts)
+        rel = Path(f"{cycle_ts:%Y-%m-%d}") / "snapshots" / f"cycle-{cycle_ts:%H}"
+        entries = tuple(
+            replace(entry, path=str(rel / f"{entry.pair.replace('/', '-')}-{entry.grid}.parquet")) for entry in record.snapshots
+        )
+        for entry in entries:
+            ts, by_symbol = grids[int(entry.grid)]
+            closes = by_symbol[entry.pair if entry.pair in by_symbol else f"{entry.pair}/EUR"]
+            frame = pl.DataFrame(
+                {"ts": list(ts), "close": list(closes)}, schema={"ts": pl.Datetime("us", "UTC"), "close": pl.Float64}
+            )
+            write_parquet(frame, journal / entry.path)
+        day_dir = journal / f"{cycle_ts:%Y-%m-%d}"
+        day_dir.mkdir(parents=True, exist_ok=True)
+        (day_dir / f"cycle-{cycle_ts:%H}.json").write_text(to_json(replace(record, snapshots=entries)) + "\n")
+    minimums = root / "kraken-refdata-20260710T000000Z.json"
+    minimums.write_text(
+        json.dumps(
+            {
+                "fetched_at": "2026-07-10T00:00:00+00:00",
+                "universe": [{"base": b, "quote": "EUR", "ordermin": "0.0001", "costmin": "0.45"} for b in _MODEL_BASES],
+            }
+        )
+    )
+    return _Slice(root, journal, minimums)
+
+
+def _tracking_argv(sliced: _Slice, *extra: str, nav: str | None = "1000") -> list[str]:
+    """`--minimums` is passed on EVERY invocation: left absent, `_resolve_minimums` globs the
+    configured data dir, so the run would silently depend on this workstation's own snapshots
+    directory instead of on the fixture -- and a write there would sit outside every mtime diff."""
+    argv = ["engine", "tracking-report", "--journal-dir", str(sliced.journal), "--minimums", str(sliced.minimums)]
+    if nav is not None:
+        argv += ["--nav", nav]
+    return argv + list(extra)
+
+
+def _mtimes(root: Path) -> dict[Path, int]:
+    return {p: p.stat().st_mtime_ns for p in root.rglob("*") if p.is_file()}
+
+
+class _Run(NamedTuple):
+    exit_code: int
+    stdout: str
+    before: dict[Path, int]
+    after: dict[Path, int]
+
+
+def _invoke(sliced: _Slice, argv: list[str]) -> _Run:
+    before = _mtimes(sliced.root)
+    result = runner.invoke(app, argv)
+    return _Run(result.exit_code, result.output, before, _mtimes(sliced.root))
+
+
+@pytest.fixture(scope="session")
+def real_journal_fixture(tmp_path_factory):
+    return _copy_slice(tmp_path_factory.mktemp("real-journal"), *_COMPLETE_WEEKS)
+
+
+@pytest.fixture(scope="session")
+def short_journal_fixture(tmp_path_factory):
+    return _copy_slice(tmp_path_factory.mktemp("short-journal"), *_PARTIAL_WEEK)
+
+
+@pytest.fixture(scope="session")
+def tracking_json(real_journal_fixture):
+    return _invoke(
+        real_journal_fixture,
+        _tracking_argv(real_journal_fixture, "--simulated-fills", "--gate-from", _FIRST_COMPLETE_WEEK, "--json"),
+    )
+
+
+@pytest.fixture(scope="session")
+def accum_json(real_journal_fixture):
+    return _invoke(
+        real_journal_fixture,
+        [
+            "engine",
+            "accum-replay",
+            "--journal-dir",
+            str(real_journal_fixture.journal),
+            "--minimums",
+            str(real_journal_fixture.minimums),
+            "--nav",
+            "1000",
+            "--json",
+        ],
+    )
+
+
+@pytest.fixture
+def mixed_schema_fixture(tmp_path) -> _Slice:
+    return _synth_slice(tmp_path / "mixed", (1, 2))
+
+
+@pytest.fixture(scope="session")
+def complete_week_fixture(tmp_path_factory) -> _Slice:
+    """42 synthetic cycles = one complete ISO week. Built once per session (~seconds)."""
+    return _synth_slice(tmp_path_factory.mktemp("complete-week"), (2,) * 42, start=_SYNTH_WEEK_START)
+
+
+@pytest.fixture
+def single_schema_fixture(tmp_path) -> _Slice:
+    """The mixed fixture's control: same builder, same shape, ONE schema version."""
+    return _synth_slice(tmp_path / "single", (2, 2))
+
+
+def test_simulated_fills_produce_a_non_degenerate_report(tracking_json):
+    assert tracking_json.exit_code == 0, tracking_json.stdout
+    payload = json.loads(tracking_json.stdout)
+    weeks = payload["tracking"]["weeks"]
+    assert weeks, "the replay produced no weeks at all"
+    # `_p95` returns NaN on an empty list and `_payload_json` maps non-finite floats to null, so a
+    # bare `> 0` would raise TypeError -- a red exit proving nothing about the pipeline.
+    assert any(isinstance(w["floor_p95_bps"], (int, float)) and w["floor_p95_bps"] > 0 for w in weeks), (
+        "a silently zeroed pipeline would pass 'it ran'"
+    )
+    # The true-positive proper. Everything above still passes with the REALIZED half dead: the floor
+    # is computed without a single fill. Three complete weeks with fills must therefore DECIDE --
+    # an always-refusing realized half leaves every week undecided and the verdict at
+    # insufficient-data, which is exactly what zero journaled fills cannot distinguish today.
+    assert payload["tracking"]["complete_gate_eligible_weeks"] == 3
+    assert payload["tracking"]["verdict"] == "pass"
+    assert payload["cost"]["n_fills"] > 0 and payload["cost"]["realized_fee_per_side"] > 0
+    # And the realized half must reproduce the book it was HANDED, week for week. Fed the floor
+    # policy's own placements, `realized_drift` rebuilds the same held quantities from signed fills
+    # attributed to boundaries, so its weekly mean must equal the floor's -- the one assertion here
+    # that a wrong side, a wrong quantity or a fill booked at the wrong boundary cannot survive,
+    # while "it produced three decided weeks" survives all three.
+    floor_means = [w["mean_drift_bps"] for w in sorted(payload["floor"]["weeks"], key=lambda w: (w["iso_year"], w["iso_week"]))]
+    assert [w["realized_mean_bps"] for w in weeks] == pytest.approx(floor_means, rel=1e-9)
+
+
+def test_a_gate_boundary_is_required_before_any_week_decides(complete_week_fixture):
+    # The fail-open defect this pair exists to prevent, on the smallest window that can show it:
+    # ONE complete week with fills, decided or not decided purely by whether the operator named the
+    # boundary. Under the inverted default the same week decided itself.
+    argv = ("--simulated-fills",)
+    without = _invoke(complete_week_fixture, _tracking_argv(complete_week_fixture, *argv))
+    named = _invoke(complete_week_fixture, _tracking_argv(complete_week_fixture, *argv, "--gate-from", _SYNTH_WEEK, "--json"))
+    assert without.exit_code == 0 and named.exit_code == 0, without.stdout + named.stdout
+    # Wired: the SAME week decides once the boundary is named, so the refusal below is not merely a
+    # report that can never decide anything.
+    assert json.loads(named.stdout)["tracking"]["complete_gate_eligible_weeks"] == 1
+    assert "0 decided week(s)" in without.stdout
+    assert "--gate-from" in without.stdout, "fail-closed without naming the remedy is the useless version"
+    table = without.stdout.split("Verdict:")[0]
+    assert "no gate boundary -- pass --gate-from" in table  # the row says why, not just the footer
+    assert "no data" not in table, "only the verdict is withheld -- the week still carries both measurements"
+
+
+def test_the_floor_figures_match_accum_replay_for_the_same_window(tracking_json, accum_json):
+    # One implementation, two callers -- and the two paths genuinely differ (accum-replay goes
+    # through accumulation_report with its own NAV list and stamp), so this is not redundant.
+    assert json.loads(accum_json.stdout)["by_nav"]["1000.0"]["p95_drift_bps"] == pytest.approx(
+        json.loads(tracking_json.stdout)["floor"]["p95_drift_bps"]
+    )
+
+
+def test_the_verdict_is_insufficient_data_before_three_complete_weeks(short_journal_fixture):
+    run = _invoke(
+        short_journal_fixture,
+        _tracking_argv(short_journal_fixture, "--simulated-fills", "--gate-from", "2026-W28", "--json"),
+    )
+    payload = json.loads(run.stdout)
+    assert payload["tracking"]["verdict"] == "insufficient-data"
+    # Not vacuously, and not because the boundary was withheld -- it is named here, and the week is
+    # excluded solely for being partial. Both halves measured it.
+    (week,) = payload["tracking"]["weeks"]
+    assert week["rung"] == 3 and week["complete"] is False and week["gate_eligible"] is False
+    assert isinstance(week["realized_mean_bps"], (int, float)) and week["realized_mean_bps"] > 0
+
+
+def test_the_compared_nav_defaults_to_the_configured_shadow_size(mixed_schema_fixture):
+    # The other fail-open default: every other invocation in this file passes --nav, so the default
+    # was unexercised. Read from the config rather than hardcoded, because the point is that the two
+    # cannot drift apart -- the engine trips at this size, so the human must band at it.
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--json", nav=None))
+    assert run.exit_code == 0, run.stdout
+    assert json.loads(run.stdout)["nav"] == load_config().engine.shadow_nav_eur == 1000.0
+
+
+def test_a_record_that_cannot_replay_is_named_counted_and_exits_non_zero(mixed_schema_fixture):
+    # The n_failed/failures path, which nothing else reaches: an implementation hardcoding zero
+    # passes every other test in this file while the README promises `decompose`'s behaviour.
+    # A tampered content hash is the shape a partial rsync leaves behind.
+    record_path = sorted(mixed_schema_fixture.journal.rglob("cycle-*.json"))[0]
+    doc = json.loads(record_path.read_text())
+    doc["snapshots"][0]["content_hash"] = "0" * 64
+    record_path.write_text(json.dumps(doc))
+
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills"))
+
+    assert run.exit_code != 0, run.stdout  # a silent skip would render a smaller window and exit 0
+    assert "failed to replay: 1" in run.stdout
+    assert doc["cycle_ts"] in run.stdout  # the cycle is named, not just tallied
+
+
+def test_the_command_writes_nothing(mixed_schema_fixture):
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills"))
+    assert run.before == run.after
+    assert run.before, "the mtime diff walked an empty tree and would pass on any command"
+
+
+def test_the_minimums_snapshot_stamp_is_quoted(mixed_schema_fixture):
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills"))
+    assert "minimums read" in run.stdout.lower()
+
+
+def test_a_window_straddling_the_schema_bump_says_so(mixed_schema_fixture):
+    # Schema 1 records are base-keyed, schema 2 symbol-keyed; a straddling run must say so rather
+    # than mixing key spaces silently.
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills"))
+    assert run.exit_code == 0, run.stdout
+    assert "schema" in run.stdout.lower()
+    assert "straddles a journal schema change" in run.stdout
+    assert "1, 2" in run.stdout  # both versions named, not merely "more than one"
+
+
+def test_a_single_schema_window_does_not_claim_a_straddle(single_schema_fixture):
+    # The other half of the straddle line: a renderer that always prints it would pass the test
+    # above and say nothing true. Same builder, same two cycles, one schema version.
+    run = _invoke(single_schema_fixture, _tracking_argv(single_schema_fixture, "--simulated-fills"))
+    assert run.exit_code == 0, run.stdout
+    assert "straddles a journal schema change" not in run.stdout
+
+
+def test_a_simulated_run_is_labelled_as_simulated(mixed_schema_fixture):
+    # The number is real-shaped but not real. An unlabelled one read in the go/no-go window is the
+    # whole hazard -- and the modelled fee is exactly the assumed one, so a run mistaken for real
+    # would "confirm" the rate it was handed.
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--json"))
+    text = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills"))
+    assert "simulated" in text.stdout.lower()
+    cost = json.loads(run.stdout)["cost"]
+    assert cost["realized_fee_per_side"] == pytest.approx(cost["current_fee_per_side"])
+
+
+def test_a_run_without_simulated_fills_is_not_labelled_simulated(mixed_schema_fixture):
+    # The negative the label needs: with no test running WITHOUT the flag, an unconditional banner
+    # passes the test above and lies on every real run.
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture))
+    assert run.exit_code == 0, run.stdout
+    assert "simulated" not in run.stdout.lower()
+    assert json.loads(_invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--json")).stdout)["simulated"] is False
