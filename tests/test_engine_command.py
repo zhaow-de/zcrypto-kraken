@@ -4,7 +4,6 @@ no live node. `run`'s fail-fast checks and watchdog are exercised against a stub
 synchronous timer; nautilus lazy-import stays a subprocess check at the bottom; the attended soak
 is the live smoke."""
 
-import io
 import json
 import re
 import subprocess
@@ -700,6 +699,11 @@ def _run_env(monkeypatch, tmp_path, *, is_running: bool, symbols=BASKET) -> list
     _write_basket_store(engine_cfg.store_dir, symbols)
     monkeypatch.delenv("ZCRYPTO_REQUIRE_CONFIG", raising=False)
     monkeypatch.setattr("cli.engine.node.build_shadow_node", lambda config: _fake_node(is_running))
+    # Stubbed for EVERY `run` test, not just the two that assert on it: the real re-arm would
+    # re-point this pytest process's own faulthandler at fd 2 (pytest's plugin aims it at its
+    # capture), and an earlier default-`sys.stderr` form left it switched OFF for the rest of the
+    # session -- silently removing native-crash dumps from every later test in the process.
+    monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=lambda **_: None))
     monkeypatch.setattr(command.threading, "Timer", FakeTimer)
     FakeTimer.instances.clear()
     exits: list[int] = []
@@ -779,9 +783,10 @@ def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, 
     calls and their order are pinned: the re-arm must follow the build (before it, there is nothing
     to undo), and `disable()` must precede `enable()` (`enable()` returns early when faulthandler
     already considers itself enabled, so on its own it cannot reinstall the clobbered handler).
+    The `file=2` is pinned too -- see the sibling test for the defect the default form causes.
     `tests/test_engine_node.py` measures the underlying library behaviour this rests on."""
     _run_env(monkeypatch, tmp_path, is_running=True)
-    calls: list[str] = []
+    calls: list[object] = []
     monkeypatch.setattr(
         "cli.engine.node.build_shadow_node",
         lambda config: (calls.append("build"), _fake_node(True))[1],
@@ -789,29 +794,50 @@ def test_run_re_arms_faulthandler_immediately_after_the_node_is_built(tmp_path, 
     monkeypatch.setattr(
         command,
         "faulthandler",
-        types.SimpleNamespace(disable=lambda: calls.append("disable"), enable=lambda: calls.append("enable")),
+        types.SimpleNamespace(
+            disable=lambda: calls.append("disable"),
+            enable=lambda **kw: calls.append(("enable", kw)),
+        ),
     )
 
     result = runner.invoke(app, ["engine", "run"])
 
     assert result.exit_code == 0, _output(result)
-    assert calls == ["build", "disable", "enable"]
+    assert calls == ["build", "disable", ("enable", {"file": 2})]
 
 
-def test_run_starts_even_when_the_faulthandler_re_arm_cannot_take(tmp_path, monkeypatch):
-    """`faulthandler.enable()` raises when `sys.stderr` has no file descriptor. The re-arm is a
-    diagnostic aid and must never be able to stop the engine from starting -- so the raise is
-    swallowed rather than propagated out of `engine run`."""
+def test_the_faulthandler_re_arm_targets_fd_2_because_the_default_would_disarm_it(tmp_path):
+    """Why `engine run` passes `file=2` rather than taking the default `sys.stderr`.
 
-    def _no_fileno():
-        raise io.UnsupportedOperation("fileno")
+    The default form raises when `sys.stderr` has no `fileno()` -- which is any harness that
+    substitutes a buffer for it. Because `disable()` has already run by then, swallowing that raise
+    would leave the process with faulthandler switched OFF: strictly worse than never re-arming,
+    and precisely the blindness the re-arm exists to remove. An fd needs no `fileno()`, so the
+    `file=2` form both survives and stays armed. Measured in a child so this process's own
+    faulthandler state is untouched."""
+    probe = r"""
+import faulthandler, io, sys
 
-    _run_env(monkeypatch, tmp_path, is_running=True)
-    monkeypatch.setattr(command, "faulthandler", types.SimpleNamespace(disable=lambda: None, enable=_no_fileno))
+faulthandler.enable()
+sys.stderr = io.TextIOWrapper(io.BytesIO())          # a harness's fileno-less stderr
 
-    result = runner.invoke(app, ["engine", "run"])
+faulthandler.disable()
+try:
+    faulthandler.enable()
+except Exception as exc:
+    default = f"{type(exc).__name__} -> armed={faulthandler.is_enabled()}"
+else:
+    default = f"no raise -> armed={faulthandler.is_enabled()}"
 
-    assert result.exit_code == 0, _output(result)
+faulthandler.disable()
+faulthandler.enable(file=2)
+sys.__stdout__.write(f"default: {default}\nfd2: armed={faulthandler.is_enabled()}\n")
+"""
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120)
+
+    assert result.returncode == 0, result.stderr
+    assert "default: UnsupportedOperation -> armed=False" in result.stdout, result.stdout
+    assert "fd2: armed=True" in result.stdout, result.stdout
 
 
 def test_run_watchdog_force_exits_when_the_trader_never_runs(tmp_path, monkeypatch):
