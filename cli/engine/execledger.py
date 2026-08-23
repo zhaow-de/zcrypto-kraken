@@ -253,6 +253,38 @@ def _exec_records_in_window(journal_dir: Path, now: datetime) -> list[dict]:
     return docs
 
 
+def exec_records_through(journal_dir: Path, until: datetime) -> dict[datetime, dict]:
+    """Every exec record filed at or before `until`, keyed by its boundary.
+
+    A SECOND window over the same files, deliberately not a widening of `_exec_records_in_window`:
+    that one is the dedup/re-attach window and is two UTC days by design -- the horizon over which a
+    duplicate submission is possible. This one answers a different question, "what has this engine
+    executed up to here", for which two days is 2/7 of a week and, worse, `held` is cumulative from
+    the first fill ever: a week-scoped read understates the position by everything bought before it
+    and reports the shortfall as drift the book never had.
+
+    Each record is `validate_exec_record`-checked, so one unreadable file refuses the whole scan --
+    `_exec_records_in_window`'s ruling exactly. A skipped record's fills would be a position nothing
+    accounts for, which is precisely the arithmetic this feeds.
+
+    A day dir or file whose name does not parse as a boundary is skipped, not refused -- the house
+    reading (`cli.engine.command._journal_artifacts`): this engine only ever writes `%Y-%m-%d`
+    directories, so an unparseable name is somebody else's file rather than a corrupt record.
+    """
+    out: dict[datetime, dict] = {}
+    for path in sorted(Path(journal_dir).glob(f"*/{_PREFIX}-*.json")):
+        try:
+            boundary = _cycle_ts_from_path(path)
+        except ValueError:
+            continue
+        if boundary > until:
+            continue
+        doc = _read_existing(path)
+        validate_exec_record(doc)
+        out[boundary] = doc
+    return out
+
+
 def ledgered_plan_ids(journal_dir: Path, now: datetime) -> frozenset[str]:
     ids: set[str] = set()
     for doc in _exec_records_in_window(journal_dir, now):

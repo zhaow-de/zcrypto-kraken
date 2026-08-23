@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -27,9 +28,12 @@ from cli.engine.execledger import (
     open_submitted_rows,
     read_exec_record,
     update_submitted_row,
+    write_exec_record,
 )
 from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder
+from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
+from cli.engine.node import ShadowStrategy
 from cli.engine.probeplan import PLAN_FILENAME
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
@@ -593,6 +597,10 @@ class RecordingMetrics:
         self.positions = []
         self.realized = []
         self.external = []
+        self.tracking = []
+
+    def set_tracking_state(self, state):
+        self.tracking.append(state)
 
     def inc_order(self, outcome):
         self.orders.append(outcome)
@@ -3164,3 +3172,516 @@ def test_a_ledger_row_with_no_readable_order_quantity_trips_on_any_fill(tmp_path
     ex.on_order_event(_fill("O-shapeless", 0.0004))
 
     assert "of the 0 it was submitted for" in _kill_file(tmp_path).read_text()
+
+
+# --- the weekly tracking-error trip --------------------------------------------------------------
+#
+# The call site is the 4-HOURLY BOUNDARY ALERT, never `on_timer`: every `_evaluate` on the tick path
+# sits behind an operator-written probe-plan.json, so a trip hooked there could only fire while a
+# plan existed -- i.e. never in the stopped-placing state this exists to catch.
+
+_TRACK_MONDAY = datetime(2026, 9, 7, tzinfo=timezone.utc)  # ISO 2026-W37, the week under test
+_TRACK_LEAD = _TRACK_MONDAY - timedelta(days=1)  # six boundaries before it, so the book is built
+_TRACK_EVAL = _TRACK_MONDAY + timedelta(days=7)  # the boundary alert that scores W37
+_TRACK_NEXT_EVAL = _TRACK_EVAL + timedelta(days=7)
+_TRACK_BAND = 120.0
+_TRACK_NAV = 1000.0
+
+# Ten EUR legs at DISTINCT non-zero weights, one of them negative (a short leg signs `held`, so a
+# sell booked as a buy would double the apparent position); the two /BTC legs at 0.0, which is what
+# `final_targets` really carries -- symbol-keyed TWELVE against base-keyed TEN closes. A uniform or
+# all-zero book cannot tell a wrong key space, a lost sign or a dropped leg from a healthy read.
+_TRACK_WEIGHTS = {
+    "BTC/EUR": 0.20,
+    "ETH/EUR": 0.15,
+    "SOL/EUR": 0.12,
+    "ADA/EUR": 0.10,
+    "DOGE/EUR": 0.08,
+    "XRP/EUR": 0.07,
+    "DOT/EUR": 0.06,
+    "LINK/EUR": 0.05,
+    "LTC/EUR": 0.04,
+    "AVAX/EUR": -0.03,
+    "ETH/BTC": 0.0,
+    "SOL/BTC": 0.0,
+}
+# Base-keyed, spanning five orders of magnitude: a close is a DIVISOR in drift_bps, so a fixture
+# whose prices are all ~1 would score identically however the legs were mixed up.
+_TRACK_CLOSES = {
+    "BTC": 60000.0,
+    "ETH": 3200.0,
+    "SOL": 145.0,
+    "LTC": 85.0,
+    "AVAX": 22.0,
+    "LINK": 14.0,
+    "DOT": 4.2,
+    "XRP": 0.62,
+    "ADA": 0.45,
+    "DOGE": 0.13,
+}
+_TRACK_BASES = tuple(_TRACK_CLOSES)
+
+_OPENING = _TRACK_LEAD + timedelta(hours=4)  # the journal's oldest boundary carries NO fill
+_BUILD_OUT = _TRACK_LEAD + timedelta(hours=16)
+_IN_WEEK = _TRACK_MONDAY + timedelta(hours=40)  # 2026-09-08 16:00, boundary 10 of the week
+_MINT_AT = _OPENING + timedelta(hours=4)  # the boundary a live engine dates itself at: the next one
+
+# Asymmetric by construction: ten different sizes, one sell, and BTC arriving in two slices at two
+# different boundaries -- so a reader that ignored the boundary a fill was filed under, or summed
+# magnitudes unsigned, would land on a different number.
+_NINE_LEGS = [
+    ("ETH/EUR", "buy", 0.0468),
+    ("SOL/EUR", "buy", 0.825),
+    ("ADA/EUR", "buy", 220.0),
+    ("DOGE/EUR", "buy", 610.0),
+    ("XRP/EUR", "buy", 112.0),
+    ("DOT/EUR", "buy", 14.2),
+    ("LINK/EUR", "buy", 3.55),
+    ("LTC/EUR", "buy", 0.468),
+    ("AVAX/EUR", "sell", 1.36),
+]
+# ~46 bps: the book is deployed and tracks. THE TRUE POSITIVE -- a band that refused this would ship
+# an always-tripping switch.
+_HEALTHY_FILLS = {
+    _OPENING: [("BTC/EUR", "buy", 0.00042)],
+    _BUILD_OUT: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
+}
+# ~317 bps: the same book with BTC 26 EUR short of its target, plus one in-week DOGE top-up, so the
+# per-cycle series is not flat across the week and boundary attribution is load-bearing.
+_BREACH_FILLS = {
+    _OPENING: [("BTC/EUR", "buy", 0.00042)],
+    _BUILD_OUT: [("BTC/EUR", "buy", 0.00248), *_NINE_LEGS],
+    _IN_WEEK: [("DOGE/EUR", "buy", 30.0)],
+}
+# The same shortfall with NOTHING filled inside the week: started, quiet, and fully measured.
+_QUIET_FILLS = {b: rows for b, rows in _BREACH_FILLS.items() if b != _IN_WEEK}
+# The same book, opened a day earlier, so the day-dir holding the opening slice can be deleted
+# WHOLE -- which is the only cut `zcrypto-engine-journal-prune.sh` actually makes. What survives is
+# a day whose 00:00 boundary is quiet and whose 16:00 carries the build-out.
+_EARLY_OPENING = _TRACK_MONDAY - timedelta(days=2) + timedelta(hours=4)
+_PRUNABLE_FILLS = {
+    _EARLY_OPENING: [("BTC/EUR", "buy", 0.00042)],
+    _BUILD_OUT: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
+}
+# ~5500 bps: only two legs were ever opened. Started (so it is not the never-traded case) and
+# violently outside any band, so a partial week that was scored would be unmistakable.
+_PARTIAL_FILLS = {_OPENING: [("BTC/EUR", "buy", 0.00332), ("ETH/EUR", "buy", 0.0468)]}
+
+
+def _track_snapshots(boundary):
+    """One pair x grid pair, shaped to the no-peek invariant so the fixture is a record the engine
+    could really have written."""
+    midnight = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
+    return tuple(
+        SnapshotEntry(
+            pair="BTC/EUR",
+            grid=grid,
+            n_bars=400,
+            first_ts=boundary - timedelta(days=90),
+            last_ts=last,
+            content_hash="a" * 64,
+            path=f"{boundary:%Y-%m-%d}/snapshots/cycle-{boundary:%H}/BTC-EUR-{grid}.parquet",
+        )
+        for grid, last in (("240", boundary - timedelta(hours=4)), ("1440", midnight - timedelta(days=1)))
+    )
+
+
+def _track_fill_row(index, symbol, side, qty):
+    px = _TRACK_CLOSES[symbol.split("/")[0]] if symbol.endswith("/EUR") else 0.05
+    return {
+        "plan_id": f"plan-{index}",
+        "intent_index": 0,
+        "client_order_id": f"O-{index}",
+        "intent": {"symbol": symbol, "side": side, "action": "open", "mode": "execute", "notional_eur": qty * px},
+        "order": {"symbol": symbol, "side": side, "qty": qty, "price": px},
+        "state": "filled",
+        "filled_qty": qty,
+        "events": [
+            {
+                "event": "fill",
+                "at": None,  # stamped by the caller, which knows the boundary
+                "qty": qty,
+                "px": px,
+                "fee": 0.02,
+                "fee_currency": "EUR",
+                "liquidity": "MAKER",
+                "trade_id": f"T-{index}",
+            }
+        ],
+    }
+
+
+def _journal_week(tmp_path, *, fills, start=_TRACK_MONDAY, n_cycles=42, lead=0, level="full", overrides=None):
+    """`lead` boundaries before `start` plus `n_cycles` from it, each with the cycle record AND the
+    exec record the engine writes at that boundary. `fills` maps a boundary to (symbol, side, qty)
+    tuples; `overrides` maps a boundary to any of `level`/`weights`/`closes`."""
+    journal = tmp_path / "journal"
+    overrides = overrides or {}
+    boundaries = [start - timedelta(hours=4 * (lead - i)) for i in range(lead)]
+    boundaries += [start + timedelta(hours=4 * i) for i in range(n_cycles)]
+    index = 0
+    for boundary in boundaries:
+        override = overrides.get(boundary, {})
+        weights = override.get("weights", _TRACK_WEIGHTS)
+        closes = override.get("closes", _TRACK_CLOSES) if "closes" in override else _TRACK_CLOSES
+        record = CycleRecord(
+            schema_version=2,
+            cycle_ts=boundary,
+            snapshots=_track_snapshots(boundary),
+            final_targets=dict(weights),
+            started_at=boundary + timedelta(seconds=90),
+            completed_at=boundary + timedelta(minutes=2),
+            code_version="1.0.0",
+            builder_path="fast",
+            closes=None if closes is None else dict(closes),
+        )
+        day = journal / f"{boundary:%Y-%m-%d}"
+        day.mkdir(parents=True, exist_ok=True)
+        (day / f"cycle-{boundary:%H}.json").write_text(to_json(record))
+        verdict = GateVerdict(level=override.get("level", level), reasons=(), inputs={})
+        write_exec_record(journal, boundary, verdict, evaluated_at=boundary)
+        for symbol, side, qty in fills.get(boundary, ()):
+            index += 1
+            row = _track_fill_row(index, symbol, side, qty)
+            row["events"][0]["at"] = (boundary + timedelta(minutes=3)).isoformat()
+            append_submitted_row(journal, boundary, row, verdict=verdict, evaluated_at=boundary)
+    return journal
+
+
+def _tracking_executor(tmp_path, *, band=_TRACK_BAND, armed=True, clock=None, gate=None, at=_TRACK_EVAL):
+    # The clock sits just past the boundary being scored, as the live one does: the alert fires at
+    # `boundary + settle delay`, and the birth recorder reads the journal "through now".
+    config = _config(tmp_path, exec_armed=armed, tracking_band_bps=band, shadow_nav_eur=_TRACK_NAV)
+    return _executor(tmp_path, config=config, clock=clock or (lambda: at + timedelta(minutes=2)), gate=gate)
+
+
+def _mint_birth(tmp_path, at=_MINT_AT, **kwargs):
+    """Run the boundary the live engine would have DATED ITSELF at -- the first one after its first
+    fill. Every fixture below is a journal the engine lived through boundary by boundary, so a test
+    that jumped straight to the scoring boundary a week later would be asking the recorder to date a
+    week-old fill, which is the one thing it refuses."""
+    _tracking_executor(tmp_path, at=at, **kwargs).on_boundary(at)
+
+
+def _tracking_states(tmp_path, boundary=_TRACK_EVAL, mint_at=_MINT_AT, **kwargs):
+    """Fire one boundary alert against a fresh executor and return (kill-file-exists, states).
+
+    `mint_at=None` is the engine that never witnessed its own first fill -- no record, and whatever
+    the journal still holds is all it has."""
+    set_executor_hooks()  # the mint is setup, not the measurement -- it publishes into nobody's list
+    if mint_at is not None:
+        _mint_birth(tmp_path, at=mint_at, **kwargs)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    _tracking_executor(tmp_path, at=boundary, **kwargs).on_boundary(boundary)
+    return _kill_file(tmp_path).exists(), metrics.tracking
+
+
+def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_file(tmp_path, kill_trip_expected):
+    """The whole design in one test: the strategy's 4-hourly alert, with NO probe plan on disk, no
+    resting order and nothing in flight, reaches the executor and latches the kill file. Every
+    `_evaluate` on the tick path is gated behind that absent plan file, so a trip hooked there
+    could not fire here -- and the kill file has no other producer in this construction."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    _mint_birth(tmp_path)
+    assert not _plan_path(tmp_path).exists()
+    executor = _tracking_executor(tmp_path)
+    strategy = SimpleNamespace(
+        clock=None,
+        _engine_config=executor._config,
+        _run_cycle_fn=lambda cycle_ts, *, config, venue_state=None: None,
+        _snapshot_venue_state=lambda: None,
+        _next_cycle_ts=_TRACK_EVAL,
+        _executor=executor,
+    )
+    strategy._schedule_alert = lambda boundary, alert_time: setattr(strategy, "_next_cycle_ts", boundary)
+
+    ShadowStrategy._on_cycle_alert(strategy, None)
+
+    assert "2026-W37" in _kill_file(tmp_path).read_text()
+    assert executor._plan is None and not _plan_path(tmp_path).exists()
+
+
+def test_an_unset_band_never_trips(tmp_path):
+    """Ships disarmed: the same breaching week, with no band configured, decides nothing."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path, band=None)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_DISARMED]
+
+
+def test_a_complete_week_beyond_the_band_latches_the_kill_file(tmp_path, kill_trip_expected):
+    """The constructed defect: a fully-eligible week whose realized mean is ~317 bps against a 120
+    bps band. The reason names the week and both numbers -- it is what an operator finds mid-incident."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert tripped
+    text = _kill_file(tmp_path).read_text()
+    assert "2026-W37" in text and "317" in text and "120" in text
+    assert states == [executor_module._TRACKING_BREACHED]
+
+
+def test_a_healthy_complete_week_does_not_trip(tmp_path):
+    """THE TRUE POSITIVE, and the reason the band is compared in the direction it is: the same
+    fixture with the book fully deployed reads ~46 bps, strictly the other side of 120, and must
+    pass. A guard that refused this would be an always-refusing guard shipping green."""
+    _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_WITHIN_BAND]
+
+
+def test_a_quiet_week_with_a_started_series_still_trips(tmp_path, kill_trip_expected):
+    """ "No data" means the realized series never STARTED, never that a week was quiet. A week with
+    no fills at all but a `held` that stopped tracking its targets is fully measured -- and is
+    precisely the stopped-placing state this trip exists to catch."""
+    _journal_week(tmp_path, fills=_QUIET_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert tripped
+    assert states == [executor_module._TRACKING_BREACHED]
+
+
+def test_a_partial_week_never_trips_however_bad_it_looks(tmp_path):
+    """41 boundaries, not 0, at ~5500 bps: a week the engine did not fully live through is not
+    comparable to one it did, and the fixture is far enough outside the band that scoring it would
+    be unmistakable."""
+    _journal_week(tmp_path, fills=_PARTIAL_FILLS, lead=6, n_cycles=41)
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_week_the_gate_never_reached_full_does_not_trip(tmp_path):
+    """Eligibility is the JOURNALED level, not live config: `restart_hold` is written at every
+    engine start and cleared only by hand, so a week spent held reads as fully armed while the
+    engine never traded. The fixture is the breaching one but for ONE boundary's level, so only
+    eligibility can tell the two apart."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={_TRACK_MONDAY + timedelta(hours=80): {"level": "reduce_only"}})
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_the_week_containing_the_first_fill_is_not_scored(tmp_path):
+    """A week holding cycles on BOTH sides of the first fill averages an undeployed book (10000 bps
+    a cycle) with a deployed one, so the first week of live trading is biased toward a trip. It is
+    excluded -- and the NEXT week, on the same held, must still be SCORED and pass: a rule that
+    refused both would be indistinguishable here."""
+    _journal_week(tmp_path, fills={_TRACK_MONDAY + timedelta(hours=80): [("BTC/EUR", "buy", 0.00332), *_NINE_LEGS]}, lead=6)
+    _journal_week(tmp_path, fills={}, start=_TRACK_EVAL)
+
+    straddling, straddling_states = _tracking_states(tmp_path)
+    settled, settled_states = _tracking_states(tmp_path, boundary=_TRACK_NEXT_EVAL)
+
+    assert not straddling and straddling_states == [executor_module._TRACKING_UNSCORED]
+    assert not settled and settled_states == [executor_module._TRACKING_WITHIN_BAND]
+
+
+def test_a_fill_at_the_journals_oldest_boundary_is_refused(tmp_path):
+    """The truncated journal: the same HEALTHY week with everything before the build-out pruned
+    away, so the opening slice is gone, `held` is short and the week reads ~290 bps. Nothing on
+    disk distinguishes that from a real breach, so a first fill sitting on the oldest boundary the
+    journal still holds is refused rather than scored."""
+    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
+    for boundary in (_TRACK_LEAD, _OPENING, _TRACK_LEAD + timedelta(hours=8), _TRACK_LEAD + timedelta(hours=12)):
+        (journal / f"{boundary:%Y-%m-%d}" / f"cycle-{boundary:%H}.json").unlink()
+        (journal / f"{boundary:%Y-%m-%d}" / f"exec-{boundary:%H}.json").unlink()
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_it_is_refused_while_exec_armed_is_false(tmp_path):
+    """Every journaled level still reads `full`, so only the config gate can stop this one."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path, armed=False)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_week_missing_journaled_closes_is_refused_not_guessed(tmp_path):
+    """Every artifact written before the closes key existed reads None. The price a cycle actually
+    used is not recoverable afterwards, and a guessed one moves every leg's drift at once."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={_TRACK_MONDAY + timedelta(hours=80): {"closes": None}})
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_week_whose_targets_miss_a_model_leg_is_refused(tmp_path):
+    """A leg absent from `final_targets` contributes no drift at all, so a book that dropped one
+    reads BETTER than it is -- the fail-open direction, and the one a trip must never take."""
+    thin = {s: w for s, w in _TRACK_WEIGHTS.items() if s != "ADA/EUR"}
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6, overrides={_TRACK_MONDAY + timedelta(hours=80): {"weights": thin}})
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_an_unreadable_journal_does_not_raise_onto_the_trade_path(tmp_path):
+    """A measurement may never take the engine down. The refusal is published as one, so an
+    operator can tell "not scored" from "nothing ran"."""
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    (journal / f"{_TRACK_MONDAY:%Y-%m-%d}" / "exec-08.json").write_text("{not json")
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_expected):
+    """The kill file IS the durable state -- there is no marker, no checkpoint. A restarted process
+    re-derives the same breaching week and must leave the first reason exactly as it found it: that
+    text, with its timestamp, is what the operator reads to know when the engine stopped."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    _mint_birth(tmp_path)
+    _tracking_executor(tmp_path).on_boundary(_TRACK_EVAL)
+    first = _kill_file(tmp_path).read_text()
+
+    # A REAL gate over the latched tree -- `_gate()` asserts FULL and a kill file makes it `none`,
+    # which is exactly the state a restart into a tripped engine starts in.
+    gate = ExecutionGate(armed_in_config=True, state_dir=tmp_path, venue_reader=_venue_reader())
+    later = _tracking_executor(tmp_path, clock=lambda: _TRACK_EVAL + timedelta(days=30), gate=gate)
+    later.on_boundary(_TRACK_EVAL + timedelta(hours=4))
+
+    assert _kill_file(tmp_path).read_text() == first
+    assert later._kill_tripped is False  # nothing tripped again -- the latch on disk was enough
+
+
+def test_the_idle_tick_never_evaluates_tracking(tmp_path):
+    """`on_timer` is not a call site for this. A week-wide read on a 5-second tick would be 17280
+    journal scans a day, and the tick's whole cheap-idle contract is that it does an os.lstat and
+    stops."""
+    _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    gate = CountingGate()
+    executor = _tracking_executor(tmp_path)
+    executor._gate = gate
+
+    for minute in range(3):
+        executor.on_timer(_TRACK_EVAL + timedelta(minutes=minute))
+
+    assert not _kill_file(tmp_path).exists()
+    assert gate.calls == 0  # the idle path reads nothing at all
+
+
+# The ramp an operator arming exactly ON a week boundary produces: the first slice lands at the
+# week's own first boundary, the rest ten boundaries in. 8748 bps a cycle until the book is built,
+# 46.35 after -- a 2118.2 bps week, which is the WEEK THE SERIES STARTED IN wearing a settled
+# week's clothes.
+_BOUNDARY_RAMP_FILLS = {
+    _TRACK_MONDAY: [("BTC/EUR", "buy", 0.00042)],
+    _IN_WEEK: [("BTC/EUR", "buy", 0.00290), *_NINE_LEGS],
+}
+
+
+def test_a_pruned_journal_head_refuses_instead_of_scoring_a_short_held(tmp_path):
+    """The retention prune turns the true positive into a latched false kill, and this is that
+    construction: the HEALTHY fixture -- 46.35 bps, the week that must pass -- with the two oldest
+    boundaries deleted exactly as `zcrypto-engine-journal-prune.sh` deletes day-dirs at 60 days.
+    The opening slice goes with them, `held` is short by it, and the same journal reads 298.4 bps
+    against the 120 bps band.
+
+    Nothing on disk distinguishes that from a real breach, and asking "does the oldest surviving
+    boundary carry a fill" cannot tell them apart -- it passes whenever the prune happens to cut at
+    a quiet boundary. The birth record answers the question actually being asked."""
+    journal = _journal_week(tmp_path, fills=_HEALTHY_FILLS, lead=6)
+    healthy, healthy_states = _tracking_states(tmp_path)
+    assert not healthy and healthy_states == [executor_module._TRACKING_WITHIN_BAND]
+    birth = exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE
+    assert birth.read_text().strip() == _OPENING.isoformat()
+
+    # Cut per BOUNDARY, which is the granularity the check itself works at -- not a replica of the
+    # prune, which removes whole day-dirs. The shape a real prune produces is the same one: a first
+    # fill late on day D, and a quiet 00:00 on D+1 left as the oldest survivor. The sibling test
+    # below builds exactly that, with the whole day-dir deleted.
+    for boundary in (_TRACK_LEAD, _OPENING):
+        for prefix in ("cycle", "exec"):
+            (journal / f"{boundary:%Y-%m-%d}" / f"{prefix}-{boundary:%H}.json").unlink()
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+    # Write-once: the record still names the fill that is no longer on disk, which is the whole of
+    # what it knows and the only reason the refusal above is possible.
+    assert birth.read_text().strip() == _OPENING.isoformat()
+
+
+def test_the_first_fill_landing_on_the_week_boundary_is_not_scored_either(tmp_path):
+    """A first fill exactly ON Monday 00:00 -- what arming at a week boundary produces -- is still
+    the week the series started in, and its ramp is still in the mean: 2118.2 bps against a 120 bps
+    band. A strictly-interior test (`>`) scores it and latches the kill file on an engine that was
+    doing exactly what it was told."""
+    _journal_week(tmp_path, fills=_BOUNDARY_RAMP_FILLS, lead=6)
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_malformed_fill_event_does_not_raise_onto_the_trade_path(tmp_path):
+    """The outer catch's own defect, constructed rather than assumed: `validate_exec_record` checks
+    a row's KEY SET and that `events` is a list, never an event's contents -- so a fill event
+    missing `px` passes every ledger check and `KeyError`s inside `extract_fills`, which is not an
+    EngineError and escapes the refusal arm.
+
+    Two properties, and the second is why the catch publishes: a measurement may never take the
+    engine down, and it may never leave the previous verdict standing on the board either -- a trip
+    that has stopped working would otherwise read exactly like one that keeps passing."""
+    journal = _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
+    path = journal / f"{_BUILD_OUT:%Y-%m-%d}" / f"exec-{_BUILD_OUT:%H}.json"
+    doc = read_exec_record(path)
+    del doc["submitted"][0]["events"][0]["px"]
+    path.write_text(json.dumps(doc))
+    execledger_module.validate_exec_record(doc)  # the ledger's own checks still pass it
+
+    tripped, states = _tracking_states(tmp_path)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+
+
+def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
+    """The missing-file path, which is NOT the same event as "the series has not started".
+
+    The recorder is gated on the record being absent, so an engine that lost it -- a rebuilt state
+    directory, a restore -- runs the mint against whatever the journal still holds. Here the whole
+    day-dir carrying the opening slice is gone, exactly as `zcrypto-engine-journal-prune.sh`
+    deletes it, and the day that survives opens on a QUIET 00:00: the "oldest boundary carries no
+    fill" evidence is satisfied perfectly, and the earliest surviving fill would be minted as a
+    birth it never was. The scorer would then agree with its own reconstruction and latch the kill
+    file at 298.4 bps on an engine that tracked its targets the whole time.
+
+    What stops it is that a birth is something a boundary WITNESSES, hours after the fill -- so a
+    candidate a week old is refused, and the trip refuses permanently and loudly instead of
+    latching. Nothing is written: an engine that cannot date itself must not invent a date."""
+    journal = _journal_week(tmp_path, fills=_PRUNABLE_FILLS, lead=12)
+    shutil.rmtree(journal / f"{_EARLY_OPENING:%Y-%m-%d}")
+
+    tripped, states = _tracking_states(tmp_path, mint_at=None)
+
+    assert not tripped
+    assert states == [executor_module._TRACKING_UNSCORED]
+    assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()

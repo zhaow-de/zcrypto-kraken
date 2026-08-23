@@ -30,12 +30,19 @@ Two things this alert deliberately does **not** do. It does not fire when the en
 ### What to do
 
 1. **Identify which sleeve moved, and in which direction.** `uv run python infra/scripts/grafana-query.py 'zcrypto_engine_sleeve_gross'` — one value per `sleeve` label. Compare against `zcrypto_engine_active_sleeves` over the last few days to see when the step landed. A single 4h cycle's blip and a sustained re-arming are different events; do not act on one cycle.
+
 2. **Do not restart, converge, or "fix" anything.** The engine is behaving exactly as designed — the sleeve's own signal turned on or off. There is no failure here to recover from, and a restart changes nothing about the composition.
+
 3. **Re-derive the numbers that were sized against the old composition** before the next go-live decision reads them: the model-consistency band the gate compares realized performance against, and the expected order notionals versus the venue minimums. Both were derived under the previous sleeve count and neither updates itself. The command is `uv run zcrypto engine accum-replay --journal-dir <journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD> --nav 1000 --minimums <newest kraken-refdata-*.json>`, and three things decide whether its answer is usable:
+
    - **Run it over a window that starts well before the composition changed, and slice**, or run it standalone and know what you are getting: the replay initialises held quantity to zero at its FIRST cycle, so a window starting in a low-gross stretch carries an additive offset that never decays. A live book is never flat.
    - **A band the gate can rest on needs ≥3 COMPLETE ISO weeks in the new composition** — that is the basis the gate's edge is defined on. Anything shorter is the current combined floor, useful for reading today and not for ratifying.
    - **Re-check the minimums stamp in the same pass** and quote which snapshot you used; Kraken moves those without notice.
+
+   **That command is the FLOOR half only — read the realized half beside it, or you have re-derived one side of a comparison.** `accum-replay` measures what the venue's minimums make unavoidable; what the engine actually held is `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD>`, which prints both halves per complete ISO week at one NAV. The two cannot drift apart by construction — both compute the same drift function, and it is the same one the engine's own weekly trip evaluates. Until the engine has journaled fills the realized column reads *no data*, and that is the honest answer for a series that has not started, never a zero to average in.
+
 4. **Record the transition durably** — date, which sleeve, the gross before and after — as a new row in `docs/reference/sleeve-composition-ledger.md`, which exists for exactly this and carries the read recipe. This alert ages out within a day and is not a record. The book's composition history is what a later gate reading depends on, and the last such transition went unrecorded for months precisely because nothing announced it.
+
 5. **If the count went DOWN to one or zero**, treat it as information, not an emergency: a long-only sleeve going flat in a downtrend is the risk control working. Zero active sleeves means a flat book — no exposure, no turnover — which is a legitimate state and not a reason to intervene.
 
 ### Retire when
@@ -403,6 +410,7 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
    - **`armed` and `probe-plan.json` — delete these two if present, and only these two.** They are what a restore re-arms you with. The plan's own 60-minute expiry and the ledger's plan-id dedup are the designed backstops behind this check, not a substitute for running it.
    - **`kill` — this is a FINDING, never something to sweep away.** No code path anywhere clears the kill file; it is a latch a human engaged, and a restore that brings it back is telling you the backup was taken after a trip. `sudo cat /var/lib/zcrypto-engine/exec/kill` prints a timestamp and the reason that tripped it. Read that reason, work the `zcrypto-engine-exec-kill-tripped` section above, and remove the file only once the reason no longer holds. Deleting it along with the rest destroys the one record of why the system stopped, at the moment it is trying to tell you.
    - **`restart-hold` — leave it.** The engine writes one unconditionally at every start anyway, and holding at reduce-only until a human clears it is the correct resting state.
+   - **`first-fill` — leave it, and never write one by hand.** The engine writes this once, at the first boundary after its first ever fill, and reads it only to refuse: it is what tells the weekly tracking-error trip that the journal still holds the whole position history it measures against. A restore that brings back a `first-fill` older than the journal now covers is a *correct* refusal, not a fault. Writing or editing one by hand tells the trip a history is present that is not, which is the one way to make it latch the kill switch on a healthy engine. **If it is missing on an engine that has ever filled, that is a finding, not a self-healing state.** Once fills exist the engine cannot establish for itself that its journal's head is intact — a prune that happened to cut at a quiet boundary looks identical to a journal that was never cut at all — so it re-dates itself only while the earliest fill it can see is hours old, which is what the healthy path produces. Anything older it refuses to date, and the trip then refuses every week, permanently, with that reason in the log. **That refusal is the correct outcome and no operator action clears it**: the position it would need is not on this host. Do not hand-write a record to make the refusal go away — that is the one move that ends in a latched kill switch on an engine that never misbehaved.
 
 #### 6. Verify by outcome — the window is not closed until every line here reads true
 
@@ -410,7 +418,23 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
 2. **Every fill carries its fee and its liquidity side**: each `fill` line shows `fee` with a `fee_currency`, and `liquidity` reading the word `maker` or `taker` — never a number.
 
-3. **Two rollover rows per position** in the Kraken ledger export.
+3. **Two rollover rows per position** in the Kraken ledger export — read by hand, and then read again by the standing reader **in the same session, while the hand read still exists**. From the workstation, against a pulled copy of the engine journal:
+
+   ```
+   uv run zcrypto engine tracking-report \
+     --journal-dir <pulled journal> --since <first window day> --until <last window day> \
+     --ledger-export <the export>.csv
+   ```
+
+   **The comparison, and the only one that can qualify this reader**: its `rollover fees` figure must equal the total you just read by hand. A standing reader that has never once agreed with the hand read it replaces is unverified, and this window is the only place the two figures exist side by side — record both in the probe's decisions-log entry, equal or not.
+
+   This is also the first real export the reader has ever seen, so it is where three shipped assumptions get settled. Record what you find for each, in the same entry:
+
+   - **`rollover fees 0.00` against a nonzero hand read means the charge lives in `amount`, not `fee`.** The reader sums the `fee` column; which column a real rollover row carries the charge in was never verified, and this by-value comparison is exactly what catches it. A zero here is a finding about the reader, not about the window.
+   - **Only `trade` rows are matched today.** Read the export's distinct `type` values (`cut -d, -f4 <the export>.csv | sort -u`, allowing for quoting). The `row types this reader places nowhere:` line names every type it consumed nothing from and how many — `margin` above all, which a margin position writes carrying the *same* `refid` as its trade. If `margin` appears, the match widens; that decision is yours to record here, not the reader's to guess.
+   - **A venue repair guarantees an unmatched id, and that `FAILED` is honest.** A `reconciled` event carries no venue trade id, so the journal gives it a synthetic one that no ledger row can ever match. So the block does **not** have to read `ok`: read the named ids against the window's own repairs first. What must be true is that every unmatched id is *explained* — a repair, or account activity you performed by hand — and that none of them is a trade nobody can account for. That last case is the one thing this comparison exists to catch, and it is a stop.
+
+   Two reading notes. The block prints how many rows it read at all, so an export that produced nothing cannot read as a window that contained nothing. And do **not** run this with `--simulated-fills`: modelled fills carry no venue trade id, so every real ledger row is unmatched by construction — the command says so, and the block means nothing in that mode.
 
 4. **The settle and then the disposal are visible in venue truth, read from the venue record written after the disarm converge's restart** — that restart is what forces the fresh account read, and it is the verified path. Take the restart time from `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine`, wait for the next 4-hourly boundary to write its record, then run the venue-truth read and confirm `snapshot_at` is later than that restart time. A record written before the restart is corroboration, never the gate.
 
@@ -430,8 +454,73 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
    The last one is the only family here whose **zero is a reading rather than a gap**: both dispositions are registered at startup, so `matched` and `unmatched` must both be present, and `(no series)` on it means the capture keep-regex did not ship rather than that nothing happened. Record `unmatched`'s value against the settle taken in step 4 — that is the measurement of whether a hand settle reaches this process as an order event at all.
 
-7. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
+7. **Count the journaled gate level across the window's exec records**, on the engine host: `for f in /var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/exec-*.json; do python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['level'])" "$f"; done | sort | uniq -c`. This is the input the weekly tracking-error trip takes its eligibility from, and it is the one reading no other step produces. Every record written outside a window reads `none` — as all 66 of them did before the first window — so what this measures is whether an ARMED window actually journals `full`. If it does not, the restart hold was left set through the window, and the trip is structurally inert even once armed: see `engine-tracking-band` below, and do not set a band until this reads `full`.
+
+8. **Take the week's tracking reading, and record what it produced even when that is nothing.** Nothing schedules this — there is no timer and no unit behind the command, deliberately, so this step *is* the cadence: a window that closes without it leaves no missing artifact for anyone to notice later. From the workstation, against a pulled copy of the journal:
+
+   ```
+   uv run zcrypto engine tracking-report \
+     --journal-dir <pulled journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD> \
+     --gate-from <YYYY-Www>
+   ```
+
+   - **`--gate-from` is not optional in practice.** Without it NOTHING is decided whatever the numbers say — every week is measured and none is eligible, which the report states by name in its own footer. The week to pass is the first ISO week whose cycles ran under continuous arming, i.e. a fact about the deployment rather than about the journal, which is why the flag asks instead of guessing.
+   - **Confirm the boundary landed, because nothing validates it for you.** A week outside the window is accepted silently — safe in the fail-closed direction, since a wrong week decides fewer weeks and never more, but unremarked. The report echoes `Gate boundary: weeks from <YYYY-Www> onward count`, notes every week it placed before that boundary, and states in its verdict line how many weeks it decided — read all three against what you intended.
+   - **A week the report cannot produce is a refusal to record, never a zero to shrug at.** A partial ISO week, a week before the boundary, and a week with no journaled fills each print as measured-but-not-decided or as *no data* — the series not having started is not the same reading as a week of perfect tracking. Write the week labels and their reasons into the probe's decisions-log entry beside the numbers; that record is the only evidence the reading was taken at all.
+   - **Today every week reads *no data* and the cost half answers that there are no euro-denominated fills.** That is the correct output before the first fills exist, and recording it is what makes the first real reading comparable to something.
+
+9. **The verdict is recorded** in `docs/research/14.phase6-decisions.md`, and on a fail its fallback topic is registered and queued — step 7 above.
 
 ### Retire when
 
 `cli/engine/executor.py` no longer picks a plan file up out of the state directory's `exec/` — check with `grep -n PLAN_FILENAME cli/engine/executor.py`, and a run that finds nothing is the signal. At that point the continuous loop that replaces attended probe windows has landed, and this procedure with it.
+
+______________________________________________________________________
+
+<a name="engine-tracking-band"></a>
+
+## engine-tracking-band — PROCEDURE
+
+### What you are seeing
+
+You are deciding whether to arm the engine's weekly tracking-error trip, or you are looking at the **Weekly tracking error — last verdict** tile on the engine board and want to know what it is telling you. **Nothing has fired**: if the trip had latched, `zcrypto-engine-exec-kill-tripped` would have paged and that section above is the one to work.
+
+### What it means
+
+At every 4-hourly boundary — after the cycle has journaled, and reading nothing but the journal — the engine scores the **most recently closed ISO week**: what its cycles targeted, against what its own fills say it actually held, as a mean drift in bps of NAV. If that mean exceeds the configured band, the engine latches the kill file, cancels everything resting and refuses every further order until a human clears it.
+
+It exists for the failure no other guard can see: an engine that has quietly **stopped placing orders**. Every other execution guard sits behind an operator-authored plan file, so none of them can fire in a window where nothing is being submitted at all — while the targets keep moving and the book keeps standing still.
+
+Four things about it are worth knowing before you touch anything:
+
+- **It ships disarmed and stays that way until a band is set.** `tracking_band_bps` is absent from `[zcrypto.engine]`, and with no band nothing can be exceeded. The tile reads `DISARMED`; that is the correct resting state, not a fault.
+- **It carries no state of its own.** There is no checkpoint, no marker file. The week is re-derived from the journal every four hours, so a fill journaled late — filed under the boundary its ORDER was filed under, days after the fact — is folded in at the next boundary rather than lost.
+- **It refuses far more often than it decides.** A week short of its 42 boundaries, a week that spent any boundary below the `full` gate level, the week the fill series started in, a week whose records do not carry the prices they were traded at, and a journal whose oldest boundary already carries a fill are all `NOT SCORED`. Each is a deliberate refusal: refusing costs a week of coverage, guessing halts live trading.
+- **It has no alert rule of its own, deliberately.** The only value that is a fault — the band breached — latches the kill file, and `zcrypto-engine-exec-kill-tripped` already pages on exactly that. A rule here would double-page one event and would page on nothing else.
+- **It stops scoring for good once the journal's head is pruned, and that is by design.** What it measures is cumulative from the engine's first ever fill, while the journal prune deletes whole day-dirs at `engine_journal_retention_days` (60). Once the day holding that first fill ages out, the position bought before the horizon is simply not on this host, and a week scored without it reads several hundred bps high — a latched kill file on an engine that never misbehaved. The engine records the date of its first fill once, in `exec/first-fill`, and from the moment that date falls off the journal it refuses every week with that reason in the log. **There is no operator action that restores it**: the fills are gone. Raising the retention, or journalling the position alongside the cycle's `closes`, is the fix, and both are changes to make deliberately rather than in an incident.
+
+### What to do
+
+**If the tile reads `OUTSIDE BAND`** — the kill file is latched and the alert has already paged. Work `zcrypto-engine-exec-kill-tripped` above. `sudo cat /var/lib/zcrypto-engine/exec/kill` names the week, the mean it measured and the band it was measured against; that text is the only record of why the engine stopped, so read it before removing anything. The engine will not re-score while the file is present, so the first reason stays exactly as it was written.
+
+**If the tile reads `NOT SCORED` and you expected a verdict** — the reason is in the engine log, one line per boundary: `sudo docker logs --since 5h zcrypto-engine | grep 'not scored'` (a bare `--since HH:MM` does not parse; pass a duration or a full timestamp, and confirm the log lines you got are non-empty before reading anything into a quiet grep). One of those lines reads `the evaluation itself raised` and carries a Python traceback underneath it: that is the measurement failing rather than declining, it means the same NOT SCORED on the tile, and it is a defect to report rather than an operational state to work.
+
+**If the tile is absent entirely** — no boundary has been scored since this process started, or the family is not shipping. Read it by value from the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_tracking_state{host="zcrypto"}'`. `(no series)` after a boundary has passed is a keep-regex failure, not a quiet engine.
+
+**To arm it** — three preconditions, in this order, and none of them is optional:
+
+1. **A window has journaled `full`.** Run the count in the probe-window procedure's verify step above. Every exec record written outside an armed window reads `level: "none"`, and the restart hold is written at every engine start and cleared only by hand — so a week spent held reads as fully armed while the engine never traded, which is exactly the state that would latch the kill file on a healthy engine. A week the engine could actually trade must be able to show 42 records reading `full`; if it cannot, the hold-clearing step is what changes, before any band is set.
+2. **A band exists that real weeks have been measured against.** `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <first day> --until <last day>` on the workstation prints each week's realized mean beside the floor the venue's own minimums impose. The band is a number chosen from those readings and recorded in `docs/research/14.phase6-decisions.md`, never one invented here.
+3. **The band is deployed as config.** `tracking_band_bps` is read from `[zcrypto.engine]` in the rendered `/opt/zcrypto-engine/zcrypto.toml`; the engine role's template does not render the key today, so arming means adding it there — one line, reviewed like the `exec_armed` line beside it — and converging inside a 4-hourly inter-cycle gap. Verify by outcome at the next boundary: the tile moves off `DISARMED`, and `grafana-query.py` reads a number rather than `(no series)`.
+
+Three standing conditions once it IS armed, each of which silently changes what a scored week means:
+
+- **A verdict needs 42 CONSECUTIVE boundaries at `full` — seven unbroken armed days.** No attended probe window is anywhere near that long, and `zcrypto-engine-exec-armed-too-long` pages after six unbroken hours armed. So an operator who satisfies all three preconditions above and arms during ordinary attended windows gets `NOT SCORED` forever, correctly. **Verdicts only ever arrive in continuous-trading mode**, and that alert's threshold is the thing to revisit first when that mode arrives — before the band, not after.
+- **Disarm the band across any `shadow_nav_eur` change, and re-arm a week later.** NAV sets both halves of the comparison and is read live rather than journaled per cycle, so a NAV converge re-scores weeks that closed under the old value against the new one — halving NAV roughly doubles every reading of a week nobody traded differently, straight into a latched kill file. Journalling NAV on the cycle record is the durable fix and belongs with the next schema widening.
+- **Disarm the band across a basket widening.** The trip demands every model leg's target in every record it reads, so the first record written under a wider basket makes every earlier one un-scoreable. The refusal is the safe direction, but it lasts until the whole scored span post-dates the widening — a full week — and reads as a broken trip if nobody expects it.
+
+**To disarm it** — remove the key and converge. Nothing else clears it; the disarmed state is the absent key.
+
+### Retire when
+
+`tracking_band_bps` is absent from `cli/config.py` — i.e. the trip was replaced rather than merely disarmed.

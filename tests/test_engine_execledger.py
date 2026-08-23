@@ -12,6 +12,7 @@ from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
     exec_record_path,
+    exec_records_through,
     ledgered_intent_keys,
     ledgered_plan_ids,
     open_submitted_rows,
@@ -469,3 +470,43 @@ def test_populated_exec_records_leave_the_report_byte_identical(tmp_path, monkey
     with_records = runner.invoke(app, args)
     assert with_records.output == without.output
     assert with_records.exit_code == without.exit_code
+
+
+# --- the week-window reader (the tracking-error trip's input) ------------------------------------
+
+_MONDAY = datetime(2026, 9, 7, tzinfo=timezone.utc)  # ISO 2026-W37
+
+
+def _write_week(journal_dir, *, start, n=42):
+    """`n` consecutive 4-hourly boundaries from `start`, each carrying its own exec record."""
+    for i in range(n):
+        boundary = start + timedelta(hours=4 * i)
+        write_exec_record(journal_dir, boundary, _verdict(), evaluated_at=boundary)
+
+
+def test_exec_records_through_returns_the_whole_week_and_ignores_its_neighbours(tmp_path):
+    """`_exec_records_in_window` is two UTC days -- 2/7 of a week. `held` is cumulative from the
+    first fill ever, so a week-scoped read understates it and reads as drift the book never had."""
+    _write_week(tmp_path, start=_MONDAY - timedelta(days=7))  # the week before
+    _write_week(tmp_path, start=_MONDAY)  # the week under test
+    _write_week(tmp_path, start=_MONDAY + timedelta(days=7))  # the week after
+
+    docs = exec_records_through(tmp_path, _MONDAY + timedelta(days=6, hours=20))
+
+    week = [b for b in docs if _MONDAY <= b < _MONDAY + timedelta(days=7)]
+    assert len(week) == 42, "seven days x six boundaries -- a two-day window would return 12"
+    assert len(docs) == 84, "everything at or before `until`, so the previous week is in and the next is out"
+    assert max(docs) == _MONDAY + timedelta(days=6, hours=20)
+    # Keyed by boundary, and each value is that boundary's own record.
+    assert datetime.fromisoformat(docs[_MONDAY + timedelta(hours=8)]["cycle_ts"]) == _MONDAY + timedelta(hours=8)
+
+
+def test_exec_records_through_refuses_the_whole_scan_on_one_corrupt_record(tmp_path):
+    """The scan's own precedent (`_exec_records_in_window`): a record this reader cannot vouch for
+    makes the whole read refuse, never a silent skip -- a skipped record's fills are a position the
+    drift arithmetic would then attribute to nobody."""
+    _write_week(tmp_path, start=_MONDAY)
+    (tmp_path / f"{_MONDAY:%Y-%m-%d}" / "exec-08.json").write_text('{"schema_version": 9}')
+
+    with pytest.raises(EngineJournalError):
+        exec_records_through(tmp_path, _MONDAY + timedelta(days=6, hours=20))

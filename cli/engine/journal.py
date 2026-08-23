@@ -47,7 +47,13 @@ class SnapshotEntry:
 @dataclass(frozen=True)
 class CycleRecord:
     """One engine cycle's journal entry. snapshots carries one SnapshotEntry per pair x grid;
-    final_targets is the newest-row per-asset targets the cycle computed and traded."""
+    final_targets is the newest-row per-asset targets the cycle computed and traded.
+
+    closes is the forming row's 4h close the cycle priced each MODEL base at -- the input a drift
+    measurement needs, journaled so a boundary never has to replay a cycle to learn what it priced.
+    The INPUT is journaled, not a derived drift number: a derivative would rot against the code that
+    computed it. It is BASE-keyed ("BTC") in BOTH schemas -- final_targets widened to full symbols
+    at schema 2, the model did not -- and `None` on every record written before the key existed."""
 
     schema_version: int
     cycle_ts: datetime
@@ -57,6 +63,7 @@ class CycleRecord:
     completed_at: datetime
     code_version: str
     builder_path: str
+    closes: dict[str, float] | None = None
 
 
 def _epoch_seconds(ts: datetime) -> int:
@@ -154,6 +161,21 @@ def validate_record(record: CycleRecord) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise EngineJournalError(f"final_targets[{asset!r}] must be a finite number, got {value!r}")
 
+    # closes is optional: absent (None) on every record written before the key existed, and those
+    # must keep validating. Present-but-empty is a writer bug, not absence -- absence is None. The
+    # base-key check is NOT schema-conditional: closes lives in the model's key space, which never
+    # widened. Zero and negative are refused because a close is a price and divides downstream.
+    if record.closes is not None:
+        if not isinstance(record.closes, dict) or not record.closes:
+            raise EngineJournalError("closes must be a non-empty dict[str, float] when present")
+        for asset, value in record.closes.items():
+            if not isinstance(asset, str) or not asset:
+                raise EngineJournalError(f"closes key must be a non-empty str, got {asset!r}")
+            if _is_symbol_key(asset):
+                raise EngineJournalError(f"closes key must be a base key (no '/'), got {asset!r}")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise EngineJournalError(f"closes[{asset!r}] must be a finite positive number, got {value!r}")
+
     if not isinstance(record.started_at, datetime) or not isinstance(record.completed_at, datetime):
         raise EngineJournalError("started_at/completed_at must be datetimes")
     if record.started_at > record.completed_at:
@@ -202,6 +224,11 @@ def to_json(record: CycleRecord) -> str:
         "code_version": record.code_version,
         "builder_path": record.builder_path,
     }
+    # OMITTED when absent, never emitted as null: a record predating the key must re-serialize
+    # byte-identically (the v1 golden pin), and an absent-vs-null distinction would be a second
+    # dialect every reader has to carry.
+    if record.closes is not None:
+        payload["closes"] = dict(record.closes)
     return json.dumps(payload, sort_keys=True)
 
 
@@ -234,6 +261,12 @@ def from_json(s: str) -> CycleRecord:
             completed_at=datetime.fromisoformat(payload["completed_at"]),
             code_version=payload["code_version"],
             builder_path=payload["builder_path"],
+            # .get, not [...]: every record already on disk predates this key, and a reader that
+            # raised on their absence would take the journal's consumers down over its own upgrade.
+            # Coerced through dict() exactly as final_targets is, so a truncated artifact whose
+            # closes is a list or a scalar raises here rather than loading clean -- several callers
+            # read a record without ever calling validate_record.
+            closes=dict(raw) if (raw := payload.get("closes")) is not None else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise EngineJournalError(f"journal JSON is missing or misshapes a required key: {exc}") from exc

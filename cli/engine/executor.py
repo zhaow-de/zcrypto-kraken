@@ -38,14 +38,19 @@ from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict
 from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
+    exec_records_through,
     ledgered_intent_keys,
     ledgered_plan_ids,
     open_submitted_rows,
     update_plan_intent,
     update_submitted_row,
 )
-from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+from cli.engine.feeders import CycleStages
+from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
+from cli.engine.journal import CycleRecord, from_json
 from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
+from cli.engine.store import BASKET
+from cli.engine.tracking import extract_fills, realized_drift
 from cli.engine.venueledger import read_venue_record, validate_venue_record
 from cli.engine.venuestate import InstrumentConstraints, venue_state_from_cache
 from cli.logging import get_logger
@@ -77,6 +82,16 @@ _OVERFILL_TOLERANCE = 1e-12
 # What the in-process backstop journals when it refuses. The kill FILE is the durable latch and the
 # gate's own input; this is what is left when the file could not be written, and it says so.
 _TRIPPED_REFUSAL = "the kill switch tripped in this process"
+# The write-once record of when this engine's realized series began, in the control-file directory
+# beside the arm and kill files. Named HERE and not in `execgate` because it is not a gate input:
+# nothing about it can permit or refuse an order. It exists because `held` is cumulative from the
+# first fill ever while the journal prune deletes whole day-dirs at a fixed retention -- so once the
+# day holding the first fill ages out, the journal alone can no longer tell "this engine has always
+# tracked its targets" from "everything it bought before the horizon was deleted", and those two
+# read as 46 bps and 298 bps against the same 120 bps band. Write-once, and only ever read to
+# DISAGREE and refuse: unlike a rolling checkpoint, a stale value here cannot reinforce itself into
+# a wrong `held`, it can only stop a week from being scored.
+FIRST_FILL_FILE = "first-fill"
 _KRAKEN_ERROR_MARKERS = ("EOrder:", "EGeneral:", "EAccount:")
 _POST_ONLY_MARKER = "POST_ONLY_REJECTED:"
 # What a terminal event on an ADOPTED order's row writes as its state, taken from
@@ -101,12 +116,31 @@ _ADOPTED_TERMINAL_STATES = {
 }
 
 _H4 = 4
+# What a complete ISO week holds -- derived, not the literal 42, so the two halves of the sentence
+# cannot drift apart.
+_WEEK_BOUNDARIES = 7 * (24 // _H4)
+# The MODEL's key space: the ten EUR bases. `final_targets` is symbol-keyed TWELVE (the two /BTC
+# legs ride in it at 0.0) while a journaled `closes` is base-keyed TEN, so a record's targets are
+# contracted to these before any drift arithmetic -- `drift_bps` indexes closes by the key it finds
+# in the targets, and handed the raw record it raises KeyError on the first /EUR symbol. Taken from
+# BASKET so this and `tracking.extract_fills` are provably the same ten.
+_MODEL_BASES = frozenset(symbol.split("/")[0] for symbol in BASKET if symbol.endswith("/EUR"))
+# What the tracking trip publishes about the most recently closed week. The alphabet starts at 1 on
+# purpose: this gauge is registered on first use, and a 0 -- eager or accidental -- would render as
+# a legitimate reading on the board rather than as the absence it is.
+# How stale a candidate may be and still be minted as this engine's birth. On the healthy path the
+# record lands at the FIRST boundary after the first fill -- hours, not days -- so anything much
+# older is a reconstruction from whatever the journal still holds. An order of magnitude under the
+# journal's 60-day retention, so a fill old enough for its own head to have been pruned can never
+# fall inside it; an order over the 4-hourly cadence, so a converge window or a weekend outage
+# still mints normally.
+_BIRTH_MINT_WINDOW = timedelta(days=7)
+_TRACKING_DISARMED = 1
+_TRACKING_UNSCORED = 2
+_TRACKING_WITHIN_BAND = 3
+_TRACKING_BREACHED = 4
 
 _VENUE = Venue("KRAKEN")
-# Kraken spells the euro both ways across its surfaces (the adapter's Money and the measured free
-# balances carry `EUR`, the asset/instrument-quote surfaces the classic `ZEUR`); anything else is a
-# different currency and is never summed into a EUR total.
-_EUR_CODES = ("EUR", "ZEUR")
 # The integer value of every REAL `LiquiditySide` member, derived from the enum rather than written
 # out, so a member the library adds is admitted automatically. Plain ints, and the test is
 # `isinstance(side, int) and int(side) in ...`: a set membership on the enum member itself would
@@ -166,6 +200,15 @@ def _inc_external(disposition: str) -> None:
         logger.exception("executor metrics hook raised -- continuing")
 
 
+def _set_tracking_state(state: int) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_tracking_state(state)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
 def _liquidity(side) -> str:
     """The venue's own NAME for a fill's liquidity side ("MAKER"/"TAKER"/"NO_LIQUIDITY_SIDE").
 
@@ -203,7 +246,7 @@ def _fee_eur(commission) -> float | None:
     needs the BTC/EUR close (`cli.engine.instruments.fx_eur_notional`, the one proven conversion),
     which no fill event carries -- so the honest answer here is "not a EUR fee", logged."""
     code = getattr(getattr(commission, "currency", None), "code", None)
-    if code not in _EUR_CODES:
+    if code not in EUR_CODES:
         logger.warning("fill commission is denominated in %s, not EUR -- it is left out of the EUR fee total", code)
         return None
     return float(commission)
@@ -308,6 +351,62 @@ def _newest_venue_balances(journal_dir: Path) -> dict:
         if newest is None or cycle_ts > newest[0]:
             newest = (cycle_ts, doc)
     return {} if newest is None else dict(newest[1]["state"]["balances"])
+
+
+def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime, CycleRecord]:
+    """Every success record stamped at or before `until`, keyed by the boundary it names.
+
+    Keyed by the record's OWN `cycle_ts`, not by its path, because that is the stamp
+    `tracking.extract_fills` gives a fill and `realized_drift` matches the two on: a record filed
+    under a path that disagrees with its content must miss rather than silently pair a fill with a
+    different cycle's targets.
+
+    Sidecars are `failed-cycle-<HH>.json` and this glob never sees them -- a boundary the engine
+    failed has no targets to compare anything against, and it reads here as the absence it is.
+    """
+    out: dict[datetime, CycleRecord] = {}
+    for path in sorted(Path(journal_dir).glob("*/cycle-*.json")):
+        record = from_json(path.read_text())
+        if record.cycle_ts <= until:
+            out[record.cycle_ts] = record
+    return out
+
+
+def _stage(record: CycleRecord) -> CycleStages:
+    """One journaled cycle as the shape `tracking.realized_drift` reads.
+
+    Only `cycle_ts`, `final` and `closes` are read there; the remaining fields are structural and
+    carry no meaning for this caller -- the alternative, a private per-cycle drift loop here, is the
+    one thing this must not be: the number a human bands and the number the engine trips on have to
+    come from the same function.
+
+    Raises when the record cannot be turned into a comparable stage. Both refusals are the
+    fail-CLOSED direction of a fail-open trap: a missing `closes` (every artifact written before the
+    key existed) cannot be reconstructed afterwards and a guessed price moves every leg at once,
+    while a leg missing from `final_targets` contributes NO drift, so a book that dropped one reads
+    better than it is.
+    """
+    targets = {symbol.split("/")[0]: weight for symbol, weight in record.final_targets.items() if symbol.endswith("/EUR")}
+    if set(targets) != _MODEL_BASES:
+        raise EngineError(
+            f"the cycle record for {record.cycle_ts.isoformat()} carries targets for "
+            f"{sorted(targets)}, not the model's {sorted(_MODEL_BASES)}"
+        )
+    if record.closes is None or not _MODEL_BASES <= set(record.closes):
+        raise EngineError(
+            f"the cycle record for {record.cycle_ts.isoformat()} does not journal the closes it "
+            "priced every model leg at, and a close cannot be recovered after the fact"
+        )
+    return CycleStages(
+        cycle_ts=record.cycle_ts,
+        sleeve_positions={},
+        combined={},
+        capped={},
+        final=targets,
+        multiplier=1.0,
+        closes=dict(record.closes),
+        cap_bound=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -1237,6 +1336,241 @@ class ProbeExecutor:
             # `cancelling` -- an open ledger row for reconciliation, and no further order.
             logger.critical("cancel of %s raised -- the order may still rest at the venue", active.client_order_id, exc_info=True)
 
+    # --- the weekly tracking-error trip ----------------------------------------------------------
+
+    def on_boundary(self, boundary: datetime) -> None:
+        """The 4-hourly boundary alert's one call into the executor, made after that boundary's
+        cycle has journaled.
+
+        THE call site, and the whole reason this is not on the timer: every `_evaluate` on the tick
+        path sits behind an operator-written plan file, so a trip hooked there could only fire while
+        a plan was running -- never in the stopped-placing state it exists to catch. The alert chain
+        reads neither the plan file nor the venue, and it fires whether or not anything is trading.
+
+        Wrapped whole, and the wrapping is not defensive habit: the caller invokes this from a
+        `finally`, so a raise here would either reach the alert chain or REPLACE an in-flight
+        exception from the cycle with one from a measurement.
+        """
+        try:
+            self._record_series_birth()
+            self._evaluate_tracking(boundary)
+        except Exception:
+            # Publishes, rather than falling silent: an escape here leaves the last verdict standing
+            # on the board, so a trip that has stopped working reads exactly like one that keeps
+            # passing. Same opening phrase as every other refusal, so ONE grep finds them all --
+            # this one carries a traceback under it. The metrics hook is itself exception-guarded.
+            logger.exception("the most recently closed week is not scored: the evaluation itself raised")
+            _set_tracking_state(_TRACKING_UNSCORED)
+
+    def _record_series_birth(self) -> None:
+        """Write the first-fill birth record, once, at the first boundary that can WITNESS the
+        series beginning -- and never again.
+
+        Run on EVERY boundary, disarmed included, and that is the point: it must be written while
+        the journal's head is still intact, which is a property of when the engine first FILLS, not
+        of when an operator chooses to set a band. An engine that armed a band months into trading
+        would otherwise date itself off an already-pruned journal and take the short `held` for the
+        truth.
+
+        TWO preconditions, and the second is not redundant. The first -- a journal whose oldest
+        boundary carries no fill -- is the same evidence the pruned-head check uses, and it is the
+        one this method is gated on being able to ask honestly. But the gate above is
+        `path.exists()`, which is "no record yet", NOT "the series has not started": whenever the
+        file is absent while fills already exist -- it was lost, or the state directory was rebuilt
+        -- this runs against a journal whose head may be long gone, and a prune that happened to cut
+        at a QUIET boundary satisfies the first precondition perfectly. The scorer would then agree
+        with a record that is a reconstruction, and the false kill this whole file exists to prevent
+        comes back through the missing-file path.
+
+        So the second: on the healthy path the record lands at the first boundary AFTER the first
+        fill, hours later. A candidate older than `_BIRTH_MINT_WINDOW` is therefore not a birth
+        anyone witnessed, it is the earliest fill that happens to have survived, and minting it is
+        the one move that can end in a latched kill file. Refusing turns that into a permanent,
+        loud refusal instead -- the honest residual, since the position it would need is not on this
+        host at all.
+
+        Best-effort in both directions: a failure to read or write leaves no record, and the scorer
+        then refuses rather than guessing. Nothing here can raise into the caller's scoring pass.
+        """
+        path = exec_dir(self._state_dir) / FIRST_FILL_FILE
+        if path.exists():
+            return
+        try:
+            docs = exec_records_through(self._journal_dir, self._now())
+            fills, _notes = extract_fills([docs[b] for b in sorted(docs)])
+            first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+            oldest = min(docs, default=None)
+            if first_fill is None or oldest is None or first_fill <= oldest:
+                return
+            if self._now() - first_fill > _BIRTH_MINT_WINDOW:
+                logger.warning(
+                    "this engine has no record of when its realized series began and the earliest fill "
+                    "the journal still holds is %s, too old to be that beginning -- no week will be "
+                    "scored until a human establishes what was held before it",
+                    first_fill.isoformat(),
+                )
+                return
+            # Written through a temporary sibling: the reader above is gated on the file EXISTING,
+            # so a crash mid-write would leave a truncated record nothing ever repairs -- and the
+            # only recovery would be deleting it, which is exactly the reconstruction path this
+            # method refuses to take later in life.
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(".tmp")
+            tmp_path.write_text(f"{first_fill.isoformat()}\n")
+            os.replace(tmp_path, path)
+        except Exception:
+            logger.warning("this engine's realized series could not be dated this boundary", exc_info=True)
+            return
+        logger.info("recorded the realized series' first fill at %s", first_fill.isoformat())
+
+    def _series_birth(self) -> datetime | None:
+        """What the birth record says, or None when there is none this process can read."""
+        try:
+            return datetime.fromisoformat((exec_dir(self._state_dir) / FIRST_FILL_FILE).read_text().strip())
+        except FileNotFoundError:
+            return None
+        except OSError, ValueError:
+            logger.warning("the realized series' birth record is unreadable", exc_info=True)
+            return None
+
+    def _refuse_tracking(self, reason: str) -> None:
+        """No verdict this boundary. Published as its own state so an operator can tell a week that
+        was measured and passed from one nothing could score."""
+        logger.warning("the most recently closed week is not scored: %s", reason)
+        _set_tracking_state(_TRACKING_UNSCORED)
+
+    def _evaluate_tracking(self, boundary: datetime) -> None:
+        """Score the most recently CLOSED ISO week and latch the kill switch when its realized mean
+        drift exceeds the configured band.
+
+        Carries no durable state whatsoever: the week is re-derived from immutable journal artifacts
+        at every boundary, and idempotence comes from the kill file plus `_kill_tripped`. A
+        checkpoint would be strictly worse -- `update_submitted_row` files a fill under the boundary
+        its ORDER was filed under, so a fill can land in an already-scored boundary days later,
+        which a checkpoint loses permanently and a re-derivation folds in at the next boundary.
+
+        Eligibility is each boundary's JOURNALED level, never live config: `restart_hold` is written
+        unconditionally at every engine start and cleared only by hand, so a week spent under it
+        reads as fully armed while the engine never traded -- `held` frozen, targets moving, and the
+        kill file latched on a perfectly healthy engine. The journaled level is the one field that
+        reduces arm file, kill file, restart hold, config and venue status together.
+
+        Every other exit is a refusal, never a guess: a week short of its full boundary count, a
+        week whose first fill falls inside it, a week the journal cannot price, and a span whose
+        oldest boundary already carries a fill (the prune may have taken the position that explains
+        it) all decline to decide. Refusing costs a week of coverage; guessing halts live trading.
+        """
+        band = self._config.tracking_band_bps
+        if band is None:
+            _set_tracking_state(_TRACKING_DISARMED)  # ships disarmed: with no band nothing can be exceeded
+            return
+        if not self._config.exec_armed:
+            self._refuse_tracking("order submission is not armed in this engine's config")
+            return
+        if self._kill_tripped or (exec_dir(self._state_dir) / KILL_FILE).exists():
+            # The latch is the idempotence. Re-deriving here would rewrite the FIRST reason -- the
+            # one that explains why the engine stopped -- with a restatement of it hours later.
+            self._refuse_tracking("the kill switch is already latched")
+            return
+        try:
+            self._score_closed_week(_aware_utc(boundary), band)
+        except EngineError as exc:
+            # Every refusal this arithmetic can raise (a hole in the cycle span, a fill on a symbol
+            # outside the basket, a record that cannot be priced) is a reason not to decide -- not a
+            # reason to take the engine's telemetry down with a traceback every four hours.
+            self._refuse_tracking(str(exc))
+
+    def _score_closed_week(self, boundary: datetime, band: float) -> None:
+        week_end = (boundary - timedelta(days=boundary.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = week_end - timedelta(days=7)
+        last = week_end - timedelta(hours=_H4)
+        label = f"{week_start.isocalendar().year}-W{week_start.isocalendar().week:02d}"
+        expected = [week_start + timedelta(hours=_H4 * i) for i in range(_WEEK_BOUNDARIES)]
+
+        # Everything through the week's last boundary, never just the week: `held` is cumulative
+        # from the first fill ever, so a week-scoped read would report the book bought earlier as
+        # drift it never had.
+        exec_docs = exec_records_through(self._journal_dir, last)
+        cycles = _cycle_records_through(self._journal_dir, last)
+        week = [b for b in expected if b in exec_docs and b in cycles]
+        if len(week) < _WEEK_BOUNDARIES:
+            self._refuse_tracking(
+                f"{label} has {len(week)} of the {_WEEK_BOUNDARIES} boundaries a complete week holds -- "
+                "a week the engine did not live through is not comparable to one it did"
+            )
+            return
+        held_back = [b for b in week if exec_docs[b]["level"] != GateLevel.FULL]
+        if held_back:
+            self._refuse_tracking(
+                f"{label} spent {len(held_back)} of its {_WEEK_BOUNDARIES} boundaries below the full "
+                f"level (first at {held_back[0].isoformat()}) -- the engine was not free to trade it"
+            )
+            return
+
+        fills, _notes = extract_fills([exec_docs[b] for b in sorted(exec_docs)])
+        first_fill = min((f.boundary for f in fills if f.base is not None), default=None)
+        if first_fill is None:
+            self._refuse_tracking("no model-leg fill has been journaled yet -- the realized series has not started")
+            return
+        birth = self._series_birth()
+        if birth != first_fill:
+            # NOT "does the oldest surviving boundary carry a fill". That question passes whenever
+            # the prune happens to have cut at a quiet boundary, and then `held` silently omits
+            # everything bought before the horizon: the true positive's own fixture reads 298.4 bps
+            # against a 120 bps band and latches the kill file on a perfectly healthy engine. The
+            # birth record answers the question that is actually being asked -- is the head of this
+            # series still on disk -- and when it is not, there is nothing to score with, ever
+            # again, because those fills are gone from this host. That refusal is permanent by
+            # design and loud; see the runbook.
+            self._refuse_tracking(
+                f"the journal's earliest fill is {first_fill.isoformat()} but this engine's realized "
+                f"series began at {birth.isoformat() if birth is not None else '(no record)'} -- the "
+                "position bought before that is not on this host, so no week can be scored against it"
+            )
+            return
+        if first_fill >= week_start:
+            # `>=`, never `>`: a first fill landing exactly ON the Monday boundary -- what an
+            # operator arming at a week boundary produces -- would otherwise leave the week
+            # containing it fully scored, ramp and all, which is the one week D10 excludes by name.
+            # The week the series STARTED in is not comparable to a settled one whichever way it is
+            # read: its pre-fill cycles hold a book the engine had not bought yet, so counting them
+            # averages a full 10000 bps a cycle into the mean, while dropping them -- which is
+            # exactly what the span below does -- scores a fraction of a week under a whole week's
+            # name. A week entirely before the first fill is not measured at all, and takes the
+            # same exit.
+            self._refuse_tracking(
+                f"the realized series starts at {first_fill.isoformat()}, at or after {label} began "
+                "-- the week the series starts in is measurable on only the part that follows it"
+            )
+            return
+
+        # The span starts at the first fill, not at the journal's start: earlier cycles contribute
+        # nothing to `held`, and requiring them to be priceable would make every artifact written
+        # before `closes` existed refuse a week it cannot affect.
+        stages = [_stage(cycles[b]) for b in sorted(cycles) if first_fill <= b <= last]
+        # NAV is read LIVE and is not journaled per cycle, while it sets both halves of the
+        # comparison (a target is `weight * nav / close`, and the drift is divided by `nav`). So a
+        # `shadow_nav_eur` converge re-scores weeks that closed under the OLD value against the new
+        # one -- halving it roughly doubles every reading of a week nobody traded differently. The
+        # runbook's arming section therefore requires the band disarmed across any NAV change;
+        # journalling NAV on the cycle record is the real fix and belongs to the next schema
+        # widening, beside `closes`.
+        rows = realized_drift(stages, fills, self._config.shadow_nav_eur)["cycles"]
+        scored = set(week)
+        # The straddle refusal above is what guarantees every one of the week's boundaries is in the
+        # span, and so what makes this a mean over the WHOLE week rather than over its tail.
+        values = [row["drift_bps"] for row in rows if datetime.fromisoformat(row["cycle_ts"]) in scored]
+        mean = sum(values) / len(values)
+        logger.info("%s tracked %.1f bps of NAV across %d cycles, against a %.1f bps band", label, mean, len(values), band)
+        if mean > band:
+            _set_tracking_state(_TRACKING_BREACHED)
+            self._trip_kill(
+                f"{label} tracked {mean:.1f} bps of NAV across its {len(values)} cycles, outside the "
+                f"{band:.1f} bps band this engine is allowed to drift from its targets"
+            )
+            return
+        _set_tracking_state(_TRACKING_WITHIN_BAND)
+
     # --- the kill switch -----------------------------------------------------------------------
 
     def _trip_kill(self, reason: str) -> None:
@@ -1715,7 +2049,7 @@ class ProbeExecutor:
                 if pnl is None:
                     continue
                 code = getattr(getattr(pnl, "currency", None), "code", None)
-                if code not in _EUR_CODES:
+                if code not in EUR_CODES:
                     logger.warning(
                         "realized pnl on %s is denominated in %s, not EUR -- it is left out of the EUR total",
                         instrument_id,
