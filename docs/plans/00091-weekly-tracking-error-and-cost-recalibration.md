@@ -898,7 +898,18 @@ The artifact already carries `final_targets`; **closes are the only missing term
 
 **The record is `journal.py`'s, not `cycle.py`'s.** `CycleRecord` is an eight-field dataclass; `to_json` writes an explicit key list, `from_json` reads an explicit key list, and `validate_record` is schema-aware. Nothing done in `cycle.py` alone can put a key into the artifact.
 
-**The value already exists in `run_cycle`:** `model_h4` — base-keyed, the ten EUR legs, the identical construction `replay_stages` uses for `CycleStages.closes`. **Not** `h4_closes`, which is pair-keyed. Pass it; do not recompute it.
+**`model_h4` is a dict of SERIES, not of floats — do not journal it directly.** `cycle.run_cycle:613` binds `model_h4_ts, model_h4 = select_model_inputs(...)`, and `select_model_inputs` returns `(union_ts, {base: list[float | None]})` — the full close series per base, hundreds of rows. Journaling it would write ten lists, contradicting this task's own "ten floats" test and inflating every artifact by ~3 orders of magnitude on the live path. Take the last value exactly as `replay_stages` does (`feeders.py:497-503`):
+
+```python
+closes = {}
+for base, series in model_h4.items():
+    value = series[-1]
+    if value is None:
+        raise EngineError(f"the forming row's close is missing for asset={base!r}")
+    closes[base] = float(value)
+```
+
+A `None` last value FAILS THE CYCLE, matching `replay_stages`' existing refusal — it does not journal `closes=None`, because a cycle that cannot price its own forming row has a worse problem than tracking. It is `model_h4`, never `h4_closes` (`cycle.py:638`), which is pair-keyed.
 
 **Journal the INPUT, not the derivative.** A journaled drift number would rot against the code that derived it; journaled closes stay true.
 
@@ -906,10 +917,12 @@ The artifact already carries `final_targets`; **closes are the only missing term
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_engine_journal.py`, built the way that module already builds records (there are no `journal_dir` / `one_cycle` / `legacy_artifact` fixtures — `tests/test_engine_cycle.py` works from `tmp_path, monkeypatch` plus `_env(...)` / `_success_record_json(...)`; follow those).
 
+**Types matter here.** `journal.from_json(s: str) -> CycleRecord` takes a STRING and returns a DATACLASS (it calls `json.loads` itself); `journal.validate_record(record: CycleRecord)` takes the dataclass and reads `record.schema_version`. Passing a dict to either raises `TypeError`/`AttributeError`, which `pytest.raises(EngineError)` does not catch — the test then errors instead of proving anything.
+
 ```python
 def test_the_record_round_trips_its_closes():
     rec = _record(closes={"BTC": 50000.0, "ETH": 3000.0})
-    assert from_json(json.loads(to_json(rec)))["closes"] == {"BTC": 50000.0, "ETH": 3000.0}
+    assert from_json(to_json(rec)).closes == {"BTC": 50000.0, "ETH": 3000.0}
 
 def test_closes_are_base_keyed_ten_and_positive():
     art = json.loads(to_json(_record(closes=_ten_eur_closes())))
@@ -922,18 +935,17 @@ def test_an_artifact_without_closes_still_loads():
     # component A down over its own upgrade -- this IS the readers-before-writer guarantee.
     payload = json.loads(to_json(_record(closes=_ten_eur_closes())))
     del payload["closes"]
-    assert from_json(payload).closes is None
+    assert from_json(json.dumps(payload)).closes is None
 
 def test_validate_record_refuses_a_pair_keyed_closes():
-    payload = json.loads(to_json(_record(closes=_ten_eur_closes())))
-    payload["closes"] = {"BTC/EUR": 50000.0}
+    # validate_record takes a CycleRecord, not a payload dict -- construct it directly.
     with pytest.raises(EngineError, match="closes"):
-        validate_record(payload)
+        validate_record(_record(closes={"BTC/EUR": 50000.0}))
 ```
 
 - [ ] **Step 2: Run and read WHICH assertion fails.**
 
-- [ ] **Step 3: Implement in `journal.py`** — a `closes: dict[str, float] | None` field on `CycleRecord`, the `to_json` arm, an absence-tolerant `from_json` arm (`payload.get("closes")`), and the `validate_record` arm (base-keyed, positive floats). Then in `cycle.run_cycle`, pass `model_h4` into the `CycleRecord(...)` construction.
+- [ ] **Step 3: Implement in `journal.py`** — a `closes: dict[str, float] | None` field on `CycleRecord`, the `to_json` arm, an absence-tolerant `from_json` arm (`payload.get("closes")`), and the `validate_record` arm (base-keyed, positive floats). Then in `cycle.run_cycle`, build the last-value dict shown above from `model_h4` and pass THAT into the `CycleRecord(...)` construction.
 
 - [ ] **Step 4: Run to green, then the FULL suite** — this touches the record every engine reader parses, and `tests/test_engine_cycle.py::_success_record_json` needs the new key.
 
@@ -948,105 +960,64 @@ def test_validate_record_refuses_a_pair_keyed_closes():
 ### Task 7: Component C — the tracking-error trip (LIVE TRADE PATH — Fable floor)
 
 **Files:**
-- Modify: `cli/config.py`, `cli/engine/execledger.py`, `cli/engine/executor.py`, `zcrypto.toml`, `infra/ansible/roles/capture/files/config.alloy`, `infra/grafana/engine-dashboard.json`, `infra/runbooks/engine.md`
-- Test: `tests/test_config.py`, `tests/test_engine_execledger.py`, `tests/test_engine_executor.py`
+- Modify: `cli/config.py`, `cli/engine/execledger.py`, `cli/engine/node.py`, `cli/engine/executor.py`, `cli/engine/command.py`, `zcrypto.toml`, `infra/ansible/roles/capture/files/config.alloy`, `infra/grafana/engine-dashboard.json`, `infra/runbooks/engine.md`
+- Test: `tests/test_config.py`, `tests/test_engine_execledger.py`, `tests/test_engine_executor.py`, `tests/test_engine_node.py`
 
-**Interfaces:**
-- **Requirement inherited from Task 2's review:** `drift_bps` raises a bare `KeyError` when `closes` lacks an asset present in `final`. On component A that is unreachable — `replay_stages` builds both over the same asset set and raises `EngineError` first — but on THIS path the inputs are journaled artifacts that can disagree, so component C must check `set(final) <= set(closes)` and refuse the week rather than propagate a `KeyError`. The refusal is owed here, not in `drift_bps`, which would otherwise be guarding a door with no caller.
-- Consumes: `tracking.drift_bps` (Task 2's shared core — plain dicts), `tracking.extract_fills`, the journaled `closes` (Task 6), `EngineConfig.shadow_nav_eur`, `self._trip_kill(reason)`.
-- Produces: `EngineConfig.tracking_band_bps: float | None`; `execledger.exec_records_for_week(journal_dir, iso_key)`; `executor._evaluate_tracking_band(now)`; a rendered gauge.
+**The call site is the 4-hourly boundary alert, and that is the whole design.** Three review rounds assumed the hook belonged in `on_timer`, where every `_evaluate` sits behind an operator-written `probe-plan.json` — so the trip could fire only while a plan existed, i.e. never in the stopped-placing state it exists for. `node.ShadowStrategy._on_cycle_alert` has no plan dependency: nothing in that chain reads the plan file, `self._plan`, or the venue. **`on_timer` is not edited.**
 
-**It never computes the floor, and cannot.** `load_minimums` reads a refdata **snapshot file**; the engine host carries no refdata snapshot (state dir and config only), and `accumulation_payload` raises on the first asset with no minimum. So the trip compares that week's realized mean drift against the **configured** `tracking_band_bps`, which a human sets from component A's output — where the floor IS computed, on a workstation that has the snapshot. Do not import `weekly_tracking` or `accumulation_payload` here.
+**It carries no durable state.** The most recently closed week is re-derived from immutable journal artifacts at every boundary; idempotence comes from the kill file and `_kill_tripped`. A checkpoint's wrong `held` would be self-reinforcing, and `update_submitted_row` files a fill under the boundary its ORDER was filed under — so a fill can land in an already-scored boundary days later, which a checkpoint loses permanently and a re-derivation folds in at the next boundary.
 
-**Its inputs are all journaled**: `final_targets` (pair-keyed twelve → contracted to the ten EUR bases at this reader's edge), `closes` (base-keyed, Task 6), fills (`extract_fills`), NAV (`shadow_nav_eur`).
+**Measured cost:** 66 exec records in 40 ms, 260 cycle records in 0.19 s (~0.27 s each at the 60-day steady state), against `run_cycle`'s 9.90 s median and **1683.9 s of headroom** to the `[B, B+30 min]` bound.
 
-- [ ] **Step 1: The week-window reader.** `execledger._exec_records_in_window` is **current + previous UTC day** — a 2/7 window that would silently see five sevenths of nothing. Add `exec_records_for_week(journal_dir, iso_key) -> list[dict]` built from the week's day dirs, with its own test asserting it returns all seven days and ignores neighbouring weeks. A trip reading 2/7 of a week is a wrong number with a kill file attached.
+- [ ] **Step 1: The week-window reader.** `execledger._exec_records_in_window` is current + previous UTC day — 2/7 of a week, and `held` is cumulative from the first fill ever, so a week-scoped read understates it and trips spuriously. Add `exec_records_through(journal_dir: Path, until: datetime) -> dict[datetime, dict]` — every `exec-*.json` whose boundary is `<= until`, keyed by boundary, each `validate_exec_record`-checked so a corrupt record refuses the whole scan. Test: it returns all seven days of a week and ignores neighbouring weeks; a corrupt record raises.
 
-- [ ] **Step 2: The config knob, with its refusals.** `EngineConfig` is a frozen dataclass in `cli/config.py` with a hand-written per-key parser; follow the `shadow_nav_eur` arm, including a `math.isfinite` refusal — a `nan` band defeats every `>` comparison. The table is `[zcrypto.engine]` (`CONFIG_TABLE = "zcrypto"`), not `[engine]`. Tests: absent → `None`; negative, zero, `nan`, and non-number each refused by name.
+- [ ] **Step 2: The config knob.** `EngineConfig.tracking_band_bps: float | None = None`, with a parse arm in `_build_engine` copied in shape from `exec_max_plan_notional_eur` — `isinstance(value, bool)` rejection, `math.isfinite`, `> 0`. The table is `[zcrypto.engine]`. Tests: absent → `None`; negative, zero, `nan`, `True`, and a non-number each refused by name.
 
-- [ ] **Step 3: Write the failing executor tests.** Build the fixtures from `tests/test_engine_executor.py`'s existing patterns; each helper below is this task's own scaffolding.
+- [ ] **Step 3: Write the failing tests.** One shared builder `_journal_week(tmp_path, *, weights, closes, fills, level="full", n_cycles=42)`, with **non-degeneracy built in**: ten EUR legs at distinct non-zero weights including one negative; the two `/BTC` legs at 0.0; base-keyed closes spanning orders of magnitude (BTC 60000.0, ADA 0.45, DOGE 0.13 — never uniform); asymmetric fills. Every prior task in this branch shipped a probe that could not bite because a fixture was uniform, symmetric, or all-zero.
 
 ```python
-def test_an_unset_band_never_trips(executor_disarmed):
-    executor_disarmed._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert executor_disarmed._kill_tripped is False
-    assert not (exec_dir(executor_disarmed._state_dir) / KILL_FILE).exists()
-
-def test_a_complete_week_beyond_the_band_latches_the_kill_file(executor_with_band_120):
-    # THE CONSTRUCTED DEFECT.
-    _journal_a_complete_week(executor_with_band_120, realized_mean_bps=300.0)
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert executor_with_band_120._kill_tripped is True
-    assert "tracking" in (exec_dir(executor_with_band_120._state_dir) / KILL_FILE).read_text()
-
-def test_a_healthy_complete_week_does_not_trip(executor_with_band_120):
-    # THE TRUE-POSITIVE. Without it an always-tripping guard ships green.
-    _journal_a_complete_week(executor_with_band_120, realized_mean_bps=40.0)
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert executor_with_band_120._kill_tripped is False
-
-def test_a_quiet_week_with_a_started_series_still_trips(executor_with_band_120):
-    # The failure the trip exists for: the engine stopped placing entirely.
-    _journal_a_week_with_no_fills_after_a_filled_one(executor_with_band_120)
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert executor_with_band_120._kill_tripped is True
-
-def test_a_partial_week_never_trips_however_bad_it_looks(executor_with_band_120):
-    _journal_a_partial_week(executor_with_band_120, realized_mean_bps=5000.0)
-    executor_with_band_120._evaluate_tracking_band(_mid_week_boundary())
-    assert executor_with_band_120._kill_tripped is False
-
-def test_it_is_refused_while_exec_armed_is_false(executor_band_120_not_armed):
-    _journal_a_complete_week(executor_band_120_not_armed, realized_mean_bps=300.0)
-    executor_band_120_not_armed._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert executor_band_120_not_armed._kill_tripped is False
-
-def test_a_week_missing_journaled_closes_is_refused_not_guessed(executor_with_band_120):
-    _journal_a_complete_week(executor_with_band_120, realized_mean_bps=300.0, closes=None)
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert executor_with_band_120._kill_tripped is False
-
-def test_an_unreadable_journal_does_not_raise_onto_the_trade_path(executor_with_band_120):
-    _corrupt_a_cycle_artifact(executor_with_band_120)
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())  # must not raise
-    assert executor_with_band_120._kill_tripped is False
-
-def test_the_trip_is_idempotent_and_keeps_the_first_reason(executor_with_band_120):
-    _journal_a_complete_week(executor_with_band_120, realized_mean_bps=300.0)
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())
-    first = (exec_dir(executor_with_band_120._state_dir) / KILL_FILE).read_text()
-    executor_with_band_120._evaluate_tracking_band(_boundary_after_a_complete_week())
-    assert (exec_dir(executor_with_band_120._state_dir) / KILL_FILE).read_text() == first
-
-def test_the_executor_actually_CALLS_the_trip_at_a_boundary(executor_with_band_120):
-    # A guard nothing calls ships green exactly as an always-refusing one does.
-    _journal_a_complete_week(executor_with_band_120, realized_mean_bps=300.0)
-    _drive_one_boundary_tick(executor_with_band_120)      # the real tick path, not the method
-    assert (exec_dir(executor_with_band_120._state_dir) / KILL_FILE).exists()
-
-def test_the_pair_keyed_targets_are_contracted_before_comparison(executor_with_band_120):
-    # final_targets is pair-keyed twelve including the /BTC legs at zero weight; an uncontracted
-    # read matches no close and the drift is computed against nothing.
-    _journal_a_complete_week(executor_with_band_120, realized_mean_bps=300.0)
-    assert executor_with_band_120._week_mean_bps(_last_complete_week()) == pytest.approx(300.0, rel=0.05)
+def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_file(...)
+def test_an_unset_band_never_trips(...)
+def test_a_complete_week_beyond_the_band_latches_the_kill_file(...)        # CONSTRUCTED DEFECT ~300 vs 120
+def test_a_healthy_complete_week_does_not_trip(...)                       # TRUE POSITIVE ~40 vs 120
+def test_a_quiet_week_with_a_started_series_still_trips(...)
+def test_a_partial_week_never_trips_however_bad_it_looks(...)             # 41 records, ~5000 bps
+def test_a_week_the_gate_never_reached_full_does_not_trip(...)            # one record level="reduce_only"
+def test_the_week_containing_the_first_fill_is_not_scored(...)            # straddle refused, next week passes
+def test_a_fill_at_the_journals_oldest_boundary_is_refused(...)
+def test_it_is_refused_while_exec_armed_is_false(...)
+def test_a_week_missing_journaled_closes_is_refused_not_guessed(...)
+def test_a_week_whose_targets_miss_a_model_leg_is_refused(...)
+def test_an_unreadable_journal_does_not_raise_onto_the_trade_path(...)
+def test_the_trip_keeps_the_first_reason_across_a_restart(...)
+def test_the_idle_tick_never_evaluates_tracking(...)                      # on_timer stays untouched
 ```
 
-- [ ] **Step 4: Run and read WHICH assertion fails.** Expected: `AttributeError: _evaluate_tracking_band`.
+- [ ] **Step 4: Run and read WHICH assertion fails.**
 
-- [ ] **Step 5: Implement, and NAME THE CALL SITE.** Wire the evaluation into the boundary path beside the existing gate evaluation — **the task is not done while the method exists and nothing calls it.** Return immediately when the band is unset or `exec_armed` is false; read the just-closed week via Step 1's reader; contract `final_targets` to the ten EUR bases; refuse a week lacking `closes`; wrap every read in an exception boundary; compute each cycle's `drift_bps` from the shared core and mean them; trip only on a **complete** week whose mean exceeds the band, with a reason naming the week, the mean and the band. Reuse `_trip_kill` — no second latch path.
+- [ ] **Step 5: Implement.** In `node.ShadowStrategy._on_cycle_alert`, capture `boundary = self._next_cycle_ts` **before** calling `on_alert_logic` (its first act is `schedule_alert`, which overwrites the field), then call `self._executor.on_boundary(boundary)` in a `finally`. `on_boundary` carries a total `except Exception` so it can neither raise onto the trade path nor replace an in-flight exception, and it runs after the cycle journaled so `completed_at` is already stamped.
 
-- [ ] **Step 6: Prove the guard bites, reading WHICH failure fires.** Via `mutate-probe.sh`: drop the `complete` condition → the partial-week test fails; invert the comparison → the healthy-week test fails; drop the unset-band early return → the disarmed test fails; drop the `exec_armed` check → that test fails; skip the pair→base contraction → the contraction test fails; **delete the call site → the call-site test fails** (that one is the point of Step 5).
+  `_evaluate_tracking` returns early when the band is unset or `exec_armed` is false; takes eligibility from each boundary's journaled **`level == "full"`** — not live config, because `restart_hold` is written unconditionally at every start and cleared only by hand, so a held week reads as armed while the engine never traded; requires 42 boundaries; refuses a straddling week, a week missing `closes`, a week whose `final_targets` miss a model leg, and a span whose oldest boundary carries the first fill; and computes the mean through **`tracking.realized_drift`** — the same function component A calls, not a private loop, so the number a human bands cannot drift from the number the engine trips on.
 
-- [ ] **Step 7: Render the state.** A gauge for the trip's armed/disarmed state, added to the capture role's keep-regex in `config.alloy` **and** a dashboard target — a disarmed trip with no rendered state cannot be confirmed disarmed after the converge. **No new alert rule**: a latched trip already pages via `zcrypto-engine-exec-kill-tripped`, and a second would double-page one event; record that decision in the runbook section so its absence does not read as an oversight.
+- [ ] **Step 6: Prove the guard bites, reading WHICH failure fires.** Via `mutate-probe.sh`, each row naming its test and why the fixture is non-degenerate:
 
-- [ ] **Step 8: The runbook section** — what the operator sees, what it means, what to do, when it retires. No internal traceability tokens in operator-visible strings.
+| mutation | test that must fail | non-degeneracy |
+| --- | --- | --- |
+| delete `on_boundary(...)` from `_on_cycle_alert` | `…reaches_the_executors_tracking_trip_with_no_plan_file` | no plan file, no resting orders, breach ~300 vs 120 — the kill file has no other producer |
+| `mean > band` → `mean < band` | `…healthy_complete_week_does_not_trip` | 40 and 300 both non-zero, strictly opposite sides of 120 |
+| delete the 42-boundary refusal | `…partial_week_never_trips…` | the partial week has **41** records, not 0, at ~5000 bps |
+| delete the `level == "full"` check | `…gate_never_reached_full_does_not_trip` | fixture identical to the breach one but for ONE record's level, so only eligibility can distinguish |
+| delete the straddle exclusion | `…week_containing_the_first_fill_is_not_scored` | crosses the band only via its 20 pre-fill boundaries; the next week, same held, must still pass |
+| delete the oldest-boundary check | `…fill_at_the_journals_oldest_boundary_is_refused` | the truncated journal drops the opening buy, so held is short and the week reads ~300 |
+| delete the `exec_armed` early return | `…refused_while_exec_armed_is_false` | every journaled level still reads `full`, so only the config gate can stop it |
 
-- [ ] **Step 9: Commit.** `feat(engine): the tracking-error trip, disarmed until three complete weeks exist`
+- [ ] **Step 7: Render the state.** A gauge whose alphabet never publishes `0`, in the capture role's keep-regex **and** a dashboard target — a disarmed trip with no rendered state cannot be confirmed disarmed after the converge, and an eagerly-registered `0` reads as a legitimate value. **No new alert rule**: a latched trip already pages via `zcrypto-engine-exec-kill-tripped`; record that decision in the runbook so its absence does not read as an oversight.
 
-**Deploy note (not a plan step) — three legs, in this order:**
-1. **Readers first** (Tasks 1–5 merged), then the writer (Task 6), then this.
-2. **Engine + capture converge**, attended, inside a 4-hourly inter-cycle gap, canary-gated (the secondary's capture bake IS the engine's gate). `--tags capture,engine` because the keep-regex lives in the capture role, with `-e capture_image_digest` and `-e capture_alloy_digest` at the currently-running digests. Verify the new family **by value** at the next scrape — `(no series)` is FAIL.
-3. **The NAS leg.** This branch edits `command.py`, `cycle.py` and `journal.py` and adds `tracking.py` to `command.py`'s closure — all inside `gate_cache._REPLAY_ROOTS`' transitive digest, so the fingerprint changes and the whole gate-export replays. **Size that window against the measured 2490 s cold cost**, never the smaller figure. (`evidence_fingerprint` is unaffected — it digests snapshots, `cycle_ts`, `completed_at` and `final_targets`, not `closes`.)
+- [ ] **Step 8: The runbook section**, plus the owed verify-by-outcome step: **at the first armed probe window, count `level == "full"` across that week's 42 exec records.** All 66 live records currently read `level: "none"` (`config_not_armed, arm_file_absent, restart_hold`), so if hold is left set through armed windows the trip is structurally inert even when armed. A count below 42 means the hold-clearing step or the eligibility rule must change **before** the band is set.
+
+- [ ] **Step 9: Commit.** `feat(engine): the tracking-error trip, evaluated at the boundary alert`
+
+**Deploy note (not a plan step) — three legs, in order:** readers (Tasks 1–5) → the writer (Task 6) → this. Engine converge attended, inside a 4-hourly inter-cycle gap, canary-gated, `--tags capture,engine` with `-e capture_image_digest` and `-e capture_alloy_digest` at the currently-running digests; verify the new family **by value** at the next scrape, `(no series)` is FAIL. Then the NAS leg: this branch touches `command.py`, `cycle.py` and `journal.py` inside `gate_cache`'s transitive replay digest, so the gate-export replays at its measured **2490 s** cold cost.
 
 ---
 
