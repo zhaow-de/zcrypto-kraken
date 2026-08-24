@@ -28,6 +28,9 @@ ENV UV_LINK_MODE=copy \
 # README.md is copied too: hatchling (the build backend) reads `[project].readme` at build time.
 COPY pyproject.toml uv.lock README.md ./
 COPY cli/ cli/
+# Not documentation: `cli.data.sync` reads this at runtime to verify frozen sets whose own manifest
+# vouches nothing, and the image runs `push_hot`. Absent, that verification degrades to a no-op.
+COPY docs/reference/vouched-dataset-hashes.jsonl docs/reference/
 # POLARS_RUNTIME=default -> keeps the AVX-optimized `polars-runtime-32` (the VPS, AMD EPYC).
 # POLARS_RUNTIME=compat  -> swaps to `polars-runtime-compat` and drops the AVX runtime, so the
 #   image runs on CPUs without AVX/AVX2 (the Synology NAS, Intel Atom Goldmont). Same polars

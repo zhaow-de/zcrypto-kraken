@@ -17,6 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
+from cli.data.errors import DataSyncError
 from cli.data.sync import _manifest_sha256s, sidecar_hashes
 from cli.ohlc.dataset import dataset_hash, read_parquet
 from cli.registry.errors import RegistryError
@@ -49,11 +50,15 @@ class ObservedReader:
     def _vouched_for(self, dataset: str) -> set[str]:
         if dataset not in self._vouched:
             manifest = self._root / dataset / "manifest.json"
+            try:
+                from_sidecar = sidecar_hashes(dataset)
+            except DataSyncError as exc:  # a corrupt sidecar must refuse in THIS surface's dialect
+                raise RegistryError(f"{dataset}: committed attestations are unreadable — {exc}") from exc
             if not manifest.exists():
-                self._vouched[dataset] = sidecar_hashes(dataset)
+                self._vouched[dataset] = from_sidecar
             else:
                 try:
-                    self._vouched[dataset] = _manifest_sha256s(json.loads(manifest.read_text())) | sidecar_hashes(dataset)
+                    self._vouched[dataset] = _manifest_sha256s(json.loads(manifest.read_text())) | from_sidecar
                 except ValueError as exc:  # unparseable manifest: refuse typed, not with a raw JSONDecodeError
                     raise RegistryError(
                         f"{dataset}: manifest.json is unparseable — refusing to read a dataset whose freeze record is corrupt: {exc}"

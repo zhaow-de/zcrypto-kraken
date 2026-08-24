@@ -37,6 +37,10 @@ def _sidecar_by_dataset() -> dict[str, frozenset[str]]:
     """
     by_dataset: dict[str, set[str]] = {}
     if not _VOUCHED_SIDECAR.is_file():
+        logger.warning(
+            "vouched attestations absent at %s -- frozen sets whose manifest vouches nothing are unverified in this environment",
+            _VOUCHED_SIDECAR,
+        )
         return {}
     for line_no, raw in enumerate(_VOUCHED_SIDECAR.read_text(encoding="utf-8").splitlines(), start=1):
         if not (line := raw.strip()):
@@ -45,6 +49,8 @@ def _sidecar_by_dataset() -> dict[str, frozenset[str]]:
             row = json.loads(line)
         except ValueError as exc:
             raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: unparseable attestation line") from exc
+        if not isinstance(row, dict):
+            raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: attestation is not an object")
         try:
             by_dataset.setdefault(row["dataset"], set()).add(row["dataset_sha256"])
         except KeyError as exc:

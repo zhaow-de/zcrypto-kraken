@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "step (2) is unblocked NOW — no set under the hot dir vouches nothing any more, so fail-closed would refuse nothing (re-check by running `_vouched_for_set` over every set there); step (3) waits on [[T0132]]'s manifest contract"
+ripe_when: "the fail-closed step is unblocked NOW — no set under the hot dir vouches nothing any more, so it would refuse nothing (re-check by running `_vouched_for_set` over every set there); the path-binding step waits on [[T0132]]'s manifest contract"
 ---
 
 # The holdout set is the one canonical dataset with no byte verification

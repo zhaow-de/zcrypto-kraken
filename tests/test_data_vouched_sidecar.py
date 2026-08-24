@@ -71,7 +71,12 @@ def test_sidecar_hashes_are_keyed_by_dataset(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(
     ("line", "because"),
-    [("{not json", "unparseable"), (json.dumps({"dataset": "x"}), "missing dataset_sha256")],
+    [
+        ("{not json", "unparseable"),
+        (json.dumps({"dataset": "x"}), "missing dataset_sha256"),
+        (json.dumps([1, 2]), "valid JSON but not an object"),
+        (json.dumps("x"), "a bare JSON string"),
+    ],
 )
 def test_a_broken_sidecar_line_is_refused_typed_rather_than_ignored(tmp_path, monkeypatch, line, because):
     # Silently skipping a bad line is how a set loses its attestation without anyone noticing --
@@ -82,6 +87,28 @@ def test_a_broken_sidecar_line_is_refused_typed_rather_than_ignored(tmp_path, mo
     sync._sidecar_by_dataset.cache_clear()
     with pytest.raises(DataSyncError):
         sync.sidecar_hashes("x")
+
+
+def test_a_corrupt_sidecar_refuses_in_the_read_surfaces_own_dialect(tmp_path, monkeypatch):
+    # `read_series` speaks RegistryError; a DataSyncError escaping through it would bypass every
+    # caller that catches the documented type.
+    root, _ = _frozen_set(tmp_path)
+    path = tmp_path / "sidecar.jsonl"
+    path.write_text("{not json\n", encoding="utf-8")
+    monkeypatch.setattr(sync, "_VOUCHED_SIDECAR", path)
+    sync._sidecar_by_dataset.cache_clear()
+    with pytest.raises(RegistryError, match="attestations are unreadable"):
+        ObservedReader(root).read_series("frozen-set", "BTC/EUR/1440.parquet")
+
+
+def test_a_missing_sidecar_says_so_rather_than_degrading_in_silence(tmp_path, monkeypatch, caplog):
+    # Absent attestations revert every frozen set to unverified. That is survivable; being
+    # survivable AND silent is the shape this whole change exists to close.
+    monkeypatch.setattr(sync, "_VOUCHED_SIDECAR", tmp_path / "nope.jsonl")
+    sync._sidecar_by_dataset.cache_clear()
+    with caplog.at_level("WARNING"):
+        assert sync.sidecar_hashes("anything") == set()
+    assert "vouched attestations absent" in caplog.text
 
 
 # --- the read-time guard, which is the one that protects the copy already on disk -----------------
