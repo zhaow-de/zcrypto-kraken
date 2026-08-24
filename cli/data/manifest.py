@@ -229,6 +229,21 @@ def _check_digest(value: Any, field: str, where: str = "") -> None:
         raise ManifestError(f"{prefix}{field} must be 64 lowercase hex characters, got {value!r}")
 
 
+def _walk_key(node: Any, key: str) -> set[str]:
+    """Every string value stored under `key`, at any depth."""
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == key and isinstance(v, str):
+                found.add(v)
+            else:
+                found |= _walk_key(v, key)
+    elif isinstance(node, list):
+        for item in node:
+            found |= _walk_key(item, key)
+    return found
+
+
 def conformant_paths(root: Path) -> Iterable[Path]:
     """Every `manifest.json` under `root`'s immediate dataset directories."""
     return sorted(root.glob("*/manifest.json"))
@@ -264,20 +279,26 @@ def convert_dataset(root: Path, *, apply: bool = False) -> dict[str, Any]:
     if not series:
         return {"dataset": root.name, "status": "no parquet, skipped", "series": 0}
 
-    attested = _manifest_sha256s(raw)
+    # Both spellings: v0 wrote its content hash under `dataset_hash`, so a `sha256`-only walk
+    # returns nothing for such a set and would skip the proof entirely.
+    attested = _manifest_sha256s(raw) | _walk_key(raw, "dataset_hash")
+    if not attested:
+        raise ManifestError(
+            f"{root.name}: refusing to convert -- the legacy manifest attests no content hash at all, so there is "
+            f"nothing to prove the conversion against. Converting would vouch whatever is on disk."
+        )
     recomputed = {leaf["sha256"] for leaf in series.values()}
-    if attested:
-        drifted = sorted(p for p, leaf in series.items() if leaf["sha256"] not in attested)
-        if drifted:
-            raise ManifestError(
-                f"{root.name}: refusing to convert -- {len(drifted)} series no longer hash to what the legacy "
-                f"manifest attested, first {drifted[0]!r}. Converting would re-vouch whatever is on disk."
-            )
-        if len(recomputed) != len(attested):
-            raise ManifestError(
-                f"{root.name}: refusing to convert -- the legacy manifest attests {len(attested)} distinct hashes "
-                f"but the tree yields {len(recomputed)}; the sets must correspond exactly"
-            )
+    drifted = sorted(p for p, leaf in series.items() if leaf["sha256"] not in attested)
+    if drifted:
+        raise ManifestError(
+            f"{root.name}: refusing to convert -- {len(drifted)} series no longer hash to what the legacy "
+            f"manifest attested, first {drifted[0]!r}. Converting would re-vouch whatever is on disk."
+        )
+    if len(recomputed) != len(attested):
+        raise ManifestError(
+            f"{root.name}: refusing to convert -- the legacy manifest attests {len(attested)} distinct hashes "
+            f"but the tree yields {len(recomputed)}; the sets must correspond exactly"
+        )
 
     # Detached legs are named by the FILENAME, which is the series key, so the subsets need no
     # per-set knowledge beyond the convention the filenames already enforce.

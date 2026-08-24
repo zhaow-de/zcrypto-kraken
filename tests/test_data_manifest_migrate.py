@@ -155,6 +155,49 @@ def test_legacy_fields_the_contract_does_not_name_are_preserved_verbatim(tmp_pat
     assert legacy["source"] == "/machine/local"
 
 
+def test_a_legacy_manifest_attesting_nothing_is_refused_rather_than_vouched_blind(tmp_path):
+    """The drift refusal used to be skipped entirely when nothing was attested, so a set with no
+    per-series hash converted with ZERO content proof -- silently, and while the docs claimed every
+    conversion was proved. Refusing is the only honest option: there is nothing to prove against."""
+    root = tmp_path / "ohlc-thing"
+    write_parquet(to_frame(_rows(5)), root / "ADA/EUR/1440.parquet")
+    (root / "manifest.json").write_text(json.dumps({"fetched_at": "2026-07-01T00:00:00+00:00", "series": {"ADA": {"rows": 5}}}))
+    with pytest.raises(ManifestError, match="attests no content hash at all"):
+        convert_dataset(root, apply=True)
+
+
+def test_the_v0_dataset_hash_spelling_still_proves_the_conversion(tmp_path):
+    # v0 wrote its content hash under `dataset_hash`, so a `sha256`-only walk saw nothing and the
+    # proof was skipped. Both spellings now count, so a v0 set converts WITH proof rather than without.
+    root = tmp_path / "ohlc"
+    frame = to_frame(_rows(5))
+    write_parquet(frame, root / "ADA/1440.parquet")
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "fetched_at": "2026-07-01T00:00:00+00:00",
+                "series": [{"symbol": "ADA", "interval": 1440, "dataset_hash": dataset_hash(frame)}],
+            }
+        )
+    )
+    convert_dataset(root, apply=True)
+    assert read_manifest(root / "manifest.json").series["ADA/1440.parquet"]["sha256"] == dataset_hash(frame)
+
+    # ...and a v0 set whose content has since drifted is refused, like any other.
+    root2 = tmp_path / "ohlc2"
+    write_parquet(to_frame(_rows(5)), root2 / "ADA/1440.parquet")
+    (root2 / "manifest.json").write_text(
+        json.dumps(
+            {
+                "fetched_at": "2026-07-01T00:00:00+00:00",
+                "series": [{"symbol": "ADA", "interval": 1440, "dataset_hash": "a" * 64}],
+            }
+        )
+    )
+    with pytest.raises(ManifestError, match="no longer hash to what the legacy manifest attested"):
+        convert_dataset(root2, apply=True)
+
+
 def test_an_already_conformant_set_is_left_alone(tmp_path):
     root = tmp_path / "ohlc-thing"
     _legacy_set(root)
