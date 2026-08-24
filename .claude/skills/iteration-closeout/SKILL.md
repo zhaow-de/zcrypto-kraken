@@ -14,11 +14,11 @@ The closeout file mechanics. The ambient rules keep the WHEN (`.claude/rules/ite
 
 Each entry is a new section appended at the bottom of its phase file (`## <YYYY-MM-DD> — <heading>`) followed by a bullet list: one bullet per feature/change/fix, covering what landed, the artifacts/settings/log events it introduced, and any non-obvious behavior.
 
-Entries and branch-end status claims name the CLASS they cover ("every spec/plan commit on this branch"), never an enumeration or a count — an enumeration is falsified by the next commit that lands beside it (iter-140: twice to one sentence); where a number is load-bearing, recompute it in the final pre-PR pass.
+Entries and branch-end status claims name the CLASS they cover ("every spec/plan commit on this branch"), never an enumeration or a count — an enumeration is falsified by the next commit that lands beside it; where a number is load-bearing, recompute it in the final pre-PR pass.
 
 ## Dataset-catalog sync (every dataset-introducing closeout)
 
-An iteration that introduces, relocates, or retires a dataset updates `docs/reference/data-catalog-full.md` (or `data-catalog.md` for v0-class sets) **in the same closeout** — location(s), producer, schema/grid, consumption convention, caveats. The catalogs are the research loop's dataset inventory; the open-topics index carries consumer-shaped pointers, but a loop brainstorming "what inputs exist?" reads the catalog — an uncataloged dataset is invisible to it (the 2026-07-15 discovery-gap finding: liquidations + the L2 panel ran for a day uncataloged).
+An iteration that introduces, relocates, or retires a dataset updates `docs/reference/data-catalog-full.md` (or `data-catalog.md` for v0-class sets) **in the same closeout** — location(s), producer, schema/grid, consumption convention, caveats. The catalogs are the research loop's dataset inventory; the open-topics index carries consumer-shaped pointers, but a loop brainstorming "what inputs exist?" reads the catalog — an uncataloged dataset is invisible to it.
 
 ## The decisions-log entry
 

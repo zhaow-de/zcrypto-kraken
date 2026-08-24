@@ -10,11 +10,11 @@ disable-model-invocation: false
 
 The master plan marks fees, fee tiers, borrow-rollover rates, pair lists, MiCA status, tax rules and data pricing as **externally owned** — third-party facts that move without notice, where a stale one is **silent**. This sweep re-confirms the machine-readable subset and stamps the result, so "re-confirmed, identical" is always distinguishable from "never re-run".
 
-Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier (step 6) — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it (that run belongs to `T0085`).
+Two halves, one routine: an **automated** re-fetch of the public endpoints, and an **attended** re-read of the account's own fee tier (step 6) — the authoritative surface is behind a login, so no amount of API work replaces it. Two occasions, same procedure: **monthly**, and **immediately before the go/no-go**, where the verdict is an input to the decision rather than a follow-up to it.
 
 ## The one rule that makes the verdict meaningful
 
-**Read the verdict from the rendered tables, never from `raw_sha256`.** Kraken's full response churns constantly — sweep #1 saw 93 pairs removed and 13 added while every candidate held — so the hash changes on nearly every sweep for reasons that touch nothing we depend on. A sweep that treats hash movement as fact movement raises a false alarm every month and will be ignored by the third one.
+**Read the verdict from the rendered tables, never from `raw_sha256`.** Kraken's full response churns constantly, so the hash changes on nearly every sweep for reasons that touch nothing we depend on. A sweep that treats hash movement as fact movement raises a false alarm every month and will be ignored by the third one.
 
 ## Procedure
 
@@ -50,20 +50,20 @@ The raw snapshot is gitignored on purpose — it is the evidence, not the artifa
    - **Changed** → correct `kraken-fee-schedule.md` *and* say what it invalidates: `cli/costs/fees.py` encodes that ladder verbatim, so a tier move re-prices every quoted figure that reads it — name `T0090`'s cost basis and the deployable's quoted band explicitly.
    - **Owner unavailable** → record the row as `not re-read`, never as unchanged. A blank is honest; a false confirmation is the failure this whole routine exists to prevent.
 
-   At \$0 30-day volume the tier *cannot* move, so this step is cheap today and becomes load-bearing the moment RUNG 1 puts real fills through — that is also when the endpoint's own drift detector starts mattering.
+   At \$0 30-day volume the tier *cannot* move, so run it cheaply now; it is load-bearing once real fills flow.
 
 7. **Commit** with the sweep number in the subject. If the sweep is the one before the go/no-go, say so — that run is a decision input.
 
 ## What this sweep does and does not cover
 
 - **Covers** (public, no account): pair existence and `status`, margin flag, leverage bands, `ordermin`/`costmin`, per-asset **`margin_rate`** (the per-4h rollover rate) and `collateral_value`, `margin_call`/`margin_stop`, position limits.
-- **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint was still serving the **pre-2026-07-09** schedule when checked on 2026-08-04, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
-- **No endpoint covers, so step 6 asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `T0000` recorded them at Phase 0 and is now archived, so `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
+- **Reports but does NOT own — the fee ladder.** `docs/reference/kraken-fee-schedule.md` is the fee source of truth, account-confirmed. The public endpoint lags the account-confirmed schedule by weeks, so the register's fee columns are a **drift detector on the endpoint**, never a costing anchor. If they move, reconcile against the fee-schedule file and say which is now right — do not adopt the endpoint's numbers because they are newer-looking.
+- **No endpoint covers, so step 6 asks a human**: the account's own realised fee **tier** and 30-day volume — that is exactly what the attended half re-reads, not something this routine skips. AoP qualification and the observed margin/rollover bands stay unautomated too; `docs/reference/kraken-fee-schedule.md` is where they live and the anchor for any costing question — never the register's endpoint columns, at any volume.
 - **Does not cover** (no endpoint): MiCA status, tax rules, market-data pricing — human re-reads, and they belong to the go/no-go run.
 
 ## Failure modes worth naming
 
 - **A changed hash reported as a changed fact.** See the rule above.
 - **Reading `margin_rate` off the pair.** It is a property of the **asset**; the pair carries no such field, so a pair-side lookup yields `None` for every row and looks like "no borrow data" rather than a bug.
-- **Costing off the register's fee columns.** They are the *endpoint's* view and were a month stale at sweep #1 — a reader who anchors a cost model to them adopts a superseded schedule that happens to look authoritative because it came from an API.
-- **Trusting an "UNCHANGED" verdict for fields the register does not extract.** It renders what `derive_universe` extracts and nothing more. If a decision starts leaning on a field outside that set, extend the extraction first — sweep #1's review found `margin_rate` and `short_position_limit` moving inside one hour while the then-current table was blind to both.
+- **Costing off the register's fee columns.** They are the *endpoint's* view — a reader who anchors a cost model to them adopts a superseded schedule that happens to look authoritative because it came from an API.
+- **Trusting an "UNCHANGED" verdict for fields the register does not extract.** It renders what `derive_universe` extracts and nothing more. If a decision starts leaning on a field outside that set, extend the extraction first — fields outside the table move without the table seeing them.

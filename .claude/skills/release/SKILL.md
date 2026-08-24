@@ -119,7 +119,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
     git checkout develop
     ```
 
-14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). The skill no longer pauses to ask the user — releases run end-to-end. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise poll every 30 seconds and merge as soon as GitHub reports the PR mergeable and not blocked by branch protection:
+14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise poll every 30 seconds and merge as soon as GitHub reports the PR mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 
@@ -160,7 +160,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
     ```
     The `awk` prints from the top of the tagged `CHANGELOG.md` until the next `## v…` header — i.e. just the new version's section. `--verify-tag` aborts if the tag was not pushed in step 15. The command prints the Release URL — keep it for the final report.
 
-17. **Back-merge `main` → `develop` via a PR.** This repo's `develop` is protected against direct pushes, so the back-merge cannot be a plain `git push`. Cut a dedicated `chore/back-merge-v<VERSION>` branch off `origin/main` (using `main` itself as the PR head works in GitHub but is awkward — a topic branch keeps the PR's head distinct from the long-lived ref and gives us something straightforward to delete locally in step 18). Push it, open the PR, then auto-merge with the same poll-then-merge loop as step 14:
+17. **Back-merge `main` → `develop` via a PR.** This repo's `develop` is protected against direct pushes, so the back-merge cannot be a plain `git push`. Cut a dedicated `chore/back-merge-v<VERSION>` branch off `origin/main` (a topic branch keeps the PR's head distinct from the long-lived ref, and step 18 deletes it). Push it, open the PR, then auto-merge with the same poll-then-merge loop as step 14:
     ```bash
     git fetch origin main
     BACKMERGE_BRANCH="chore/back-merge-v<VERSION>"

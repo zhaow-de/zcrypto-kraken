@@ -1,7 +1,7 @@
 # CLAUDE.md, rules, and markdown style
 
 - **Markdown: one line per paragraph/bullet** — never hard-wrap to a column width; let the renderer wrap.
-- **Escape `|` as `\|` inside a table's code spans** — GFM otherwise splits the row and silently discards the surplus cells (a rollback operand once vanished this way), and `docs/reference/` is outside mdformat's reach; after editing a table carrying code, check the rendered cell count.
+- **Escape `|` as `\|` inside a table's code spans** — GFM otherwise splits the row and silently discards the surplus cells, and `docs/reference/` is outside mdformat's reach; after editing a table carrying code, check the rendered cell count.
 - **A living reference doc records current state** — per-event evidence (checks read, values quoted, deploy narrative) goes in the updating commit's MESSAGE, so the file never contradicts itself and `git log --follow` on it is the chronicle.
 - **CLAUDE.md and `.claude/rules/*` are operational guidance for Claude, not human-facing docs**: the shortest imperative statement of what to DO / NOT do, one line each where possible; drop human-facing phrasing.
 - **No narration in rules** — history, derivations, measurements, dates, and rationale beyond one clause belong in specs/topics.

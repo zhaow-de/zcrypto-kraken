@@ -84,7 +84,7 @@ Tests live in `tests/` (pytest + Typer's `CliRunner`).
 
 **The pre-PR full-suite run is CI's — do not duplicate it locally.** `.github/workflows/coverage.yml` runs the whole suite on every PR into `develop` and a failing suite fails that check. Locally run the tests the diff can reach, targeting one with `uv run pytest path::test` while iterating. The full run takes ~19 minutes with both local data sources present.
 
-**Except what CI cannot run, which is not a short list.** ~24 tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard, sits on the live trade path, and skips in CI.
+**Except what CI cannot run.** Tests skip there for want of local data or mounts — `data/ohlc-full`, the engine-journal mount, the gitignored refdata snapshot and universe JSON, the panel and trade-archive mounts, `data/ohlc-15m`, the ops journal mirror. **Run the data-gated tests locally before PR whenever the diff can reach them**, and never assume a skip is coverage: `tests/test_costmin_drift.py` is COSTMIN's only guard, sits on the live trade path, and skips in CI.
 
 **A change to `uv.lock`, `pyproject.toml` or a `conftest.py` reaches everything** — run the suite in full for those.
 

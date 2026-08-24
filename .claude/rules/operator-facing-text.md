@@ -8,4 +8,4 @@ Internal traceability vocabulary — `Phase <N>`, `T<NNNN>`, `iter-<NNN>`, `spec
 - Keep the semantic content, move the token to the adjacent comment. A `Description=` still says what the unit does; the serial sits on the line above it.
 - `WP<N>` is banned from every git-tracked file, not just these — `zcrypto-grooming`'s `references/memo-protocol.md`, which also records the one historical exception; don't add more, and don't "fix" the recorded exception away. The ban is enforced repo-wide by the same test (two-way allowlist).
 
-`tests/test_internal_terms_not_operator_visible.py` enforces every surface listed above. It checks each **non-docstring** literal rather than only the ones inside a `raise`/`echo` — a message built into a variable and printed later is invisible to a call-site walk.
+`tests/test_internal_terms_not_operator_visible.py` enforces every surface listed above.

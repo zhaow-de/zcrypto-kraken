@@ -48,7 +48,7 @@ When the item is research-type (alpha families, validation, portfolio/risk): the
 
 ## Distrust the instrument — before any verdict, research or not
 
-The project's worst conclusions were measurement bugs producing plausible numbers, and the 2026-07-20 audits found twenty-plus defects that were all *artifacts asserting untruths*. So, for every claim the loop produces:
+Measurement bugs produce plausible numbers — *artifacts asserting untruths*. So, for every claim the loop produces:
 
 - **Prove the treatment engaged** before reading a result; bit-identical arms = a dead knob until proven otherwise.
 - **Plausibility-gate every metric before it counts**: NaN/inf/degenerate values, zero trades or zero turnover under a live signal, identical numbers where seeds/windows/arms should differ, a Sharpe far above the family's literature bound — instrument suspects first, findings second.
@@ -88,4 +88,4 @@ The project's worst conclusions were measurement bugs producing plausible number
 
 - Orchestrates: `superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:subagent-driven-development`, `superpowers:systematic-debugging`, `merge-pr`, and `/zcrypto-grooming` (ad-hoc procedures only). All `.claude/rules/` conventions hold. Unattended mode changes *who approves* — not *what gets produced*.
 - War stories behind these rules: `references/case-log.md` — read it when a rule's rationale matters to a live call.
-- Renamed from `research-loop` 2026-07-21; `docs/research/` and older specs keep the old name as history.
+- Older docs and specs call this loop `research-loop`; the names are the same thing.
