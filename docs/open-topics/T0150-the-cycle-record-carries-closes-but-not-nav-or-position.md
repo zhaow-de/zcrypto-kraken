@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the oldest cycle record in the engine journal postdates the deploy of the `held` widening — read the oldest `cycle-<HH>.json` on the engine host and compare against that converge; the 60-day retention makes this arrive on its own
+ripe_when: "not before 2026-10-25 — the engine converge carrying the `held` widening is due 2026-08-24/25, the journal keeps a 60-day tail, and the prune works in whole day-directories, so that date is converge + 60d + a day of granularity. The DATE IS A HANDLE, NOT THE TEST — the test is that the oldest `cycle-<HH>.json` on the engine host postdates that converge, which is what stays right if the converge slips, the retention changes, or `zcrypto_engine_journal_prune_deleted_days` shows the prune stalled"
 ---
 
 # The cycle record carries `closes` but not the NAV or the position the drift was computed against
