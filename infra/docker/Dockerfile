@@ -28,8 +28,11 @@ ENV UV_LINK_MODE=copy \
 # README.md is copied too: hatchling (the build backend) reads `[project].readme` at build time.
 COPY pyproject.toml uv.lock README.md ./
 COPY cli/ cli/
-# Not documentation: `cli.data.sync` reads this at runtime to verify frozen sets whose own manifest
-# vouches nothing, and the image runs `push_hot`. Absent, that verification degrades to a no-op.
+# Carried so an in-image caller of `cli.data.sync` would find its attestations rather than degrade
+# to a silent no-op. Correcting the claim this line shipped with: no deployed entrypoint reads it --
+# `push_hot`'s only callers are `zcrypto data push` (cli/data/command.py), which runs from a repo
+# checkout; `cli/capture/command.py` names it in a DOCSTRING, which is what the original claim
+# mistook for a call site. `.dockerignore` must re-include it or the build fails.
 COPY docs/reference/vouched-dataset-hashes.jsonl docs/reference/
 # POLARS_RUNTIME=default -> keeps the AVX-optimized `polars-runtime-32` (the VPS, AMD EPYC).
 # POLARS_RUNTIME=compat  -> swaps to `polars-runtime-compat` and drops the AVX runtime, so the

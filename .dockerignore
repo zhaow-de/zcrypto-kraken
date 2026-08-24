@@ -2,9 +2,10 @@
 data/
 runs/
 docs/
-# ...except this one file, which `cli.data.sync` READS AT RUNTIME to verify frozen datasets whose
-# own manifest vouches nothing. Excluding it makes that verification silently inert in-image, and
-# the image runs `push_hot`. A later pattern re-includes it; docs/ stays excluded otherwise.
+# ...except this one file, because the Dockerfile COPYs it and the build fails outright without it
+# in the context. It is NOT read by anything the image runs: `zcrypto data push`/`fetch` and the
+# research loader are the only readers, and both run from a repo checkout where docs/ is present.
+# A later pattern re-includes it; docs/ stays excluded otherwise.
 !docs/reference/vouched-dataset-hashes.jsonl
 tests/
 .venv/
