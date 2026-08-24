@@ -8,6 +8,7 @@ import json
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from cli.data.errors import DataSyncError
@@ -16,6 +17,45 @@ from cli.ohlc.dataset import dataset_hash, read_parquet
 
 logger = get_logger("data.sync")
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]  # cli/data/sync.py -> repo root
+_VOUCHED_SIDECAR = _REPO_ROOT / "docs" / "reference" / "vouched-dataset-hashes.jsonl"
+
+
+@lru_cache(maxsize=1)
+def _sidecar_by_dataset() -> dict[str, frozenset[str]]:
+    """The committed per-series attestations, keyed by dataset.
+
+    Some canonical sets are produced by a freeze process this repo does not write, whose manifest
+    exposes no per-series hash at all -- leaving `_manifest_sha256s` empty and every consumer of it
+    silently inert. This file is where those sets' hashes live instead. It is OUR format, uniform
+    across sets, so reading it needs none of the per-set manifest knowledge that the manifest
+    shapes would demand.
+
+    Values are `dataset_hash` (sha256 of the frame's canonical CSV) -- the SAME grade every manifest
+    writer vouches and both consumers compare. A byte-grade digest here would be a second,
+    incompatible grade and would refuse every healthy read.
+    """
+    by_dataset: dict[str, set[str]] = {}
+    if not _VOUCHED_SIDECAR.is_file():
+        return {}
+    for line_no, raw in enumerate(_VOUCHED_SIDECAR.read_text(encoding="utf-8").splitlines(), start=1):
+        if not (line := raw.strip()):
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: unparseable attestation line") from exc
+        try:
+            by_dataset.setdefault(row["dataset"], set()).add(row["dataset_sha256"])
+        except KeyError as exc:
+            raise DataSyncError(f"{_VOUCHED_SIDECAR.name}:{line_no}: attestation is missing {exc}") from exc
+    return {name: frozenset(hashes) for name, hashes in by_dataset.items()}
+
+
+def sidecar_hashes(dataset: str) -> set[str]:
+    """Committed attestations for `dataset`, or an empty set when it has none."""
+    return set(_sidecar_by_dataset().get(dataset, frozenset()))
+
 
 @dataclass(frozen=True)
 class SyncReport:
@@ -23,8 +63,11 @@ class SyncReport:
     skipped_existing: int  # files present on both sides (never transmitted)
 
 
-def _run_rsync(src: Path, dst: str, runner) -> str:
-    argv = ["rsync", "--archive", "--ignore-existing", "--itemize-changes", "--out-format=%i %n", f"{src}/", dst]
+def _run_rsync(src: Path, dst: str, runner, *, dry_run: bool = False) -> str:
+    argv = ["rsync", "--archive", "--ignore-existing", "--itemize-changes", "--out-format=%i %n"]
+    if dry_run:
+        argv.append("--dry-run")
+    argv += [f"{src}/", dst]
     result = runner(argv, capture_output=True, text=True)
     if result.returncode != 0:
         raise DataSyncError(f"data sync: rsync {src} -> {dst} failed (exit {result.returncode}): {result.stderr.strip()}")
@@ -72,6 +115,36 @@ def _manifest_sha256s(node: object) -> set[str]:
     return found
 
 
+def _vouched_for_set(manifest_dir: Path, set_name: str) -> set[str]:
+    """Everything that attests `set_name`: its own manifest, plus any committed sidecar line."""
+    manifest_path = manifest_dir / "manifest.json"
+    from_manifest = _manifest_sha256s(json.loads(manifest_path.read_text())) if manifest_path.is_file() else set()
+    return from_manifest | sidecar_hashes(set_name)
+
+
+def _verify_outgoing(set_dir: Path, set_name: str, planned: tuple[str, ...]) -> None:
+    """Re-hash what a push is about to transmit, and refuse content nothing attests.
+
+    This is pre-flight rather than post-hoc for one reason: the channel is `--ignore-existing`, so a
+    node that accepts tampered bytes is never corrected by any later push. Detecting it afterwards
+    detects a permanent fact. The only containable moment is before the bytes leave.
+    """
+    parquets = tuple(rel for rel in planned if rel.endswith(".parquet"))
+    if not parquets:
+        return
+    vouched = _vouched_for_set(set_dir, set_name)
+    if not vouched:
+        return  # attested nowhere -- the same silence a fetch keeps for such a set
+    for rel in parquets:
+        actual = dataset_hash(read_parquet(set_dir / rel))
+        if actual not in vouched:
+            raise DataSyncError(
+                f"data push: {set_name}/{rel} content hash {actual} is attested by neither its manifest nor "
+                f"{_VOUCHED_SIDECAR.name} -- refusing to transmit, because a node that accepts these bytes "
+                f"can never be corrected by a later push"
+            )
+
+
 def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]) -> None:
     new_by_set: dict[str, set[str]] = {}
     for rel in new_files:
@@ -80,10 +153,7 @@ def _verify_new_files(hot_dir: Path, data_root: Path, new_files: tuple[str, ...]
             new_by_set.setdefault(set_name, set()).add(sub_path)
 
     for set_name, sub_paths in new_by_set.items():
-        manifest_path = hot_dir / set_name / "manifest.json"
-        if not manifest_path.is_file():
-            continue  # e.g. universe/snapshots ship no manifest
-        vouched = _manifest_sha256s(json.loads(manifest_path.read_text()))
+        vouched = _vouched_for_set(hot_dir / set_name, set_name)
         if not vouched:
             logger.warning(
                 "data fetch verify: %s manifest exposes no per-parquet sha256 -- transfer integrity for "
@@ -124,6 +194,8 @@ def push_hot(
     for set_name in all_sets:
         set_dir = data_root / set_name
         total_files = _count_files(set_dir)
+        planned = _parse_new_files(_run_rsync(set_dir, f"{dest}{set_name}/", runner, dry_run=True))
+        _verify_outgoing(set_dir, set_name, planned)
         output = _run_rsync(set_dir, f"{dest}{set_name}/", runner)
         new = _parse_new_files(output)
         all_new.extend(f"{set_name}/{n}" for n in new)

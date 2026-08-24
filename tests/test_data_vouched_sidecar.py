@@ -1,0 +1,163 @@
+"""Committed attestations for frozen sets whose producer this repo does not write.
+
+The holdout freeze emits a manifest with no per-series `sha256` at all, so `_manifest_sha256s`
+returned the empty set and BOTH consumers of it silently degraded to no-ops -- the sync-side
+`_verify_new_files` and, more importantly, `ObservedReader.read_series`, which cross-checks every
+read against the vouched set but short-circuits on `if vouched and ...`.
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+
+import cli.data.sync as sync
+from cli.data.errors import DataSyncError
+from cli.ohlc.dataset import dataset_hash, to_frame, write_parquet
+from cli.registry.errors import RegistryError
+from cli.registry.observed import ObservedReader
+
+ROOT = Path(__file__).resolve().parent.parent
+COMMITTED_SIDECAR = ROOT / "docs" / "reference" / "vouched-dataset-hashes.jsonl"
+HOLDOUT = "ohlc-holdout-2026-07-10"
+
+
+@pytest.fixture(autouse=True)
+def _clear_sidecar_cache():
+    # The loader is lru_cached, so a monkeypatched path leaks into later tests without this.
+    sync._sidecar_by_dataset.cache_clear()
+    yield
+    sync._sidecar_by_dataset.cache_clear()
+
+
+def _rows(n, start=1577836800):
+    return [[start + i * 86400, "1", "2", "0.5", "1.5", "1.2", "10", 3] for i in range(n)]
+
+
+def _point_sidecar_at(tmp_path, monkeypatch, records):
+    path = tmp_path / "sidecar.jsonl"
+    path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records), encoding="utf-8")
+    monkeypatch.setattr(sync, "_VOUCHED_SIDECAR", path)
+    sync._sidecar_by_dataset.cache_clear()
+
+
+# --- the committed file itself -------------------------------------------------------------------
+
+
+def test_the_committed_sidecar_attests_every_holdout_series():
+    """CI-runnable: the sidecar is committed even though `data/` is not, so this holds everywhere."""
+    lines = [json.loads(x) for x in COMMITTED_SIDECAR.read_text(encoding="utf-8").splitlines() if x.strip()]
+    holdout = [r for r in lines if r["dataset"] == HOLDOUT]
+    assert len(holdout) == 10, "the freeze has ten series; a missing line is a silently unattested one"
+    assert len({r["relpath"] for r in holdout}) == 10
+    assert sum(r["rows"] for r in holdout) == 30_032  # the freeze's recorded total
+    for r in holdout:
+        assert len(r["dataset_sha256"]) == 64 and int(r["dataset_sha256"], 16) >= 0
+
+
+def test_sidecar_hashes_are_keyed_by_dataset(tmp_path, monkeypatch):
+    _point_sidecar_at(
+        tmp_path,
+        monkeypatch,
+        [
+            {"dataset": "set-a", "relpath": "A.parquet", "dataset_sha256": "a" * 64, "rows": 1},
+            {"dataset": "set-b", "relpath": "B.parquet", "dataset_sha256": "b" * 64, "rows": 1},
+        ],
+    )
+    assert sync.sidecar_hashes("set-a") == {"a" * 64}
+    assert sync.sidecar_hashes("set-b") == {"b" * 64}
+    assert sync.sidecar_hashes("set-never-heard-of") == set()
+
+
+@pytest.mark.parametrize(
+    ("line", "because"),
+    [("{not json", "unparseable"), (json.dumps({"dataset": "x"}), "missing dataset_sha256")],
+)
+def test_a_broken_sidecar_line_is_refused_typed_rather_than_ignored(tmp_path, monkeypatch, line, because):
+    # Silently skipping a bad line is how a set loses its attestation without anyone noticing --
+    # the exact failure mode this whole file exists to close.
+    path = tmp_path / "sidecar.jsonl"
+    path.write_text(line + "\n", encoding="utf-8")
+    monkeypatch.setattr(sync, "_VOUCHED_SIDECAR", path)
+    sync._sidecar_by_dataset.cache_clear()
+    with pytest.raises(DataSyncError):
+        sync.sidecar_hashes("x")
+
+
+# --- the read-time guard, which is the one that protects the copy already on disk -----------------
+
+
+def _frozen_set(tmp_path, name="frozen-set"):
+    """A set whose manifest vouches NOTHING -- the holdout's shape, without needing `data/`."""
+    root = tmp_path / "data"
+    frame = to_frame(_rows(10))
+    write_parquet(frame, root / name / "BTC/EUR/1440.parquet")
+    (root / name / "manifest.json").write_text(
+        json.dumps({"pulled_at": "2026-07-10", "series": {"BTC/EUR": {"rows": 10}}, "manifest_sha256": "9" * 64})
+    )
+    return root, dataset_hash(frame)
+
+
+def test_a_manifest_that_vouches_nothing_leaves_the_read_guard_inert_without_a_sidecar(tmp_path, monkeypatch):
+    # The true positive for the defect: this is the state the holdout was in.
+    root, _ = _frozen_set(tmp_path)
+    _point_sidecar_at(tmp_path, monkeypatch, [])
+    reader = ObservedReader(root)
+    reader.read_series("frozen-set", "BTC/EUR/1440.parquet")
+    assert reader.vouched_status() == {"frozen-set": "inert (0 vouched hashes)"}
+
+
+def test_the_sidecar_arms_the_read_guard_and_a_tampered_frame_is_refused(tmp_path, monkeypatch):
+    root, good = _frozen_set(tmp_path)
+    _point_sidecar_at(
+        tmp_path,
+        monkeypatch,
+        [{"dataset": "frozen-set", "relpath": "BTC/EUR/1440.parquet", "dataset_sha256": good, "rows": 10}],
+    )
+    reader = ObservedReader(root)
+    reader.read_series("frozen-set", "BTC/EUR/1440.parquet")  # healthy read still passes
+    assert reader.vouched_status() == {"frozen-set": "checked (1 vouched hashes)"}
+
+    # Tamper preserving ROW COUNT and SPAN -- what the manifest's own metadata cannot catch.
+    tampered = _rows(10)
+    tampered[5][4] = "99.5"
+    write_parquet(to_frame(tampered), root / "frozen-set" / "BTC/EUR/1440.parquet")
+    with pytest.raises(RegistryError, match="frame-content hash"):
+        ObservedReader(root).read_series("frozen-set", "BTC/EUR/1440.parquet")
+
+
+# --- the push side: a node that accepts bad bytes is never corrected ------------------------------
+
+
+def test_push_refuses_unattested_content_before_it_leaves(tmp_path, monkeypatch):
+    root, good = _frozen_set(tmp_path)
+    _point_sidecar_at(
+        tmp_path,
+        monkeypatch,
+        [{"dataset": "frozen-set", "relpath": "BTC/EUR/1440.parquet", "dataset_sha256": good, "rows": 10}],
+    )
+    dest = tmp_path / "hub"
+    dest.mkdir()
+
+    tampered = _rows(10)
+    tampered[5][4] = "99.5"
+    write_parquet(to_frame(tampered), root / "frozen-set" / "BTC/EUR/1440.parquet")
+
+    with pytest.raises(DataSyncError, match="refusing to transmit"):
+        sync.push_hot(root, ["frozen-set"], str(dest) + "/")
+    # PRE-flight is the whole point: the channel never overwrites, so bytes that leave are permanent.
+    assert not list(dest.rglob("*.parquet")), "the tampered parquet reached the hub before being refused"
+
+
+def test_push_still_carries_an_attested_set(tmp_path, monkeypatch):
+    root, good = _frozen_set(tmp_path)
+    _point_sidecar_at(
+        tmp_path,
+        monkeypatch,
+        [{"dataset": "frozen-set", "relpath": "BTC/EUR/1440.parquet", "dataset_sha256": good, "rows": 10}],
+    )
+    dest = tmp_path / "hub"
+    dest.mkdir()
+    report = sync.push_hot(root, ["frozen-set"], str(dest) + "/")
+    assert "frozen-set/BTC/EUR/1440.parquet" in report.new_files
+    assert (dest / "frozen-set" / "BTC/EUR/1440.parquet").is_file()
