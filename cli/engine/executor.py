@@ -2065,7 +2065,12 @@ class ProbeExecutor:
         Both halves are needed: an OPEN position accrues realized PnL as it is partly closed, and a
         round trip's final PnL lives only on the CLOSED one. `Position.realized_pnl` is
         `Money | None` -- a `None` contributes zero and is never `float()`-ed -- and a position
-        denominated in anything but EUR is logged and skipped rather than added to a EUR total."""
+        denominated in anything but EUR is logged and skipped rather than added to a EUR total.
+
+        Instrument-scoped on purpose, unlike the post-terminal reconciliation: a hand settle of a
+        leg this engine opened realizes an outcome that is genuinely this engine's, and scoping to
+        our own strategy would systematically miss exactly that case. Telemetry answers what the
+        account did; the reconciliation answers what our own orders did."""
         cache = self._client.cache
         total = 0.0
         for instrument_id in self._traded:
