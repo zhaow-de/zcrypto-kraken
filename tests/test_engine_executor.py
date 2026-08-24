@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from nautilus_trader.model.enums import LiquiditySide, OrderSide, OrderStatus, TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, StrategyId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.model.orders.base import Order
 
@@ -34,7 +34,7 @@ from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_or
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
-from cli.engine.probeplan import PLAN_FILENAME
+from cli.engine.probeplan import PLAN_FILENAME, ProbeIntent
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
@@ -169,6 +169,7 @@ class StubCache:
         self._instruments = _all_instruments() if instruments is None else instruments
         self._balances = {"ZEUR": 1000.0} if balances is None else balances
         self._positions = positions or {}
+        self._external: dict[str, list] = {}
         self._closed: dict[str, list] = {}
         self._open_orders = open_orders or []
         self._closed_orders = closed_orders or []
@@ -192,8 +193,18 @@ class StubCache:
             )
         return str(instrument_id)
 
-    def positions_open(self, *, instrument_id=None, **kwargs):
-        return self._positions.get(self._position_key(instrument_id), [])
+    def positions_open(self, *, instrument_id=None, strategy_id=None, **kwargs):
+        """Honours `strategy_id` because production now depends on it: NETTING position ids are
+        `f"{instrument_id}-{strategy_id}"`, so an external fill lands in a SEPARATE position and a
+        strategy-scoped read is what excludes the operator's book. A stub that swallowed the filter
+        would return the operator's holding to a scoped read, and the test could not tell a fixed
+        `_reconcile_terminal` from a broken one."""
+        key = self._position_key(instrument_id)
+        own = self._positions.get(key, [])
+        external = self._external.get(key, [])
+        if strategy_id is None:
+            return own + external
+        return external if str(strategy_id) == "EXTERNAL" else own
 
     def positions_closed(self, *, instrument_id=None, **kwargs):
         return self._closed.get(self._position_key(instrument_id), [])
@@ -204,6 +215,12 @@ class StubCache:
         ordered (the manual settle). `realized_pnl` is `Money | None` on a real Position, and the
         None is the ordinary case for a leg with no closed round trip yet."""
         self._positions[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=realized_pnl)]
+
+    def set_external_position(self, symbol, signed_qty):
+        """A holding attributed to `StrategyId("EXTERNAL")` -- what an operator's hand settle, or
+        any order this engine never placed, leaves in the Cache. Instrument-scoped reads see it;
+        reads scoped to this engine's own strategy must not."""
+        self._external[INSTRUMENT_IDS[symbol]] = [SimpleNamespace(signed_qty=signed_qty, realized_pnl=None)]
 
     def close_position(self, symbol, realized_pnl):
         """A CLOSED position carrying realized PnL -- what `positions_closed` serves once a round
@@ -245,6 +262,9 @@ class StubClient:
 
     def __init__(self, cache=None, *, submit_raises=None):
         self.cache = cache if cache is not None else StubCache()
+        # A real StrategyId, not a str: `Cache.positions_open(strategy_id=...)` is Cython-typed and
+        # refuses a str, so a stubbed str would accept what production cannot.
+        self.id = StrategyId("ShadowStrategy-000")
         self.order_factory = StubOrderFactory()
         self.submitted = []
         self.canceled = []
@@ -2924,7 +2944,7 @@ def test_an_external_fill_with_no_strategy_claim_does_not_trip(tmp_path):
     reaching the executor (an external fill routes through reconciliation, never on_order_event).
     Ticks pass, no intent is active -- the kill file must NOT appear."""
     ex, client, state_dir = _idle_executor(tmp_path)
-    client.cache.set_position("BTC/EUR", 0.0004)  # the settle landed as a holding
+    client.cache.set_external_position("BTC/EUR", 0.0004)  # the settle landed as a holding, attributed to EXTERNAL
     _advance_ticks(ex, minutes=2)
     assert not (exec_dir(state_dir) / KILL_FILE).exists()
     assert client.canceled == []  # and nothing was pulled off the venue for it either
@@ -3698,3 +3718,90 @@ def test_a_pruned_head_is_refused_when_no_birth_record_survives(tmp_path):
     assert not tripped
     assert states == [executor_module._TRACKING_UNSCORED]
     assert not (exec_dir(tmp_path) / executor_module.FIRST_FILL_FILE).exists()
+
+
+# --- _reconcile_terminal is scoped to this engine's own position (the operator's hand settle) ----
+
+
+def _terminal_intent(*, filled, symbol="BTC/EUR", side="buy", position_before=0.0, own_position_before=0.0):
+    """An intent already at its terminal exit, carrying only what `_reconcile_terminal` reads."""
+    instrument_id = InstrumentId.from_str(INSTRUMENT_IDS[symbol])
+    return executor_module._ActiveIntent(
+        index=0,
+        intent=ProbeIntent(symbol=symbol, side=side, action="open", mode="execute", notional_eur=30.0, qty=None, leverage=None),
+        raw_intent={},
+        instrument_id=instrument_id,
+        constraints=InstrumentConstraints(
+            symbol=symbol,
+            instrument_id=str(instrument_id),
+            ordermin=0.0001,
+            costmin=0.5,
+            costmin_quote="EUR",
+            lot_step=1e-08,
+            tick_size=0.1,
+        ),
+        phase="terminal",
+        started_at=NOW,
+        quote_deadline=NOW,
+        timebox_at=NOW,
+        filled=filled,
+        position_before=position_before,
+        own_position_before=own_position_before,
+    )
+
+
+def test_reconcile_terminal_ignores_a_holding_this_engine_never_ordered(tmp_path):
+    """The operator hand-settles on a symbol this engine also trades, while an intent is running.
+
+    Spec 00098 D1's scope property says that reaches no trip, no row and no cancel. An
+    instrument-scoped position read breaks that promise on a path D1 never covered: the operator's
+    holding lands in the post-terminal comparison, diverges from what this engine's own fills
+    account for, and latches the kill switch on a sanctioned action.
+    """
+    cache = StubCache()
+    cache.set_position("BTC/EUR", 0.001)  # exactly what our own fill bought
+    cache.set_external_position("BTC/EUR", 0.5)  # the operator's, mid-intent
+    ex = _executor(tmp_path, client=StubClient(cache=cache))
+
+    ex._reconcile_terminal(_terminal_intent(filled=0.001))
+
+    assert not (exec_dir(tmp_path) / KILL_FILE).exists(), (
+        "a holding this engine never ordered tripped the kill switch -- spec 00098 D1's scope "
+        "property says an operator's hand settle reaches no trip"
+    )
+
+
+def test_reconcile_terminal_still_trips_when_our_own_position_diverges(tmp_path, kill_trip_expected):
+    """The true positive: without it the scoping fix above could ship as an always-passing guard.
+
+    Same shape, but the divergence is in THIS engine's own position -- a fill it never saw or one it
+    mis-accounted, which is the condition the check exists for and must still stop on.
+    """
+    cache = StubCache()
+    cache.set_position("BTC/EUR", 0.002)  # twice what our fills account for
+    ex = _executor(tmp_path, client=StubClient(cache=cache))
+
+    ex._reconcile_terminal(_terminal_intent(filled=0.001))
+
+    assert (exec_dir(tmp_path) / KILL_FILE).exists(), "a divergence in this engine's own position must still latch the kill switch"
+
+
+def test_reconcile_terminal_baselines_against_our_own_holding_not_the_instrument(tmp_path):
+    """Scoping the READ alone is not the fix: the baseline has to be scoped too.
+
+    Here the operator was already holding 0.5 when the intent started, so the instrument-scoped
+    `position_before` (0.5) and this engine's own (0.0) genuinely disagree. A fix that narrowed only
+    the post-terminal read would expect 0.501, see its own 0.001, and trip -- so this construction is
+    what makes the two ends provably scoped rather than only the one.
+    """
+    cache = StubCache()
+    cache.set_position("BTC/EUR", 0.001)
+    cache.set_external_position("BTC/EUR", 0.5)
+    ex = _executor(tmp_path, client=StubClient(cache=cache))
+
+    ex._reconcile_terminal(_terminal_intent(filled=0.001, position_before=0.5, own_position_before=0.0))
+
+    assert not (exec_dir(tmp_path) / KILL_FILE).exists(), (
+        "the post-terminal comparison baselined against the whole instrument -- both ends must be "
+        "scoped to this engine's own position or a pre-existing operator holding trips it"
+    )

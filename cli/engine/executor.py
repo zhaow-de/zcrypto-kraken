@@ -498,9 +498,19 @@ class _ActiveIntent:
     close_qty: float | None = None
     reduce_only: bool = False
     # What the Cache said was held in this symbol when the intent started, off the SAME frozen venue
-    # truth the intent was authorized against. The post-terminal reconciliation subtracts against it,
-    # so the two ends of that comparison cannot disagree about anything except real movement.
+    # truth the intent was authorized against. Instrument-scoped, because SIZING trades the real
+    # book: what the operator holds is part of what this engine must size against.
     position_before: float = 0.0
+    # The same read, scoped to THIS engine's own strategy. The post-terminal reconciliation
+    # subtracts against this one instead, so a holding the engine never ordered cannot enter the
+    # comparison -- NETTING position ids are `f"{instrument_id}-{strategy_id}"`, so an external fill
+    # lands in a separate position and a scoped read excludes it by construction.
+    # NOT captured at the same instant as `position_before`, and it does not need to be: the Cache
+    # is mutated from the asyncio loop thread while this runs on a timer callback, so the two reads
+    # can straddle an event. Nothing compares them to each other -- an own-strategy fill landing
+    # between them enters this baseline AND persists into the terminal read, so it cancels; an
+    # external one is excluded from both by the scoping above.
+    own_position_before: float = 0.0
     order: object | None = None
     order_payload: dict | None = None
     client_order_id: str | None = None
@@ -1077,6 +1087,10 @@ class ProbeExecutor:
             close_qty=decision.qty if intent.action == "close" else None,
             reduce_only=decision.reduce_only,
             position_before=state.positions.get(intent.symbol, 0.0),
+            own_position_before=sum(
+                float(p.signed_qty)
+                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.id)
+            ),
         )
 
     def _classify_close(self, intent: ProbeIntent, state, level: str) -> _CloseDecision:
@@ -1742,8 +1756,16 @@ class ProbeExecutor:
             attached[1]["filled_qty"] = attached[1]["filled_qty"] + qty
 
     def _reconcile_terminal(self, active: _ActiveIntent) -> None:
-        """The post-terminal reconciliation: what this intent's fills say the position should now be,
-        against what the Cache says it is.
+        """The post-terminal reconciliation: what this intent's fills say this engine's OWN position
+        should now be, against what the Cache says it is.
+
+        Scoped to this engine's strategy on BOTH ends, never to the instrument. An instrument-scoped
+        read carries every holding on the symbol, including one this engine never ordered -- and
+        spec 00098 D1's scope property says an operator's hand settle reaches no trip, no row and no
+        cancel. Reading the whole instrument broke that promise on a path D1 never covered: the
+        operator's holding entered the comparison, diverged from what this engine's fills account
+        for, and latched the kill switch on a sanctioned action. `position_before` stays
+        instrument-scoped because SIZING trades the real book; only this comparison is narrowed.
 
         The tolerance is the instrument's own lot step -- the smallest quantity the venue can even
         express, so nothing tradeable hides under it. Anything larger is either a fill this engine
@@ -1759,9 +1781,12 @@ class ProbeExecutor:
         away. What covers it instead is that an ambiguous outcome already stops the whole plan and
         leaves an open row for the attended operator, which is the state that path exists to produce.
         """
-        expected = active.position_before + (active.filled if active.intent.side == "buy" else -active.filled)
+        expected = active.own_position_before + (active.filled if active.intent.side == "buy" else -active.filled)
         try:
-            actual = sum(float(p.signed_qty) for p in self._client.cache.positions_open(instrument_id=active.instrument_id))
+            actual = sum(
+                float(p.signed_qty)
+                for p in self._client.cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._client.id)
+            )
         except Exception:
             # The venue-truth read at intent start proved this same Cache readable minutes ago, so a
             # raise here is an anomaly rather than routine -- and an unverifiable position after a
@@ -1774,8 +1799,8 @@ class ProbeExecutor:
             return
         if abs(actual - expected) > active.constraints.lot_step:
             self._trip_kill(
-                f"{active.intent.symbol} holds {actual:.10g} after intent {active.index}, not the {expected:.10g} "
-                "this engine's own fills account for"
+                f"{active.intent.symbol} holds {actual:.10g} in this engine's own position after intent "
+                f"{active.index}, not the {expected:.10g} its fills account for"
             )
 
     # --- order events --------------------------------------------------------------------------
@@ -2013,8 +2038,9 @@ class ProbeExecutor:
         leg whose only fill happened while this process was down does not enter the realized-PnL
         gauge until it fills live again.
 
-        The position comes from the CACHE, never from this process's own running total: what the
-        engine thinks it holds is exactly the quantity `_reconcile_terminal` exists to doubt.
+        The position comes from the CACHE, never from this process's own running total. Note this
+        read is instrument-scoped, so it carries any holding this engine never ordered too --
+        `_reconcile_terminal` doubts the strategy-scoped quantity, not this one.
 
         Wrapped whole, `_inc_order`'s contract: the Cache reads here are telemetry and a metrics
         failure may never alter what this engine does with a fill. `inc_fill` runs first, so a
