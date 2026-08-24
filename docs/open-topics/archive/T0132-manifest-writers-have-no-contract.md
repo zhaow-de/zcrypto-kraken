@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: a generic manifest reader is proposed again, or a manifest writer is being changed for another reason
+status: resolved
 ---
 
 # The manifest writers have no contract, so nothing can read them generically
@@ -44,7 +43,23 @@ So nothing is blocked on this today, and that is precisely the risk: the zoo is 
 
 - **Two attempts at a generic manifest consumer have now failed nine cold-review rounds** — the first squarely against this heterogeneity, the second narrowed to an allowlist and still stopped by judgement rather than convergence. When the trigger fires the answer should be **normalise first**, not read generically. Spec `00086` is NOT such a consumer and no longer waits on this: its provenance identity is computed from file bytes, and its only manifest touch is a vouched-hash cross-check that walks any JSON shape without extracting structure.
 
-## Suggested next steps
+## Resolution
+
+**Resolved 2026-08-24 by normalising the writers, not by reading the zoo** (spec `00099`, plan `00099`). Two prior attempts wrote a generic consumer over four `series` shapes and failed nine cold-review rounds between them, the findings MOVING each round because a reader over a zoo is a pile of special cases discovered one review at a time. This removed the zoo instead.
+
+**The contract.** `cli/data/manifest.py` owns one shape: `series` keyed by the parquet's path relative to the dataset root — the path IS the key, so no consumer derives one — with `sha256` at the repo's existing `dataset_hash` grade, one `written_at`, one `set_sha256`, and a `provenance` block that never reaches a digest. All five writers call it; the four legacy shapes are gone.
+
+**Two decisions the topic had not anticipated.** The digest's ordering had to be DECLARED rather than inherited: `backfill.py` sorted interval keys as strings and `reach.py` as integers, so there was never one "existing recipe" and something had to move. And a manifest now declares which digest is its `identity`, because `ohlc-reach`'s identity is its continuous subset while every other set's is set-wide — without that, a caller would still need per-set knowledge, the removed special case one layer up.
+
+**Migration was manifest-only.** A converter rebuilds each manifest from the parquets already on disk, refusing the whole set unless every recomputed hash matches what the legacy manifest attested. Measured across the workstation: 128 parquet files, **zero bytes changed**. The hub was converted the same way on 2026-08-24, its manifests built from its own parquets read over the read-only mount, after all six were backed up byte-identically.
+
+**The waiting consumer is discharged in production, not only in tests.** Every set on the hub now supplies path bindings — 36, 12, 10, 10, 30, and the holdout's 10 from the committed sidecar — so a swap inside a manifest-attested set is refused at fetch and at read. It was invisible at both before.
+
+**The external freeze is excluded by design.** `ohlc-holdout-*` carries no `schema_version` and is not read by the contract reader; `docs/reference/vouched-dataset-hashes.jsonl` is the normalised form of its attestation content. Loosening the contract to fit a set this repo does not write is what killed round 1.
+
+**What this cost, recorded because it is the useful part.** The converter's first version preserved only top-level legacy keys, and the guard test asserted only top-level fields while its comment cited reach's per-row seam evidence as the motivation — so it passed against the defect it named. Running it erased the per-series seam record of `data/ohlc-reach-20260813`. The derivable fields were reconstructed and labelled `reconstructed: true`; `rest_first` on all 36 rows, `overlap_bars` on the 12 continuous and `gap_bars` on the 24 detached are absent, because nothing on disk records them. The set's data, digests and the universe citation that depends on them were never at risk.
+
+## Superseded next steps
 
 - **(waiting consumer — the first one that is real)** [[T0133]] wanted `_verify_new_files` and `ObservedReader.read_series` bound to PATHS rather than hash membership, because two series swapped inside one set leave the hash SET unchanged and pass every membership test. It shipped path binding for sets attested by the committed sidecar (`docs/reference/vouched-dataset-hashes.jsonl`, which carries a `relpath` per line), and **consciously kept membership for sets attested by their own manifest**, because deriving a path per hash is exactly the per-set knowledge this topic exists to remove — a fifth hard-coded reader would have been the wrong payment. So when the contract lands, path-binding those sets is owed, and the residual until then is that a swap inside `ohlc-full`/`ohlc-15m`/`derivatives-*`/`ohlc-reach` is invisible at both consumers.
 - **(design, when triggered)** Decide the contract: required keys (`series`, a set digest under ONE name, a timestamp under ONE name), a single `series` shape, and an explicit rule for per-run values — a nonce like `ohlc-reach`'s `series_digest` and a machine-local `source` must be OUTSIDE anything a consumer would hash, or absent.
