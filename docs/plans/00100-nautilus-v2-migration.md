@@ -100,9 +100,6 @@ def test_every_attribute_we_read_still_exists_on_its_class(module_path, cls_name
     assert hasattr(cls, attr), f"{cls_name}.{attr} is gone -- the live trade path reads it"
 
 
-# Also pin OrderStatus: its values are compared against the library's own at executor.py and
-# consumed by the adopted-terminal map, so a silent renumbering mis-books a terminal order.
-
 
 @pytest.mark.parametrize("module_path,symbol", PINNED_SYMBOLS, ids=lambda v: v.rsplit(".", 1)[-1])
 def test_every_symbol_we_import_still_exists_where_we_import_it(module_path, symbol):
@@ -117,6 +114,9 @@ PINNED_ENUM_VALUES = {
     "OrderSide": {"NO_ORDER_SIDE": 0, "BUY": 1, "SELL": 2},
     "TimeInForce": {"GTC": 1, "IOC": 2, "FOK": 3, "GTD": 4},
     "AccountType": {"CASH": 1, "MARGIN": 2, "BETTING": 3},
+    # Compared against the library's own values and consumed by the adopted-terminal map, so a
+    # silent renumbering mis-books a terminal order.
+    "OrderStatus": {"INITIALIZED": 1, "FILLED": 14, "CANCELED": 8, "REJECTED": 6, "EXPIRED": 15},
 }
 
 
@@ -367,7 +367,7 @@ Measured, and the reason this is spelled out: supplying a tag yields `strategy_i
 The first draft listed eight and left `cancel_orders`, `modify_orders` and `post_market_exit` live — which is why Step 3 derives the set rather than trusting this list.
 - [ ] **Step 3: Test that each one raises, and that the list is COMPLETE.** Derive the mutating surface — everything on `Strategy` that is absent from `DataActor`, minus `on_*` handlers and the read-only queries — and assert every member of it is sealed. A hand-enumerated seal regains a hole the next time upstream adds a method, silently; a derived one fails loudly and names it. This is the barrier: on an EXTERNAL-registered strategy every scoping default points its authority at the operator's book.
 - [ ] **Step 4:** Extend `test_the_strategy_claims_no_external_orders` and `_ORDER_STREAM_WIDENERS` to cover the observer; retire the `msgbus` allowance, which is now zero.
-- [ ] **Step 5 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
+- [ ] **Step 6 (D3): Give the prohibition a guard, because the existing one cannot see it.** `_ORDER_STREAM_WIDENERS` is a `text.count(name)` walk over lowercase `msgbus`, and `"MessageBus".count("msgbus")` is **0** — so a `MessageBus(...)` constructed in `cli/` passes every check in the repo today. Add `"MessageBus": {}` to that map (allowed nowhere) and prove it bites by temporarily constructing one under `cli/`. Text-count, matching the guard's own stated reasoning.
 
 This matters most during Phase C specifically: the red suite hands an implementer failing external-topic tests whose most obvious repair is the forbidden one, and its failure mode is an engine that accepts orders and never sends them.
 - [ ] **Step 5:** Commit.
@@ -413,7 +413,7 @@ Both review rounds produced blocking findings with one root: the engine suite is
 **Files:** `tests/test_engine_executor.py`, `tests/test_engine_node.py`
 
 - [ ] **Step 1: Enumerate every stub standing in for a nautilus type** — `StubClient`, `StubCache`, `_fake_instrument`, `_fake_node`, the order/event doubles — and state, per stub, how it is verified against the real type. Task 7a Step 3 does this for `StubClient`; generalise it.
-- [ ] **Step 2: Fix the two already known to be wrong.** `_fake_instrument` sets `make_qty=lambda value: value` and `make_price=lambda value: value` — identity — so no fixture through it can reach the production rounding path, which is what Task 12 measures. `_fake_node` fabricates `_config` with `timeout_connection`, a field v2 renames and `LiveNode` no longer exposes at all.
+- [ ] **Step 2: Fix the two already known to be wrong.** (`StubCache`'s strategy-id partition and its `str` refusal were closed on this branch; start the enumeration from what remains.) `_fake_instrument` sets `make_qty=lambda value: value` and `make_price=lambda value: value` — identity — so no fixture through it can reach the production rounding path, which is what Task 12 measures. `_fake_node` fabricates `_config` with `timeout_connection`, a field v2 renames and `LiveNode` no longer exposes at all.
 - [ ] **Step 3: Task 12's fixtures must drive `_place` itself** through a real `CurrencyPair` (or a parametrised `_fake_instrument` delegating to one), asserting the SUBMITTED order's quantity and price. A rounding fixture that never reaches the rounding code proves nothing.
 - [ ] **Step 4:** Commit.
 
