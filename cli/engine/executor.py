@@ -375,7 +375,7 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
 def _stage(record: CycleRecord) -> CycleStages:
     """One journaled cycle as the shape `tracking.realized_drift` reads.
 
-    Only `cycle_ts`, `final` and `closes` are read there; the remaining fields are structural and
+    Only `cycle_ts`, `final`, `closes` and `nav` are read there; the remaining fields are structural and
     carry no meaning for this caller -- the alternative, a private per-cycle drift loop here, is the
     one thing this must not be: the number a human bands and the number the engine trips on have to
     come from the same function.
@@ -406,6 +406,9 @@ def _stage(record: CycleRecord) -> CycleStages:
         multiplier=1.0,
         closes=dict(record.closes),
         cap_bound=False,
+        # Carried through so the boundary scores each cycle under the NAV it actually priced
+        # against (T0150). None for records written before the key existed.
+        nav=record.nav,
     )
 
 
@@ -1548,13 +1551,11 @@ class ProbeExecutor:
         # nothing to `held`, and requiring them to be priceable would make every artifact written
         # before `closes` existed refuse a week it cannot affect.
         stages = [_stage(cycles[b]) for b in sorted(cycles) if first_fill <= b <= last]
-        # NAV is read LIVE and is not journaled per cycle, while it sets both halves of the
-        # comparison (a target is `weight * nav / close`, and the drift is divided by `nav`). So a
-        # `shadow_nav_eur` converge re-scores weeks that closed under the OLD value against the new
-        # one -- halving it roughly doubles every reading of a week nobody traded differently. The
-        # runbook's arming section therefore requires the band disarmed across any NAV change;
-        # journalling NAV on the cycle record is the real fix and belongs to the next schema
-        # widening, beside `closes`.
+        # NAV sets both halves of the comparison (a target is `weight * nav / close`, and the
+        # drift is divided by `nav`), so a `shadow_nav_eur` converge used to re-score weeks that
+        # closed under the OLD value against the new one. Each record now journals the NAV it was
+        # priced against and is scored under THAT; the scalar below is the fallback for records
+        # written before the field existed, which age out with the journal's retention.
         rows = realized_drift(stages, fills, self._config.shadow_nav_eur)["cycles"]
         scored = set(week)
         # The straddle refusal above is what guarantees every one of the week's boundaries is in the

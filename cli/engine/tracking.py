@@ -224,8 +224,18 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
     for s in ordered:
         for f in by_boundary.get(s.cycle_ts, []):
             held[f.base] = held.get(f.base, 0.0) + (f.qty if f.side == "buy" else -f.qty)
-        bps = drift_bps(s.final, s.closes, held, nav)
-        rows.append({"cycle_ts": s.cycle_ts.isoformat(), "drift_bps": bps, "drift_eur": bps / 10_000 * nav})
+        # Each cycle is scored under the NAV that was LIVE for it (T0150): a `shadow_nav_eur`
+        # change must not re-price a week that closed under the old value. The caller's scalar is
+        # the fallback for records written before the key existed, which reproduces the previous
+        # behaviour exactly for them -- so a week straddling the widening scores each half right.
+        cycle_nav = nav if s.nav is None else s.nav
+        if not math.isfinite(cycle_nav) or cycle_nav <= 0:
+            raise EngineError(
+                f"NAV must be finite and positive, got {cycle_nav!r} for cycle {s.cycle_ts.isoformat()} "
+                "-- a negative one signs every drift_bps"
+            )
+        bps = drift_bps(s.final, s.closes, held, cycle_nav)
+        rows.append({"cycle_ts": s.cycle_ts.isoformat(), "drift_bps": bps, "drift_eur": bps / 10_000 * cycle_nav})
     values = [r["drift_bps"] for r in rows]
     # NaN on an empty window, never None: `_median`/`_p95` already answer that way, and
     # `feeders._bps` -- the renderer this feeds -- branches on `math.isnan` and raises TypeError on
@@ -262,6 +272,16 @@ def weekly_tracking(
     """
     rung_by_week = rung_by_week or {}
     ordered = sorted(stages, key=lambda s: s.cycle_ts)
+    # The asymmetry below is deliberate, not an oversight: the floor is measured at the CALLER's
+    # scalar NAV while the realized half is scored per journaled cycle. They answer different
+    # questions. Realized drift is past tense -- what a closed week actually cost against the NAV it
+    # traded under -- so re-denominating it is simply wrong. The floor is present tense -- what is
+    # unavoidable at the size run TODAY -- and `accumulation_payload` holds NAV constant across the
+    # window by design, because a floor that moved with NAV would stop being a pure venue-minimum
+    # measurement. Do NOT "fix" this by threading per-cycle NAV into the floor.
+    # The seam it leaves: across a `shadow_nav_eur` change, a week's numerator and its floor are
+    # quoted at different NAVs, so that week's `within_band` verdict is advisory. Same seam in
+    # `--simulated-fills`, whose fills are built at the scalar and then scored per cycle.
     floor = accumulation_payload(ordered, minimums, [nav])["by_nav"][nav]
     real = realized_drift(ordered, fills, nav)
     floor_weeks = {(w["iso_year"], w["iso_week"]): w for w in _weekly_drift(ordered, floor["cycles"])}

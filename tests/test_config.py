@@ -145,6 +145,15 @@ def test_engine_bool_shadow_nav_raises(tmp_path):
         load_config(_write(tmp_path, "[zcrypto.engine]\nshadow_nav_eur = true\n"))
 
 
+@pytest.mark.parametrize("literal", ["nan", "inf", "-inf"])
+def test_engine_non_finite_shadow_nav_raises(tmp_path, literal):
+    # `nan`/`inf` are valid TOML floats and `nan <= 0` is False, so they cleared the positivity
+    # check. The cycle writer would then fail its record's validation AFTER appending its orders,
+    # leaving an orders block with no cycle record behind it -- so this must fail at load.
+    with pytest.raises(ConfigError):
+        load_config(_write(tmp_path, f"[zcrypto.engine]\nshadow_nav_eur = {literal}\n"))
+
+
 def test_engine_shadow_nav_accepts_float(tmp_path):
     cfg = load_config(_write(tmp_path, "[zcrypto.engine]\nshadow_nav_eur = 1500.5\n"))
     assert cfg.engine.shadow_nav_eur == 1500.5

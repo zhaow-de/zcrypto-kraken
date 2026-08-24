@@ -473,6 +473,67 @@ def test_validate_record_refuses_a_pair_keyed_closes():
         validate_record(_record(closes={"BTC/EUR": 50000.0}))
 
 
+def test_nav_and_held_round_trip():
+    r = _record(nav=100000.0, held={"BTC": 0.5, "ETH": -2.0})
+    back = from_json(to_json(r))
+    assert back.nav == 100000.0
+    assert back.held == {"BTC": 0.5, "ETH": -2.0}
+
+
+def test_to_json_omits_nav_and_held_when_absent():
+    # Same contract closes established: omission, never '"nav": null'. A record predating these
+    # keys must re-serialize byte-identically, which the v1 golden pins.
+    payload = json.loads(to_json(_record()))
+    assert "nav" not in payload
+    assert "held" not in payload
+
+
+def test_a_record_without_nav_or_held_still_validates():
+    validate_record(_record())  # every artifact written before the keys existed
+
+
+def test_validate_record_refuses_a_non_positive_nav():
+    # NAV sets BOTH halves of drift -- a target is `weight * nav / close` and the drift divides by
+    # nav -- so a zero divides by zero and a negative signs every reading.
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(EngineJournalError, match="nav"):
+            validate_record(_record(nav=bad))
+
+
+def test_from_json_type_guards_nav_at_read_time():
+    """`closes` and `held` are coerced at READ time because several callers read a record without
+    ever calling `validate_record`. `nav` needs the same guard, and `bool` is the case a plain
+    isinstance check misses: `True` is an `int`, `isfinite(True)` is True, and it is > 0 -- so a
+    corrupted `"nav": true` would clear every downstream check and score the cycle at NAV=1."""
+    payload = json.loads(to_json(_record(nav=1000.0)))
+    for bad in (True, "1000", [1000]):
+        payload["nav"] = bad
+        with pytest.raises(EngineJournalError, match="nav"):
+            from_json(json.dumps(payload))
+
+
+def test_validate_record_refuses_a_pair_keyed_held():
+    # held is SIGNED BASE UNITS in the model's key space, exactly like closes.
+    with pytest.raises(EngineJournalError, match="held"):
+        validate_record(_record(held={"BTC/EUR": 0.5}))
+
+
+def test_held_admits_zero_and_negative_but_not_a_non_number():
+    validate_record(_record(held={"BTC": 0.0, "ETH": -2.0}))  # flat and short are both real books
+    with pytest.raises(EngineJournalError, match="held"):
+        validate_record(_record(held={"BTC": "0.5"}))
+
+
+def test_evidence_fingerprint_ignores_nav_and_held():
+    # Deliberate, and the same reasoning that excludes `closes`: the fingerprint covers what a
+    # REPLAY verdict depends on, and these are drift-scoring inputs a replay never reads. Pinned so
+    # a future widening does not quietly fold them in and invalidate every cached verdict.
+    from cli.engine.gate_cache import evidence_fingerprint
+
+    base = _record()
+    assert evidence_fingerprint(base) == evidence_fingerprint(_record(nav=1.0, held={"BTC": 9.0}))
+
+
 def test_v1_closes_stay_base_keyed_too():
     # The base keying is NOT schema-conditional: the model's key space never widened, so a v1
     # record's closes are refused for a symbol key on exactly the same terms as a v2's.

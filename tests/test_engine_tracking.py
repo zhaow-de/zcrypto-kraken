@@ -1139,3 +1139,79 @@ def test_an_export_whose_header_cannot_be_mapped_aborts_the_command(tmp_path, mi
     run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
     assert run.exit_code != 0
     assert "fee" in run.stdout
+
+
+# --- the journaled per-cycle NAV (T0150) ----------------------------------------------------------
+
+
+def _stage_at(ts, *, nav=None):
+    """One minimal stage: a single BTC leg priced at 100.0, target weight 1.0."""
+    return CycleStages(
+        cycle_ts=ts,
+        sleeve_positions={},
+        combined={"BTC": 1.0},
+        capped={"BTC": 1.0},
+        final={"BTC": 1.0},
+        multiplier=1.0,
+        closes={"BTC": 100.0},
+        cap_bound=False,
+        nav=nav,
+    )
+
+
+def test_the_journaled_nav_moves_drift_bps_itself_not_only_the_eur_restatement():
+    """`drift_bps` -- the operand the kill switch trips on -- must come from the journaled NAV.
+
+    The sibling tests run a FLAT book, where drift_eur reduces to `nav * sum|weight|` and the bps
+    ratio is NAV-INVARIANT by construction: they can only ever discriminate via drift_eur. A held
+    book breaks that symmetry, so this is the one test that fails if bps is taken from the live
+    scalar while drift_eur is taken from the journaled value.
+    """
+    ts = datetime(2026, 8, 1, tzinfo=UTC)
+    # Holding exactly the target the journaled NAV implies: 1.0 * 1000 / 100 = 10 BTC. Under the
+    # journaled 1000 the book is perfectly on target -> 0 bps. Under the live 2000 the target
+    # would be 20 BTC, so the same book is 10 BTC short -> 1000 EUR / 2000 NAV = 5000 bps.
+    held_the_journaled_target = [Fill(ts, ts, "BTC", "buy", 10.0, 100.0, 0.0, "MAKER", "T-nav")]
+    out = realized_drift([_stage_at(ts, nav=1000.0)], held_the_journaled_target, 2000.0)
+    assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+    assert out["cycles"][0]["drift_eur"] == pytest.approx(0.0)
+
+    # The same book scored with NO journaled NAV falls back to the live scalar, and then reads the
+    # full 5000 bps -- which is what the assertion above is discriminating against.
+    fallback = realized_drift([_stage_at(ts, nav=None)], held_the_journaled_target, 2000.0)
+    assert fallback["cycles"][0]["drift_bps"] == pytest.approx(5000.0)
+
+
+def test_a_cycle_is_scored_under_its_own_journaled_nav():
+    """The fix T0150 exists for: a `shadow_nav_eur` change must not re-score a closed week against a
+    denominator nobody traded under. A cycle carrying its own NAV is scored under THAT."""
+    ts = datetime(2026, 8, 1, tzinfo=UTC)
+    # Journaled 1000, live 2000. Flat book, so drift is the whole target: 1000/100 * 100 = 1000 EUR
+    # over a 1000 NAV = 10_000 bps. Scored under the LIVE nav it would read 10_000 too (2000/100*100
+    # over 2000) -- so the discriminating assertion is drift_eur, which is bps/10_000 * nav.
+    out = realized_drift([_stage_at(ts, nav=1000.0)], [], 2000.0)
+    assert out["cycles"][0]["drift_eur"] == pytest.approx(1000.0)  # journaled, not the live 2000
+
+
+def test_a_cycle_without_a_journaled_nav_falls_back_to_the_live_one():
+    """Every record written before the key existed. The fallback is what keeps those weeks
+    scoreable at all, and it reproduces exactly today's behaviour."""
+    ts = datetime(2026, 8, 1, tzinfo=UTC)
+    out = realized_drift([_stage_at(ts, nav=None)], [], 2000.0)
+    assert out["cycles"][0]["drift_eur"] == pytest.approx(2000.0)
+
+
+def test_a_week_straddling_the_widening_scores_each_cycle_under_its_own_nav():
+    """The straddle case: some cycles predate the key, some carry it. Each is scored under the NAV
+    that was live for IT -- mixing is correct here, because drift is a per-cycle quantity."""
+    a, b = datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 1, 4, tzinfo=UTC)
+    out = realized_drift([_stage_at(a, nav=None), _stage_at(b, nav=1000.0)], [], 2000.0)
+    assert [r["drift_eur"] for r in out["cycles"]] == [pytest.approx(2000.0), pytest.approx(1000.0)]
+
+
+def test_a_journaled_nav_that_is_not_positive_is_refused():
+    """Same refusal the scalar gets: a zero divides by zero and a negative signs every reading."""
+    ts = datetime(2026, 8, 1, tzinfo=UTC)
+    for bad in (0.0, -1.0, float("nan")):
+        with pytest.raises(EngineError, match="NAV"):
+            realized_drift([_stage_at(ts, nav=bad)], [], 2000.0)
