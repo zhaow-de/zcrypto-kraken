@@ -19,6 +19,10 @@ Spec: `docs/specs/00100-nautilus-v2-migration-design.md`. Every `D<N>` below ref
 - **Never construct a `MessageBus`** (D3). It registers itself globally and replaces the engine's own: orders freeze at `INITIALIZED`, no events fire, nothing raises.
 - **`external_order_claims` stays unset** on every strategy, and the token stays absent from `cli/` — the existing structural ban.
 - **A `uv.lock` change reaches every test** (D12), so from Task 4 onward the full suite is owed, never the diff's reachable subset. The image is shared — one Dockerfile, one lock — so the pin change rebuilds capture, engine, ops and NAS; the NAS runs `-compat` builds only.
+- **One branch, one PR, however large.** Every phase lands here; the PR opens at migration completion.
+- **Trailer the reviewer at review time**, not at branch end — `Co-Authored-By:` first, `Reviewed-by:` last, amended onto the commits the review covered while they are still local.
+- **Review at each task's completion**, covering that task's commits, rather than one whole-branch pass at the end.
+- **Code comments and docstrings describe what the code does now.** No "v1 did X", no migration narrative, no before-and-after. Why it moved belongs in the commit message and the spec; a future reader of `cli/engine/` should not be able to tell a migration happened.
 - **Deployment is out of this plan's scope.** The deployable pin is a stable release (D1); nothing here converges anything.
 
 ______________________________________________________________________
